@@ -1,0 +1,28 @@
+{
+  "name": "scpper-cn-backend",
+  "version": "1.0.0",
+  "description": "SCPPER-CN backend service with PostgreSQL storage",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "db:setup": "docker-compose up -d postgres redis",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "sync:test": "node src/sync/test-full-sync.js",
+    "sync:full": "node src/sync/full-sync.js",
+    "analyze": "node src/analysis/analyze-data.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.7.0",
+    "graphql-request": "^6.1.0",
+    "dotenv": "^16.0.3",
+    "fastify": "^4.24.0",
+    "redis": "^4.6.0",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.7.0",
+    "@types/node": "^20.0.0"
+  }
+}

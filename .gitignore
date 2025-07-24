@@ -88,6 +88,8 @@ backend/user-analysis/
 backend/visualization-data/
 backend/sync-logs/
 backend/*.json
+!backend/package.json
+!backend/package-lock.json
 backend/src/sync/archive/
 
 # Database files
