@@ -1,0 +1,104 @@
+{
+  "timestamp": "2025-07-24T03:06:28.425Z",
+  "strategies": {
+    "aggregateBased": [
+      {
+        "category": "全站统计",
+        "timestamp": "2025-07-24T03:06:18.766Z",
+        "stats": {
+          "_count": 30849,
+          "rating": {
+            "sum": 734470,
+            "mean": 23.808551330675225,
+            "min": -1893,
+            "max": 3797
+          }
+        },
+        "cost": 2
+      },
+      {
+        "category": "最近7天新增",
+        "timestamp": "2025-07-24T03:06:21.083Z",
+        "stats": {
+          "_count": 161,
+          "rating": {
+            "sum": 1785,
+            "mean": 11.08695652173913,
+            "min": -17,
+            "max": 192
+          }
+        },
+        "cost": 2
+      },
+      {
+        "category": "最近30天新增",
+        "timestamp": "2025-07-24T03:06:22.367Z",
+        "stats": {
+          "_count": 503,
+          "rating": {
+            "sum": 7247,
+            "mean": 14.40755467196819,
+            "min": -17,
+            "max": 315
+          }
+        },
+        "cost": 2
+      },
+      {
+        "category": "高评分页面(>50)",
+        "timestamp": "2025-07-24T03:06:23.621Z",
+        "stats": {
+          "_count": 3127,
+          "rating": {
+            "sum": 431171,
+            "mean": 137.8864726574992,
+            "min": 51,
+            "max": 3797
+          }
+        },
+        "cost": 2
+      },
+      {
+        "category": "原创内容",
+        "timestamp": "2025-07-24T03:06:24.994Z",
+        "stats": {
+          "_count": 10457,
+          "rating": {
+            "sum": 559450,
+            "mean": 53.50004781486086,
+            "min": -1893,
+            "max": 3797
+          }
+        },
+        "cost": 2
+      }
+    ],
+    "tieredMonitoring": "See console output",
+    "differentialSync": {
+      "lastSync": {
+        "timestamp": "2025-07-23T03:06:28.144Z",
+        "totalPages": 30840,
+        "totalRating": 734000,
+        "highValuePages": 3120
+      },
+      "current": {
+        "pages": 30849,
+        "totalRating": 734470,
+        "timestamp": "2025-07-24T03:06:28.425Z"
+      },
+      "changes": {
+        "pages": 9,
+        "rating": 470
+      },
+      "recommendation": "incremental_sync"
+    },
+    "smartSampling": {
+      "strategy": "smart_sampling",
+      "sampleSize": 1000,
+      "estimatedCost": 2000,
+      "estimatedTime": 100,
+      "confidence": "95%",
+      "recommendation": "每小时采样检测，根据结果决定是否全量同步"
+    }
+  }
+}

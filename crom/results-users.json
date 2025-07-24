@@ -1,0 +1,65 @@
+{
+  "searchUsers": [
+    {
+      "name": "蟲眼",
+      "wikidotInfo": null,
+      "statistics": {
+        "rank": 8080,
+        "totalRating": 18,
+        "pageCount": 1
+      }
+    },
+    {
+      "name": "Wuz",
+      "wikidotInfo": {
+        "displayName": "Wuz",
+        "wikidotId": 1755920,
+        "unixName": "wuz"
+      },
+      "statistics": {
+        "rank": 1242,
+        "totalRating": 763,
+        "pageCount": 17
+      }
+    },
+    {
+      "name": "5M7",
+      "wikidotInfo": {
+        "displayName": "5M7",
+        "wikidotId": 6624859,
+        "unixName": "5m7"
+      },
+      "statistics": {
+        "rank": 1621,
+        "totalRating": 523,
+        "pageCount": 18
+      }
+    },
+    {
+      "name": "E_U",
+      "wikidotInfo": {
+        "displayName": "E_U",
+        "wikidotId": 7277621,
+        "unixName": "e-u"
+      },
+      "statistics": {
+        "rank": 2435,
+        "totalRating": 278,
+        "pageCount": 5
+      }
+    },
+    {
+      "name": "cm0",
+      "wikidotInfo": {
+        "displayName": "cm0",
+        "wikidotId": 8012099,
+        "unixName": "cm0"
+      },
+      "statistics": {
+        "rank": 3679,
+        "totalRating": 132,
+        "pageCount": 8
+      }
+    }
+  ]
+}

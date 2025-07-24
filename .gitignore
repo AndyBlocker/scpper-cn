@@ -1,0 +1,107 @@
+# Dependencies
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Production builds
+build/
+dist/
+out/
+target/
+*.tgz
+*.tar.gz
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Temporary files
+*.tmp
+*.temp
+
+# SCPPER-CN specific data files
+backend/resume-sync-data/
+backend/full-sync-data/
+backend/user-analysis/
+backend/visualization-data/
+backend/sync-logs/
+backend/*.json
+backend/src/sync/archive/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Large data exports
+*.json.gz
+complete-data-*.json
+checkpoint-*.json
+raw-batch-*.json
+
+# Generated reports
+*-report.json
+*-analysis-*.json
+*-rankings-*.json

@@ -1,0 +1,603 @@
+{
+  "searchUsers": [
+    {
+      "name": "蟲眼",
+      "wikidotInfo": null,
+      "authorInfos": [],
+      "statistics": {
+        "rank": 8080,
+        "totalRating": 18,
+        "meanRating": 18,
+        "pageCount": 1,
+        "pageCountScp": 1,
+        "pageCountTale": 0,
+        "pageCountGoiFormat": 0,
+        "pageCountArtwork": 0,
+        "pageCountLevel": 0,
+        "pageCountEntity": 0,
+        "pageCountObject": 0
+      },
+      "attributedPages": {
+        "edges": [
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-764",
+              "wikidotInfo": {
+                "title": "SCP-CN-764",
+                "rating": 18,
+                "voteCount": 22,
+                "createdAt": "2015-08-01T15:19:40.000Z",
+                "tags": [
+                  "euclid",
+                  "scp",
+                  "原创",
+                  "叙述性",
+                  "文件",
+                  "知识"
+                ]
+              }
+            }
+          }
+        ],
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": "UGFnZVdpa2lkb3RJbmZvOnsic29ydEtleSI6IlJBVElORyIsInNvcnRJZCI6MTgsImlkIjoxOTc2OTY1fQ=="
+        }
+      }
+    },
+    {
+      "name": "Wuz",
+      "wikidotInfo": {
+        "displayName": "Wuz",
+        "wikidotId": 1755920,
+        "unixName": "wuz"
+      },
+      "authorInfos": [
+        {
+          "site": "http://scp-wiki-cn.wikidot.com",
+          "authorPage": {
+            "url": "http://scp-wiki-cn.wikidot.com/wuz",
+            "wikidotInfo": {
+              "title": "Wuz的翻译记录",
+              "wikidotId": 91258450,
+              "createdAt": "2018-07-03T05:58:46.000Z",
+              "rating": 12,
+              "voteCount": 12
+            }
+          }
+        }
+      ],
+      "statistics": {
+        "rank": 1242,
+        "totalRating": 763,
+        "meanRating": 45,
+        "pageCount": 17,
+        "pageCountScp": 16,
+        "pageCountTale": 0,
+        "pageCountGoiFormat": 0,
+        "pageCountArtwork": 0,
+        "pageCountLevel": 0,
+        "pageCountEntity": 0,
+        "pageCountObject": 0
+      },
+      "attributedPages": {
+        "edges": [
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-579",
+              "wikidotInfo": {
+                "title": "SCP-579",
+                "rating": 105,
+                "voteCount": 125,
+                "createdAt": "2015-10-13T07:31:20.000Z",
+                "tags": [
+                  "keter",
+                  "scp",
+                  "信息危害",
+                  "crom:series-1"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-2719",
+              "wikidotInfo": {
+                "title": "SCP-2719",
+                "rating": 88,
+                "voteCount": 92,
+                "createdAt": "2017-05-15T00:31:15.000Z",
+                "tags": [
+                  "bright博士",
+                  "keter",
+                  "scp",
+                  "不灭孽蜥",
+                  "概念",
+                  "crom:series-3"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-1440",
+              "wikidotInfo": {
+                "title": "SCP-1440",
+                "rating": 87,
+                "voteCount": 87,
+                "createdAt": "2015-10-29T08:19:00.000Z",
+                "tags": [
+                  "keter",
+                  "scp",
+                  "不可摧毁",
+                  "人形生物",
+                  "智能",
+                  "未收容",
+                  "死之兄弟",
+                  "活物",
+                  "crom:series-2"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-013",
+              "wikidotInfo": {
+                "title": "SCP-013",
+                "rating": 65,
+                "voteCount": 69,
+                "createdAt": "2015-10-13T04:42:58.000Z",
+                "tags": [
+                  "safe",
+                  "scp",
+                  "人造物品",
+                  "感知影响",
+                  "精神影响",
+                  "crom:series-1"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-012",
+              "wikidotInfo": {
+                "title": "SCP-012",
+                "rating": 63,
+                "voteCount": 69,
+                "createdAt": "2015-10-13T04:38:32.000Z",
+                "tags": [
+                  "euclid",
+                  "scp",
+                  "在各各他山上",
+                  "文件",
+                  "精神影响",
+                  "血",
+                  "视觉性",
+                  "认知危害",
+                  "音乐性",
+                  "crom:series-1"
+                ]
+              }
+            }
+          }
+        ],
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "UGFnZVdpa2lkb3RJbmZvOnsic29ydEtleSI6IlJBVElORyIsInNvcnRJZCI6NjMsImlkIjoxNzg4NTAxfQ=="
+        }
+      }
+    },
+    {
+      "name": "5M7",
+      "wikidotInfo": {
+        "displayName": "5M7",
+        "wikidotId": 6624859,
+        "unixName": "5m7"
+      },
+      "authorInfos": [
+        {
+          "site": "http://scp-wiki-cn.wikidot.com",
+          "authorPage": {
+            "url": "http://scp-wiki-cn.wikidot.com/5m7-s-personal-profile",
+            "wikidotInfo": {
+              "title": "七宝头戴警笛头右手拿着必杀之剑左手拿着浪鸡怒死之枪身穿钻石蜥战甲脚踩682大爬虫坐骑直接一剑爆杀干碎了爱死西皮叙事层将金发碧眼166救下回老家结婚过上悠闲的种田生活",
+              "wikidotId": 1331480678,
+              "createdAt": "2022-01-26T14:40:22.000Z",
+              "rating": 47,
+              "voteCount": 47
+            }
+          }
+        }
+      ],
+      "statistics": {
+        "rank": 1621,
+        "totalRating": 523,
+        "meanRating": 29,
+        "pageCount": 18,
+        "pageCountScp": 11,
+        "pageCountTale": 3,
+        "pageCountGoiFormat": 0,
+        "pageCountArtwork": 0,
+        "pageCountLevel": 0,
+        "pageCountEntity": 0,
+        "pageCountObject": 0
+      },
+      "attributedPages": {
+        "edges": [
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-2346",
+              "wikidotInfo": {
+                "title": "SCP-CN-2346",
+                "rating": 95,
+                "voteCount": 115,
+                "createdAt": "2022-05-13T15:27:28.000Z",
+                "tags": [
+                  "keter",
+                  "scp",
+                  "原创",
+                  "基因",
+                  "微观",
+                  "感知力",
+                  "病毒",
+                  "自我复制",
+                  "蜂巢意识"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-2046",
+              "wikidotInfo": {
+                "title": "SCP-CN-2046",
+                "rating": 81,
+                "voteCount": 89,
+                "createdAt": "2021-11-07T09:52:17.000Z",
+                "tags": [
+                  "safe",
+                  "scp",
+                  "原创",
+                  "基因",
+                  "基金会制",
+                  "建筑",
+                  "生物性"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-2102",
+              "wikidotInfo": {
+                "title": "SCP-CN-2102",
+                "rating": 70,
+                "voteCount": 78,
+                "createdAt": "2021-10-09T13:09:14.000Z",
+                "tags": [
+                  "scp",
+                  "信息危害",
+                  "原创",
+                  "基金会制",
+                  "无定形",
+                  "机密分级"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-1138",
+              "wikidotInfo": {
+                "title": "SCP-CN-1138",
+                "rating": 68,
+                "voteCount": 74,
+                "createdAt": "2022-04-29T14:29:02.000Z",
+                "tags": [
+                  "safe",
+                  "scp",
+                  "修正花卉",
+                  "原创",
+                  "感知力",
+                  "植物",
+                  "视觉性",
+                  "认知危害"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-2045",
+              "wikidotInfo": {
+                "title": "SCP-CN-2045",
+                "rating": 61,
+                "voteCount": 91,
+                "createdAt": "2022-02-26T02:32:53.000Z",
+                "tags": [
+                  "safe",
+                  "scp",
+                  "原创",
+                  "基金会制",
+                  "尸体",
+                  "树木",
+                  "生殖性",
+                  "逆模因"
+                ]
+              }
+            }
+          }
+        ],
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "UGFnZVdpa2lkb3RJbmZvOnsic29ydEtleSI6IlJBVElORyIsInNvcnRJZCI6NjEsImlkIjoyMDE3MjY5fQ=="
+        }
+      }
+    },
+    {
+      "name": "E_U",
+      "wikidotInfo": {
+        "displayName": "E_U",
+        "wikidotId": 7277621,
+        "unixName": "e-u"
+      },
+      "authorInfos": [],
+      "statistics": {
+        "rank": 2435,
+        "totalRating": 278,
+        "meanRating": 56,
+        "pageCount": 5,
+        "pageCountScp": 2,
+        "pageCountTale": 1,
+        "pageCountGoiFormat": 1,
+        "pageCountArtwork": 0,
+        "pageCountLevel": 0,
+        "pageCountEntity": 0,
+        "pageCountObject": 0
+      },
+      "attributedPages": {
+        "edges": [
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/short-stories:00132",
+              "wikidotInfo": {
+                "title": "00132",
+                "rating": 80,
+                "voteCount": 84,
+                "createdAt": "2021-04-02T12:58:52.000Z",
+                "tags": []
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/taihua",
+              "wikidotInfo": {
+                "title": "苔花如米小",
+                "rating": 79,
+                "voteCount": 97,
+                "createdAt": "2020-01-28T05:28:16.000Z",
+                "tags": [
+                  "2020冬季征文",
+                  "原创",
+                  "异学会",
+                  "故事"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-2534",
+              "wikidotInfo": {
+                "title": "SCP-CN-2534",
+                "rating": 65,
+                "voteCount": 69,
+                "createdAt": "2022-07-14T09:24:06.000Z",
+                "tags": [
+                  "safe",
+                  "scp",
+                  "site-cn-09",
+                  "动物",
+                  "原创",
+                  "猫科",
+                  "精神影响",
+                  "隔地促动"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-1850",
+              "wikidotInfo": {
+                "title": "SCP-CN-1850",
+                "rating": 27,
+                "voteCount": 49,
+                "createdAt": "2020-05-23T11:29:50.000Z",
+                "tags": [
+                  "scp",
+                  "site-cn-64",
+                  "thaumiel",
+                  "原创",
+                  "工具",
+                  "悖论",
+                  "时间影响"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/shengyujiqunyishi",
+              "wikidotInfo": {
+                "title": "批准关于生物集群意识转化技术体系建设的申请",
+                "rating": 27,
+                "voteCount": 41,
+                "createdAt": "2020-02-16T12:57:30.000Z",
+                "tags": [
+                  "goi格式",
+                  "原创",
+                  "普罗米修斯实验室",
+                  "_cc",
+                  "_普罗米修斯实验室"
+                ]
+              }
+            }
+          }
+        ],
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": "UGFnZVdpa2lkb3RJbmZvOnsic29ydEtleSI6IlJBVElORyIsInNvcnRJZCI6MjcsImlkIjoxNzU0NjEwfQ=="
+        }
+      }
+    },
+    {
+      "name": "cm0",
+      "wikidotInfo": {
+        "displayName": "cm0",
+        "wikidotId": 8012099,
+        "unixName": "cm0"
+      },
+      "authorInfos": [
+        {
+          "site": "http://scp-wiki-cn.wikidot.com",
+          "authorPage": {
+            "url": "http://scp-wiki-cn.wikidot.com/chrono-matrix-s-personnel-file",
+            "wikidotInfo": {
+              "title": "人事档案：Chrono Matrix",
+              "wikidotId": 1459662701,
+              "createdAt": "2025-05-07T13:30:02.000Z",
+              "rating": 7,
+              "voteCount": 11
+            }
+          }
+        }
+      ],
+      "statistics": {
+        "rank": 3679,
+        "totalRating": 132,
+        "meanRating": 17,
+        "pageCount": 8,
+        "pageCountScp": 5,
+        "pageCountTale": 2,
+        "pageCountGoiFormat": 0,
+        "pageCountArtwork": 0,
+        "pageCountLevel": 0,
+        "pageCountEntity": 0,
+        "pageCountObject": 0
+      },
+      "attributedPages": {
+        "edges": [
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-3560",
+              "wikidotInfo": {
+                "title": "SCP-CN-3560",
+                "rating": 29,
+                "voteCount": 41,
+                "createdAt": "2025-01-26T07:09:51.000Z",
+                "tags": [
+                  "euclid",
+                  "meta",
+                  "scp",
+                  "原创",
+                  "媒体",
+                  "逆模因"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-3562",
+              "wikidotInfo": {
+                "title": "SCP-CN-3562",
+                "rating": 26,
+                "voteCount": 28,
+                "createdAt": "2025-04-15T13:12:11.000Z",
+                "tags": [
+                  "scp",
+                  "thaumiel",
+                  "原创",
+                  "建筑",
+                  "感知力",
+                  "战术神学部",
+                  "鬼魂"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-3561",
+              "wikidotInfo": {
+                "title": "SCP-CN-3561",
+                "rating": 25,
+                "voteCount": 35,
+                "createdAt": "2025-04-12T07:47:48.000Z",
+                "tags": [
+                  "euclid",
+                  "scp",
+                  "原创",
+                  "听觉影响",
+                  "工具"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/scp-cn-3406",
+              "wikidotInfo": {
+                "title": "（更改未保存）SCP-CN-3406",
+                "rating": 21,
+                "voteCount": 25,
+                "createdAt": "2025-05-06T13:11:07.000Z",
+                "tags": [
+                  "euclid",
+                  "scp",
+                  "site-cn-999",
+                  "人形生物",
+                  "原创",
+                  "复活",
+                  "活物"
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "url": "http://scp-wiki-cn.wikidot.com/cn40k-contextaddmirror",
+              "wikidotInfo": {
+                "title": "SCP-CN-40K：赞美伟大的泥头车之神",
+                "rating": 11,
+                "voteCount": 21,
+                "createdAt": "2025-04-02T03:57:19.000Z",
+                "tags": [
+                  "2025愚人竞赛",
+                  "scp",
+                  "信息危害",
+                  "原创",
+                  "搞笑",
+                  "机密分级"
+                ]
+              }
+            }
+          }
+        ],
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "UGFnZVdpa2lkb3RJbmZvOnsic29ydEtleSI6IlJBVElORyIsInNvcnRJZCI6MTEsImlkIjoyMTE4NDE5fQ=="
+        }
+      }
+    }
+  ],
+  "rateLimit": {
+    "cost": 16,
+    "remaining": 299963,
+    "resetAt": "2025-07-24T03:23:50.118Z"
+  }
+}

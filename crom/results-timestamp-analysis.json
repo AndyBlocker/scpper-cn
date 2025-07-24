@@ -1,0 +1,801 @@
+{
+  "pages": {
+    "edges": [
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/0020",
+          "wikidotInfo": {
+            "title": "00:20",
+            "rating": 56,
+            "voteCount": 58,
+            "createdAt": "2020-11-07T16:15:50.000Z",
+            "revisionCount": 2,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2020-11-07T16:15:50.000Z",
+                "type": "PAGE_CREATED",
+                "comment": null
+              },
+              {
+                "index": 1,
+                "timestamp": "2020-11-07T16:16:20.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增标签：2020万圣节, linkage。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2020-11-08T00:37:15.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": null
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": -1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2023-07-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2023-12-09T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/005-fr-1-2-005-fr-1",
+          "wikidotInfo": {
+            "title": "实验报告005-FR-1 与2 + 事件005-FR-1",
+            "rating": 1,
+            "voteCount": 1,
+            "createdAt": "2017-10-13T05:39:53.000Z",
+            "revisionCount": 6,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2017-10-13T05:39:53.000Z",
+                "type": "PAGE_CREATED",
+                "comment": null
+              },
+              {
+                "index": 1,
+                "timestamp": "2017-10-13T05:40:15.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": null
+              },
+              {
+                "index": 2,
+                "timestamp": "2017-10-13T05:41:05.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：附录。"
+              },
+              {
+                "index": 3,
+                "timestamp": "2017-10-13T05:41:37.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：fr, 事件, 实验记录。"
+              },
+              {
+                "index": 4,
+                "timestamp": "2017-10-13T05:42:32.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：记录。 移除标签： 事件, 实验记录。"
+              },
+              {
+                "index": 5,
+                "timestamp": "2017-10-13T05:48:33.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：事故, 实验, 补充材料。 移除标签： 记录, 附录。"
+              },
+              {
+                "index": 6,
+                "timestamp": "2017-10-13T05:49:14.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-005-fr\"."
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/009-nrs003",
+          "wikidotInfo": {
+            "title": "有关项目 009 的备忘录 NRS003",
+            "rating": 5,
+            "voteCount": 17,
+            "createdAt": "2022-08-13T04:54:41.000Z",
+            "revisionCount": 4,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2022-08-13T04:54:41.000Z",
+                "type": "PAGE_CREATED",
+                "comment": null
+              },
+              {
+                "index": 1,
+                "timestamp": "2022-08-13T04:55:25.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增标签：goi格式, oria, 原创。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2022-08-13T04:57:40.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增标签：伊斯兰物品回收办公室。 移除标签：oria。"
+              },
+              {
+                "index": 3,
+                "timestamp": "2022-08-13T06:34:09.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增标签：_伊斯兰物品回收办公室。"
+              },
+              {
+                "index": 4,
+                "timestamp": "2022-08-13T06:35:41.000Z",
+                "type": "TITLE_CHANGED",
+                "comment": null
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": -1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": -1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": -1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": -1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-13T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-14T00:00:00.000Z",
+                "direction": -1
+              },
+              {
+                "timestamp": "2022-08-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-08-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2023-11-23T00:00:00.000Z",
+                "direction": -1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/01",
+          "wikidotInfo": {
+            "title": "附录01",
+            "rating": 2,
+            "voteCount": 2,
+            "createdAt": "2019-04-03T08:58:44.000Z",
+            "revisionCount": 4,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2019-04-03T08:58:44.000Z",
+                "type": "PAGE_CREATED",
+                "comment": "作者：Dr Steakay\n译者：Agt_LEAZOV"
+              },
+              {
+                "index": 1,
+                "timestamp": "2019-04-03T09:00:26.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": null
+              },
+              {
+                "index": 2,
+                "timestamp": "2019-04-03T09:00:41.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": null
+              },
+              {
+                "index": 3,
+                "timestamp": "2019-04-03T09:01:00.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：fr, 补充材料。"
+              },
+              {
+                "index": 4,
+                "timestamp": "2019-04-03T09:01:17.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-091-fr\"."
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/01-091",
+          "wikidotInfo": {
+            "title": "事件01-091",
+            "rating": 2,
+            "voteCount": 2,
+            "createdAt": "2019-04-03T08:53:24.000Z",
+            "revisionCount": 3,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2019-04-03T08:53:24.000Z",
+                "type": "PAGE_CREATED",
+                "comment": "作者：Dr Steakay\n译者：Agt_LEAZOV"
+              },
+              {
+                "index": 1,
+                "timestamp": "2019-04-03T08:54:06.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：fr, 事故, 补充材料。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2019-04-03T08:56:11.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": null
+              },
+              {
+                "index": 3,
+                "timestamp": "2019-04-03T08:56:36.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-091-fr\"."
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/022-de",
+          "wikidotInfo": {
+            "title": "实验记录022-DE",
+            "rating": 0,
+            "voteCount": 0,
+            "createdAt": "2021-08-02T06:53:35.000Z",
+            "revisionCount": 3,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2021-08-02T06:53:35.000Z",
+                "type": "PAGE_CREATED",
+                "comment": "原作者:[[*user Dr Ore]]\n翻译者:[[*user ApocalypticPotato]]"
+              },
+              {
+                "index": 1,
+                "timestamp": "2021-08-02T06:55:07.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增标签：de, 实验, 补充材料。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2021-08-02T07:05:06.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-022-de\"."
+              },
+              {
+                "index": 3,
+                "timestamp": "2021-08-05T01:38:22.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": "捉个小虫"
+              }
+            ],
+            "coarseVoteRecords": []
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/026-exploration-logs",
+          "wikidotInfo": {
+            "title": "SCP-026探索记录",
+            "rating": 8,
+            "voteCount": 8,
+            "createdAt": "2017-09-26T04:03:32.000Z",
+            "revisionCount": 4,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2017-09-26T04:03:32.000Z",
+                "type": "PAGE_CREATED",
+                "comment": "作者：DrEverettMann\n翻译：风干的狐狸皮"
+              },
+              {
+                "index": 1,
+                "timestamp": "2017-09-26T04:03:49.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：探索, 补充材料。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2017-09-26T04:04:02.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-026\"."
+              },
+              {
+                "index": 3,
+                "timestamp": "2018-01-23T07:26:33.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": "美里改正为美丽"
+              },
+              {
+                "index": 4,
+                "timestamp": "2018-02-23T14:20:01.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": "修正几个空格和符号"
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2025-04-05T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2025-04-19T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/028-de-i2",
+          "wikidotInfo": {
+            "title": "事故#028-DE/I2",
+            "rating": 2,
+            "voteCount": 2,
+            "createdAt": "2018-06-11T15:02:54.000Z",
+            "revisionCount": 4,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2018-06-11T15:02:54.000Z",
+                "type": "PAGE_CREATED",
+                "comment": null
+              },
+              {
+                "index": 1,
+                "timestamp": "2018-06-11T15:04:59.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：de, 事故, 补充材料。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2018-06-11T15:05:21.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-028-de\"."
+              },
+              {
+                "index": 3,
+                "timestamp": "2018-06-12T14:58:00.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": "移除已翻译德语部分"
+              },
+              {
+                "index": 4,
+                "timestamp": "2020-03-13T05:04:41.000Z",
+                "type": "SOURCE_CHANGED",
+                "comment": null
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-15T00:00:00.000Z",
+                "direction": 1
+              },
+              {
+                "timestamp": "2023-08-23T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/028-de-p1",
+          "wikidotInfo": {
+            "title": "#028-DE/P1 - 协议“雷神之锤”",
+            "rating": 1,
+            "voteCount": 1,
+            "createdAt": "2018-06-11T15:06:23.000Z",
+            "revisionCount": 2,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2018-06-11T15:06:23.000Z",
+                "type": "PAGE_CREATED",
+                "comment": null
+              },
+              {
+                "index": 1,
+                "timestamp": "2018-06-11T15:06:39.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：de, 补充材料。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2018-06-11T15:08:04.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-028-de\"."
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "node": {
+          "url": "http://scp-wiki-cn.wikidot.com/028-de-p2",
+          "wikidotInfo": {
+            "title": "#028-DE/P2 - 协议“诸神黄昏”",
+            "rating": 1,
+            "voteCount": 1,
+            "createdAt": "2018-06-11T15:08:59.000Z",
+            "revisionCount": 2,
+            "revisions": [
+              {
+                "index": 0,
+                "timestamp": "2018-06-11T15:08:59.000Z",
+                "type": "PAGE_CREATED",
+                "comment": null
+              },
+              {
+                "index": 1,
+                "timestamp": "2018-06-11T15:09:21.000Z",
+                "type": "TAGS_CHANGED",
+                "comment": "已新增的标签：de, 补充材料。"
+              },
+              {
+                "index": 2,
+                "timestamp": "2018-06-11T15:10:05.000Z",
+                "type": null,
+                "comment": "父页面设置为: \"scp-028-de\"."
+              }
+            ],
+            "coarseVoteRecords": [
+              {
+                "timestamp": "2022-05-14T00:00:00.000Z",
+                "direction": 1
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "rateLimit": {
+    "cost": 30,
+    "remaining": 299970
+  }
+}

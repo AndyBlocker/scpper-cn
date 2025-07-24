@@ -1,0 +1,15 @@
+{
+  "aggregatePageWikidotInfos": {
+    "_count": 30849,
+    "rating": {
+      "sum": 734435,
+      "mean": 23.80741677201854,
+      "min": -1893,
+      "max": 3796
+    }
+  },
+  "rateLimit": {
+    "cost": 2,
+    "remaining": 299998
+  }
+}

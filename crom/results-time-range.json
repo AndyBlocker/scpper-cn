@@ -1,0 +1,56 @@
+[
+  {
+    "name": "最近24小时创建的页面",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      },
+      "wikidotInfo": {
+        "createdAt": {
+          "gte": "2025-07-23T02:53:57.792Z"
+        }
+      }
+    },
+    "count": 21,
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299968
+    }
+  },
+  {
+    "name": "最近一周创建的页面",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      },
+      "wikidotInfo": {
+        "createdAt": {
+          "gte": "2025-07-17T02:53:57.793Z"
+        }
+      }
+    },
+    "count": 161,
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299966
+    }
+  },
+  {
+    "name": "最近一个月创建的页面",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      },
+      "wikidotInfo": {
+        "createdAt": {
+          "gte": "2025-06-24T02:53:57.793Z"
+        }
+      }
+    },
+    "count": 503,
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299964
+    }
+  }
+]

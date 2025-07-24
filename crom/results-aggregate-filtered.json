@@ -1,0 +1,127 @@
+[
+  {
+    "name": "全站统计",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      }
+    },
+    "result": {
+      "_count": 30849,
+      "rating": {
+        "sum": 734435,
+        "mean": 23.80741677201854,
+        "min": -1893,
+        "max": 3796
+      }
+    },
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299996
+    }
+  },
+  {
+    "name": "高评分页面 (>50)",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      },
+      "wikidotInfo": {
+        "rating": {
+          "gt": 50
+        }
+      }
+    },
+    "result": {
+      "_count": 3127,
+      "rating": {
+        "sum": 431145,
+        "mean": 137.8781579788935,
+        "min": 51,
+        "max": 3796
+      }
+    },
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299994
+    }
+  },
+  {
+    "name": "SCP系列",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      },
+      "wikidotInfo": {
+        "tags": {
+          "startsWith": "scp"
+        }
+      }
+    },
+    "result": {
+      "_count": 0,
+      "rating": {
+        "sum": null,
+        "mean": null,
+        "min": null,
+        "max": null
+      }
+    },
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299992
+    }
+  },
+  {
+    "name": "原创内容",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      },
+      "wikidotInfo": {
+        "tags": {
+          "eq": "原创"
+        }
+      }
+    },
+    "result": {
+      "_count": 10457,
+      "rating": {
+        "sum": 559418,
+        "mean": 53.4969876637659,
+        "min": -1893,
+        "max": 3796
+      }
+    },
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299990
+    }
+  },
+  {
+    "name": "近期创建 (2023年后)",
+    "filter": {
+      "url": {
+        "startsWith": "http://scp-wiki-cn.wikidot.com"
+      },
+      "wikidotInfo": {
+        "createdAt": {
+          "gte": "2023-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "result": {
+      "_count": 7490,
+      "rating": {
+        "sum": 155074,
+        "mean": 20.7041388518024,
+        "min": -49,
+        "max": 1552
+      }
+    },
+    "rateLimit": {
+      "cost": 2,
+      "remaining": 299988
+    }
+  }
+]
