@@ -616,6 +616,6 @@ async function runDatabaseSync() {
 
 export { DatabaseSyncService };
 
-if (import.meta.url === \`file://\${process.argv[1]}\`) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   runDatabaseSync().catch(console.error);
 }
