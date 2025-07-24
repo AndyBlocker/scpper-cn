@@ -1,0 +1,3500 @@
+{
+  "types": [
+    {
+      "kind": "OBJECT",
+      "name": "Query",
+      "description": "Query type.",
+      "fields": [
+        {
+          "name": "viewer",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "Viewer"
+            }
+          }
+        },
+        {
+          "name": "page",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "Page"
+            }
+          }
+        },
+        {
+          "name": "pageByWikidotId",
+          "type": {
+            "kind": "OBJECT",
+            "name": "Page",
+            "ofType": null
+          }
+        },
+        {
+          "name": "pages",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PageConnection"
+            }
+          }
+        },
+        {
+          "name": "searchPages",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "aggregatePageWikidotInfos",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PageWikidotInfoAggregation"
+            }
+          }
+        },
+        {
+          "name": "randomPage",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "RandomPageResponse"
+            }
+          }
+        },
+        {
+          "name": "rateLimit",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "RateLimit"
+            }
+          }
+        },
+        {
+          "name": "sites",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "OBJECT",
+            "name": "User",
+            "ofType": null
+          }
+        },
+        {
+          "name": "searchUsers",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "usersByRank",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "SCALAR",
+      "name": "String",
+      "description": "The `String` scalar type represents textual data, represented as UTF-8 character sequences. The String type is most often used by GraphQL to represent free-form human-readable text.",
+      "fields": null,
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "SCALAR",
+      "name": "Int",
+      "description": "The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1.",
+      "fields": null,
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "SCALAR",
+      "name": "ID",
+      "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
+      "fields": null,
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "SCALAR",
+      "name": "URL",
+      "description": "An absolute URL.",
+      "fields": null,
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "SCALAR",
+      "name": "DateTime",
+      "description": "An ISO8601-formatted DateTime string.",
+      "fields": null,
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "IntAggregation",
+      "description": null,
+      "fields": [
+        {
+          "name": "sum",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Float",
+            "ofType": null
+          }
+        },
+        {
+          "name": "mean",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Float",
+            "ofType": null
+          }
+        },
+        {
+          "name": "min",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "max",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "SCALAR",
+      "name": "Float",
+      "description": "The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point).",
+      "fields": null,
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "Viewer",
+      "description": "The client accessing this API.",
+      "fields": [
+        {
+          "name": "name",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "privileges",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "ClientPrivilege",
+      "description": null,
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "CRAWLER"
+        },
+        {
+          "name": "MANAGE_DISCORD_USERS"
+        },
+        {
+          "name": "BYPASS_RATE_LIMITS"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "SCALAR",
+      "name": "Boolean",
+      "description": "The `Boolean` scalar type represents `true` or `false`.",
+      "fields": null,
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "StringFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "eq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "startsWith",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "CaseInsensitiveStringFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "eq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "eqLower",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neqLower",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "startsWith",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "startsWithLower",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "IntFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "eq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "DateTimeFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "eq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "DateTime",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neq",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "DateTime",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "DateTime",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lt",
+          "type": {
+            "kind": "SCALAR",
+            "name": "DateTime",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lte",
+          "type": {
+            "kind": "SCALAR",
+            "name": "DateTime",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "OBJECT",
+      "name": "Page",
+      "description": "Represents a Page resource. Each URL is canonically tied to a single page.",
+      "fields": [
+        {
+          "name": "url",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "URL"
+            }
+          }
+        },
+        {
+          "name": "wikidotInfo",
+          "type": {
+            "kind": "OBJECT",
+            "name": "PageWikidotInfo",
+            "ofType": null
+          }
+        },
+        {
+          "name": "alternateTitles",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "attributions",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "translations",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "translationOf",
+          "type": {
+            "kind": "OBJECT",
+            "name": "Page",
+            "ofType": null
+          }
+        },
+        {
+          "name": "adultContentPage",
+          "type": {
+            "kind": "OBJECT",
+            "name": "Page",
+            "ofType": null
+          }
+        },
+        {
+          "name": "adultSplashPage",
+          "type": {
+            "kind": "OBJECT",
+            "name": "Page",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageWikidotInfo",
+      "description": "Information specific to wikidot pages.",
+      "fields": [
+        {
+          "name": "title",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "parent",
+          "type": {
+            "kind": "OBJECT",
+            "name": "Page",
+            "ofType": null
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "category",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "rating",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "realtimeRating",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "voteCount",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "realtimeVoteCount",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "commentCount",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tags",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "wikidotId",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "DateTime"
+            }
+          }
+        },
+        {
+          "name": "revisionCount",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "createdBy",
+          "type": {
+            "kind": "OBJECT",
+            "name": "User",
+            "ofType": null
+          }
+        },
+        {
+          "name": "thumbnailUrl",
+          "type": {
+            "kind": "SCALAR",
+            "name": "URL",
+            "ofType": null
+          }
+        },
+        {
+          "name": "source",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "textContent",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isPrivate",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        },
+        {
+          "name": "revisions",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "coarseVoteRecords",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageAlternateTitle",
+      "description": "Tracks an alternate title.\n\nAlternate titles are titles derived from outside the page itself. For example,\nSCP titles come from a seprate listing page.",
+      "fields": [
+        {
+          "name": "type",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "title",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageAttribution",
+      "description": "A tracked attribution to the page.\nAlso enriched with wikidot history where possible.",
+      "fields": [
+        {
+          "name": "type",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "ENUM",
+              "name": "PageAttributionType"
+            }
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "User"
+            }
+          }
+        },
+        {
+          "name": "date",
+          "type": {
+            "kind": "SCALAR",
+            "name": "DateTime",
+            "ofType": null
+          }
+        },
+        {
+          "name": "order",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "isCurrent",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "PageAttributionType",
+      "description": "The type of attribution.\nFor more information, see https://scp-wiki.wikidot.com/attribution-metadata",
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "AUTHOR"
+        },
+        {
+          "name": "REWRITE"
+        },
+        {
+          "name": "TRANSLATOR"
+        },
+        {
+          "name": "MAINTAINER"
+        },
+        {
+          "name": "SUBMITTER"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageWikidotVoteRecord",
+      "description": "A record of a change in a user's vote on a page.",
+      "fields": [
+        {
+          "name": "timestamp",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "DateTime"
+            }
+          }
+        },
+        {
+          "name": "userWikidotId",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "direction",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "OBJECT",
+            "name": "User",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageWikidotRevision",
+      "description": null,
+      "fields": [
+        {
+          "name": "index",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "wikidotId",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "timestamp",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "DateTime"
+            }
+          }
+        },
+        {
+          "name": "type",
+          "type": {
+            "kind": "ENUM",
+            "name": "PageWikidotRevisionType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "userWikidotId",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "comment",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "OBJECT",
+            "name": "User",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "PageWikidotRevisionType",
+      "description": null,
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "PAGE_CREATED"
+        },
+        {
+          "name": "SOURCE_CHANGED"
+        },
+        {
+          "name": "FILES_CHANGED"
+        },
+        {
+          "name": "TAGS_CHANGED"
+        },
+        {
+          "name": "TITLE_CHANGED"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageConnection",
+      "description": null,
+      "fields": [
+        {
+          "name": "edges",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "pageInfo",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PageInfo"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageEdge",
+      "description": null,
+      "fields": [
+        {
+          "name": "node",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "Page"
+            }
+          }
+        },
+        {
+          "name": "cursor",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "ID"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "QueryPagesSortKey",
+      "description": null,
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "URL"
+        },
+        {
+          "name": "TITLE"
+        },
+        {
+          "name": "CREATED_AT"
+        },
+        {
+          "name": "RATING"
+        },
+        {
+          "name": "ATTRIBUTION_DATE"
+        },
+        {
+          "name": "WIKIDOT_FULLNAME"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryPagesSort",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "order",
+          "type": {
+            "kind": "ENUM",
+            "name": "SortOrder",
+            "ofType": null
+          }
+        },
+        {
+          "name": "key",
+          "type": {
+            "kind": "ENUM",
+            "name": "QueryPagesSortKey",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryPagesFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "url",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "wikidotInfo",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attributions",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesAttributionsFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryPagesWikidotInfoFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "parent",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "category",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "rating",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "IntFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tags",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "DateTimeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isPrivate",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryPagesAttributionsFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesAttributionsFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "type",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "PageAttributionTypeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isCurrent",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "PageAttributionTypeFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "eq",
+          "type": {
+            "kind": "ENUM",
+            "name": "PageAttributionType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neq",
+          "type": {
+            "kind": "ENUM",
+            "name": "PageAttributionType",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryPagesAttributionsUserFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryPagesAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "name",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "CaseInsensitiveStringFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QuerySearchPagesFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "url",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "wikidotInfo",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attributions",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesAttributionsFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QuerySearchPagesWikidotInfoFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "parent",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "category",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "rating",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "IntFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tags",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "DateTimeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isPrivate",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QuerySearchPagesAttributionsFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesAttributionsFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "type",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "PageAttributionTypeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isCurrent",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QuerySearchPagesAttributionsUserFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "name",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "CaseInsensitiveStringFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryAggregatePageWikidotInfosFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryAggregatePageWikidotInfosFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "url",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "wikidotInfo",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryAggregatePageWikidotInfosWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attributions",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryAggregatePageWikidotInfosAttributionsFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryAggregatePageWikidotInfosWikidotInfoFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryAggregatePageWikidotInfosWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "parent",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QuerySearchPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "category",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "rating",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "IntFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tags",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "DateTimeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isPrivate",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryAggregatePageWikidotInfosAttributionsFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryAggregatePageWikidotInfosAttributionsFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "type",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "PageAttributionTypeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryAggregatePageWikidotInfosAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isCurrent",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "QueryAggregatePageWikidotInfosAttributionsUserFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "QueryAggregatePageWikidotInfosAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "name",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "CaseInsensitiveStringFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "SearchPagesFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "anyBaseUrl",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "RandomPageFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "allAttributedUsers",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "allTags",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "noneTags",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "anyBaseUrl",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageWikidotInfoAggregation",
+      "description": null,
+      "fields": [
+        {
+          "name": "_count",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "rating",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "IntAggregation"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "RandomPageResponse",
+      "description": null,
+      "fields": [
+        {
+          "name": "page",
+          "type": {
+            "kind": "OBJECT",
+            "name": "Page",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "PageInfo",
+      "description": "PageInfo from the Relay Cursor Connections Spec.\nNote that the cursor fields are optional, and are null if no edges are returned.\nSee https://relay.dev/graphql/connections.htm#sec-undefined.PageInfo",
+      "fields": [
+        {
+          "name": "hasPreviousPage",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        },
+        {
+          "name": "hasNextPage",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        },
+        {
+          "name": "startCursor",
+          "type": {
+            "kind": "SCALAR",
+            "name": "ID",
+            "ofType": null
+          }
+        },
+        {
+          "name": "endCursor",
+          "type": {
+            "kind": "SCALAR",
+            "name": "ID",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "SortOrder",
+      "description": "Standard pagination order indicator for paginatable fields.",
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "ASC"
+        },
+        {
+          "name": "DESC"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "RateLimit",
+      "description": null,
+      "fields": [
+        {
+          "name": "cost",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "limit",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "remaining",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "resetAt",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "DateTime"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "SiteInfo",
+      "description": null,
+      "fields": [
+        {
+          "name": "type",
+          "type": {
+            "kind": "ENUM",
+            "name": "SiteType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "displayName",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "url",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "URL"
+            }
+          }
+        },
+        {
+          "name": "language",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "recentlyCreatedUrl",
+          "type": {
+            "kind": "SCALAR",
+            "name": "URL",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "SiteType",
+      "description": "A family of wikis that the wiki belongs to.",
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "SCP_WIKI"
+        },
+        {
+          "name": "WANDERERS_LIBRARY"
+        },
+        {
+          "name": "BACKROOMS"
+        },
+        {
+          "name": "CHAOS_INSURGENCY"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "User",
+      "description": "A user represents a singular identity.\nTypically, this is their wikidot username or author name.",
+      "fields": [
+        {
+          "name": "name",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "wikidotInfo",
+          "type": {
+            "kind": "OBJECT",
+            "name": "UserWikidotInfo",
+            "ofType": null
+          }
+        },
+        {
+          "name": "authorInfos",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "statistics",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "UserStatistics"
+            }
+          }
+        },
+        {
+          "name": "attributedPages",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PageConnection"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "UserWikidotInfo",
+      "description": "Details about a user's wikidot account.",
+      "fields": [
+        {
+          "name": "displayName",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "wikidotId",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "unixName",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "UserAuthorInfo",
+      "description": "Wiki specific details about an established wiki author.\nThese details are generally standardised across international wikis.",
+      "fields": [
+        {
+          "name": "site",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "URL"
+            }
+          }
+        },
+        {
+          "name": "authorPage",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "Page"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "UserStatistics",
+      "description": "Aggregate user statistics.",
+      "fields": [
+        {
+          "name": "rank",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "totalRating",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "meanRating",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCount",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCountScp",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCountTale",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCountGoiFormat",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCountArtwork",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCountLevel",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCountEntity",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        },
+        {
+          "name": "pageCountObject",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int"
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "UserAttributedPagesSortKey",
+      "description": null,
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "URL"
+        },
+        {
+          "name": "TITLE"
+        },
+        {
+          "name": "CREATED_AT"
+        },
+        {
+          "name": "RATING"
+        },
+        {
+          "name": "ATTRIBUTION_DATE"
+        },
+        {
+          "name": "WIKIDOT_FULLNAME"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "UserAttributedPagesSort",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "order",
+          "type": {
+            "kind": "ENUM",
+            "name": "SortOrder",
+            "ofType": null
+          }
+        },
+        {
+          "name": "key",
+          "type": {
+            "kind": "ENUM",
+            "name": "UserAttributedPagesSortKey",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "UserAttributedPagesFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "url",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "wikidotInfo",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attributions",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesAttributionsFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "UserAttributedPagesWikidotInfoFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesWikidotInfoFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "parent",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "category",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "rating",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "IntFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tags",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "StringFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "DateTimeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isPrivate",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "UserAttributedPagesAttributionsFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesAttributionsFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "type",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "PageAttributionTypeFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "user",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isCurrent",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "UserAttributedPagesAttributionsUserFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "_and",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_or",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "_not",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "UserAttributedPagesAttributionsUserFilter",
+            "ofType": null
+          }
+        },
+        {
+          "name": "name",
+          "type": {
+            "kind": "INPUT_OBJECT",
+            "name": "CaseInsensitiveStringFilter",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "SearchUsersFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "anyBaseUrl",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "INPUT_OBJECT",
+      "name": "UsersByRankFilter",
+      "description": null,
+      "fields": null,
+      "enumValues": null,
+      "inputFields": [
+        {
+          "name": "anyBaseUrl",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "OBJECT",
+      "name": "__Schema",
+      "description": "A GraphQL Schema defines the capabilities of a GraphQL server. It exposes all available types and directives on the server, as well as the entry points for query, mutation, and subscription operations.",
+      "fields": [
+        {
+          "name": "description",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "types",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "queryType",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "__Type"
+            }
+          }
+        },
+        {
+          "name": "mutationType",
+          "type": {
+            "kind": "OBJECT",
+            "name": "__Type",
+            "ofType": null
+          }
+        },
+        {
+          "name": "subscriptionType",
+          "type": {
+            "kind": "OBJECT",
+            "name": "__Type",
+            "ofType": null
+          }
+        },
+        {
+          "name": "directives",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "__Type",
+      "description": "The fundamental unit of any GraphQL Schema is the type. There are many kinds of types in GraphQL as represented by the `__TypeKind` enum.\n\nDepending on the kind of a type, certain fields describe information about that type. Scalar types provide no information beyond a name, description and optional `specifiedByURL`, while Enum types provide their values. Object and Interface types provide the fields they describe. Abstract types, Union and Interface, provide the Object types possible at runtime. List and NonNull types compose other types.",
+      "fields": [
+        {
+          "name": "kind",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "ENUM",
+              "name": "__TypeKind"
+            }
+          }
+        },
+        {
+          "name": "name",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "specifiedByURL",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "fields",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "interfaces",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "possibleTypes",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "enumValues",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "inputFields",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "ofType",
+          "type": {
+            "kind": "OBJECT",
+            "name": "__Type",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isOneOf",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "__TypeKind",
+      "description": "An enum describing what kind of type a given `__Type` is.",
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "SCALAR"
+        },
+        {
+          "name": "OBJECT"
+        },
+        {
+          "name": "INTERFACE"
+        },
+        {
+          "name": "UNION"
+        },
+        {
+          "name": "ENUM"
+        },
+        {
+          "name": "INPUT_OBJECT"
+        },
+        {
+          "name": "LIST"
+        },
+        {
+          "name": "NON_NULL"
+        }
+      ],
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "__Field",
+      "description": "Object and Interface types are described by a list of Fields, each of which has a name, potentially a list of arguments, and a return type.",
+      "fields": [
+        {
+          "name": "name",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "args",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "type",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "__Type"
+            }
+          }
+        },
+        {
+          "name": "isDeprecated",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        },
+        {
+          "name": "deprecationReason",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "__InputValue",
+      "description": "Arguments provided to Fields or Directives and the input fields of an InputObject are represented as Input Values which describe their type and optionally a default value.",
+      "fields": [
+        {
+          "name": "name",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "type",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "__Type"
+            }
+          }
+        },
+        {
+          "name": "defaultValue",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isDeprecated",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        },
+        {
+          "name": "deprecationReason",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "__EnumValue",
+      "description": "One possible value for a given Enum. Enum values are unique values, not a placeholder for a string or numeric value. However an Enum value is returned in a JSON response as a string.",
+      "fields": [
+        {
+          "name": "name",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isDeprecated",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        },
+        {
+          "name": "deprecationReason",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "OBJECT",
+      "name": "__Directive",
+      "description": "A Directive provides a way to describe alternate runtime execution and type validation behavior in a GraphQL document.\n\nIn some cases, you need to provide options to alter GraphQL's execution behavior in ways field arguments will not suffice, such as conditionally including or skipping a field. Directives provide this by describing additional information to the executor.",
+      "fields": [
+        {
+          "name": "name",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String"
+            }
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isRepeatable",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Boolean"
+            }
+          }
+        },
+        {
+          "name": "locations",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        },
+        {
+          "name": "args",
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "LIST",
+              "name": null
+            }
+          }
+        }
+      ],
+      "enumValues": null,
+      "inputFields": null
+    },
+    {
+      "kind": "ENUM",
+      "name": "__DirectiveLocation",
+      "description": "A Directive can be adjacent to many parts of the GraphQL language, a __DirectiveLocation describes one such possible adjacencies.",
+      "fields": null,
+      "enumValues": [
+        {
+          "name": "QUERY"
+        },
+        {
+          "name": "MUTATION"
+        },
+        {
+          "name": "SUBSCRIPTION"
+        },
+        {
+          "name": "FIELD"
+        },
+        {
+          "name": "FRAGMENT_DEFINITION"
+        },
+        {
+          "name": "FRAGMENT_SPREAD"
+        },
+        {
+          "name": "INLINE_FRAGMENT"
+        },
+        {
+          "name": "VARIABLE_DEFINITION"
+        },
+        {
+          "name": "SCHEMA"
+        },
+        {
+          "name": "SCALAR"
+        },
+        {
+          "name": "OBJECT"
+        },
+        {
+          "name": "FIELD_DEFINITION"
+        },
+        {
+          "name": "ARGUMENT_DEFINITION"
+        },
+        {
+          "name": "INTERFACE"
+        },
+        {
+          "name": "UNION"
+        },
+        {
+          "name": "ENUM"
+        },
+        {
+          "name": "ENUM_VALUE"
+        },
+        {
+          "name": "INPUT_OBJECT"
+        },
+        {
+          "name": "INPUT_FIELD_DEFINITION"
+        }
+      ],
+      "inputFields": null
+    }
+  ]
+}
