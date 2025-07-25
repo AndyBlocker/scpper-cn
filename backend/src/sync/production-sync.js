@@ -34,20 +34,20 @@ class ProductionSync {
     
     // 基于300,000点/5分钟的高速配置 - 支持增量更新
     this.config = {
-      pagesBatchSize: 20,    // 增加页面批次大小
-      votesBatchSize: 100,   // 每次获取100条投票记录（API默认最大值）
-      maxRequestsPerSecond: 8.0,   // 更保守的请求频率，避免过多429错误
+      pagesBatchSize: 5,    // 大幅降低批次大小以控制查询复杂度
+      votesBatchSize: 50,    // 降低投票批次大小以控制复杂度
+      maxRequestsPerSecond: 20.0,   // 提高请求频率
       targetPages: null,     // 自动检测所有CN分支页面（基于API分页）
-      checkpointInterval: 1000,
+      checkpointInterval: 1000, // 更频繁的检查点，防止丢失进度
       maxRetries: 10,         // 增加重试次数以处理rate limiting
-      retryDelayMs: 15000,    // 429错误后等待15秒（更保守）
+      retryDelayMs: 10000,    // 429错误后等待10秒（缩短等待时间）
       max429Retries: 50,      // 专门处理429错误的重试次数
       // 全量投票数据配置
       getCompleteVoteRecords: true,  // 获取完整投票记录
       maxVotePagesPerRequest: 500,   // 每500页进行一次投票记录检查点保存
       // 增量更新配置
       enableIncrementalUpdate: true, // 启用增量更新
-      voteDataRetentionDays: 7,      // 投票数据保留天数（用于增量计算）
+      voteDataRetentionDays: 30,     // 30天保留期，用于增量更新优化
       rateLimitPoints: 300000,       // 5分钟内可用点数
       rateLimitWindowMs: 5 * 60 * 1000 // 5分钟窗口
     };
@@ -274,6 +274,21 @@ class ProductionSync {
     let cursor = null;
     let totalProcessed = 0;
     
+    // 尝试加载页面同步检查点
+    const checkpoint = await this.loadPageCheckpoint();
+    if (checkpoint) {
+      console.log(`📥 发现页面检查点，从第 ${checkpoint.totalProcessed} 页继续...`);
+      this.data.pages = checkpoint.pages || [];
+      this.data.revisions = checkpoint.revisions || [];
+      this.data.attributions = checkpoint.attributions || [];
+      this.data.alternateTitles = checkpoint.alternateTitles || [];
+      totalProcessed = checkpoint.totalProcessed || 0;
+      this.stats.pagesProcessed = totalProcessed;
+      
+      // 通过跳过已处理的页面来找到正确的cursor
+      cursor = await this.findCursorFromProcessedPages(totalProcessed);
+    }
+    
     while (true) {
       try {
         await this.rateLimit();
@@ -348,16 +363,15 @@ class ProductionSync {
                 source
                 textContent
                 
-                # 尝试修复后的字段
+                # 修复：移除不存在的language字段
                 alternateTitles {
                   title
-                  language
                 }
                 
-                revisions(first: 10) {
+                revisions(first: 5) {
                   edges {
                     node {
-                      id
+                      wikidotId
                       timestamp
                       user {
                         ... on WikidotUser {
@@ -558,7 +572,7 @@ class ProductionSync {
           pageUrl: page.url,
           pageTitle: page.title,
           title: altTitle.title,
-          language: altTitle.language
+          language: 'unknown' // API v2中移除了language字段，使用默认值
         });
       }
     }
@@ -570,7 +584,7 @@ class ProductionSync {
         this.data.revisions.push({
           pageUrl: page.url,
           pageTitle: page.title,
-          revisionId: revision.id,
+          revisionId: revision.wikidotId,
           timestamp: revision.timestamp,
           userId: revision.user?.wikidotId,
           userName: revision.user?.displayName,
@@ -655,13 +669,13 @@ class ProductionSync {
         if (!needsUpdate) ratingChanged++;
       }
       
-      // 检查3: 需要检查第一个vote的ID（获取少量数据进行比较）
+      // 检查3: 智能投票变化检测（获取前5个投票进行比较）
       if (!needsUpdate && page.voteCount > 0) {
         // 只有在前两个检查都通过时才进行这个较昂贵的检查
-        const currentFirstVote = await this.getFirstVoteId(page.url);
-        if (currentFirstVote && currentFirstVote !== historicalState.firstVoteId) {
+        const voteChangeResult = await this.checkVoteChanges(page.url, historicalState);
+        if (voteChangeResult.hasChanges) {
           needsUpdate = true;
-          reason = 'first_vote_changed';
+          reason = voteChangeResult.reason;
           firstVoteChanged++;
         }
       }
@@ -979,6 +993,147 @@ class ProductionSync {
       const delayMs = Math.max(1000, remainingTime / 10); // 动态延迟
       console.log(`⏳ Rate limit使用 ${(usagePercentage * 100).toFixed(1)}%, 延迟 ${delayMs}ms`);
       await this.sleep(delayMs);
+    }
+  }
+
+  async checkVoteChanges(pageUrl, historicalState) {
+    try {
+      console.log(`🔍 检查页面投票变化: ${pageUrl}`);
+      
+      // 获取前5个最新投票记录进行比较
+      const query = `
+        query CheckVoteChanges($pageUrl: URL!) {
+          wikidotPage(url: $pageUrl) {
+            fuzzyVoteRecords(first: 5) {
+              edges {
+                node {
+                  userWikidotId
+                  direction
+                  timestamp
+                }
+              }
+            }
+          }
+        }
+      `;
+      
+      const result = await this.cromClient.request(query, { pageUrl });
+      const currentVotes = result.wikidotPage?.fuzzyVoteRecords?.edges || [];
+      
+      if (currentVotes.length === 0) {
+        return { hasChanges: false, reason: 'no_votes' };
+      }
+      
+      // 检查是否有历史投票数据
+      if (!this.incrementalData.existingVotes.has(pageUrl)) {
+        // 没有历史数据，说明是首次同步，需要获取所有投票
+        return { hasChanges: true, reason: 'first_sync_no_history' };
+      }
+      
+      const existingVoteKeys = this.incrementalData.existingVotes.get(pageUrl);
+      
+      // 检查前5个投票是否都存在于历史数据中
+      let hasNewVotes = false;
+      for (const voteEdge of currentVotes) {
+        const vote = voteEdge.node;
+        const voteKey = `${vote.userWikidotId}-${vote.timestamp}`;
+        
+        if (!existingVoteKeys.has(voteKey)) {
+          hasNewVotes = true;
+          console.log(`   发现新投票: ${vote.userWikidotId} at ${vote.timestamp}`);
+          break;
+        }
+      }
+      
+      if (hasNewVotes) {
+        return { hasChanges: true, reason: 'new_votes_detected' };
+      }
+      
+      // 所有前5个投票都存在于历史数据中，说明没有变化
+      console.log(`   前5个投票均无变化，跳过页面`);
+      return { hasChanges: false, reason: 'no_changes_in_recent_votes' };
+      
+    } catch (error) {
+      console.log(`❌ 检查投票变化失败: ${error.message}，保守地获取投票数据`);
+      // 出错时保守地假设有变化，确保数据完整性
+      return { hasChanges: true, reason: 'error_fallback' };
+    }
+  }
+
+  async findCursorFromProcessedPages(totalProcessed) {
+    console.log(`🔍 正在定位第 ${totalProcessed} 页后的cursor...`);
+    
+    try {
+      // 通过分页查询找到正确的cursor位置
+      let currentCursor = null;
+      let processedCount = 0;
+      const skipBatchSize = Math.min(20, this.config.pagesBatchSize * 2); // 降低跳过批次大小以控制复杂度
+      
+      while (processedCount < totalProcessed) {
+        const remainingToSkip = totalProcessed - processedCount;
+        const batchSize = Math.min(skipBatchSize, remainingToSkip);
+        
+        const result = await this.fetchPagesBasic(currentCursor, batchSize);
+        if (!result || !result.pages.edges.length) {
+          console.log('⚠️  无法找到更多页面，从头开始');
+          return null;
+        }
+        
+        processedCount += result.pages.edges.length;
+        currentCursor = result.pages.pageInfo.endCursor;
+        
+        // 显示跳过进度
+        if (processedCount % 500 === 0) {
+          console.log(`   已跳过 ${processedCount}/${totalProcessed} 页面...`);
+        }
+        
+        if (!result.pages.pageInfo.hasNextPage || processedCount >= totalProcessed) {
+          break;
+        }
+      }
+      
+      console.log(`✅ 找到续传位置: ${processedCount} 页面后`);
+      return currentCursor;
+      
+    } catch (error) {
+      console.log(`❌ 定位cursor失败: ${error.message}，将从头开始`);
+      return null;
+    }
+  }
+
+  async loadPageCheckpoint() {
+    try {
+      // 查找最新的页面检查点文件
+      const files = fs.readdirSync(this.dataDir);
+      const pageCheckpointFiles = files
+        .filter(f => f.startsWith('production-data-pages-checkpoint-') && f.endsWith('.json'))
+        .sort()
+        .reverse();
+
+      if (pageCheckpointFiles.length === 0) {
+        return null;
+      }
+
+      const latestFile = pageCheckpointFiles[0];
+      const checkpointPath = path.join(this.dataDir, latestFile);
+      const checkpointData = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
+
+      // 从文件名中提取已处理的页面数
+      const match = latestFile.match(/pages-checkpoint-(\d+)/);
+      const totalProcessed = match ? parseInt(match[1]) : 0;
+
+      return {
+        totalProcessed,
+        pages: checkpointData.pages || [],
+        revisions: checkpointData.revisions || [],
+        attributions: checkpointData.attributions || [],
+        alternateTitles: checkpointData.alternateTitles || [],
+        cursor: null // cursor需要重新计算，通过跳过已处理的页面来实现
+      };
+      
+    } catch (error) {
+      console.log(`⚠️  加载页面检查点失败: ${error.message}`);
+      return null;
     }
   }
 
