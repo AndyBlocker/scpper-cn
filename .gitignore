@@ -92,6 +92,13 @@ backend/*.json
 !backend/package-lock.json
 backend/src/sync/archive/
 
+# Production data and checkpoints (避免提交大量数据文件)
+backend/production-data/
+backend/production-checkpoints/
+*-checkpoint-*.json
+*-data-*.json
+production-data-*.json
+
 # Database files
 *.db
 *.sqlite
@@ -107,3 +114,8 @@ raw-batch-*.json
 *-report.json
 *-analysis-*.json
 *-rankings-*.json
+
+# Temporary debug and test files (保留调试脚本但忽略输出)
+debug-output-*.json
+test-results-*.json
+analyze-results-*.json
