@@ -8,7 +8,7 @@ import 'dotenv/config';
 
 class RealRateLimitTester {
   constructor() {
-    this.cromClient = new GraphQLClient('https://crom.avn.sh/graphql');
+    this.cromClient = new GraphQLClient('https://apiv2.crom.avn.sh/graphql');
     
     this.config = {
       targetSite: process.env.TARGET_SITE_URL || 'http://scp-wiki-cn.wikidot.com',
