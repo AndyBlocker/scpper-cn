@@ -1,0 +1,12 @@
+[
+  {
+    "name": "pages_query",
+    "query": "\nquery GetPages($first: Int, $after: String) {\n  pages(first: $first, after: $after) {\n    edges {\n      node {\n        url\n        ... on WikidotPage {\n          url\n                alternateTitles\n                wikidotId\n                title\n                rating\n                voteCount\n                category\n                tags\n                createdAt\n                revisionCount\n        }\n      }\n      cursor\n    }\n    pageInfo {\n      hasNextPage\n      endCursor\n    }\n  }\n}",
+    "description": "基本页面查询"
+  },
+  {
+    "name": "user_query",
+    "query": "\nquery GetUser($displayName: String!) {\n  wikidotUser(displayName: $displayName) {\n    displayName\n    wikidotId\n    unixName\n  }\n}",
+    "description": "用户查询"
+  }
+]

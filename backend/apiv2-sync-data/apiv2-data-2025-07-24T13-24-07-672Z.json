@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "timestamp": "2025-07-24T13:24:07.672Z",
+    "apiVersion": "v2",
+    "apiEndpoint": "https://apiv2.crom.avn.sh/internal",
+    "totalPages": 0,
+    "totalUsers": 3,
+    "syncDuration": 15.365,
+    "errors": 3
+  },
+  "pages": [],
+  "users": [
+    {
+      "displayName": "MScarlet",
+      "wikidotId": "1745583",
+      "unixName": "mscarlet"
+    },
+    {
+      "displayName": "Sekai_s",
+      "wikidotId": "4476849",
+      "unixName": "sekai-s"
+    },
+    {
+      "displayName": "DrSSS",
+      "wikidotId": "1594121",
+      "unixName": "drsss"
+    }
+  ],
+  "stats": {
+    "startTime": "2025-07-24T13:23:52.306Z",
+    "endTime": "2025-07-24T13:24:07.671Z",
+    "pagesProcessed": 0,
+    "batchesCompleted": 0,
+    "errors": [
+      {
+        "type": "batch_error",
+        "error": "Unknown type \"QueryPagesFilter\".: {\"response\":{\"errors\":[{\"message\":\"Unknown type \\\"QueryPagesFilter\\\".\",\"locations\":[{\"line\":2,\"column\":36}]}],\"status\":200,\"headers\":{}},\"request\":{\"query\":\"\\n      query APIv2PageSync($filter: QueryPagesFilter, $first: Int, $after: ID) {\\n        pages(filter: $filter, first: $first, after: $after) {\\n          edges {\\n            node {\\n              url\\n              ... on WikidotPage {\\n                title\\n                wikidotId\\n                category\\n                rating\\n                voteCount\\n                commentCount\\n                createdAt\\n                revisionCount\\n                source\\n                textContent\\n                tags\\n                thumbnailUrl\\n                \\n                createdBy {\\n                  ... on WikidotUser {\\n                    displayName\\n                    wikidotId\\n                    unixName\\n                  }\\n                }\\n                \\n                # 尝试获取修订信息 - 可能需要不同的查询方式\\n                revisions {\\n                  edges {\\n                    node {\\n                      index\\n                      timestamp\\n                      comment\\n                      user {\\n                        ... on WikidotUser {\\n                          displayName\\n                          wikidotId\\n                        }\\n                      }\\n                    }\\n                  }\\n                }\\n                \\n                # 尝试获取贡献者信息\\n                attributions {\\n                  type\\n                  user {\\n                    ... on WikidotUser {\\n                      displayName\\n                      wikidotId\\n                    }\\n                  }\\n                  date\\n                  order\\n                }\\n              }\\n            }\\n            cursor\\n          }\\n          pageInfo {\\n            hasNextPage\\n            endCursor\\n          }\\n        }\\n      }\\n    \",\"variables\":{\"filter\":{\"url\":{\"startsWith\":\"http://scp-wiki-cn.wikidot.com\"}},\"first\":10}}}",
+        "timestamp": "2025-07-24T13:23:54.614Z",
+        "processedPages": 0
+      },
+      {
+        "type": "batch_error",
+        "error": "Unknown type \"QueryPagesFilter\".: {\"response\":{\"errors\":[{\"message\":\"Unknown type \\\"QueryPagesFilter\\\".\",\"locations\":[{\"line\":2,\"column\":36}]}],\"status\":200,\"headers\":{}},\"request\":{\"query\":\"\\n      query APIv2PageSync($filter: QueryPagesFilter, $first: Int, $after: ID) {\\n        pages(filter: $filter, first: $first, after: $after) {\\n          edges {\\n            node {\\n              url\\n              ... on WikidotPage {\\n                title\\n                wikidotId\\n                category\\n                rating\\n                voteCount\\n                commentCount\\n                createdAt\\n                revisionCount\\n                source\\n                textContent\\n                tags\\n                thumbnailUrl\\n                \\n                createdBy {\\n                  ... on WikidotUser {\\n                    displayName\\n                    wikidotId\\n                    unixName\\n                  }\\n                }\\n                \\n                # 尝试获取修订信息 - 可能需要不同的查询方式\\n                revisions {\\n                  edges {\\n                    node {\\n                      index\\n                      timestamp\\n                      comment\\n                      user {\\n                        ... on WikidotUser {\\n                          displayName\\n                          wikidotId\\n                        }\\n                      }\\n                    }\\n                  }\\n                }\\n                \\n                # 尝试获取贡献者信息\\n                attributions {\\n                  type\\n                  user {\\n                    ... on WikidotUser {\\n                      displayName\\n                      wikidotId\\n                    }\\n                  }\\n                  date\\n                  order\\n                }\\n              }\\n            }\\n            cursor\\n          }\\n          pageInfo {\\n            hasNextPage\\n            endCursor\\n          }\\n        }\\n      }\\n    \",\"variables\":{\"filter\":{\"url\":{\"startsWith\":\"http://scp-wiki-cn.wikidot.com\"}},\"first\":10}}}",
+        "timestamp": "2025-07-24T13:23:58.705Z",
+        "processedPages": 0
+      },
+      {
+        "type": "batch_error",
+        "error": "Unknown type \"QueryPagesFilter\".: {\"response\":{\"errors\":[{\"message\":\"Unknown type \\\"QueryPagesFilter\\\".\",\"locations\":[{\"line\":2,\"column\":36}]}],\"status\":200,\"headers\":{}},\"request\":{\"query\":\"\\n      query APIv2PageSync($filter: QueryPagesFilter, $first: Int, $after: ID) {\\n        pages(filter: $filter, first: $first, after: $after) {\\n          edges {\\n            node {\\n              url\\n              ... on WikidotPage {\\n                title\\n                wikidotId\\n                category\\n                rating\\n                voteCount\\n                commentCount\\n                createdAt\\n                revisionCount\\n                source\\n                textContent\\n                tags\\n                thumbnailUrl\\n                \\n                createdBy {\\n                  ... on WikidotUser {\\n                    displayName\\n                    wikidotId\\n                    unixName\\n                  }\\n                }\\n                \\n                # 尝试获取修订信息 - 可能需要不同的查询方式\\n                revisions {\\n                  edges {\\n                    node {\\n                      index\\n                      timestamp\\n                      comment\\n                      user {\\n                        ... on WikidotUser {\\n                          displayName\\n                          wikidotId\\n                        }\\n                      }\\n                    }\\n                  }\\n                }\\n                \\n                # 尝试获取贡献者信息\\n                attributions {\\n                  type\\n                  user {\\n                    ... on WikidotUser {\\n                      displayName\\n                      wikidotId\\n                    }\\n                  }\\n                  date\\n                  order\\n                }\\n              }\\n            }\\n            cursor\\n          }\\n          pageInfo {\\n            hasNextPage\\n            endCursor\\n          }\\n        }\\n      }\\n    \",\"variables\":{\"filter\":{\"url\":{\"startsWith\":\"http://scp-wiki-cn.wikidot.com\"}},\"first\":10}}}",
+        "timestamp": "2025-07-24T13:24:02.639Z",
+        "processedPages": 0
+      }
+    ]
+  }
+}

@@ -9,9 +9,12 @@
     "db:setup": "docker-compose up -d postgres redis",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "sync:test": "node src/sync/test-full-sync.js",
-    "sync:full": "node src/sync/full-sync.js",
-    "analyze": "node src/analysis/analyze-data.js"
+    "main": "node src/main.js",
+    "sync": "node src/sync/production-sync.js",
+    "database": "node src/sync/database-sync.js",
+    "analyze": "node src/analyze/vote-analyzer.js",
+    "schema": "node src/sync/schema-explorer.js",
+    "full": "node src/main.js full"
   },
   "dependencies": {
     "@prisma/client": "^5.7.0",
