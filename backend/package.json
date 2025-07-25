@@ -11,6 +11,8 @@
     "db:studio": "prisma studio",
     "main": "node src/main.js",
     "sync": "node src/sync/production-sync.js",
+    "votes": "node src/sync/production-sync.js --votes",
+    "vote-only": "node src/sync/production-sync.js --vote-only",
     "database": "node src/sync/database-sync.js",
     "analyze": "node src/analyze/vote-analyzer.js",
     "schema": "node src/sync/schema-explorer.js",

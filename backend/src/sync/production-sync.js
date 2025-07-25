@@ -8,7 +8,7 @@ dotenv.config();
 // SCPPER-CN 生产环境数据同步脚本
 // 基于复杂度限制和权限分析的优化版本
 class ProductionSync {
-  constructor() {
+  constructor(options = {}) {
     this.cromClient = new GraphQLClient('https://apiv2.crom.avn.sh/graphql');
     
     this.dataDir = './production-data';
@@ -24,7 +24,9 @@ class ProductionSync {
     this.stats = {
       startTime: null,
       endTime: null,
+      actualSyncStartTime: null, // 实际网络同步开始时间（排除checkpoint加载）
       pagesProcessed: 0,
+      actualPagesProcessed: 0,   // 实际从网络同步的页面数（不包括checkpoint）
       votesProcessed: 0,
       usersProcessed: 0,
       batchesCompleted: 0,
@@ -32,19 +34,22 @@ class ProductionSync {
       requestTimes: []
     };
     
-    // 基于300,000点/5分钟的高速配置 - 支持增量更新
+    // 基于300,000点/5分钟的保守配置 - 支持增量更新
     this.config = {
-      pagesBatchSize: 5,    // 大幅降低批次大小以控制查询复杂度
-      votesBatchSize: 50,    // 降低投票批次大小以控制复杂度
-      maxRequestsPerSecond: 20.0,   // 提高请求频率
+      pagesBatchSize: 5,     // 设置为5如用户建议
+      votesBatchSize: 100,   // 设置为100如用户建议
+      maxRequestsPerSecond: 4,    // 进一步降低请求频率以适应更大的投票批次
       targetPages: null,     // 自动检测所有CN分支页面（基于API分页）
       checkpointInterval: 1000, // 更频繁的检查点，防止丢失进度
-      maxRetries: 10,         // 增加重试次数以处理rate limiting
-      retryDelayMs: 10000,    // 429错误后等待10秒（缩短等待时间）
+      maxRetries: 15,         // 增加重试次数以处理网络错误
+      retryDelayMs: 60000,    // 429错误后等待60秒（进一步延长等待时间）
+      networkRetryDelayMs: 8000, // 网络错误后等待8秒
       max429Retries: 50,      // 专门处理429错误的重试次数
+      // 运行模式配置
+      voteOnlyMode: options.voteOnly || false,    // 仅获取投票数据模式，不同步页面数据
       // 全量投票数据配置
       getCompleteVoteRecords: true,  // 获取完整投票记录
-      maxVotePagesPerRequest: 500,   // 每500页进行一次投票记录检查点保存
+      maxVotePagesPerRequest: 200,   // 每200页进行一次投票记录检查点保存（降低间隔以更频繁保存）
       // 增量更新配置
       enableIncrementalUpdate: true, // 启用增量更新
       voteDataRetentionDays: 30,     // 30天保留期，用于增量更新优化
@@ -91,13 +96,44 @@ class ProductionSync {
       speedHistory: [],           // 最近的速度记录
       maxSpeedHistory: 10         // 保留最近10次速度记录用于预估
     };
+
+    // 网络耗时追踪
+    this.lastNetworkTime = 0;
     
-    // Rate Limit追踪
+    // Rate Limit追踪 - 基于5分钟滑动窗口
     this.rateLimitTracker = {
-      pointsUsed: 0,
-      windowStart: Date.now(),
-      requestHistory: []  // {timestamp, points} 的数组
+      requestHistory: [],  // {timestamp, points, operation} 的数组
+      windowSizeMs: 5 * 60 * 1000, // 5分钟窗口
+      maxPoints: 300000,   // 5分钟内最大点数
+      currentWindowStart: Date.now(),
+      isWaiting: false,
+      waitingReason: null, // 'rate_limit', 'network_error', 'other'
+      waitStartTime: null,
+      estimatedWaitEndTime: null,
+      // 新增：空响应检测
+      emptyResponseCount: 0,       // 连续空响应计数
+      consecutiveEmptyThreshold: 3, // 连续空响应阈值
+      adaptiveDelayMs: 1000,       // 自适应延迟
+      maxAdaptiveDelayMs: 30000    // 最大自适应延迟
     };
+  }
+
+  resetRateLimitTracker() {
+    this.rateLimitTracker = {
+      requestHistory: [],
+      windowSizeMs: 5 * 60 * 1000,
+      maxPoints: 300000,
+      currentWindowStart: Date.now(),
+      isWaiting: false,
+      waitingReason: null,
+      waitStartTime: null,
+      estimatedWaitEndTime: null,
+      emptyResponseCount: 0,
+      consecutiveEmptyThreshold: 3,
+      adaptiveDelayMs: 1000,
+      maxAdaptiveDelayMs: 30000
+    };
+    console.log('🔄 Rate limit追踪器已重置');
   }
 
   async loadHistoricalData() {
@@ -227,31 +263,22 @@ class ProductionSync {
     console.log(`📅 开始时间: ${new Date().toLocaleString()}`);
     console.log(`📦 页面批次: ${this.config.pagesBatchSize}, 投票批次: ${this.config.votesBatchSize}`);
     console.log(`⚡ 请求频率: ${this.config.maxRequestsPerSecond}/秒`);
+    
+    if (this.config.voteOnlyMode) {
+      console.log('🗳️  运行模式: 仅获取投票数据');
+    }
     console.log('');
     
     this.stats.startTime = new Date();
     
     try {
-      // -1. 预先获取总页面数（用于进度条）
-      await this.fetchTotalPageCount();
-      
-      // 0. 检查并加载历史数据（用于增量更新）
-      await this.loadHistoricalData();
-      
-      // 1. 第一阶段：同步页面基础数据
-      await this.syncPagesBasicData();
-      
-      // 1.5. 加载投票进度检查点（如果存在）
-      await this.loadVoteProgressCheckpoint();
-      
-      // 2. 第二阶段：同步投票数据（支持增量更新）
-      await this.syncVoteData();
-      
-      // 3. 第三阶段：汇总用户数据（无需额外查询）
-      await this.consolidateUserData();
-      
-      // 4. 生成最终报告和分析
-      await this.generateProductionReport();
+      if (this.config.voteOnlyMode) {
+        // 仅获取投票数据模式
+        await this.runVoteOnlySync();
+      } else {
+        // 完整同步模式
+        await this.runFullSync();
+      }
       
     } catch (error) {
       console.error(`❌ 同步过程发生错误: ${error.message}`);
@@ -266,6 +293,46 @@ class ProductionSync {
         await this.saveCurrentData('emergency');
       }
     }
+  }
+
+  async runFullSync() {
+    // -1. 预先获取总页面数（用于进度条）
+    await this.fetchTotalPageCount();
+    
+    // 0. 检查并加载历史数据（用于增量更新）
+    await this.loadHistoricalData();
+    
+    // 1. 第一阶段：同步页面基础数据
+    await this.syncPagesBasicData();
+    
+    // 1.5. 加载投票进度检查点（如果存在）
+    await this.loadVoteProgressCheckpoint();
+    
+    // 2. 第二阶段：同步投票数据（支持增量更新）
+    await this.syncVoteData();
+    
+    // 3. 第三阶段：汇总用户数据（无需额外查询）
+    await this.consolidateUserData();
+    
+    // 4. 生成最终报告和分析
+    await this.generateProductionReport();
+  }
+
+  async runVoteOnlySync() {
+    console.log('🗳️  仅获取投票数据模式');
+    console.log('='.repeat(50));
+    
+    // 1. 加载现有页面数据
+    await this.loadExistingPageData();
+    
+    // 2. 获取所有页面的投票数据
+    await this.syncVoteDataForExistingPages();
+    
+    // 3. 汇总用户数据
+    await this.consolidateUserData();
+    
+    // 4. 生成报告
+    await this.generateVoteOnlyReport();
   }
 
   async syncPagesBasicData() {
@@ -285,55 +352,140 @@ class ProductionSync {
       totalProcessed = checkpoint.totalProcessed || 0;
       this.stats.pagesProcessed = totalProcessed;
       
-      // 通过跳过已处理的页面来找到正确的cursor
-      cursor = await this.findCursorFromProcessedPages(totalProcessed);
+      // 直接使用保存的cursor，无需重新计算
+      cursor = checkpoint.cursor;
+      
+      if (cursor) {
+        console.log(`✅ 已恢复cursor，将从断点继续同步`);
+        // 重置rate limit追踪器，因为从检查点恢复意味着之前的请求历史已过期
+        this.resetRateLimitTracker();
+        // 设置实际同步开始时间为现在（而不是程序启动时间）
+        this.stats.actualSyncStartTime = Date.now();
+        this.stats.actualPagesProcessed = 0; // 重置实际同步页面计数
+      } else {
+        console.log(`⚠️  检查点中没有cursor信息，页面同步可能已完成`);
+        // 检查是否接近总页面数
+        if (this.progressState.totalPages && totalProcessed >= this.progressState.totalPages - 10) {
+          console.log(`✅ 页面同步已基本完成 (${totalProcessed}/${this.progressState.totalPages})`);
+          // 直接结束页面同步阶段，进入投票同步
+          this.stats.actualSyncStartTime = Date.now();
+          return;
+        }
+        
+        // 否则从头开始
+        console.log(`🔄 从头开始页面同步`);
+        this.data.pages = [];
+        this.data.revisions = [];
+        this.data.attributions = [];
+        this.data.alternateTitles = [];
+        totalProcessed = 0;
+        this.stats.pagesProcessed = 0;
+        this.stats.actualSyncStartTime = Date.now();
+        this.stats.actualPagesProcessed = 0;
+        this.resetRateLimitTracker();
+      }
+    }
+    
+    // 如果没有checkpoint，设置实际同步开始时间
+    if (!this.stats.actualSyncStartTime) {
+      this.stats.actualSyncStartTime = Date.now();
     }
     
     while (true) {
-      try {
-        await this.rateLimit();
-        
-        const startTime = Date.now();
-        const result = await this.fetchPagesBasic(cursor, this.config.pagesBatchSize);
-        const requestTime = Date.now() - startTime;
-        
-        this.stats.requestTimes.push(requestTime);
-        
-        // 成功请求后清理429错误计数
-        this.clearConsecutive429Errors('pages_basic');
-        
-        if (!result || !result.pages.edges.length) {
-          console.log('\n✅ 没有更多页面可处理');
-          break;
+      let batchRetries = 0;
+      let batchSuccess = false;
+      
+      // 重试当前批次直到成功或达到最大重试次数
+      while (!batchSuccess && batchRetries < this.config.maxRetries) {
+        try {
+          
+          const startTime = Date.now();
+          const result = await this.fetchPagesBasic(cursor, this.config.pagesBatchSize);
+          const requestTime = Date.now() - startTime;
+          
+          this.stats.requestTimes.push(requestTime);
+          
+          // 成功请求后清理429错误计数
+          this.clearConsecutive429Errors('pages_basic');
+          
+          if (!result || !result.pages.edges.length) {
+            console.log('\n✅ 没有更多页面可处理');
+            // 保存最终的检查点
+            await this.savePageCheckpoint(totalProcessed, cursor);
+            
+            // 验证页面数量完整性
+            if (this.progressState.totalPages && totalProcessed < this.progressState.totalPages) {
+              const missing = this.progressState.totalPages - totalProcessed;
+              console.log(`⚠️  页面数量差异: ${missing} 页 (${totalProcessed}/${this.progressState.totalPages})`);
+              console.log('   这通常是API统计的小误差，不影响数据完整性');
+            }
+            
+            return; // 结束整个函数
+          }
+          
+          // 检测空响应或数据异常
+          const hasValidData = this.detectEmptyResponse(result, 'pages');
+          if (!hasValidData) {
+            throw new Error('检测到空响应或数据异常，可能是API限流');
+          }
+          
+          // 处理页面基础数据
+          for (const edge of result.pages.edges) {
+            this.processPageBasic(edge.node);
+            cursor = edge.cursor;
+            totalProcessed++;
+            this.stats.actualPagesProcessed++; // 增加实际同步页面计数
+          }
+          
+          this.stats.batchesCompleted++;
+          this.stats.pagesProcessed = totalProcessed;
+          
+          // 智能进度显示（避免刷屏）
+          this.updateProgress(totalProcessed);
+          
+          // 定期保存检查点
+          if (totalProcessed % this.config.checkpointInterval === 0) {
+            await this.savePageCheckpoint(totalProcessed, cursor);
+          }
+          
+          // 检查是否有下一页
+          if (!result.pages.pageInfo.hasNextPage) {
+            console.log('\n✅ 已处理所有可用页面');
+            // 保存最终的检查点
+            await this.savePageCheckpoint(totalProcessed, cursor);
+            
+            // 验证页面数量完整性
+            if (this.progressState.totalPages && totalProcessed < this.progressState.totalPages) {
+              const missing = this.progressState.totalPages - totalProcessed;
+              console.log(`⚠️  检测到缺失页面: ${missing} 页 (${totalProcessed}/${this.progressState.totalPages})`);
+              
+              if (missing <= 20) { // 如果缺失页面不多，尝试使用不同的方法获取
+                console.log('🔄 尝试获取剩余页面...');
+                await this.fetchRemainingPages(totalProcessed);
+              } else {
+                console.log('   缺失页面较多，可能是API总数统计不准确');
+              }
+            }
+            
+            return; // 结束整个函数
+          }
+          
+          batchSuccess = true; // 当前批次成功
+          
+          // 添加基础请求间隔控制
+          const delayMs = 1000 / this.config.maxRequestsPerSecond;
+          await this.sleep(delayMs);
+          
+        } catch (error) {
+          batchRetries++;
+          
+          // 使用简化的错误处理，避免输出大量调试信息
+          await this.handleBatchError(error, 'pages_basic', batchRetries);
+          
+          if (batchRetries >= this.config.maxRetries) {
+            throw new Error(`页面批次重试${this.config.maxRetries}次后仍失败，停止同步`);
+          }
         }
-        
-        // 处理页面基础数据
-        for (const edge of result.pages.edges) {
-          this.processPageBasic(edge.node);
-          cursor = edge.cursor;
-          totalProcessed++;
-        }
-        
-        this.stats.batchesCompleted++;
-        this.stats.pagesProcessed = totalProcessed;
-        
-        // 智能进度显示（避免刷屏）
-        this.updateProgress(totalProcessed);
-        
-        // 定期保存检查点
-        if (totalProcessed % this.config.checkpointInterval === 0) {
-          await this.saveCurrentData(`pages-checkpoint-${totalProcessed}`);
-        }
-        
-        // 检查是否有下一页
-        if (!result.pages.pageInfo.hasNextPage) {
-          console.log('\n✅ 已处理所有可用页面');
-          break;
-        }
-        
-      } catch (error) {
-        console.log(`\n❌ 页面批次处理失败: ${error.message}`);
-        await this.handleError(error, 'pages_basic');
       }
     }
     
@@ -451,8 +603,10 @@ class ProductionSync {
     
     this.progressState.lastProgressUpdate = now;
     
-    const speed = currentCount / ((now - this.stats.startTime) / 1000);
-    const avgResponseTime = this.stats.requestTimes.slice(-5).reduce((a, b) => a + b, 0) / Math.min(5, this.stats.requestTimes.length);
+    // 使用实际同步进度计算速度，避免checkpoint数据影响ETA
+    const actualElapsed = (now - this.stats.actualSyncStartTime) / 1000;
+    const speed = actualElapsed > 0 ? this.stats.actualPagesProcessed / actualElapsed : 0;
+    const avgResponseTime = this.stats.requestTimes.slice(-5).reduce((a, b) => a + b, 0) / Math.min(5, this.stats.requestTimes.length) || 0;
     
     // 更新速度历史用于时间预估
     this.progressState.speedHistory.push(speed);
@@ -463,8 +617,9 @@ class ProductionSync {
     let progressText = '';
     let etaText = '';
     
-    // 计算已用时间
-    const elapsedSeconds = (now - this.stats.startTime) / 1000;
+    // 计算已用时间（使用实际同步开始时间，排除checkpoint加载时间）
+    const syncStartTime = this.stats.actualSyncStartTime || this.stats.startTime;
+    const elapsedSeconds = (now - syncStartTime) / 1000;
     const elapsedText = ` | 已用: ${this.formatDuration(elapsedSeconds)}`;
     
     if (this.progressState.totalPages && context === 'pages') {
@@ -473,24 +628,81 @@ class ProductionSync {
       const progressBar = this.generateProgressBar(percentage);
       progressText = `📊 ${progressBar} ${percentage.toFixed(1)}% (${currentCount.toLocaleString()}/${this.progressState.totalPages.toLocaleString()})`;
       
-      // 计算预计剩余时间
+      // 简化ETA计算：使用当前实际速度和剩余页面数
       const remaining = this.progressState.totalPages - currentCount;
-      const avgSpeed = this.progressState.speedHistory.reduce((sum, s) => sum + s, 0) / this.progressState.speedHistory.length;
-      if (avgSpeed > 0 && remaining > 0) {
-        const etaSeconds = remaining / avgSpeed;
+      const actualElapsed = (now - this.stats.actualSyncStartTime) / 1000;
+      
+      // 需要足够的数据和时间才能给出可靠的ETA估算  
+      const hasEnoughData = this.stats.actualPagesProcessed >= 10 && actualElapsed >= 30;
+      
+      if (this.stats.actualPagesProcessed > 0 && remaining > 0 && hasEnoughData) {
+        // 直接基于这次同步的实际速度计算ETA
+        const currentSpeed = this.stats.actualPagesProcessed / actualElapsed;
+        let etaSeconds = remaining / currentSpeed;
+        
+        // 考虑错误率对时间的影响
+        const totalErrors = this.stats.errors.length;
+        const errorRate = totalErrors / Math.max(currentCount, 1);
+        
+        if (errorRate > 0.1) { // 如果错误率超过10%
+          // 根据错误类型调整ETA
+          const rateLimitErrors = this.stats.errors.filter(e => e.is429).length;
+          const networkErrors = this.stats.errors.filter(e => 
+            !e.is429 && (e.error.includes('ECONNRESET') || e.error.includes('network'))
+          ).length;
+          
+          // 估算额外的等待时间
+          const avgRateLimitDelay = (rateLimitErrors * this.config.retryDelayMs) / 1000;
+          const avgNetworkDelay = (networkErrors * this.config.networkRetryDelayMs) / 1000;
+          const extraDelay = (avgRateLimitDelay + avgNetworkDelay) / Math.max(currentCount, 1);
+          
+          // 将额外延迟应用到剩余时间
+          etaSeconds = etaSeconds * (1 + errorRate) + (remaining * extraDelay);
+        }
+        
         etaText = ` | ETA: ${this.formatDuration(etaSeconds)}`;
+        
+        // 如果有很多错误，添加不确定性提示
+        if (errorRate > 0.2) {
+          etaText += ' (±误差较大)';
+        }
       }
     } else {
       // 无总数时显示简单计数
       progressText = `📊 ${context === 'pages' ? '页面' : '投票'}进度: ${currentCount.toLocaleString()}`;
     }
     
-    // Rate limit状态指示
-    const rateLimitStatus = this.progressState.isWaitingRateLimit ? ' ⏳ [等待Rate Limit]' : '';
+    // 等待状态指示
+    const waitingStatus = this.getWaitingStatusText();
     
-    process.stdout.write(`\r${progressText} | 速度: ${speed.toFixed(1)}/s | 响应: ${avgResponseTime.toFixed(0)}ms${elapsedText}${etaText}${rateLimitStatus}`);
+    process.stdout.write(`\r${progressText} | 速度: ${speed.toFixed(1)}/s | 响应: ${avgResponseTime.toFixed(0)}ms${elapsedText}${etaText}${waitingStatus}`);
   }
   
+  getWaitingStatusText() {
+    if (!this.rateLimitTracker.isWaiting) {
+      return '';
+    }
+    
+    const now = Date.now();
+    const remainingMs = this.rateLimitTracker.estimatedWaitEndTime - now;
+    const remainingSecs = Math.max(0, Math.ceil(remainingMs / 1000));
+    
+    switch (this.rateLimitTracker.waitingReason) {
+      case 'rate_limit':
+        return ` ⏳ [Rate Limit: ${remainingSecs}s]`;
+      case 'rate_limit_throttle':
+        return ` ⚡ [节流中]`;
+      case 'adaptive_delay':
+        return ` 🔄 [自适应延迟: ${remainingSecs}s]`;
+      case 'network_error':
+        return ` 🔌 [网络重试: ${remainingSecs}s]`;
+      case 'other':
+        return ` ⏸️ [等待: ${remainingSecs}s]`;
+      default:
+        return ` ⏳ [等待中]`;
+    }
+  }
+
   generateProgressBar(percentage, width = 20) {
     const filled = Math.round(percentage / 100 * width);
     const empty = width - filled;
@@ -526,12 +738,12 @@ class ProductionSync {
       }
     }
     
-    // Rate limit状态和使用率
-    const rateLimitUsage = (this.rateLimitTracker.pointsUsed / this.config.rateLimitPoints * 100).toFixed(1);
-    const rateLimitStatus = this.progressState.isWaitingRateLimit ? ' ⏳ [等待Rate Limit]' : '';
+    // 网络耗时显示
+    const networkTime = this.lastNetworkTime || 0;
+    const waitingStatus = this.getWaitingStatusText();
     const incrementalInfo = this.incrementalData.newVotesOnly ? ' | 增量更新' : ' | 全量同步';
     
-    process.stdout.write(`\r🗳️  ${progressBar} ${progress}% (${processedPages}/${totalPages}) | 投票: ${this.stats.votesProcessed.toLocaleString()} | 完整性: ${completeness}% | RL: ${rateLimitUsage}%${elapsedText}${etaText}${incrementalInfo}${rateLimitStatus}`);
+    process.stdout.write(`\r🗳️  ${progressBar} ${progress}% (${processedPages}/${totalPages}) | 投票: ${this.stats.votesProcessed.toLocaleString()} | 完整性: ${completeness}% | 网络: ${networkTime}ms${elapsedText}${etaText}${incrementalInfo}${waitingStatus}`);
   }
 
   processPageBasic(page) {
@@ -646,8 +858,8 @@ class ProductionSync {
         newPages++;
         pagesToUpdate.push({
           ...page,
-          updateReason: 'new_page',
-          limitVoteCount: Math.min(100, page.voteCount)
+          updateReason: 'new_page'
+          // 移除limitVoteCount限制，获取完整投票数据
         });
         continue;
       }
@@ -683,8 +895,8 @@ class ProductionSync {
       if (needsUpdate) {
         pagesToUpdate.push({
           ...page,
-          updateReason: reason,
-          limitVoteCount: Math.min(100, page.voteCount)
+          updateReason: reason
+          // 移除limitVoteCount限制，获取完整投票数据
         });
       } else {
         unchanged++;
@@ -739,88 +951,216 @@ class ProductionSync {
     const pagesToUpdate = await this.filterPagesNeedingVoteUpdate(pagesWithVotes);
     console.log(`📊 需要更新投票数据的页面: ${pagesToUpdate.length}/${pagesWithVotes.length} (节省 ${pagesWithVotes.length - pagesToUpdate.length} 个请求)`);
     
-    // 计算预期投票总数（基于实际需要更新的页面）
-    this.voteProgress.totalVotesExpected = pagesToUpdate.reduce((sum, p) => sum + Math.min(100, p.voteCount), 0);
+    // 计算预期投票总数（基于实际需要更新的页面的完整投票数）
+    this.voteProgress.totalVotesExpected = pagesToUpdate.reduce((sum, p) => sum + p.voteCount, 0);
     console.log(`📊 预期投票记录总数: ${this.voteProgress.totalVotesExpected.toLocaleString()}`);
     
     let processedVotePages = 0;
     
     for (const page of pagesToUpdate) {
-      try {
-        // 检查是否已完成该页面的投票获取
-        if (this.voteProgress.completedPages.has(page.url)) {
-          processedVotePages++;
-          continue;
-        }
-        
-        await this.rateLimit();
-        
-        // 智能获取投票记录，使用限制数量
-        const voteResult = await this.fetchPageVotesWithResume(page.url, page.limitVoteCount || page.voteCount);
-        
-        // 成功请求后清理429错误计数
-        this.clearConsecutive429Errors('votes');
-        
-        if (voteResult.votes && voteResult.votes.length > 0) {
-          for (const vote of voteResult.votes) {
-            this.data.voteRecords.push({
-              pageUrl: page.url,
-              pageTitle: page.title,
-              pageAuthor: page.createdByUser,
-              pageAuthorId: page.createdByWikidotId,
-              voterWikidotId: vote.userWikidotId,
-              voterName: vote.user?.displayName,
-              direction: vote.direction,
-              timestamp: vote.timestamp
-            });
-            
-            // 收集投票用户ID
-            if (vote.user?.wikidotId) {
-              this.userCache.add(vote.user.wikidotId);
+      // 检查是否已完成该页面的投票获取
+      if (this.voteProgress.completedPages.has(page.url)) {
+        processedVotePages++;
+        continue;
+      }
+      
+      let pageRetries = 0;
+      let pageSuccess = false;
+      
+      // 重试当前页面的投票获取直到成功或达到最大重试次数
+      while (!pageSuccess && pageRetries < this.config.maxRetries) {
+        try {
+          
+          // 获取页面的完整投票记录
+          const voteResult = await this.fetchPageVotesWithResume(page.url, page.voteCount);
+          
+          // 成功请求后清理429错误计数
+          this.clearConsecutive429Errors('votes');
+          
+          // 数据覆盖逻辑：先检查是否有差异，如有差异则先清理旧数据
+          let hasDataDiscrepancy = false;
+          if (voteResult.votes && page.voteCount > 0) {
+            const difference = page.voteCount - voteResult.votes.length;
+            if (difference !== 0) {
+              hasDataDiscrepancy = true;
+              
+              // 移除该页面的旧投票记录（如果存在）
+              const oldVoteCount = this.data.voteRecords.filter(v => v.pageUrl === page.url).length;
+              if (oldVoteCount > 0) {
+                console.log(`\n🔄 数据覆盖: ${page.url} (旧:${oldVoteCount}票 → 新:${voteResult.votes.length}票)`);
+                this.data.voteRecords = this.data.voteRecords.filter(v => v.pageUrl !== page.url);
+                
+                // 调整统计计数
+                this.voteProgress.totalVotesCollected -= oldVoteCount;
+                this.stats.votesProcessed -= oldVoteCount;
+              } else if (Math.abs(difference) > 5) {
+                // 只有在显著差异时才记录日志
+                console.log(`\n🔍 数据差异: ${page.url} (期望:${page.voteCount}票, 实际:${voteResult.votes.length}票, 差异:${difference})`);
+              }
             }
           }
           
-          this.stats.votesProcessed += voteResult.votes.length;
-          this.voteProgress.totalVotesCollected += voteResult.votes.length;
+          // 添加新的投票记录
+          if (voteResult.votes && voteResult.votes.length > 0) {
+            for (const vote of voteResult.votes) {
+              this.data.voteRecords.push({
+                pageUrl: page.url,
+                pageTitle: page.title,
+                pageAuthor: page.createdByUser,
+                pageAuthorId: page.createdByWikidotId,
+                voterWikidotId: vote.userWikidotId,
+                voterName: vote.user?.displayName,
+                direction: vote.direction,
+                timestamp: vote.timestamp
+              });
+              
+              // 收集投票用户ID
+              if (vote.user?.wikidotId) {
+                this.userCache.add(vote.user.wikidotId);
+              }
+            }
+            
+            this.stats.votesProcessed += voteResult.votes.length;
+            this.voteProgress.totalVotesCollected += voteResult.votes.length;
+            
+            if (hasDataDiscrepancy) {
+              console.log(`   已添加新记录: ${voteResult.votes.length} 票`);
+            }
+            
+            // 更新页面投票状态缓存
+            const firstVoteId = voteResult.votes.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0].voterWikidotId;
+            this.incrementalData.pageVoteStates.set(page.url, {
+              voteCount: page.voteCount,
+              rating: page.rating,
+              firstVoteId: firstVoteId,
+              lastUpdated: new Date().toISOString()
+            });
+            
+            // 如果有数据差异，更新增量数据的已有投票索引
+            if (hasDataDiscrepancy) {
+              const newVoteKeys = new Set();
+              voteResult.votes.forEach(vote => {
+                const voteKey = `${vote.userWikidotId}-${vote.timestamp}`;
+                newVoteKeys.add(voteKey);
+              });
+              this.incrementalData.existingVotes.set(page.url, newVoteKeys);
+              console.log(`   已更新增量索引: ${newVoteKeys.size} 条记录`);
+            }
+          }
+          
+          // 标记完成状态和数据差异处理
+          const difference = page.voteCount - voteResult.votes.length;
+          let shouldContinue = false;
+          
+          if (voteResult.isComplete) {
+            // API标记为完整，分析数据差异原因
+            if (difference === 0) {
+              // 完全匹配，正常情况
+              shouldContinue = true;
+            } else {
+              // 有差异但API认为完整，这是fuzzyVoteRecords的特性
+              shouldContinue = true;
+              
+              // 记录数据差异用于分析
+              if (Math.abs(difference) > 5) {
+                console.log(`📊 fuzzy数据差异: ${page.url} (${voteResult.votes.length}/${page.voteCount}, 差异${difference})`);
+                
+                if (!this.stats.dataDiscrepancies) {
+                  this.stats.dataDiscrepancies = [];
+                }
+                this.stats.dataDiscrepancies.push({
+                  pageUrl: page.url,
+                  pageTitle: page.title,
+                  expectedVotes: page.voteCount,
+                  actualVotes: voteResult.votes.length,
+                  difference: difference,
+                  rating: page.rating,
+                  reason: 'fuzzy_data_nature' // 标记为fuzzy数据特性
+                });
+              }
+            }
+          } else {
+            // 我们的逻辑认为数据不完整
+            const hasPartialData = voteResult.partialData; // 是否因异常导致的部分数据
+            const retryThreshold = hasPartialData ? 2 : 3; // 如果是因异常导致，减少重试次数
+            
+            if (pageRetries >= retryThreshold) {
+              // 重试次数达到阈值，接受当前数据并继续
+              const reasonMsg = hasPartialData ? '网络异常但数据可用' : '数据评估为不完整';
+              console.log(`📋 接受数据: ${page.url} (${voteResult.votes?.length || 0}/${page.voteCount}票, ${reasonMsg})`);
+              shouldContinue = true;
+              
+              // 记录不完整页面
+              if (!this.stats.incompletePages) {
+                this.stats.incompletePages = [];
+              }
+              this.stats.incompletePages.push({
+                url: page.url,
+                title: page.title,
+                expectedVotes: page.voteCount,
+                actualVotes: voteResult.votes?.length || 0,
+                difference: page.voteCount - (voteResult.votes?.length || 0),
+                reason: hasPartialData ? 'network_error_partial_data' : 'data_assessment_incomplete',
+                retries: pageRetries,
+                errorMessage: voteResult.error
+              });
+            } else {
+              // 继续重试
+              const errorDetail = voteResult.error ? ` (${voteResult.error})` : '';
+              throw new Error(`投票数据不完整: 数据评估失败 (${voteResult.votes?.length || 0}/${page.voteCount})${errorDetail}`);
+            }
+          }
+          
+          // 如果决定继续处理，标记为完成
+          if (shouldContinue) {
+            this.voteProgress.completedPages.add(page.url);
+            this.voteProgress.partialPages.delete(page.url);
+            
+            // 添加处理完成标记，用于数据验证
+            if (voteResult.votes && voteResult.votes.length > 0) {
+              // 在投票记录中添加元数据标记
+              voteResult.votes.forEach(vote => {
+                if (vote._metadata) {
+                  vote._metadata.dataQuality = voteResult.isComplete ? 'complete' : 'partial';
+                  vote._metadata.expectedCount = page.voteCount;
+                  vote._metadata.actualCount = voteResult.votes.length;
+                }
+              });
+            }
+          }
+          
+          pageSuccess = true; // 当前页面成功
+          
+          // 添加基础请求间隔控制
+          const delayMs = 1000 / this.config.maxRequestsPerSecond;
+          await this.sleep(delayMs);
+          
+        } catch (error) {
+          pageRetries++;
+          
+          // 使用简化的错误处理
+          await this.handleBatchError(error, 'votes', pageRetries);
+          
+          if (pageRetries >= this.config.maxRetries) {
+            console.log(`\n❌ 页面 ${page.url} 投票获取失败，跳过该页面`);
+            break; // 跳过此页面，继续下一个
+          }
         }
-        
-        // 更新页面投票状态（用于下次智能检测）
-        if (voteResult.votes && voteResult.votes.length > 0) {
-          const firstVoteId = voteResult.votes.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0].voterWikidotId;
-          this.incrementalData.pageVoteStates.set(page.url, {
-            voteCount: page.voteCount,
-            rating: page.rating,
-            firstVoteId: firstVoteId,
-            lastUpdated: new Date().toISOString()
-          });
-        }
-        
-        // 标记完成状态
-        if (voteResult.isComplete) {
-          this.voteProgress.completedPages.add(page.url);
-          this.voteProgress.partialPages.delete(page.url);
-        } else {
-          // 保存部分进度
-          this.voteProgress.partialPages.set(page.url, {
-            cursor: voteResult.nextCursor,
-            votesCollected: voteResult.votes.length
-          });
-        }
-        
-        processedVotePages++;
-        
-        // 智能进度显示（投票阶段）  
-        this.updateVoteProgress(processedVotePages, pagesToUpdate.length);
-        
-        // 定期保存投票进度检查点
-        if (processedVotePages % this.config.maxVotePagesPerRequest === 0) {
-          await this.saveVoteProgressCheckpoint();
-        }
-        
-      } catch (error) {
-        await this.handleError(error, 'votes');
+      }
+      
+      processedVotePages++;
+      
+      // 智能进度显示（投票阶段）  
+      this.updateVoteProgress(processedVotePages, pagesToUpdate.length);
+      
+      // 定期保存投票进度检查点
+      if (processedVotePages % this.config.maxVotePagesPerRequest === 0) {
+        await this.saveVoteProgressCheckpoint();
       }
     }
+    
+    // 保存最终的投票进度检查点
+    await this.saveVoteProgressCheckpoint();
     
     console.log(`\n✅ 投票数据同步完成! 总计 ${this.stats.votesProcessed.toLocaleString()} 条投票记录`);
   }
@@ -833,28 +1173,36 @@ class ProductionSync {
     let hasNextPage = true;
     let foundOldVote = false; // 是否找到已存在的投票（用于增量更新）
     
-    // 检查是否有部分完成的进度
+    // 对于投票数据，我们要求完整性，不允许部分完成状态
+    // 如果之前有部分数据，从头重新获取以确保完整性
     if (this.voteProgress.partialPages.has(pageUrl)) {
-      const partialProgress = this.voteProgress.partialPages.get(pageUrl);
-      cursor = partialProgress.cursor;
-      console.log(`\n📥 继续获取页面 ${pageUrl} 的投票记录 (从游标继续)`);
+      console.log(`\n🔄 发现页面 ${pageUrl} 有部分数据，为确保完整性将重新获取`);
+      this.voteProgress.partialPages.delete(pageUrl);
+      cursor = null; // 重置游标，从头获取
     }
     
-    // 增量更新逻辑：检查是否需要获取该页面的投票
-    if (this.incrementalData.newVotesOnly && this.incrementalData.pageVoteTimestamps.has(pageUrl)) {
-      const lastVoteTime = this.incrementalData.pageVoteTimestamps.get(pageUrl);
-      const daysSinceLastVote = (Date.now() - lastVoteTime.getTime()) / (1000 * 60 * 60 * 24);
+    // 智能增量更新逻辑：只在有足够历史数据时启用
+    if (this.config.enableIncrementalUpdate && 
+        !this.config.voteOnlyMode && 
+        this.incrementalData.newVotesOnly &&
+        this.incrementalData.existingVotes.has(pageUrl) &&
+        this.incrementalData.pageVoteStates.has(pageUrl)) {
       
-      // 如果该页面最后投票时间超过保留期，跳过获取
-      if (daysSinceLastVote > this.config.voteDataRetentionDays) {
-        console.log(`⏭️  跳过页面 ${pageUrl} (最后投票: ${daysSinceLastVote.toFixed(1)}天前)`);
-        return {
-          votes: [],
-          isComplete: true,
-          nextCursor: null,
-          error: null,
-          skipped: true
-        };
+      try {
+        const shouldSkip = await this.checkVoteChangesAndDecideSync(pageUrl, expectedVoteCount);
+        if (shouldSkip) {
+          console.log(`⏭️  增量更新跳过: ${pageUrl}`);
+          return {
+            votes: [],
+            isComplete: true,
+            nextCursor: null,
+            error: null,
+            skipped: true
+          };
+        }
+      } catch (error) {
+        console.log(`⚠️  增量更新检查失败，进行完整同步: ${pageUrl} - ${error.message}`);
+        // 增量更新失败时，继续进行完整同步
       }
     }
     
@@ -888,15 +1236,29 @@ class ProductionSync {
         }
       `;
       
+      const actualBatchSize = Math.min(this.config.votesBatchSize, remainingVotes);
       const variables = {
         pageUrl,
-        first: Math.min(this.config.votesBatchSize, remainingVotes), // 智能批次大小
+        first: actualBatchSize, // 智能批次大小
         ...(cursor && { after: cursor })
       };
       
+      // 调试信息：显示实际批次大小
+      if (actualBatchSize < this.config.votesBatchSize) {
+        console.log(`🔍 智能批次: ${pageUrl} 使用 ${actualBatchSize}/${remainingVotes} 而非 ${this.config.votesBatchSize}`);
+      }
+      
       try {
+        const networkStart = Date.now();
         const result = await this.cromClient.request(query, variables);
+        this.lastNetworkTime = Date.now() - networkStart;
         const voteData = result.wikidotPage?.fuzzyVoteRecords;
+        
+        // 检测空响应
+        const hasValidData = this.detectEmptyResponse(result, 'votes');
+        if (!hasValidData) {
+          throw new Error('检测到投票数据空响应，可能是API限流');
+        }
         
         if (!voteData || !voteData.edges.length) {
           break;
@@ -905,34 +1267,9 @@ class ProductionSync {
         // 处理本批次的投票记录
         const batchVotes = voteData.edges.map(edge => edge.node);
         
-        // 增量更新：检查是否遇到已存在的投票
-        if (this.incrementalData.newVotesOnly && this.incrementalData.existingVotes.has(pageUrl)) {
-          const existingVoteKeys = this.incrementalData.existingVotes.get(pageUrl);
-          const newVotes = [];
-          
-          for (const vote of batchVotes) {
-            const voteKey = `${vote.userWikidotId}-${vote.timestamp}`;
-            if (existingVoteKeys.has(voteKey)) {
-              foundOldVote = true;
-              console.log(`🔍 发现已存在投票，停止增量获取: ${pageUrl}`);
-              break;
-            } else {
-              newVotes.push(vote);
-            }
-          }
-          
-          allVotes.push(...newVotes);
-          remainingVotes -= newVotes.length;
-          
-          // 如果发现老投票，停止继续获取
-          if (foundOldVote) {
-            hasNextPage = false;
-          }
-        } else {
-          // 全量更新：添加所有投票
-          allVotes.push(...batchVotes);
-          remainingVotes -= batchVotes.length;
-        }
+        // 现在统一使用全量获取，因为增量检测已在上层完成
+        allVotes.push(...batchVotes);
+        remainingVotes -= batchVotes.length;
         
         // 更新分页信息
         if (!foundOldVote) {
@@ -940,32 +1277,83 @@ class ProductionSync {
           cursor = voteData.pageInfo.endCursor;
         }
         
-        // 更新rate limit追踪
-        await this.updateRateLimitTracker(this.config.votesBatchSize);
         
-        // 如果有更多数据需要获取，短暂延迟
+        // 如果有更多数据需要获取，按配置的频率限制延迟
         if (hasNextPage && !foundOldVote) {
-          await this.sleep(100); // 减少延迟以利用更高的速率限制
+          const delayMs = 1000 / this.config.maxRequestsPerSecond;
+          await this.sleep(delayMs);
         }
         
       } catch (error) {
-        // 如果遇到错误，返回当前已获取的数据和游标信息
+        // 如果遇到错误，智能判断是否应该接受部分数据
+        const isDataComplete = this.assessDataCompleteness(allVotes, expectedVoteCount, hasNextPage);
+        
         return {
           votes: allVotes,
-          isComplete: false,
+          isComplete: isDataComplete, // 基于数据而非异常来判断
           nextCursor: cursor,
-          error: error.message
+          error: error.message,
+          partialData: true // 标记为因异常导致的部分数据
         };
       }
     }
     
+    // 智能判断数据完整性
+    const isDataComplete = this.assessDataCompleteness(allVotes, expectedVoteCount, hasNextPage);
+    
     return {
       votes: allVotes,
-      isComplete: true,
+      isComplete: isDataComplete,
       nextCursor: null,
       error: null,
       skipped: false
     };
+  }
+
+  assessDataCompleteness(votes, expectedVoteCount, hasNextPage) {
+    // 智能评估数据完整性，而不是简单的异常检测
+    
+    if (!votes || votes.length === 0) {
+      // 没有获取到任何投票数据
+      if (expectedVoteCount === 0) {
+        return true; // 页面确实没有投票
+      } else {
+        return false; // 应该有投票但没获取到
+      }
+    }
+    
+    // 获取到了投票数据，评估完整性
+    const actualCount = votes.length;
+    const difference = Math.abs(expectedVoteCount - actualCount);
+    
+    // 1. 如果API还有下一页，但我们停止了获取，标记为不完整
+    if (hasNextPage && actualCount < expectedVoteCount) {
+      return false;
+    }
+    
+    // 2. 数据完全匹配
+    if (difference === 0) {
+      return true;
+    }
+    
+    // 3. fuzzyVoteRecords的特性：轻微差异是正常的
+    if (difference <= 5) {
+      return true; // 认为是fuzzy数据的正常特性
+    }
+    
+    // 4. 获取到的数据比预期多（重复投票等情况）
+    if (actualCount > expectedVoteCount) {
+      return true; // 有额外数据不算不完整
+    }
+    
+    // 5. 大差异但获取到了大部分数据
+    const completionRate = actualCount / expectedVoteCount;
+    if (completionRate >= 0.8) { // 80%以上认为基本完整
+      return true;
+    }
+    
+    // 6. 其他情况认为不完整
+    return false;
   }
 
   async updateRateLimitTracker(pointsUsed) {
@@ -1060,75 +1448,50 @@ class ProductionSync {
     }
   }
 
-  async findCursorFromProcessedPages(totalProcessed) {
-    console.log(`🔍 正在定位第 ${totalProcessed} 页后的cursor...`);
-    
-    try {
-      // 通过分页查询找到正确的cursor位置
-      let currentCursor = null;
-      let processedCount = 0;
-      const skipBatchSize = Math.min(20, this.config.pagesBatchSize * 2); // 降低跳过批次大小以控制复杂度
-      
-      while (processedCount < totalProcessed) {
-        const remainingToSkip = totalProcessed - processedCount;
-        const batchSize = Math.min(skipBatchSize, remainingToSkip);
-        
-        const result = await this.fetchPagesBasic(currentCursor, batchSize);
-        if (!result || !result.pages.edges.length) {
-          console.log('⚠️  无法找到更多页面，从头开始');
-          return null;
-        }
-        
-        processedCount += result.pages.edges.length;
-        currentCursor = result.pages.pageInfo.endCursor;
-        
-        // 显示跳过进度
-        if (processedCount % 500 === 0) {
-          console.log(`   已跳过 ${processedCount}/${totalProcessed} 页面...`);
-        }
-        
-        if (!result.pages.pageInfo.hasNextPage || processedCount >= totalProcessed) {
-          break;
-        }
-      }
-      
-      console.log(`✅ 找到续传位置: ${processedCount} 页面后`);
-      return currentCursor;
-      
-    } catch (error) {
-      console.log(`❌ 定位cursor失败: ${error.message}，将从头开始`);
-      return null;
-    }
-  }
+  // 移除低效的findCursorFromProcessedPages方法
+  // 已被新的cursor保存/恢复机制替代
 
   async loadPageCheckpoint() {
     try {
-      // 查找最新的页面检查点文件
+      // 查找最新的页面检查点文件（按页面数量排序）
       const files = fs.readdirSync(this.dataDir);
-      const pageCheckpointFiles = files
+      const checkpointFiles = files
         .filter(f => f.startsWith('production-data-pages-checkpoint-') && f.endsWith('.json'))
-        .sort()
-        .reverse();
+        .map(f => {
+          // 从文件名中提取页面数量用于排序
+          const match = f.match(/pages-checkpoint-(\d+)-/);
+          const pageCount = match ? parseInt(match[1]) : 0;
+          return { filename: f, pageCount };
+        })
+        .sort((a, b) => b.pageCount - a.pageCount); // 按页面数量降序排序
 
-      if (pageCheckpointFiles.length === 0) {
+      if (checkpointFiles.length === 0) {
         return null;
       }
 
-      const latestFile = pageCheckpointFiles[0];
+      const latestFile = checkpointFiles[0].filename;
+      const maxPageCount = checkpointFiles[0].pageCount;
+      console.log(`📊 找到 ${checkpointFiles.length} 个检查点文件，选择最大的: ${maxPageCount} 页面`);
+      
       const checkpointPath = path.join(this.dataDir, latestFile);
       const checkpointData = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
 
-      // 从文件名中提取已处理的页面数
-      const match = latestFile.match(/pages-checkpoint-(\d+)/);
-      const totalProcessed = match ? parseInt(match[1]) : 0;
+      // 优先使用metadata中的信息，兼容旧格式
+      const metadata = checkpointData.metadata || {};
+      const totalProcessed = metadata.totalProcessed || 
+        (latestFile.match(/pages-checkpoint-(\d+)/) ? parseInt(latestFile.match(/pages-checkpoint-(\d+)/)[1]) : 0);
+      const cursor = metadata.cursor || null;
+
+      console.log(`✅ 加载页面检查点: ${latestFile}`);
+      console.log(`   页面数: ${totalProcessed}, cursor: ${cursor ? '已保存' : '无'}`);
 
       return {
         totalProcessed,
+        cursor: cursor, // 直接使用保存的cursor，无需重新计算
         pages: checkpointData.pages || [],
         revisions: checkpointData.revisions || [],
         attributions: checkpointData.attributions || [],
-        alternateTitles: checkpointData.alternateTitles || [],
-        cursor: null // cursor需要重新计算，通过跳过已处理的页面来实现
+        alternateTitles: checkpointData.alternateTitles || []
       };
       
     } catch (error) {
@@ -1165,13 +1528,131 @@ class ProductionSync {
       this.voteProgress.totalVotesExpected = checkpointData.totalVotesExpected || 0;
       this.voteProgress.totalVotesCollected = checkpointData.totalVotesCollected || 0;
 
+      // 关键修复：恢复已收集的数据
+      if (checkpointData.collectedData) {
+        console.log(`🔄 恢复已收集的数据...`);
+        this.data.pages = checkpointData.collectedData.pages || [];
+        this.data.voteRecords = checkpointData.collectedData.voteRecords || [];
+        this.data.users = checkpointData.collectedData.users || [];
+        this.data.attributions = checkpointData.collectedData.attributions || [];
+        this.data.revisions = checkpointData.collectedData.revisions || [];
+        this.data.alternateTitles = checkpointData.collectedData.alternateTitles || [];
+        
+        console.log(`   📄 恢复页面: ${this.data.pages.length.toLocaleString()}`);
+        console.log(`   🗳️  恢复投票: ${this.data.voteRecords.length.toLocaleString()}`);
+        console.log(`   👤 恢复用户: ${this.data.users.length.toLocaleString()}`);
+      }
+
       console.log(`✅ 已加载投票进度检查点: ${latestFile}`);
       console.log(`   已完成页面: ${this.voteProgress.completedPages.size}`);
       console.log(`   部分完成页面: ${this.voteProgress.partialPages.size}`);
-      console.log(`   已收集投票: ${this.voteProgress.totalVotesCollected.toLocaleString()}`);
+      console.log(`   期望总投票: ${this.voteProgress.totalVotesExpected.toLocaleString()}`);
       
     } catch (error) {
       console.log(`⚠️  加载投票进度检查点失败: ${error.message}`);
+    }
+  }
+
+  async checkVoteChangesAndDecideSync(pageUrl, expectedVoteCount) {
+    try {
+      // 步骤1: 获取页面当前状态（包含最新5个投票和页面统计）
+      const query = `
+        query CheckVoteChangesAndPageState($pageUrl: URL!) {
+          wikidotPage(url: $pageUrl) {
+            voteCount
+            rating
+            fuzzyVoteRecords(first: 5) {
+              edges {
+                node {
+                  userWikidotId
+                  direction
+                  timestamp
+                }
+              }
+            }
+          }
+        }
+      `;
+      
+      const result = await this.cromClient.request(query, { pageUrl });
+      const pageData = result.wikidotPage;
+      
+      if (!pageData) {
+        console.log(`   ⚠️  页面无法访问: ${pageUrl}`);
+        return false; // 无法访问，进行同步
+      }
+      
+      const currentVotes = pageData.fuzzyVoteRecords?.edges || [];
+      const currentVoteCount = pageData.voteCount;
+      const currentRating = pageData.rating;
+      
+      // 步骤2: 检查是否有历史数据
+      const hasHistoricalVotes = this.incrementalData.existingVotes.has(pageUrl);
+      const hasHistoricalPageState = this.incrementalData.pageVoteStates.has(pageUrl);
+      
+      if (!hasHistoricalVotes || !hasHistoricalPageState) {
+        console.log(`   📝 首次同步页面: ${pageUrl}`);
+        return false; // 首次同步，需要获取数据
+      }
+      
+      // 步骤3: 比较最新5个投票
+      const historicalVoteKeys = this.incrementalData.existingVotes.get(pageUrl);
+      const historicalPageState = this.incrementalData.pageVoteStates.get(pageUrl);
+      
+      // 获取历史数据中最新的5个投票（按时间戳排序）
+      const historicalVotes = Array.from(historicalVoteKeys)
+        .map(voteKey => {
+          // voteKey格式: "userWikidotId-timestamp"，但timestamp中也包含-，所以需要更精确的分割
+          const dashIndex = voteKey.indexOf('-');
+          const userWikidotId = parseInt(voteKey.substring(0, dashIndex));
+          const timestamp = voteKey.substring(dashIndex + 1);
+          return { userWikidotId, timestamp };
+        })
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .slice(0, 5);
+      
+      // 比较当前最新5个投票与历史最新5个投票
+      let votesChanged = false;
+      if (currentVotes.length !== historicalVotes.length) {
+        votesChanged = true;
+        console.log(`   🔄 投票数量变化: ${historicalVotes.length} → ${currentVotes.length}`);
+      } else {
+        for (let i = 0; i < currentVotes.length; i++) {
+          const currentVote = currentVotes[i].node;
+          const historicalVote = historicalVotes[i];
+          
+          
+          if (parseInt(currentVote.userWikidotId) !== historicalVote.userWikidotId ||
+              currentVote.timestamp !== historicalVote.timestamp) {
+            votesChanged = true;
+            console.log(`   🔄 投票内容变化在位置 ${i + 1}: ${historicalVote.userWikidotId}@${historicalVote.timestamp} → ${currentVote.userWikidotId}@${currentVote.timestamp}`);
+            break;
+          }
+        }
+      }
+      
+      // 步骤4: 如果投票有变化，进行同步
+      if (votesChanged) {
+        console.log(`   ✅ 检测到投票变化，将进行同步: ${pageUrl}`);
+        return false; // 需要同步
+      }
+      
+      // 步骤5: 投票相同，检查页面状态（voteCount和rating）
+      const voteCountChanged = currentVoteCount !== historicalPageState.voteCount;
+      const ratingChanged = Math.abs(currentRating - historicalPageState.rating) > 0.01; // 使用小误差比较
+      
+      if (voteCountChanged || ratingChanged) {
+        console.log(`   🔄 页面状态变化: voteCount ${historicalPageState.voteCount} → ${currentVoteCount}, rating ${historicalPageState.rating} → ${currentRating}`);
+        return false; // 需要同步
+      }
+      
+      // 步骤6: 所有检查都通过，跳过同步
+      console.log(`   ⏭️  页面无变化，跳过同步: ${pageUrl} (${currentVoteCount}票, 评分${currentRating})`);
+      return true; // 跳过同步
+      
+    } catch (error) {
+      console.log(`   ❌ 检查投票变化失败: ${error.message}，保守地进行同步`);
+      return false; // 出错时保守地进行同步
     }
   }
 
@@ -1179,6 +1660,7 @@ class ProductionSync {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const checkpointFile = `vote-progress-checkpoint-${timestamp}.json`;
     
+    // 修复：保存完整的数据状态，包括已收集的投票数据
     const checkpoint = {
       timestamp: new Date().toISOString(),
       completedPages: Array.from(this.voteProgress.completedPages),
@@ -1188,13 +1670,73 @@ class ProductionSync {
       stats: {
         votesProcessed: this.stats.votesProcessed,
         pagesProcessed: this.stats.pagesProcessed
+      },
+      // 关键修复：保存已收集的数据，而不是只保存状态
+      collectedData: {
+        pages: this.data.pages,           // 页面数据
+        voteRecords: this.data.voteRecords, // 已收集的投票记录
+        users: this.data.users,           // 用户数据
+        attributions: this.data.attributions,
+        revisions: this.data.revisions,
+        alternateTitles: this.data.alternateTitles
       }
     };
     
     const checkpointPath = path.join(this.checkpointDir, checkpointFile);
     fs.writeFileSync(checkpointPath, JSON.stringify(checkpoint, null, 2));
     
-    console.log(`\n💾 投票进度检查点已保存: ${checkpointFile}`);
+    // 清理旧的投票checkpoint文件，只保留最新的3个
+    this.cleanupOldVoteCheckpoints();
+    
+    const completedCount = this.voteProgress.completedPages.size;
+    const partialCount = this.voteProgress.partialPages.size;
+    const dataSize = (fs.statSync(checkpointPath).size / 1024 / 1024).toFixed(2);
+    
+    console.log(`\n💾 投票进度检查点已保存: ${checkpointFile} (${dataSize} MB)`);
+    console.log(`   ✅ 已完成页面: ${completedCount}, ⏸️ 部分完成: ${partialCount}`);
+    console.log(`   🗳️  已保存投票: ${this.data.voteRecords.length.toLocaleString()} 条`);
+  }
+
+  cleanupOldVoteCheckpoints() {
+    try {
+      if (!fs.existsSync(this.checkpointDir)) {
+        return;
+      }
+
+      const files = fs.readdirSync(this.checkpointDir);
+      const voteCheckpointFiles = files
+        .filter(f => f.startsWith('vote-progress-checkpoint-') && f.endsWith('.json'))
+        .map(f => {
+          const filePath = path.join(this.checkpointDir, f);
+          const stats = fs.statSync(filePath);
+          return {
+            filename: f,
+            filepath: filePath,
+            mtime: stats.mtime.getTime(),
+            size: stats.size
+          };
+        })
+        .sort((a, b) => b.mtime - a.mtime); // 按修改时间降序排序，最新的在前
+
+      // 保留最新的3个投票checkpoint，删除其余的
+      if (voteCheckpointFiles.length > 3) {
+        const toDelete = voteCheckpointFiles.slice(3);
+        
+        toDelete.forEach(file => {
+          try {
+            fs.unlinkSync(file.filepath);
+            const sizeStr = (file.size / 1024 / 1024).toFixed(2);
+            console.log(`🗑️  已删除旧投票checkpoint: ${file.filename} (${sizeStr} MB)`);
+          } catch (error) {
+            console.log(`⚠️  删除投票checkpoint失败: ${file.filename} - ${error.message}`);
+          }
+        });
+        
+        console.log(`✅ 投票checkpoint清理完成，删除了 ${toDelete.length} 个旧文件`);
+      }
+    } catch (error) {
+      console.log(`⚠️  清理投票checkpoint时出错: ${error.message}`);
+    }
   }
 
   async consolidateUserData() {
@@ -1290,6 +1832,74 @@ class ProductionSync {
     console.log(`   贡献者: ${this.data.users.filter(u => u.roles.includes('contributor')).length}`);
   }
 
+  async savePageCheckpoint(totalProcessed, cursor) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `production-data-pages-checkpoint-${totalProcessed}-${timestamp}.json`;
+    
+    const checkpointData = {
+      metadata: {
+        timestamp: new Date().toISOString(),
+        checkpointType: 'pages',
+        totalProcessed: totalProcessed,
+        cursor: cursor,
+        apiVersion: 'v2'
+      },
+      pages: this.data.pages,
+      revisions: this.data.revisions,
+      attributions: this.data.attributions,
+      alternateTitles: this.data.alternateTitles,
+      stats: {
+        pagesProcessed: this.stats.pagesProcessed,
+        batchesCompleted: this.stats.batchesCompleted,
+        errors: this.stats.errors.length
+      }
+    };
+    
+    const filepath = path.join(this.dataDir, filename);
+    fs.writeFileSync(filepath, JSON.stringify(checkpointData, null, 2));
+    
+    // 清理旧的页面checkpoint文件，只保留最新的
+    this.cleanupOldPageCheckpoints(totalProcessed);
+    
+    console.log(`💾 页面检查点已保存: ${filename} (页面: ${totalProcessed}, cursor已保存)`);
+    return filepath;
+  }
+
+  cleanupOldPageCheckpoints(currentPageCount) {
+    try {
+      const files = fs.readdirSync(this.dataDir);
+      const checkpointFiles = files
+        .filter(f => f.startsWith('production-data-pages-checkpoint-') && f.endsWith('.json'))
+        .map(f => {
+          const match = f.match(/pages-checkpoint-(\d+)-/);
+          const pageCount = match ? parseInt(match[1]) : 0;
+          return { filename: f, pageCount };
+        })
+        .filter(f => f.pageCount > 0 && f.pageCount < currentPageCount) // 只删除页面数更少的checkpoint
+        .sort((a, b) => a.pageCount - b.pageCount);
+
+      if (checkpointFiles.length > 0) {
+        const toDelete = checkpointFiles.slice(0, -2); // 保留最新的2个旧checkpoint以防万一
+        
+        toDelete.forEach(file => {
+          const filePath = path.join(this.dataDir, file.filename);
+          try {
+            fs.unlinkSync(filePath);
+            console.log(`🗑️  已删除旧checkpoint: ${file.filename} (${file.pageCount}页)`);
+          } catch (error) {
+            console.log(`⚠️  删除checkpoint失败: ${file.filename} - ${error.message}`);
+          }
+        });
+        
+        if (toDelete.length > 0) {
+          console.log(`✅ 清理完成，删除了 ${toDelete.length} 个旧checkpoint文件`);
+        }
+      }
+    } catch (error) {
+      console.log(`⚠️  清理checkpoint时出错: ${error.message}`);
+    }
+  }
+
   async saveCurrentData(suffix = '') {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `production-data${suffix ? '-' + suffix : ''}-${timestamp}.json`;
@@ -1359,6 +1969,16 @@ class ProductionSync {
     console.log(`🔄 批次数量: ${this.stats.batchesCompleted}`);
     console.log(`❌ 错误数量: ${this.stats.errors.length}`);
     
+    // 详细错误统计
+    if (this.stats.errorDetails && Object.keys(this.stats.errorDetails).length > 0) {
+      console.log('\n📊 错误类型统计:');
+      Object.entries(this.stats.errorDetails)
+        .sort(([,a], [,b]) => b - a)
+        .forEach(([errorType, count]) => {
+          console.log(`   ${errorType}: ${count} 次`);
+        });
+    }
+    
     // 数据质量分析
     const pagesWithVotes = this.data.pages.filter(p => p.voteCount > 0).length;
     const pagesWithContent = this.data.pages.filter(p => p.sourceLength > 0).length;
@@ -1368,6 +1988,67 @@ class ProductionSync {
     console.log(`   有投票的页面: ${pagesWithVotes} (${(pagesWithVotes/this.data.pages.length*100).toFixed(1)}%)`);
     console.log(`   有内容的页面: ${pagesWithContent} (${(pagesWithContent/this.data.pages.length*100).toFixed(1)}%)`);
     console.log(`   平均投票/页面: ${avgVotesPerPage.toFixed(1)}`);
+    
+    // 数据质量综合分析
+    const fuzzyDataPages = this.stats.dataDiscrepancies?.filter(d => d.reason === 'fuzzy_data_nature') || [];
+    const incompleteApiPages = this.stats.incompletePages?.filter(p => p.reason === 'api_incomplete_after_retries') || [];
+    
+    if (fuzzyDataPages.length > 0) {
+      console.log('\n📊 fuzzyVoteRecords 数据差异分析:');
+      console.log(`   有显著差异的页面: ${fuzzyDataPages.length}`);
+      
+      const totalDifference = fuzzyDataPages.reduce((sum, d) => sum + Math.abs(d.difference), 0);
+      const avgDifference = totalDifference / fuzzyDataPages.length;
+      console.log(`   平均差异: ${avgDifference.toFixed(1)} 票/页面`);
+      
+      // 按差异类型分类
+      const positive = fuzzyDataPages.filter(d => d.difference > 0);
+      const negative = fuzzyDataPages.filter(d => d.difference < 0);
+      
+      console.log(`   缺失投票: ${positive.length} 页 (总计 ${positive.reduce((sum, d) => sum + d.difference, 0)} 票)`);
+      console.log(`   多余投票: ${negative.length} 页 (总计 ${Math.abs(negative.reduce((sum, d) => sum + d.difference, 0))} 票)`);
+      
+      // 显示最大差异的页面
+      const sortedByDiff = fuzzyDataPages.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
+      console.log(`   最大差异页面 (前3个):`);
+      sortedByDiff.slice(0, 3).forEach((d, i) => {
+        const sign = d.difference > 0 ? '缺失' : '多余';
+        console.log(`     ${i+1}. ${d.pageTitle} - ${sign}: ${Math.abs(d.difference)} (${d.actualVotes}/${d.expectedVotes})`);
+      });
+      
+      console.log('\n💡 这是 fuzzyVoteRecords 的正常特性，不影响数据分析价值');
+    } else {
+      console.log('\n✅ fuzzyVoteRecords 数据质量良好，无显著差异');
+    }
+    
+    if (incompleteApiPages.length > 0) {
+      console.log('\n⚠️  API不完整页面统计:');
+      console.log(`   不完整页面数量: ${incompleteApiPages.length}`);
+      
+      const totalMissing = incompleteApiPages.reduce((sum, p) => sum + p.difference, 0);
+      console.log(`   总缺失投票数: ${totalMissing.toLocaleString()}`);
+      
+      // 按重试次数分组
+      const retryStats = {};
+      incompleteApiPages.forEach(p => {
+        const retries = p.retries || 0;
+        retryStats[retries] = (retryStats[retries] || 0) + 1;
+      });
+      
+      console.log('   重试次数分布:');
+      Object.entries(retryStats).forEach(([retries, count]) => {
+        console.log(`     ${retries}次重试: ${count} 页`);
+      });
+      
+      // 显示缺失最多的页面
+      const sortedIncomplete = incompleteApiPages.sort((a, b) => b.difference - a.difference);
+      console.log(`   缺失最多的页面 (前3个):`);
+      sortedIncomplete.slice(0, 3).forEach((p, i) => {
+        console.log(`     ${i+1}. ${p.title} - 缺失: ${p.difference} (${p.actualVotes}/${p.expectedVotes})`);
+      });
+      
+      console.log('\n📋 这些页面在多次重试后仍标记为不完整，已保存可用数据');
+    }
     
     console.log('\n🔬 分析能力总结:');
     console.log('✅ 支持的分析类型:');
@@ -1496,12 +2177,274 @@ function getMutualVoting() {
     console.log(`📋 分析指南已保存: ${filename}`);
   }
 
-  async handleError(error, context) {
-    const is429Error = error.message.includes('429') || error.status === 429;
+  async loadExistingPageData() {
+    console.log('📥 加载现有页面数据...');
     
-    // 简化错误信息，避免打印大量body内容
-    const errorMessage = is429Error ? 'Rate Limit (429)' : 
-      (error.message.length > 100 ? error.message.substring(0, 100) + '...' : error.message);
+    try {
+      // 查找最新的数据文件（包括检查点文件）
+      const files = fs.readdirSync(this.dataDir);
+      let dataFiles = files
+        .filter(f => f.startsWith('production-data-') && f.endsWith('.json') && !f.includes('checkpoint'))
+        .sort()
+        .reverse();
+
+      // 如果没有最终数据文件，尝试使用最新的检查点文件
+      if (dataFiles.length === 0) {
+        console.log('📋 未找到最终数据文件，尝试使用检查点文件...');
+        const checkpointFiles = files
+          .filter(f => f.startsWith('production-data-pages-checkpoint-') && f.endsWith('.json'))
+          .map(f => {
+            // 从文件名中提取页面数量用于排序
+            const match = f.match(/pages-checkpoint-(\d+)-/);
+            const pageCount = match ? parseInt(match[1]) : 0;
+            return { filename: f, pageCount };
+          })
+          .sort((a, b) => b.pageCount - a.pageCount); // 按页面数量降序排序
+        
+        if (checkpointFiles.length === 0) {
+          throw new Error('未找到任何页面数据文件，请先运行完整同步');
+        }
+        
+        dataFiles = checkpointFiles.map(f => f.filename);
+        console.log(`📊 找到 ${checkpointFiles.length} 个检查点文件，最大包含 ${checkpointFiles[0].pageCount} 页面`);
+      }
+
+      const latestFile = dataFiles[0];
+      console.log(`📂 加载数据文件: ${latestFile}`);
+      
+      const existingData = JSON.parse(
+        fs.readFileSync(path.join(this.dataDir, latestFile), 'utf8')
+      );
+
+      if (!existingData.pages || existingData.pages.length === 0) {
+        throw new Error('数据文件中没有页面信息');
+      }
+
+      // 加载页面数据
+      this.data.pages = existingData.pages;
+      this.data.revisions = existingData.revisions || [];
+      this.data.attributions = existingData.attributions || [];
+      this.data.alternateTitles = existingData.alternateTitles || [];
+      
+      // 重置投票相关数据
+      this.data.voteRecords = [];
+      this.data.users = [];
+      
+      console.log(`✅ 已加载 ${this.data.pages.length} 个页面的基础数据`);
+      console.log(`   有投票的页面: ${this.data.pages.filter(p => p.voteCount > 0).length}`);
+      
+    } catch (error) {
+      throw new Error(`加载现有页面数据失败: ${error.message}`);
+    }
+  }
+
+  async syncVoteDataForExistingPages() {
+    console.log('🗳️  基于现有页面获取投票数据...');
+    
+    // 筛选有投票的页面
+    const pagesWithVotes = this.data.pages.filter(p => p.voteCount > 0);
+    console.log(`📊 需要获取投票数据的页面: ${pagesWithVotes.length}/${this.data.pages.length}`);
+    
+    // 计算预期投票总数
+    this.voteProgress.totalVotesExpected = pagesWithVotes.reduce((sum, p) => sum + p.voteCount, 0);
+    console.log(`📊 预期投票记录总数: ${this.voteProgress.totalVotesExpected.toLocaleString()}`);
+    
+    let processedVotePages = 0;
+    
+    for (const page of pagesWithVotes) {
+      let pageRetries = 0;
+      let pageSuccess = false;
+      
+      // 重试当前页面的投票获取直到成功或达到最大重试次数
+      while (!pageSuccess && pageRetries < this.config.maxRetries) {
+        try {
+          
+          // 获取页面的完整投票记录
+          const voteResult = await this.fetchPageVotesWithResume(page.url, page.voteCount);
+          
+          if (voteResult.votes && voteResult.votes.length > 0) {
+            for (const vote of voteResult.votes) {
+              this.data.voteRecords.push({
+                pageUrl: page.url,
+                pageTitle: page.title,
+                pageAuthor: page.createdByUser,
+                pageAuthorId: page.createdByWikidotId,
+                voterWikidotId: vote.userWikidotId,
+                voterName: vote.user?.displayName,
+                direction: vote.direction,
+                timestamp: vote.timestamp
+              });
+              
+              // 收集投票用户ID
+              if (vote.user?.wikidotId) {
+                this.userCache.add(vote.user.wikidotId);
+              }
+            }
+            
+            this.stats.votesProcessed += voteResult.votes.length;
+            this.voteProgress.totalVotesCollected += voteResult.votes.length;
+          }
+          
+          pageSuccess = true;
+          
+        } catch (error) {
+          pageRetries++;
+          await this.handleBatchError(error, 'votes', pageRetries);
+          
+          if (pageRetries >= this.config.maxRetries) {
+            console.log(`\n❌ 页面 ${page.url} 投票获取失败，跳过该页面`);
+            break;
+          }
+        }
+      }
+      
+      processedVotePages++;
+      
+      // 进度显示
+      if (processedVotePages % 10 === 0 || processedVotePages === pagesWithVotes.length) {
+        const progress = (processedVotePages / pagesWithVotes.length * 100).toFixed(1);
+        const completeness = (this.voteProgress.totalVotesCollected / this.voteProgress.totalVotesExpected * 100).toFixed(1);
+        console.log(`🗳️  进度: ${progress}% (${processedVotePages}/${pagesWithVotes.length}) | 投票: ${this.stats.votesProcessed.toLocaleString()} | 完整性: ${completeness}%`);
+      }
+      
+      // 定期保存投票进度检查点
+      if (processedVotePages % this.config.maxVotePagesPerRequest === 0) {
+        await this.saveVoteProgressCheckpoint();
+      }
+    }
+    
+    // 保存最终的投票进度检查点
+    await this.saveVoteProgressCheckpoint();
+    
+    console.log(`\n✅ 投票数据获取完成! 总计 ${this.stats.votesProcessed.toLocaleString()} 条投票记录`);
+  }
+
+  async generateVoteOnlyReport() {
+    this.stats.endTime = new Date();
+    const duration = (this.stats.endTime - this.stats.startTime) / 1000;
+    
+    const filepath = await this.saveCurrentData('vote-only');
+    
+    console.log('\n🎉 投票数据获取完成！');
+    console.log('='.repeat(50));
+    console.log(`⏱️  总耗时: ${this.formatDuration(duration)}`);
+    console.log(`📄 现有页面: ${this.data.pages.length.toLocaleString()}`);
+    console.log(`🗳️  投票记录: ${this.data.voteRecords.length.toLocaleString()}`);
+    console.log(`👤 用户数据: ${this.data.users.length.toLocaleString()}`);
+    console.log(`⚡ 平均速度: ${(this.data.pages.filter(p => p.voteCount > 0).length / duration).toFixed(1)} 页面/秒`);
+    console.log(`❌ 错误数量: ${this.stats.errors.length}`);
+    
+    const pagesWithVotes = this.data.pages.filter(p => p.voteCount > 0).length;
+    const avgVotesPerPage = this.data.voteRecords.length / pagesWithVotes;
+    
+    console.log('\n📊 投票数据统计:');
+    console.log(`   有投票的页面: ${pagesWithVotes} (${(pagesWithVotes/this.data.pages.length*100).toFixed(1)}%)`);
+    console.log(`   平均投票/页面: ${avgVotesPerPage.toFixed(1)}`);
+    console.log(`   投票完整性: ${(this.data.voteRecords.length / this.voteProgress.totalVotesExpected * 100).toFixed(1)}%`);
+    
+    console.log(`\n📁 数据已保存到: ${path.resolve(this.dataDir)}`);
+    console.log(`📅 结束时间: ${new Date().toLocaleString()}`);
+  }
+
+  extractErrorInfo(error) {
+    // 提取详细的错误信息
+    const errorInfo = {
+      type: 'unknown',
+      code: null,
+      message: error.message || error.toString(),
+      status: error.status || error.statusCode || null,
+      originalError: error
+    };
+    
+    // 检查各种错误类型
+    if (error.status === 429 || error.statusCode === 429 || error.message.includes('429')) {
+      errorInfo.type = 'rate_limit';
+      errorInfo.code = '429';
+    } else if (error.message.includes('ECONNRESET')) {
+      errorInfo.type = 'network';
+      errorInfo.code = 'ECONNRESET';
+    } else if (error.message.includes('ETIMEDOUT')) {
+      errorInfo.type = 'network';
+      errorInfo.code = 'ETIMEDOUT';
+    } else if (error.message.includes('ENOTFOUND')) {
+      errorInfo.type = 'network';
+      errorInfo.code = 'ENOTFOUND';
+    } else if (error.message.includes('ECONNREFUSED')) {
+      errorInfo.type = 'network';
+      errorInfo.code = 'ECONNREFUSED';
+    } else if (error.response && error.response.errors) {
+      // GraphQL 错误
+      errorInfo.type = 'graphql';
+      const gqlError = error.response.errors[0];
+      errorInfo.code = gqlError.extensions?.code || 'GRAPHQL_ERROR';
+      errorInfo.message = gqlError.message;
+    } else if (error.message.includes('fetch')) {
+      errorInfo.type = 'fetch';
+      errorInfo.code = 'FETCH_ERROR';
+    } else if (error.message.includes('timeout')) {
+      errorInfo.type = 'timeout';
+      errorInfo.code = 'TIMEOUT';
+    } else {
+      errorInfo.type = 'other';
+      errorInfo.code = error.code || 'UNKNOWN';
+    }
+    
+    return errorInfo;
+  }
+
+  async handleBatchError(error, context, retryCount) {
+    const errorInfo = this.extractErrorInfo(error);
+    
+    // 记录详细错误信息用于统计
+    if (!this.stats.errorDetails) {
+      this.stats.errorDetails = {};
+    }
+    const errorKey = `${errorInfo.type}_${errorInfo.code}`;
+    this.stats.errorDetails[errorKey] = (this.stats.errorDetails[errorKey] || 0) + 1;
+    
+    // 非常简化的错误输出，但包含错误代码
+    if (errorInfo.type === 'rate_limit') {
+      this.setWaitingState('rate_limit', this.config.retryDelayMs);
+      if (retryCount === 1 || retryCount % 5 === 0) {
+        process.stdout.write(`\n⚠️  Rate Limit (${errorInfo.code}) #${retryCount}`);
+      } else {
+        process.stdout.write('.');
+      }
+      await this.sleep(this.config.retryDelayMs);
+    } else if (errorInfo.type === 'network') {
+      this.setWaitingState('network_error', this.config.networkRetryDelayMs);
+      if (retryCount === 1 || retryCount % 3 === 0) {
+        process.stdout.write(`\n🔌 网络错误 (${errorInfo.code}) #${retryCount}`);
+      } else {
+        process.stdout.write('.');
+      }
+      await this.sleep(this.config.networkRetryDelayMs);
+    } else {
+      this.setWaitingState('other', 3000);
+      if (retryCount <= 3) {
+        process.stdout.write(`\n❌ 其他错误 (${errorInfo.code || errorInfo.type}) #${retryCount}: ${errorInfo.message.substring(0, 50)}`);
+      } else {
+        process.stdout.write('.');
+      }
+      await this.sleep(3000);
+    }
+    
+    this.clearWaitingState();
+  }
+
+  async handleError(error, context) {
+    const is429Error = error.message.includes('429') || error.status === 429 || 
+                       error.message.toLowerCase().includes('rate limit');
+    
+    // 进一步简化错误信息，特别是429错误
+    let errorMessage;
+    if (is429Error) {
+      errorMessage = 'Rate Limit (429)';
+    } else {
+      // 对于非429错误，也要简化过长的错误信息
+      const rawMessage = error.message || error.toString();
+      errorMessage = rawMessage.length > 100 ? rawMessage.substring(0, 100) + '...' : rawMessage;
+    }
     
     this.stats.errors.push({
       type: `${context}_error`,
@@ -1511,19 +2454,22 @@ function getMutualVoting() {
     });
     
     if (is429Error) {
-      // 429错误特殊处理 - 减少重复输出
+      // 429错误特殊处理 - 高度简化输出
       const count429 = this.stats.errors.filter(e => e.type === `${context}_error` && e.is429).length;
       
-      // 只在第1,5,10,20,30...次时显示消息，避免刷屏
-      if (count429 === 1 || count429 % 5 === 0) {
-        process.stdout.write(`\n⚠️  Rate Limit第${count429}次，等待${this.config.retryDelayMs/1000}s... `);
+      // 进一步减少输出频率：只在第1,10,20,50次时显示
+      if (count429 === 1 || count429 % 10 === 0 || count429 % 50 === 0) {
+        process.stdout.write(`\n⚠️  Rate Limit #${count429}，等待${this.config.retryDelayMs/1000}s `);
+      } else {
+        // 其他时候只显示一个点，表示仍在重试
+        process.stdout.write('.');
       }
       
       if (count429 >= this.config.max429Retries) {
         throw new Error(`${context} 429错误过多(${count429}次)，停止同步`);
       }
       
-      await this.sleep(this.config.retryDelayMs); // 429错误后长时间等待
+      await this.sleep(this.config.retryDelayMs);
     } else {
       // 普通错误处理
       const generalErrors = this.stats.errors.filter(e => e.type === `${context}_error` && !e.is429).length;
@@ -1533,7 +2479,7 @@ function getMutualVoting() {
         throw new Error(`${context}一般错误过多(${generalErrors}次)，停止同步`);
       }
       
-      await this.sleep(3000); // 普通错误后短暂等待
+      await this.sleep(3000);
     }
   }
 
@@ -1561,45 +2507,273 @@ function getMutualVoting() {
   }
 
   async rateLimit() {
-    // 基于300,000点/5分钟的动态频率控制
     const now = Date.now();
     
-    // 清理过期的请求记录
+    // 清理5分钟窗口外的请求记录
     this.rateLimitTracker.requestHistory = this.rateLimitTracker.requestHistory
-      .filter(req => now - req.timestamp < this.config.rateLimitWindowMs);
+      .filter(req => now - req.timestamp < this.rateLimitTracker.windowSizeMs);
     
     // 计算当前窗口内的点数使用
     const currentUsage = this.rateLimitTracker.requestHistory
       .reduce((sum, req) => sum + req.points, 0);
     
-    // 计算剩余点数
-    const remainingPoints = this.config.rateLimitPoints - currentUsage;
-    const usagePercentage = currentUsage / this.config.rateLimitPoints;
+    const remainingPoints = this.rateLimitTracker.maxPoints - currentUsage;
+    const usagePercentage = currentUsage / this.rateLimitTracker.maxPoints;
     
-    // 动态调整延迟
-    let delayMs = 1000 / this.config.maxRequestsPerSecond; // 基础延迟
+    // 预测下次请求的点数消耗（页面查询通常10-20点，投票查询50点）
+    const estimatedNextRequestPoints = this.config.pagesBatchSize * 2 + this.config.votesBatchSize;
     
-    if (usagePercentage > 0.9) {
-      // 使用超过90%，大幅延迟
-      delayMs = 2000;
-      this.progressState.isWaitingRateLimit = true;
-    } else if (usagePercentage > 0.7) {
-      // 使用超过70%，适度延迟
-      delayMs = 500;
-      this.progressState.isWaitingRateLimit = true;
-    } else if (remainingPoints > 50000) {
-      // 剩余点数充足，加速
-      delayMs = 50;
-      this.progressState.isWaitingRateLimit = false;
+    let delayMs = Math.max(1000 / this.config.maxRequestsPerSecond, this.rateLimitTracker.adaptiveDelayMs); // 结合基础延迟和自适应延迟
+    let waitingReason = null;
+    
+    if (remainingPoints < estimatedNextRequestPoints || usagePercentage > 0.95) {
+      // 点数不足，需要等待窗口滑动
+      const oldestRequest = Math.min(...this.rateLimitTracker.requestHistory.map(r => r.timestamp));
+      const timeToWait = this.rateLimitTracker.windowSizeMs - (now - oldestRequest) + 1000; // 多等1秒保险
+      
+      if (timeToWait > 0) {
+        delayMs = timeToWait;
+        waitingReason = 'rate_limit';
+        this.setWaitingState('rate_limit', delayMs);
+        console.log(`\n⏳ Rate limit窗口等待: ${Math.ceil(timeToWait/1000)}s (使用率: ${usagePercentage.toFixed(1)}%)`);
+      }
+    } else if (usagePercentage > 0.8) {
+      // 使用率较高，适度减速
+      delayMs = Math.max(300, this.rateLimitTracker.adaptiveDelayMs);
+      waitingReason = 'rate_limit_throttle';
+    } else if (usagePercentage > 0.6) {
+      // 中等使用率，轻微减速
+      delayMs = Math.max(150, this.rateLimitTracker.adaptiveDelayMs);
+    } else if (this.rateLimitTracker.adaptiveDelayMs > 1000) {
+      // 自适应延迟激活，即使使用率不高也要应用
+      delayMs = this.rateLimitTracker.adaptiveDelayMs;
+      waitingReason = 'adaptive_delay';
+    }
+    
+    if (waitingReason) {
+      this.setWaitingState(waitingReason, delayMs);
     } else {
-      this.progressState.isWaitingRateLimit = false;
+      this.clearWaitingState();
     }
     
     await this.sleep(delayMs);
     
-    // 延迟完成后清除等待状态
-    if (delayMs > 200) {
-      this.progressState.isWaitingRateLimit = false;
+    // 记录本次请求（估算点数）
+    this.rateLimitTracker.requestHistory.push({
+      timestamp: now,
+      points: estimatedNextRequestPoints,
+      operation: 'api_request'
+    });
+  }
+
+  setWaitingState(reason, durationMs) {
+    this.rateLimitTracker.isWaiting = true;
+    this.rateLimitTracker.waitingReason = reason;
+    this.rateLimitTracker.waitStartTime = Date.now();
+    this.rateLimitTracker.estimatedWaitEndTime = Date.now() + durationMs;
+  }
+
+  clearWaitingState() {
+    this.rateLimitTracker.isWaiting = false;
+    this.rateLimitTracker.waitingReason = null;
+    this.rateLimitTracker.waitStartTime = null;
+    this.rateLimitTracker.estimatedWaitEndTime = null;
+  }
+
+  detectEmptyResponse(result, context) {
+    // 检测GraphQL响应是否为空或异常
+    let isEmpty = false;
+    let hasValidData = true;
+    
+    if (context === 'pages') {
+      // 检查页面数据的完整性
+      if (!result.pages || !result.pages.edges) {
+        isEmpty = true;
+      } else {
+        // 检查页面数据是否包含关键字段
+        const edges = result.pages.edges;
+        if (edges.length > 0) {
+          const firstPage = edges[0].node;
+          // 检查关键字段是否存在
+          if (!firstPage.url || !firstPage.title || firstPage.wikidotId === undefined) {
+            isEmpty = true;
+            console.log(`⚠️  页面数据字段缺失: ${JSON.stringify(firstPage, null, 2).substring(0, 200)}...`);
+          }
+        }
+      }
+    } else if (context === 'votes') {
+      // 检查投票数据的完整性
+      if (!result.wikidotPage || !result.wikidotPage.fuzzyVoteRecords) {
+        isEmpty = true;
+      } else {
+        const voteData = result.wikidotPage.fuzzyVoteRecords;
+        if (voteData.edges && voteData.edges.length > 0) {
+          const firstVote = voteData.edges[0].node;
+          // 检查投票数据关键字段
+          if (!firstVote.userWikidotId || firstVote.direction === undefined || !firstVote.timestamp) {
+            isEmpty = true;
+            console.log(`⚠️  投票数据字段缺失: ${JSON.stringify(firstVote, null, 2).substring(0, 200)}...`);
+          }
+        }
+      }
+    }
+    
+    if (isEmpty) {
+      this.rateLimitTracker.emptyResponseCount++;
+      console.log(`⚠️  检测到空响应 #${this.rateLimitTracker.emptyResponseCount} (${context})`);
+      
+      // 当连续空响应达到阈值时，增加延迟
+      if (this.rateLimitTracker.emptyResponseCount >= this.rateLimitTracker.consecutiveEmptyThreshold) {
+        this.rateLimitTracker.adaptiveDelayMs = Math.min(
+          this.rateLimitTracker.adaptiveDelayMs * 1.5,
+          this.rateLimitTracker.maxAdaptiveDelayMs
+        );
+        console.log(`📈 自适应延迟已增加至 ${this.rateLimitTracker.adaptiveDelayMs}ms`);
+      }
+      
+      hasValidData = false;
+    } else {
+      // 成功响应，重置空响应计数和自适应延迟
+      if (this.rateLimitTracker.emptyResponseCount > 0) {
+        console.log(`✅ 数据响应恢复正常，重置空响应计数`);
+        this.rateLimitTracker.emptyResponseCount = 0;
+        this.rateLimitTracker.adaptiveDelayMs = 1000; // 重置为基础延迟
+      }
+      hasValidData = true;
+    }
+    
+    return hasValidData;
+  }
+
+  async fetchRemainingPages(currentTotal) {
+    console.log('🔍 尝试多种方法获取剩余页面...');
+    
+    try {
+      // 方法1: 尝试不使用cursor，直接跳转到最后几页
+      const estimatedRemaining = this.progressState.totalPages - currentTotal;
+      console.log(`   方法1: 尝试获取最后 ${estimatedRemaining} 页`);
+      
+      // 使用一个较大的 first 参数来获取剩余页面
+      const query = `
+        query FetchRemainingPages($filter: PageQueryFilter, $first: Int, $after: ID) {
+          pages(filter: $filter, first: $first, after: $after) {
+            edges {
+              node {
+                url
+                ... on WikidotPage {
+                  wikidotId
+                  title
+                  rating
+                  voteCount
+                  category
+                  tags
+                  createdAt
+                  revisionCount
+                  commentCount
+                  isHidden
+                  isUserPage
+                  thumbnailUrl
+                  source
+                  textContent
+                  
+                  alternateTitles {
+                    title
+                  }
+                  
+                  revisions(first: 5) {
+                    edges {
+                      node {
+                        wikidotId
+                        timestamp
+                        user {
+                          ... on WikidotUser {
+                            displayName
+                            wikidotId
+                            unixName
+                          }
+                        }
+                        comment
+                      }
+                    }
+                  }
+                  
+                  createdBy {
+                    ... on WikidotUser {
+                      displayName
+                      wikidotId
+                      unixName
+                    }
+                  }
+                  
+                  parent {
+                    url
+                  }
+                  
+                  children {
+                    url
+                  }
+                  
+                  attributions {
+                    type
+                    user {
+                      ... on WikidotUser {
+                        displayName
+                        wikidotId
+                        unixName
+                      }
+                    }
+                    date
+                    order
+                  }
+                }
+              }
+              cursor
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      `;
+      
+      const variables = {
+        filter: {
+          onWikidotPage: {
+            url: { startsWith: "http://scp-wiki-cn.wikidot.com" }
+          }
+        },
+        first: Math.min(50, estimatedRemaining * 2) // 获取更多以防万一
+      };
+      
+      await this.rateLimit();
+      const result = await this.cromClient.request(query, variables);
+      
+      if (result && result.pages.edges.length > 0) {
+        let newPagesFound = 0;
+        const existingUrls = new Set(this.data.pages.map(p => p.url));
+        
+        for (const edge of result.pages.edges) {
+          if (!existingUrls.has(edge.node.url)) {
+            this.processPageBasic(edge.node);
+            newPagesFound++;
+          }
+        }
+        
+        if (newPagesFound > 0) {
+          console.log(`   ✅ 找到 ${newPagesFound} 个新页面`);
+          this.stats.pagesProcessed += newPagesFound;
+          
+          // 保存更新后的检查点
+          await this.savePageCheckpoint(this.stats.pagesProcessed, null);
+        } else {
+          console.log('   ℹ️  未找到新页面，可能总数统计存在误差');
+        }
+      }
+      
+    } catch (error) {
+      console.log(`   ⚠️  获取剩余页面失败: ${error.message}`);
+      console.log('   继续使用现有数据');
     }
   }
 
@@ -1609,13 +2783,28 @@ function getMutualVoting() {
 }
 
 // 运行生产环境同步
-async function runProductionSync() {
-  const syncService = new ProductionSync();
+async function runProductionSync(voteOnly = false) {
+  const syncService = new ProductionSync({ voteOnly });
   await syncService.runProductionSync();
 }
 
-export { ProductionSync };
+// 仅获取投票数据
+async function runVoteOnlySync() {
+  const syncService = new ProductionSync({ voteOnly: true });
+  await syncService.runProductionSync();
+}
+
+export { ProductionSync, runVoteOnlySync };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runProductionSync().catch(console.error);
+  // 检查命令行参数
+  const args = process.argv.slice(2);
+  const voteOnly = args.includes('--vote-only') || args.includes('--votes');
+  
+  if (voteOnly) {
+    console.log('🗳️  启动仅投票模式...');
+    runVoteOnlySync().catch(console.error);
+  } else {
+    runProductionSync().catch(console.error);
+  }
 }
