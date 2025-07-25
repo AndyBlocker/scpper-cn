@@ -79,44 +79,65 @@ class RealRateLimitTester {
     
     // 获取有投票的页面
     const pagesQuery = `
-      query GetPagesWithVotes($site: String!, $first: Int, $offset: Int) {
-        wikidotPages(site: $site, first: $first, offset: $offset) {
+      query GetPagesWithVotes($filter: PageQueryFilter, $first: Int, $after: ID) {
+        pages(filter: $filter, first: $first, after: $after) {
           edges {
             node {
               url
-              wikidotId  
-              title
-              voteCount
-              rating
+              ... on WikidotPage {
+                wikidotId  
+                title
+                voteCount
+                rating
+                category
+              }
             }
           }
-          totalCount
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
         }
       }
     `;
     
-    // 分批获取，避免在准备阶段就触发限制
-    let offset = 0;
+    // 分批获取，使用cursor分页避免在准备阶段就触发限制
+    let cursor = null;
     const batchSize = 50;
     let attempts = 0;
     const maxAttempts = 10;
     
+    const filter = {
+      onWikidotPage: {
+        url: { startsWith: this.config.targetSite }
+      }
+    };
+    
     while (this.samplePages.length < this.config.sampleSize && attempts < maxAttempts) {
       try {
         const result = await this.cromClient.request(pagesQuery, {
-          site: this.config.targetSite,
+          filter,
           first: batchSize,
-          offset: offset
+          after: cursor
         });
         
-        const pages = result.wikidotPages.edges
-          .map(edge => edge.node)
-          .filter(page => page.voteCount > 0 && page.voteCount <= 200); // 选择中等投票数的页面
+        if (result.pages?.edges) {
+          const pages = result.pages.edges
+            .map(edge => edge.node)
+            .filter(page => page.voteCount > 0 && page.voteCount <= 200); // 选择中等投票数的页面
+          
+          this.samplePages.push(...pages);
+          
+          if (result.pages.pageInfo.hasNextPage) {
+            cursor = result.pages.pageInfo.endCursor;
+          } else {
+            break; // 没有更多页面了
+          }
+        } else {
+          break;
+        }
         
-        this.samplePages.push(...pages);
-        offset += batchSize;
         attempts++;
-        
         console.log(`   获得 ${this.samplePages.length}/${this.config.sampleSize} 个有效页面`);
         
         // 准备阶段使用较慢速度
