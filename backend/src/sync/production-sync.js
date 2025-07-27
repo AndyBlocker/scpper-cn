@@ -1,12 +1,27 @@
+/**
+ * 文件路径: src/sync/production-sync.js
+ * 功能概述: SCPPER-CN 生产环境数据同步核心模块
+ * 
+ * 主要功能:
+ * - 从 CROM GraphQL API v2 获取完整的生产环境数据
+ * - 支持页面数据、投票记录、用户信息、修订历史的全量同步
+ * - 基于复杂度限制和权限分析的优化同步策略
+ * - 断点续传机制，支持大规模数据同步中断恢复
+ * - Rate Limit 管理和错误处理
+ * - 数据导出和JSON文件生成
+ * 
+ * 使用方式:
+ * - npm run sync 或 node src/sync/production-sync.js
+ * - 支持命令行参数: --votes, --vote-only 等
+ */
+
 import { GraphQLClient } from 'graphql-request';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
+import { RateLimitSafeFetcher } from './core/rate-limit-safe-fetcher.js';
 
 dotenv.config();
-
-// SCPPER-CN 生产环境数据同步脚本
-// 基于复杂度限制和权限分析的优化版本
 class ProductionSync {
   constructor(options = {}) {
     this.cromClient = new GraphQLClient('https://apiv2.crom.avn.sh/graphql');
@@ -36,7 +51,7 @@ class ProductionSync {
     
     // 基于300,000点/5分钟的保守配置 - 支持增量更新
     this.config = {
-      pagesBatchSize: 5,     // 设置为5如用户建议
+      pagesBatchSize: 10,    // 基础查询可以用更大的批次
       votesBatchSize: 100,   // 设置为100如用户建议
       maxRequestsPerSecond: 4,    // 进一步降低请求频率以适应更大的投票批次
       targetPages: null,     // 自动检测所有CN分支页面（基于API分页）
@@ -493,7 +508,8 @@ class ProductionSync {
   }
 
   async fetchPagesBasic(cursor, batchSize) {
-    const query = `
+    // 第一阶段：获取基础页面数据（低复杂度）
+    const basicQuery = `
       query FetchPagesBasic($filter: PageQueryFilter, $first: Int, $after: ID) {
         pages(filter: $filter, first: $first, after: $after) {
           edges {
@@ -515,55 +531,11 @@ class ProductionSync {
                 source
                 textContent
                 
-                # 修复：移除不存在的language字段
-                alternateTitles {
-                  title
-                }
-                
-                revisions(first: 5) {
-                  edges {
-                    node {
-                      wikidotId
-                      timestamp
-                      user {
-                        ... on WikidotUser {
-                          displayName
-                          wikidotId
-                          unixName
-                        }
-                      }
-                      comment
-                    }
-                  }
-                }
-                
                 createdBy {
                   ... on WikidotUser {
                     displayName
                     wikidotId
-                    unixName
                   }
-                }
-                
-                parent {
-                  url
-                }
-                
-                children {
-                  url
-                }
-                
-                attributions {
-                  type
-                  user {
-                    ... on WikidotUser {
-                      displayName
-                      wikidotId
-                      unixName
-                    }
-                  }
-                  date
-                  order
                 }
               }
             }
@@ -590,7 +562,271 @@ class ProductionSync {
       variables.after = cursor;
     }
     
-    return await this.cromClient.request(query, variables);
+    const basicResult = await this.cromClient.request(basicQuery, variables);
+    
+    // 第二阶段：为每个页面获取复杂数据（revisions, attributions, alternateTitles）
+    if (basicResult?.pages?.edges) {
+      await this.enrichPagesWithComplexData(basicResult.pages.edges);
+    }
+    
+    return basicResult;
+  }
+
+  /**
+   * 为页面补充复杂数据（revisions, attributions, alternateTitles）
+   */
+  async enrichPagesWithComplexData(pageEdges) {
+    console.log(`   🔍 补充 ${pageEdges.length} 个页面的复杂数据...`);
+    
+    let successCount = 0;
+    let errorCount = 0;
+    
+    for (const edge of pageEdges) {
+      const page = edge.node;
+      if (!page.url) continue;
+      
+      try {
+        await this.fetchAndMergeComplexPageData(page);
+        successCount++;
+        
+        // 避免过于频繁的请求
+        await this.sleep(100);
+        
+      } catch (error) {
+        errorCount++;
+        console.log(`   ⚠️  页面 ${page.url} 复杂数据获取失败: ${error.message}`);
+        
+        // 记录错误但不中断整个流程
+        this.stats.errors.push({
+          type: 'complex_data_fetch_failed',
+          error: error.message,
+          url: page.url,
+          phase: 'enrich_complex_data',
+          timestamp: new Date()
+        });
+        
+        // 根据错误类型采取不同的等待策略
+        if (error.message.includes('API_NULL_RESPONSE')) {
+          console.log(`   ⏳ API返回null，等待60秒后继续...`);
+          await this.sleep(60000);
+        } else if (error.message.includes('RATE_LIMIT') || error.message.includes('429')) {
+          console.log(`   ⏳ Rate Limit达到，等待90秒后继续...`);
+          await this.sleep(90000);
+        } else if (error.message.includes('NETWORK_ERROR')) {
+          console.log(`   ⏳ 网络错误，等待15秒后继续...`);
+          await this.sleep(15000);
+        } else if (error.message.includes('maximum per-request complexity')) {
+          console.log(`   ⏳ 复杂度超限，等待5秒后继续...`);
+          await this.sleep(5000);
+        } else {
+          console.log(`   ⏳ 其他错误，等待30秒后继续...`);
+          await this.sleep(30000);
+        }
+      }
+    }
+    
+    console.log(`   ✅ 复杂数据补充完成: 成功 ${successCount}，失败 ${errorCount}/${pageEdges.length}`);
+  }
+
+  /**
+   * 获取单个页面的复杂数据
+   */
+  async fetchAndMergeComplexPageData(page) {
+    const complexQuery = `
+      query FetchComplexPageData($url: URL!) {
+        wikidotPage(url: $url) {
+          alternateTitles {
+            title
+          }
+          
+          attributions {
+            type
+            user {
+              displayName
+              ... on UserWikidotNameReference {
+                wikidotUser {
+                  displayName
+                  wikidotId
+                }
+              }
+            }
+            date
+            order
+          }
+          
+          revisions(first: 50) {
+            edges {
+              node {
+                wikidotId
+                timestamp
+                type
+                user {
+                  ... on WikidotUser {
+                    displayName
+                    wikidotId
+                  }
+                }
+                comment
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const complexResult = await this.cromClient.request(complexQuery, { url: page.url });
+      
+      if (complexResult?.wikidotPage) {
+        // 将复杂数据合并到原页面对象中
+        const complexData = complexResult.wikidotPage;
+        
+        if (complexData.alternateTitles) {
+          page.alternateTitles = complexData.alternateTitles;
+        }
+        
+        if (complexData.attributions) {
+          page.attributions = complexData.attributions;
+        }
+        
+        if (complexData.revisions) {
+          page.revisions = complexData.revisions;
+        }
+      }
+      
+    } catch (error) {
+      // 处理不同类型的错误响应
+      
+      // 1. 处理null响应（通常是Rate Limit导致）
+      if (error.response?.data === null) {
+        console.log(`   🔄 页面 ${page.url} API返回null - Rate Limit或服务暂时不可用`);
+        throw new Error(`API_NULL_RESPONSE: ${page.url}`);
+      }
+      
+      // 2. 处理GraphQL复杂度超限
+      if (error.message.includes('maximum per-request complexity')) {
+        console.log(`   ⚠️  页面 ${page.url} 查询复杂度超限，尝试简化查询`);
+        return await this.fetchSimplifiedComplexData(page);
+      }
+      
+      // 3. 处理429 Rate Limit错误
+      if (error.message.includes('429') || error.response?.status === 429) {
+        console.log(`   🔄 页面 ${page.url} Rate Limit达到，需要等待`);
+        throw new Error(`RATE_LIMIT: ${page.url}`);
+      }
+      
+      // 4. 处理网络错误
+      if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || 
+          error.message.includes('network') || error.message.includes('timeout')) {
+        console.log(`   🌐 页面 ${page.url} 网络错误: ${error.message}`);
+        throw new Error(`NETWORK_ERROR: ${page.url}`);
+      }
+      
+      // 5. 其他错误
+      console.log(`   ❌ 页面 ${page.url} 未知错误: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取简化的复杂数据（当复杂度超限时使用）
+   */
+  async fetchSimplifiedComplexData(page) {
+    console.log(`   🔄 使用简化查询获取页面 ${page.url} 的数据`);
+    
+    // 分别获取每种数据类型，降低单次查询复杂度
+    try {
+      // 1. 获取备用标题
+      const altTitlesQuery = `
+        query FetchAlternateTitles($url: URL!) {
+          wikidotPage(url: $url) {
+            alternateTitles {
+              title
+            }
+          }
+        }
+      `;
+      
+      try {
+        const altTitlesResult = await this.cromClient.request(altTitlesQuery, { url: page.url });
+        if (altTitlesResult?.wikidotPage?.alternateTitles) {
+          page.alternateTitles = altTitlesResult.wikidotPage.alternateTitles;
+        }
+        await this.sleep(200);
+      } catch (error) {
+        console.log(`     ⚠️  备用标题获取失败: ${error.message}`);
+      }
+
+      // 2. 获取合著信息
+      const attributionsQuery = `
+        query FetchAttributions($url: URL!) {
+          wikidotPage(url: $url) {
+            attributions {
+              type
+              user {
+                displayName
+                ... on UserWikidotNameReference {
+                  wikidotUser {
+                    displayName
+                    wikidotId
+                  }
+                }
+              }
+              date
+              order
+            }
+          }
+        }
+      `;
+      
+      try {
+        const attributionsResult = await this.cromClient.request(attributionsQuery, { url: page.url });
+        if (attributionsResult?.wikidotPage?.attributions) {
+          page.attributions = attributionsResult.wikidotPage.attributions;
+        }
+        await this.sleep(200);
+      } catch (error) {
+        console.log(`     ⚠️  合著信息获取失败: ${error.message}`);
+      }
+
+      // 3. 获取修订历史（减少数量）
+      const revisionsQuery = `
+        query FetchRevisions($url: URL!) {
+          wikidotPage(url: $url) {
+            revisions(first: 20) {
+              edges {
+                node {
+                  wikidotId
+                  timestamp
+                  type
+                  user {
+                    ... on WikidotUser {
+                      displayName
+                      wikidotId
+                    }
+                  }
+                  comment
+                }
+              }
+            }
+          }
+        }
+      `;
+      
+      try {
+        const revisionsResult = await this.cromClient.request(revisionsQuery, { url: page.url });
+        if (revisionsResult?.wikidotPage?.revisions) {
+          page.revisions = revisionsResult.wikidotPage.revisions;
+        }
+        await this.sleep(200);
+      } catch (error) {
+        console.log(`     ⚠️  修订历史获取失败: ${error.message}`);
+      }
+
+    } catch (error) {
+      console.log(`   ❌ 简化查询也失败: ${error.message}`);
+      throw error;
+    }
   }
 
   updateProgress(currentCount, context = 'pages') {
@@ -814,16 +1050,23 @@ class ProductionSync {
     // 处理贡献者信息
     if (page.attributions) {
       for (const attr of page.attributions) {
+        // 从新的数据结构中获取用户信息
+        const wikidotUser = attr.user?.wikidotUser;
         this.data.attributions.push({
           pageUrl: page.url,
           pageTitle: page.title,
-          userId: attr.user?.wikidotId,
-          userName: attr.user?.displayName,
-          userUnixName: attr.user?.unixName,
+          userId: wikidotUser?.wikidotId || null,
+          userName: wikidotUser?.displayName || attr.user?.displayName || `Unknown_${wikidotUser?.wikidotId || 'User'}`,
+          userUnixName: wikidotUser?.unixName || null,
           attributionType: attr.type,
           date: attr.date,
           order: attr.order
         });
+        
+        // 收集贡献者用户ID
+        if (wikidotUser?.wikidotId) {
+          this.userCache.add(wikidotUser.wikidotId);
+        }
       }
     }
     

@@ -1,0 +1,329 @@
+// SCPPER-CN Schema重构方案 v2
+// 解决URL复用问题 + 完善历史版本支持
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 页面实体模型 - 使用自增ID作为主键
+model Page {
+  id                 Int       @id @default(autoincrement())
+  
+  // URL和实例管理
+  url                String
+  instanceVersion    Int       @default(1)
+  urlInstanceId      String    @unique  // url + instanceVersion的组合标识
+  
+  // 基本信息
+  wikidotId          String?
+  title              String
+  category           String?
+  
+  // 内容相关
+  source             String?
+  textContent        String?
+  sourceHash         String?   @db.VarChar(64)
+  contentLength      Int       @default(0)
+  
+  // 统计数据
+  rating             Int       @default(0)
+  voteCount          Int       @default(0)
+  commentCount       Int       @default(0)
+  revisionCount      Int       @default(0)
+  lastRevisionCount  Int       @default(0)
+  
+  // 分析字段
+  wilsonScore        Decimal?  @db.Decimal(10,8)
+  upVoteRatio        Decimal?  @db.Decimal(5,4)
+  controversyScore   Decimal?  @db.Decimal(10,6)
+  
+  // 作者信息
+  createdByUser      String?
+  createdByWikidotId String?
+  lastEditedByUser   String?
+  parentUrl          String?
+  thumbnailUrl       String?
+  
+  // 标签和分类
+  tags               String[]
+  
+  // 状态字段
+  isPrivate          Boolean   @default(false)
+  isDeleted          Boolean   @default(false)
+  deletedAt          DateTime?
+  deletionReason     String?
+  
+  // 实例生命周期
+  instanceCreatedAt  DateTime  @default(now())
+  instanceDeletedAt  DateTime?
+  replacedByInstanceId Int?    // 如果被新实例替换，指向新实例
+  
+  // 时间戳
+  createdAt          DateTime?
+  lastEditedAt       DateTime?
+  lastSyncedAt       DateTime  @default(now())
+  lastAnalyzedAt     DateTime?
+  last_source_check_at DateTime?
+  
+  // 关联关系 - 现在使用页面ID
+  voteRecords        VoteRecord[]
+  revisions          Revision[]
+  attributions       Attribution[]
+  alternateTitles    AlternateTitle[]
+  pageHistory        PageHistory[]
+  sourceVersions     SourceVersion[]
+  urlMappings        UrlMapping[]
+  
+  // 实例关系
+  replacedByInstance Page?     @relation("PageInstanceReplacement", fields: [replacedByInstanceId], references: [id])
+  replacedInstances  Page[]    @relation("PageInstanceReplacement")
+  
+  @@index([url])
+  @@index([url, instanceVersion])
+  @@index([isDeleted])
+  @@index([instanceCreatedAt])
+  @@index([rating])
+  @@index([voteCount])
+  @@index([wilsonScore(sort: Desc)])
+  @@index([sourceHash])
+}
+
+// URL映射表 - 管理URL到当前活跃页面的映射
+model UrlMapping {
+  url                String    @id
+  currentPageId      Int
+  currentInstanceVersion Int
+  lastUpdatedAt      DateTime  @default(now())
+  
+  // 历史实例计数
+  totalInstances     Int       @default(1)
+  
+  currentPage        Page      @relation(fields: [currentPageId], references: [id])
+  
+  @@index([currentPageId])
+  @@index([lastUpdatedAt])
+}
+
+// 用户模型 - 保持不变
+model User {
+  name               String    @id
+  wikidotId          String?   @unique
+  displayName        String
+  unixName           String?
+  
+  // 统计字段
+  pageCount          Int       @default(0)
+  totalRating        Int       @default(0)
+  meanRating         Float     @default(0)
+  pageCountScp       Int       @default(0)
+  pageCountTale      Int       @default(0)
+  pageCountGoiFormat Int       @default(0)
+  rank               Int?      // 用户排名
+  
+  // 分析字段
+  joinTime           DateTime?
+  isActive           Boolean   @default(false)
+  
+  // 时间戳
+  lastSyncedAt       DateTime  @default(now())
+  lastAnalyzedAt     DateTime?
+  
+  @@index([totalRating])
+  @@index([joinTime])
+  @@index([isActive])
+  @@index([wikidotId])
+}
+
+// 投票记录模型 - 改用页面ID
+model VoteRecord {
+  pageId             Int
+  userWikidotId      String
+  timestamp          DateTime
+  
+  // 投票数据
+  userName           String
+  direction          Int
+  
+  // 关联关系
+  page              Page      @relation(fields: [pageId], references: [id])
+  
+  @@id([pageId, userWikidotId, timestamp])
+  @@index([userWikidotId])
+  @@index([direction])
+  @@index([timestamp])
+}
+
+// 修订记录模型 - 改用页面ID + 扩展源代码支持
+model Revision {
+  pageId             Int
+  revisionIndex      Int
+  
+  // 修订数据
+  wikidotId          String?
+  timestamp          DateTime
+  type               String    @default("edit")
+  comment            String?
+  
+  // 作者信息
+  userWikidotId      String?
+  userName           String?
+  
+  // 源代码版本支持（保留向后兼容）
+  sourceCode         String?   // 该版本的完整源代码
+  sourceHash         String?   @db.VarChar(64)
+  diffFromPrevious   String?   // 与前一版本的差异
+  contentLength      Int?      // 内容长度
+  
+  // 新的源代码版本关联
+  sourceVersionId    Int?      // 关联到SourceVersion表
+  
+  // 关联关系
+  page              Page      @relation(fields: [pageId], references: [id])
+  sourceVersion     SourceVersion? @relation(fields: [sourceVersionId], references: [id])
+  
+  @@id([pageId, revisionIndex])
+  @@index([userWikidotId])
+  @@index([timestamp])
+  @@index([sourceHash])
+}
+
+// 贡献记录模型 - 改用页面ID
+model Attribution {
+  pageId             Int
+  userName           String
+  attributionType    String
+  
+  // 贡献数据
+  userId             String?
+  userUnixName       String?
+  date               DateTime?
+  orderIndex         Int       @default(0)
+  isCurrent          Boolean   @default(true)
+  
+  // 关联关系
+  page              Page      @relation(fields: [pageId], references: [id])
+  
+  @@id([pageId, userName, attributionType])
+  @@index([userId])
+  @@index([userUnixName])
+  @@index([attributionType])
+  @@index([orderIndex])
+}
+
+// 备用标题模型 - 改用页面ID
+model AlternateTitle {
+  id                 Int       @id @default(autoincrement())
+  
+  // 标题数据
+  pageId             Int
+  type               String
+  title              String
+  
+  // 关联关系
+  page              Page      @relation(fields: [pageId], references: [id])
+  
+  @@index([pageId])
+  @@index([type])
+}
+
+// 页面历史模型 - 扩展完整快照支持
+model PageHistory {
+  id                 Int       @id @default(autoincrement())
+  
+  // 版本跟踪
+  pageId             Int
+  versionNumber      Int
+  capturedAt         DateTime  @default(now())
+  changeType         String    // created, updated, deleted, recreated, replaced
+  changeReason       String?
+  
+  // 完整历史快照数据
+  title              String?
+  rating             Int?
+  voteCount          Int?
+  commentCount       Int?
+  revisionCount      Int?
+  tags               String[]
+  
+  // 源代码快照
+  sourceSnapshot     String?   // 源代码快照
+  textSnapshot       String?   // 文本内容快照
+  sourceHash         String?   @db.VarChar(64)
+  
+  // 实例信息快照
+  instanceVersion    Int?
+  isDeleted          Boolean?
+  
+  // 关联关系
+  page              Page      @relation(fields: [pageId], references: [id])
+  
+  @@index([pageId, versionNumber])
+  @@index([capturedAt])
+  @@index([changeType])
+  @@index([sourceHash])
+}
+
+// 专门的源代码版本控制表
+model SourceVersion {
+  id                 Int       @id @default(autoincrement())
+  
+  pageId             Int
+  sourceCode         String    // 完整源代码
+  sourceHash         String    @db.VarChar(64) // 源代码哈希
+  contentLength      Int       @default(0)
+  
+  // 版本控制
+  isCurrentVersion   Boolean   @default(false)  // 是否为当前版本
+  capturedAt         DateTime  // 捕获时间
+  createdAt          DateTime  @default(now())
+  
+  // 关联关系
+  page              Page      @relation(fields: [pageId], references: [id])
+  revisions         Revision[] // 一个源代码版本可以对应多个revision
+  
+  @@unique([pageId, sourceHash])
+  @@index([pageId])
+  @@index([sourceHash])
+  @@index([pageId, isCurrentVersion])
+}
+
+// 同步日志模型 - 保持不变
+model SyncLog {
+  id                 Int       @id @default(autoincrement())
+  
+  // 同步元数据
+  syncType           String
+  status             String
+  
+  // 时间戳
+  startedAt          DateTime  @default(now())
+  completedAt        DateTime?
+  
+  // 统计数据
+  pagesProcessed     Int?
+  errors             String[]
+  
+  @@index([syncType])
+  @@index([status])
+  @@index([startedAt])
+}
+
+// 用户投票关系表 - 保持不变
+model UserVoteRelation {
+  fromUserId         String
+  toUserId           String
+  upvotes            Int       @default(0)
+  downvotes          Int       @default(0)
+  totalVotes         Int       @default(0)
+  mutualVoting       Boolean   @default(false)
+  lastUpdatedAt      DateTime  @default(now())
+  
+  @@id([fromUserId, toUserId])
+  @@index([totalVotes])
+  @@index([mutualVoting])
+}

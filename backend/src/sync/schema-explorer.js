@@ -1,10 +1,32 @@
+/**
+ * 文件路径: src/sync/schema-explorer.js
+ * 功能概述: CROM GraphQL Schema 探索和分析工具
+ * 
+ * 主要功能:
+ * - CROM GraphQL API v2 的 Schema 内省和探索
+ * - API 结构分析和字段映射发现
+ * - 示例查询生成和测试
+ * - API v1 vs v2 的对比分析
+ * - 新功能和字段的自动发现
+ * - Schema 文档生成和导出
+ * 
+ * 核心特性:
+ * - 完整的 GraphQL Schema 内省分析
+ * - 类型定义和字段关系的详细解析
+ * - 实用查询示例的自动生成
+ * - API 版本间的差异对比
+ * - 错误处理和调试信息输出
+ * 
+ * 使用方式:
+ * - npm run schema 或 node src/sync/schema-explorer.js
+ * - 探索新的 API 功能和可用字段
+ */
+
 import { GraphQLClient } from 'graphql-request';
 import fs from 'fs';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-// CROM GraphQL Schema 探索脚本
 class SchemaExplorer {
   constructor() {
     // CROM GraphQL端点
@@ -34,6 +56,9 @@ class SchemaExplorer {
       
       // 3. 探索页面相关查询
       await this.testPageQueries();
+      
+      // 3.5. 深度探索WikidotPage字段
+      await this.exploreWikidotPageFields();
       
       // 4. 探索用户相关查询
       await this.testUserQueries();
@@ -424,6 +449,177 @@ class SchemaExplorer {
           success: false
         };
       }
+    }
+  }
+
+  async exploreWikidotPageFields() {
+    console.log('\n🔍 探索 WikidotPage 可用字段...');
+    
+    // 从 introspection 结果中找到 WikidotPage 类型
+    if (this.results.introspection) {
+      const wikidotPageType = this.results.introspection.__schema.types.find(
+        t => t.name === 'WikidotPage'
+      );
+      
+      if (wikidotPageType) {
+        console.log(`📋 WikidotPage 字段总数: ${wikidotPageType.fields.length}`);
+        
+        // 按类别整理字段
+        const fieldCategories = {
+          基础信息: ['url', 'wikidotId', 'title', 'category', 'tags'],
+          评分投票: ['rating', 'voteCount'],
+          时间相关: ['createdAt', 'lastEditedAt'],
+          计数统计: ['revisionCount', 'commentCount'],
+          内容相关: ['source', 'textContent', 'thumbnailUrl'],
+          状态标记: ['isHidden', 'isUserPage', 'isPrivate'],
+          关联数据: ['createdBy', 'parent', 'children', 'attributions', 'revisions', 'fuzzyVoteRecords', 'alternateTitles']
+        };
+        
+        const confirmedFields = {};
+        const unknownFields = [];
+        
+        // 检查每个字段
+        for (const field of wikidotPageType.fields) {
+          let found = false;
+          for (const [category, fields] of Object.entries(fieldCategories)) {
+            if (fields.includes(field.name)) {
+              if (!confirmedFields[category]) confirmedFields[category] = [];
+              confirmedFields[category].push({
+                name: field.name,
+                type: this.formatFieldType(field.type),
+                description: field.description || '无描述'
+              });
+              found = true;
+              break;
+            }
+          }
+          
+          if (!found) {
+            unknownFields.push({
+              name: field.name,
+              type: this.formatFieldType(field.type),
+              description: field.description || '无描述'
+            });
+          }
+        }
+        
+        // 输出分类结果
+        for (const [category, fields] of Object.entries(confirmedFields)) {
+          console.log(`\n📂 ${category}:`);
+          fields.forEach(field => {
+            console.log(`   ✅ ${field.name}: ${field.type}`);
+          });
+        }
+        
+        if (unknownFields.length > 0) {
+          console.log(`\n❓ 未分类字段:`);
+          unknownFields.forEach(field => {
+            console.log(`   ? ${field.name}: ${field.type}`);
+          });
+        }
+        
+        // 保存字段信息
+        this.results.wikidotPageFields = {
+          confirmed: confirmedFields,
+          unknown: unknownFields,
+          total: wikidotPageType.fields.length
+        };
+        
+        // 测试一些关键字段是否真的可用
+        await this.validateCriticalFields();
+        
+      } else {
+        console.log('❌ 无法找到 WikidotPage 类型定义');
+      }
+    }
+  }
+  
+  formatFieldType(type) {
+    if (type.kind === 'NON_NULL') {
+      return `${this.formatFieldType(type.ofType)}!`;
+    } else if (type.kind === 'LIST') {
+      return `[${this.formatFieldType(type.ofType)}]`;
+    } else {
+      return type.name || 'Unknown';
+    }
+  }
+  
+  async validateCriticalFields() {
+    console.log('\n🧪 验证关键字段可用性...');
+    
+    const criticalFields = [
+      'title', 'rating', 'voteCount', 'revisionCount', 'createdAt',
+      'commentCount', 'source', 'textContent', 'tags', 'thumbnailUrl'
+    ];
+    
+    // 构建测试查询
+    const testQuery = `
+      query ValidateCriticalFields {
+        pages(first: 1, filter: { onWikidotPage: { url: { startsWith: "http://scp-wiki-cn.wikidot.com" } } }) {
+          edges {
+            node {
+              url
+              ... on WikidotPage {
+                ${criticalFields.join('\n                ')}
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    try {
+      const result = await this.cromClient.request(testQuery);
+      console.log('✅ 所有关键字段验证通过');
+      
+      // 记录验证结果
+      this.results.fieldValidation = {
+        tested: criticalFields,
+        success: true,
+        sampleData: result.pages.edges[0]?.node
+      };
+      
+    } catch (error) {
+      console.log(`❌ 字段验证失败: ${error.message.split('\n')[0]}`);
+      
+      // 尝试逐个验证字段
+      const workingFields = [];
+      const brokenFields = [];
+      
+      for (const field of criticalFields) {
+        try {
+          const singleFieldQuery = `
+            query Test_${field} {
+              pages(first: 1, filter: { onWikidotPage: { url: { startsWith: "http://scp-wiki-cn.wikidot.com" } } }) {
+                edges {
+                  node {
+                    url
+                    ... on WikidotPage {
+                      ${field}
+                    }
+                  }
+                }
+              }
+            }
+          `;
+          
+          await this.cromClient.request(singleFieldQuery);
+          workingFields.push(field);
+          console.log(`   ✅ ${field}: 可用`);
+          
+        } catch (fieldError) {
+          brokenFields.push(field);
+          console.log(`   ❌ ${field}: 不可用`);
+        }
+      }
+      
+      this.results.fieldValidation = {
+        tested: criticalFields,
+        success: false,
+        working: workingFields,
+        broken: brokenFields,
+        error: error.message
+      };
     }
   }
 

@@ -1,13 +1,30 @@
+/**
+ * 文件路径: src/sync/database-sync.js
+ * 功能概述: SCPPER-CN 数据库同步基础模块
+ * 
+ * 主要功能:
+ * - 基础数据库同步类，提供核心同步逻辑
+ * - 页面历史版本管理和删除页面检测
+ * - 用户评分维护和数据一致性保证
+ * - 集成投票关系分析、用户分析、页面质量分析
+ * - 支持增量更新和批量操作
+ * - 数据库连接和事务管理
+ * 
+ * 注意:
+ * - 此类作为基础类被 FastDatabaseSync 继承和优化
+ * - 建议使用 FastDatabaseSync 以获得更好的性能
+ */
+
 import { GraphQLClient } from 'graphql-request';
 import { PrismaClient } from '@prisma/client';
+import { VoteRelationAnalyzer } from './analyzers/vote-relation-analyzer.js';
+import { UserAnalyzer } from '../analyze/user-analyzer.js';
+import { PageAnalyzer } from '../analyze/page-analyzer.js';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-// SCPPER-CN 数据库同步脚本
-// 功能: 页面历史版本管理、删除页面检测、用户评分维护、增量更新
 class DatabaseSync {
   constructor() {
     this.cromClient = new GraphQLClient('https://apiv2.crom.avn.sh/graphql');
@@ -19,6 +36,7 @@ class DatabaseSync {
       pagesProcessed: 0,
       pagesCreated: 0,
       pagesUpdated: 0,
+      pagesRecreated: 0,
       pagesDeleted: 0,
       versionsCreated: 0,
       usersProcessed: 0,
@@ -56,6 +74,9 @@ class DatabaseSync {
     this.stats.startTime = new Date();
     
     try {
+      // 0. 确保数据一致性和数据库扩展
+      await this.ensureDataConsistency();
+      
       // 1. 记录同步开始
       const syncLog = await this.createSyncLog();
       
@@ -84,7 +105,16 @@ class DatabaseSync {
       // 6. 更新用户排名
       await this.updateUserRankings();
       
-      // 7. 完成同步记录
+      // 7. 分析用户投票关系
+      await this.analyzeUserVoteRelations();
+      
+      // 8. 分析用户数据（joinTime、活跃用户）
+      await this.analyzeUserData();
+      
+      // 9. 分析页面数据（威尔逊置信区间）
+      await this.analyzePageData();
+      
+      // 10. 完成同步记录
       await this.completeSyncLog(syncLog.id);
       
       this.stats.endTime = new Date();
@@ -113,7 +143,7 @@ class DatabaseSync {
     
     const files = fs.readdirSync(dataDir);
     const dataFiles = files
-      .filter(f => f.startsWith('production-data') && f.endsWith('.json'))
+      .filter(f => f.startsWith('production-data-final-') && f.endsWith('.json'))
       .sort()
       .reverse();
     
@@ -179,49 +209,116 @@ class DatabaseSync {
     
     for (const pageData of pages) {
       try {
-        // 检查页面是否存在
-        const existingPage = await this.prisma.page.findUnique({
-          where: { url: pageData.url }
+        // 检查页面是否存在（查找指定URL的活跃页面）
+        const existingPage = await this.prisma.page.findFirst({
+          where: { 
+            url: pageData.url,
+            instanceDeletedAt: null // 只查找未被删除的实例
+          },
+          orderBy: { instanceVersion: 'desc' } // 获取最新版本
         });
+        
+        // 检查是否存在已删除的页面（用于URL复用检测）
+        const deletedPage = existingPage?.isDeleted ? existingPage : null;
+        const activePage = existingPage?.isDeleted ? null : existingPage;
+        
+        // 计算实例版本号：新页面从1开始，已存在页面递增
+        const nextVersion = activePage ? activePage.instanceVersion + 1 : 1;
         
         const pageRecord = {
           url: pageData.url,
+          urlInstanceId: `${pageData.url}#${nextVersion}`, // 使用正确的版本号
+          instanceVersion: nextVersion, // 添加实例版本字段
           wikidotId: pageData.wikidotId,
           title: pageData.title,
           category: pageData.category,
           rating: pageData.rating || 0,
           voteCount: pageData.voteCount || 0,
           commentCount: pageData.commentCount || 0,
-          createdAt: pageData.createdAt ? new Date(pageData.createdAt) : null,
           revisionCount: pageData.revisionCount || 0,
-          source: null, // v2 API doesn't store full source in basic data
-          textContent: null, // v2 API doesn't store full text in basic data
+          source: pageData.source || null, // 保存源代码
+          textContent: pageData.textContent || null, // 保存文本内容
           tags: pageData.tags || [],
           isPrivate: false, // v2 doesn't have this field
           isDeleted: false,
-          createdByUser: pageData.createdByUser,
           parentUrl: pageData.parentUrl,
           thumbnailUrl: pageData.thumbnailUrl,
           lastSyncedAt: new Date(),
-          lastRevisionCount: pageData.revisionCount || 0
+          lastRevisionCount: pageData.revisionCount || 0,
+          // 创建信息：仅在新页面时设置，更新时保留原值
+          ...(activePage ? {} : {
+            createdAt: pageData.createdAt ? new Date(pageData.createdAt) : null,
+            createdByUser: pageData.createdByUser,
+            createdByWikidotId: pageData.createdByWikidotId,
+            instanceCreatedAt: new Date()
+          })
         };
         
-        if (existingPage) {
-          // 检查是否需要更新
-          const needsUpdate = this.checkPageNeedsUpdate(existingPage, pageRecord);
+        if (activePage) {
+          // 存在活跃页面，检查是否需要更新
+          const needsUpdate = this.checkPageNeedsUpdate(activePage, pageRecord);
           
           if (needsUpdate) {
+            // 更新时仅修改可变字段，保留创建信息
+            const updateData = {
+              title: pageRecord.title,
+              category: pageRecord.category,
+              rating: pageRecord.rating,
+              voteCount: pageRecord.voteCount,
+              commentCount: pageRecord.commentCount,
+              revisionCount: pageRecord.revisionCount,
+              source: pageRecord.source,
+              textContent: pageRecord.textContent,
+              tags: pageRecord.tags,
+              parentUrl: pageRecord.parentUrl,
+              thumbnailUrl: pageRecord.thumbnailUrl,
+              lastSyncedAt: pageRecord.lastSyncedAt,
+              lastRevisionCount: pageRecord.lastRevisionCount,
+              // 保留原有的创建信息，不覆盖
+              // createdAt, createdByUser, createdByWikidotId, instanceCreatedAt 等字段不更新
+            };
+            
             await this.prisma.page.update({
-              where: { url: existingPage.url },
-              data: pageRecord
+              where: { id: activePage.id },
+              data: updateData
             });
             
             // 创建页面历史版本记录
-            await this.createPageHistory(existingPage.url, pageRecord, 'updated');
+            await this.createPageHistory(activePage.url, pageRecord, 'updated');
             this.stats.pagesUpdated++;
           }
+        } else if (deletedPage) {
+          // URL复用情况：存在已删除页面，需要复活并保留删除历史
+          console.log(`🔄 检测到URL复用: ${pageData.url} (之前被删除于 ${deletedPage.deletedAt})`);
+          
+          // 先为已删除状态创建历史记录（如果还没有）
+          const hasDeletedHistory = await this.prisma.pageHistory.findFirst({
+            where: { 
+              pageUrl: deletedPage.url,
+              changeType: 'deleted' 
+            }
+          });
+          
+          if (!hasDeletedHistory) {
+            await this.createPageHistory(deletedPage.url, deletedPage, 'deleted');
+          }
+          
+          // 复活页面并更新为新数据
+          await this.prisma.page.update({
+            where: { url: deletedPage.url },
+            data: {
+              ...pageRecord,
+              // 保留一些删除相关的历史信息到备注字段或新字段
+              deletionReason: `复用URL - 原删除原因: ${deletedPage.deletionReason}`
+            }
+          });
+          
+          // 创建复活记录
+          await this.createPageHistory(deletedPage.url, pageRecord, 'recreated');
+          this.stats.pagesRecreated = (this.stats.pagesRecreated || 0) + 1;
+          
         } else {
-          // 创建新页面
+          // 创建全新页面
           await this.prisma.page.create({
             data: pageRecord
           });
@@ -251,7 +348,7 @@ class DatabaseSync {
       }
     }
     
-    console.log(`✅ 页面同步完成: 创建 ${this.stats.pagesCreated}, 更新 ${this.stats.pagesUpdated}`);
+    console.log(`✅ 页面同步完成: 创建 ${this.stats.pagesCreated}, 更新 ${this.stats.pagesUpdated}, 复活 ${this.stats.pagesRecreated}`);
   }
 
   async syncUsers(users) {
@@ -259,24 +356,35 @@ class DatabaseSync {
     
     for (const userData of users) {
       try {
-        // 检查用户是否存在（使用displayName作为主键，因为schema中name是主键）
+        // 使用 wikidotId 作为唯一主键，避免同名用户互相覆盖
+        if (!userData.wikidotId) {
+          console.log(`⚠️  跳过无 wikidotId 的用户: ${userData.displayName}`);
+          continue;
+        }
+        
         let user = await this.prisma.user.findUnique({
-          where: { name: userData.displayName }
+          where: { wikidotId: String(userData.wikidotId) }
         });
         
         const userRecord = {
-          name: userData.displayName,
-          displayName: userData.displayName,
-          wikidotId: userData.wikidotId ? parseInt(userData.wikidotId) : null,
+          name: userData.displayName, // 保持 schema 兼容性
+          displayName: userData.displayName, // 可变显示名
+          wikidotId: String(userData.wikidotId), // 真正的唯一主键
           unixName: userData.unixName || null,
           // 其他统计字段将在updateUserStatistics中计算
           lastSyncedAt: new Date()
         };
         
         if (user) {
+          // 更新时允许 displayName 变更，但保持 wikidotId 不变
           await this.prisma.user.update({
-            where: { name: user.name },
-            data: userRecord
+            where: { wikidotId: user.wikidotId },
+            data: {
+              displayName: userRecord.displayName,
+              name: userRecord.name, // 同步更新 name 字段
+              unixName: userRecord.unixName,
+              lastSyncedAt: userRecord.lastSyncedAt
+            }
           });
         } else {
           await this.prisma.user.create({
@@ -301,16 +409,142 @@ class DatabaseSync {
   }
 
   async syncVoteRecords(voteRecords) {
-    console.log('🗳️  同步投票记录...');
+    console.log('🗳️  智能投票记录同步...');
     
-    for (const voteData of voteRecords) {
+    if (!voteRecords || voteRecords.length === 0) {
+      console.log('   无投票记录需要同步');
+      return;
+    }
+    
+    console.log(`   📊 待处理投票记录: ${voteRecords.length.toLocaleString()} 条`);
+    
+    // 获取数据库中最新的投票时间戳，实现增量同步
+    const latestVoteInDb = await this.prisma.voteRecord.findFirst({
+      orderBy: { timestamp: 'desc' },
+      select: { timestamp: true }
+    });
+    
+    let filteredVotes = voteRecords;
+    if (latestVoteInDb && this.config.enableIncrementalUpdate) {
+      const latestTimestamp = latestVoteInDb.timestamp;
+      console.log(`   📅 数据库最新投票时间: ${latestTimestamp.toLocaleString()}`);
+      
+      // 只处理比数据库最新记录更新的投票
+      filteredVotes = voteRecords.filter(vote => {
+        const voteTimestamp = new Date(vote.timestamp);
+        return voteTimestamp > latestTimestamp;
+      });
+      
+      console.log(`   🔄 增量模式: 需要同步 ${filteredVotes.length.toLocaleString()} 条新投票记录`);
+      console.log(`   ⚡ 跳过了 ${(voteRecords.length - filteredVotes.length).toLocaleString()} 条已存在的记录`);
+      
+      if (filteredVotes.length === 0) {
+        console.log('   ✅ 所有投票记录都是最新的，无需同步');
+        return;
+      }
+    } else {
+      console.log('   📦 完整模式: 将检查所有投票记录');
+    }
+    
+    // 批量处理投票记录
+    await this.batchSyncVoteRecords(filteredVotes);
+  }
+  
+  async batchSyncVoteRecords(voteRecords) {
+    const batchSize = 1000; // 每批处理1000条记录
+    const totalBatches = Math.ceil(voteRecords.length / batchSize);
+    
+    console.log(`   🔄 开始批量同步: ${totalBatches} 个批次，每批 ${batchSize} 条`);
+    
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      const startIdx = batchIndex * batchSize;
+      const endIdx = Math.min(startIdx + batchSize, voteRecords.length);
+      const batch = voteRecords.slice(startIdx, endIdx);
+      
+      console.log(`     批次 ${batchIndex + 1}/${totalBatches}: 处理 ${batch.length} 条记录...`);
+      
+      try {
+        // 批量检查现有记录
+        const existingVotes = await this.batchCheckExistingVotes(batch);
+        const existingVoteKeys = new Set(existingVotes.map(vote => {
+          // 统一到秒级 Unix 时间戳
+          const ts = Math.floor(new Date(vote.timestamp).getTime() / 1000);
+          return `${vote.pageUrl}|${vote.userWikidotId}|${ts}`;
+        }));
+        
+        // 过滤出需要插入的新记录
+        const newVotes = batch.filter(voteData => {
+          // 统一到秒级 Unix 时间戳，避免毫秒精度差异导致的重复插入
+          const ts = Math.floor(new Date(voteData.timestamp).getTime() / 1000);
+          const key = `${voteData.pageUrl}|${voteData.voterWikidotId}|${ts}`;
+          return !existingVoteKeys.has(key);
+        });
+        
+        if (newVotes.length > 0) {
+          // 批量插入新记录
+          await this.batchInsertVoteRecords(newVotes);
+          console.log(`       ✅ 插入了 ${newVotes.length} 条新记录`);
+        } else {
+          console.log(`       ⚪ 该批次所有记录都已存在`);
+        }
+        
+        this.stats.votesProcessed += batch.length;
+        
+      } catch (error) {
+        console.error(`❌ 批次 ${batchIndex + 1} 处理失败: ${error.message}`);
+        // 回退到逐条处理
+        await this.fallbackSyncVoteRecords(batch);
+      }
+    }
+    
+    console.log(`   ✅ 投票记录同步完成: 处理了 ${this.stats.votesProcessed.toLocaleString()} 条记录`);
+  }
+  
+  async batchCheckExistingVotes(batch) {
+    const conditions = batch.map(vote => ({
+      pageUrl: vote.pageUrl,
+      userWikidotId: String(vote.voterWikidotId),
+      timestamp: new Date(vote.timestamp)
+    }));
+    
+    return await this.prisma.voteRecord.findMany({
+      where: {
+        OR: conditions
+      },
+      select: {
+        pageUrl: true,
+        userWikidotId: true,
+        timestamp: true
+      }
+    });
+  }
+  
+  async batchInsertVoteRecords(voteRecords) {
+    const data = voteRecords.map(voteData => ({
+      pageUrl: voteData.pageUrl,
+      userWikidotId: String(voteData.voterWikidotId),
+      userName: voteData.voterName || `User_${voteData.voterWikidotId}`,
+      timestamp: new Date(voteData.timestamp),
+      direction: voteData.direction
+    }));
+    
+    await this.prisma.voteRecord.createMany({
+      data: data,
+      skipDuplicates: true // 跳过重复记录
+    });
+  }
+  
+  async fallbackSyncVoteRecords(batch) {
+    console.log(`       🔄 回退到逐条处理模式...`);
+    
+    for (const voteData of batch) {
       try {
         // 检查投票记录是否已存在
         const existingVote = await this.prisma.voteRecord.findUnique({
           where: {
             pageUrl_userWikidotId_timestamp: {
               pageUrl: voteData.pageUrl,
-              userWikidotId: parseInt(voteData.voterWikidotId),
+              userWikidotId: String(voteData.voterWikidotId),
               timestamp: new Date(voteData.timestamp)
             }
           }
@@ -320,18 +554,12 @@ class DatabaseSync {
           await this.prisma.voteRecord.create({
             data: {
               pageUrl: voteData.pageUrl,
-              userWikidotId: parseInt(voteData.voterWikidotId),
-              userName: voteData.voterName,
+              userWikidotId: String(voteData.voterWikidotId),
+              userName: voteData.voterName || `User_${voteData.voterWikidotId}`,
               timestamp: new Date(voteData.timestamp),
               direction: voteData.direction
             }
           });
-        }
-        
-        this.stats.votesProcessed++;
-        
-        if (this.stats.votesProcessed % 10000 === 0) {
-          console.log(`   已处理 ${this.stats.votesProcessed} 投票记录...`);
         }
         
       } catch (error) {
@@ -367,10 +595,10 @@ class DatabaseSync {
             data: {
               pageUrl: revisionData.pageUrl,
               revisionIndex: parseInt(revisionData.revisionId),
-              wikidotId: parseInt(revisionData.revisionId),
+              wikidotId: revisionData.revisionId,
               timestamp: new Date(revisionData.timestamp),
               type: 'edit',
-              userWikidotId: revisionData.userId ? parseInt(revisionData.userId) : null,
+              userWikidotId: revisionData.userId ? String(revisionData.userId) : null,
               userName: revisionData.userName,
               comment: revisionData.comment
             }
@@ -397,12 +625,12 @@ class DatabaseSync {
     
     for (const attrData of attributions) {
       try {
-        // 检查贡献记录是否已存在
+        // 检查贡献记录是否已存在（使用实际的唯一约束：pageUrl + userName + attributionType）
         const existingAttribution = await this.prisma.attribution.findUnique({
           where: {
             pageUrl_userName_attributionType: {
               pageUrl: attrData.pageUrl,
-              userName: attrData.userName,
+              userName: attrData.userName || 'Unknown',
               attributionType: attrData.attributionType
             }
           }
@@ -412,8 +640,28 @@ class DatabaseSync {
           await this.prisma.attribution.create({
             data: {
               pageUrl: attrData.pageUrl,
-              userName: attrData.userName,
+              userName: attrData.userName || 'Unknown',
+              userId: attrData.userId,
+              userUnixName: attrData.userUnixName,
               attributionType: attrData.attributionType,
+              date: attrData.date ? new Date(attrData.date) : null,
+              orderIndex: attrData.order || 0,
+              isCurrent: true
+            }
+          });
+        } else {
+          // 更新现有记录以确保数据最新（使用复合主键）
+          await this.prisma.attribution.update({
+            where: {
+              pageUrl_userName_attributionType: {
+                pageUrl: attrData.pageUrl,
+                userName: attrData.userName || 'Unknown',
+                attributionType: attrData.attributionType
+              }
+            },
+            data: {
+              userId: attrData.userId,
+              userUnixName: attrData.userUnixName,
               date: attrData.date ? new Date(attrData.date) : null,
               orderIndex: attrData.order || 0,
               isCurrent: true
@@ -527,16 +775,31 @@ class DatabaseSync {
 
   async createPageHistory(pageUrl, pageData, changeType) {
     try {
+      // 获取页面ID
+      const page = await this.prisma.page.findFirst({
+        where: { 
+          url: pageUrl,
+          instanceDeletedAt: null
+        },
+        select: { id: true },
+        orderBy: { instanceVersion: 'desc' }
+      });
+      
+      if (!page) {
+        console.warn(`⚠️ 页面不存在，无法创建历史记录: ${pageUrl}`);
+        return;
+      }
+      
       // 获取当前版本号
       const lastVersion = await this.prisma.pageHistory.findFirst({
-        where: { pageUrl: pageUrl },
+        where: { pageId: page.id },
         orderBy: { versionNumber: 'desc' }
       });
       
       const versionNumber = (lastVersion?.versionNumber || 0) + 1;
       
       const historyData = {
-        pageUrl: pageUrl,
+        pageId: page.id,
         versionNumber: versionNumber,
         capturedAt: new Date(),
         changeType: changeType,
@@ -595,7 +858,7 @@ class DatabaseSync {
         COUNT(*) as page_count,
         SUM(p.rating) as total_rating,
         AVG(p.rating::float) as mean_rating
-      FROM pages p 
+      FROM "Page" p 
       WHERE p.created_by_user IS NOT NULL 
         AND p.is_deleted = false  -- ✅ 关键：排除已删除页面
       GROUP BY p.created_by_user
@@ -693,6 +956,73 @@ class DatabaseSync {
     
     console.log(`✅ 用户排名更新完成`);
   }
+  
+  async analyzeUserVoteRelations() {
+    console.log('🤝 分析用户投票关系...');
+    
+    try {
+      const voteRelationAnalyzer = new VoteRelationAnalyzer(this.prisma);
+      await voteRelationAnalyzer.analyzeAndUpdateVoteRelations();
+      
+      console.log(`✅ 用户投票关系分析完成`);
+    } catch (error) {
+      console.error(`❌ 投票关系分析失败: ${error.message}`);
+      this.stats.errors.push({
+        type: 'vote_relation_analysis_error',
+        error: error.message,
+        timestamp: new Date()
+      });
+      // 不抛出错误，允许同步继续完成
+    }
+  }
+
+  async analyzeUserData() {
+    console.log('👤 分析用户数据...');
+    
+    try {
+      const userAnalyzer = new UserAnalyzer(this.prisma);
+      
+      // 确保数据库表包含必要字段
+      await userAnalyzer.ensureUserTableFields();
+      
+      // 运行用户数据分析
+      await userAnalyzer.analyzeAndUpdateUserData();
+      
+      console.log(`✅ 用户数据分析完成`);
+    } catch (error) {
+      console.error(`❌ 用户数据分析失败: ${error.message}`);
+      this.stats.errors.push({
+        type: 'user_data_analysis_error',
+        error: error.message,
+        timestamp: new Date()
+      });
+      // 不抛出错误，允许同步继续完成
+    }
+  }
+
+  async analyzePageData() {
+    console.log('📄 分析页面数据...');
+    
+    try {
+      const pageAnalyzer = new PageAnalyzer(this.prisma);
+      
+      // 确保数据库表包含必要字段
+      await pageAnalyzer.ensurePageTableFields();
+      
+      // 运行页面数据分析
+      await pageAnalyzer.analyzeAndUpdatePageData();
+      
+      console.log(`✅ 页面数据分析完成`);
+    } catch (error) {
+      console.error(`❌ 页面数据分析失败: ${error.message}`);
+      this.stats.errors.push({
+        type: 'page_data_analysis_error',
+        error: error.message,
+        timestamp: new Date()
+      });
+      // 不抛出错误，允许同步继续完成
+    }
+  }
 
   async generateSyncReport() {
     const duration = (this.stats.endTime - this.stats.startTime) / 1000;
@@ -700,7 +1030,7 @@ class DatabaseSync {
     console.log('\n🎉 API v2 数据库同步完成！');
     console.log('='.repeat(80));
     console.log(`⏱️  总耗时: ${this.formatDuration(duration)}`);
-    console.log(`📄 页面处理: ${this.stats.pagesProcessed} (创建: ${this.stats.pagesCreated}, 更新: ${this.stats.pagesUpdated}, 删除: ${this.stats.pagesDeleted})`);
+    console.log(`📄 页面处理: ${this.stats.pagesProcessed} (创建: ${this.stats.pagesCreated}, 更新: ${this.stats.pagesUpdated}, 复活: ${this.stats.pagesRecreated}, 删除: ${this.stats.pagesDeleted})`);
     console.log(`👤 用户处理: ${this.stats.usersProcessed}`);
     console.log(`🗳️  投票记录: ${this.stats.votesProcessed}`);
     console.log(`📝 修订记录: ${this.stats.revisionsProcessed}`);
@@ -737,6 +1067,134 @@ class DatabaseSync {
     if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
     if (minutes > 0) return `${minutes}m ${secs}s`;
     return `${secs}s`;
+  }
+
+  /**
+   * 确保数据一致性和数据库扩展
+   */
+  async ensureDataConsistency() {
+    console.log('🔧 检查数据一致性和数据库扩展...');
+    
+    try {
+      // 1. 确保PostgreSQL扩展存在
+      await this.ensurePostgreSQLExtensions();
+      
+      // 2. 检查和修复外键一致性
+      await this.checkForeignKeyConsistency();
+      
+      // 3. 添加缺失的索引
+      await this.ensureOptimalIndexes();
+      
+      console.log('✅ 数据一致性检查完成');
+      
+    } catch (error) {
+      console.error(`⚠️  数据一致性检查警告: ${error.message}`);
+      // 不中断同步，仅记录警告
+    }
+  }
+  
+  /**
+   * 确保PostgreSQL扩展存在
+   */
+  async ensurePostgreSQLExtensions() {
+    const extensions = ['pgcrypto', 'uuid-ossp'];
+    
+    for (const ext of extensions) {
+      try {
+        await this.prisma.$executeRawUnsafe(`CREATE EXTENSION IF NOT EXISTS "${ext}"`);
+        console.log(`   ✅ PostgreSQL扩展 ${ext} 已确保`);
+      } catch (error) {
+        console.log(`   ⚠️  PostgreSQL扩展 ${ext} 创建失败: ${error.message}`);
+      }
+    }
+  }
+  
+  /**
+   * 检查外键一致性
+   */
+  async checkForeignKeyConsistency() {
+    console.log('   🔍 检查外键一致性...');
+    
+    try {
+      // 检查孤立的投票记录（引用不存在的页面）
+      const orphanedVotes = await this.prisma.$queryRawUnsafe(`
+        SELECT COUNT(*) as count FROM "VoteRecord" v
+        LEFT JOIN "Page" p ON v."pageId" = p.id
+        WHERE p.id IS NULL
+      `);
+      
+      if (orphanedVotes[0]?.count > 0) {
+        console.log(`   ⚠️  发现 ${orphanedVotes[0].count} 条孤立投票记录`);
+        
+        // 删除孤立的投票记录
+        await this.prisma.$executeRawUnsafe(`
+          DELETE FROM "VoteRecord" v
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "Page" p WHERE p.id = v."pageId"
+          )
+        `);
+        
+        console.log(`   🧹 已清理孤立投票记录`);
+      }
+      
+      // 检查孤立的归属记录
+      const orphanedAttributions = await this.prisma.$queryRawUnsafe(`
+        SELECT COUNT(*) as count FROM "Attribution" a
+        LEFT JOIN "Page" p ON a."pageId" = p.id
+        WHERE p.id IS NULL
+      `);
+      
+      if (orphanedAttributions[0]?.count > 0) {
+        console.log(`   ⚠️  发现 ${orphanedAttributions[0].count} 条孤立归属记录`);
+        
+        await this.prisma.$executeRawUnsafe(`
+          DELETE FROM "Attribution" a
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "Page" p WHERE p.id = a."pageId"
+          )
+        `);
+        
+        console.log(`   🧹 已清理孤立归属记录`);
+      }
+      
+    } catch (error) {
+      console.log(`   ⚠️  外键一致性检查失败: ${error.message}`);
+    }
+  }
+  
+  /**
+   * 确保最优索引存在
+   */
+  async ensureOptimalIndexes() {
+    console.log('   📊 确保最优索引...');
+    
+    const indexes = [
+      {
+        name: 'idx_pages_url_is_deleted',
+        sql: 'CREATE INDEX IF NOT EXISTS idx_pages_url_is_deleted ON "Page" (url, "isDeleted")'
+      },
+      {
+        name: 'idx_pages_last_synced',
+        sql: 'CREATE INDEX IF NOT EXISTS idx_pages_last_synced ON "Page" ("lastSyncedAt")'
+      },
+      {
+        name: 'idx_vote_records_page_user',
+        sql: 'CREATE INDEX IF NOT EXISTS idx_vote_records_page_user ON "VoteRecord" ("pageId", "userWikidotId")'
+      },
+      {
+        name: 'idx_users_wikidot_id',
+        sql: 'CREATE INDEX IF NOT EXISTS idx_users_wikidot_id ON "User" ("wikidotId")'
+      }
+    ];
+    
+    for (const index of indexes) {
+      try {
+        await this.prisma.$executeRawUnsafe(index.sql);
+        console.log(`   ✅ 索引 ${index.name} 已确保`);
+      } catch (error) {
+        console.log(`   ⚠️  索引 ${index.name} 创建失败: ${error.message}`);
+      }
+    }
   }
 }
 

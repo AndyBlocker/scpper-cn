@@ -1,7 +1,27 @@
+/**
+ * 文件路径: src/analyze/vote-analyzer.js
+ * 功能概述: SCPPER-CN 投票数据分析器核心模块
+ * 
+ * 主要功能:
+ * - 专门处理 fuzzyVoteRecords 投票数据的分析和统计
+ * - 支持多种投票关系分析：谁给我投票、我给谁投票、双向投票
+ * - 投票网络分析和用户影响力计算
+ * - 详细的投票统计报告生成
+ * - 支持命令行参数的灵活分析模式
+ * 
+ * 分析类型:
+ * - who-voted-me: 分析特定作者的投票者
+ * - i-voted-whom: 分析特定用户的投票历史
+ * - mutual-voting: 发现相互投票的用户对
+ * - comprehensive: 生成完整的投票网络报告
+ * 
+ * 使用方式:
+ * - npm run analyze <data-file> [analysis-type] [user-name]
+ * - node src/analyze/vote-analyzer.js <data-file> [options]
+ */
+
 import fs from 'fs';
 import path from 'path';
-
-// SCPPER-CN 投票数据分析器 - 专门处理fuzzyVoteRecords数据
 class VoteAnalyzer {
   constructor(dataFilePath) {
     this.dataFilePath = dataFilePath;
