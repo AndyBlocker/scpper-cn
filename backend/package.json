@@ -1,37 +1,15 @@
 {
   "name": "scpper-cn-backend",
-  "version": "1.0.0",
-  "description": "SCPPER-CN backend service with PostgreSQL storage",
-  "main": "src/index.js",
+  "version": "2.0.0",
+  "description": "SCPPER-CN backend service - Core components only",
+  "main": "src/core/example-usage.js",
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
-    "db:setup": "docker-compose up -d postgres redis",
-    "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio",
-    "main": "node src/main.js",
-    "sync": "node src/sync/production-sync.js",
-    "votes": "node src/sync/production-sync.js --votes",
-    "vote-only": "node src/sync/production-sync.js --vote-only",
-    "database": "node src/main.js database",
-    "update": "node src/main.js update",
-    "analyze": "node src/analyze/vote-analyzer.js",
-    "schema": "node src/sync/schema-explorer.js",
-    "doc-explore": "node src/sync/graphql-doc-explorer.js",
-    "full": "node src/main.js full",
-    "query": "node query-page-user.js"
+    "start": "node src/index.js",
+    "example": "node src/core/example-usage.js",
+    "test": "node src/core/example-usage.js"
   },
   "dependencies": {
-    "@prisma/client": "^5.7.0",
-    "dotenv": "^16.0.3",
-    "fastify": "^4.24.0",
-    "graphql-request": "^6.1.0",
-    "p-limit": "^6.2.0",
-    "pg": "^8.11.0",
-    "redis": "^4.6.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "prisma": "^5.7.0"
+    "graphql-request": "^6.1.0"
   }
 }
