@@ -3,18 +3,22 @@ import { CoreQueries } from './CoreQueries.js';
 const cq = new CoreQueries();
 const MAX_FIRST = 100;
 
-export function buildAliasQuery(pages) {
+export function buildAliasQuery(pages, options = {}) {
   const queries = [];
   const variables = {};
+  
+  // Phase B uses conservative limits to match actual processing
+  const revisionLimit = options.revisionLimit ?? MAX_FIRST;
+  const voteLimit = options.voteLimit ?? MAX_FIRST;
 
   pages.forEach((page, idx) => {
     const alias = `p${idx}`;
     const varUrl = `url${idx}`;
     variables[varUrl] = page.url || page.wikidotInfo?.url;
 
-    // 根据实际数量动态设置first参数，避免浪费
-    const revFirst = Math.min(page.revisionCount ?? 0, MAX_FIRST);
-    const voteFirst = Math.min(page.voteCount ?? 0, MAX_FIRST);
+    // 根据实际数量和限制动态设置first参数，避免浪费
+    const revFirst = Math.min(page.revisionCount ?? 0, revisionLimit);
+    const voteFirst = Math.min(page.voteCount ?? 0, voteLimit);
 
     // 只有在需要的时候才包含revisions和votes查询
     const revPart = revFirst > 0 ? 

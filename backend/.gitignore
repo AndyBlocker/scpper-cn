@@ -49,3 +49,44 @@ Thumbs.db
 # Backup files
 *.backup
 *.bak
+
+# Temporary analysis and debug files
+analyze-*.js
+analyze_*.js
+check-*.js
+check_*.js
+debug-*.js
+debug-*.ts
+test-*.js
+test-*.ts
+compare-*.js
+backup-*.js
+cleanup-*.js
+detailed-*.js
+deep-*.js
+enhanced-*.js
+final-*.js
+find-*.js
+investigate-*.js
+restore-*.js
+sample-*.js
+staging-*.js
+validate-*.js
+verify-*.js
+
+# Temporary export files
+*.txt
+scpper-cn-backend-export-*.txt
+database-export-*.json
+debug-response-*.json
+
+# Cache directories
+.cache/
+
+# Temporary documentation
+DATABASE_DOCUMENTATION.md
+QUERY_FEATURES.md
+RATING_SYSTEM_IMPLEMENTATION_SUMMARY.md
+UPDATE.md
+USAGE.md
+USER_RATING_SYSTEM_PROPOSAL.md

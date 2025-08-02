@@ -2,7 +2,7 @@
 import { GraphQLClient } from '../client/GraphQLClient.js';
 import { CoreQueries } from '../graphql/CoreQueries.js';
 import { PointEstimator } from '../graphql/PointEstimator.js';
-import { DataStore } from '../store/DataStore.js';
+import { DatabaseStore } from '../store/DatabaseStore.js';
 import { Logger } from '../../utils/Logger.js';
 
 const cq = new CoreQueries();
@@ -21,28 +21,28 @@ const TOTAL_QUERY = /* GraphQL */`
 export class PhaseAProcessor {
   constructor() {
     this.client = new GraphQLClient();
-    this.store = new DataStore();
+    this.store = new DatabaseStore();
   }
 
-  async run() {
-    Logger.info('=== Phase A: Basic Page Scanning ===');
+  async runComplete() {
+    Logger.info('=== Phase A: Complete Page Scanning (New Architecture) ===');
     
     // 获取总页面数量
     Logger.info('Fetching total page count...');
     const totalResult = await this.client.request(TOTAL_QUERY);
     const total = totalResult.aggregatePages._count;
-    Logger.info(`Total pages in database: ${total}`);
+    Logger.info(`Total pages in remote: ${total}`);
     
-    // 获取已处理的页面
-    const processed = new Set((await this.store.loadProgress('phase1')).map(p => p.url));
-    Logger.info(`Previously processed pages: ${processed.size}`);
+    // Clear staging table to start fresh
+    Logger.info('🧹 Clearing staging table...');
+    await this.store.prisma.pageMetaStaging.deleteMany({});
     
     let after = null;
-    let processedCount = processed.size;
-    const initialProcessed = processed.size;
+    let processedCount = 0;
     const startTime = Date.now();
     let batchCount = 0;
-    let overall_processed = 0;
+    
+    Logger.info('🔄 Starting complete scan (no skipping)...');
     
     while (true) {
       const vars = cq.buildPhaseAVariables({ first: PHASE_A_BATCHSIZE, after });
@@ -54,17 +54,10 @@ export class PhaseAProcessor {
       if (edges.length === 0) break;
       
       batchCount++;
-      let newInBatch = 0;
+      let totalCostInBatch = 0;
 
-      let tmp = 0;
-      let cnt = 0;
+      // Process all pages in this batch (no skipping)
       for (const { node } of edges) {
-        cnt++;
-        if (processed.has(node.url))
-        {
-          tmp += node.estimatedCost;
-          continue;
-        }
         // 估算完整采集 cost，使用更准确的参数
         const estCost = PointEstimator.estimatePageCost(
           node,
@@ -73,29 +66,63 @@ export class PhaseAProcessor {
             voteLimit: Math.max(node.voteCount ?? 0, 20) 
           }
         );
-        node.estimatedCost = estCost;
-        tmp += estCost;
-        await this.store.append('phase1', node);
-        processed.add(node.url);
+        
+        // Write to staging table instead of cache file
+        await this.store.upsertPageMetaStaging({
+          url: node.url,
+          wikidotId: node.wikidotId ? parseInt(node.wikidotId) : null,
+          title: node.title,
+          rating: node.rating !== null && node.rating !== undefined ? parseInt(node.rating) : null,
+          voteCount: node.voteCount !== null && node.voteCount !== undefined ? parseInt(node.voteCount) : null,
+          revisionCount: node.revisionCount !== null && node.revisionCount !== undefined ? parseInt(node.revisionCount) : null,
+          tags: node.tags || [],
+          isDeleted: node.isDeleted || false,
+          estimatedCost: estCost,
+          // New fields for enhanced dirty detection
+          category: node.category || null,
+          parentUrl: node.parent?.url || null,
+          childCount: node.children ? node.children.length : 0,
+          attributionCount: node.attributions ? node.attributions.length : 0, // Count attributions from Phase A data
+          voteUp: null, // Will be populated by Wilson score calculation if available
+          voteDown: null, // Will be populated by Wilson score calculation if available
+        });
+        
+        totalCostInBatch += estCost;
         processedCount++;
-        newInBatch++;
       }
-      overall_processed += cnt;
-      // 每批次日志
-      // Logger.info(tmp)
-      // Logger.info(cnt)
-      Logger.info(`Batch ${batchCount}: processed ${newInBatch} new pages (${overall_processed}/${total}), avg cost: ${(tmp / cnt).toFixed(2)} pts`);
+      
+      const avgCostInBatch = edges.length > 0 ? (totalCostInBatch / edges.length).toFixed(2) : '0';
+      const firstUrl = edges.length > 0 ? edges[0].node.url : 'N/A';
+      Logger.info(`Batch ${batchCount}: processed ${edges.length} pages (${processedCount}/${total}), avg cost: ${avgCostInBatch} pts`);
+      Logger.info(`  First URL: ${firstUrl}`);
 
       if (!res.pages.pageInfo.hasNextPage) break;
       after = res.pages.pageInfo.endCursor;
-      // break
     }
     
     const elapsedTime = (Date.now() - startTime) / 1000;
-    const newPagesProcessed = processedCount - initialProcessed;
-    const speed = elapsedTime > 0 && newPagesProcessed > 0 ? 
-      (newPagesProcessed / elapsedTime).toFixed(1) + ' pages/s' : 'N/A';
+    const speed = elapsedTime > 0 && processedCount > 0 ? 
+      (processedCount / elapsedTime).toFixed(1) + ' pages/s' : 'N/A';
     
-    Logger.info(`Phase A completed: ${processedCount} pages total, ${newPagesProcessed} new pages processed in ${elapsedTime.toFixed(1)}s (${speed})`);
+    Logger.info(`✅ Phase A completed: ${processedCount} pages scanned in ${elapsedTime.toFixed(1)}s (${speed})`);
+    
+    // Now build the dirty queue
+    Logger.info('🔍 Building dirty page queue...');
+    const queueStats = await this.store.buildDirtyQueue();
+    
+    // Cleanup old staging data
+    await this.store.cleanupStagingData(24);
+    
+    return {
+      totalScanned: processedCount,
+      elapsedTime,
+      speed,
+      queueStats,
+    };
+  }
+
+  // Legacy method for backward compatibility
+  async run() {
+    return await this.runComplete();
   }
 }

@@ -9,8 +9,34 @@ function log(level, prefix, msg) {
 }
 
 export const Logger = {
-  debug: (msg) => log('DEBUG', '⇢', msg),
-  info:  (msg) => log('INFO',  'ℹ︎', msg),
-  warn:  (msg) => log('WARN',  '⚠︎', msg),
-  error: (err) => log('ERROR', '✖', err instanceof Error ? err.stack : err)
+  debug: (msg, extra) => {
+    if (extra) {
+      log('DEBUG', '⇢', `${msg} ${JSON.stringify(extra, null, 2)}`);
+    } else {
+      log('DEBUG', '⇢', msg);
+    }
+  },
+  info:  (msg, extra) => {
+    if (extra) {
+      log('INFO', 'ℹ︎', `${msg} ${JSON.stringify(extra, null, 2)}`);
+    } else {
+      log('INFO', 'ℹ︎', msg);
+    }
+  },
+  warn:  (msg, extra) => {
+    if (extra) {
+      log('WARN', '⚠︎', `${msg} ${JSON.stringify(extra, null, 2)}`);
+    } else {
+      log('WARN', '⚠︎', msg);
+    }
+  },
+  error: (msg, extra) => {
+    if (extra instanceof Error) {
+      log('ERROR', '✖', `${msg}\n${extra.stack || extra.message}`);
+    } else if (extra) {
+      log('ERROR', '✖', `${msg}\n${JSON.stringify(extra, null, 2)}`);
+    } else {
+      log('ERROR', '✖', msg instanceof Error ? msg.stack : msg);
+    }
+  }
 };

@@ -3,7 +3,6 @@ import { GraphQLClient as GQLClient } from 'graphql-request';
 import { MAX_RETRY_ATTEMPTS } from '../../config/RateLimitConfig.js';
 import { BackoffManager } from '../scheduler/BackoffManager.js';
 import { Logger } from '../../utils/Logger.js';
-import { Progress } from '../../utils/Progress.js';
 
 
 export class GraphQLClient {
@@ -33,12 +32,23 @@ export class GraphQLClient {
   }
 
   _isRateLimited(err) {
-    // console.log(err.response.headers)
+    const h = err.response?.headers;
     return err.response?.status === 429 ||
-           (err.response?.headers && 'retry-after' in err.response.headers);
+           (h && (h['retry-after'] || (typeof h.get === 'function' && h.get('retry-after'))));
   }
 
   _getRetryAfter(err) {
-    return Number(err.response?.headers?.get('retry-after') ?? 60);
+    const h = err?.response?.headers;
+    if (!h) return 60;
+    
+    // Handle different header object types
+    if (typeof h.get === 'function') {
+      return Number(h.get('retry-after') ?? 60);
+    }
+    if (typeof h['retry-after'] !== 'undefined') {
+      return Number(h['retry-after']);
+    }
+    
+    return 60;
   }
 }

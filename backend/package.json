@@ -1,15 +1,31 @@
 {
   "name": "scpper-cn-backend",
   "version": "2.0.0",
-  "description": "SCPPER-CN backend service - Core components only",
-  "main": "src/core/example-usage.js",
+  "description": "SCPPER-CN backend service with Prisma database integration",
+  "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "example": "node src/core/example-usage.js",
-    "test": "node src/core/example-usage.js"
+    "dev": "node --import tsx/esm src/cli/index.ts",
+    "phase-a": "node --loader tsx/esm src/cli/sync.ts phase-a",
+    "phase-b": "node --loader tsx/esm src/cli/sync.ts phase-b", 
+    "phase-c": "node --loader tsx/esm src/cli/sync.ts phase-c",
+    "analyze": "node --loader tsx/esm src/cli/sync.ts analyze",
+    "query": "node --loader tsx/esm src/cli/query.ts",
+    "test": "node src/core/example-usage.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset"
   },
   "dependencies": {
-    "graphql-request": "^6.1.0"
+    "graphql-request": "^6.1.0",
+    "@prisma/client": "^5.20.0",
+    "tsx": "^4.19.1"
+  },
+  "devDependencies": {
+    "prisma": "^5.20.0",
+    "@types/node": "^22.5.4",
+    "typescript": "^5.6.2"
   }
 }
