@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { calculateUserRatings } from './UserRatingJob.js';
+import { calculateSiteStatistics } from './SiteStatsJob.js';
 
 export async function analyze({ since }: { since?: Date } = {}) {
   const prisma = new PrismaClient();
@@ -113,7 +114,113 @@ export async function analyze({ since }: { since?: Date } = {}) {
         "totalRating" = EXCLUDED."totalRating";
     `);
 
-    // Step 3: Update most common tags for users
+    // Step 3: Calculate and update user first activity timestamps with details
+    console.log('Calculating user first activity timestamps with detailed information...');
+    
+    // First, update just the timestamps and types (faster)
+    await prisma.$executeRawUnsafe(`
+      WITH user_first_activities AS (
+        SELECT 
+          u.id as "userId",
+          CASE 
+            WHEN LEAST(
+              COALESCE(first_vote.timestamp, '2099-01-01'::timestamp),
+              COALESCE(first_revision.timestamp, '2099-01-01'::timestamp),
+              COALESCE(first_attribution.date, '2099-01-01'::timestamp)
+            ) = COALESCE(first_vote.timestamp, '2099-01-01'::timestamp) 
+            AND first_vote.timestamp IS NOT NULL THEN 'VOTE'
+            WHEN LEAST(
+              COALESCE(first_vote.timestamp, '2099-01-01'::timestamp),
+              COALESCE(first_revision.timestamp, '2099-01-01'::timestamp),
+              COALESCE(first_attribution.date, '2099-01-01'::timestamp)
+            ) = COALESCE(first_revision.timestamp, '2099-01-01'::timestamp) 
+            AND first_revision.timestamp IS NOT NULL THEN 'REVISION'
+            WHEN LEAST(
+              COALESCE(first_vote.timestamp, '2099-01-01'::timestamp),
+              COALESCE(first_revision.timestamp, '2099-01-01'::timestamp),
+              COALESCE(first_attribution.date, '2099-01-01'::timestamp)
+            ) = COALESCE(first_attribution.date, '2099-01-01'::timestamp) 
+            AND first_attribution.date IS NOT NULL THEN 'ATTRIBUTION'
+            ELSE NULL
+          END as activity_type,
+          LEAST(
+            COALESCE(first_vote.timestamp, '2099-01-01'::timestamp),
+            COALESCE(first_revision.timestamp, '2099-01-01'::timestamp),
+            COALESCE(first_attribution.date, '2099-01-01'::timestamp)
+          ) as first_activity_at
+        FROM "User" u
+        LEFT JOIN (
+          SELECT "userId", MIN("timestamp") as timestamp
+          FROM "Vote" WHERE "userId" IS NOT NULL
+          GROUP BY "userId"
+        ) first_vote ON u.id = first_vote."userId"
+        LEFT JOIN (
+          SELECT "userId", MIN("timestamp") as timestamp  
+          FROM "Revision" WHERE "userId" IS NOT NULL
+          GROUP BY "userId"
+        ) first_revision ON u.id = first_revision."userId"
+        LEFT JOIN (
+          SELECT "userId", MIN("date") as date
+          FROM "Attribution" WHERE "userId" IS NOT NULL AND "date" IS NOT NULL
+          GROUP BY "userId"
+        ) first_attribution ON u.id = first_attribution."userId"
+        WHERE LEAST(
+          COALESCE(first_vote.timestamp, '2099-01-01'::timestamp),
+          COALESCE(first_revision.timestamp, '2099-01-01'::timestamp),
+          COALESCE(first_attribution.date, '2099-01-01'::timestamp)
+        ) < '2099-01-01'::timestamp
+      )
+      UPDATE "User" u
+      SET 
+        "firstActivityAt" = ufa.first_activity_at,
+        "firstActivityType" = ufa.activity_type
+      FROM user_first_activities ufa
+      WHERE u.id = ufa."userId";
+    `);
+
+    // Then update activity details for users who have activity types (batch processing)
+    console.log('Adding detailed activity descriptions...');
+    
+    // Update VOTE details
+    await prisma.$executeRawUnsafe(`
+      UPDATE "User" u
+      SET "firstActivityDetails" = '给页面 "' || COALESCE(pv.title, p.url, 'Unknown') || '" 投票'
+      FROM "Vote" v
+      INNER JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+      INNER JOIN "Page" p ON pv."pageId" = p.id
+      WHERE u."firstActivityType" = 'VOTE' 
+        AND v."userId" = u.id 
+        AND v."timestamp" = u."firstActivityAt"
+        AND u."firstActivityDetails" IS NULL;
+    `);
+
+    // Update REVISION details
+    await prisma.$executeRawUnsafe(`
+      UPDATE "User" u
+      SET "firstActivityDetails" = '修改了页面 "' || COALESCE(pv.title, p.url, 'Unknown') || '" (' || r.type || ')'
+      FROM "Revision" r
+      INNER JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+      INNER JOIN "Page" p ON pv."pageId" = p.id
+      WHERE u."firstActivityType" = 'REVISION' 
+        AND r."userId" = u.id 
+        AND r."timestamp" = u."firstActivityAt"
+        AND u."firstActivityDetails" IS NULL;
+    `);
+
+    // Update ATTRIBUTION details
+    await prisma.$executeRawUnsafe(`
+      UPDATE "User" u
+      SET "firstActivityDetails" = '创建/参与了页面 "' || COALESCE(pv.title, p.url, 'Unknown') || '" (' || a.type || ')'
+      FROM "Attribution" a
+      INNER JOIN "PageVersion" pv ON a."pageVerId" = pv.id
+      INNER JOIN "Page" p ON pv."pageId" = p.id
+      WHERE u."firstActivityType" = 'ATTRIBUTION' 
+        AND a."userId" = u.id 
+        AND a."date" = u."firstActivityAt"
+        AND u."firstActivityDetails" IS NULL;
+    `);
+
+    // Step 4: Update most common tags for users
     console.log('Updating user favorite tags...');
     await prisma.$executeRawUnsafe(`
       WITH user_tags AS (
@@ -139,7 +246,7 @@ export async function analyze({ since }: { since?: Date } = {}) {
       WHERE us."userId" = uft."userId";
     `);
 
-    // Step 4: Sync PageVersion counts
+    // Step 5: Sync PageVersion counts
     // NOTE: Disabled to prevent dirty queue false positives
     // The voteCount/revisionCount fields are used by buildDirtyQueue for change detection
     // Updating them here causes mismatch with API counts, leading to unnecessary dirty marking
@@ -180,9 +287,17 @@ export async function analyze({ since }: { since?: Date } = {}) {
         (SELECT COUNT(*) FROM "UserStats") as analyzed_users
     `;
 
-    // Step 5: Calculate user ratings and rankings
+    // Step 6: Calculate user vote pattern analysis
+    console.log('Calculating user vote patterns...');
+    await calculateUserVotePatterns(prisma);
+
+    // Step 7: Calculate user ratings and rankings
     console.log('Calculating user ratings and rankings...');
     await calculateUserRatings(prisma);
+
+    // Step 8: Calculate site statistics
+    console.log('Calculating site-wide statistics...');
+    await calculateSiteStatistics(prisma);
 
     console.log('Analysis completed successfully!');
     console.log('Final statistics:', stats[0]);
@@ -192,6 +307,135 @@ export async function analyze({ since }: { since?: Date } = {}) {
     throw error;
   } finally {
     await prisma.$disconnect();
+  }
+}
+
+/**
+ * 计算用户投票模式分析
+ * 包括：用户间投票交互统计、用户标签偏好统计
+ */
+export async function calculateUserVotePatterns(prisma: PrismaClient) {
+  console.log('📊 开始分析用户投票模式...');
+  
+  try {
+    // 1. 计算用户间投票交互统计
+    console.log('👥 计算用户间投票交互统计...');
+    await prisma.$executeRawUnsafe(`
+      WITH vote_interactions AS (
+        SELECT 
+          v."userId" as from_user_id,
+          a."userId" as to_user_id,
+          SUM(CASE WHEN v.direction = 1 THEN 1 ELSE 0 END) as upvote_count,
+          SUM(CASE WHEN v.direction = -1 THEN 1 ELSE 0 END) as downvote_count,
+          COUNT(*) FILTER (WHERE v.direction != 0) as total_votes,
+          MAX(v."timestamp") as last_vote_at
+        FROM "Vote" v
+        INNER JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+        INNER JOIN "Attribution" a ON a."pageVerId" = pv.id
+        WHERE v."userId" IS NOT NULL 
+          AND a."userId" IS NOT NULL
+          AND v."userId" != a."userId"  -- 排除自投
+          AND v.direction != 0  -- 排除中性投票
+        GROUP BY v."userId", a."userId"
+        HAVING COUNT(*) > 0
+      )
+      INSERT INTO "UserVoteInteraction" (
+        "fromUserId", 
+        "toUserId", 
+        "upvoteCount", 
+        "downvoteCount", 
+        "totalVotes", 
+        "lastVoteAt",
+        "updatedAt"
+      )
+      SELECT 
+        from_user_id,
+        to_user_id,
+        upvote_count,
+        downvote_count,
+        total_votes,
+        last_vote_at,
+        CURRENT_TIMESTAMP
+      FROM vote_interactions
+      ON CONFLICT ("fromUserId", "toUserId") DO UPDATE SET
+        "upvoteCount" = EXCLUDED."upvoteCount",
+        "downvoteCount" = EXCLUDED."downvoteCount",
+        "totalVotes" = EXCLUDED."totalVotes",
+        "lastVoteAt" = EXCLUDED."lastVoteAt",
+        "updatedAt" = CURRENT_TIMESTAMP;
+    `);
+
+    // 2. 计算用户标签偏好统计
+    console.log('🏷️ 计算用户标签偏好统计...');
+    await prisma.$executeRawUnsafe(`
+      WITH tag_preferences AS (
+        SELECT 
+          v."userId",
+          unnest(pv.tags) as tag,
+          SUM(CASE WHEN v.direction = 1 THEN 1 ELSE 0 END) as upvote_count,
+          SUM(CASE WHEN v.direction = -1 THEN 1 ELSE 0 END) as downvote_count,
+          COUNT(*) FILTER (WHERE v.direction != 0) as total_votes,
+          MAX(v."timestamp") as last_vote_at
+        FROM "Vote" v
+        INNER JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+        WHERE v."userId" IS NOT NULL 
+          AND array_length(pv.tags, 1) > 0
+          AND v.direction != 0  -- 排除中性投票
+        GROUP BY v."userId", unnest(pv.tags)
+        HAVING COUNT(*) > 0
+      )
+      INSERT INTO "UserTagPreference" (
+        "userId", 
+        "tag", 
+        "upvoteCount", 
+        "downvoteCount", 
+        "totalVotes", 
+        "lastVoteAt",
+        "updatedAt"
+      )
+      SELECT 
+        "userId",
+        tag,
+        upvote_count,
+        downvote_count,
+        total_votes,
+        last_vote_at,
+        CURRENT_TIMESTAMP
+      FROM tag_preferences
+      ON CONFLICT ("userId", "tag") DO UPDATE SET
+        "upvoteCount" = EXCLUDED."upvoteCount",
+        "downvoteCount" = EXCLUDED."downvoteCount",
+        "totalVotes" = EXCLUDED."totalVotes",
+        "lastVoteAt" = EXCLUDED."lastVoteAt",
+        "updatedAt" = CURRENT_TIMESTAMP;
+    `);
+
+    // 3. 获取统计信息
+    const interactionStats = await prisma.$queryRaw`
+      SELECT 
+        COUNT(*) as total_interactions,
+        AVG("totalVotes"::float) as avg_votes_per_interaction,
+        MAX("totalVotes") as max_votes_to_single_user,
+        COUNT(CASE WHEN "totalVotes" >= 10 THEN 1 END) as high_interaction_pairs
+      FROM "UserVoteInteraction"
+    `;
+
+    const preferenceStats = await prisma.$queryRaw`
+      SELECT 
+        COUNT(*) as total_preferences,
+        COUNT(DISTINCT "userId") as users_with_preferences,
+        COUNT(DISTINCT "tag") as unique_tags,
+        AVG("totalVotes"::float) as avg_votes_per_tag
+      FROM "UserTagPreference"
+    `;
+
+    console.log('✅ 用户投票模式分析完成');
+    console.log('📊 用户间投票交互统计:', (interactionStats as any)[0]);
+    console.log('🏷️ 用户标签偏好统计:', (preferenceStats as any)[0]);
+
+  } catch (error) {
+    console.error('❌ 用户投票模式分析失败:', error);
+    throw error;
   }
 }
 

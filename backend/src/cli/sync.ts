@@ -12,15 +12,26 @@ export async function sync({
   phase?: string; 
   concurrency?: string; 
 }) {
-  console.log('🚀 Starting incremental synchronization (New Architecture)...');
-  console.log(`Mode: ${full ? 'Full sync' : 'Incremental sync'}`);
-  console.log(`Phase: ${phase || 'all'}`);
-  console.log(`Concurrency: ${concurrency || '4'}`);
-
   const startTime = Date.now();
   let results = {};
 
   try {
+    // 如果只运行analyze阶段
+    if (phase === 'analyze') {
+      console.log('📊 Running Analysis Only...');
+      await analyze();
+      console.log('✅ Analysis completed');
+      
+      const totalTime = (Date.now() - startTime) / 1000;
+      console.log(`\n🎉 Analysis completed successfully in ${totalTime.toFixed(1)}s!`);
+      return { analysis: true };
+    }
+
+    console.log('🚀 Starting incremental synchronization (New Architecture)...');
+    console.log(`Mode: ${full ? 'Full sync' : 'Incremental sync'}`);
+    console.log(`Phase: ${phase || 'all'}`);
+    console.log(`Concurrency: ${concurrency || '4'}`);
+
     if (phase === 'all' || phase === 'a') {
       console.log('\n=== Phase A: Complete Page Scanning ===');
       const phaseAProcessor = new PhaseAProcessor();
@@ -61,4 +72,22 @@ export async function sync({
     console.error('❌ Synchronization failed:', error);
     throw error;
   }
+}
+
+// 如果直接运行此文件，处理命令行参数
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const phase = process.argv[2] || 'all';
+  const full = process.argv.includes('--full');
+  const concurrencyArg = process.argv.find(arg => arg.startsWith('--concurrency='));
+  const concurrency = concurrencyArg ? concurrencyArg.split('=')[1] : '4';
+
+  sync({ full, phase, concurrency })
+    .then(() => {
+      console.log('🎉 操作完成！');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('💥 操作失败:', error);
+      process.exit(1);
+    });
 }

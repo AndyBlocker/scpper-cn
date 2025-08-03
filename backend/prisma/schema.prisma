@@ -90,10 +90,19 @@ model User {
   id            Int            @id @default(autoincrement())
   wikidotId     Int?           @unique
   displayName   String?
+  firstActivityAt DateTime?
+  firstActivityType String?    // "VOTE", "REVISION", "ATTRIBUTION"
+  firstActivityDetails String? // 活动详情描述
   votes         Vote[]
   revisions     Revision[]
   attributions  Attribution[]
   stats         UserStats?
+  voteInteractionsFrom UserVoteInteraction[] @relation("VoteInteractionFrom")
+  voteInteractionsTo   UserVoteInteraction[] @relation("VoteInteractionTo")
+  tagPreferences       UserTagPreference[]
+  
+  @@index([firstActivityAt])
+  @@index([firstActivityType])
 }
 
 model PageStats {
@@ -214,4 +223,75 @@ model DirtyPage {
   
   @@index([needPhaseB, donePhaseB])
   @@index([needPhaseC, donePhaseC])
+}
+
+model UserVoteInteraction {
+  id           Int      @id @default(autoincrement())
+  fromUserId   Int
+  toUserId     Int
+  upvoteCount  Int      @default(0)
+  downvoteCount Int     @default(0)
+  totalVotes   Int      @default(0)
+  lastVoteAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  fromUser     User     @relation("VoteInteractionFrom", fields: [fromUserId], references: [id])
+  toUser       User     @relation("VoteInteractionTo", fields: [toUserId], references: [id])
+
+  @@unique([fromUserId, toUserId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([totalVotes])
+}
+
+model UserTagPreference {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  tag          String
+  upvoteCount  Int      @default(0)
+  downvoteCount Int     @default(0)
+  totalVotes   Int      @default(0)
+  lastVoteAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, tag])
+  @@index([userId])
+  @@index([tag])
+  @@index([totalVotes])
+}
+
+model SiteStats {
+  id          Int      @id @default(autoincrement())
+  date        DateTime @unique @db.Date
+  totalUsers  Int      @default(0)
+  activeUsers Int      @default(0)  // Users with firstActivityAt
+  totalPages  Int      @default(0)
+  totalVotes  Int      @default(0)
+  newUsersToday Int    @default(0)  // New users by firstActivityAt on this date
+  newPagesToday Int    @default(0)  // New pages created on this date
+  newVotesToday Int    @default(0)  // New votes on this date
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([date])
+}
+
+model SeriesStats {
+  id             Int      @id @default(autoincrement())
+  seriesNumber   Int      @unique
+  isOpen         Boolean  @default(false)
+  totalSlots     Int      // 999 for series 1, 1000 for others
+  usedSlots      Int      @default(0)
+  usagePercentage Float   @default(0.0)
+  milestonePageId Int?     // The scp-cn-x000 page that opened this series
+  lastUpdated    DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([seriesNumber])
+  @@index([isOpen])
+  @@index([usagePercentage])
 }

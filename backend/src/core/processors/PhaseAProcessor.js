@@ -2,7 +2,7 @@
 import { GraphQLClient } from '../client/GraphQLClient.js';
 import { CoreQueries } from '../graphql/CoreQueries.js';
 import { PointEstimator } from '../graphql/PointEstimator.js';
-import { DatabaseStore } from '../store/DatabaseStore.js';
+import { DatabaseStore } from '../store/DatabaseStore.ts';
 import { Logger } from '../../utils/Logger.js';
 
 const cq = new CoreQueries();

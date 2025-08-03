@@ -115,6 +115,17 @@ raw-batch-*.json
 *-analysis-*.json
 *-rankings-*.json
 
+# Debug, test, demo, and fix scripts
+backend/scripts/debug-*.ts
+backend/scripts/test-*.ts
+backend/scripts/demo-*.ts
+backend/scripts/fix-*.ts
+backend/scripts/*-demo.ts
+backend/scripts/diagnose-*.ts
+backend/scripts/repair-*.ts
+backend/scripts/import-with-repair.ts
+backend/scripts/robust-import.ts
+
 # Temporary debug and test files (保留调试脚本但忽略输出)
 debug-output-*.json
 test-results-*.json

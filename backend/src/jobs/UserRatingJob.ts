@@ -238,6 +238,182 @@ export class UserRatingSystem {
   }
 
   /**
+   * 获取用户投票模式相关的查询接口
+   */
+  
+  /**
+   * 获取用户的投票目标Top5 (我投票给谁最多)
+   */
+  async getUserVoteTargets(userId: number, limit: number = 5) {
+    return await this.prisma.$queryRaw<Array<{
+      toUserId: number;
+      displayName: string;
+      wikidotId: string;
+      upvoteCount: number;
+      downvoteCount: number;
+      totalVotes: number;
+      lastVoteAt: Date | null;
+    }>>`
+      SELECT 
+        uvi."toUserId",
+        u."displayName",
+        u."wikidotId",
+        uvi."upvoteCount",
+        uvi."downvoteCount", 
+        uvi."totalVotes",
+        uvi."lastVoteAt"
+      FROM "UserVoteInteraction" uvi
+      INNER JOIN "User" u ON uvi."toUserId" = u.id
+      WHERE uvi."fromUserId" = ${userId}
+      ORDER BY uvi."totalVotes" DESC, uvi."lastVoteAt" DESC
+      LIMIT ${limit}
+    `;
+  }
+
+  /**
+   * 获取用户的投票来源Top5 (谁投票给我最多)
+   */
+  async getUserVoteSources(userId: number, limit: number = 5) {
+    return await this.prisma.$queryRaw<Array<{
+      fromUserId: number;
+      displayName: string;
+      wikidotId: string;
+      upvoteCount: number;
+      downvoteCount: number;
+      totalVotes: number;
+      lastVoteAt: Date | null;
+    }>>`
+      SELECT 
+        uvi."fromUserId",
+        u."displayName",
+        u."wikidotId",
+        uvi."upvoteCount",
+        uvi."downvoteCount",
+        uvi."totalVotes",
+        uvi."lastVoteAt"
+      FROM "UserVoteInteraction" uvi
+      INNER JOIN "User" u ON uvi."fromUserId" = u.id
+      WHERE uvi."toUserId" = ${userId}
+      ORDER BY uvi."totalVotes" DESC, uvi."lastVoteAt" DESC
+      LIMIT ${limit}
+    `;
+  }
+
+  /**
+   * 获取用户的标签偏好Top5
+   */
+  async getUserTagPreferences(userId: number, limit: number = 5) {
+    return await this.prisma.$queryRaw<Array<{
+      tag: string;
+      upvoteCount: number;
+      downvoteCount: number;
+      totalVotes: number;
+      upvoteRatio: number;
+      lastVoteAt: Date | null;
+    }>>`
+      SELECT 
+        utp."tag",
+        utp."upvoteCount",
+        utp."downvoteCount",
+        utp."totalVotes",
+        CASE 
+          WHEN utp."totalVotes" > 0 
+          THEN utp."upvoteCount"::float / utp."totalVotes"::float
+          ELSE 0
+        END as "upvoteRatio",
+        utp."lastVoteAt"
+      FROM "UserTagPreference" utp
+      WHERE utp."userId" = ${userId}
+      ORDER BY utp."totalVotes" DESC, utp."upvoteRatio" DESC
+      LIMIT ${limit}
+    `;
+  }
+
+  /**
+   * 获取用户的完整投票模式信息
+   */
+  async getUserVotePattern(userId: number) {
+    const [voteTargets, voteSources, tagPreferences] = await Promise.all([
+      this.getUserVoteTargets(userId, 5),
+      this.getUserVoteSources(userId, 5),
+      this.getUserTagPreferences(userId, 10)
+    ]);
+
+    return {
+      userId,
+      voteTargets,      // 我投票给谁最多
+      voteSources,      // 谁投票给我最多
+      tagPreferences    // 我的标签偏好
+    };
+  }
+
+  /**
+   * 获取最活跃的投票交互对 (用于发现潜在的相互投票)
+   */
+  async getTopVoteInteractions(limit: number = 20) {
+    return await this.prisma.$queryRaw<Array<{
+      fromUserId: number;
+      fromDisplayName: string;
+      toUserId: number;
+      toDisplayName: string;
+      totalVotes: number;
+      upvoteCount: number;
+      downvoteCount: number;
+      mutualVotes: number | null;
+    }>>`
+      SELECT 
+        uvi1."fromUserId",
+        u1."displayName" as "fromDisplayName",
+        uvi1."toUserId",
+        u2."displayName" as "toDisplayName",
+        uvi1."totalVotes",
+        uvi1."upvoteCount",
+        uvi1."downvoteCount",
+        uvi2."totalVotes" as "mutualVotes"
+      FROM "UserVoteInteraction" uvi1
+      INNER JOIN "User" u1 ON uvi1."fromUserId" = u1.id
+      INNER JOIN "User" u2 ON uvi1."toUserId" = u2.id
+      LEFT JOIN "UserVoteInteraction" uvi2 
+        ON uvi1."fromUserId" = uvi2."toUserId" 
+        AND uvi1."toUserId" = uvi2."fromUserId"
+      ORDER BY uvi1."totalVotes" DESC
+      LIMIT ${limit}
+    `;
+  }
+
+  /**
+   * 获取最受欢迎的标签统计
+   */
+  async getPopularTags(limit: number = 20) {
+    return await this.prisma.$queryRaw<Array<{
+      tag: string;
+      totalVoters: bigint;
+      totalUpvotes: bigint;
+      totalDownvotes: bigint;
+      totalVotes: bigint;
+      avgUpvoteRatio: number;
+    }>>`
+      SELECT 
+        utp."tag",
+        COUNT(DISTINCT utp."userId") as "totalVoters",
+        SUM(utp."upvoteCount") as "totalUpvotes",
+        SUM(utp."downvoteCount") as "totalDownvotes",
+        SUM(utp."totalVotes") as "totalVotes",
+        AVG(
+          CASE 
+            WHEN utp."totalVotes" > 0 
+            THEN utp."upvoteCount"::float / utp."totalVotes"::float
+            ELSE 0
+          END
+        ) as "avgUpvoteRatio"
+      FROM "UserTagPreference" utp
+      GROUP BY utp."tag"
+      ORDER BY "totalVotes" DESC
+      LIMIT ${limit}
+    `;
+  }
+
+  /**
    * 获取统计信息
    */
   async getStats() {

@@ -27,7 +27,15 @@ program
   .option('--user <name>', 'Query specific user')
   .option('--stats', 'Show general statistics')
   .option('--user-rank', 'Show user rankings')
+  .option('--vote-pattern', 'Show user vote patterns')
+  .option('--vote-interactions', 'Show top vote interactions')
+  .option('--popular-tags', 'Show popular tags by votes')
+  .option('--site-stats', 'Show site-wide statistics and trends')
+  .option('--series-stats', 'Show SCP-CN series usage statistics')
+  .option('--historical', 'Show historical trends (requires --site-stats)')
+  .option('--days <number>', 'Number of days for historical data (default 30)', '30')
   .option('--category <category>', 'User ranking category (overall, scp, translation, goi, story)', 'overall')
+  .option('--help', 'Show detailed help for query command')
   .action(query);
 
 program
