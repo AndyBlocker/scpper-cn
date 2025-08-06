@@ -60,9 +60,9 @@ model Page {
   url            String        @unique
   urlKey         String
   createdAt      DateTime      @default(now())
-  updatedAt      DateTime
-  pageUuid       String?       @unique // Business UUID for stable page identification
-  historicalUrls String[]      // Track previous URLs for renamed pages
+  updatedAt      DateTime      @updatedAt
+  pageUuid       String?
+  historicalUrls String[]
   dirtyPage      DirtyPage?
   versions       PageVersion[]
 }
@@ -116,14 +116,11 @@ model PageVersion {
   isDeleted     Boolean       @default(false)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
-  
-  revisions     Revision[]
-  votes         Vote[]
   attributions  Attribution[]
   stats         PageStats?
-  sourceVersions SourceVersion[]  // 关联的source code版本历史
-  
   page          Page          @relation(fields: [pageId], references: [id])
+  revisions     Revision[]
+  votes         Vote[]
 
   @@index([pageId])
   @@index([rating])
@@ -132,18 +129,16 @@ model PageVersion {
 }
 
 model Revision {
-  id            Int            @id @default(autoincrement())
+  id            Int         @id @default(autoincrement())
   pageVersionId Int
   wikidotId     Int
   timestamp     DateTime
   type          String
   comment       String?
   userId        Int?
-  
-  pageVersion   PageVersion    @relation(fields: [pageVersionId], references: [id])
-  user          User?          @relation(fields: [userId], references: [id])
-  sourceVersions SourceVersion[]  // 关联的source code版本
-  
+  pageVersion   PageVersion @relation(fields: [pageVersionId], references: [id])
+  user          User?       @relation(fields: [userId], references: [id])
+
   @@unique([pageVersionId, wikidotId])
   @@index([pageVersionId])
   @@index([pageVersionId, timestamp])
@@ -184,20 +179,17 @@ model SiteStats {
 }
 
 model SourceVersion {
-  id              Int         @id @default(autoincrement())
-  pageVersionId   Int         // 关联的PageVersion
-  revisionId      Int?        // 关联的SOURCE_CHANGED revision (可选，初始版本可能没有revision)
-  revisionNumber  Int?        // Revision的wikidotId，用于快速查找
-  source          String?     // 页面源代码
-  textContent     String?     // 渲染后内容
-  timestamp       DateTime    @default(now())
-  isLatest        Boolean     @default(false) // 标记是否为当前最新版本
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  
-  pageVersion     PageVersion @relation(fields: [pageVersionId], references: [id], onDelete: Cascade)
-  revision        Revision?   @relation(fields: [revisionId], references: [id])
-  
+  id             Int      @id @default(autoincrement())
+  pageVersionId  Int
+  revisionId     Int?
+  revisionNumber Int?
+  source         String?
+  textContent    String?
+  timestamp      DateTime @default(now())
+  isLatest       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
   @@unique([pageVersionId, revisionNumber])
   @@index([pageVersionId, isLatest])
   @@index([pageVersionId, timestamp])
@@ -206,21 +198,17 @@ model SourceVersion {
 }
 
 model User {
-  id                   Int            @id @default(autoincrement())
-  wikidotId            Int?           @unique
+  id                   Int           @id @default(autoincrement())
+  wikidotId            Int?          @unique
   displayName          String?
   firstActivityAt      DateTime?
   firstActivityType    String?
   firstActivityDetails String?
   lastActivityAt       DateTime?
-  
-  votes         Vote[]
-  revisions     Revision[]
-  attributions  Attribution[]
-  stats         UserStats?
-  tagPreferences       UserTagPreference[]
-  voteInteractionsFrom UserVoteInteraction[] @relation("VoteInteractionFrom")
-  voteInteractionsTo   UserVoteInteraction[] @relation("VoteInteractionTo")
+  attributions         Attribution[]
+  revisions            Revision[]
+  stats                UserStats?
+  votes                Vote[]
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
@@ -228,105 +216,88 @@ model User {
 }
 
 model UserStats {
-  id            Int  @id @default(autoincrement())
-  userId        Int  @unique
-  totalUp       Int
-  totalDown     Int
-  totalRating   Int
-  favTag        String?
-  
-  // User Rating and Ranking System
-  overallRating      Decimal?  @db.Decimal(10, 2) @default(0)
-  overallRank        Int?
-  pageCount          Int       @default(0)
-  
-  // SCP Category (原创 + scp)
-  scpRating          Decimal?  @db.Decimal(10, 2) @default(0)
-  scpRank            Int?
-  scpPageCount       Int       @default(0)
-  
-  // Translation Category (翻译)
-  translationRating  Decimal?  @db.Decimal(10, 2) @default(0)
-  translationRank    Int?
-  translationPageCount Int     @default(0)
-  
-  // GOI Category (原创 + goi格式)
-  goiRating          Decimal?  @db.Decimal(10, 2) @default(0)
-  goiRank            Int?
-  goiPageCount       Int       @default(0)
-  
-  // Story Category (原创 + 故事)
-  storyRating        Decimal?  @db.Decimal(10, 2) @default(0)
-  storyRank          Int?
-  storyPageCount     Int       @default(0)
-  
-  // Wanderers/Library Category (原创 + wanderers)
-  wanderersRating    Decimal?  @db.Decimal(10, 2) @default(0)
-  wanderersRank      Int?
-  wanderersPageCount Int       @default(0)
-  
-  // Art Category (原创 + 艺术作品)
-  artRating          Decimal?  @db.Decimal(10, 2) @default(0)
-  artRank            Int?
-  artPageCount       Int       @default(0)
-  
-  ratingUpdatedAt    DateTime? @default(now())
-  
-  user          User @relation(fields: [userId], references: [id])
-  
+  id                   Int       @id @default(autoincrement())
+  userId               Int       @unique
+  totalUp              Int
+  totalDown            Int
+  totalRating          Int
+  favTag               String?
+  goiPageCount         Int       @default(0)
+  goiRank              Int?
+  goiRating            Decimal?  @default(0) @db.Decimal(10, 2)
+  overallRank          Int?
+  overallRating        Decimal?  @default(0) @db.Decimal(10, 2)
+  pageCount            Int       @default(0)
+  ratingUpdatedAt      DateTime? @default(now())
+  scpPageCount         Int       @default(0)
+  scpRank              Int?
+  scpRating            Decimal?  @default(0) @db.Decimal(10, 2)
+  storyPageCount       Int       @default(0)
+  storyRank            Int?
+  storyRating          Decimal?  @default(0) @db.Decimal(10, 2)
+  translationPageCount Int       @default(0)
+  translationRank      Int?
+  translationRating    Decimal?  @default(0) @db.Decimal(10, 2)
+  wanderersRating      Decimal?  @default(0) @db.Decimal(10, 2)
+  wanderersRank        Int?
+  wanderersPageCount   Int       @default(0)
+  artRating            Decimal?  @default(0) @db.Decimal(10, 2)
+  artRank              Int?
+  artPageCount         Int       @default(0)
+  user                 User      @relation(fields: [userId], references: [id])
+
   @@index([overallRating(sort: Desc)])
-  @@index([overallRank(sort: Asc)])
+  @@index([overallRank])
   @@index([scpRating(sort: Desc)])
-  @@index([scpRank(sort: Asc)])
+  @@index([scpRank])
   @@index([translationRating(sort: Desc)])
-  @@index([translationRank(sort: Asc)])
+  @@index([translationRank])
   @@index([goiRating(sort: Desc)])
-  @@index([goiRank(sort: Asc)])
+  @@index([goiRank])
   @@index([storyRating(sort: Desc)])
-  @@index([storyRank(sort: Asc)])
+  @@index([storyRank])
   @@index([wanderersRating(sort: Desc)])
-  @@index([wanderersRank(sort: Asc)])
+  @@index([wanderersRank])
   @@index([artRating(sort: Desc)])
-  @@index([artRank(sort: Asc)])
+  @@index([artRank])
+  @@index([goiRank], map: "idx_userstats_goi_rank")
+  @@index([goiRating(sort: Desc)], map: "idx_userstats_goi_rating")
+  @@index([overallRank], map: "idx_userstats_overall_rank")
+  @@index([overallRating(sort: Desc)], map: "idx_userstats_overall_rating")
+  @@index([scpRank], map: "idx_userstats_scp_rank")
+  @@index([scpRating(sort: Desc)], map: "idx_userstats_scp_rating")
+  @@index([storyRank], map: "idx_userstats_story_rank")
+  @@index([storyRating(sort: Desc)], map: "idx_userstats_story_rating")
+  @@index([translationRank], map: "idx_userstats_translation_rank")
+  @@index([translationRating(sort: Desc)], map: "idx_userstats_translation_rating")
 }
 
 model UserTagPreference {
-  id           Int      @id @default(autoincrement())
-  userId       Int
-  tag          String
-  upvoteCount  Int       @default(0)
-  downvoteCount Int      @default(0)
-  totalVotes   Int       @default(0)
-  lastVoteAt   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  user         User     @relation(fields: [userId], references: [id])
+  userId        Int
+  tag           String
+  upvoteCount   Int       @default(0)
+  downvoteCount Int       @default(0)
+  totalVotes    Int       @default(0)
+  lastVoteAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  id            Int       @id @default(autoincrement())
 
   @@unique([userId, tag])
-  @@index([userId])
-  @@index([tag])
-  @@index([totalVotes])
 }
 
 model UserVoteInteraction {
-  id           Int      @id @default(autoincrement())
-  fromUserId   Int
-  toUserId     Int
-  upvoteCount  Int       @default(0)
-  downvoteCount Int      @default(0)
-  totalVotes   Int       @default(0)
-  lastVoteAt   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  fromUser     User     @relation("VoteInteractionFrom", fields: [fromUserId], references: [id])
-  toUser       User     @relation("VoteInteractionTo", fields: [toUserId], references: [id])
+  fromUserId    Int
+  toUserId      Int
+  upvoteCount   Int       @default(0)
+  downvoteCount Int       @default(0)
+  totalVotes    Int       @default(0)
+  lastVoteAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  id            Int       @id @default(autoincrement())
 
   @@unique([fromUserId, toUserId])
-  @@index([fromUserId])
-  @@index([toUserId])
-  @@index([totalVotes])
 }
 
 model Vote {

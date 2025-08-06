@@ -1115,6 +1115,202 @@ export class DatabaseStore {
     };
   }
 
+  async buildDirtyQueueTestMode() {
+    console.log('🧪 Building dirty page queue for test mode (staging data only)...');
+    
+    // Get all staging URLs for test batch
+    const stagingUrls = await this.prisma.pageMetaStaging.findMany({
+      select: { url: true }
+    });
+    
+    if (stagingUrls.length === 0) {
+      console.log('No staging data found for test mode');
+      return {
+        total: 0,
+        phaseB: 0,
+        phaseC: 0,
+        deleted: 0,
+      };
+    }
+    
+    const stagingUrlSet = new Set(stagingUrls.map(s => s.url));
+    
+    console.log(`Found ${stagingUrls.length} URLs in staging for test batch`);
+    
+    // Only check for deleted pages within our test batch URLs
+    // (pages that exist in DB but not in our test batch staging data)
+    const testBatchPages = await this.prisma.page.findMany({
+      where: {
+        url: { in: Array.from(stagingUrlSet) }
+      },
+      include: {
+        versions: {
+          where: { validTo: null },
+          take: 1,
+        }
+      }
+    });
+    
+    console.log(`Found ${testBatchPages.length} existing pages in test batch range`);
+    
+    // Build dirty queue only for test batch pages
+    const dirtyPages: Array<{
+      pageId: number;
+      url: string;
+      needPhaseB: boolean;
+      needPhaseC: boolean;
+      reasons: string[];
+    }> = [];
+    
+    // Check existing pages for changes (within test batch)
+    const existingPagesMap = new Map(testBatchPages.map(p => [p.url, p]));
+    
+    for (const stagingPage of await this.prisma.pageMetaStaging.findMany()) {
+      const existingPage = existingPagesMap.get(stagingPage.url);
+      
+      if (!existingPage) {
+        // This is a new page that doesn't exist in DB yet
+        // It will be handled by the "new pages" logic below
+        continue;
+      }
+      
+      const currentVersion = existingPage.versions[0];
+      if (!currentVersion) {
+        // Page exists but has no current version - needs Phase B
+        dirtyPages.push({
+          pageId: existingPage.id,
+          url: stagingPage.url,
+          needPhaseB: true,
+          needPhaseC: false,
+          reasons: ['missing current version'],
+        });
+        continue;
+      }
+      
+      // Check for changes that require Phase B (content changes)
+      const needPhaseB = 
+        currentVersion.title !== stagingPage.title ||
+        currentVersion.rating !== stagingPage.rating ||
+        currentVersion.revisionCount !== stagingPage.revisionCount ||
+        JSON.stringify(currentVersion.tags.sort()) !== JSON.stringify((stagingPage.tags || []).sort()) ||
+        currentVersion.isDeleted !== (stagingPage.isDeleted || false);
+      
+      // Check for changes that require Phase C (vote/revision changes)  
+      const needPhaseC = currentVersion.voteCount !== stagingPage.voteCount;
+      
+      if (needPhaseB || needPhaseC) {
+        const reasons: string[] = [];
+        if (needPhaseB) {
+          if (currentVersion.title !== stagingPage.title) reasons.push('title change');
+          if (currentVersion.rating !== stagingPage.rating) reasons.push('rating change');
+          if (currentVersion.revisionCount !== stagingPage.revisionCount) reasons.push('revision count change');
+          if (JSON.stringify(currentVersion.tags.sort()) !== JSON.stringify((stagingPage.tags || []).sort())) reasons.push('tags change');
+          if (currentVersion.isDeleted !== (stagingPage.isDeleted || false)) reasons.push('deletion status change');
+        }
+        if (needPhaseC) {
+          if (currentVersion.voteCount !== stagingPage.voteCount) reasons.push('vote count change');
+        }
+        
+        dirtyPages.push({
+          pageId: existingPage.id,
+          url: stagingPage.url,
+          needPhaseB,
+          needPhaseC,
+          reasons,
+        });
+      }
+    }
+    
+    // Check for new pages in staging that don't exist in DB
+    const newPages = await this.prisma.pageMetaStaging.findMany({
+      where: {
+        url: {
+          notIn: testBatchPages.map(p => p.url)
+        }
+      }
+    });
+    
+    console.log(`Found ${newPages.length} new pages in test batch`);
+    
+    // Create pages for new URLs and add to dirty queue
+    for (const newPage of newPages) {
+      const urlKey = this.extractUrlKey(newPage.url);
+      const page = await this.prisma.page.create({
+        data: {
+          url: newPage.url,
+          urlKey,
+        },
+      });
+      
+      // Get staging data to create initial PageVersion
+      const stagingData = await this.prisma.pageMetaStaging.findUnique({
+        where: { url: newPage.url }
+      });
+      
+      if (stagingData) {
+        await this.prisma.pageVersion.create({
+          data: {
+            pageId: page.id,
+            wikidotId: stagingData.wikidotId,
+            title: stagingData.title,
+            rating: stagingData.rating,
+            voteCount: stagingData.voteCount,
+            revisionCount: stagingData.revisionCount,
+            tags: stagingData.tags || [],
+            validFrom: new Date(),
+            validTo: null,
+            isDeleted: stagingData.isDeleted || false,
+          },
+        });
+      }
+      
+      // Add to dirty queue (new pages need Phase B, which will determine Phase C needs)
+      dirtyPages.push({
+        pageId: page.id,
+        url: newPage.url,
+        needPhaseB: true,
+        needPhaseC: false,
+        reasons: ['new page'],
+      });
+    }
+    
+    // Insert dirty pages for test batch only
+    const dirtyPagesToInsert = dirtyPages.filter(dp => dp.needPhaseB || dp.needPhaseC);
+    
+    for (const dirtyPage of dirtyPagesToInsert) {
+      await this.prisma.dirtyPage.upsert({
+        where: { pageId: dirtyPage.pageId },
+        update: {
+          needPhaseB: dirtyPage.needPhaseB,
+          needPhaseC: dirtyPage.needPhaseC,
+          reasons: dirtyPage.reasons,
+          donePhaseB: false,
+          donePhaseC: false,
+          updatedAt: new Date(),
+        },
+        create: {
+          pageId: dirtyPage.pageId,
+          needPhaseB: dirtyPage.needPhaseB,
+          needPhaseC: dirtyPage.needPhaseC,
+          reasons: dirtyPage.reasons,
+          donePhaseB: false,
+          donePhaseC: false,
+        },
+      });
+    }
+    
+    console.log(`✅ Test mode dirty queue built: ${dirtyPagesToInsert.length} pages need processing`);
+    console.log(`  - Phase B needed: ${dirtyPagesToInsert.filter(dp => dp.needPhaseB).length}`);
+    console.log(`  - Phase C needed: ${dirtyPagesToInsert.filter(dp => dp.needPhaseC).length}`);
+    
+    return {
+      total: dirtyPagesToInsert.length,
+      phaseB: dirtyPagesToInsert.filter(dp => dp.needPhaseB).length,
+      phaseC: dirtyPagesToInsert.filter(dp => dp.needPhaseC).length,
+      deleted: 0, // No deletion handling in test mode
+    };
+  }
+
   async fetchDirtyPages(phase: 'B' | 'C', limit = 500) {
     const whereCondition = phase === 'B' 
       ? { needPhaseB: true, donePhaseB: false }

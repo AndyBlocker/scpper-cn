@@ -345,95 +345,140 @@ export async function calculateUserVotePatterns(prisma: PrismaClient) {
   try {
     // 1. 计算用户间投票交互统计
     console.log('👥 计算用户间投票交互统计...');
-    await prisma.$executeRawUnsafe(`
-      WITH vote_interactions AS (
-        SELECT 
-          v."userId" as from_user_id,
-          a."userId" as to_user_id,
-          SUM(CASE WHEN v.direction = 1 THEN 1 ELSE 0 END) as upvote_count,
-          SUM(CASE WHEN v.direction = -1 THEN 1 ELSE 0 END) as downvote_count,
-          COUNT(*) FILTER (WHERE v.direction != 0) as total_votes,
-          MAX(v."timestamp") as last_vote_at
-        FROM "Vote" v
-        INNER JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        INNER JOIN "Attribution" a ON a."pageVerId" = pv.id
-        WHERE v."userId" IS NOT NULL 
-          AND a."userId" IS NOT NULL
-          AND v."userId" != a."userId"  -- 排除自投
-          AND v.direction != 0  -- 排除中性投票
-        GROUP BY v."userId", a."userId"
-        HAVING COUNT(*) > 0
-      )
-      INSERT INTO "UserVoteInteraction" (
-        "fromUserId", 
-        "toUserId", 
-        "upvoteCount", 
-        "downvoteCount", 
-        "totalVotes", 
-        "lastVoteAt",
-        "updatedAt"
-      )
+    
+    // 使用安全的查询方式获取投票交互数据
+    const voteInteractions = await prisma.$queryRaw<Array<{
+      from_user_id: number;
+      to_user_id: number;
+      upvote_count: number;
+      downvote_count: number;
+      total_votes: number;
+      last_vote_at: Date;
+    }>>`
       SELECT 
-        from_user_id,
-        to_user_id,
-        upvote_count,
-        downvote_count,
-        total_votes,
-        last_vote_at,
-        CURRENT_TIMESTAMP
-      FROM vote_interactions
-      ON CONFLICT ("fromUserId", "toUserId") DO UPDATE SET
-        "upvoteCount" = EXCLUDED."upvoteCount",
-        "downvoteCount" = EXCLUDED."downvoteCount",
-        "totalVotes" = EXCLUDED."totalVotes",
-        "lastVoteAt" = EXCLUDED."lastVoteAt",
-        "updatedAt" = CURRENT_TIMESTAMP;
-    `);
+        v."userId" as from_user_id,
+        a."userId" as to_user_id,
+        SUM(CASE WHEN v.direction = 1 THEN 1 ELSE 0 END)::int as upvote_count,
+        SUM(CASE WHEN v.direction = -1 THEN 1 ELSE 0 END)::int as downvote_count,
+        COUNT(CASE WHEN v.direction != 0 THEN 1 END)::int as total_votes,
+        MAX(v."timestamp") as last_vote_at
+      FROM "Vote" v
+      INNER JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+      INNER JOIN "Attribution" a ON a."pageVerId" = pv.id
+      WHERE v."userId" IS NOT NULL 
+        AND a."userId" IS NOT NULL
+        AND v."userId" != a."userId"  -- 排除自投
+        AND v.direction != 0  -- 排除中性投票
+      GROUP BY v."userId", a."userId"
+      HAVING COUNT(*) > 0
+    `;
+    
+    console.log(`Found ${voteInteractions.length} user vote interactions`);
+    
+    if (voteInteractions.length > 0) {
+      console.log('使用高性能清空重建模式更新用户投票交互数据...');
+      
+      // 第一步：清空现有数据
+      console.log('清空现有用户投票交互数据...');
+      await prisma.$executeRaw`TRUNCATE TABLE "UserVoteInteraction" RESTART IDENTITY CASCADE`;
+      
+      // 第二步：批量插入新数据
+      const batchSize = 10000; // 提高批次大小，因为现在只是纯插入
+      const totalBatches = Math.ceil(voteInteractions.length / batchSize);
+      
+      for (let i = 0; i < totalBatches; i++) {
+        const startIdx = i * batchSize;
+        const endIdx = Math.min(startIdx + batchSize, voteInteractions.length);
+        const batch = voteInteractions.slice(startIdx, endIdx);
+        
+        console.log(`批量插入第 ${i + 1}/${totalBatches} 批 (${batch.length} 条记录)...`);
+        
+        try {
+          const values = batch.map(interaction => 
+            `(${interaction.from_user_id}, ${interaction.to_user_id}, ${interaction.upvote_count}, ${interaction.downvote_count}, ${interaction.total_votes}, '${interaction.last_vote_at.toISOString()}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+          ).join(',');
+          
+          await prisma.$executeRawUnsafe(`
+            INSERT INTO "UserVoteInteraction" ("fromUserId", "toUserId", "upvoteCount", "downvoteCount", "totalVotes", "lastVoteAt", "createdAt", "updatedAt")
+            VALUES ${values}
+          `);
+          
+        } catch (error) {
+          console.error(`批量插入批次 ${i + 1} 处理失败:`, error.message);
+          // 继续处理下一批
+        }
+      }
+      
+      console.log('✅ 用户投票交互数据高性能重建完成');
+    }
 
     // 2. 计算用户标签偏好统计
     console.log('🏷️ 计算用户标签偏好统计...');
-    await prisma.$executeRawUnsafe(`
-      WITH tag_preferences AS (
-        SELECT 
-          v."userId",
-          unnest(pv.tags) as tag,
-          SUM(CASE WHEN v.direction = 1 THEN 1 ELSE 0 END) as upvote_count,
-          SUM(CASE WHEN v.direction = -1 THEN 1 ELSE 0 END) as downvote_count,
-          COUNT(*) FILTER (WHERE v.direction != 0) as total_votes,
-          MAX(v."timestamp") as last_vote_at
-        FROM "Vote" v
-        INNER JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        WHERE v."userId" IS NOT NULL 
-          AND array_length(pv.tags, 1) > 0
-          AND v.direction != 0  -- 排除中性投票
-        GROUP BY v."userId", unnest(pv.tags)
-        HAVING COUNT(*) > 0
-      )
-      INSERT INTO "UserTagPreference" (
-        "userId", 
-        "tag", 
-        "upvoteCount", 
-        "downvoteCount", 
-        "totalVotes", 
-        "lastVoteAt",
-        "updatedAt"
-      )
+    
+    // 使用安全的查询方式获取用户标签偏好数据
+    const tagPreferences = await prisma.$queryRaw<Array<{
+      userId: number;
+      tag: string;
+      upvote_count: number;
+      downvote_count: number;
+      total_votes: number;
+      last_vote_at: Date;
+    }>>`
       SELECT 
-        "userId",
-        tag,
-        upvote_count,
-        downvote_count,
-        total_votes,
-        last_vote_at,
-        CURRENT_TIMESTAMP
-      FROM tag_preferences
-      ON CONFLICT ("userId", "tag") DO UPDATE SET
-        "upvoteCount" = EXCLUDED."upvoteCount",
-        "downvoteCount" = EXCLUDED."downvoteCount",
-        "totalVotes" = EXCLUDED."totalVotes",
-        "lastVoteAt" = EXCLUDED."lastVoteAt",
-        "updatedAt" = CURRENT_TIMESTAMP;
-    `);
+        v."userId",
+        unnest(pv.tags) as tag,
+        SUM(CASE WHEN v.direction = 1 THEN 1 ELSE 0 END)::int as upvote_count,
+        SUM(CASE WHEN v.direction = -1 THEN 1 ELSE 0 END)::int as downvote_count,
+        COUNT(CASE WHEN v.direction != 0 THEN 1 END)::int as total_votes,
+        MAX(v."timestamp") as last_vote_at
+      FROM "Vote" v
+      INNER JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+      WHERE v."userId" IS NOT NULL 
+        AND array_length(pv.tags, 1) > 0
+        AND v.direction != 0  -- 排除中性投票
+      GROUP BY v."userId", unnest(pv.tags)
+      HAVING COUNT(*) > 0
+    `;
+    
+    console.log(`Found ${tagPreferences.length} user tag preferences`);
+    
+    if (tagPreferences.length > 0) {
+      console.log('使用高性能清空重建模式更新用户标签偏好数据...');
+      
+      // 第一步：清空现有数据
+      console.log('清空现有用户标签偏好数据...');
+      await prisma.$executeRaw`TRUNCATE TABLE "UserTagPreference" RESTART IDENTITY CASCADE`;
+      
+      // 第二步：批量插入新数据
+      const batchSize = 20000; // 标签数据可以用更大的批次，因为只是纯插入
+      const totalBatches = Math.ceil(tagPreferences.length / batchSize);
+      
+      for (let i = 0; i < totalBatches; i++) {
+        const startIdx = i * batchSize;
+        const endIdx = Math.min(startIdx + batchSize, tagPreferences.length);
+        const batch = tagPreferences.slice(startIdx, endIdx);
+        
+        console.log(`批量插入第 ${i + 1}/${totalBatches} 批 (${batch.length} 条记录)...`);
+        
+        try {
+          const values = batch.map(preference => {
+            const escapedTag = preference.tag.replace(/'/g, "''"); // SQL字符串转义
+            return `(${preference.userId}, '${escapedTag}', ${preference.upvote_count}, ${preference.downvote_count}, ${preference.total_votes}, '${preference.last_vote_at.toISOString()}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+          }).join(',');
+          
+          await prisma.$executeRawUnsafe(`
+            INSERT INTO "UserTagPreference" ("userId", "tag", "upvoteCount", "downvoteCount", "totalVotes", "lastVoteAt", "createdAt", "updatedAt")
+            VALUES ${values}
+          `);
+          
+        } catch (error) {
+          console.error(`批量插入批次 ${i + 1} 处理失败:`, error.message);
+          // 继续处理下一批
+        }
+      }
+      
+      console.log('✅ 用户标签偏好数据高性能重建完成');
+    }
 
     // 3. 获取统计信息
     const interactionStats = await prisma.$queryRaw`

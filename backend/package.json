@@ -7,6 +7,7 @@
   "scripts": {
     "sync": "node --import tsx/esm src/cli/sync.ts",
     "sync:full": "node --import tsx/esm src/cli/sync.ts --full",
+    "sync:test": "node --import tsx/esm src/cli/sync.ts --test",
     "phase-a": "node --import tsx/esm src/cli/sync.ts phase-a",
     "phase-b": "node --import tsx/esm src/cli/sync.ts phase-b",
     "phase-c": "node --import tsx/esm src/cli/sync.ts phase-c",
