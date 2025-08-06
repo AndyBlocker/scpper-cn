@@ -1,12 +1,16 @@
 import { PrismaClient } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
 import { MAX_FIRST } from '../../config/RateLimitConfig.js';
+import { v4 as uuidv4 } from 'uuid';
+import { SourceVersionService } from '../../services/SourceVersionService.js';
 
 export class DatabaseStore {
   private prisma: PrismaClient;
+  private sourceVersionService: SourceVersionService;
 
   constructor() {
     this.prisma = new PrismaClient();
+    this.sourceVersionService = new SourceVersionService(this.prisma);
   }
 
   async loadProgress(phase = 'phase1') {
@@ -59,14 +63,83 @@ export class DatabaseStore {
   private async upsertPageBasicInfo(data: any) {
     const urlKey = this.extractUrlKey(data.url);
     
-    const page = await this.prisma.page.upsert({
+    Logger.info(`🔄 Processing ${data.url} (wikidotId: ${data.wikidotId})`);
+    
+    // 第1步：通过URL查找页面
+    let targetPage = await this.prisma.page.findUnique({
       where: { url: data.url },
-      update: { urlKey },
-      create: {
-        url: data.url,
-        urlKey,
-      },
+      include: {
+        versions: {
+          where: { validTo: null },
+          take: 1
+        }
+      }
     });
+
+    // 第2步：通过wikidotId查找现有的页面（无论URL是否找到）
+    let existingPageVersion = null;
+    if (data.wikidotId) {
+      existingPageVersion = await this.prisma.pageVersion.findFirst({
+        where: { 
+          wikidotId: data.wikidotId,
+          validTo: null 
+        },
+        include: { page: true }
+      });
+    }
+
+    // 第3步：分析不同的情况并处理
+    let page: any;
+    if (targetPage && existingPageVersion) {
+      // 情况A：两个页面都找到了
+      if (targetPage.id === existingPageVersion.pageId) {
+        // A1: 同一个页面，数据一致
+        Logger.info(`✅ Page consistency check passed for ${data.url}`);
+        page = targetPage;
+      } else {
+        // A2: 不同页面，需要合并！
+        Logger.info(`🔀 Detected page merge needed: ${existingPageVersion.page.url} -> ${data.url}`);
+        page = await this.handlePageMergeInUpsert(existingPageVersion.page, targetPage, data);
+      }
+    } else if (!targetPage && existingPageVersion) {
+      // 情况B：URL没找到页面，但wikidotId对应的页面存在 -> 页面重命名
+      Logger.info(`🔄 Detected page rename: ${existingPageVersion.page.url} -> ${data.url}`);
+      page = await this.handlePageRenameInUpsert(existingPageVersion.page, data);
+    } else if (targetPage && !existingPageVersion) {
+      // 情况C：URL找到页面，但wikidotId没有对应页面 -> 页面身份变更
+      Logger.info(`⚠️ Page identity change detected for ${data.url}`);
+      page = await this.handlePageIdentityChangeInUpsert(targetPage, data);
+    } else {
+      // 情况D：都没找到 -> 新页面
+      Logger.info(`📝 Creating new page: ${data.url}`);
+      page = null; // 将在下面创建
+    }
+
+    // 如果仍未找到，创建新页面
+    if (!page) {
+      page = await this.prisma.page.create({
+        data: {
+          url: data.url,
+          urlKey,
+          pageUuid: uuidv4(),
+        },
+      });
+      Logger.info(`📝 Created new page with UUID: ${page.pageUuid} for ${data.url}`);
+    } else {
+      // 更新现有页面的urlKey和确保有UUID
+      const updateData: any = { urlKey };
+      if (!page.pageUuid) {
+        updateData.pageUuid = uuidv4();
+        Logger.info(`🔧 Added missing UUID to existing page: ${page.id}`);
+      }
+      
+      if (Object.keys(updateData).length > 1 || page.urlKey !== urlKey) {
+        await this.prisma.page.update({
+          where: { id: page.id },
+          data: updateData
+        });
+      }
+    }
 
     const existingVersion = await this.prisma.pageVersion.findFirst({
       where: {
@@ -197,6 +270,15 @@ export class DatabaseStore {
       where: { id: currentVersion.id },
       data: updateData,
     });
+
+    // === 0. Manage Source Code Versions ===
+    if (data.textContent || data.source) {
+      Logger.debug(`📋 Managing source code versions for PageVersion ${currentVersion.id}`);
+      await this.sourceVersionService.manageSourceVersion(currentVersion.id, {
+        source: data.source,
+        textContent: data.textContent,
+      });
+    }
 
     // === 1. Process Attributions (修复版) ===
     if (data.attributions && Array.isArray(data.attributions)) {
@@ -706,6 +788,7 @@ export class DatabaseStore {
     return (
       existingVersion.wikidotId !== newData.wikidotId ||
       existingVersion.title !== newData.title ||
+      existingVersion.revisionCount !== newData.revisionCount || // 检查revision数量变化
       (existingVersion.isDeleted !== (newData.isDeleted || false))
     );
   }
@@ -1078,6 +1161,424 @@ export class DatabaseStore {
     
     console.log(`🧹 Cleaned up ${deleted.count} old staging records`);
     return deleted.count;
+  }
+
+  /**
+   * 根据UUID或URL查找页面（支持历史URL）
+   */
+  private async findPageByUuidOrUrl(identifier: string) {
+    // 尝试UUID格式
+    if (identifier.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      return await this.prisma.page.findUnique({
+        where: { pageUuid: identifier }
+      });
+    }
+    
+    // 尝试URL
+    let page = await this.prisma.page.findUnique({
+      where: { url: identifier }
+    });
+    
+    // 如果直接URL未找到，检查历史URL
+    if (!page) {
+      page = await this.prisma.page.findFirst({
+        where: {
+          historicalUrls: {
+            has: identifier
+          }
+        }
+      });
+      
+      if (page) {
+        Logger.info(`📋 Found page via historical URL: ${identifier} -> ${page.url} (UUID: ${page.pageUuid})`);
+      }
+    }
+    
+    return page;
+  }
+
+  /**
+   * 公开版本：根据UUID或URL查找页面
+   */
+  async findPageByIdentifier(identifier: string) {
+    return await this.findPageByUuidOrUrl(identifier);
+  }
+
+  /**
+   * 改进版buildDirtyQueue - 使用wikidotId智能匹配
+   */
+  async buildDirtyQueueEnhanced() {
+    console.log('🔍 Building enhanced dirty page queue with smart matching...');
+    
+    // 清空现有的dirty queue
+    await this.prisma.dirtyPage.deleteMany({});
+    
+    // 首先处理删除的页面（在数据库中但不在staging中）
+    const deletedPages = await this.prisma.$queryRaw<Array<{pageId: number, url: string}>>`
+      SELECT p.id as "pageId", p.url
+      FROM "Page" p
+      WHERE p.url NOT IN (SELECT url FROM "PageMetaStaging")
+      AND EXISTS (SELECT 1 FROM "PageVersion" pv WHERE pv."pageId" = p.id AND pv."validTo" IS NULL)
+    `;
+    
+    console.log(`Found ${deletedPages.length} deleted pages`);
+    
+    // 标记删除的页面
+    for (const deletedPage of deletedPages) {
+      await this.prisma.pageVersion.updateMany({
+        where: {
+          pageId: deletedPage.pageId,
+          validTo: null,
+        },
+        data: {
+          validTo: new Date(),
+        },
+      });
+      
+      await this.prisma.pageVersion.create({
+        data: {
+          pageId: deletedPage.pageId,
+          validFrom: new Date(),
+          isDeleted: true,
+        },
+      });
+      
+      console.log(`Marked page as deleted: ${deletedPage.url}`);
+    }
+    
+    // 智能分析：使用wikidotId作为主要匹配标准
+    const smartAnalysis = await this.prisma.$queryRaw<Array<{
+      pageId: number | null;
+      stagingUrl: string;
+      currentUrl: string | null;
+      wikidotId: number;
+      matchType: 'NEW_PAGE' | 'URL_CHANGED' | 'EXISTING_PAGE';
+      needsProcessing: boolean;
+      reasons: string[];
+    }>>`
+      WITH smart_page_matching AS (
+        SELECT 
+          s.url as staging_url,
+          s."wikidotId",
+          s.title, s.rating, s."voteCount", s.tags, s."revisionCount",
+          
+          -- 🎯 核心改进：通过wikidotId匹配页面
+          pv.\"pageId\" as page_id,
+          p.url as current_url,
+          pv.title as current_title,
+          pv.rating as current_rating,
+          pv.\"voteCount\" as current_vote_count,
+          pv.tags as current_tags,
+          pv.\"revisionCount\" as current_revision_count,
+          
+          -- 🚀 智能状态判断
+          CASE 
+            WHEN pv.\"pageId\" IS NULL THEN 'NEW_PAGE'
+            WHEN pv.\"pageId\" IS NOT NULL AND p.url != s.url THEN 'URL_CHANGED'  -- 🔥 检测重命名
+            ELSE 'EXISTING_PAGE'
+          END as match_type,
+          
+          -- 变化检测
+          CASE WHEN 
+            pv.\"pageId\" IS NULL OR
+            p.url != s.url OR  -- URL变化需要处理
+            s.title IS DISTINCT FROM pv.title OR
+            s.rating IS DISTINCT FROM pv.rating OR
+            s.\"voteCount\" IS DISTINCT FROM pv.\"voteCount\" OR
+            s.tags IS DISTINCT FROM pv.tags OR
+            s.\"revisionCount\" IS DISTINCT FROM pv.\"revisionCount\"
+          THEN TRUE ELSE FALSE END as needs_processing,
+          
+          -- 详细变化原因
+          array_remove(ARRAY[
+            CASE WHEN pv.\"pageId\" IS NULL THEN 'new page' END,
+            CASE WHEN p.url != s.url THEN 'url changed (rename detected)' END,
+            CASE WHEN s.title IS DISTINCT FROM pv.title THEN 'title changed' END,
+            CASE WHEN s.rating IS DISTINCT FROM pv.rating THEN 'rating changed' END,
+            CASE WHEN s.\"voteCount\" IS DISTINCT FROM pv.\"voteCount\" THEN 'vote count changed' END,
+            CASE WHEN s.tags IS DISTINCT FROM pv.tags THEN 'tags changed' END,
+            CASE WHEN s.\"revisionCount\" IS DISTINCT FROM pv.\"revisionCount\" THEN 'revision count changed' END
+          ], NULL) as reasons
+          
+        FROM \"PageMetaStaging\" s
+        -- 🎯 关键改进：通过wikidotId连接而不是URL
+        LEFT JOIN \"PageVersion\" pv ON pv.\"wikidotId\" = s.\"wikidotId\" 
+                                     AND pv.\"validTo\" IS NULL
+        LEFT JOIN \"Page\" p ON p.id = pv.\"pageId\"
+      )
+      
+      SELECT 
+        page_id as "pageId",
+        staging_url as "stagingUrl", 
+        current_url as "currentUrl",
+        "wikidotId",
+        match_type as "matchType",
+        needs_processing as "needsProcessing",
+        reasons
+      FROM smart_page_matching
+      WHERE needs_processing = true
+      ORDER BY match_type, staging_url
+    `;
+
+    console.log(`\n📊 智能分析结果:`);
+    console.log(`  新页面: ${smartAnalysis.filter(p => p.matchType === 'NEW_PAGE').length}`);
+    console.log(`  重命名页面: ${smartAnalysis.filter(p => p.matchType === 'URL_CHANGED').length}`);
+    console.log(`  更新页面: ${smartAnalysis.filter(p => p.matchType === 'EXISTING_PAGE').length}`);
+
+    // 显示重命名页面详情
+    const renamedPages = smartAnalysis.filter(p => p.matchType === 'URL_CHANGED');
+    if (renamedPages.length > 0) {
+      console.log(`\n🔄 检测到的页面重命名:`);
+      for (const page of renamedPages.slice(0, 5)) {
+        console.log(`  ${page.currentUrl} → ${page.stagingUrl} (wikidotId: ${page.wikidotId})`);
+      }
+      if (renamedPages.length > 5) {
+        console.log(`  ... 还有 ${renamedPages.length - 5} 个重命名页面`);
+      }
+    }
+
+    // 将结果写入DirtyPage表
+    for (const page of smartAnalysis) {
+      if (page.pageId) {
+        await this.prisma.dirtyPage.create({
+          data: {
+            pageId: page.pageId,
+            needPhaseB: true,
+            needPhaseC: false,
+            reasons: [`${page.matchType}: ${page.reasons.join(', ')}`]
+          }
+        });
+      }
+      // TODO: 新页面需要先创建Page记录
+    }
+
+    console.log(`\n✅ 增强dirty queue构建完成，共 ${smartAnalysis.length} 个需要处理的页面`);
+    return smartAnalysis;
+  }
+
+  /**
+   * 专门处理页面重命名的方法
+   */
+  async handlePageRename(options: {
+    pageId: number;
+    oldUrl: string;
+    newUrl: string;
+    preserveHistory?: boolean;
+  }) {
+    const { pageId, oldUrl, newUrl, preserveHistory = true } = options;
+    
+    Logger.info(`🔄 处理页面重命名: ${oldUrl} → ${newUrl}`);
+    
+    const page = await this.prisma.page.findUnique({
+      where: { id: pageId }
+    });
+    
+    if (!page) {
+      throw new Error(`Page ${pageId} not found`);
+    }
+    
+    // 更新URL并保存历史
+    const historicalUrls = preserveHistory 
+      ? [...(page.historicalUrls || []), oldUrl]
+        .filter((url, index, arr) => arr.indexOf(url) === index && url !== newUrl)
+      : page.historicalUrls;
+    
+    await this.prisma.page.update({
+      where: { id: pageId },
+      data: {
+        url: newUrl,
+        urlKey: this.extractUrlKey(newUrl),
+        historicalUrls,
+        updatedAt: new Date()
+      }
+    });
+    
+    Logger.info(`✅ 页面重命名完成: ${page.pageUuid}`);
+    Logger.info(`   历史URLs: ${historicalUrls?.join(', ') || '无'}`);
+    
+    return page;
+  }
+
+  /**
+   * 合并两个页面记录（用于处理重复页面）
+   */
+  async mergePageRecords(options: {
+    sourcePageId: number;
+    targetPageId: number;
+    preserveHistory?: boolean;
+  }) {
+    const { sourcePageId, targetPageId, preserveHistory = true } = options;
+    
+    await this.prisma.$transaction(async (tx) => {
+      // 获取源页面信息
+      const sourcePage = await tx.page.findUnique({
+        where: { id: sourcePageId },
+        include: { versions: true }
+      });
+      
+      if (!sourcePage) {
+        throw new Error(`Source page ${sourcePageId} not found`);
+      }
+      
+      Logger.info(`🔀 合并页面 ${sourcePageId} (${sourcePage.url}) → ${targetPageId}`);
+      
+      // 1. 迁移所有PageVersion
+      await tx.pageVersion.updateMany({
+        where: { pageId: sourcePageId },
+        data: { pageId: targetPageId }
+      });
+      
+      // 2. 迁移DirtyPage
+      await tx.dirtyPage.updateMany({
+        where: { pageId: sourcePageId },
+        data: { pageId: targetPageId }
+      });
+      
+      // 3. 记录源页面URL为历史URL
+      if (preserveHistory) {
+        const targetPage = await tx.page.findUnique({
+          where: { id: targetPageId }
+        });
+        
+        if (targetPage) {
+          const newHistoricalUrls = [
+            ...(targetPage.historicalUrls || []),
+            ...(sourcePage.historicalUrls || []),
+            sourcePage.url
+          ].filter((url, index, arr) => arr.indexOf(url) === index && url !== targetPage.url);
+          
+          await tx.page.update({
+            where: { id: targetPageId },
+            data: { historicalUrls: newHistoricalUrls }
+          });
+        }
+      }
+      
+      // 4. 删除源页面
+      await tx.page.delete({
+        where: { id: sourcePageId }
+      });
+      
+      Logger.info(`✅ 页面合并完成: ${sourcePage.url} → 目标页面`);
+    });
+  }
+
+  /**
+   * 在upsert中处理页面合并
+   */
+  private async handlePageMergeInUpsert(sourcePage: any, targetPage: any, data: any) {
+    Logger.info(`🔀 Merging pages in upsert: ${sourcePage.id} -> ${targetPage.id}`);
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. 迁移所有PageVersion
+      await tx.pageVersion.updateMany({
+        where: { pageId: sourcePage.id },
+        data: { pageId: targetPage.id }
+      });
+
+      // 2. 迁移DirtyPage
+      await tx.dirtyPage.updateMany({
+        where: { pageId: sourcePage.id },
+        data: { pageId: targetPage.id }
+      });
+
+      // 3. 更新目标页面的历史URLs
+      const newHistoricalUrls = [
+        ...(targetPage.historicalUrls || []),
+        sourcePage.url
+      ].filter((url, index, arr) => arr.indexOf(url) === index && url !== data.url);
+
+      await tx.page.update({
+        where: { id: targetPage.id },
+        data: { 
+          historicalUrls: newHistoricalUrls,
+          updatedAt: new Date()
+        }
+      });
+
+      // 4. 删除源页面
+      await tx.page.delete({
+        where: { id: sourcePage.id }
+      });
+
+      Logger.info(`✅ Page merge completed: ${sourcePage.url} merged into ${targetPage.url}`);
+    });
+
+    return targetPage;
+  }
+
+  /**
+   * 在upsert中处理页面重命名
+   */
+  private async handlePageRenameInUpsert(existingPage: any, data: any) {
+    Logger.info(`🔄 Renaming page in upsert: ${existingPage.url} -> ${data.url}`);
+
+    const historicalUrls = [
+      ...(existingPage.historicalUrls || []),
+      existingPage.url
+    ].filter((url, index, arr) => arr.indexOf(url) === index && url !== data.url);
+
+    const updatedPage = await this.prisma.page.update({
+      where: { id: existingPage.id },
+      data: {
+        url: data.url,
+        urlKey: this.extractUrlKey(data.url),
+        historicalUrls,
+        updatedAt: new Date()
+      }
+    });
+
+    Logger.info(`✅ Page renamed: ${existingPage.url} -> ${data.url} (UUID: ${updatedPage.pageUuid})`);
+    return updatedPage;
+  }
+
+  /**
+   * 在upsert中处理页面替换（旧页面被删除，新页面创建在相同URL）
+   */
+  private async handlePageIdentityChangeInUpsert(existingPage: any, data: any) {
+    Logger.info(`🔄 Page replacement detected: ${data.url} - old page deleted, new page created`);
+    Logger.info(`  Old page ${existingPage.id} (UUID: ${existingPage.pageUuid})`);
+    Logger.info(`  New wikidotId: ${data.wikidotId}`);
+    
+    await this.prisma.$transaction(async (tx) => {
+      // 1. 标记旧页面的所有版本为过期（表示页面已被删除）
+      await tx.pageVersion.updateMany({
+        where: {
+          pageId: existingPage.id,
+          validTo: null
+        },
+        data: { validTo: new Date() }
+      });
+
+      // 2. 为旧页面创建一个删除版本
+      await tx.pageVersion.create({
+        data: {
+          pageId: existingPage.id,
+          validFrom: new Date(),
+          isDeleted: true,
+          title: `Deleted: ${data.title || 'Unknown'}`
+        }
+      });
+
+      // 3. 修改旧页面的URL，为新页面让路
+      const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      const historicalUrl = `${data.url}-deleted-${timestamp}`;
+      
+      await tx.page.update({
+        where: { id: existingPage.id },
+        data: {
+          url: historicalUrl,
+          urlKey: this.extractUrlKey(historicalUrl),
+          updatedAt: new Date()
+        }
+      });
+
+      Logger.info(`  ✅ Old page moved to: ${historicalUrl}`);
+    });
+
+    // 4. 返回null，让调用方创建新页面
+    Logger.info(`  📝 Will create new page for wikidotId: ${data.wikidotId}`);
+    return null;
   }
 
   async disconnect() {

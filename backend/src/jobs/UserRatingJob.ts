@@ -76,14 +76,16 @@ export class UserRatingSystem {
             THEN 1 
           END) as scp_pages,
           
-          -- 翻译分类
+          -- 翻译分类 (不包含原创和掩藏页的页面)
           SUM(CASE 
-            WHEN tags @> ARRAY['翻译'] 
+            WHEN NOT (tags @> ARRAY['原创']) 
+                 AND NOT (tags @> ARRAY['掩藏页'])
             THEN rating::float
             ELSE 0 
           END) as translation_rating,
           COUNT(CASE 
-            WHEN tags @> ARRAY['翻译'] 
+            WHEN NOT (tags @> ARRAY['原创']) 
+                 AND NOT (tags @> ARRAY['掩藏页'])
             THEN 1 
           END) as translation_pages,
           
@@ -107,7 +109,29 @@ export class UserRatingSystem {
           COUNT(CASE 
             WHEN tags @> ARRAY['原创', '故事'] 
             THEN 1 
-          END) as story_pages
+          END) as story_pages,
+          
+          -- Wanderers/图书馆分类 (原创 + wanderers)
+          SUM(CASE 
+            WHEN tags @> ARRAY['原创', 'wanderers'] 
+            THEN rating::float
+            ELSE 0 
+          END) as wanderers_rating,
+          COUNT(CASE 
+            WHEN tags @> ARRAY['原创', 'wanderers'] 
+            THEN 1 
+          END) as wanderers_pages,
+          
+          -- 艺术作品分类 (原创 + 艺术作品)
+          SUM(CASE 
+            WHEN tags @> ARRAY['原创', '艺术作品'] 
+            THEN rating::float
+            ELSE 0 
+          END) as art_rating,
+          COUNT(CASE 
+            WHEN tags @> ARRAY['原创', '艺术作品'] 
+            THEN 1 
+          END) as art_pages
           
         FROM page_attributions
         GROUP BY "userId"
@@ -123,7 +147,11 @@ export class UserRatingSystem {
         "goiRating" = uc.goi_rating,
         "goiPageCount" = uc.goi_pages,
         "storyRating" = uc.story_rating,
-        "storyPageCount" = uc.story_pages
+        "storyPageCount" = uc.story_pages,
+        "wanderersRating" = uc.wanderers_rating,
+        "wanderersPageCount" = uc.wanderers_pages,
+        "artRating" = uc.art_rating,
+        "artPageCount" = uc.art_pages
       FROM user_contributions uc
       WHERE us."userId" = uc."userId"
     `);
@@ -145,6 +173,8 @@ export class UserRatingSystem {
     await this.calculateCategoryRanking('translationRating', 'translationRank');
     await this.calculateCategoryRanking('goiRating', 'goiRank');
     await this.calculateCategoryRanking('storyRating', 'storyRank');
+    await this.calculateCategoryRanking('wanderersRating', 'wanderersRank');
+    await this.calculateCategoryRanking('artRating', 'artRank');
     
     console.log('✅ 用户排名计算完成');
   }
@@ -190,13 +220,15 @@ export class UserRatingSystem {
   /**
    * 获取排行榜数据
    */
-  async getRankings(category: 'overall' | 'scp' | 'translation' | 'goi' | 'story' = 'overall', limit: number = 50) {
+  async getRankings(category: 'overall' | 'scp' | 'translation' | 'goi' | 'story' | 'wanderers' | 'art' = 'overall', limit: number = 50) {
     const fieldMapping = {
       overall: { rating: 'overallRating', rank: 'overallRank', count: 'pageCount' },
       scp: { rating: 'scpRating', rank: 'scpRank', count: 'scpPageCount' },
       translation: { rating: 'translationRating', rank: 'translationRank', count: 'translationPageCount' },
       goi: { rating: 'goiRating', rank: 'goiRank', count: 'goiPageCount' },
-      story: { rating: 'storyRating', rank: 'storyRank', count: 'storyPageCount' }
+      story: { rating: 'storyRating', rank: 'storyRank', count: 'storyPageCount' },
+      wanderers: { rating: 'wanderersRating', rank: 'wanderersRank', count: 'wanderersPageCount' },
+      art: { rating: 'artRating', rank: 'artRank', count: 'artPageCount' }
     };
 
     const fields = fieldMapping[category];
@@ -435,7 +467,9 @@ export class UserRatingSystem {
         COUNT(CASE WHEN "scpRating" > 0 THEN 1 END) as scp_users,
         COUNT(CASE WHEN "translationRating" > 0 THEN 1 END) as translation_users,
         COUNT(CASE WHEN "goiRating" > 0 THEN 1 END) as goi_users,
-        COUNT(CASE WHEN "storyRating" > 0 THEN 1 END) as story_users
+        COUNT(CASE WHEN "storyRating" > 0 THEN 1 END) as story_users,
+        COUNT(CASE WHEN "wanderersRating" > 0 THEN 1 END) as wanderers_users,
+        COUNT(CASE WHEN "artRating" > 0 THEN 1 END) as art_users
       FROM "UserStats"
     `;
 
@@ -447,7 +481,9 @@ export class UserRatingSystem {
       scpUsers: Number(stats[0].scp_users),
       translationUsers: Number(stats[0].translation_users),
       goiUsers: Number(stats[0].goi_users),
-      storyUsers: Number(stats[0].story_users)
+      storyUsers: Number(stats[0].story_users),
+      wanderersUsers: Number(stats[0].wanderers_users),
+      artUsers: Number(stats[0].art_users)
     };
   }
 }
@@ -472,6 +508,8 @@ export async function calculateUserRatings(prisma: PrismaClient) {
   console.log(`  翻译作者数: ${stats.translationUsers}`);
   console.log(`  GOI作者数: ${stats.goiUsers}`);
   console.log(`  故事作者数: ${stats.storyUsers}`);
+  console.log(`  Wanderers作者数: ${stats.wanderersUsers}`);
+  console.log(`  艺术作品作者数: ${stats.artUsers}`);
   
   return stats;
 }

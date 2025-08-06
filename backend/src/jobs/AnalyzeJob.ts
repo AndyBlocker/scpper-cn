@@ -114,12 +114,12 @@ export async function analyze({ since }: { since?: Date } = {}) {
         "totalRating" = EXCLUDED."totalRating";
     `);
 
-    // Step 3: Calculate and update user first activity timestamps with details
-    console.log('Calculating user first activity timestamps with detailed information...');
+    // Step 3: Calculate and update user first and last activity timestamps with details
+    console.log('Calculating user first and last activity timestamps with detailed information...');
     
-    // First, update just the timestamps and types (faster)
+    // First, update the timestamps and types (faster)
     await prisma.$executeRawUnsafe(`
-      WITH user_first_activities AS (
+      WITH user_activities AS (
         SELECT 
           u.id as "userId",
           CASE 
@@ -147,7 +147,12 @@ export async function analyze({ since }: { since?: Date } = {}) {
             COALESCE(first_vote.timestamp, '2099-01-01'::timestamp),
             COALESCE(first_revision.timestamp, '2099-01-01'::timestamp),
             COALESCE(first_attribution.date, '2099-01-01'::timestamp)
-          ) as first_activity_at
+          ) as first_activity_at,
+          GREATEST(
+            COALESCE(last_vote.timestamp, '1900-01-01'::timestamp),
+            COALESCE(last_revision.timestamp, '1900-01-01'::timestamp),
+            COALESCE(last_attribution.date, '1900-01-01'::timestamp)
+          ) as last_activity_at
         FROM "User" u
         LEFT JOIN (
           SELECT "userId", MIN("timestamp") as timestamp
@@ -164,6 +169,21 @@ export async function analyze({ since }: { since?: Date } = {}) {
           FROM "Attribution" WHERE "userId" IS NOT NULL AND "date" IS NOT NULL
           GROUP BY "userId"
         ) first_attribution ON u.id = first_attribution."userId"
+        LEFT JOIN (
+          SELECT "userId", MAX("timestamp") as timestamp
+          FROM "Vote" WHERE "userId" IS NOT NULL
+          GROUP BY "userId"
+        ) last_vote ON u.id = last_vote."userId"
+        LEFT JOIN (
+          SELECT "userId", MAX("timestamp") as timestamp  
+          FROM "Revision" WHERE "userId" IS NOT NULL
+          GROUP BY "userId"
+        ) last_revision ON u.id = last_revision."userId"
+        LEFT JOIN (
+          SELECT "userId", MAX("date") as date
+          FROM "Attribution" WHERE "userId" IS NOT NULL AND "date" IS NOT NULL
+          GROUP BY "userId"
+        ) last_attribution ON u.id = last_attribution."userId"
         WHERE LEAST(
           COALESCE(first_vote.timestamp, '2099-01-01'::timestamp),
           COALESCE(first_revision.timestamp, '2099-01-01'::timestamp),
@@ -172,10 +192,15 @@ export async function analyze({ since }: { since?: Date } = {}) {
       )
       UPDATE "User" u
       SET 
-        "firstActivityAt" = ufa.first_activity_at,
-        "firstActivityType" = ufa.activity_type
-      FROM user_first_activities ufa
-      WHERE u.id = ufa."userId";
+        "firstActivityAt" = ua.first_activity_at,
+        "lastActivityAt" = CASE 
+          WHEN ua.last_activity_at > '1900-01-01'::timestamp 
+          THEN ua.last_activity_at 
+          ELSE NULL 
+        END,
+        "firstActivityType" = ua.activity_type
+      FROM user_activities ua
+      WHERE u.id = ua."userId";
     `);
 
     // Then update activity details for users who have activity types (batch processing)

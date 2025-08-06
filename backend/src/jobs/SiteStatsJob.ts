@@ -154,6 +154,9 @@ export async function calculateDailySiteStats(prisma: PrismaClient) {
     today.setHours(0, 0, 0, 0);
     
     // Get total counts
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    
     const totalStats = await prisma.$queryRaw<Array<{
       totalUsers: bigint,
       activeUsers: bigint,
@@ -162,7 +165,7 @@ export async function calculateDailySiteStats(prisma: PrismaClient) {
     }>>`
       SELECT 
         (SELECT COUNT(*) FROM "User") as "totalUsers",
-        (SELECT COUNT(*) FROM "User" WHERE "firstActivityAt" IS NOT NULL) as "activeUsers",
+        (SELECT COUNT(*) FROM "User" WHERE "lastActivityAt" IS NOT NULL AND "lastActivityAt" >= ${threeMonthsAgo}) as "activeUsers",
         (SELECT COUNT(*) FROM "Page") as "totalPages",
         (SELECT COUNT(*) FROM "Vote") as "totalVotes"
     `;
@@ -251,6 +254,9 @@ export async function generateHistoricalStats(prisma: PrismaClient, startDate?: 
       const dateStr = currentDate.toISOString().split('T')[0];
       
       // Calculate cumulative stats up to this date
+      const threeMonthsBeforeCurrentDate = new Date(currentDate);
+      threeMonthsBeforeCurrentDate.setMonth(threeMonthsBeforeCurrentDate.getMonth() - 3);
+      
       const cumulativeStats = await prisma.$queryRaw<Array<{
         totalUsers: bigint,
         activeUsers: bigint,
@@ -262,7 +268,7 @@ export async function generateHistoricalStats(prisma: PrismaClient, startDate?: 
       }>>`
         SELECT 
           (SELECT COUNT(*) FROM "User" WHERE DATE("firstActivityAt") <= ${currentDate}) as "totalUsers",
-          (SELECT COUNT(*) FROM "User" WHERE "firstActivityAt" IS NOT NULL AND DATE("firstActivityAt") <= ${currentDate}) as "activeUsers",
+          (SELECT COUNT(*) FROM "User" WHERE "lastActivityAt" IS NOT NULL AND DATE("lastActivityAt") >= ${threeMonthsBeforeCurrentDate} AND DATE("lastActivityAt") <= ${currentDate}) as "activeUsers",
           (SELECT COUNT(*) FROM "Page" WHERE DATE("createdAt") <= ${currentDate}) as "totalPages",
           (SELECT COUNT(*) FROM "Vote" WHERE DATE("timestamp") <= ${currentDate}) as "totalVotes",
           (SELECT COUNT(*) FROM "User" WHERE DATE("firstActivityAt") = ${currentDate}) as "newUsersToday",
