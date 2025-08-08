@@ -21,7 +21,7 @@ export class GraphQLClient {
             await this.backoff.wait(wait);  // 使用新的带进度的等待方法
             continue;
         }
-        console.log(err)
+        Logger.error('GraphQL request error:', err);
         if (attempt === MAX_RETRY_ATTEMPTS) throw err;
         
         Logger.warn(`Network error, retry #${attempt}`);

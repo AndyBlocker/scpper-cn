@@ -895,7 +895,8 @@ export class DatabaseStore {
     const deletedPages = await this.prisma.$queryRaw<Array<{pageId: number, url: string}>>`
       SELECT p.id as "pageId", p.url
       FROM "Page" p
-      WHERE p.url NOT IN (SELECT url FROM "PageMetaStaging")
+      LEFT JOIN "PageMetaStaging" s ON s.url = p.url
+      WHERE s.url IS NULL
       AND EXISTS (SELECT 1 FROM "PageVersion" pv WHERE pv."pageId" = p.id AND pv."validTo" IS NULL)
     `;
     
@@ -991,14 +992,14 @@ export class DatabaseStore {
       FROM "PageMetaStaging" s
       JOIN "Page" p ON p.url = s.url
       LEFT JOIN "PageVersion" v ON v."pageId" = p.id AND v."validTo" IS NULL
-      WHERE s.url IN (SELECT url FROM "PageMetaStaging")
     `;
     
     // Also handle new pages not in database yet
     const newPages = await this.prisma.$queryRaw<Array<{url: string}>>`
       SELECT s.url
       FROM "PageMetaStaging" s
-      WHERE s.url NOT IN (SELECT url FROM "Page")
+      LEFT JOIN "Page" p ON p.url = s.url
+      WHERE p.url IS NULL
     `;
     
     console.log(`Found ${newPages.length} new pages, ${dirtyPages.length} existing pages to check`);
@@ -1033,6 +1034,65 @@ export class DatabaseStore {
           },
         });
         console.log(`Created initial version for: ${pageInfo.url}`);
+      }
+    }
+    
+    // Handle page recreation (existing page but no current version due to wikidotId change)
+    const pagesNeedingRecreation = await this.prisma.$queryRaw<Array<{
+      pageId: number;
+      url: string;
+      lastWikidotId: number | null;
+    }>>`
+      SELECT 
+        p.id as "pageId", 
+        p.url,
+        (SELECT pv."wikidotId" 
+         FROM "PageVersion" pv 
+         WHERE pv."pageId" = p.id AND pv."wikidotId" IS NOT NULL 
+         ORDER BY pv."createdAt" DESC 
+         LIMIT 1) as "lastWikidotId"
+      FROM "Page" p
+      JOIN "PageMetaStaging" s ON s.url = p.url
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "PageVersion" pv 
+        WHERE pv."pageId" = p.id AND pv."validTo" IS NULL
+      )
+      AND s."wikidotId" IS NOT NULL
+      AND s."wikidotId" != COALESCE(
+        (SELECT pv."wikidotId" 
+         FROM "PageVersion" pv 
+         WHERE pv."pageId" = p.id AND pv."wikidotId" IS NOT NULL 
+         ORDER BY pv."createdAt" DESC 
+         LIMIT 1), 
+        0
+      )
+    `;
+    
+    console.log(`Found ${pagesNeedingRecreation.length} pages needing recreation due to wikidotId change...`);
+    
+    for (const pageInfo of pagesNeedingRecreation) {
+      const stagingData = await this.prisma.pageMetaStaging.findUnique({
+        where: { url: pageInfo.url }
+      });
+      
+      if (stagingData) {
+        console.log(`🔥 Recreation detected: ${pageInfo.url} (wikidotId: ${pageInfo.lastWikidotId} → ${stagingData.wikidotId})`);
+        
+        await this.prisma.pageVersion.create({
+          data: {
+            pageId: pageInfo.pageId,
+            wikidotId: stagingData.wikidotId,
+            title: stagingData.title,
+            rating: stagingData.rating,
+            voteCount: stagingData.voteCount,
+            revisionCount: stagingData.revisionCount,
+            tags: stagingData.tags || [],
+            validFrom: new Date(),
+            validTo: null,  // New current version
+            isDeleted: stagingData.isDeleted || false,
+          },
+        });
+        console.log(`✅ Created recreation version for: ${pageInfo.url}`);
       }
     }
     
@@ -1338,7 +1398,7 @@ export class DatabaseStore {
       ? { donePhaseB: true, updatedAt: new Date() }
       : { donePhaseC: true, updatedAt: new Date() };
 
-    await this.prisma.dirtyPage.update({
+    await this.prisma.dirtyPage.updateMany({
       where: { pageId },
       data: updateData,
     });
@@ -1413,7 +1473,8 @@ export class DatabaseStore {
     const deletedPages = await this.prisma.$queryRaw<Array<{pageId: number, url: string}>>`
       SELECT p.id as "pageId", p.url
       FROM "Page" p
-      WHERE p.url NOT IN (SELECT url FROM "PageMetaStaging")
+      LEFT JOIN "PageMetaStaging" s ON s.url = p.url
+      WHERE s.url IS NULL
       AND EXISTS (SELECT 1 FROM "PageVersion" pv WHERE pv."pageId" = p.id AND pv."validTo" IS NULL)
     `;
     

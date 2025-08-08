@@ -60,48 +60,6 @@ export class Page {
     return this.votes.length;
   }
 
-  validate(options = { strict: false }) {
-    const errors = [];
-    const warnings = [];
-
-    // Basic field checks
-    if (!this.id) {
-      if (options.strict) {
-        throw new Error('Page must have an id');
-      } else {
-        warnings.push('Page missing id - may cause database issues');
-      }
-    }
-
-    if (!this.wikidotInfo?.wikidotPageName) {
-      if (options.strict) {
-        throw new Error('Page must have wikidot page name');
-      } else {
-        warnings.push('Page missing wikidot page name - using URL fallback');
-        if (this.wikidotInfo?.url) {
-          this.wikidotInfo.wikidotPageName = this.extractPageNameFromUrl(this.wikidotInfo.url);
-        }
-      }
-    }
-
-    // wikidotId check - handle permission-hidden cases
-    if (!this.wikidotInfo?.wikidotId) {
-      warnings.push('Page missing wikidotId - may be hidden due to permissions or API changes');
-      if (this.wikidotInfo?.url) {
-        this.id = this.wikidotInfo.url.split('/').pop() || `temp_${Date.now()}`;
-      }
-    }
-
-    if (errors.length > 0) {
-      throw new Error(`Page validation failed: ${errors.join(', ')}`);
-    }
-
-    return {
-      valid: true,
-      errors,
-      warnings
-    };
-  }
 
   toJSON() {
     return {

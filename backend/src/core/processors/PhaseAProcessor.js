@@ -2,12 +2,12 @@
 import { GraphQLClient } from '../client/GraphQLClient.js';
 import { CoreQueries } from '../graphql/CoreQueries.js';
 import { PointEstimator } from '../graphql/PointEstimator.js';
-import { DatabaseStore } from '../store/DatabaseStore.ts';
+import { DatabaseStore } from '../store/DatabaseStore.js';
 import { Logger } from '../../utils/Logger.js';
 
 const cq = new CoreQueries();
 
-let PHASE_A_BATCHSIZE = 200
+let PHASE_A_BATCHSIZE = 100
 
 // 获取总量的查询
 const TOTAL_QUERY = /* GraphQL */`
@@ -179,8 +179,9 @@ export class PhaseAProcessor {
         parentUrl: node.parent?.url || null,
         childCount: node.childCount || null,
         attributionCount: node.attributions?.length || null,
-        voteUp: node.rating > 0 ? node.rating : null,
-        voteDown: node.rating < 0 ? Math.abs(node.rating) : null,
+        // Don't estimate uv/dv in Phase A, leave for analysis stage
+        voteUp: null,
+        voteDown: null,
       });
       
       totalCostInBatch += estCost;

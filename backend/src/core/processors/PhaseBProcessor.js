@@ -140,6 +140,11 @@ export class PhaseBProcessor {
     });
     const cost = PointEstimator.estimateQueryCost(bucket);
     
+    // Precompute url->alias mapping to avoid O(n²) complexity in findIndex
+    const aliasByUrl = new Map(
+      bucket.map((p, i) => [p.url, `p${i}`])
+    );
+    
     // Show progress for each batch with total progress
     const currentProgress = totalProcessed + bucket.length;
     const progressPercent = totalPhaseBPages > 0 ? (currentProgress / totalPhaseBPages * 100).toFixed(1) : '0';
@@ -165,10 +170,8 @@ export class PhaseBProcessor {
             // Debug: log GraphQL response structure
             Logger.debug(`📋 GraphQL response keys: ${Object.keys(res)}`);
             
-            // Fix: Use proper alias mapping instead of unreliable Object.values().find()
-            // The alias is created as `p${originalIndex}` in buildAliasQuery
-            const originalIndex = bucket.findIndex(bucketPage => bucketPage.url === page.url);
-            const alias = `p${originalIndex}`;
+            // Fix: Use O(1) alias lookup instead of O(n) findIndex
+            const alias = aliasByUrl.get(page.url);
             const pageData = res[alias];
             
             Logger.debug(`📄 Found pageData for ${page.url} at alias ${alias}: ${pageData ? 'YES' : 'NO'}`);
@@ -252,9 +255,8 @@ export class PhaseBProcessor {
             Logger.debug(`🔍 Individual processing for: ${page.url}`);
             Logger.debug(`📋 Available GraphQL response keys: ${Object.keys(res)}`);
             
-            // Fix: Use proper alias mapping instead of unreliable Object.values().find()
-            const originalIndex = bucket.findIndex(bucketPage => bucketPage.url === page.url);
-            const alias = `p${originalIndex}`;
+            // Fix: Use O(1) alias lookup instead of O(n) findIndex
+            const alias = aliasByUrl.get(page.url);
             const pageData = res[alias];
             Logger.debug(`📄 Found pageData for ${page.url} at alias ${alias}: ${pageData ? 'YES' : 'NO'}`);
             

@@ -7,6 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// 只读模式的数据模型，去掉写入相关的模型
 model Attribution {
   id        Int      @id @default(autoincrement())
   pageVerId Int
@@ -25,36 +26,6 @@ model Attribution {
   @@index([userId])
 }
 
-model DirtyPage {
-  pageId     Int      @id
-  needPhaseB Boolean
-  needPhaseC Boolean
-  reasons    String[]
-  donePhaseB Boolean  @default(false)
-  donePhaseC Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  
-  page       Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
-
-  @@index([needPhaseB, donePhaseB])
-  @@index([needPhaseC, donePhaseC])
-}
-
-model DirtyPageBackup {
-  pageId      Int?
-  needPhaseB  Boolean?
-  needPhaseC  Boolean?
-  reasons     String[]
-  donePhaseB  Boolean?
-  donePhaseC  Boolean?
-  createdAt   DateTime?
-  updatedAt   DateTime?
-  url         String?
-  backup_time DateTime?
-  id          Int       @id @default(autoincrement())
-}
-
 model Page {
   id               Int                   @id @default(autoincrement())
   url              String                @unique
@@ -63,34 +34,12 @@ model Page {
   updatedAt        DateTime              @updatedAt
   pageUuid         String?
   historicalUrls   String[]
-  dirtyPage        DirtyPage?
   versions         PageVersion[]
   interestingFacts InterestingFacts[]
   timeMilestones   TimeMilestones[]
   tagRecords       TagRecords[]
   contentRecords   ContentRecords[]
   ratingRecords    RatingRecords[]
-}
-
-model PageMetaStaging {
-  url              String   @id
-  wikidotId        Int?
-  title            String?
-  rating           Int?
-  voteCount        Int?
-  revisionCount    Int?
-  tags             String[]
-  isDeleted        Boolean  @default(false)
-  estimatedCost    Int?
-  lastSeenAt       DateTime @default(now())
-  category         String?
-  parentUrl        String?
-  childCount       Int?
-  attributionCount Int?
-  voteUp           Int?
-  voteDown         Int?
-
-  @@index([lastSeenAt])
 }
 
 model PageStats {
@@ -171,40 +120,21 @@ model SiteStats {
   id          Int      @id @default(autoincrement())
   date        DateTime @unique @db.Date
   totalUsers  Int      @default(0)
-  activeUsers Int      @default(0)  // Users with firstActivityAt
+  activeUsers Int      @default(0)
   totalPages  Int      @default(0)
   totalVotes  Int      @default(0)
-  newUsersToday Int    @default(0)  // New users by firstActivityAt on this date
-  newPagesToday Int    @default(0)  // New pages created on this date
-  newVotesToday Int    @default(0)  // New votes on this date
+  newUsersToday Int    @default(0)
+  newPagesToday Int    @default(0)
+  newVotesToday Int    @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([date])
 }
 
-model SourceVersion {
-  id             Int      @id @default(autoincrement())
-  pageVersionId  Int
-  revisionId     Int?
-  revisionNumber Int?
-  source         String?
-  textContent    String?
-  timestamp      DateTime @default(now())
-  isLatest       Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@unique([pageVersionId, revisionNumber])
-  @@index([pageVersionId, isLatest])
-  @@index([pageVersionId, timestamp])
-  @@index([revisionNumber])
-  @@index([timestamp])
-}
-
 model User {
-  id                   Int                   @id @default(autoincrement())
-  wikidotId            Int?                  @unique
+  id                   Int                     @id @default(autoincrement())
+  wikidotId            Int?                    @unique
   displayName          String?
   firstActivityAt      DateTime?
   firstActivityType    String?
@@ -254,20 +184,20 @@ model UserStats {
   artPageCount         Int       @default(0)
   user                 User      @relation(fields: [userId], references: [id])
 
-  @@index([overallRating(sort: Desc)], map: "idx_userstats_overall_rating")
-  @@index([overallRank], map: "idx_userstats_overall_rank")
-  @@index([scpRating(sort: Desc)], map: "idx_userstats_scp_rating")
-  @@index([scpRank], map: "idx_userstats_scp_rank")
-  @@index([translationRating(sort: Desc)], map: "idx_userstats_translation_rating")
-  @@index([translationRank], map: "idx_userstats_translation_rank")
-  @@index([goiRating(sort: Desc)], map: "idx_userstats_goi_rating")
-  @@index([goiRank], map: "idx_userstats_goi_rank")
-  @@index([storyRating(sort: Desc)], map: "idx_userstats_story_rating")
-  @@index([storyRank], map: "idx_userstats_story_rank")
-  @@index([wanderersRating(sort: Desc)], map: "idx_userstats_wanderers_rating")
-  @@index([wanderersRank], map: "idx_userstats_wanderers_rank")
-  @@index([artRating(sort: Desc)], map: "idx_userstats_art_rating")
-  @@index([artRank], map: "idx_userstats_art_rank")
+  @@index([overallRating(sort: Desc)])
+  @@index([overallRank])
+  @@index([scpRating(sort: Desc)])
+  @@index([scpRank])
+  @@index([translationRating(sort: Desc)])
+  @@index([translationRank])
+  @@index([goiRating(sort: Desc)])
+  @@index([goiRank])
+  @@index([storyRating(sort: Desc)])
+  @@index([storyRank])
+  @@index([wanderersRating(sort: Desc)])
+  @@index([wanderersRank])
+  @@index([artRating(sort: Desc)])
+  @@index([artRank])
 }
 
 model UserTagPreference {
@@ -304,20 +234,17 @@ model Vote {
   timestamp     DateTime
   direction     Int
   userId        Int?
-  anonKey       String?        // For anonymous votes when userId is null
+  anonKey       String?
   
   pageVersion   PageVersion    @relation(fields: [pageVersionId], references: [id])
   user          User?          @relation(fields: [userId], references: [id])
   
-  // Fixed unique constraint that handles NULL userId properly
   @@unique([pageVersionId, userId, timestamp], name: "Vote_unique_constraint")
   @@unique([pageVersionId, anonKey, timestamp], name: "Vote_anon_unique_constraint")
   @@index([pageVersionId, direction])
   @@index([pageVersionId, timestamp])
   @@index([userId])
 }
-
-// 有趣统计信息相关表
 
 model InterestingFacts {
   id           Int       @id @default(autoincrement())
@@ -450,4 +377,3 @@ model TrendingStats {
   @@index([statType, period])
   @@index([score])
 }
-

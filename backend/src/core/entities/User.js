@@ -33,11 +33,6 @@ export class User {
     return this.statistics?.totalPages || 0;
   }
 
-  validate() {
-    if (!this.id) throw new Error('User must have an id');
-    if (!this.wikidotInfo?.username) throw new Error('User must have a username');
-    return true;
-  }
 
   updateStatistics(stats) {
     this.statistics = { ...this.statistics, ...stats };
