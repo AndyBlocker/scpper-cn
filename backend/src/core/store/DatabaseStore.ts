@@ -141,46 +141,48 @@ export class DatabaseStore {
       }
     }
 
-    const existingVersion = await this.prisma.pageVersion.findFirst({
-      where: {
-        pageId: page.id,
-        validTo: null,
-      },
-    });
+    await this.prisma.$transaction(async (tx) => {
+      const existingVersion = await tx.pageVersion.findFirst({
+        where: {
+          pageId: page.id,
+          validTo: null,
+        },
+      });
 
-    if (this.needsNewVersion(existingVersion, data)) {
-      if (existingVersion) {
-        await this.prisma.pageVersion.update({
+      if (this.needsNewVersion(existingVersion, data)) {
+        if (existingVersion) {
+          await tx.pageVersion.update({
+            where: { id: existingVersion.id },
+            data: { validTo: new Date() },
+          });
+        }
+
+        await tx.pageVersion.create({
+          data: {
+            pageId: page.id,
+            wikidotId: data.wikidotId,
+            title: data.title,
+            rating: data.rating,
+            voteCount: data.voteCount,
+            revisionCount: data.revisionCount,
+            tags: data.tags || [],
+            validFrom: new Date(),
+            isDeleted: data.isDeleted || false,
+          },
+        });
+      } else if (existingVersion) {
+        await tx.pageVersion.update({
           where: { id: existingVersion.id },
-          data: { validTo: new Date() },
+          data: {
+            rating: data.rating,
+            voteCount: data.voteCount,
+            revisionCount: data.revisionCount,
+            title: data.title,
+            tags: data.tags || [],
+          },
         });
       }
-
-      await this.prisma.pageVersion.create({
-        data: {
-          pageId: page.id,
-          wikidotId: data.wikidotId,
-          title: data.title,
-          rating: data.rating,
-          voteCount: data.voteCount,
-          revisionCount: data.revisionCount,
-          tags: data.tags || [],
-          validFrom: new Date(),
-          isDeleted: data.isDeleted || false,
-        },
-      });
-    } else if (existingVersion) {
-      await this.prisma.pageVersion.update({
-        where: { id: existingVersion.id },
-        data: {
-          rating: data.rating,
-          voteCount: data.voteCount,
-          revisionCount: data.revisionCount,
-          title: data.title,
-          tags: data.tags || [],
-        },
-      });
-    }
+    });
   }
 
   async upsertPageContent(data: any) {
@@ -373,12 +375,12 @@ export class DatabaseStore {
           }
           
           Logger.debug(`✅ Processed attribution: type=${attr.type}, order=${orderValue}`);
-        } catch (error) {
+        } catch (error: any) {
           Logger.error(`❌ Failed to process attribution ${i}:`, {
-            message: error.message,
-            code: error.code,
+            message: error?.message || 'Unknown error',
+            code: error?.code,
             attribution: attr,
-            stack: error.stack?.split('\n').slice(0, 3).join('\n')
+            stack: error?.stack?.split('\n').slice(0, 3).join('\n')
           });
         }
       }
@@ -430,9 +432,10 @@ export class DatabaseStore {
       Logger.debug(`📝 Processing ${data.revisions.length} revisions...`);
       for (const revision of data.revisions) {
         const userId = revision.user ? await this.upsertUser(revision.user) : null;
-        const wikidotIdInt = revision.wikidotId ? parseInt(revision.wikidotId.toString()) : null;
+        const wikidotIdInt = Number.isFinite(Number(revision.wikidotId))
+          ? Number(revision.wikidotId) : null;
         
-        if (!wikidotIdInt) {
+        if (wikidotIdInt == null) {
           Logger.warn(`⚠️ Invalid wikidotId for revision: ${JSON.stringify(revision)}`);
           continue;
         }
@@ -461,11 +464,11 @@ export class DatabaseStore {
             },
           });
           Logger.debug(`✅ Processed revision ${wikidotIdInt}`);
-        } catch (error) {
+        } catch (error: any) {
           Logger.error(`❌ Failed to process revision ${wikidotIdInt}:`, {
-            message: error.message,
-            code: error.code,
-            name: error.name,
+            message: error?.message || 'Unknown error',
+            code: error?.code,
+            name: error?.name,
             revision: {
               wikidotId: wikidotIdInt,
               timestamp: revision.timestamp,
@@ -537,11 +540,11 @@ export class DatabaseStore {
           Logger.debug(`✅ Processed vote: direction=${direction}, userId=${userId || 'anonymous'}, anonKey=${anonKey || 'N/A'}`);
         } catch (error) {
           // More detailed error handling for vote conflicts
-          if (error.code === 'P2002') {
-            Logger.warn(`⚠️ Vote already exists, skipping: pageVersionId=${currentVersion.id}, userId=${userId}, anonKey=${anonKey}, timestamp=${vote.timestamp}`);
+          if ((error as any)?.code === 'P2002') {
+            Logger.warn(`⚠️ Vote already exists, skipping: pageVersionId=${currentVersion.id}, userId=${userId}, anonKey=${anonKey || 'N/A'}, timestamp=${vote.timestamp}`);
           } else {
             Logger.error(`❌ Failed to upsert vote for page ${currentVersion.id}:`, {
-              error: error.message,
+              error: (error as any)?.message || 'Unknown error',
               vote: {
                 direction,
                 timestamp: vote.timestamp,
@@ -559,8 +562,17 @@ export class DatabaseStore {
   }
 
   private extractUrlKey(url: string): string {
-    const match = url.match(/\/([^\/]+)$/);
-    return match ? match[1] : url;
+    try {
+      const u = new URL(url, 'https://placeholder.local'); // 支持相对路径
+      const path = u.pathname.replace(/\/+$/, '');         // 去掉末尾斜杠
+      const last = path.split('/').filter(Boolean).pop() || '';
+      return decodeURIComponent(last);
+    } catch {
+      // 兜底：剔除 ? 和 #，再取最后一段
+      const cleaned = url.split('#')[0].split('?')[0].replace(/\/+$/, '');
+      const parts = cleaned.split('/').filter(Boolean);
+      return decodeURIComponent(parts.pop() || cleaned);
+    }
   }
 
   private async upsertUser(userData: any): Promise<number | null> {
@@ -586,8 +598,8 @@ export class DatabaseStore {
         });
         
         return user.id;
-      } catch (error) {
-        Logger.error(`❌ Failed to upsert user with wikidotId ${wikidotIdInt}:`, error.message);
+      } catch (error: any) {
+        Logger.error(`❌ Failed to upsert user with wikidotId ${wikidotIdInt}:`, error?.message || 'Unknown error');
         return null;
       }
     }
@@ -625,8 +637,8 @@ export class DatabaseStore {
         Logger.info(`👤 Created user record for deleted user: ${displayName} (ID: ${newUser.id})`);
         return newUser.id;
         
-      } catch (error) {
-        Logger.error(`❌ Failed to create deleted user record for ${displayName}:`, error.message);
+      } catch (error: any) {
+        Logger.error(`❌ Failed to create deleted user record for ${displayName}:`, error?.message || 'Unknown error');
         return null;
       }
     }
@@ -651,9 +663,10 @@ export class DatabaseStore {
       
       for (const revision of revisionsToProcess) {
         const userId = revision.user ? await this.upsertUser(revision.user) : null;
-        const wikidotIdInt = revision.wikidotId ? parseInt(revision.wikidotId.toString()) : null;
+        const wikidotIdInt = Number.isFinite(Number(revision.wikidotId))
+          ? Number(revision.wikidotId) : null;
         
-        if (!wikidotIdInt) {
+        if (wikidotIdInt == null) {
           Logger.warn(`⚠️ Invalid wikidotId for revision: ${JSON.stringify(revision)}`);
           continue;
         }
@@ -682,11 +695,11 @@ export class DatabaseStore {
             },
           });
           Logger.debug(`✅ Processed revision ${wikidotIdInt}`);
-        } catch (error) {
+        } catch (error: any) {
           Logger.error(`❌ Failed to process revision ${wikidotIdInt}:`, {
-            message: error.message,
-            code: error.code,
-            name: error.name,
+            message: error?.message || 'Unknown error',
+            code: error?.code,
+            name: error?.name,
             revision: {
               wikidotId: wikidotIdInt,
               timestamp: revision.timestamp,
@@ -768,8 +781,8 @@ export class DatabaseStore {
             });
           }
           Logger.debug(`✅ Processed vote: direction=${direction}, userId=${userId || 'anonymous'}, anonKey=${anonKey || 'N/A'}`);
-        } catch (error) {
-          Logger.warn(`⚠️ Failed to upsert vote: ${error.message}`, {
+        } catch (error: any) {
+          Logger.warn(`⚠️ Failed to upsert vote: ${error?.message || 'Unknown error'}`, {
             pageVersionId,
             userId,
             anonKey,
@@ -1103,6 +1116,7 @@ export class DatabaseStore {
         data: {
           url: newPage.url,
           urlKey,
+          pageUuid: uuidv4(),
         },
       });
       
@@ -1252,7 +1266,7 @@ export class DatabaseStore {
         currentVersion.title !== stagingPage.title ||
         currentVersion.rating !== stagingPage.rating ||
         currentVersion.revisionCount !== stagingPage.revisionCount ||
-        JSON.stringify(currentVersion.tags.sort()) !== JSON.stringify((stagingPage.tags || []).sort()) ||
+        JSON.stringify((currentVersion.tags || []).slice().sort()) !== JSON.stringify((stagingPage.tags || []).slice().sort()) ||
         currentVersion.isDeleted !== (stagingPage.isDeleted || false);
       
       // Check for changes that require Phase C (vote/revision changes)  
@@ -1264,7 +1278,7 @@ export class DatabaseStore {
           if (currentVersion.title !== stagingPage.title) reasons.push('title change');
           if (currentVersion.rating !== stagingPage.rating) reasons.push('rating change');
           if (currentVersion.revisionCount !== stagingPage.revisionCount) reasons.push('revision count change');
-          if (JSON.stringify(currentVersion.tags.sort()) !== JSON.stringify((stagingPage.tags || []).sort())) reasons.push('tags change');
+          if (JSON.stringify((currentVersion.tags || []).slice().sort()) !== JSON.stringify((stagingPage.tags || []).slice().sort())) reasons.push('tags change');
           if (currentVersion.isDeleted !== (stagingPage.isDeleted || false)) reasons.push('deletion status change');
         }
         if (needPhaseC) {
@@ -1299,6 +1313,7 @@ export class DatabaseStore {
         data: {
           url: newPage.url,
           urlKey,
+          pageUuid: uuidv4(),
         },
       });
       
@@ -1425,7 +1440,7 @@ export class DatabaseStore {
   private async findPageByUuidOrUrl(identifier: string) {
     // 尝试UUID格式
     if (identifier.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
-      return await this.prisma.page.findUnique({
+      return await this.prisma.page.findFirst({
         where: { pageUuid: identifier }
       });
     }
@@ -1595,18 +1610,63 @@ export class DatabaseStore {
     }
 
     // 将结果写入DirtyPage表
-    for (const page of smartAnalysis) {
-      if (page.pageId) {
+    for (const rec of smartAnalysis) {
+      if (!rec.pageId && rec.matchType === 'NEW_PAGE') {
+        const page = await this.prisma.page.create({
+          data: { 
+            url: rec.stagingUrl, 
+            urlKey: this.extractUrlKey(rec.stagingUrl), 
+            pageUuid: uuidv4() 
+          }
+        });
+        // 从 staging 取元数据
+        const staging = await this.prisma.pageMetaStaging.findUnique({ 
+          where: { url: rec.stagingUrl }
+        });
+        if (staging) {
+          await this.prisma.pageVersion.create({
+            data: {
+              pageId: page.id,
+              wikidotId: staging.wikidotId,
+              title: staging.title,
+              rating: staging.rating,
+              voteCount: staging.voteCount,
+              revisionCount: staging.revisionCount,
+              tags: staging.tags ?? [],
+              validFrom: new Date(),
+              isDeleted: staging.isDeleted ?? false,
+            }
+          });
+        }
         await this.prisma.dirtyPage.create({
-          data: {
-            pageId: page.pageId,
-            needPhaseB: true,
-            needPhaseC: false,
-            reasons: [`${page.matchType}: ${page.reasons.join(', ')}`]
+          data: { 
+            pageId: page.id, 
+            needPhaseB: true, 
+            needPhaseC: false, 
+            reasons: ['new page'] 
+          }
+        });
+        continue;
+      }
+      if (rec.pageId) {
+        await this.prisma.dirtyPage.upsert({
+          where: { pageId: rec.pageId },
+          update: { 
+            needPhaseB: true, 
+            needPhaseC: false, 
+            reasons: [`${rec.matchType}: ${rec.reasons.join(', ')}`], 
+            donePhaseB: false, 
+            donePhaseC: false, 
+            updatedAt: new Date() 
+          },
+          create: { 
+            pageId: rec.pageId, 
+            needPhaseB: true, 
+            needPhaseC: false, 
+            reasons: [`${rec.matchType}: ${rec.reasons.join(', ')}`] 
           }
         });
       }
-      // TODO: 新页面需要先创建Page记录
     }
 
     console.log(`\n✅ 增强dirty queue构建完成，共 ${smartAnalysis.length} 个需要处理的页面`);
@@ -1818,8 +1878,8 @@ export class DatabaseStore {
       });
 
       // 3. 修改旧页面的URL，为新页面让路
-      const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
-      const historicalUrl = `${data.url}-deleted-${timestamp}`;
+      const stamp = new Date().toISOString().replace(/[-:TZ.]/g,''); // 到秒
+      const historicalUrl = `${data.url}-deleted-${stamp}-${uuidv4().slice(0,8)}`;
       
       await tx.page.update({
         where: { id: existingPage.id },

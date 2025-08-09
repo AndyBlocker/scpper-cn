@@ -61,15 +61,20 @@ model Page {
   urlKey           String
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
+  firstPublishedAt DateTime?             // 标准化的页面创建时间
   pageUuid         String?
   historicalUrls   String[]
   dirtyPage        DirtyPage?
   versions         PageVersion[]
+  searchIndex      SearchIndex?
   interestingFacts InterestingFacts[]
   timeMilestones   TimeMilestones[]
   tagRecords       TagRecords[]
   contentRecords   ContentRecords[]
   ratingRecords    RatingRecords[]
+  pageDailyStats   PageDailyStats[]
+
+  @@index([firstPublishedAt])
 }
 
 model PageMetaStaging {
@@ -217,6 +222,7 @@ model User {
   interestingFacts     InterestingFacts[]
   tagRecords           TagRecords[]
   userActivityRecords  UserActivityRecords[]
+  userDailyStats       UserDailyStats[]
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
@@ -449,5 +455,74 @@ model TrendingStats {
   @@unique([statType, period, entityId, entityType])
   @@index([statType, period])
   @@index([score])
+}
+
+// ======================
+// 新增模型：增量分析和搜索功能
+// ======================
+
+model AnalysisWatermark {
+  id        Int      @id @default(autoincrement())
+  task      String   @unique
+  lastRunAt DateTime @default(now())
+  cursorTs  DateTime?
+}
+
+model SearchIndex {
+  pageId        Int      @id
+  title         String?
+  url           String?
+  tags          String[]
+  textContent   String?  @map("text_content")
+  sourceContent String?  @map("source_content")
+  updatedAt     DateTime @default(now())
+  page          Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+model PageDailyStats {
+  id            Int      @id @default(autoincrement())
+  pageId        Int
+  date          DateTime @db.Date
+  votesUp       Int      @default(0) @map("votes_up")
+  votesDown     Int      @default(0) @map("votes_down")
+  totalVotes    Int      @default(0) @map("total_votes")
+  uniqueVoters  Int      @default(0) @map("unique_voters")
+  revisions     Int      @default(0)
+  createdAt     DateTime @default(now())
+  
+  page          Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, date])
+  @@index([date])
+  @@index([pageId])
+}
+
+model UserDailyStats {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  date         DateTime  @db.Date
+  votesCast    Int       @default(0) @map("votes_cast")
+  pagesCreated Int       @default(0) @map("pages_created")
+  lastActivity DateTime? @map("last_activity")
+  createdAt    DateTime  @default(now())
+  
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([date])
+  @@index([userId])
+}
+
+model LeaderboardCache {
+  id        Int       @id @default(autoincrement())
+  key       String
+  period    String
+  payload   Json
+  updatedAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@unique([key, period])
+  @@index([key, period])
+  @@index([expiresAt])
 }
 
