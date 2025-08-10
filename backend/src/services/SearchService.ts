@@ -72,18 +72,67 @@ export class SearchService {
     const { limit = 20, offset = 0 } = pagination;
     const { titleWeight = 2, contentWeight = 1, sourceWeight = 0.5 } = scoring;
 
-    // 构建过滤条件
-    let tagFilter = '';
+    // 构建基础WHERE条件
+    let whereConditions = [`(
+        si.title ILIKE $1 
+        OR si.text_content ILIKE $1
+        OR si.source_content ILIKE $1
+      )`];
+    let params: any[] = [`%${query}%`];
+    let paramIndex = 2;
+
+    // 添加标签过滤
     if (tags && tags.length > 0) {
-      tagFilter = `AND si.tags @> ARRAY[${tags.map(tag => `'${tag}'`).join(',')}]`;
+      whereConditions.push(`si.tags @> $${paramIndex}`);
+      params.push(tags);
+      paramIndex++;
     }
 
-    let contentFilters = '';
-    if (hasTitle) contentFilters += `AND si.title IS NOT NULL AND si.title != ''`;
-    if (hasContent) contentFilters += `AND si.text_content IS NOT NULL AND si.text_content != ''`;
-    if (hasSource) contentFilters += `AND si.source_content IS NOT NULL AND si.source_content != ''`;
+    // 添加内容过滤
+    if (hasTitle) {
+      whereConditions.push(`si.title IS NOT NULL AND si.title != ''`);
+    }
+    if (hasContent) {
+      whereConditions.push(`si.text_content IS NOT NULL AND si.text_content != ''`);
+    }
+    if (hasSource) {
+      whereConditions.push(`si.source_content IS NOT NULL AND si.source_content != ''`);
+    }
 
-    const searchResults = await this.prisma.$queryRaw<Array<{
+    const whereClause = whereConditions.join(' AND ');
+    
+    // 添加query参数到scoring计算中
+    params.push(query, query, query); // titleWeight, contentWeight, sourceWeight计算需要
+    const titleQueryParam = paramIndex;
+    const contentQueryParam = paramIndex + 1;
+    const sourceQueryParam = paramIndex + 2;
+    paramIndex += 3;
+
+    params.push(limit, offset);
+    const limitParam = paramIndex;
+    const offsetParam = paramIndex + 1;
+
+    const sql = `
+      SELECT 
+        si."pageId",
+        si.title,
+        si.url,
+        si.tags,
+        (similarity(COALESCE(si.title, ''), $${titleQueryParam}) * ${titleWeight}
+         + similarity(COALESCE(si.text_content, ''), $${contentQueryParam}) * ${contentWeight}
+         + similarity(COALESCE(si.source_content, ''), $${sourceQueryParam}) * ${sourceWeight}
+        ) AS score,
+        similarity(COALESCE(si.title, ''), $${titleQueryParam}) AS "titleSimilarity",
+        similarity(COALESCE(si.text_content, ''), $${contentQueryParam}) AS "contentSimilarity",
+        similarity(COALESCE(si.source_content, ''), $${sourceQueryParam}) AS "sourceSimilarity"
+      FROM "SearchIndex" si
+      WHERE ${whereClause}
+      ORDER BY score DESC, si."pageId" ASC
+      LIMIT $${limitParam}
+      OFFSET $${offsetParam}
+    `;
+
+    const searchResults = await this.prisma.$queryRawUnsafe<Array<{
       pageId: number;
       title: string;
       url: string;
@@ -92,31 +141,7 @@ export class SearchService {
       titleSimilarity: number;
       contentSimilarity: number;
       sourceSimilarity: number;
-    }>>`
-      SELECT 
-        si."pageId",
-        si.title,
-        si.url,
-        si.tags,
-        (similarity(COALESCE(si.title, ''), ${query}) * ${titleWeight}
-         + similarity(COALESCE(si.text_content, ''), ${query}) * ${contentWeight}
-         + similarity(COALESCE(si.source_content, ''), ${query}) * ${sourceWeight}
-        ) AS score,
-        similarity(COALESCE(si.title, ''), ${query}) AS "titleSimilarity",
-        similarity(COALESCE(si.text_content, ''), ${query}) AS "contentSimilarity",
-        similarity(COALESCE(si.source_content, ''), ${query}) AS "sourceSimilarity"
-      FROM "SearchIndex" si
-      WHERE (
-        si.title ILIKE '%' || ${query} || '%' 
-        OR si.text_content ILIKE '%' || ${query} || '%'
-        OR si.source_content ILIKE '%' || ${query} || '%'
-      )
-      ${tagFilter ? `${tagFilter}` : ''}
-      ${contentFilters}
-      ORDER BY score DESC, si."pageId" ASC
-      LIMIT ${limit}
-      OFFSET ${offset}
-    `;
+    }>>(sql, ...params);
 
     return searchResults;
   }
@@ -127,28 +152,41 @@ export class SearchService {
   private async getSearchResultCount(query: string, filters: any): Promise<number> {
     const { tags, hasTitle, hasContent, hasSource } = filters;
 
-    let tagFilter = '';
+    // 构建基础WHERE条件
+    let whereConditions = [`(
+        si.title ILIKE $1 
+        OR si.text_content ILIKE $1
+        OR si.source_content ILIKE $1
+      )`];
+    let params: any[] = [`%${query}%`];
+    let paramIndex = 2;
+
+    // 添加标签过滤
     if (tags && tags.length > 0) {
-      tagFilter = `AND si.tags @> ARRAY[${tags.map(tag => `'${tag}'`).join(',')}]`;
+      whereConditions.push(`si.tags @> $${paramIndex}`);
+      params.push(tags);
+      paramIndex++;
     }
 
-    let contentFilters = '';
-    if (hasTitle) contentFilters += `AND si.title IS NOT NULL AND si.title != ''`;
-    if (hasContent) contentFilters += `AND si.text_content IS NOT NULL AND si.text_content != ''`;
-    if (hasSource) contentFilters += `AND si.source_content IS NOT NULL AND si.source_content != ''`;
+    // 添加内容过滤
+    if (hasTitle) {
+      whereConditions.push(`si.title IS NOT NULL AND si.title != ''`);
+    }
+    if (hasContent) {
+      whereConditions.push(`si.text_content IS NOT NULL AND si.text_content != ''`);
+    }
+    if (hasSource) {
+      whereConditions.push(`si.source_content IS NOT NULL AND si.source_content != ''`);
+    }
 
-    const result = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
+    const whereClause = whereConditions.join(' AND ');
+    const sql = `
       SELECT COUNT(*) as count
       FROM "SearchIndex" si
-      WHERE (
-        si.title ILIKE '%' || ${query} || '%' 
-        OR si.text_content ILIKE '%' || ${query} || '%'
-        OR si.source_content ILIKE '%' || ${query} || '%'
-      )
-      ${tagFilter ? `${tagFilter}` : ''}
-      ${contentFilters}
+      WHERE ${whereClause}
     `;
 
+    const result = await this.prisma.$queryRawUnsafe<Array<{ count: bigint }>>(sql, ...params);
     return Number(result[0].count);
   }
 
@@ -170,9 +208,9 @@ export class SearchService {
         si.title,
         si.url,
         si.tags,
-        array_length(si.tags & ARRAY[${tags.map(tag => `'${tag}'`).join(',')}], 1) as "matchedTags"
+        array_length(array(select unnest(si.tags) intersect select unnest(${tags})), 1) as "matchedTags"
       FROM "SearchIndex" si
-      WHERE si.tags && ARRAY[${tags.map(tag => `'${tag}'`).join(',')}]
+      WHERE si.tags && ${tags}
       ORDER BY "matchedTags" DESC, si.title ASC
       LIMIT ${limit}
       OFFSET ${offset}
@@ -181,7 +219,7 @@ export class SearchService {
     const totalCount = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*) as count
       FROM "SearchIndex" si
-      WHERE si.tags && ARRAY[${tags.map(tag => `'${tag}'`).join(',')}]
+      WHERE si.tags && ${tags}
     `;
 
     return {
@@ -237,7 +275,7 @@ export class SearchService {
         similarity(si.title, ${query}) as similarity
       FROM "SearchIndex" si
       WHERE si.title IS NOT NULL 
-        AND si.title ILIKE '%' || ${query} || '%'
+        AND si.title ILIKE ${`%${query}%`}
         AND similarity(si.title, ${query}) > 0.1
       ORDER BY similarity DESC, length(si.title) ASC
       LIMIT ${limit}
@@ -269,39 +307,50 @@ export class SearchService {
     const { limit = 20, offset = 0 } = pagination;
     const { include: includeTags = [], exclude: excludeTags = [] } = tags;
 
-    let conditions = [];
+    let whereConditions = [];
     let scoreComponents = [];
+    let params: any[] = [];
+    let paramIndex = 1;
 
     // 构建搜索条件和评分组件
     if (title) {
-      conditions.push(`si.title ILIKE '%' || ${title} || '%'`);
-      scoreComponents.push(`similarity(COALESCE(si.title, ''), ${title}) * 3`);
+      whereConditions.push(`si.title ILIKE $${paramIndex}`);
+      scoreComponents.push(`similarity(COALESCE(si.title, ''), $${paramIndex + 1}) * 3`);
+      params.push(`%${title}%`, title);
+      paramIndex += 2;
     }
 
     if (content) {
-      conditions.push(`si.text_content ILIKE '%' || ${content} || '%'`);
-      scoreComponents.push(`similarity(COALESCE(si.text_content, ''), ${content}) * 2`);
+      whereConditions.push(`si.text_content ILIKE $${paramIndex}`);
+      scoreComponents.push(`similarity(COALESCE(si.text_content, ''), $${paramIndex + 1}) * 2`);
+      params.push(`%${content}%`, content);
+      paramIndex += 2;
     }
 
     if (source) {
-      conditions.push(`si.source_content ILIKE '%' || ${source} || '%'`);
-      scoreComponents.push(`similarity(COALESCE(si.source_content, ''), ${source})`);
+      whereConditions.push(`si.source_content ILIKE $${paramIndex}`);
+      scoreComponents.push(`similarity(COALESCE(si.source_content, ''), $${paramIndex + 1})`);
+      params.push(`%${source}%`, source);
+      paramIndex += 2;
     }
 
     // 标签过滤
-    let tagConditions = '';
     if (includeTags.length > 0) {
-      tagConditions += `AND si.tags @> ARRAY[${includeTags.map(tag => `'${tag}'`).join(',')}]`;
+      whereConditions.push(`si.tags @> $${paramIndex}`);
+      params.push(includeTags);
+      paramIndex++;
     }
     if (excludeTags.length > 0) {
-      tagConditions += `AND NOT (si.tags && ARRAY[${excludeTags.map(tag => `'${tag}'`).join(',')}])`;
+      whereConditions.push(`NOT (si.tags && $${paramIndex})`);
+      params.push(excludeTags);
+      paramIndex++;
     }
 
-    if (conditions.length === 0) {
+    if (whereConditions.length === 0) {
       throw new Error('At least one search field must be specified');
     }
 
-    const whereClause = `WHERE (${conditions.join(' OR ')}) ${tagConditions}`;
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
     const scoreClause = scoreComponents.length > 0 ? scoreComponents.join(' + ') : '0';
 
     let orderBy = '';
@@ -316,13 +365,11 @@ export class SearchService {
         orderBy = `ORDER BY (${scoreClause}) DESC`;
     }
 
-    const results = await this.prisma.$queryRaw<Array<{
-      pageId: number;
-      title: string;
-      url: string;
-      tags: string[];
-      score: number;
-    }>>`
+    params.push(limit, offset);
+    const limitParam = paramIndex;
+    const offsetParam = paramIndex + 1;
+
+    const sql = `
       SELECT 
         si."pageId",
         si.title,
@@ -332,16 +379,27 @@ export class SearchService {
       FROM "SearchIndex" si
       ${whereClause}
       ${orderBy}
-      LIMIT ${limit}
-      OFFSET ${offset}
+      LIMIT $${limitParam}
+      OFFSET $${offsetParam}
     `;
 
-    // 获取总数
-    const totalCount = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
+    const results = await this.prisma.$queryRawUnsafe<Array<{
+      pageId: number;
+      title: string;
+      url: string;
+      tags: string[];
+      score: number;
+    }>>(sql, ...params);
+
+    // 获取总数（去除limit/offset参数）
+    const countParams = params.slice(0, -2);
+    const countSql = `
       SELECT COUNT(*) as count
       FROM "SearchIndex" si
       ${whereClause}
     `;
+
+    const totalCount = await this.prisma.$queryRawUnsafe<Array<{ count: bigint }>>(countSql, ...countParams);
 
     return {
       results,

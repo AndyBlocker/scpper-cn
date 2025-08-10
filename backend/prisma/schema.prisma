@@ -56,25 +56,29 @@ model DirtyPageBackup {
 }
 
 model Page {
-  id               Int                   @id @default(autoincrement())
-  url              String                @unique
-  urlKey           String
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
-  firstPublishedAt DateTime?             // 标准化的页面创建时间
-  pageUuid         String?
-  historicalUrls   String[]
-  dirtyPage        DirtyPage?
-  versions         PageVersion[]
-  searchIndex      SearchIndex?
-  interestingFacts InterestingFacts[]
-  timeMilestones   TimeMilestones[]
-  tagRecords       TagRecords[]
-  contentRecords   ContentRecords[]
-  ratingRecords    RatingRecords[]
-  pageDailyStats   PageDailyStats[]
+  id                     Int                   @id @default(autoincrement())
+  url                    String                @unique
+  urlKey                 String
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  firstPublishedAt       DateTime?             // 标准化的页面创建时间
+  pageUuid               String?
+  historicalUrls         String[]
+  // Voting time series data for efficient frontend plotting
+  votingTimeSeriesCache  Json?                 // Cached voting statistics over time: {dates: [], upvotes: [], downvotes: [], totalVotes: []}
+  votingCacheUpdatedAt   DateTime?             // When the voting cache was last updated
+  dirtyPage              DirtyPage?
+  versions               PageVersion[]
+  searchIndex            SearchIndex?
+  interestingFacts       InterestingFacts[]
+  timeMilestones         TimeMilestones[]
+  tagRecords             TagRecords[]
+  contentRecords         ContentRecords[]
+  ratingRecords          RatingRecords[]
+  pageDailyStats         PageDailyStats[]
 
   @@index([firstPublishedAt])
+  @@index([votingCacheUpdatedAt])
 }
 
 model PageMetaStaging {
@@ -208,25 +212,29 @@ model SourceVersion {
 }
 
 model User {
-  id                   Int                   @id @default(autoincrement())
-  wikidotId            Int?                  @unique
-  displayName          String?
-  firstActivityAt      DateTime?
-  firstActivityType    String?
-  firstActivityDetails String?
-  lastActivityAt       DateTime?
-  attributions         Attribution[]
-  revisions            Revision[]
-  stats                UserStats?
-  votes                Vote[]
-  interestingFacts     InterestingFacts[]
-  tagRecords           TagRecords[]
-  userActivityRecords  UserActivityRecords[]
-  userDailyStats       UserDailyStats[]
+  id                          Int                   @id @default(autoincrement())
+  wikidotId                   Int?                  @unique
+  displayName                 String?
+  firstActivityAt             DateTime?
+  firstActivityType           String?
+  firstActivityDetails        String?
+  lastActivityAt              DateTime?
+  // Attribution voting time series data for efficient frontend plotting (votes on pages user contributed to)
+  attributionVotingTimeSeriesCache Json?           // Cached attribution voting statistics over time: {dates: [], upvotes: [], downvotes: [], totalVotes: []}
+  attributionVotingCacheUpdatedAt  DateTime?       // When the attribution voting cache was last updated
+  attributions                Attribution[]
+  revisions                   Revision[]
+  stats                       UserStats?
+  votes                       Vote[]
+  interestingFacts            InterestingFacts[]
+  tagRecords                  TagRecords[]
+  userActivityRecords         UserActivityRecords[]
+  userDailyStats              UserDailyStats[]
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
   @@index([lastActivityAt])
+  @@index([attributionVotingCacheUpdatedAt])
 }
 
 model UserStats {
@@ -469,14 +477,17 @@ model AnalysisWatermark {
 }
 
 model SearchIndex {
-  pageId        Int      @id
-  title         String?
-  url           String?
-  tags          String[]
-  textContent   String?  @map("text_content")
-  sourceContent String?  @map("source_content")
-  updatedAt     DateTime @default(now())
-  page          Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId           Int      @id
+  title            String?
+  url              String?
+  tags             String[]
+  textContent      String?  @map("text_content")
+  sourceContent    String?  @map("source_content")
+  searchVector     String?  @map("search_vector") // tsvector stored as text for Prisma compatibility
+  randomSentences  String[] @map("random_sentences")
+  contentStats     Json?    @map("content_stats")
+  updatedAt        DateTime @default(now())
+  page             Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
 }
 
 model PageDailyStats {

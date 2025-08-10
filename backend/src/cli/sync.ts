@@ -2,6 +2,7 @@ import { PhaseAProcessor } from '../core/processors/PhaseAProcessor.js';
 import { PhaseBProcessor } from '../core/processors/PhaseBProcessor.js';
 import { PhaseCProcessor } from '../core/processors/PhaseCProcessor.js';
 import { analyze } from '../jobs/AnalyzeJob.js';
+import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 
 export async function sync({ 
   full, 
@@ -21,7 +22,13 @@ export async function sync({
     // 如果只运行analyze阶段
     if (phase === 'analyze') {
       console.log('📊 Running Analysis Only...');
-      await analyze();
+      if (full) {
+        console.log('🔄 Running full incremental analysis (includes voting cache)...');
+        await analyzeIncremental({ forceFullAnalysis: true });
+      } else {
+        console.log('🔄 Running incremental analysis (includes voting cache)...');
+        await analyzeIncremental();
+      }
       console.log('✅ Analysis completed');
       
       const totalTime = (Date.now() - startTime) / 1000;
@@ -79,7 +86,13 @@ export async function sync({
     }
 
     console.log(testMode ? '\n=== Test Mode: Running Analysis ===' : '\n=== Running Analysis ===');
-    await analyze();
+    if (full) {
+      console.log('🔄 Running full incremental analysis (includes voting cache)...');
+      await analyzeIncremental({ forceFullAnalysis: true });
+    } else {
+      console.log('🔄 Running incremental analysis (includes voting cache)...');
+      await analyzeIncremental();
+    }
     console.log('✅ Analysis completed');
 
     const totalTime = (Date.now() - startTime) / 1000;
@@ -98,7 +111,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const testMode = process.argv.includes('--test');
   // If test mode, default phase should be 'all', otherwise use argument or 'all'
   const phase = testMode ? 'all' : (process.argv[2] || 'all');
-  const full = process.argv.includes('--full');
+  const full = process.argv.includes('--full') || process.argv.includes('--force');
   const concurrencyArg = process.argv.find(arg => arg.startsWith('--concurrency='));
   const concurrency = concurrencyArg ? concurrencyArg.split('=')[1] : '4';
 

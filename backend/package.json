@@ -14,6 +14,8 @@
     "analyze": "node --import tsx/esm src/cli/sync.ts analyze",
     "analyze:incremental": "node --import tsx/esm -e \"import {analyzeIncremental} from './src/jobs/IncrementalAnalyzeJob.js'; analyzeIncremental();\"",
     "analyze:full": "node --import tsx/esm -e \"import {analyzeIncremental} from './src/jobs/IncrementalAnalyzeJob.js'; analyzeIncremental({forceFullAnalysis: true});\"",
+    "analyze:init-history": "node --import tsx/esm -e \"import {analyzeIncremental} from './src/jobs/IncrementalAnalyzeJob.js'; analyzeIncremental({forceFullHistory: true, tasks: ['daily_aggregates']});\"",
+    "analyze:complete-init": "node --import tsx/esm -e \"import {analyzeIncremental} from './src/jobs/IncrementalAnalyzeJob.js'; analyzeIncremental({forceFullAnalysis: true, forceFullHistory: true});\"",
     "search:sync": "node --import tsx/esm -e \"import {SearchService} from './src/services/SearchService.js'; new SearchService().syncPagesToSearchIndex();\"",
     "stats:extended": "node --import tsx/esm -e \"import {generateExtendedInterestingStats} from './src/jobs/ExtendedInterestingStatsJob.js'; import {PrismaClient} from '@prisma/client'; const p = new PrismaClient(); generateExtendedInterestingStats(p).then(() => p.$disconnect());\"",
     "migrate:complete": "node --import tsx/esm scripts/run-complete-migration.ts",
