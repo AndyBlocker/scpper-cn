@@ -1,11 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
-import { getPrismaClient } from '../../utils/db-connection.js';
+import { getPrismaClient, disconnectPrisma } from '../../utils/db-connection.js';
 import { PageStore } from './PageStore.js';
 import { PageVersionStore } from './PageVersionStore.js';
 import { VoteRevisionStore } from './VoteRevisionStore.js';
 import { DirtyQueueStore } from './DirtyQueueStore.js';
 import { SourceVersionService } from '../../services/SourceVersionService.js';
+import { AttributionService } from './AttributionService.js';
+import { shouldCreateNewVersion } from './versionRules.js';
 
 /**
  * 数据库存储主类
@@ -18,6 +20,7 @@ export class DatabaseStore {
   private voteRevisionStore: VoteRevisionStore;
   private dirtyQueueStore: DirtyQueueStore;
   private sourceVersionService: SourceVersionService;
+  private attributionService: AttributionService;
 
   constructor() {
     this.prisma = getPrismaClient();
@@ -26,6 +29,7 @@ export class DatabaseStore {
     this.voteRevisionStore = new VoteRevisionStore(this.prisma);
     this.dirtyQueueStore = new DirtyQueueStore(this.prisma);
     this.sourceVersionService = new SourceVersionService(this.prisma);
+    this.attributionService = new AttributionService(this.prisma);
   }
 
   /**
@@ -214,6 +218,11 @@ export class DatabaseStore {
       revisions: data.revisions
     });
 
+    // 处理归属（Phase C 也可能携带）
+    if (data.attributions && Array.isArray(data.attributions)) {
+      await this.attributionService.importAttributions(currentVersion.id, data.attributions);
+    }
+
     Logger.debug(`✅ Updated details for wikidotId ${data.wikidotId}`);
   }
 
@@ -228,7 +237,7 @@ export class DatabaseStore {
       }
     });
 
-    const needsNewVersion = this.shouldCreateNewVersion(currentVersion, data);
+    const needsNewVersion = shouldCreateNewVersion(currentVersion, data);
 
     if (needsNewVersion) {
       if (currentVersion) {
@@ -272,7 +281,7 @@ export class DatabaseStore {
       }
     });
 
-    const needsNewVersion = this.shouldCreateNewVersion(currentVersion, data);
+    const needsNewVersion = shouldCreateNewVersion(currentVersion, data);
 
     if (needsNewVersion) {
       await this.prisma.$transaction(async (tx) => {
@@ -323,18 +332,6 @@ export class DatabaseStore {
   /**
    * 判断是否需要创建新版本
    */
-  private shouldCreateNewVersion(currentVersion: any, newData: any): boolean {
-    if (!currentVersion) return true;
-    
-    // 仅内容/结构变化触发新版本；评分/票数属于快照字段，不触发
-    const contentOrMetaChanged =
-      currentVersion.title !== newData.title ||
-      (currentVersion.category ?? null) !== (newData.category ?? currentVersion.category ?? null) ||
-      !this.arraysEqual(currentVersion.tags ?? [], newData.tags ?? []);
-    
-    return contentOrMetaChanged;
-  }
-
   /**
    * 导入归属信息
    */
@@ -496,9 +493,65 @@ export class DatabaseStore {
   }
 
   /**
+   * 通过 wikidotId 标记页面删除（若找到 page 则调用 PageStore 以生成删除版本），并清理脏标记
+   */
+  async markDeletedByWikidotId(wikidotId: number): Promise<void> {
+    const existingPage = await this.prisma.page.findUnique({
+      where: { wikidotId }
+    });
+
+    if (existingPage) {
+      await this.markPageDeleted(existingPage.id);
+    } else {
+      // 没有找到页面，尽量清理标记避免循环
+      Logger.warn(`No page entity for wikidotId ${wikidotId}, marking flags cleared only`);
+    }
+    try {
+      await this.clearDirtyFlag(wikidotId, 'B');
+    } catch {}
+    try {
+      await this.clearDirtyFlag(wikidotId, 'C');
+    } catch {}
+  }
+
+  /**
+   * 标记页面需要 Phase C（合并 reasons），若不存在则创建 dirtyPage
+   */
+  async markForPhaseC(wikidotId: number, pageId: number | null, reasons: string[]): Promise<void> {
+    const existingDirtyPage = await this.prisma.dirtyPage.findFirst({
+      where: { wikidotId }
+    });
+
+    const mergedReasons = Array.from(new Set([...(existingDirtyPage?.reasons || []), ...reasons]));
+
+    if (existingDirtyPage) {
+      await this.prisma.dirtyPage.update({
+        where: { id: existingDirtyPage.id },
+        data: {
+          needPhaseC: true,
+          donePhaseC: false,
+          reasons: mergedReasons
+        }
+      });
+    } else {
+      await this.prisma.dirtyPage.create({
+        data: {
+          wikidotId,
+          pageId: pageId ?? undefined,
+          needPhaseC: true,
+          donePhaseC: false,
+          needPhaseB: false,
+          donePhaseB: true,
+          reasons: reasons
+        }
+      });
+    }
+  }
+
+  /**
    * 断开数据库连接
    */
   async disconnect() {
-    await this.prisma.$disconnect();
+    await disconnectPrisma();
   }
 }

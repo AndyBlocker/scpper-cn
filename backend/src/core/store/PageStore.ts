@@ -166,18 +166,12 @@ export class PageStore {
         }
       });
 
-      // 更新SearchIndex - 标记为已删除
-      await tx.searchIndex.update({
-        where: { pageId: pageId },
-        data: {
-          isDeleted: true,
-          validTo: new Date(),
-          updatedAt: new Date()
-        }
-      }).catch(() => {
-        // SearchIndex可能不存在，忽略错误
+      // 更新SearchIndex - 标记为已删除（表可能不存在，使用原生SQL并忽略错误）
+      try {
+        await tx.$executeRaw`UPDATE "SearchIndex" SET "isDeleted" = true, "validTo" = now(), "updatedAt" = now() WHERE "pageId" = ${pageId}`;
+      } catch {
         Logger.debug(`SearchIndex not found for page ${pageId}, skipping update`);
-      });
+      }
 
       Logger.info(`✅ Marked page ${pageId} as deleted`);
     });
@@ -215,17 +209,12 @@ export class PageStore {
         }
       });
 
-      // 更新SearchIndex - 更新URL
-      await tx.searchIndex.update({
-        where: { pageId: pageId },
-        data: {
-          url: newUrl,
-          updatedAt: new Date()
-        }
-      }).catch(() => {
-        // SearchIndex可能不存在，忽略错误
+      // 更新SearchIndex - 更新URL（表可能不存在，使用原生SQL并忽略错误）
+      try {
+        await tx.$executeRaw`UPDATE "SearchIndex" SET url = ${newUrl}, "updatedAt" = now() WHERE "pageId" = ${pageId}`;
+      } catch {
         Logger.debug(`SearchIndex not found for page ${pageId}, skipping URL update`);
-      });
+      }
 
       Logger.info(`✅ Renamed page ${pageId}: ${oldUrl} -> ${newUrl}`);
     });

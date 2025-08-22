@@ -1,0 +1,1719 @@
+"""
+Authentication directive.
+Restricts access to certain fields based on the application's privilege.
+"""
+directive @privileged(to: ClientPrivilege!) on FIELD_DEFINITION
+
+"""
+Authentication directive.
+Restricts access to certain fields based on the authorization OAuth2 scope.
+"""
+directive @scope(to: AuthScope!) on FIELD_DEFINITION
+
+"""Query complexity directive. Tracks the cost for each field."""
+directive @staticComplexity(value: Int!) on FIELD_DEFINITION
+
+"""Query complexity directive. Tracks the cost for each field."""
+directive @connectionComplexity(value: Int!, defaultFirst: Int!) on FIELD_DEFINITION
+
+input DiaryEntryQueryFilter {
+  page: DiaryEntryPageQueryFilter
+}
+
+input DiaryEntryPageQueryFilter {
+  url: PrefixStringFilter
+}
+
+input StringFilter {
+  """Match strings that equal the provided value exactly."""
+  eq: String
+
+  """Match strings that don't equal the provided value."""
+  neq: String
+}
+
+input PrefixStringFilter {
+  """Match strings that equal the provided value exactly."""
+  eq: String
+
+  """Match strings that don't equal the provided value."""
+  neq: String
+
+  """Match strings that start with the provided substring."""
+  startsWith: String
+}
+
+input CaseInsensitiveStringFilter {
+  """Match strings that equal the provided value exactly."""
+  eq: String
+
+  """
+  Match (case-insensitive) strings that equal the provided value exactly.
+  """
+  eqLower: String
+
+  """Match strings that don't equal the provided value."""
+  neq: String
+
+  """
+  Match (case-insensitive) strings that don't equal the provided value exactly.
+  """
+  neqLower: String
+
+  """Match strings that start with the provided substring."""
+  startsWith: String
+
+  """
+  Match (case-insensitive) strings that start with the provided substring
+  """
+  startsWithLower: String
+}
+
+input IntFilter {
+  """Match numbers that equal the provided value."""
+  eq: Int
+
+  """Match numbers that don't equal the provided value."""
+  neq: String
+
+  """Match numbers that are greater than the provided value."""
+  gt: Int
+
+  """Match numbers that are equal to or greater than the provided value."""
+  gte: Int
+
+  """Match numbers that are less than the provided value."""
+  lt: Int
+
+  """Match numbers that are equal to or less than the provided value."""
+  lte: Int
+}
+
+input DateTimeFilter {
+  """Match timestamps that equal the provided value."""
+  eq: DateTime
+
+  """Match timestamps that don't equal the provided value."""
+  neq: String
+
+  """Match timestamps that are greater than the provided value."""
+  gt: DateTime
+
+  """Match timestamps that are equal to or greater than the provided value."""
+  gte: DateTime
+
+  """Match timestamps that are less than the provided value."""
+  lt: DateTime
+
+  """Match timestamps that are equal to or less than the provided value."""
+  lte: DateTime
+}
+
+input BooleanFilter {
+  """Match the provided boolean value."""
+  eq: Boolean
+
+  """Match the opposite of the provided boolean value."""
+  neq: Boolean
+}
+
+input PageQueryFilter {
+  _and: [PageQueryFilter!]
+  _or: [PageQueryFilter!]
+  _not: PageQueryFilter
+  onWikidotPage: WikidotPageQueryFilter
+  url: PrefixStringFilter
+  alternateTitles: PageAlternateTitlesQueryFilter
+  attributions: PageAttributionsQueryFilter
+}
+
+input PageAlternateTitlesQueryFilter {
+  _and: [PageAlternateTitlesQueryFilter!]
+  _or: [PageAlternateTitlesQueryFilter!]
+  _not: PageAlternateTitlesQueryFilter
+  title: CaseInsensitiveStringFilter
+}
+
+input PageAttributionsQueryFilter {
+  _and: [PageAttributionsQueryFilter!]
+  _or: [PageAttributionsQueryFilter!]
+  _not: PageAttributionsQueryFilter
+  type: PageAttributionTypeQueryFilter
+  user: UserQueryFilter
+}
+
+input PageAttributionTypeQueryFilter {
+  eq: PageAttributionType
+  neq: PageAttributionType
+}
+
+input PageUrlReferenceQueryFilter {
+  _and: [PageUrlReferenceQueryFilter!]
+  _or: [PageUrlReferenceQueryFilter!]
+  _not: PageUrlReferenceQueryFilter
+  url: PrefixStringFilter
+  alternateTitles: PageAlternateTitlesQueryFilter
+  attributions: PageAttributionsQueryFilter
+  page: PageQueryFilter
+}
+
+input WikidotPageQueryFilter {
+  _and: [WikidotPageQueryFilter!]
+  _or: [WikidotPageQueryFilter!]
+  _not: WikidotPageQueryFilter
+  url: PrefixStringFilter
+  alternateTitles: PageAlternateTitlesQueryFilter
+  attributions: PageAttributionsQueryFilter
+  title: CaseInsensitiveStringFilter
+  rating: IntFilter
+  category: StringFilter
+  tags: StringFilter
+  createdAt: DateTimeFilter
+  isHidden: BooleanFilter
+  isUserPage: BooleanFilter
+  parent: PageUrlReferenceQueryFilter
+  children: WikidotPageQueryFilter
+}
+
+input UserQueryFilter {
+  _and: [UserQueryFilter!]
+  _or: [UserQueryFilter!]
+  _not: UserQueryFilter
+  displayName: CaseInsensitiveStringFilter
+}
+
+"""
+PageInfo from the Relay Cursor Connections Spec.
+Note that the cursor fields are optional, and are null if no edges are returned.
+See https://relay.dev/graphql/connections.htm#sec-undefined.PageInfo
+"""
+type PageInfo {
+  """Whether more edges exist prior to the returned results."""
+  hasPreviousPage: Boolean!
+
+  """Whether more edges exist following the returned results."""
+  hasNextPage: Boolean!
+
+  """Corresponds to the first edge in the returned edges."""
+  startCursor: ID
+
+  """Corresponds to the last edge in the returned edges."""
+  endCursor: ID
+}
+
+"""Standard pagination order indicator for paginatable fields."""
+enum SortOrder {
+  ASC
+  DESC
+}
+
+"""Query type."""
+type Query {
+  """
+  Get an account by its ID.
+  
+  Currently, while accounts are still in beta, will only return your own account.
+  In the future, it will return public accounts.
+  """
+  account(id: ID!): Account
+
+  """Get an application by its ID."""
+  application(id: ID!): Application
+
+  """Get metadata on the current access token."""
+  viewer: Viewer!
+
+  """
+  Get a page by its canonical URL.
+  
+  Note: Wikidot canonical URLs are always stored as "http://", regardless of
+  whether the individual Wikidot site supports or forces HTTPS.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  page(url: URL!): ResolvedPage
+
+  """
+  Get a list of pages stored in Crom using a custom filter query. See the Relay
+  pagination spec (https://relay.dev/graphql/connections.htm) for documentation
+  on the before/after/first/last arguments and the connection/edge types.
+  
+  The `filter` and `sort` arguments are specific to the Crom API. Use `filter`
+  to select the specific fields in the resulting node that must match a specific
+  value. The shape of the filter matches the shape of the page type. For example,
+  provide a value to `filter.attributions.user.displayName.eq` to get all pages
+  where `attributions.user.displayName` matches the provided string exactly.
+  
+  Primitive types (strings, integers, enums) can be filtered using operators like
+  `eq` (equals), `neq` (not equals), `lt` (less than), etc. If multiple operators
+  are provided for a single field, they're combined using AND logic.
+  
+  Filters for non-primitive types can be combined using boolean logic using `_and`,
+  `_or`, and `_not`. Multiple filters on a single object are implicitly combined
+  using `_and`, except fragment properties (e.g. `onWikidotPage`,
+  `onPageUrlReference`) which are combined using `_or`.
+  
+  **Rate limiting:** This field consumes 1 point multiplied by the page size. The default page size is 100.
+  """
+  pages(filter: PageQueryFilter, sort: PagesSort, before: ID, after: ID, first: Int, last: Int): PageConnection!
+
+  """
+  Get aggregate statistics for pages.
+  
+  **Rate limiting:** This field consumes 2 points.
+  """
+  aggregatePages(filter: PageQueryFilter): PageAggregation!
+
+  """
+  Get a list of pages on related sites with matching paths. The provided URL
+  does not necessarily have to exist; it's just used to determine which pages
+  to fetch.
+  
+  Used by the interwiki modules on many sites, so takes into account logic
+  like "wanderers" categories on certain branches and path truncation on
+  Wikidot pages, so it's more powerful than calling `page` for each site.
+  
+  **Rate limiting:** This field consumes 20 points.
+  """
+  matchingPages(url: URL!): [ResolvedPage!]!
+
+  """
+  Get a single random page that matches the filter. Returns null if no pages match.
+  Do not use - only supported for internal backwards compatibility.
+  
+  **Rate limiting:** This field consumes 5 points.
+  """
+  randomPage_v1(filter: PageQueryFilter): ResolvedPage
+
+  """
+  Do not use - only supported for internal backwards compatibility.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  searchPages_v1(query: String!, siteUrl: URL!): [ResolvedPage!]!
+
+  """
+  Get a reading list by its ID or slug.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  readingList(id: ID, slug: String): ReadingList
+
+  """
+  Returns a list of sites that Crom supports along with their metadata.
+  
+  The API doesn't exactly function on a "site" abstraction, but this metadata
+  is useful for user-facing applications that typically separate concerns by
+  site.
+  """
+  sites: [SiteInfo!]!
+
+  """
+  Get a user by their ID.
+  
+  Providing an ID for a WikidotUserDisplayNameReference will always return a
+  UserWikidotNameReference regardless of whether the user exists.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  user(id: ID!): User
+
+  """
+  Get a wikidot page by its canonical URL or a best-case match for wikidot ID.
+  
+  Note: Wikidot canonical URLs are always stored as "http://", regardless of
+  whether the individual Wikidot site supports or forces HTTPS.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  wikidotPage(url: URL, wikidotId: String): WikidotPage
+
+  """
+  Get a wikidot user by their displayName or wikidotId.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  wikidotUser(displayName: String, wikidotId: String): WikidotUser
+
+  """
+  Do not use - only supported for internal backwards compatibility.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  searchUsers_v1(query: String!, siteUrl: URL): [UserWikidotNameReference!]!
+
+  """
+  Do not use - only supported for internal backwards compatibility.
+  
+  **Rate limiting:** This field consumes 2 points.
+  """
+  usersByRank_v1(rank: Int!, siteUrl: URL): [UserWikidotNameReference!]!
+}
+
+"""Mutation type."""
+type Mutation {
+  """
+  Remove the currently logged in account's Wikidot integration.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  deleteAccountWikidotIntegration: DeleteAccountWikidotIntegrationPayload!
+
+  """
+  Remove the currently logged in account's Discord integration.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  deleteAccountDiscordIntegration: DeleteAccountDiscordIntegrationPayload!
+
+  """
+  Remove the currently logged in account's Patreon integration.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  deleteAccountPatreonIntegration: DeleteAccountPatreonIntegrationPayload!
+
+  """
+  Delete the entire account.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  deleteAccount: DeleteAccountPayload!
+
+  """
+  Create a new application.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  createApplication(input: CreateApplicationInput!): CreateApplicationPayload!
+
+  """
+  Update an existing application.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  updateApplication(input: UpdateApplicationInput!): UpdateApplicationPayload!
+
+  """
+  Delete an application.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  deleteApplication(input: DeleteApplicationInput!): DeleteApplicationPayload!
+
+  """
+  Create a new diary entry.
+  
+  **Notice:** This field requires the `MANAGE_DIARY_ENTRIES` scope.
+  
+  **Rate limiting:** This field consumes 3 points.
+  """
+  createDiaryEntry(input: CreateDiaryEntryInput!): CreateDiaryEntryPayload!
+
+  """
+  Update a diary entry.
+  
+  **Notice:** This field requires the `MANAGE_DIARY_ENTRIES` scope.
+  
+  **Rate limiting:** This field consumes 3 points.
+  """
+  updateDiaryEntry(input: UpdateDiaryEntryInput!): UpdateDiaryEntryPayload!
+
+  """
+  Delete a diary entry.
+  
+  **Notice:** This field requires the `MANAGE_DIARY_ENTRIES` scope.
+  
+  **Rate limiting:** This field consumes 3 points.
+  """
+  deleteDiaryEntry(input: DeleteDiaryEntryInput!): DeleteDiaryEntryPayload!
+
+  """
+  Creates a new reading list.
+  
+  **Notice:** This field requires the `MANAGE_READING_LISTS` scope.
+  
+  **Rate limiting:** This field consumes 100 points.
+  """
+  createReadingList(input: CreateReadingListInput!): CreateReadingListPayload!
+
+  """
+  Updates an existing reading list.
+  
+  **Notice:** This field requires the `MANAGE_READING_LISTS` scope.
+  
+  **Rate limiting:** This field consumes 10 points.
+  """
+  updateReadingList(input: UpdateReadingListInput!): UpdateReadingListPayload!
+
+  """
+  Deletes an existing reading list.
+  
+  **Notice:** This field requires the `MANAGE_READING_LISTS` scope.
+  
+  **Rate limiting:** This field consumes 10 points.
+  """
+  deleteReadingList(input: DeleteReadingListInput!): DeleteReadingListPayload!
+}
+
+"""An absolute URL."""
+scalar URL
+
+"""An ISO8601-formatted DateTime string."""
+scalar DateTime
+
+"""Contains details about a single user account."""
+type Account {
+  """Account ID. Use this where a slug would be expected."""
+  id: ID!
+
+  """
+  The account's primary email address.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  emailAddress: String!
+
+  """
+  List all of the applications created by this account.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  applications: [Application!]!
+
+  """
+  The linked discord account information.
+  
+  **Notice:** This field requires the `MANAGE_ACCOUNT` scope.
+  """
+  discordIntegration: AccountDiscordIntegration
+
+  """
+  The linked wikidot account information.
+  
+  **Notice:** This field requires the `READ_WIKIDOT_INTEGRATION` scope.
+  """
+  wikidotIntegration: AccountWikidotIntegration
+
+  """
+  The linked patreon account information.
+  
+  **Notice:** This field requires the `READ_PATREON_INTEGRATION` scope.
+  """
+  patreonIntegration: AccountPatreonIntegration
+
+  """
+  A reading list that all entries go into by default.
+  
+  One default reading list must exist for each user, but if it's marked as
+  private, it will return null when other users request it.
+  
+  **Notice:** This field requires the `MANAGE_READING_LISTS` scope.
+  """
+  defaultReadingList: ReadingList
+
+  """
+  Get a filtered paginated list of reading lists created by this account.
+  If the account isn't the viewer, private lists won't be returned.
+  
+  **Rate limiting:** This field consumes 1 point multiplied by the page size. The default page size is 10.
+  """
+  readingLists(sort: AccountReadingListsSort, before: ID, after: ID, first: Int, last: Int): ReadingListConnection!
+
+  """
+  Get diary entries in reverse chronological order for the account.
+  
+  **Notice:** This field requires the `MANAGE_DIARY_ENTRIES` scope.
+  
+  **Rate limiting:** This field consumes 1 point multiplied by the page size. The default page size is 50.
+  """
+  diaryEntries(filter: DiaryEntryQueryFilter, after: ID, before: ID, first: Int, last: Int): DiaryEntryConnection!
+}
+
+type AccountWikidotIntegration {
+  """The correctly cased display name for the user."""
+  displayName: String!
+
+  """
+  A wikidot-specific user ID. Used for wikidot AJAX API stuff and profile image URL.
+  """
+  wikidotId: String!
+
+  """
+  The user's "unix name" is a slugified version of their wikidot username.
+  It is used primarily to generate their wikidot profile url.
+  """
+  unixName: String!
+
+  """
+  The associated wikidot user object retrieved from the crawler data, if it
+  exists.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  wikidotUser: WikidotUser
+}
+
+type AccountDiscordIntegration {
+  """The discord account ID."""
+  discordId: ID!
+
+  """The discord username of the linked account."""
+  username: String!
+}
+
+type AccountPatreonIntegration {
+  """The Patreon account ID."""
+  patreonId: ID!
+
+  """Whether the linked patreon account is an active patron of @crombird."""
+  isActive: Boolean!
+}
+
+enum AccountReadingListsSortKey {
+  TITLE
+  CREATED_AT
+}
+
+input AccountReadingListsSort {
+  key: AccountReadingListsSortKey
+  order: SortOrder
+}
+
+type DeleteAccountWikidotIntegrationPayload {
+  ok: Boolean!
+}
+
+type DeleteAccountDiscordIntegrationPayload {
+  ok: Boolean!
+}
+
+type DeleteAccountPatreonIntegrationPayload {
+  ok: Boolean!
+}
+
+type DeleteAccountPayload {
+  ok: Boolean!
+}
+
+"""An automated client that can authorize against and call the API."""
+type Application {
+  """The application ID."""
+  id: ID!
+
+  """
+  The account that created this application. May be null for internal apps.
+  """
+  createdBy: Account
+
+  """The OAuth2 client ID."""
+  clientId: String!
+
+  """User-visible name for this application."""
+  name: String!
+
+  """
+  Description of this application. Used as justification for granting access,
+  and shown to users for code grants.
+  """
+  description: String
+
+  """Link to find out more about this application. Shown to users."""
+  aboutUrl: URL
+
+  """
+  A list of permitted redirect URIs for this application when used with the
+  code grant. Redirect URIs are matched using exact-string matching.
+  """
+  redirectUris: [String!]!
+
+  """
+  The allowed special API privileges the client has access to. This is not
+  configurable and is meant for internal clients with special privileges.
+  """
+  privileges: [ClientPrivilege!]!
+}
+
+input CreateApplicationInput {
+  name: String!
+  description: String
+  aboutUrl: URL
+  redirectUris: [String!]!
+}
+
+type CreateApplicationPayload {
+  application: Application!
+  clientSecret: String!
+}
+
+input UpdateApplicationInput {
+  id: ID!
+  name: String
+  description: String
+  aboutUrl: URL
+  redirectUris: [String!]
+}
+
+type UpdateApplicationPayload {
+  application: Application!
+}
+
+input DeleteApplicationInput {
+  id: ID!
+}
+
+type DeleteApplicationPayload {
+  ok: Boolean!
+}
+
+"""The client accessing this API."""
+type Viewer {
+  """The OAuth2 scope that the viewer has access to."""
+  scope: [AuthScope!]!
+
+  """For OAuth2-authorized tokens, provides the current viewer application."""
+  application: Application
+
+  """
+  For user-authorized tokens, provides the account that authorized the client.
+  """
+  account: Account
+}
+
+enum ClientPrivilege {
+  """Allows the crawler to update and delete publicly accessible wiki data."""
+  CRAWLER
+
+  """
+  Allows access to discord guild config APIs (for all guilds).
+  Used by the discord bot to add/edit guild-specific preferences.
+  """
+  MANAGE_DISCORD_GUILDS
+
+  """
+  Allows Crom's frontend website to authenticate users and make requests
+  on behalf of real end users.
+  """
+  MANAGE_AUTHENTICATION
+
+  """Allows the client to break rate limiting requirements."""
+  BYPASS_RATE_LIMITS
+}
+
+enum AuthScope {
+  """Allows the application to manage the user's account."""
+  MANAGE_ACCOUNT
+
+  """
+  Allows the application to get details about the wikidot account linked to
+  the user's Crom account.
+  """
+  READ_WIKIDOT_INTEGRATION
+
+  """
+  Allows the application to get details about the patreon account linked to
+  the user's Crom account.
+  """
+  READ_PATREON_INTEGRATION
+
+  """
+  Allows the application to create, update, and delete publicly viewable and
+  private reading lists.
+  """
+  MANAGE_READING_LISTS
+
+  """Allows the application to create, update, and delete diary entries."""
+  MANAGE_DIARY_ENTRIES
+}
+
+type DiaryEntry {
+  """The ID of the diary entry."""
+  id: ID!
+
+  """
+  The timestamp associated with the diary entry. This can be set to any time
+  in the past by the user.
+  """
+  timestamp: DateTime!
+
+  """An optional comment associated with the diary entry."""
+  comment: String
+
+  """The page associated with the diary entry."""
+  page: Page!
+
+  """The title of the page at the time the diary entry was created."""
+  pageTitleHint: String!
+
+  """
+  Solution for an edge case. If the page was moved, this contains the page
+  that's likely the same page as the one they originally added.
+  """
+  correctedPage: Page
+}
+
+type DiaryEntryConnection {
+  edges: [DiaryEntryEdge!]!
+  pageInfo: PageInfo!
+}
+
+type DiaryEntryEdge {
+  node: DiaryEntry!
+  cursor: ID!
+}
+
+input CreateDiaryEntryInput {
+  pageUrl: URL!
+  comment: String
+  timestamp: DateTime
+}
+
+type CreateDiaryEntryPayload {
+  diaryEntry: DiaryEntry!
+}
+
+input UpdateDiaryEntryInput {
+  id: ID!
+  comment: String
+  timestamp: DateTime
+}
+
+type UpdateDiaryEntryPayload {
+  diaryEntry: DiaryEntry!
+}
+
+input DeleteDiaryEntryInput {
+  id: ID!
+}
+
+type DeleteDiaryEntryPayload {
+  ok: Boolean!
+}
+
+"""
+Tracks an alternate title.
+
+Alternate titles are titles derived from outside the page itself. For example,
+SCP titles come from a seprate listing page.
+"""
+type PageAlternateTitle {
+  """The canonical URL of the page where the alternate title was found."""
+  source: URL!
+
+  """The title string."""
+  title: String!
+
+  """
+  The page associated with the alternate title.
+  Currently always returns a PageUrlReference for legacy reasons.
+  """
+  page: Page!
+}
+
+"""
+A tracked attribution to the page.
+Also enriched with platform history where possible.
+"""
+type PageAttribution {
+  """The type of contribution."""
+  type: PageAttributionType!
+
+  """
+  The contribution user. For wikidot pages, this data comes from a manually
+  curated table, and so will always be a UserWikidotNameReference. Use
+  `.wikidotUser` on the type if you want to get wikidot user details.
+  
+  The provided user's display name may be incorrectly capitalized if the
+  data was manually provided.
+  """
+  user: User!
+
+  """
+  An optional date of contribution.
+  If a time is not present, it's rounded down to midnight.
+  """
+  date: DateTime
+
+  """
+  Relative order of the attribution in the attribution table. Only use this
+  to sort attributions to match the original table order (the absolute value
+  is meaningless).
+  """
+  order: Int!
+}
+
+"""
+The type of attribution.
+For more information, see https://scpwiki.com/attribution-metadata
+"""
+enum PageAttributionType {
+  """Primary author or co-authors of the page."""
+  AUTHOR
+
+  """Authors of major rewrites to the page. A date is usually accompanied."""
+  REWRITE
+
+  """Translators of pages originally written in another language."""
+  TRANSLATOR
+
+  """
+  A fallback type pointing to the user who created this page if no explicit
+  attributions have been provided.
+  """
+  SUBMITTER
+}
+
+"""
+Represents a page on the internet.
+Each URL is canonically tied to a single page.
+"""
+interface Page {
+  """
+  The URL of the page. Remember, all wikidot URLs are stored as "http://".
+  """
+  url: URL!
+
+  """
+  High-level information about the users attributed to the page.
+  Data comes from either page info or external attribution pages.
+  """
+  attributions: [PageAttribution!]!
+
+  """
+  Alternate titles for SCP or Backrooms style pages. Data comes from external
+  listing pages on Wikidot.
+  """
+  alternateTitles: [PageAlternateTitle!]!
+
+  """
+  The latest diary entry for this page in the logged in account's diary.
+  Returns null if the page is not in the diary.
+  """
+  latestDiaryEntry: DiaryEntry
+
+  """Whether the page is in the logged in account's default reading list."""
+  inDefaultReadingList: Boolean!
+}
+
+"""
+A reference to a wikidot page that may or may not exist.
+Provided when resources manually refer to pages by URL and can get out of date.
+"""
+type PageUrlReference implements Page {
+  url: URL!
+
+  """
+  The referenced page, if present in the API.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  page: ResolvedPage
+
+  """
+  Proxy for page.attributions. Returns empty list if page is null.
+  
+  **Rate limiting:** This field consumes 2 points.
+  """
+  attributions: [PageAttribution!]!
+
+  """
+  Proxy for page.alternateTitles. Returns empty list if page is null.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  alternateTitles: [PageAlternateTitle!]!
+
+  """
+  Proxy for page.latestDiaryEntry. Returns null if page is null.
+  
+  **Notice:** This field requires the `MANAGE_DIARY_ENTRIES` scope.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  latestDiaryEntry: DiaryEntry
+
+  """
+  Whether the page is in the logged in account's default reading list.
+  
+  **Notice:** This field requires the `MANAGE_READING_LISTS` scope.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  inDefaultReadingList: Boolean!
+}
+
+"""
+A Page object that is tracked in Crom's database.
+Basically excludes URL reference types.
+"""
+interface ResolvedPage implements Page {
+  url: URL!
+
+  """Proxy for page.attributions. Returns empty list if page is null."""
+  attributions: [PageAttribution!]!
+
+  """Proxy for page.alternateTitles. Returns empty list if page is null."""
+  alternateTitles: [PageAlternateTitle!]!
+
+  """Proxy for page.latestDiaryEntry. Returns null if page is null."""
+  latestDiaryEntry: DiaryEntry
+
+  """Whether the page is in the logged in account's default reading list."""
+  inDefaultReadingList: Boolean!
+}
+
+type PageAggregation {
+  _count: Int!
+}
+
+type PageConnection {
+  edges: [PageEdge!]!
+  pageInfo: PageInfo!
+}
+
+type PageEdge {
+  node: ResolvedPage!
+  cursor: ID!
+}
+
+enum PagesSortKey {
+  URL
+  LATEST_ATTRIBUTION_DATE
+  WIKIDOT_TITLE
+  WIKIDOT_CREATED_AT
+  WIKIDOT_RATING
+
+  """
+  Warning: Don't use unless you know what you're doing.
+  Order by POSIX-collated approximation of wikidot's internal fullname representation.
+  """
+  WIKIDOT_FULLNAME
+}
+
+input PagesSort {
+  order: SortOrder
+  key: PagesSortKey
+}
+
+type ReadingList {
+  """A unique identifier for this reading list."""
+  id: ID!
+
+  """
+  A URL path friendly slug for the reading list. Typically the ID concatenated
+  with a truncated slugified version of the title.
+  """
+  slug: String!
+
+  """The title of the reading list."""
+  title: String!
+
+  """
+  The description. Would outline why the list was created and what it contains.
+  """
+  description: String!
+
+  """Whether this reading list is publicly accessible."""
+  isPublic: Boolean!
+
+  """The time when the list was created."""
+  createdAt: DateTime!
+
+  """The account that created the list."""
+  createdBy: Account
+
+  """The time when the list was last updated."""
+  updatedAt: DateTime!
+
+  """The default view for all viewers of the list."""
+  view: ReadingListView!
+
+  """
+  Items that make up the list, defined in visible order for the list view.
+  """
+  items: [ReadingListItem!]!
+
+  """
+  Tiers for tier list view of the reading list. Defined in order from top to
+  bottom. If no tiers were defined yet, the property will be null.
+  """
+  tiers: [ReadingListTier!]
+}
+
+enum ReadingListView {
+  ORDERED_LIST
+  TIER_LIST
+}
+
+type ReadingListItem {
+  """The linked page."""
+  page: PageUrlReference!
+
+  """An optional comment attached to this reading list item."""
+  comment: String
+
+  """When the item was first added to the list."""
+  insertedAt: DateTime!
+
+  """
+  The ID of the tier that this item belongs to. If null, it's placed outside
+  the tiers in the list view order.
+  """
+  tierId: ID
+}
+
+type ReadingListTier {
+  """An ID to identify the tier from the reading list items."""
+  id: ID!
+
+  """The name of the tier (e.g. "S", "A", "B", etc.)"""
+  name: String!
+
+  """The hex color code for the tier."""
+  color: String!
+}
+
+type ReadingListConnection {
+  edges: [ReadingListEdge!]!
+  pageInfo: PageInfo!
+}
+
+type ReadingListEdge {
+  node: ReadingList!
+  cursor: ID!
+}
+
+input ReadingListItemInput {
+  pageUrl: URL!
+  insertedAt: DateTime!
+  comment: String
+  tierId: ID
+}
+
+input ReadingListTierInput {
+  id: ID!
+  name: String!
+  color: String!
+}
+
+input CreateReadingListInput {
+  title: String!
+  description: String!
+  isPublic: Boolean!
+  view: ReadingListView!
+  items: [ReadingListItemInput!]!
+  tiers: [ReadingListTierInput!]
+}
+
+type CreateReadingListPayload {
+  readingList: ReadingList!
+}
+
+input UpdateReadingListInput {
+  id: ID!
+  title: String
+  description: String
+  isPublic: Boolean
+  view: ReadingListView
+  items: [ReadingListItemInput!]
+  tiers: [ReadingListTierInput!]
+}
+
+type UpdateReadingListPayload {
+  readingList: ReadingList!
+}
+
+input DeleteReadingListInput {
+  id: ID!
+}
+
+type DeleteReadingListPayload {
+  ok: Boolean!
+}
+
+type SiteInfo {
+  """
+  The type of wiki.
+  
+  This information can be used to determine wiki-specific conventions or
+  generate interwiki URLs among wikis of the same type.
+  """
+  type: SiteType!
+
+  """
+  An friendly English-language name for the site. Typically just the
+  type suffixed with the language.
+  """
+  displayName: String!
+
+  """
+  The base domain of the site.
+  
+  All pages indexed from the site will start with this URL. Some wikis
+  (such as the -EN wiki) are still returned as "http://" URLs for historical
+  reasons.
+  """
+  url: URL!
+
+  """The written language of the wiki as an IETF language tag."""
+  language: String!
+
+  """
+  The URL for the site's "recently created" page.
+  This is used by the discord bot to link to when calling "lc" or "/latest".
+  """
+  recentlyCreatedUrl: URL
+}
+
+"""A family of wikis that the wiki belongs to."""
+enum SiteType {
+  SCP_WIKI
+  WANDERERS_LIBRARY
+  BACKROOMS
+  CHAOS_INSURGENCY
+  OTHER
+}
+
+"""A user of a platform."""
+interface User {
+  """
+  An opaque ID that uniquely identifies this user across all platforms.
+  For example, two accounts with the same username on different platforms will
+  have different IDs.
+  """
+  id: ID!
+
+  """
+  The name to show when displaying this user. All users must have some
+  representable "friendly" name. It isn't necessarily unique.
+  
+  Some examples of "special" display names are "Anonymous", "Unknown Author",
+  "Staff", and "(deleted user)".
+  """
+  displayName: String!
+
+  """
+  Aggregated user statistics, scoped to sites (see `sites` query for a list
+  of which sites are supported). Providing no value to `siteUrl` returns
+  statistics across all pages.
+  
+  Important note: these statistics are not updated in real time.
+  """
+  statistics(siteUrl: URL): UserStatistics
+
+  """
+  Connection returning the list of pages that the user is attributed to.
+  
+  This is expensive because it essentially runs the `pages` query for each
+  user. A more rate-limiting friendly alternative, especially when requesting
+  many pages at once, is to call the top-level `pages` field directly in a
+  separate second request.
+  """
+  attributedPages(filter: PageQueryFilter, sort: PagesSort, before: ID, after: ID, first: Int, last: Int): PageConnection!
+}
+
+type UserStatistics {
+  """Rank amongst other users in this site."""
+  rank: Int!
+
+  """
+  Aggregate rating across all of the user's pages.
+  Excludes private pages.
+  """
+  totalRating: Int!
+
+  """
+  Mean rating across the user's pages.
+  For self-esteem reasons, private pages are excluded.
+  """
+  meanRating: Int!
+
+  """The number of pages attributed to the user. Excludes private pages."""
+  pageCount: Int!
+
+  """Number of pages by this author tagged "scp", or international variant."""
+  pageCountScp: Int!
+
+  """
+  Number of pages by this author tagged "tale", or international variant.
+  """
+  pageCountTale: Int!
+
+  """
+  Number of pages by this author tagged "goi-format", or international
+  variant.
+  """
+  pageCountGoiFormat: Int!
+
+  """
+  Number of pages by this author tagged "artwork", or international variant.
+  """
+  pageCountArtwork: Int!
+
+  """
+  Number of pages by this author tagged "level", or international variant.
+  """
+  pageCountLevel: Int!
+
+  """
+  Number of pages by this author tagged "entity", or international variant.
+  """
+  pageCountEntity: Int!
+
+  """
+  Number of pages by this author tagged "object", or international variant.
+  """
+  pageCountObject: Int!
+}
+
+"""Information specific to Wikidot pages."""
+type WikidotPage implements ResolvedPage & Page {
+  url: URL!
+
+  "\n\n**Rate limiting:** This field consumes 2 points."
+  attributions: [PageAttribution!]!
+
+  "\n\n**Rate limiting:** This field consumes 1 point."
+  alternateTitles: [PageAlternateTitle!]!
+
+  """
+  **Notice:** This field requires the `MANAGE_DIARY_ENTRIES` scope.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  latestDiaryEntry: DiaryEntry
+
+  """
+  **Notice:** This field requires the `MANAGE_READING_LISTS` scope.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  inDefaultReadingList: Boolean!
+
+  """Last known wikidot's internal page ID for this page."""
+  wikidotId: String!
+
+  """
+  The page's title. An empty string is returned if a title doesn't exist.
+  """
+  title: String!
+
+  """The page's rating, if the page/category supports voting."""
+  rating: Float
+
+  """The total number of votes cast on this page."""
+  voteCount: Int!
+
+  """
+  The wikidot category of this page. The default page category is "_default".
+  The category is also a part of the path (i.e. /category:page-slug).
+  """
+  category: String!
+
+  """All tags set on the page."""
+  tags: [String!]!
+
+  """The time when this page was created."""
+  createdAt: DateTime!
+
+  """
+  The number of revisions made to the page.
+  The number is primarily used by the crawler to determine if a page was
+  updated since the last crawl.
+  """
+  revisionCount: Int!
+
+  """
+  The number of posts in the associated forum thread created for this page.
+  The link to the forum thread itself is not stored by Crom.
+  """
+  commentCount: Int!
+
+  """
+  Whether this page is considered "hidden" on this wiki. Hidden pages should
+  not be displayed as being attributed to a user, or be considered for
+  aggregation. But they still exist on the wiki.
+  
+  See https://github.com/crombird/selectors/blob/main/selectors/hidden-pages.json
+  """
+  isHidden: Boolean!
+
+  """
+  Whether this page is a user page on a wiki. Typically, they're referred
+  to as "author pages" on most sites, and are identified based on a
+  combination of tags (e.g. "author") and attribution.
+  
+  See https://github.com/crombird/selectors/blob/main/selectors/author-pages.json
+  """
+  isUserPage: Boolean!
+
+  """
+  The user that posted this article.
+  
+  Returns null if the account was deleted before the crawler got to it.
+  This only exists to provide low-level PageWikidotInfo specific data. Prefer
+  the generic attributions field on the page.
+  """
+  createdBy: WikidotUser
+
+  """The original URL to the uncropped thumbnail image for this page."""
+  thumbnailUrl: URL
+
+  """
+  The parent page, if one is attached. Stored as a PageUrlReference because
+  the crawler only fetches the parent page URL when the child page is crawled.
+  
+  This means that the parent page may have been renamed, moved, or deleted.
+  """
+  parent: PageUrlReference
+
+  """
+  Pages that have this page marked as the parent page.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  children: [WikidotPage!]!
+
+  """
+  The wikidot page source for this page, if accessible.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  source: String
+
+  """
+  The raw unformatted text content of the page. It can often include hidden
+  text or code blocks, so it's not meant for display, only for indexing for
+  full-text search.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  textContent: String
+
+  """
+  Returns the metadata for all revisions on this page in index order.
+  
+  **Rate limiting:** This field consumes 1 point multiplied by the page size. The default page size is 100.
+  """
+  revisions(before: ID, after: ID, first: Int, last: Int): WikidotRevisionConnection!
+
+  """
+  Get coarse-grained vote records for the page from oldest to newest.
+  
+  This returns a connection of vote records rounded down to the recorded day,
+  to prevent abuse. For multiple vote changes made by a user in a single day,
+  it will only return the latest tracked record. Data is returned in order of
+  vote date, but not necessarily in chronological order within each day.
+  
+  Votes started being tracked in May 2022, so timestamps are clamped to around
+  that time. If you want data from before that, see https://scpper.com (note
+  that it does not support API access for vote data).
+  
+  **Rate limiting:** This field consumes 1 point multiplied by the page size. The default page size is 100.
+  """
+  fuzzyVoteRecords(before: ID, after: ID, first: Int, last: Int): WikidotVoteRecordConnection!
+
+  """
+  Get all historical vote records for the page scoped to the logged-in user.
+  Unlike `fuzzyVoteRecords`, the timestamps are returned without any fuzzing.
+  
+  If the session isn't associated with an account or if the account isn't
+  linked to a wikidot account, this will just return an empty connection.
+  
+  **Notice:** This field requires the `READ_WIKIDOT_INTEGRATION` scope.
+  
+  **Rate limiting:** This field consumes 1 point multiplied by the page size. The default page size is 100.
+  """
+  accountVoteRecords(before: ID, after: ID, first: Int, last: Int): WikidotVoteRecordConnection! @deprecated(reason: "Use `latestAccountVoteRecord` instead.")
+
+  """
+  Get the latest vote record for the page by the wikidot account linked to
+  the logged-in Crom account. Returns null if the account isn't linked to a
+  wikidot account or if the user never voted on the page.
+  
+  **Notice:** This field requires the `READ_WIKIDOT_INTEGRATION` scope.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  latestAccountVoteRecord: WikidotVoteRecord
+
+  """
+  Experimental, may be removed or changed in the future.
+  
+  Returns an array of cumulative votes for the page, binned by a certain number
+  of days. Used to generate the cumulative vote graph on Aviary.
+  """
+  binnedCumulativeRatings: [BinnedCumulativeRating!]!
+}
+
+type BinnedCumulativeRating {
+  date: DateTime!
+  cumulativeRating: Int!
+}
+
+"""
+Metadata for a page revision on a wikidot page.
+The source text is not captured.
+"""
+type WikidotRevision {
+  """
+  The revision's index in the page's revision history. The first revision is 0
+  and is probably always a PAGE_CREATED.
+  
+  Warning: Indexes are not necessarily unique! Due to race conditions on
+  wikidot's end, it's possible for two revisions to have the same index.
+  """
+  index: Int!
+
+  """
+  The revision's wikidot-specific ID. Not used for much, but is guaranteed to
+  be unique across all revisions on all pages across wikidot.
+  """
+  wikidotId: String!
+
+  """The time the revision was made, according to wikidot."""
+  timestamp: DateTime!
+
+  """The revision's type. May be null if wikidot doesn't provide it either."""
+  type: WikidotRevisionType
+
+  """
+  The user's wikidot ID. Null if the edit was anonymous, in which case the
+  IP address associated with the edit is NOT recorded.
+  """
+  userWikidotId: String
+
+  """Comment associated with the revision. Null if the comment is blank."""
+  comment: String
+
+  """
+  The associated user based on the user's wikidot ID.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  user: WikidotUser
+
+  """
+  The wikidot page associated with this vote record.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  page: WikidotPage!
+}
+
+enum WikidotRevisionType {
+  """The first revision of a page. Flagged as type "N"."""
+  PAGE_CREATED
+
+  """When the source of the page is changed. Flagged as type "S"."""
+  SOURCE_CHANGED
+
+  """
+  When a file attachment on the page is added or removed. Flagged as type "F".
+  """
+  FILES_CHANGED
+
+  """When tags are changed. Flagged as type "A"."""
+  TAGS_CHANGED
+
+  """When the title of the page is changed. Flagged as type "T"."""
+  TITLE_CHANGED
+}
+
+type WikidotRevisionConnection {
+  edges: [WikidotRevisionEdge!]!
+  pageInfo: PageInfo!
+}
+
+type WikidotRevisionEdge {
+  node: WikidotRevision!
+  cursor: ID!
+}
+
+"""
+A reference to a wikidot user that may or may not be real.
+Provided when users are manually referred to by their wikidot display name.
+"""
+type UserWikidotNameReference implements User {
+  """See `User.id`."""
+  id: ID!
+
+  """
+  The referenced name of this user. This user may be a real
+  account, a previously existing account, or neither (e.g. Anonymous, Unknown
+  Author, Staff). Or just a misspelled username.
+  """
+  displayName: String!
+
+  """
+  See `User.statistics`.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  statistics(siteUrl: URL): UserStatistics
+
+  """
+  Get the "author page" for the wikidot user on the given site.
+  
+  Functionally equivalent to calling `attributedPages` with the filter
+  `{ url: { startsWith: $siteUrl }, onWikidotPage: { isUserPage: { eq: true } } }`,
+  and returning the earliest matching page, but with a much lower rate
+  limiting complexity.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  userPage(siteUrl: URL!): WikidotPage
+
+  """
+  See `User.attributedPages`.
+  
+  **Rate limiting:** This field consumes 5 points multiplied by the page size. The default page size is 100.
+  """
+  attributedPages(filter: PageQueryFilter, sort: PagesSort, before: ID, after: ID, first: Int, last: Int): PageConnection!
+
+  """
+  The referenced wikidot user, if their details are present in the API.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  wikidotUser: WikidotUser
+}
+
+type WikidotUser implements User {
+  """See `User.id`."""
+  id: ID!
+
+  """The wikidot display name for this user."""
+  displayName: String!
+
+  """
+  See `User.statistics`.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  statistics(siteUrl: URL): UserStatistics
+
+  """
+  Get the "author page" for the wikidot user on the given site.
+  
+  Functionally equivalent to calling `attributedPages` with the filter
+  `{ url: { startsWith: $siteUrl }, onWikidotPage: { isUserPage: { eq: true } } }`,
+  and returning the earliest matching page, but with a much lower rate
+  limiting complexity.
+  
+  **Rate limiting:** This field consumes 1 point.
+  """
+  userPage(siteUrl: URL!): WikidotPage
+
+  """
+  See `User.attributedPages`.
+  
+  **Rate limiting:** This field consumes 5 points multiplied by the page size. The default page size is 100.
+  """
+  attributedPages(filter: PageQueryFilter, sort: PagesSort, before: ID, after: ID, first: Int, last: Int): PageConnection!
+
+  """
+  The list of vote records created by this user, in ascending order of
+  timestamp. Precise timestamp granularity is only available if the user is
+  associated with the logged-in Crom account.
+  
+  **Rate limiting:** This field consumes 2 points multiplied by the page size. The default page size is 100.
+  """
+  voteRecords(before: ID, after: ID, first: Int, last: Int): WikidotVoteRecordConnection!
+
+  """
+  The "slugified" version of the display name, for use in URLs and so on.
+  """
+  unixName: String!
+
+  """
+  The wikidot-specific ID for this user. Can be used to identify them across
+  renames.
+  """
+  wikidotId: String!
+
+  """
+  Experimental, may be removed or changed in the future.
+  
+  Returns an array of cumulative votes for the page, binned by a certain number
+  of days. Used to generate the cumulative vote graph on Aviary.
+  
+  **Rate limiting:** This field consumes 5 points.
+  """
+  binnedCumulativeRatings: [BinnedCumulativeRating!]!
+
+  """
+  Experimental, may be removed or changed in the future.
+  
+  Returns an ordered list of authors (from most to least) that this user likes
+  based on their upvotes/downvotes across all their attributed pages.
+  
+  **Rate limiting:** This field consumes 5 points.
+  """
+  favoriteAuthors: [WikidotUserFavoriteAuthor!]!
+
+  """
+  Experimental, may be removed or changed in the future.
+  
+  Returns an ordered list of users (from most to least) that like this author
+  based on their upvotes/downvotes across all their attributed pages.
+  
+  **Rate limiting:** This field consumes 5 points.
+  """
+  mostLikedBy: [WikidotUserMostLikedByUser!]!
+}
+
+type WikidotUserFavoriteAuthor {
+  user: UserWikidotNameReference!
+  positiveVotes: Int!
+  negativeVotes: Int!
+  totalRating: Int!
+  positiveVoteRatio: Float!
+}
+
+type WikidotUserMostLikedByUser {
+  user: WikidotUser
+  positiveVotes: Int!
+  negativeVotes: Int!
+  totalRating: Int!
+  positiveVoteRatio: Float!
+}
+
+"""A record of a change in a user's vote on a wikidot page."""
+type WikidotVoteRecord {
+  """The associated wikidot user account ID. This is always present."""
+  userWikidotId: String!
+
+  """The wikidot page associated with this vote record."""
+  page: WikidotPage!
+
+  """
+  The associated wikidot user account. If the account was deleted, this
+  returns null.
+  """
+  user: WikidotUser
+
+  """
+  The change in their vote. <0 = downvote, 0 = novote, >0 = upvote.
+  
+  The numbers can be outside the specified range if wikidot registers the
+  user's vote twice (or more).
+  """
+  direction: Int!
+
+  """
+  The time when the change was detected. This is not necessarily when the
+  vote was made, only when the crawler saw it.
+  """
+  timestamp: DateTime!
+}
+
+type WikidotVoteRecordConnection {
+  edges: [WikidotVoteRecordEdge!]!
+  pageInfo: PageInfo!
+}
+
+type WikidotVoteRecordEdge {
+  node: WikidotVoteRecord!
+  cursor: ID!
+}

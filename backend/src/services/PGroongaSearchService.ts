@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { Logger } from '../utils/logger';
+import { Logger } from '../utils/Logger.js';
 
 interface SearchOptions {
   query: string;

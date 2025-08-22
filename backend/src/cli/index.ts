@@ -4,6 +4,8 @@ import { Command } from 'commander';
 import { sync } from './sync.js';
 import { query } from './query.js';
 import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
+import { disconnectPrisma } from '../utils/db-connection.js';
+import { Logger } from '../utils/Logger.js';
 
 const program = new Command();
 
@@ -18,13 +20,15 @@ program
   .option('--full', 'Ignore incremental detection and sync all pages')
   .option('--phase <phase>', 'Run specific phase only (a, b, c)', 'all')
   .option('--concurrency <n>', 'Number of concurrent requests', '4')
-  .action(sync);
+  .option('--test', 'Test mode (first batch only)')
+  .action(async (options) => { await sync(options as any); });
 
 program
   .command('query')
   .description('Query pages, users, or statistics')
-  .option('--url <url>', 'Query specific page URL')
-  .option('--user <name>', 'Query specific user')
+  .option('-U, --url <url>', 'Query specific page URL')
+  .option('-u, --user <name>', 'Query specific user')
+  .option('--compact', 'Compact output for narrow terminals')
   .option('--stats', 'Show general statistics')
   .option('--user-rank', 'Show user rankings')
   .option('--vote-pattern', 'Show user vote patterns')
@@ -35,7 +39,7 @@ program
   .option('--historical', 'Show historical trends (requires --site-stats)')
   .option('--days <number>', 'Number of days for historical data (default 30)', '30')
   .option('--category <category>', 'User ranking category (overall, scp, translation, goi, story)', 'overall')
-  .option('--help', 'Show detailed help for query command')
+  .option('--usage', 'Show detailed usage for query command')
   .action(query);
 
 program
@@ -49,5 +53,19 @@ program
     const forceFullAnalysis = options.full || options.since;
     await analyzeIncremental({ forceFullAnalysis });
   });
+
+// Global error handlers for robust CLI processes
+const handleFatal = async (err: any) => {
+  try {
+    Logger.error('Fatal error', err instanceof Error ? err : new Error(String(err)));
+  } catch {}
+  try {
+    await disconnectPrisma();
+  } catch {}
+  process.exit(1);
+};
+
+process.on('unhandledRejection', handleFatal);
+process.on('uncaughtException', handleFatal);
 
 program.parse();

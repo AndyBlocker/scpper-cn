@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { EmbeddingService } from './EmbeddingService';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/Logger.js';
 
 interface SearchOptions {
   ftsWeight?: number;
@@ -202,7 +202,7 @@ export class HybridSearchService {
       return { results, stats };
 
     } catch (error) {
-      logger.error('Hybrid search failed:', error);
+      Logger.error('Hybrid search failed:', error);
       throw error;
     }
   }
@@ -237,7 +237,7 @@ export class HybridSearchService {
         );
         result.highlightedContent = highlighted;
       } catch (error) {
-        logger.warn(`Failed to generate highlight for result ${result.pageId}:`, error);
+        Logger.warn(`Failed to generate highlight for result ${result.pageId}:`, error);
         result.highlightedContent = result.content.substring(0, 200) + '...';
       }
     }
@@ -355,7 +355,7 @@ export class HybridSearchService {
       return { results, stats };
 
     } catch (error) {
-      logger.error('Page search failed:', error);
+      Logger.error('Page search failed:', error);
       throw error;
     }
   }
@@ -405,7 +405,7 @@ export class HybridSearchService {
       }));
 
     } catch (error) {
-      logger.error('Similar pages search failed:', error);
+      Logger.error('Similar pages search failed:', error);
       throw error;
     }
   }
@@ -420,9 +420,9 @@ export class HybridSearchService {
       `;
 
       // The trigger will automatically update the search vector
-      logger.info(`Updated search index for page ${pageId}`);
+      Logger.info(`Updated search index for page ${pageId}`);
     } catch (error) {
-      logger.error(`Failed to update search index for page ${pageId}:`, error);
+      Logger.error(`Failed to update search index for page ${pageId}:`, error);
       throw error;
     }
   }
@@ -452,12 +452,12 @@ export class HybridSearchService {
         }
 
         offset += batchSize;
-        logger.info(`Rebuilt search vectors for ${offset} pages`);
+        Logger.info(`Rebuilt search vectors for ${offset} pages`);
       }
 
-      logger.info('Search vector rebuild completed');
+      Logger.info('Search vector rebuild completed');
     } catch (error) {
-      logger.error('Failed to rebuild search vectors:', error);
+      Logger.error('Failed to rebuild search vectors:', error);
       throw error;
     }
   }

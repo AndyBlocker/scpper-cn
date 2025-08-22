@@ -3,7 +3,9 @@ import { GraphQLClient } from '../client/GraphQLClient.js';
 import { CoreQueries } from '../graphql/CoreQueries.js';
 import { PointEstimator } from '../graphql/PointEstimator.js';
 import { DatabaseStore } from '../store/DatabaseStore.js';
+import { AttributionService } from '../store/AttributionService.js';
 import { Logger } from '../../utils/Logger.js';
+import { Progress } from '../../utils/Progress.js';
 
 const cq = new CoreQueries();
 
@@ -22,6 +24,7 @@ export class PhaseAProcessor {
   constructor() {
     this.client = new GraphQLClient();
     this.store = new DatabaseStore();
+    this.attrService = new AttributionService(this.store.prisma);
   }
 
   async runComplete() {
@@ -32,6 +35,7 @@ export class PhaseAProcessor {
     const totalResult = await this.client.request(TOTAL_QUERY);
     const total = totalResult.aggregatePages._count;
     Logger.info(`Total pages in remote: ${total}`);
+    const bar = total > 0 ? Progress.createBar({ title: 'Phase A', total }) : null;
     
     // Clear staging table to start fresh
     Logger.info('🧹 Clearing staging table...');
@@ -82,13 +86,35 @@ export class PhaseAProcessor {
           category: node.category || null,
           parentUrl: node.parent?.url || null,
           childCount: null,
-          attributionCount: null,
+          attributionCount: Array.isArray(node.attributions) ? node.attributions.length : null,
           voteUp: null, // Will be populated by Wilson score calculation if available
           voteDown: null, // Will be populated by Wilson score calculation if available
         });
+
+        // Best-effort attribution import in Phase A: if page exists, write attributions to current version
+        if (Array.isArray(node.attributions) && node.attributions.length > 0 && node.wikidotId) {
+          try {
+            const wikidotId = parseInt(node.wikidotId);
+            const page = await this.store.prisma.page.findUnique({
+              where: { wikidotId },
+              include: { versions: { where: { validTo: null }, take: 1 } }
+            });
+            const currentVersion = page?.versions?.[0];
+            if (currentVersion) {
+              await this.attrService.importAttributions(currentVersion.id, node.attributions);
+              await this.store.prisma.pageVersion.update({
+                where: { id: currentVersion.id },
+                data: { attributionCount: node.attributions.length }
+              });
+            }
+          } catch (e) {
+            Logger.warn('Phase A attribution import failed', { url: node.url, err: e instanceof Error ? e.message : String(e) });
+          }
+        }
         
         totalCostInBatch += estCost;
         processedCount++;
+        if (bar) bar.increment(1);
       }
       
       const avgCostInBatch = edges.length > 0 ? (totalCostInBatch / edges.length).toFixed(2) : '0';
@@ -105,6 +131,7 @@ export class PhaseAProcessor {
       (processedCount / elapsedTime).toFixed(1) + ' pages/s' : 'N/A';
     
     Logger.info(`✅ Phase A completed: ${processedCount} pages scanned in ${elapsedTime.toFixed(1)}s (${speed})`);
+    if (bar) bar.stop();
     
     // Now build the dirty queue
     Logger.info('🔍 Building dirty page queue...');
@@ -139,6 +166,7 @@ export class PhaseAProcessor {
     
     const res = await this.client.request(query, vars);
     const edges = res.pages.edges;
+    const bar = edges.length > 0 ? Progress.createBar({ title: 'Phase A (test)', total: edges.length }) : null;
     
     if (edges.length === 0) {
       Logger.info('No pages found in first batch');
@@ -186,6 +214,7 @@ export class PhaseAProcessor {
       
       totalCostInBatch += estCost;
       processedCount++;
+      if (bar) bar.increment(1);
     }
     
     const elapsedTime = (Date.now() - startTime) / 1000;
@@ -193,6 +222,7 @@ export class PhaseAProcessor {
       (processedCount / elapsedTime).toFixed(1) + ' pages/s' : 'N/A';
     
     Logger.info(`✅ Test batch completed: ${processedCount} pages scanned in ${elapsedTime.toFixed(1)}s (${speed})`);
+    if (bar) bar.stop();
     Logger.info(`💰 Estimated total cost for test batch: ${totalCostInBatch} points`);
     
     // Build dirty queue with only the test batch data

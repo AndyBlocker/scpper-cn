@@ -1,21 +1,17 @@
 import { PrismaClient } from '@prisma/client';
-import { Logger } from '../src/utils/Logger.js';
 
-/**
- * 数据库清空脚本
- * 按依赖顺序清空所有数据表
- */
-
-interface ClearOptions {
+type ClearOptions = {
+  help?: boolean;
   force?: boolean;
   keepUsers?: boolean;
   keepPages?: boolean;
   tables?: string[];
-  help?: boolean;
-}
+};
 
-async function clearDatabase(options: ClearOptions = {}) {
+async function clearDatabase(options: ClearOptions = {}): Promise<void> {
   if (options.help) {
+    // Help text in Chinese to mirror compiled output
+    // eslint-disable-next-line no-console
     console.log(`
 数据库清空脚本 - 使用说明
 
@@ -40,11 +36,8 @@ async function clearDatabase(options: ClearOptions = {}) {
   }
 
   const prisma = new PrismaClient();
-
   try {
-    // 获取当前数据统计
     const stats = await getDataStats(prisma);
-    
     console.log('📊 当前数据库状态:');
     console.log(`  页面: ${stats.pages.toLocaleString()}`);
     console.log(`  页面版本: ${stats.pageVersions.toLocaleString()}`);
@@ -55,7 +48,6 @@ async function clearDatabase(options: ClearOptions = {}) {
     console.log(`  Staging页面: ${stats.staging.toLocaleString()}`);
     console.log(`  脏页面: ${stats.dirtyPages.toLocaleString()}`);
 
-    // 确认操作
     if (!options.force) {
       console.log('\n⚠️  警告: 即将清空数据库数据！');
       console.log('此操作不可逆，所有数据将被永久删除。');
@@ -65,22 +57,17 @@ async function clearDatabase(options: ClearOptions = {}) {
 
     console.log('\n🗑️  开始清空数据库...');
 
-    if (options.tables) {
-      // 只清空指定表
+    if (options.tables && options.tables.length > 0) {
       await clearSpecificTables(prisma, options.tables);
     } else if (options.keepPages) {
-      // 保留页面，只清空关联数据
       await clearRelatedData(prisma);
     } else if (options.keepUsers) {
-      // 保留用户，清空其他数据
       await clearExceptUsers(prisma);
     } else {
-      // 清空所有数据
       await clearAllData(prisma);
     }
 
     console.log('✅ 数据库清空完成！');
-
   } catch (error) {
     console.error('❌ 清空失败:', error);
     process.exit(1);
@@ -89,8 +76,26 @@ async function clearDatabase(options: ClearOptions = {}) {
   }
 }
 
-async function getDataStats(prisma: PrismaClient) {
-  const [pages, pageVersions, users, votes, revisions, attributions, staging, dirtyPages] = await Promise.all([
+async function getDataStats(prisma: PrismaClient): Promise<{
+  pages: number;
+  pageVersions: number;
+  users: number;
+  votes: number;
+  revisions: number;
+  attributions: number;
+  staging: number;
+  dirtyPages: number;
+}> {
+  const [
+    pages,
+    pageVersions,
+    users,
+    votes,
+    revisions,
+    attributions,
+    staging,
+    dirtyPages,
+  ] = await Promise.all([
     prisma.page.count(),
     prisma.pageVersion.count(),
     prisma.user.count(),
@@ -98,29 +103,35 @@ async function getDataStats(prisma: PrismaClient) {
     prisma.revision.count(),
     prisma.attribution.count(),
     prisma.pageMetaStaging.count(),
-    prisma.dirtyPage.count()
+    prisma.dirtyPage.count(),
   ]);
-
-  return { pages, pageVersions, users, votes, revisions, attributions, staging, dirtyPages };
+  return {
+    pages,
+    pageVersions,
+    users,
+    votes,
+    revisions,
+    attributions,
+    staging,
+    dirtyPages,
+  };
 }
 
-async function clearSpecificTables(prisma: PrismaClient, tableList: string[]) {
-  const tables = tableList.map(t => t.trim());
+async function clearSpecificTables(prisma: PrismaClient, tableList: string[]): Promise<void> {
+  const tables = tableList.map((t) => t.trim());
   console.log(`🎯 清空指定表: ${tables.join(', ')}`);
-  
-  const tableMap: { [key: string]: () => Promise<any> } = {
-    'Vote': () => prisma.vote.deleteMany(),
-    'Revision': () => prisma.revision.deleteMany(),
-    'Attribution': () => prisma.attribution.deleteMany(),
-    'PageStats': () => prisma.pageStats.deleteMany(),
-    'SourceVersion': () => prisma.sourceVersion.deleteMany(),
-    'DirtyPage': () => prisma.dirtyPage.deleteMany(),
-    'PageMetaStaging': () => prisma.pageMetaStaging.deleteMany(),
-    'UserStats': () => prisma.userStats.deleteMany(),
-    'SearchIndex': () => prisma.searchIndex.deleteMany(),
-    'UserSearchIndex': () => prisma.userSearchIndex.deleteMany()
+  const tableMap: Record<string, () => Promise<unknown>> = {
+    Vote: () => prisma.vote.deleteMany(),
+    Revision: () => prisma.revision.deleteMany(),
+    Attribution: () => prisma.attribution.deleteMany(),
+    PageStats: () => prisma.pageStats.deleteMany(),
+    SourceVersion: () => prisma.sourceVersion.deleteMany(),
+    DirtyPage: () => prisma.dirtyPage.deleteMany(),
+    PageMetaStaging: () => prisma.pageMetaStaging.deleteMany(),
+    UserStats: () => prisma.userStats.deleteMany(),
+    SearchIndex: () => prisma.searchIndex.deleteMany(),
+    UserSearchIndex: () => prisma.userSearchIndex.deleteMany(),
   };
-
   for (const table of tables) {
     if (tableMap[table]) {
       console.log(`  清空 ${table}...`);
@@ -132,11 +143,9 @@ async function clearSpecificTables(prisma: PrismaClient, tableList: string[]) {
   }
 }
 
-async function clearRelatedData(prisma: PrismaClient) {
+async function clearRelatedData(prisma: PrismaClient): Promise<void> {
   console.log('🔗 清空关联数据，保留页面和用户...');
-  
-  // 按依赖顺序清空关联数据
-  const operations = [
+  const operations: Array<{ name: string; op: () => Promise<unknown> }> = [
     { name: 'Vote', op: () => prisma.vote.deleteMany() },
     { name: 'Revision', op: () => prisma.revision.deleteMany() },
     { name: 'Attribution', op: () => prisma.attribution.deleteMany() },
@@ -144,9 +153,8 @@ async function clearRelatedData(prisma: PrismaClient) {
     { name: 'SourceVersion', op: () => prisma.sourceVersion.deleteMany() },
     { name: 'SearchIndex', op: () => prisma.searchIndex.deleteMany() },
     { name: 'UserSearchIndex', op: () => prisma.userSearchIndex.deleteMany() },
-    { name: 'DirtyPage', op: () => prisma.dirtyPage.deleteMany() }
+    { name: 'DirtyPage', op: () => prisma.dirtyPage.deleteMany() },
   ];
-
   for (const { name, op } of operations) {
     console.log(`  清空 ${name}...`);
     await op();
@@ -154,11 +162,9 @@ async function clearRelatedData(prisma: PrismaClient) {
   }
 }
 
-async function clearExceptUsers(prisma: PrismaClient) {
+async function clearExceptUsers(prisma: PrismaClient): Promise<void> {
   console.log('👥 保留用户数据，清空其他数据...');
-  
-  // 按依赖顺序清空（保留User表）
-  const operations = [
+  const operations: Array<{ name: string; op: () => Promise<unknown> }> = [
     { name: 'Vote', op: () => prisma.vote.deleteMany() },
     { name: 'Revision', op: () => prisma.revision.deleteMany() },
     { name: 'Attribution', op: () => prisma.attribution.deleteMany() },
@@ -170,9 +176,8 @@ async function clearExceptUsers(prisma: PrismaClient) {
     { name: 'PageVersion', op: () => prisma.pageVersion.deleteMany() },
     { name: 'Page', op: () => prisma.page.deleteMany() },
     { name: 'PageMetaStaging', op: () => prisma.pageMetaStaging.deleteMany() },
-    { name: 'DirtyPage', op: () => prisma.dirtyPage.deleteMany() }
+    { name: 'DirtyPage', op: () => prisma.dirtyPage.deleteMany() },
   ];
-
   for (const { name, op } of operations) {
     console.log(`  清空 ${name}...`);
     await op();
@@ -180,12 +185,9 @@ async function clearExceptUsers(prisma: PrismaClient) {
   }
 }
 
-async function clearAllData(prisma: PrismaClient) {
+async function clearAllData(prisma: PrismaClient): Promise<void> {
   console.log('🧹 清空所有数据...');
-  
-  // 按外键依赖顺序清空所有表
-  const operations = [
-    // 先清空有外键依赖的表
+  const operations: Array<{ name: string; op: () => Promise<any> }> = [
     { name: 'Vote', op: () => prisma.vote.deleteMany() },
     { name: 'Revision', op: () => prisma.revision.deleteMany() },
     { name: 'Attribution', op: () => prisma.attribution.deleteMany() },
@@ -209,42 +211,34 @@ async function clearAllData(prisma: PrismaClient) {
     { name: 'AnalysisWatermark', op: () => prisma.analysisWatermark.deleteMany() },
     { name: 'SeriesStats', op: () => prisma.seriesStats.deleteMany() },
     { name: 'SiteStats', op: () => prisma.siteStats.deleteMany() },
-    
-    // 然后清空主表
     { name: 'PageVersion', op: () => prisma.pageVersion.deleteMany() },
     { name: 'Page', op: () => prisma.page.deleteMany() },
     { name: 'User', op: () => prisma.user.deleteMany() },
-    
-    // 最后清空辅助表
     { name: 'PageMetaStaging', op: () => prisma.pageMetaStaging.deleteMany() },
     { name: 'DirtyPage', op: () => prisma.dirtyPage.deleteMany() },
-    { name: 'DirtyPageBackup', op: () => prisma.dirtyPageBackup.deleteMany() }
+    { name: 'DirtyPageBackup', op: () => prisma.dirtyPageBackup.deleteMany() },
   ];
-
   for (const { name, op } of operations) {
     console.log(`  清空 ${name}...`);
     try {
       const result = await op();
-      const count = result.count || 0;
+      const count: number = (result && (result as any).count) || 0;
       console.log(`  ✅ ${name} 已清空 (${count} 条记录)`);
     } catch (error: any) {
-      if (error.code === 'P2003') {
+      if (error && error.code === 'P2003') {
         console.log(`  ⚠️  ${name} 外键约束错误，跳过`);
       } else {
-        console.log(`  ❌ ${name} 清空失败: ${error.message}`);
+        console.log(`  ❌ ${name} 清空失败: ${error?.message ?? String(error)}`);
       }
     }
   }
 }
 
-// 命令行参数解析
 function parseArgs(): ClearOptions {
   const args = process.argv.slice(2);
   const options: ClearOptions = {};
-  
-  for (let i = 0; i < args.length; i++) {
+  for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
-    
     switch (arg) {
       case '--force':
         options.force = true;
@@ -270,24 +264,19 @@ function parseArgs(): ClearOptions {
         process.exit(1);
     }
   }
-  
   return options;
 }
 
-// 主函数
-async function main() {
+async function main(): Promise<void> {
   const options = parseArgs();
-  
   console.log('🗑️  SCPPER-CN 数据库清空工具');
   console.log('='.repeat(50));
-  
   if (options.help) {
     await clearDatabase({ help: true });
     return;
   }
-  
-  // 显示操作类型
-  if (options.tables) {
+
+  if (options.tables && options.tables.length > 0) {
     console.log(`🎯 操作类型: 清空指定表 (${options.tables.join(', ')})`);
   } else if (options.keepUsers) {
     console.log('👥 操作类型: 保留用户数据');
@@ -296,11 +285,10 @@ async function main() {
   } else {
     console.log('🧹 操作类型: 清空所有数据');
   }
-  
+
   await clearDatabase(options);
 }
 
-// 直接运行时执行主函数
 if (import.meta.url === `file://${process.argv[1]}`) {
   main()
     .then(() => {
@@ -312,3 +300,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(1);
     });
 }
+
+

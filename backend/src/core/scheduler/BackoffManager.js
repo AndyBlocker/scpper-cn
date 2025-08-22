@@ -1,5 +1,6 @@
 // src/core/scheduler/BackoffManager.js
 import { Logger } from '../../utils/Logger.js';
+import { Progress } from '../../utils/Progress.js';
 
 export class BackoffManager {
   /**
@@ -14,7 +15,9 @@ export class BackoffManager {
    */
   async wait(seconds) {
     Logger.warn(`Rate limited. Waiting ${seconds}s before retry...`);
-    await this.sleep(seconds * 1000);
+    const ms = seconds * 1000;
+    try { Progress.addPause(ms); } catch {}
+    await this.sleep(ms);
     Logger.info('Resuming requests...');
   }
 }

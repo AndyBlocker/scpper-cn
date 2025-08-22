@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import pLimit from 'p-limit';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/Logger.js';
 
 interface EmbeddingConfig {
   modelName: string;
@@ -32,6 +32,8 @@ export class EmbeddingService extends EventEmitter {
   private pythonProcess: any;
   private isInitialized: boolean = false;
   private limit: any;
+  private stdoutBuffer: string = '';
+  private pendingResolvers: Map<string, { resolve: (v: any) => void; reject: (e: any) => void; timeout: NodeJS.Timeout } > = new Map();
 
   constructor(prisma: PrismaClient, config: Partial<EmbeddingConfig> = {}) {
     super();
@@ -72,9 +74,9 @@ export class EmbeddingService extends EventEmitter {
       await this.initializePythonService();
       
       this.isInitialized = true;
-      logger.info('EmbeddingService initialized successfully');
+      Logger.info('EmbeddingService initialized successfully');
     } catch (error) {
-      logger.error('Failed to initialize EmbeddingService:', error);
+      Logger.error('Failed to initialize EmbeddingService:', error);
       throw error;
     }
   }
@@ -142,7 +144,49 @@ while True:
     });
 
     this.pythonProcess.stderr.on('data', (data: Buffer) => {
-      logger.error(`Python embedding service error: ${data.toString()}`);
+      Logger.error(`Python embedding service error: ${data.toString()}`);
+    });
+
+    this.pythonProcess.on('error', (err: Error) => {
+      Logger.error('Python embedding service process error:', err);
+    });
+
+    this.pythonProcess.on('exit', (code: number, signal: string) => {
+      Logger.warn(`Python embedding service exited (code=${code}, signal=${signal})`);
+      // Reject all pending requests
+      for (const [, h] of this.pendingResolvers) {
+        clearTimeout(h.timeout);
+        h.reject(new Error('Embedding service exited'));
+      }
+      this.pendingResolvers.clear();
+      this.isInitialized = false;
+    });
+
+    // Line-buffered stdout JSON protocol
+    this.pythonProcess.stdout.on('data', (data: Buffer) => {
+      this.stdoutBuffer += data.toString();
+      let idx;
+      while ((idx = this.stdoutBuffer.indexOf('\n')) >= 0) {
+        const line = this.stdoutBuffer.slice(0, idx);
+        this.stdoutBuffer = this.stdoutBuffer.slice(idx + 1);
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          const requestId = msg.request_id ?? msg.requestId;
+          if (requestId && this.pendingResolvers.has(requestId)) {
+            const handler = this.pendingResolvers.get(requestId)!;
+            clearTimeout(handler.timeout);
+            this.pendingResolvers.delete(requestId);
+            if (msg.error) {
+              handler.reject(new Error(msg.error));
+            } else {
+              handler.resolve(msg.embeddings);
+            }
+          }
+        } catch (e) {
+          // ignore parse error of partial lines
+        }
+      }
     });
 
     // Wait for initialization
@@ -155,34 +199,21 @@ while True:
     }
 
     return new Promise((resolve, reject) => {
-      const requestId = Date.now().toString();
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const request = { texts, request_id: requestId };
-
-      let responseHandler: any;
-      responseHandler = (data: Buffer) => {
-        try {
-          const response = JSON.parse(data.toString());
-          if (response.request_id === requestId) {
-            this.pythonProcess.stdout.removeListener('data', responseHandler);
-            if (response.error) {
-              reject(new Error(response.error));
-            } else {
-              resolve(response.embeddings);
-            }
-          }
-        } catch (error) {
-          // Continue listening if parse fails
+      try {
+        this.pythonProcess.stdin.write(JSON.stringify(request) + '\n');
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      const timeout = setTimeout(() => {
+        if (this.pendingResolvers.has(requestId)) {
+          this.pendingResolvers.get(requestId)!.reject(new Error('Embedding generation timeout'));
+          this.pendingResolvers.delete(requestId);
         }
-      };
-
-      this.pythonProcess.stdout.on('data', responseHandler);
-      this.pythonProcess.stdin.write(JSON.stringify(request) + '\n');
-
-      // Timeout after 30 seconds
-      setTimeout(() => {
-        this.pythonProcess.stdout.removeListener('data', responseHandler);
-        reject(new Error('Embedding generation timeout'));
       }, 30000);
+      this.pendingResolvers.set(requestId, { resolve, reject, timeout });
     });
   }
 
@@ -222,7 +253,7 @@ while True:
       await this.updatePageEmbedding(pageId);
       
     } catch (error) {
-      logger.error(`Failed to process document ${pageId}:`, error);
+      Logger.error(`Failed to process document ${pageId}:`, error);
       throw error;
     }
   }
@@ -284,16 +315,20 @@ while True:
       content: chunk.content,
       tokens: chunk.tokens,
       lang: chunk.lang || 'zh',
-      embedding: `[${chunk.embedding.join(',')}]`
+      embedding: chunk.embedding
     }));
 
     // Use raw SQL for vector insertion
     for (const value of values) {
+      if (!Array.isArray(value.embedding) || value.embedding.length !== this.config.dimension) {
+        throw new Error(`Embedding dimension mismatch: expected ${this.config.dimension}, got ${value.embedding?.length}`);
+      }
+      const embeddingLiteral = `[${value.embedding.join(',')}]`;
       await this.prisma.$executeRaw`
         INSERT INTO "SearchChunk" 
         ("pageId", "chunkIndex", content, tokens, lang, embedding)
         VALUES (${value.pageId}, ${value.chunkIndex}, ${value.content}, 
-                ${value.tokens}, ${value.lang}, ${value.embedding}::vector(${this.config.dimension}))
+                ${value.tokens}, ${value.lang}, ${embeddingLiteral}::vector(${this.config.dimension}))
         ON CONFLICT ("pageId", "chunkIndex") 
         DO UPDATE SET 
           content = EXCLUDED.content,
@@ -375,6 +410,11 @@ while True:
       this.pythonProcess = null;
     }
     this.isInitialized = false;
+    for (const [, h] of this.pendingResolvers) {
+      clearTimeout(h.timeout);
+      h.reject(new Error('Embedding service cleaned up'));
+    }
+    this.pendingResolvers.clear();
   }
 }
 

@@ -8,6 +8,7 @@ export class TaskQueue {
     this.concurrency = concurrency;
     this.active = 0;
     this.queue = [];
+    this._waiters = [];
   }
 
   add(fn) {
@@ -33,11 +34,15 @@ export class TaskQueue {
     if (this.active >= this.concurrency) return;
     const task = this.queue.shift();
     if (task) task();
+    if (!task && this.active === 0) {
+      const waiters = this._waiters;
+      this._waiters = [];
+      for (const w of waiters) w();
+    }
   }
 
   async drain() {
-    while (this.queue.length || this.active) {
-      await new Promise(r => setTimeout(r, 100));
-    }
+    if (!this.queue.length && this.active === 0) return;
+    await new Promise(resolve => this._waiters.push(resolve));
   }
 }

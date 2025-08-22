@@ -11,6 +11,7 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 let prismaInstance: PrismaClient | null = null;
+let signalsBound = false;
 
 /**
  * 创建或获取PrismaClient实例
@@ -47,6 +48,22 @@ export function getPrismaClient(): PrismaClient {
     });
   }
   
+  if (!signalsBound) {
+    // 处理进程退出时的数据库连接清理（幂等）
+    const graceful = async (signal?: string) => {
+      try {
+        if (signal) console.log(`Received ${signal}, disconnecting database...`);
+        await disconnectPrisma();
+      } finally {
+        if (signal) process.exit(0);
+      }
+    };
+    process.on('SIGINT', () => { void graceful('SIGINT'); });
+    process.on('SIGTERM', () => { void graceful('SIGTERM'); });
+    process.on('beforeExit', () => { void graceful(); });
+    signalsBound = true;
+  }
+
   return prismaInstance;
 }
 
@@ -54,14 +71,13 @@ export function getPrismaClient(): PrismaClient {
  * 断开数据库连接
  */
 export async function disconnectPrisma(): Promise<void> {
-  if (prismaInstance) {
-    try {
-      await prismaInstance.$disconnect();
-    } catch (error) {
-      console.error('Error disconnecting Prisma client:', error);
-    } finally {
-      prismaInstance = null;
-    }
+  if (!prismaInstance) return;
+  try {
+    await prismaInstance.$disconnect();
+  } catch (error) {
+    console.error('Error disconnecting Prisma client:', error);
+  } finally {
+    prismaInstance = null;
   }
 }
 
@@ -118,21 +134,5 @@ export async function executeWithRetry<T>(
 }
 
 // 处理进程退出时的数据库连接清理
-process.on('SIGINT', async () => {
-  console.log('Received SIGINT, disconnecting database...');
-  await disconnectPrisma();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  console.log('Received SIGTERM, disconnecting database...');
-  await disconnectPrisma();
-  process.exit(0);
-});
-
-process.on('beforeExit', async () => {
-  await disconnectPrisma();
-});
-
 // 导出一个默认实例供向后兼容
 export const prisma = getPrismaClient();

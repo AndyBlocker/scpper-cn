@@ -1,8 +1,10 @@
 import { PrismaClient } from '@prisma/client';
+import { disconnectPrisma } from '../utils/db-connection.js';
 import { table } from 'table';
 import { getPrismaClient } from '../utils/db-connection.js';
 import { UserRatingSystem } from '../jobs/UserRatingJob.js';
 import { DatabaseStore } from '../core/store/DatabaseStore.js';
+import chalk from 'chalk';
 
 /**
  * 判断一个数字是否值得关注（特殊编号）
@@ -62,7 +64,7 @@ function isNotableNumber(num: number): { notable: boolean; reason?: string } {
 async function showNotableUnusedNumbers(prisma: PrismaClient, openSeries: any[]) {
   if (openSeries.length === 0) return;
   
-  console.log('\n=== 值得关注的空编号 ===');
+  console.log(`\n${chalk.bold('值得关注的空编号')}`);
   
   // Get all used numbers from all open series
   const scpPages = await prisma.$queryRaw<Array<{url: string}>>`
@@ -168,7 +170,8 @@ export async function query({
   historical,
   days,
   category,
-  help 
+  help,
+  compact
 }: { 
   url?: string; 
   user?: string; 
@@ -183,7 +186,11 @@ export async function query({
   days?: string;
   category?: string;
   help?: boolean;
+  compact?: boolean;
 }) {
+  const termWidth = process.stdout.columns || 80;
+  const isCompact = compact || termWidth < 100;
+
   if (help) {
     console.log(`
 SCPPER-CN Query Tool - 数据查询工具
@@ -290,7 +297,7 @@ SCPPER-CN Query Tool - 数据查询工具
 
       // Basic page info
       const currentVersion = fullPage.versions.find(v => v.validTo === null) || fullPage.versions[0];
-      console.log(`\n=== Page Information ===`);
+      console.log(`\n${chalk.bold('Page')} ${isCompact ? '' : chalk.gray('information')}`);
       console.log(`URL: ${page.url}`);
       console.log(`Current URL: ${page.currentUrl}`);
       console.log(`Wikidot ID: ${page.wikidotId}`);
@@ -314,11 +321,13 @@ SCPPER-CN Query Tool - 数据查询工具
       }
 
       // Version history table
-      console.log(`\n=== Version History ===`);
+      console.log(`\n${chalk.bold('Versions')}`);
       console.log(table([
-        ['Version ID', 'Valid Period', 'Rating', 'RCnt', 'VCnt', 'Wilson', 'Controversy', 'Deleted'],
+        isCompact
+          ? ['Ver', 'Period', 'R', 'RC', 'VC', 'W', 'Ctrv', 'Del']
+          : ['Version ID', 'Valid Period', 'Rating', 'RCnt', 'VCnt', 'Wilson', 'Controversy', 'Deleted'],
         ...fullPage.versions.map(v => [
-          v.id.toString(),
+          isCompact ? v.id.toString().slice(-6) : v.id.toString(),
           `${v.validFrom.toISOString().split('T')[0]} ⇢ ${v.validTo ? v.validTo.toISOString().split('T')[0] : 'now'}`,
           v.rating?.toString() || '—',
           v.revisionCount?.toString() || '—',
@@ -331,7 +340,7 @@ SCPPER-CN Query Tool - 数据查询工具
 
       // Attributions for current version
       if (currentVersion?.attributions && currentVersion.attributions.length > 0) {
-        console.log(`\n=== Attributions ===`);
+        console.log(`\n${chalk.bold('Attributions')}`);
         console.log(table([
           ['Type', 'User', 'Date', 'Order'],
           ...currentVersion.attributions.map(attr => [
@@ -345,7 +354,7 @@ SCPPER-CN Query Tool - 数据查询工具
 
       // Recent revisions for current version
       if (currentVersion?.revisions && currentVersion.revisions.length > 0) {
-        console.log(`\n=== Recent Revisions (Latest 10) ===`);
+        console.log(`\n${chalk.bold('Revisions')} ${isCompact ? '' : chalk.gray('(latest 10)')}`);
         console.log(table([
           ['Date', 'User', 'Type', 'Comment'],
           ...currentVersion.revisions.map(rev => [
@@ -359,7 +368,7 @@ SCPPER-CN Query Tool - 数据查询工具
 
       // Recent votes for current version (sample)
       if (currentVersion?.votes && currentVersion.votes.length > 0) {
-        console.log(`\n=== Recent Votes (Latest 20) ===`);
+        console.log(`\n${chalk.bold('Votes')} ${isCompact ? '' : chalk.gray('(latest 20)')}`);
         console.log(table([
           ['Date', 'User', 'Direction'],
           ...currentVersion.votes.map(vote => [
@@ -404,7 +413,7 @@ SCPPER-CN Query Tool - 数据查询工具
         return;
       }
 
-      console.log(`\nUser: ${userData.displayName}`);
+      console.log(`\n${chalk.bold('User')} ${userData.displayName}`);
       console.log(`Wikidot ID: ${userData.wikidotId || 'Unknown'}`);
       if (userData.firstActivityAt) {
         const activityDate = userData.firstActivityAt.toISOString().split('T')[0];
@@ -421,7 +430,7 @@ SCPPER-CN Query Tool - 数据查询工具
         console.log(`Favorite Tag: ${userData.stats.favTag || 'None'}`);
         
         // User Ranking Information
-        console.log('\n=== User Rankings ===');
+        console.log(`\n${chalk.bold('User Rankings')}`);
         console.log(table([
           ['Category', 'Rating', 'Rank', 'Page Count'],
           [
@@ -479,7 +488,7 @@ SCPPER-CN Query Tool - 数据查询工具
         const pattern = await ratingSystem.getUserVotePattern(userData.id);
         
         if (pattern.voteTargets.length > 0) {
-          console.log('\n=== 投票目标 Top5 (我投票给谁最多) ===');
+          console.log(`\n${chalk.bold('投票目标 Top5')}${isCompact ? '' : chalk.gray(' (我投票给谁最多)')}`);
           console.log(table([
             ['用户', 'Wikidot ID', '总票数', '↑票', '↓票', '最后投票'],
             ...pattern.voteTargets.map(target => [
@@ -494,7 +503,7 @@ SCPPER-CN Query Tool - 数据查询工具
         }
 
         if (pattern.voteSources.length > 0) {
-          console.log('\n=== 投票来源 Top5 (谁投票给我最多) ===');
+          console.log(`\n${chalk.bold('投票来源 Top5')}${isCompact ? '' : chalk.gray(' (谁投票给我最多)')}`);
           console.log(table([
             ['用户', 'Wikidot ID', '总票数', '↑票', '↓票', '最后投票'],
             ...pattern.voteSources.map(source => [
@@ -509,7 +518,7 @@ SCPPER-CN Query Tool - 数据查询工具
         }
 
         if (pattern.tagPreferences.length > 0) {
-          console.log('\n=== 标签偏好 Top10 ===');
+          console.log(`\n${chalk.bold('标签偏好 Top10')}`);
           console.log(table([
             ['标签', '总票数', '↑票', '↓票', '赞成率%', '最后投票'],
             ...pattern.tagPreferences.map(pref => [
@@ -525,7 +534,7 @@ SCPPER-CN Query Tool - 数据查询工具
       }
 
       if (userData.votes.length > 0) {
-        console.log('\nRecent Votes:');
+        console.log(`\n${chalk.bold('Recent Votes')}`);
         console.log(table([
           ['Date', 'Direction', 'Page Version ID'],
           ...userData.votes.map(v => [
@@ -551,7 +560,7 @@ SCPPER-CN Query Tool - 数据查询工具
           })
           .slice(0, 10); // Take top 10 after sorting
 
-        console.log('\nRecent Attributions:');
+        console.log(`\n${chalk.bold('Recent Attributions')}`);
         console.log(table([
           ['Type', 'Page Title', 'Page ID', 'Date'],
           ...sortedAttributions.map(attr => [
@@ -590,14 +599,14 @@ SCPPER-CN Query Tool - 数据查询工具
         take: 10
       });
 
-      console.log('=== Database Statistics ===');
+      console.log(chalk.bold('Database Statistics'));
       console.log(`Pages: ${pageCount}`);
       console.log(`Page Versions: ${versionCount}`);
       console.log(`Users: ${userCount}`);
       console.log(`Votes: ${voteCount}`);
       console.log(`Revisions: ${revisionCount}`);
 
-      console.log('\n=== Top Rated Pages ===');
+      console.log(`\n${chalk.bold('Top Rated Pages')}`);
       console.log(table([
         ['Title', 'Rating', 'Wilson Score', 'URL'],
         ...topRated.map(v => [
@@ -608,7 +617,7 @@ SCPPER-CN Query Tool - 数据查询工具
         ])
       ]));
 
-      console.log('\n=== Top Wilson Score Pages ===');
+      console.log(`\n${chalk.bold('Top Wilson Score Pages')}`);
       console.log(table([
         ['Title', 'Rating', 'Wilson Score', 'URL'],
         ...topWilson.map(v => [
@@ -624,7 +633,7 @@ SCPPER-CN Query Tool - 数据查询工具
       const validCategories = ['overall', 'scp', 'translation', 'goi', 'story', 'wanderers', 'art'];
       const selectedCategory = category && validCategories.includes(category) ? category : 'overall';
       
-      console.log(`\n=== ${selectedCategory.toUpperCase()} User Rankings ===`);
+      console.log(`\n${chalk.bold(`${selectedCategory.toUpperCase()} User Rankings`)}`);
       
       let orderBy: any;
       let ratingField: string;
@@ -716,7 +725,7 @@ SCPPER-CN Query Tool - 数据查询工具
         return;
       }
 
-      console.log('\n=== 最活跃投票交互 Top20 ===');
+      console.log(`\n${chalk.bold('最活跃投票交互 Top20')}`);
       console.log(table([
         ['投票者', '页面作者', '总票数', '↑票', '↓票', '相互投票'],
         ...interactions.map(interaction => [
@@ -729,7 +738,7 @@ SCPPER-CN Query Tool - 数据查询工具
         ])
       ]));
       
-      console.log('\n说明: "相互投票"显示对方回投的票数，可用于发现潜在的相互投票行为');
+      console.log(`\n说明: "相互投票"显示对方回投的票数，可用于发现潜在的相互投票行为`);
     }
 
     if (popularTags) {
@@ -741,7 +750,7 @@ SCPPER-CN Query Tool - 数据查询工具
         return;
       }
 
-      console.log('\n=== 热门标签统计 Top20 ===');
+      console.log(`\n${chalk.bold('热门标签统计 Top20')}`);
       console.log(table([
         ['标签', '投票人数', '总票数', '↑票', '↓票', '平均赞成率%'],
         ...tags.map(tag => [
@@ -754,14 +763,14 @@ SCPPER-CN Query Tool - 数据查询工具
         ])
       ]));
       
-      console.log('\n说明: 显示按总投票数排序的标签，"平均赞成率"反映该标签内容的受欢迎程度');
+      console.log(`\n说明: 显示按总投票数排序的标签，"平均赞成率"反映该标签内容的受欢迎程度`);
     }
 
     if (siteStats) {
       const daysNum = parseInt(days || '30');
       
       if (historical) {
-        console.log(`\n=== 最近${daysNum}天站点趋势 ===`);
+        console.log(`\n${chalk.bold(`最近${daysNum}天站点趋势`)}`);
         
         const historicalData = await prisma.siteStats.findMany({
           where: {
@@ -791,7 +800,7 @@ SCPPER-CN Query Tool - 数据查询工具
           ]));
         }
       } else {
-        console.log('\n=== 当前站点统计 ===');
+        console.log(`\n${chalk.bold('当前站点统计')}`);
         
         const latestStats = await prisma.siteStats.findFirst({
           orderBy: { date: 'desc' }
@@ -815,7 +824,7 @@ SCPPER-CN Query Tool - 数据查询工具
         }
 
         // Additional comprehensive site statistics
-        console.log('\n=== 详细站点分析 ===');
+        console.log(`\n${chalk.bold('详细站点分析')}`);
         
         // Content distribution by category (derived from tags, consistent with UserRatingJob)
         const categoryStats = await prisma.$queryRaw`
@@ -850,7 +859,7 @@ SCPPER-CN Query Tool - 数据查询工具
         `;
 
         if (Array.isArray(categoryStats) && categoryStats.length > 0) {
-          console.log('\n--- 页面分类统计 ---');
+          console.log(`\n${chalk.bold('页面分类统计')}`);
           console.log(table([
             ['分类', '页面数', '平均分', '总投票数', '最高分', '最低分'],
             ...(categoryStats as any[]).map(cat => [
@@ -883,7 +892,7 @@ SCPPER-CN Query Tool - 数据查询工具
         `;
 
         if (Array.isArray(popularTags) && popularTags.length > 0) {
-          console.log('\n--- 热门标签统计 ---');
+          console.log(`\n${chalk.bold('热门标签统计')}`);
           console.log(table([
             ['标签', '页面数', '平均分', '总投票数'],
             ...(popularTags as any[]).map(tag => [
@@ -936,7 +945,7 @@ SCPPER-CN Query Tool - 数据查询工具
         `;
 
         if (Array.isArray(ratingDistribution) && ratingDistribution.length > 0) {
-          console.log('\n--- 评分分布统计 ---');
+          console.log(`\n${chalk.bold('评分分布统计')}`);
           console.log(table([
             ['评分区间', '页面数', '区间内平均分', '占比%'],
             ...(ratingDistribution as any[]).map(range => {
@@ -1003,7 +1012,7 @@ SCPPER-CN Query Tool - 数据查询工具
         `;
 
         if (Array.isArray(topContributors) && topContributors.length > 0) {
-          console.log('\n--- 顶级创作者 (3+作品) ---');
+          console.log(`\n${chalk.bold('顶级创作者 (3+作品)')}`);
           console.log(table([
             ['作者', '作品数', '平均分', '总评分', '最高分作品'],
             ...(topContributors as any[]).map(author => [
@@ -1057,7 +1066,7 @@ SCPPER-CN Query Tool - 数据查询工具
 
         if (Array.isArray(recentActivity) && recentActivity.length > 0) {
           const activity = (recentActivity as any[])[0];
-          console.log('\n--- 最近30天活动摘要 ---');
+          console.log(`\n${chalk.bold('最近30天活动摘要')}`);
           console.log(`活跃投票用户: ${Number(activity.active_voters_30d || 0)}`);
           console.log(`新增投票: ${Number(activity.votes_30d || 0)}`);
           console.log(`页面修订: ${Number(activity.revisions_30d || 0)}`);
@@ -1067,7 +1076,7 @@ SCPPER-CN Query Tool - 数据查询工具
     }
 
     if (seriesStats) {
-      console.log('\n=== SCP-CN编号系列占用情况 ===');
+      console.log(`\n${chalk.bold('SCP-CN编号系列占用情况')}`);
       
       const seriesData = await prisma.seriesStats.findMany({
         orderBy: { seriesNumber: 'asc' }
@@ -1091,7 +1100,7 @@ SCPPER-CN Query Tool - 数据查询工具
         // Show warnings for nearly full series
         const nearlyFull = seriesData.filter(s => s.isOpen && s.usagePercentage > 80);
         if (nearlyFull.length > 0) {
-          console.log('\n⚠️  系列使用率警告:');
+          console.log(`\n⚠️  系列使用率警告:`);
           nearlyFull.forEach(series => {
             const remaining = series.totalSlots - series.usedSlots;
             console.log(`  系列${series.seriesNumber}: 仅剩 ${remaining} 个编号 (${series.usagePercentage.toFixed(1)}% 已使用)`);
@@ -1099,7 +1108,7 @@ SCPPER-CN Query Tool - 数据查询工具
         }
 
         // Enhanced statistics for each series
-        console.log('\n=== 系列评分统计 ===');
+        console.log(`\n${chalk.bold('系列评分统计')}`);
         
         for (const series of seriesData) {
           // Calculate rating statistics for each series
@@ -1183,7 +1192,7 @@ SCPPER-CN Query Tool - 数据查询工具
             `;
 
             if (tagStats.length > 0) {
-              console.log(`\n🏷️  系列${series.seriesNumber} 标签分布 (Top 10):`);
+              console.log(`\n${chalk.bold(`🏷️  系列${series.seriesNumber} 标签分布 (Top 10)`)}`);
               console.log(table([
                 ['标签', '页面数', '平均分', '占比%'],
                 ...tagStats.map(tag => [
@@ -1211,54 +1220,8 @@ SCPPER-CN Query Tool - 数据查询工具
   } catch (error) {
     console.error('Query failed:', error);
   } finally {
-    await prisma.$disconnect();
+    await disconnectPrisma();
   }
 }
 
-// 如果直接运行此文件，处理命令行参数
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const args = process.argv.slice(2);
-  
-  // 解析参数
-  const options: any = {};
-  
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--help' || arg === '-h') {
-      options.help = true;
-    } else if (arg === '--url') {
-      options.url = args[++i];
-    } else if (arg === '--user') {
-      options.user = args[++i];
-    } else if (arg === '--stats') {
-      options.stats = true;
-    } else if (arg === '--user-rank') {
-      options.userRank = true;
-    } else if (arg === '--vote-pattern') {
-      options.votePattern = true;
-    } else if (arg === '--vote-interactions') {
-      options.voteInteractions = true;
-    } else if (arg === '--popular-tags') {
-      options.popularTags = true;
-    } else if (arg === '--site-stats') {
-      options.siteStats = true;
-    } else if (arg === '--series-stats') {
-      options.seriesStats = true;
-    } else if (arg === '--historical') {
-      options.historical = true;
-    } else if (arg === '--days') {
-      options.days = args[++i];
-    } else if (arg === '--category') {
-      options.category = args[++i];
-    }
-  }
-
-  query(options)
-    .then(() => {
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error('Query failed:', error);
-      process.exit(1);
-    });
-}
+// CLI execution is managed via commander in index.ts

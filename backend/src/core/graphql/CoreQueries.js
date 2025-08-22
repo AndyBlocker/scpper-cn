@@ -38,6 +38,17 @@ export class CoreQueries {
         parent {
           url
         }
+        attributions {
+          type
+          user {
+            displayName
+            ... on UserWikidotNameReference {
+              wikidotUser { displayName wikidotId }
+            }
+          }
+          date
+          order
+        }
       }
     `);
 

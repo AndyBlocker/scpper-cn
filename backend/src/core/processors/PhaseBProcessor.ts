@@ -8,6 +8,7 @@ import {
   BUCKET_SOFT_LIMIT,
   MAX_FIRST
 } from '../../config/RateLimitConfig.js';
+import { Progress } from '../../utils/Progress.js';
 
 const MAX_PACK_CNT = 15;
 
@@ -42,6 +43,7 @@ export class PhaseBProcessor {
     });
     
     Logger.info(`Phase B: ${totalPhaseBPages} total pages need processing${testMode ? ' (TEST MODE - limit 100)' : ''}`);
+    const bar = totalPhaseBPages > 0 ? Progress.createBar({ title: 'Phase B', total: testMode ? Math.min(100, totalPhaseBPages) : totalPhaseBPages }) : null;
 
     while (true) {
       // In test mode, limit to 100 pages total
@@ -121,7 +123,9 @@ export class PhaseBProcessor {
         const c = page.estimatedCost;
         if ((bucketCost + c > BUCKET_SOFT_LIMIT && bucket.length > 0) || cnt === MAX_PACK_CNT) {
           bucketCount++;
-          roundProcessedPages += await this._flush(bucket, bucketCount, round, totalProcessed + roundProcessedPages, totalPhaseBPages);
+          const processedInFlush = await this._flush(bucket, bucketCount, round, totalProcessed + roundProcessedPages, totalPhaseBPages);
+          roundProcessedPages += processedInFlush;
+          if (bar) bar.increment(processedInFlush);
           bucket = [];
           bucketCost = 0;
           cnt = 0;
@@ -133,7 +137,9 @@ export class PhaseBProcessor {
       
       if (bucket.length > 0) {
         bucketCount++;
-        roundProcessedPages += await this._flush(bucket, bucketCount, round, totalProcessed + roundProcessedPages, totalPhaseBPages);
+        const processedInFlush = await this._flush(bucket, bucketCount, round, totalProcessed + roundProcessedPages, totalPhaseBPages);
+        roundProcessedPages += processedInFlush;
+        if (bar) bar.increment(processedInFlush);
       }
 
       const roundElapsedTime = (Date.now() - roundStartTime) / 1000;
@@ -145,6 +151,7 @@ export class PhaseBProcessor {
     }
     
     Logger.info(`✅ Phase B fully completed: ${totalProcessed}/${totalPhaseBPages} pages processed across ${round} rounds`);
+    if (bar) bar.stop();
   }
 
   private async _flush(
@@ -186,8 +193,6 @@ export class PhaseBProcessor {
       const chunk = bucket.slice(i, i + CHUNK_SIZE);
       
       // Process pages and collect PhaseC candidates
-      const phaseCCandidates: Array<{wikidotId: number, pageId: number | null, reasons: string[]}> = [];
-      
       try {
         await this.store.prisma.$transaction(async (tx) => {
           for (const page of chunk) {
@@ -195,58 +200,28 @@ export class PhaseBProcessor {
             const pageData = res[alias!];
             
             if (pageData) {
-              // Check if we got all data or need PhaseC
-              // Only mark for PhaseC if we actually hit the limit
               const revisionsCount = pageData.revisions?.edges?.length || 0;
               const votesCount = pageData.fuzzyVoteRecords?.edges?.length || 0;
-              
               const needsPhaseC = 
                 (pageData.revisions?.pageInfo?.hasNextPage && revisionsCount >= MAX_FIRST) || 
                 (pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage && votesCount >= MAX_FIRST);
               
-              // Pass wikidotId instead of pageId
               await this.store.upsertPageContent({
                 ...pageData,
                 wikidotId: page.wikidotId
               });
-              
-              // Clear dirty flag using wikidotId
               await this.store.clearDirtyFlag(page.wikidotId, 'B');
               
-              // Collect pages that need PhaseC
               if (needsPhaseC) {
                 const additionalReasons = [
                   pageData.revisions?.pageInfo?.hasNextPage ? 'incomplete_revisions' : '',
                   pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage ? 'incomplete_votes' : ''
                 ].filter(Boolean);
-                
-                phaseCCandidates.push({
-                  wikidotId: page.wikidotId,
-                  pageId: page.pageId,
-                  reasons: additionalReasons
-                });
+                await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons);
               }
-              
               savedCount++;
             } else {
-              // Page is deleted
-              if (page.wikidotId) {
-                const existingPage = await this.store.prisma.page.findUnique({
-                  where: { wikidotId: page.wikidotId }
-                });
-                
-                if (existingPage) {
-                  await this.store.prisma.page.update({
-                    where: { id: existingPage.id },
-                    data: { isDeleted: true }
-                  });
-                }
-              }
-              
-              // Clear dirty flags using wikidotId
-              await this.store.clearDirtyFlag(page.wikidotId, 'B');
-              await this.store.clearDirtyFlag(page.wikidotId, 'C');
-              
+              await this.store.markDeletedByWikidotId(page.wikidotId);
               deletedCount++;
             }
           }
@@ -254,131 +229,37 @@ export class PhaseBProcessor {
           isolationLevel: 'Serializable',
           timeout: 30000
         });
-        
-        // Mark pages for PhaseC in a separate operation
-        for (const candidate of phaseCCandidates) {
-          try {
-            const existingDirtyPage = await this.store.prisma.dirtyPage.findFirst({
-              where: { wikidotId: candidate.wikidotId }
-            });
-            
-            if (existingDirtyPage) {
-              await this.store.prisma.dirtyPage.update({
-                where: { id: existingDirtyPage.id },
-                data: {
-                  needPhaseC: true,
-                  donePhaseC: false,
-                  reasons: [...existingDirtyPage.reasons, ...candidate.reasons]
-                }
-              });
-            } else {
-              await this.store.prisma.dirtyPage.create({
-                data: {
-                  wikidotId: candidate.wikidotId,
-                  pageId: candidate.pageId,
-                  needPhaseC: true,
-                  donePhaseC: false,
-                  needPhaseB: false,
-                  donePhaseB: true,
-                  reasons: candidate.reasons
-                }
-              });
-            }
-          } catch (phaseCError) {
-            Logger.warn(`Failed to mark page ${candidate.wikidotId} for PhaseC:`, phaseCError);
-          }
-        }
       } catch (error) {
         Logger.error(`❌ Failed to process chunk ${i}-${i + chunk.length}:`, error);
-        
-        // Process individually if transaction fails
         for (const page of chunk) {
           try {
             const alias = aliasByUrl.get(page.url);
             const pageData = res[alias!];
-            
             if (pageData) {
-              // Check if we got all data or need PhaseC
-              // Only mark for PhaseC if we actually hit the limit
               const revisionsCount = pageData.revisions?.edges?.length || 0;
               const votesCount = pageData.fuzzyVoteRecords?.edges?.length || 0;
-              
               const needsPhaseC = 
                 (pageData.revisions?.pageInfo?.hasNextPage && revisionsCount >= MAX_FIRST) || 
                 (pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage && votesCount >= MAX_FIRST);
-              
               await this.store.upsertPageContent({
                 ...pageData,
                 wikidotId: page.wikidotId
               });
-              
-              // Clear dirty flag using wikidotId
               await this.store.clearDirtyFlag(page.wikidotId, 'B');
-              
-              // Mark for PhaseC if we didn't get all data
               if (needsPhaseC) {
                 const additionalReasons = [
                   pageData.revisions?.pageInfo?.hasNextPage ? 'incomplete_revisions' : '',
                   pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage ? 'incomplete_votes' : ''
                 ].filter(Boolean);
-                
-                try {
-                  const existingDirtyPage = await this.store.prisma.dirtyPage.findFirst({
-                    where: { wikidotId: page.wikidotId }
-                  });
-                  
-                  if (existingDirtyPage) {
-                    await this.store.prisma.dirtyPage.update({
-                      where: { id: existingDirtyPage.id },
-                      data: {
-                        needPhaseC: true,
-                        donePhaseC: false,
-                        reasons: [...existingDirtyPage.reasons, ...additionalReasons]
-                      }
-                    });
-                  } else {
-                    await this.store.prisma.dirtyPage.create({
-                      data: {
-                        wikidotId: page.wikidotId,
-                        pageId: page.pageId,
-                        needPhaseC: true,
-                        donePhaseC: false,
-                        needPhaseB: false,
-                        donePhaseB: true,
-                        reasons: additionalReasons
-                      }
-                    });
-                  }
-                } catch (phaseCError) {
-                  Logger.warn(`Failed to mark page ${page.wikidotId} for PhaseC:`, phaseCError);
-                }
+                await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons);
               }
-              
               savedCount++;
             } else {
-              if (page.wikidotId) {
-                const existingPage = await this.store.prisma.page.findUnique({
-                  where: { wikidotId: page.wikidotId }
-                });
-                
-                if (existingPage) {
-                  await this.store.prisma.page.update({
-                    where: { id: existingPage.id },
-                    data: { isDeleted: true }
-                  });
-                }
-              }
-              
-              // Clear dirty flags using wikidotId
-              await this.store.clearDirtyFlag(page.wikidotId, 'B');
-              await this.store.clearDirtyFlag(page.wikidotId, 'C');
-              
+              await this.store.markDeletedByWikidotId(page.wikidotId);
               deletedCount++;
             }
           } catch (individualError) {
             Logger.error(`❌ Failed to process individual page ${page.url}:`, individualError);
-            
-            // Force clear dirty flag to prevent infinite loops
             try {
               await this.store.clearDirtyFlag(page.wikidotId, 'B');
               Logger.warn(`⚠️  Force cleared dirty flag for failed page: ${page.url}`);

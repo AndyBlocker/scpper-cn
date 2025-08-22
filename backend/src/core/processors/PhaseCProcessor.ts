@@ -3,6 +3,7 @@ import { DatabaseStore } from '../store/DatabaseStore.js';
 import { TaskQueue } from '../scheduler/TaskQueue.js';
 import { Logger } from '../../utils/Logger.js';
 import { MAX_FIRST, SIMPLE_PAGE_THRESHOLD } from '../../config/RateLimitConfig.js';
+import { Progress } from '../../utils/Progress.js';
 
 interface PageToProcess {
   url: string;
@@ -43,6 +44,7 @@ export class PhaseCProcessor {
     });
     
     Logger.info(`Phase C: ${totalPhaseCPages} total pages need processing${testMode ? ' (TEST MODE - limit 100)' : ''}`);
+    const bar = totalPhaseCPages > 0 ? Progress.createBar({ title: 'Phase C', total: testMode ? Math.min(100, totalPhaseCPages) : totalPhaseCPages }) : null;
 
     while (true) {
       // In test mode, limit to 100 pages total
@@ -122,6 +124,7 @@ export class PhaseCProcessor {
 
       const trackProgress = async (wikidotId: number, success = true): Promise<void> => {
         roundProcessedCount++;
+        if (bar) bar.increment(1);
         
         if (success) {
           try {
@@ -165,6 +168,7 @@ export class PhaseCProcessor {
     }
     
     Logger.info(`✅ Phase C fully completed: ${totalProcessed}/${totalPhaseCPages} pages processed across ${round} rounds`);
+    if (bar) bar.stop();
   }
 
   private async _processOne(
@@ -173,8 +177,8 @@ export class PhaseCProcessor {
     reasons: string[], 
     onComplete: (wikidotId: number, success: boolean) => Promise<void>
   ): Promise<void> {
-    let afterRev: string | null | undefined = null;
-    let afterVote: string | null | undefined = null;
+    let afterRev: string | undefined = undefined;
+    let afterVote: string | undefined = undefined;
     let requestCount = 0;
     const collected: CollectedData = { url, wikidotId, revisions: [], votes: [] };
     let success = false;
@@ -188,18 +192,7 @@ export class PhaseCProcessor {
         const page = res.page;
 
         if (!page) {
-          const existingPage = await this.store.prisma.page.findUnique({
-            where: { wikidotId }
-          });
-          
-          if (existingPage) {
-            await this.store.prisma.page.update({
-              where: { id: existingPage.id },
-              data: { isDeleted: true }
-            });
-            await this.store.clearDirtyFlag(wikidotId, 'C');
-          }
-          
+          await this.store.markDeletedByWikidotId(wikidotId);
           success = true;
           await onComplete(wikidotId, success);
           return;

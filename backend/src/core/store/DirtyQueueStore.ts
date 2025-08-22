@@ -260,6 +260,13 @@ export class DirtyQueueStore {
     if (normalizedCurrentCategory !== normalizedStagingCategory) {
       changes.push('category_changed');
     }
+
+    // attribution count change triggers Phase B to refresh attribution rows
+    const currentAttrCount = currentVersion.attributionCount ?? 0;
+    const stagingAttrCount = staging.attributionCount ?? 0;
+    if (currentAttrCount !== stagingAttrCount) {
+      changes.push('attribution_changed');
+    }
     
     return changes;
   }

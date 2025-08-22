@@ -85,37 +85,38 @@ export class UserRatingSystem {
     
     // 使用复杂SQL一次性计算所有用户的rating
     await this.prisma.$executeRawUnsafe(`
-      WITH unique_page_attributions AS (
-        -- 对每个用户的每个页面，只取一条记录（避免重复计算）
-        SELECT DISTINCT ON (a."userId", pv."pageId")
-          a."userId",
-          pv."pageId",
-          pv.rating,
-          pv.tags
+      WITH pages_attr_on_current AS (
+        -- 仅统计用户在“当前版本”上存在归属的页面（按用户-页面去重）
+        SELECT DISTINCT a."userId", pv."pageId"
         FROM "Attribution" a
-        INNER JOIN "PageVersion" pv ON a."pageVerId" = pv.id
-        WHERE pv."validTo" IS NULL 
+        INNER JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+        WHERE a."userId" IS NOT NULL
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
+      ),
+      current_versions AS (
+        -- 当前版本（用于读取rating和tags）
+        SELECT pv."pageId", pv.rating, pv.tags
+        FROM "PageVersion" pv
+        WHERE pv."validTo" IS NULL
           AND pv."isDeleted" = false
           AND pv.rating IS NOT NULL
-          AND a."userId" IS NOT NULL
-        ORDER BY a."userId", pv."pageId", a.id  -- 使用 attribution id 保证稳定的选择
       ),
       user_contributions AS (
-        -- 计算每个用户的贡献 (每个页面只计算一次)
+        -- 将“当前版本有归属”的页面映射到其当前版本聚合
         SELECT 
-          "userId",
-          -- Overall统计
-          SUM(rating::float) as overall_rating,
+          pac."userId" as "userId",
+          SUM(cv.rating::float) as overall_rating,
           COUNT(*) as total_pages,
           
           -- SCP分类 (原创 + scp)
           SUM(CASE 
-            WHEN tags @> ARRAY['原创', 'scp'] 
-            THEN rating::float
+            WHEN cv.tags @> ARRAY['原创', 'scp'] 
+            THEN cv.rating::float
             ELSE 0 
           END) as scp_rating,
           COUNT(CASE 
-            WHEN tags @> ARRAY['原创', 'scp'] 
+            WHEN cv.tags @> ARRAY['原创', 'scp'] 
             THEN 1 
           END) as scp_pages,
           
@@ -125,50 +126,50 @@ export class UserRatingSystem {
           
           -- GOI格式分类 (原创 + goi格式)
           SUM(CASE 
-            WHEN tags @> ARRAY['原创', 'goi格式'] 
-            THEN rating::float
+            WHEN cv.tags @> ARRAY['原创', 'goi格式'] 
+            THEN cv.rating::float
             ELSE 0 
           END) as goi_rating,
           COUNT(CASE 
-            WHEN tags @> ARRAY['原创', 'goi格式'] 
+            WHEN cv.tags @> ARRAY['原创', 'goi格式'] 
             THEN 1 
           END) as goi_pages,
           
           -- 故事分类 (原创 + 故事)
           SUM(CASE 
-            WHEN tags @> ARRAY['原创', '故事'] 
-            THEN rating::float
+            WHEN cv.tags @> ARRAY['原创', '故事'] 
+            THEN cv.rating::float
             ELSE 0 
           END) as story_rating,
           COUNT(CASE 
-            WHEN tags @> ARRAY['原创', '故事'] 
+            WHEN cv.tags @> ARRAY['原创', '故事'] 
             THEN 1 
           END) as story_pages,
           
           -- Wanderers/图书馆分类 (原创 + wanderers)
           SUM(CASE 
-            WHEN tags @> ARRAY['原创', 'wanderers'] 
-            THEN rating::float
+            WHEN cv.tags @> ARRAY['原创', 'wanderers'] 
+            THEN cv.rating::float
             ELSE 0 
           END) as wanderers_rating,
           COUNT(CASE 
-            WHEN tags @> ARRAY['原创', 'wanderers'] 
+            WHEN cv.tags @> ARRAY['原创', 'wanderers'] 
             THEN 1 
           END) as wanderers_pages,
           
           -- 艺术作品分类 (原创 + 艺术作品)
           SUM(CASE 
-            WHEN tags @> ARRAY['原创', '艺术作品'] 
-            THEN rating::float
+            WHEN cv.tags @> ARRAY['原创', '艺术作品'] 
+            THEN cv.rating::float
             ELSE 0 
           END) as art_rating,
           COUNT(CASE 
-            WHEN tags @> ARRAY['原创', '艺术作品'] 
+            WHEN cv.tags @> ARRAY['原创', '艺术作品'] 
             THEN 1 
           END) as art_pages
-          
-        FROM unique_page_attributions
-        GROUP BY "userId"
+        FROM pages_attr_on_current pac
+        INNER JOIN current_versions cv ON cv."pageId" = pac."pageId"
+        GROUP BY pac."userId"
       )
       UPDATE "UserStats" us
       SET 

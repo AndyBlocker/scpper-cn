@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
 import { SourceVersionService } from '../../services/SourceVersionService.js';
+import { shouldCreateNewVersion } from './versionRules.js';
+import { AttributionService } from './AttributionService.js';
 
 /**
  * 页面版本操作存储类
@@ -8,9 +10,11 @@ import { SourceVersionService } from '../../services/SourceVersionService.js';
  */
 export class PageVersionStore {
   private sourceVersionService: SourceVersionService;
+  private attributionService: AttributionService;
 
   constructor(private prisma: PrismaClient) {
     this.sourceVersionService = new SourceVersionService(prisma);
+    this.attributionService = new AttributionService(prisma);
   }
 
   /**
@@ -22,7 +26,7 @@ export class PageVersionStore {
       return;
     }
 
-    const page = await this.prisma.page.findUnique({
+    let page = await this.prisma.page.findUnique({
       where: { wikidotId: parseInt(data.wikidotId) },
       include: {
         versions: {
@@ -34,21 +38,48 @@ export class PageVersionStore {
     });
 
     if (!page) {
-      Logger.error(`Page with wikidotId ${data.wikidotId} not found`);
-      return;
+      // Auto-create page entity if missing (new page flow)
+      Logger.warn(`Page with wikidotId ${data.wikidotId} not found. Creating a new page entity.`);
+      try {
+        page = await this.prisma.page.create({
+          data: {
+            wikidotId: parseInt(data.wikidotId),
+            url: data.url,
+            currentUrl: data.url,
+            urlHistory: data.url ? [data.url] : [],
+            isDeleted: false,
+            firstPublishedAt: data.createdAt ? new Date(data.createdAt) : new Date()
+          },
+          include: {
+            versions: {
+              where: { validTo: null },
+              orderBy: { validFrom: 'desc' },
+              take: 1
+            }
+          }
+        });
+      } catch (e) {
+        Logger.error(`Failed to auto-create page for wikidotId ${data.wikidotId}`, e as any);
+        return;
+      }
     }
 
     const currentVersion = page.versions[0];
-    const needsNewVersion = this.shouldCreateNewVersion(currentVersion, data);
     let targetVersionId: number;
-
-    if (needsNewVersion) {
-      const newVersion = await this.createNewVersion(page.id, currentVersion, data);
+    if (!currentVersion) {
+      // No current version exists yet (brand new page)
+      const newVersion = await this.createNewVersion(page.id, null, data);
       targetVersionId = newVersion.id;
     } else {
-      // Always update rating and revisionCount regardless of whether they changed
-      await this.updateExistingVersion(currentVersion.id, data, true);
-      targetVersionId = currentVersion.id;
+      const needsNewVersion = shouldCreateNewVersion(currentVersion, data);
+      if (needsNewVersion) {
+        const newVersion = await this.createNewVersion(page.id, currentVersion, data);
+        targetVersionId = newVersion.id;
+      } else {
+        // Always update rating and revisionCount regardless of whether they changed
+        await this.updateExistingVersion(currentVersion.id, data, true);
+        targetVersionId = currentVersion.id;
+      }
     }
 
     // 处理source版本管理
@@ -64,7 +95,7 @@ export class PageVersionStore {
 
     // 处理归属
     if (data.attributions) {
-      await this.importAttributions(targetVersionId, data.attributions);
+      await this.attributionService.importAttributions(targetVersionId, data.attributions);
     }
     
     // 处理投票和修订数据 (Phase B 也要保存获取到的数据)
@@ -81,20 +112,7 @@ export class PageVersionStore {
   /**
    * 判断是否需要创建新版本
    */
-  private shouldCreateNewVersion(currentVersion: any, newData: any): boolean {
-    if (!currentVersion) return true;
-
-    // 只有内容/结构层面的变化才开新版本；评分/票数属于统计快照，不触发版本
-    const significantChanges = [
-      currentVersion.title !== newData.title,
-      currentVersion.category !== (newData.category ?? currentVersion.category),
-      !this.arraysEqual(currentVersion.tags ?? [], newData.tags ?? []),
-      (newData.source && newData.source !== currentVersion.source),
-      (newData.textContent && newData.textContent !== currentVersion.textContent)
-    ];
-
-    return significantChanges.some(changed => changed);
-  }
+  // Rule implemented in versionRules.ts
 
   /**
    * 创建新版本
@@ -171,77 +189,7 @@ export class PageVersionStore {
     Logger.debug(`📝 Updated existing version ${versionId} with content and metadata${forceUpdateStats ? ' (forced stats update)' : ''}`);
   }
 
-  /**
-   * 导入归属信息
-   */
-  private async importAttributions(pageVersionId: number, attributions: any[]) {
-    for (const attr of attributions) {
-      try {
-        let userId = null;
-        let anonKey = null;
-        
-        if (attr.user) {
-          let userData = attr.user;
-          
-          // 如果是 UserWikidotNameReference 类型，需要访问 wikidotUser
-          if (userData.wikidotUser) {
-            userData = userData.wikidotUser;
-          }
-          
-          // 如果有 wikidotId，创建/更新用户
-          if (userData.wikidotId) {
-            const user = await this.prisma.user.upsert({
-              where: { wikidotId: parseInt(userData.wikidotId) },
-              create: {
-                wikidotId: parseInt(userData.wikidotId),
-                displayName: userData.displayName || 'Unknown'
-              },
-              update: {
-                displayName: userData.displayName || undefined
-              }
-            });
-            userId = user?.id || null;
-          } else if (userData.displayName) {
-            // 没有 wikidotId 但有 displayName，使用 anonKey
-            anonKey = `anon:${userData.displayName}`;
-          }
-        }
-
-        // Try to find existing attribution
-        const existingAttr = await this.prisma.attribution.findFirst({
-          where: {
-            pageVerId: pageVersionId,
-            type: attr.type || 'unknown',
-            OR: [
-              { userId: userId },
-              { anonKey: anonKey }
-            ]
-          }
-        });
-
-        if (!existingAttr) {
-          await this.prisma.attribution.create({
-            data: {
-              pageVerId: pageVersionId,
-              userId: userId,
-              anonKey: anonKey,
-              type: attr.type || 'unknown'
-            }
-          });
-        } else {
-          await this.prisma.attribution.update({
-            where: { id: existingAttr.id },
-            data: {
-              userId: userId,
-              anonKey: anonKey
-            }
-          });
-        }
-      } catch (error) {
-        Logger.error(`Failed to import attribution for pageVersionId ${pageVersionId}:`, error);
-      }
-    }
-  }
+  // Attribution import moved to AttributionService
 
   /**
    * 比较两个数组是否相等
