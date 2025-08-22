@@ -1,42 +1,47 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm, pgroonga, vector, zhparser]
 }
 
 model Attribution {
-  id        Int      @id @default(autoincrement())
-  pageVerId Int
-  type      String
-  order     Int      @default(0)
-  date      DateTime?
-  userId    Int?
-  anonKey   String?
-
+  id          Int         @id @default(autoincrement())
+  pageVerId   Int
+  type        String
+  order       Int         @default(0)
+  date        DateTime?
+  userId      Int?
+  anonKey     String?
   pageVersion PageVersion @relation(fields: [pageVerId], references: [id])
   user        User?       @relation(fields: [userId], references: [id])
 
-  @@unique([pageVerId, type, order, userId], name: "Attribution_unique_constraint") 
+  @@unique([pageVerId, type, order, userId], name: "Attribution_unique_constraint")
   @@unique([pageVerId, type, order, anonKey], name: "Attribution_anon_unique_constraint")
   @@index([pageVerId])
-  @@index([userId])
+  @@index([userId], map: "idx_attr_user")
 }
 
 model DirtyPage {
-  pageId     Int      @id
+  id         Int      @id @default(autoincrement())
+  pageId     Int?
+  wikidotId  Int?
+  stagingUrl String?
   needPhaseB Boolean
   needPhaseC Boolean
   reasons    String[]
   donePhaseB Boolean  @default(false)
   donePhaseC Boolean  @default(false)
+  detectedAt DateTime @default(now())
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-  
-  page       Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  page       Page?    @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
+  @@index([wikidotId])
   @@index([needPhaseB, donePhaseB])
   @@index([needPhaseC, donePhaseC])
 }
@@ -56,34 +61,35 @@ model DirtyPageBackup {
 }
 
 model Page {
-  id                     Int                   @id @default(autoincrement())
-  url                    String                @unique
-  urlKey                 String
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
-  firstPublishedAt       DateTime?             // 标准化的页面创建时间
-  pageUuid               String?
-  historicalUrls         String[]
-  // Voting time series data for efficient frontend plotting
-  votingTimeSeriesCache  Json?                 // Cached voting statistics over time: {dates: [], upvotes: [], downvotes: [], totalVotes: []}
-  votingCacheUpdatedAt   DateTime?             // When the voting cache was last updated
-  dirtyPage              DirtyPage?
-  versions               PageVersion[]
-  searchIndex            SearchIndex?
-  interestingFacts       InterestingFacts[]
-  timeMilestones         TimeMilestones[]
-  tagRecords             TagRecords[]
-  contentRecords         ContentRecords[]
-  ratingRecords          RatingRecords[]
-  pageDailyStats         PageDailyStats[]
+  id                    Int                @id @default(autoincrement())
+  wikidotId             Int                @unique
+  url                   String
+  currentUrl            String
+  urlHistory            String[]           @default([])
+  isDeleted             Boolean            @default(false)
+  firstPublishedAt      DateTime?
+  votingTimeSeriesCache Json?
+  votingCacheUpdatedAt  DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  contentRecords        ContentRecords[]
+  dirtyPages            DirtyPage[]
+  interestingFacts      InterestingFacts[]
+  pageDailyStats        PageDailyStats[]
+  versions              PageVersion[]
+  ratingRecords         RatingRecords[]
+  tagRecords            TagRecords[]
+  timeMilestones        TimeMilestones[]
 
+  @@index([currentUrl])
+  @@index([isDeleted])
   @@index([firstPublishedAt])
   @@index([votingCacheUpdatedAt])
 }
 
 model PageMetaStaging {
-  url              String   @id
-  wikidotId        Int?
+  wikidotId        Int      @id
+  url              String
   title            String?
   rating           Int?
   voteCount        Int?
@@ -99,42 +105,45 @@ model PageMetaStaging {
   voteUp           Int?
   voteDown         Int?
 
+  @@index([url])
   @@index([lastSeenAt])
 }
 
 model PageStats {
-  id              Int   @id @default(autoincrement())
-  pageVersionId   Int   @unique
-  uv              Int
-  dv              Int
-  wilson95        Float
-  controversy     Float
-  likeRatio       Float
-  
-  pageVersion     PageVersion @relation(fields: [pageVersionId], references: [id])
+  id            Int         @id @default(autoincrement())
+  pageVersionId Int         @unique
+  uv            Int
+  dv            Int
+  wilson95      Float
+  controversy   Float
+  likeRatio     Float
+  pageVersion   PageVersion @relation(fields: [pageVersionId], references: [id])
 }
 
 model PageVersion {
-  id            Int           @id @default(autoincrement())
-  pageId        Int
-  wikidotId     Int?
-  title         String?
-  rating        Int?
-  voteCount     Int?
-  revisionCount Int?
-  textContent   String?
-  source        String?
-  tags          String[]
-  validFrom     DateTime
-  validTo       DateTime?
-  isDeleted     Boolean       @default(false)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  attributions  Attribution[]
-  stats         PageStats?
-  page          Page          @relation(fields: [pageId], references: [id])
-  revisions     Revision[]
-  votes         Vote[]
+  id               Int             @id @default(autoincrement())
+  pageId           Int
+  wikidotId        Int?
+  title            String?
+  rating           Int?
+  voteCount        Int?
+  revisionCount    Int?
+  textContent      String?
+  source           String?
+  tags             String[]
+  validFrom        DateTime
+  validTo          DateTime?
+  isDeleted        Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  category         String?
+  attributionCount Int?
+  attributions     Attribution[]
+  stats            PageStats?
+  page             Page            @relation(fields: [pageId], references: [id])
+  revisions        Revision[]
+  sourceVersions   SourceVersion[]
+  votes            Vote[]
 
   @@index([pageId])
   @@index([rating])
@@ -143,19 +152,20 @@ model PageVersion {
 }
 
 model Revision {
-  id            Int         @id @default(autoincrement())
-  pageVersionId Int
-  wikidotId     Int
-  timestamp     DateTime
-  type          String
-  comment       String?
-  userId        Int?
-  pageVersion   PageVersion @relation(fields: [pageVersionId], references: [id])
-  user          User?       @relation(fields: [userId], references: [id])
+  id             Int             @id @default(autoincrement())
+  pageVersionId  Int
+  wikidotId      Int
+  timestamp      DateTime
+  type           String
+  comment        String?
+  userId         Int?
+  pageVersion    PageVersion     @relation(fields: [pageVersionId], references: [id])
+  user           User?           @relation(fields: [userId], references: [id])
+  sourceVersions SourceVersion[]
 
   @@unique([pageVersionId, wikidotId])
   @@index([pageVersionId])
-  @@index([pageVersionId, timestamp])
+  @@index([pageVersionId, timestamp], map: "idx_rev_pv_ts")
   @@index([userId])
   @@index([timestamp])
 }
@@ -177,32 +187,34 @@ model SeriesStats {
 }
 
 model SiteStats {
-  id          Int      @id @default(autoincrement())
-  date        DateTime @unique @db.Date
-  totalUsers  Int      @default(0)
-  activeUsers Int      @default(0)  // Users with firstActivityAt
-  totalPages  Int      @default(0)
-  totalVotes  Int      @default(0)
-  newUsersToday Int    @default(0)  // New users by firstActivityAt on this date
-  newPagesToday Int    @default(0)  // New pages created on this date
-  newVotesToday Int    @default(0)  // New votes on this date
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            Int      @id @default(autoincrement())
+  date          DateTime @unique @db.Date
+  totalUsers    Int      @default(0)
+  activeUsers   Int      @default(0)
+  totalPages    Int      @default(0)
+  totalVotes    Int      @default(0)
+  newUsersToday Int      @default(0)
+  newPagesToday Int      @default(0)
+  newVotesToday Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([date])
 }
 
 model SourceVersion {
-  id             Int      @id @default(autoincrement())
+  id             Int         @id @default(autoincrement())
   pageVersionId  Int
   revisionId     Int?
   revisionNumber Int?
   source         String?
   textContent    String?
-  timestamp      DateTime @default(now())
-  isLatest       Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  timestamp      DateTime    @default(now())
+  isLatest       Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  pageVersion    PageVersion @relation(fields: [pageVersionId], references: [id])
+  revision       Revision?   @relation(fields: [revisionId], references: [id])
 
   @@unique([pageVersionId, revisionNumber])
   @@index([pageVersionId, isLatest])
@@ -212,24 +224,25 @@ model SourceVersion {
 }
 
 model User {
-  id                          Int                   @id @default(autoincrement())
-  wikidotId                   Int?                  @unique
-  displayName                 String?
-  firstActivityAt             DateTime?
-  firstActivityType           String?
-  firstActivityDetails        String?
-  lastActivityAt              DateTime?
-  // Attribution voting time series data for efficient frontend plotting (votes on pages user contributed to)
-  attributionVotingTimeSeriesCache Json?           // Cached attribution voting statistics over time: {dates: [], upvotes: [], downvotes: [], totalVotes: []}
-  attributionVotingCacheUpdatedAt  DateTime?       // When the attribution voting cache was last updated
-  attributions                Attribution[]
-  revisions                   Revision[]
-  stats                       UserStats?
-  votes                       Vote[]
-  interestingFacts            InterestingFacts[]
-  tagRecords                  TagRecords[]
-  userActivityRecords         UserActivityRecords[]
-  userDailyStats              UserDailyStats[]
+  id                               Int                   @id @default(autoincrement())
+  wikidotId                        Int?                  @unique
+  displayName                      String?
+  firstActivityAt                  DateTime?
+  firstActivityType                String?
+  firstActivityDetails             String?
+  lastActivityAt                   DateTime?
+  attributionVotingTimeSeriesCache Json?
+  attributionVotingCacheUpdatedAt  DateTime?
+  username                         String?
+  isGuest                          Boolean?
+  attributions                     Attribution[]
+  interestingFacts                 InterestingFacts[]
+  revisions                        Revision[]
+  tagRecords                       TagRecords[]
+  userActivityRecords              UserActivityRecords[]
+  userDailyStats                   UserDailyStats[]
+  stats                            UserStats?
+  votes                            Vote[]
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
@@ -313,42 +326,37 @@ model UserVoteInteraction {
 }
 
 model Vote {
-  id            Int            @id @default(autoincrement())
+  id            Int         @id @default(autoincrement())
   pageVersionId Int
   timestamp     DateTime
   direction     Int
   userId        Int?
-  anonKey       String?        // For anonymous votes when userId is null
-  
-  pageVersion   PageVersion    @relation(fields: [pageVersionId], references: [id])
-  user          User?          @relation(fields: [userId], references: [id])
-  
-  // Fixed unique constraint that handles NULL userId properly
+  anonKey       String?
+  pageVersion   PageVersion @relation(fields: [pageVersionId], references: [id])
+  user          User?       @relation(fields: [userId], references: [id])
+
   @@unique([pageVersionId, userId, timestamp], name: "Vote_unique_constraint")
   @@unique([pageVersionId, anonKey, timestamp], name: "Vote_anon_unique_constraint")
   @@index([pageVersionId, direction])
-  @@index([pageVersionId, timestamp])
+  @@index([pageVersionId, timestamp], map: "idx_vote_pv_ts")
   @@index([userId])
 }
 
-// 有趣统计信息相关表
-
 model InterestingFacts {
   id           Int       @id @default(autoincrement())
-  category     String    // time_milestone, tag_record, content_length, rating_record, user_activity
-  type         String    // first_page_of_year, highest_rated_in_tag, longest_source 等
-  title        String    // 显示标题
-  description  String?   // 详细描述
-  value        String?   // 统计值（可能是数字、日期、文本）
-  metadata     Json?     // 额外元数据
-  pageId       Int?      // 相关页面ID
-  userId       Int?      // 相关用户ID
-  dateContext  DateTime? @db.Date  // 时间上下文（如某年某月）
-  tagContext   String?   // 标签上下文
-  rank         Int       @default(1)  // 排名（支持Top N）
+  category     String
+  type         String
+  title        String
+  description  String?
+  value        String?
+  metadata     Json?
+  pageId       Int?
+  userId       Int?
+  dateContext  DateTime? @db.Date
+  tagContext   String?
+  rank         Int       @default(1)
   calculatedAt DateTime  @default(now())
-  isActive     Boolean   @default(true)  // 是否仍然有效
-
+  isActive     Boolean   @default(true)
   page         Page?     @relation(fields: [pageId], references: [id])
   user         User?     @relation(fields: [userId], references: [id])
 
@@ -359,35 +367,34 @@ model InterestingFacts {
 }
 
 model TimeMilestones {
-  id             Int      @id @default(autoincrement())
-  period         String   // year, month, quarter, day
-  periodValue    String   // 2024, 2024-01, 2024-Q1, 01-15
-  milestoneType  String   // first_page, last_page, first_high_rated
-  pageId         Int
-  pageTitle      String?
-  pageRating     Int?
-  pageCreatedAt  DateTime?
-  calculatedAt   DateTime @default(now())
-
-  page           Page     @relation(fields: [pageId], references: [id])
+  id            Int       @id @default(autoincrement())
+  period        String
+  periodValue   String
+  milestoneType String
+  pageId        Int
+  pageTitle     String?
+  pageRating    Int?
+  pageCreatedAt DateTime?
+  calculatedAt  DateTime  @default(now())
+  page          Page      @relation(fields: [pageId], references: [id])
 
   @@unique([period, periodValue, milestoneType])
   @@index([period, periodValue])
   @@index([milestoneType])
+  @@index([pageId])
 }
 
 model TagRecords {
-  id           Int       @id @default(autoincrement())
+  id           Int      @id @default(autoincrement())
   tag          String
-  recordType   String    // highest_rated, first_page, most_popular, most_controversial
+  recordType   String
   pageId       Int?
   userId       Int?
-  value        Decimal?  // 评分、数量等数值
-  metadata     Json?     // 其他相关数据
-  calculatedAt DateTime  @default(now())
-
-  page         Page?     @relation(fields: [pageId], references: [id])
-  user         User?     @relation(fields: [userId], references: [id])
+  value        Decimal?
+  metadata     Json?
+  calculatedAt DateTime @default(now())
+  page         Page?    @relation(fields: [pageId], references: [id])
+  user         User?    @relation(fields: [userId], references: [id])
 
   @@unique([tag, recordType])
   @@index([tag])
@@ -396,14 +403,13 @@ model TagRecords {
 
 model ContentRecords {
   id            Int      @id @default(autoincrement())
-  recordType    String   // longest_source, shortest_source, most_complex
+  recordType    String
   pageId        Int
   pageTitle     String?
-  sourceLength  Int?     // 源代码长度
-  contentLength Int?     // 渲染内容长度
-  complexity    Json?    // 复杂度指标
+  sourceLength  Int?
+  contentLength Int?
+  complexity    Json?
   calculatedAt  DateTime @default(now())
-
   page          Page     @relation(fields: [pageId], references: [id])
 
   @@unique([recordType, pageId])
@@ -413,18 +419,17 @@ model ContentRecords {
 
 model RatingRecords {
   id           Int       @id @default(autoincrement())
-  recordType   String    // highest_rated, most_votes, most_controversial, fastest_growth
+  recordType   String
   pageId       Int
   pageTitle    String?
   rating       Int?
   voteCount    Int?
   controversy  Float?
   wilson95     Float?
-  timeframe    String?   // 24h, 7d, 30d, all_time
-  value        Decimal?  // 记录的具体数值
+  timeframe    String?
+  value        Decimal?
   achievedAt   DateTime?
   calculatedAt DateTime  @default(now())
-
   page         Page      @relation(fields: [pageId], references: [id])
 
   @@unique([recordType, timeframe, pageId])
@@ -434,14 +439,13 @@ model RatingRecords {
 
 model UserActivityRecords {
   id              Int       @id @default(autoincrement())
-  recordType      String    // first_vote, first_page, longest_streak, most_votes_single_day
+  recordType      String
   userId          Int
   userDisplayName String?
-  value           Decimal?  // 记录数值（天数、次数等）
+  value           Decimal?
   achievedAt      DateTime?
-  context         Json?     // 上下文信息
+  context         Json?
   calculatedAt    DateTime  @default(now())
-
   user            User      @relation(fields: [userId], references: [id])
 
   @@unique([recordType, userId])
@@ -451,13 +455,13 @@ model UserActivityRecords {
 
 model TrendingStats {
   id           Int      @id @default(autoincrement())
-  statType     String   // hot_tag, active_user, trending_page
-  name         String   // 标签名、用户名、页面标题
-  entityId     Int?     // 关联实体ID
-  entityType   String?  // tag, user, page
-  score        Decimal  // 热度分数
-  period       String   // today, this_week, this_month
-  metadata     Json?    // 额外数据
+  statType     String
+  name         String
+  entityId     Int?
+  entityType   String?
+  score        Decimal
+  period       String
+  metadata     Json?
   calculatedAt DateTime @default(now())
 
   @@unique([statType, period, entityId, entityType])
@@ -465,43 +469,24 @@ model TrendingStats {
   @@index([score])
 }
 
-// ======================
-// 新增模型：增量分析和搜索功能
-// ======================
-
 model AnalysisWatermark {
-  id        Int      @id @default(autoincrement())
-  task      String   @unique
-  lastRunAt DateTime @default(now())
+  id        Int       @id @default(autoincrement())
+  task      String    @unique
+  lastRunAt DateTime  @default(now())
   cursorTs  DateTime?
 }
 
-model SearchIndex {
-  pageId           Int      @id
-  title            String?
-  url              String?
-  tags             String[]
-  textContent      String?  @map("text_content")
-  sourceContent    String?  @map("source_content")
-  searchVector     String?  @map("search_vector") // tsvector stored as text for Prisma compatibility
-  randomSentences  String[] @map("random_sentences")
-  contentStats     Json?    @map("content_stats")
-  updatedAt        DateTime @default(now())
-  page             Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
-}
-
 model PageDailyStats {
-  id            Int      @id @default(autoincrement())
-  pageId        Int
-  date          DateTime @db.Date
-  votesUp       Int      @default(0) @map("votes_up")
-  votesDown     Int      @default(0) @map("votes_down")
-  totalVotes    Int      @default(0) @map("total_votes")
-  uniqueVoters  Int      @default(0) @map("unique_voters")
-  revisions     Int      @default(0)
-  createdAt     DateTime @default(now())
-  
-  page          Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  id           Int      @id @default(autoincrement())
+  pageId       Int
+  date         DateTime @db.Date
+  votesUp      Int      @default(0) @map("votes_up")
+  votesDown    Int      @default(0) @map("votes_down")
+  totalVotes   Int      @default(0) @map("total_votes")
+  uniqueVoters Int      @default(0) @map("unique_voters")
+  revisions    Int      @default(0)
+  createdAt    DateTime @default(now())
+  page         Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@unique([pageId, date])
   @@index([date])
@@ -516,7 +501,6 @@ model UserDailyStats {
   pagesCreated Int       @default(0) @map("pages_created")
   lastActivity DateTime? @map("last_activity")
   createdAt    DateTime  @default(now())
-  
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])

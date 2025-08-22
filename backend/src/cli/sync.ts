@@ -1,7 +1,6 @@
 import { PhaseAProcessor } from '../core/processors/PhaseAProcessor.js';
 import { PhaseBProcessor } from '../core/processors/PhaseBProcessor.js';
 import { PhaseCProcessor } from '../core/processors/PhaseCProcessor.js';
-import { analyze } from '../jobs/AnalyzeJob.js';
 import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 
 export async function sync({ 
@@ -70,7 +69,7 @@ export async function sync({
         '\n=== Test Mode: Phase B (test batch only) ===' : 
         '\n=== Phase B: Targeted Content Collection ===');
       const phaseBProcessor = new PhaseBProcessor();
-      await phaseBProcessor.run(full);
+      await phaseBProcessor.run(full, testMode);
       console.log('✅ Phase B completed');
     }
 
@@ -81,19 +80,22 @@ export async function sync({
       const phaseCProcessor = new PhaseCProcessor({ 
         concurrency: parseInt(concurrency || '4') 
       });
-      await phaseCProcessor.run();
+      await phaseCProcessor.run(testMode);
       console.log('✅ Phase C completed');
     }
 
-    console.log(testMode ? '\n=== Test Mode: Running Analysis ===' : '\n=== Running Analysis ===');
-    if (full) {
-      console.log('🔄 Running full incremental analysis (includes voting cache)...');
-      await analyzeIncremental({ forceFullAnalysis: true });
-    } else {
-      console.log('🔄 Running incremental analysis (includes voting cache)...');
-      await analyzeIncremental();
+    // 只有在运行所有阶段或者明确指定 analyze 时才运行分析
+    if (phase === 'all' || phase === 'analyze') {
+      console.log(testMode ? '\n=== Test Mode: Running Analysis ===' : '\n=== Running Analysis ===');
+      if (full) {
+        console.log('🔄 Running full incremental analysis (includes voting cache)...');
+        await analyzeIncremental({ forceFullAnalysis: true });
+      } else {
+        console.log('🔄 Running incremental analysis (includes voting cache)...');
+        await analyzeIncremental();
+      }
+      console.log('✅ Analysis completed');
     }
-    console.log('✅ Analysis completed');
 
     const totalTime = (Date.now() - startTime) / 1000;
     console.log(`\n🎉 Synchronization completed successfully in ${totalTime.toFixed(1)}s!`);
@@ -110,7 +112,13 @@ export async function sync({
 if (import.meta.url === `file://${process.argv[1]}`) {
   const testMode = process.argv.includes('--test');
   // If test mode, default phase should be 'all', otherwise use argument or 'all'
-  const phase = testMode ? 'all' : (process.argv[2] || 'all');
+  let phase = testMode ? 'all' : (process.argv[2] || 'all');
+  
+  // 处理 phase-a, phase-b, phase-c 格式
+  if (phase.startsWith('phase-')) {
+    phase = phase.replace('phase-', '');
+  }
+  
   const full = process.argv.includes('--full') || process.argv.includes('--force');
   const concurrencyArg = process.argv.find(arg => arg.startsWith('--concurrency='));
   const concurrency = concurrencyArg ? concurrencyArg.split('=')[1] : '4';

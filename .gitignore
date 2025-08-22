@@ -1,26 +1,35 @@
 # Dependencies
 node_modules/
-*/node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-package-lock.json
-yarn.lock
+.pnp
+.pnp.js
 
-# Production builds
+# Testing
+coverage/
+.nyc_output/
+
+# Production
 build/
 dist/
-out/
-target/
-*.tgz
-*.tar.gz
 
-# Environment variables
+# Environment files
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # IDE files
 .vscode/
@@ -29,104 +38,46 @@ target/
 *.swo
 *~
 
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Logs
-logs/
-*.log
-
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# nyc test coverage
-.nyc_output
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-.pytest_cache/
-
-# Java
-*.class
-*.jar
-*.war
-*.ear
-*.zip
-*.tar.gz
-*.rar
-
 # Temporary files
-*.tmp
-*.temp
+tmp/
+temp/
 
-# SCPPER-CN specific data files
-backend/resume-sync-data/
-backend/full-sync-data/
-backend/user-analysis/
-backend/visualization-data/
-backend/sync-logs/
-backend/*.json
-!backend/package.json
-!backend/package-lock.json
-backend/src/sync/archive/
+# Cache directories
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.turbo/
 
-# Production data and checkpoints (避免提交大量数据文件)
-backend/production-data/
-backend/production-checkpoints/
-*-checkpoint-*.json
-*-data-*.json
-production-data-*.json
+# TypeScript
+*.tsbuildinfo
 
-# Database files
-*.db
+# Optional npm cache directory
+.npm/
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Database
 *.sqlite
 *.sqlite3
+*.db
 
-# Large data exports
-*.json.gz
-complete-data-*.json
-checkpoint-*.json
-raw-batch-*.json
+# Uploads
+uploads/
 
-# Generated reports
-*-report.json
-*-analysis-*.json
-*-rankings-*.json
+# One-time scripts cache
+backend/cache/
 
-# Debug, test, demo, and fix scripts
-backend/scripts/debug-*.ts
-backend/scripts/test-*.ts
-backend/scripts/demo-*.ts
-backend/scripts/fix-*.ts
-backend/scripts/*-demo.ts
-backend/scripts/diagnose-*.ts
-backend/scripts/repair-*.ts
-backend/scripts/import-with-repair.ts
-backend/scripts/robust-import.ts
-
-# Temporary debug and test files (保留调试脚本但忽略输出)
-debug-output-*.json
-test-results-*.json
-analyze-results-*.json
+# BFF directory (removed from project)
+BFF/

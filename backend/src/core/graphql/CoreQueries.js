@@ -38,23 +38,6 @@ export class CoreQueries {
         parent {
           url
         }
-        children{
-          url
-        }
-        attributions {
-          type
-          user {
-            displayName
-            ... on UserWikidotNameReference {
-              wikidotUser {
-                displayName
-                wikidotId
-              }
-            }
-          }
-          date
-          order
-        }
       }
     `);
 
@@ -67,6 +50,9 @@ export class CoreQueries {
         alternateTitles {
           title
           source
+        }
+        children{
+          url
         }
         attributions {
           type
@@ -91,6 +77,7 @@ export class CoreQueries {
         userWikidotId
         direction
         timestamp
+        anonKey
         user {
           ... on WikidotUser {
             displayName

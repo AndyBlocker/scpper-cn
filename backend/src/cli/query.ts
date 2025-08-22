@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { table } from 'table';
+import { getPrismaClient } from '../utils/db-connection.js';
 import { UserRatingSystem } from '../jobs/UserRatingJob.js';
 import { DatabaseStore } from '../core/store/DatabaseStore.js';
 
@@ -233,7 +234,7 @@ SCPPER-CN Query Tool - 数据查询工具
     return;
   }
 
-  const prisma = new PrismaClient();
+  const prisma = getPrismaClient();
 
   try {
     if (url) {
@@ -291,10 +292,10 @@ SCPPER-CN Query Tool - 数据查询工具
       const currentVersion = fullPage.versions.find(v => v.validTo === null) || fullPage.versions[0];
       console.log(`\n=== Page Information ===`);
       console.log(`URL: ${page.url}`);
-      console.log(`Page UUID: ${page.pageUuid || 'N/A'}`);
-      console.log(`URL Key: ${page.urlKey}`);
-      if (page.historicalUrls && page.historicalUrls.length > 0) {
-        console.log(`Historical URLs: ${page.historicalUrls.join(', ')}`);
+      console.log(`Current URL: ${page.currentUrl}`);
+      console.log(`Wikidot ID: ${page.wikidotId}`);
+      if (page.urlHistory && page.urlHistory.length > 0) {
+        console.log(`Historical URLs: ${page.urlHistory.join(', ')}`);
       }
       if (currentVersion) {
         console.log(`Title: ${currentVersion.title || 'Untitled'}`);
@@ -303,13 +304,12 @@ SCPPER-CN Query Tool - 数据查询工具
         console.log(`Rating: ${currentVersion.rating || 0}`);
         console.log(`Vote Count: ${currentVersion.voteCount || 0}`);
         console.log(`Revision Count: ${currentVersion.revisionCount || 0}`);
-        console.log(`Comment Count: ${currentVersion.commentCount || 0}`);
+        console.log(`Attribution Count: ${currentVersion.attributionCount || 0}`);
         if (currentVersion.stats) {
           console.log(`Wilson Score: ${currentVersion.stats.wilson95?.toFixed(3) || '—'}`);
           console.log(`Controversy: ${currentVersion.stats.controversy?.toFixed(3) || '—'}`);
         }
         console.log(`Created At: ${currentVersion.createdAt?.toISOString() || 'Unknown'}`);
-        console.log(`Is Hidden: ${currentVersion.isHidden}`);
         console.log(`Is Deleted: ${currentVersion.isDeleted}`);
       }
 
@@ -604,7 +604,7 @@ SCPPER-CN Query Tool - 数据查询工具
           v.title || 'Untitled',
           v.rating?.toString() || '0',
           v.stats?.wilson95?.toFixed(3) || '—',
-          v.page.urlKey
+          v.page.currentUrl
         ])
       ]));
 
@@ -615,7 +615,7 @@ SCPPER-CN Query Tool - 数据查询工具
           v.title || 'Untitled',
           v.rating?.toString() || '0',
           v.stats?.wilson95?.toFixed(3) || '—',
-          v.page.urlKey
+          v.page.currentUrl
         ])
       ]));
     }

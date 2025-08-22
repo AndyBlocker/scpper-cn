@@ -81,8 +81,8 @@ export class PhaseAProcessor {
           // New fields for enhanced dirty detection
           category: node.category || null,
           parentUrl: node.parent?.url || null,
-          childCount: node.children ? node.children.length : 0,
-          attributionCount: node.attributions ? node.attributions.length : 0, // Count attributions from Phase A data
+          childCount: null,
+          attributionCount: null,
           voteUp: null, // Will be populated by Wilson score calculation if available
           voteDown: null, // Will be populated by Wilson score calculation if available
         });
@@ -177,8 +177,8 @@ export class PhaseAProcessor {
         lastSeenAt: new Date(),
         category: node.category || null,
         parentUrl: node.parent?.url || null,
-        childCount: node.childCount || null,
-        attributionCount: node.attributions?.length || null,
+        childCount: null,
+        attributionCount: null,
         // Don't estimate uv/dv in Phase A, leave for analysis stage
         voteUp: null,
         voteDown: null,

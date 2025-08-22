@@ -1,6 +1,11 @@
-import { PrismaClient } from '@prisma/client';
+// src/jobs/IncrementalAnalyzeJob.ts
+import { PrismaClient, Prisma } from '@prisma/client';
+import { getPrismaClient } from '../utils/db-connection';
 import { VotingTimeSeriesCacheJob } from './VotingTimeSeriesCacheJob';
-import { TextProcessor } from '../utils/TextProcessor';
+import { UserDataCompletenessJob } from './UserDataCompletenessJob';
+import { UserSocialAnalysisJob } from './UserSocialAnalysisJob';
+// @ts-ignore - importing from scripts folder
+// import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
 /**
  * 增量分析任务框架
@@ -10,9 +15,10 @@ import { TextProcessor } from '../utils/TextProcessor';
 
 export class IncrementalAnalyzeJob {
   private prisma: PrismaClient;
+  private interestingFactsCleared = false;
 
   constructor(prisma?: PrismaClient) {
-    this.prisma = prisma || new PrismaClient();
+    this.prisma = prisma || getPrismaClient();
   }
 
   /**
@@ -25,8 +31,9 @@ export class IncrementalAnalyzeJob {
       const availableTasks = [
         'page_stats',
         'user_stats', 
+        'user_data_completeness',
+        'user_social_analysis',
         'site_stats',
-        'search_index',
         'daily_aggregates',
         'voting_time_series_cache',
         'materialized_views',
@@ -35,10 +42,19 @@ export class IncrementalAnalyzeJob {
         'tag_records',
         'content_records',
         'rating_records',
-        'user_activity_records'
+        'user_activity_records',
+        'search_index',
+        'series_stats',
+        'trending_stats'
       ];
 
       const tasksToRun = options.tasks || availableTasks;
+
+      // 如果是强制全量分析，先清理相关分析数据
+      if (options.forceFullAnalysis) {
+        console.log('🧹 Cleaning analysis data for full rebuild...');
+        await this.cleanAnalysisData(tasksToRun);
+      }
 
       for (const taskName of tasksToRun) {
         console.log(`📊 Running task: ${taskName}`);
@@ -51,6 +67,106 @@ export class IncrementalAnalyzeJob {
       console.error('❌ Incremental analysis failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * 清理分析数据（用于全量重建）
+   */
+  private async cleanAnalysisData(tasks: string[]) {
+    console.log('🗑️ Cleaning analysis data for tasks:', tasks.join(', '));
+
+    for (const taskName of tasks) {
+      try {
+        switch (taskName) {
+          case 'page_stats':
+            await this.prisma.pageStats.deleteMany({});
+            console.log('  ✓ PageStats cleared');
+            break;
+          case 'user_stats':
+            await this.prisma.userStats.deleteMany({});
+            console.log('  ✓ UserStats cleared');
+            break;
+          case 'user_data_completeness':
+            // User表的firstActivityAt和lastActivityAt字段需要重置
+            await this.prisma.$executeRaw`
+              UPDATE "User" 
+              SET "firstActivityAt" = NULL, 
+                  "lastActivityAt" = NULL
+            `;
+            console.log('  ✓ User activity timestamps cleared');
+            break;
+          case 'user_social_analysis':
+            await this.prisma.userTagPreference.deleteMany({});
+            await this.prisma.userVoteInteraction.deleteMany({});
+            console.log('  ✓ User social analysis data cleared');
+            break;
+          case 'site_stats':
+            await this.prisma.siteStats.deleteMany({});
+            console.log('  ✓ SiteStats cleared');
+            break;
+          case 'daily_aggregates':
+            await this.prisma.pageDailyStats.deleteMany({});
+            await this.prisma.userDailyStats.deleteMany({});
+            console.log('  ✓ Daily aggregates cleared');
+            break;
+          case 'voting_time_series_cache':
+            // 清理Page表中的votingTimeSeriesCache字段
+            await this.prisma.$executeRaw`
+              UPDATE "Page" 
+              SET "votingTimeSeriesCache" = NULL,
+                  "votingCacheUpdatedAt" = NULL
+            `;
+            // 清理User表中的attributionVotingTimeSeriesCache字段
+            await this.prisma.$executeRaw`
+              UPDATE "User" 
+              SET "attributionVotingTimeSeriesCache" = NULL,
+                  "attributionVotingCacheUpdatedAt" = NULL
+            `;
+            console.log('  ✓ Voting time series cache cleared');
+            break;
+          case 'interesting_facts':
+          case 'time_milestones':
+          case 'tag_records':
+          case 'content_records':
+          case 'rating_records':
+          case 'user_activity_records':
+            // 这些都使用InterestingFacts表，只清理一次
+            if (!this.interestingFactsCleared) {
+              await this.prisma.interestingFacts.deleteMany({});
+              console.log('  ✓ InterestingFacts cleared');
+              this.interestingFactsCleared = true;
+            }
+            break;
+          case 'search_index':
+            // SearchIndex表在当前schema中不存在，跳过清理
+            console.log('  ⚠️ Search index tables not found in schema, skipping');
+            break;
+          case 'series_stats':
+            await this.prisma.seriesStats.deleteMany({});
+            console.log('  ✓ SeriesStats cleared');
+            break;
+          case 'trending_stats':
+            await this.prisma.trendingStats.deleteMany({});
+            console.log('  ✓ TrendingStats cleared');
+            break;
+          case 'materialized_views':
+            // 物化视图需要先DROP再重建，这里只记录日志
+            console.log('  ⚠️ Materialized views will be refreshed (not dropped)');
+            break;
+          default:
+            console.warn(`  ⚠️ Unknown task for cleaning: ${taskName}`);
+        }
+      } catch (error) {
+        console.error(`  ❌ Failed to clean ${taskName}:`, error);
+        throw error;
+      }
+    }
+
+    // 清理水位线表，以确保全量分析
+    await this.prisma.analysisWatermark.deleteMany({});
+    console.log('  ✓ Analysis watermarks cleared');
+
+    console.log('✅ Analysis data cleanup completed');
   }
 
   /**
@@ -76,11 +192,14 @@ export class IncrementalAnalyzeJob {
         case 'user_stats':
           await this.updateUserStats(changeSet);
           break;
+        case 'user_data_completeness':
+          await this.updateUserDataCompleteness(changeSet);
+          break;
+        case 'user_social_analysis':
+          await this.updateUserSocialAnalysis(changeSet);
+          break;
         case 'site_stats':
           await this.updateSiteStats();
-          break;
-        case 'search_index':
-          await this.updateSearchIndex(changeSet);
           break;
         case 'daily_aggregates':
           await this.updateDailyAggregates(changeSet, { forceFullHistory: options.forceFullHistory });
@@ -108,6 +227,15 @@ export class IncrementalAnalyzeJob {
           break;
         case 'user_activity_records':
           await this.updateUserActivityRecords(changeSet);
+          break;
+        case 'search_index':
+          await this.updateSearchIndex();
+          break;
+        case 'series_stats':
+          await this.updateSeriesStats();
+          break;
+        case 'trending_stats':
+          await this.updateTrendingStats();
           break;
         default:
           console.warn(`⚠️ Unknown task: ${taskName}`);
@@ -143,11 +271,24 @@ export class IncrementalAnalyzeJob {
 
     const cursorTs = watermark?.cursorTs;
 
-    // 增量查询：找出自水位线后变更的 pageVersion (优化版)
+    // 如果没有水位线，进行全量分析
+    if (!cursorTs) {
+      console.log(`No watermark found for task ${taskName}, performing full analysis`);
+      const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
+        SELECT pv.id, pv."updatedAt" as "lastChange"
+        FROM "PageVersion" pv
+        WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+      `;
+      return result;
+    }
+
+    // 增量查询：找出自水位线后变更的 pageVersion
+    // 修复：确保正确处理 PageVersion 的更新
     const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
       WITH cursor_check AS (
-        SELECT COALESCE(${cursorTs}::timestamp, '1900-01-01'::timestamp) as cursor_ts
+        SELECT ${cursorTs}::timestamp as cursor_ts
       ),
+      -- 检查投票变化
       vote_changes AS (
         SELECT v."pageVersionId" AS id, max(v."timestamp") AS changed_at
         FROM "Vote" v
@@ -155,6 +296,7 @@ export class IncrementalAnalyzeJob {
         WHERE v."timestamp" > c.cursor_ts
         GROUP BY v."pageVersionId"
       ),
+      -- 检查修订版本变化
       revision_changes AS (
         SELECT r."pageVersionId" AS id, max(r."timestamp") AS changed_at
         FROM "Revision" r
@@ -162,12 +304,31 @@ export class IncrementalAnalyzeJob {
         WHERE r."timestamp" > c.cursor_ts
         GROUP BY r."pageVersionId"
       ),
+      -- 检查归属变化
       attribution_changes AS (
         SELECT a."pageVerId" AS id, max(a."date") AS changed_at
         FROM "Attribution" a
         CROSS JOIN cursor_check c
         WHERE a."date" IS NOT NULL AND a."date" > c.cursor_ts
         GROUP BY a."pageVerId"
+      ),
+      -- 检查页面版本本身的更新（重要：包括新创建的页面）
+      page_version_changes AS (
+        SELECT pv.id, pv."updatedAt" AS changed_at
+        FROM "PageVersion" pv
+        CROSS JOIN cursor_check c
+        WHERE pv."updatedAt" > c.cursor_ts
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
+      ),
+      -- 检查页面表的更新
+      page_changes AS (
+        SELECT pv.id, p."updatedAt" AS changed_at
+        FROM "Page" p
+        JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
+        CROSS JOIN cursor_check c
+        WHERE p."updatedAt" > c.cursor_ts
+          AND pv."isDeleted" = false
       )
       SELECT id, max(changed_at) AS "lastChange"
       FROM (
@@ -176,10 +337,16 @@ export class IncrementalAnalyzeJob {
         SELECT id, changed_at FROM revision_changes
         UNION ALL
         SELECT id, changed_at FROM attribution_changes
+        UNION ALL
+        SELECT id, changed_at FROM page_version_changes
+        UNION ALL
+        SELECT id, changed_at FROM page_changes
       ) all_changes
       GROUP BY id
+      ORDER BY "lastChange" DESC
     `;
 
+    console.log(`Task ${taskName}: Found ${result.length} changed page versions since ${cursorTs.toISOString()}`);
     return result;
   }
 
@@ -246,249 +413,23 @@ export class IncrementalAnalyzeJob {
   }
 
   /**
-   * 更新UserStats - 仅对相关用户进行计算
+   * 更新UserStats - 使用完整的UserRatingJob进行计算
    */
   private async updateUserStats(changeSet: Array<{ id: number; lastChange: Date }>) {
     if (changeSet.length === 0) return;
 
-    console.log(`👥 Updating UserStats for users affected by ${changeSet.length} page version changes...`);
+    console.log(`👥 Updating UserStats using UserRatingJob...`);
 
-    // 优化: 更高效的受影响用户查询
-    const pageVersionIds = changeSet.map(c => c.id);
-
-    const affectedUsers = await this.prisma.$queryRaw<Array<{ userId: number }>>`
-      SELECT DISTINCT a."userId" 
-      FROM "Attribution" a
-      WHERE a."pageVerId" = ANY(${pageVersionIds}::int[])
-        AND a."userId" IS NOT NULL
-      UNION
-      SELECT DISTINCT v."userId"
-      FROM "Vote" v
-      WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
-        AND v."userId" IS NOT NULL
-    `;
-
-    if (affectedUsers.length === 0) return;
-
-    const userIds = affectedUsers.map(u => u.userId);
-
-    // 创建临时表
-    await this.prisma.$executeRaw`
-      CREATE TEMP TABLE temp_affected_users ("userId" int PRIMARY KEY)
-    `;
-
-    // 插入用户ID到临时表
-    await this.prisma.$executeRaw`
-      INSERT INTO temp_affected_users SELECT unnest(${userIds}::int[])
-    `;
-
-    // 分析临时表
-    await this.prisma.$executeRaw`
-      ANALYZE temp_affected_users
-    `;
-      
-    // 插入或更新UserStats
-    await this.prisma.$executeRaw`
-      WITH user_attribution_stats AS (
-        SELECT 
-          tau."userId",
-          SUM(COALESCE(pv.rating, 0)::float) as total_rating,
-          COUNT(CASE WHEN pv.rating IS NOT NULL THEN 1 END) as page_count
-        FROM temp_affected_users tau
-        JOIN "Attribution" a ON tau."userId" = a."userId"
-        JOIN "PageVersion" pv ON a."pageVerId" = pv.id
-        WHERE pv."validTo" IS NULL 
-          AND pv."isDeleted" = false
-        GROUP BY tau."userId"
-      ),
-      user_vote_stats AS (
-        SELECT 
-          tau."userId",
-          COUNT(*) FILTER (WHERE v.direction = 1) as total_up,
-          COUNT(*) FILTER (WHERE v.direction = -1) as total_down
-        FROM temp_affected_users tau
-        JOIN "Vote" v ON tau."userId" = v."userId"
-        GROUP BY tau."userId"
-      )
-      INSERT INTO "UserStats" ("userId", "totalUp", "totalDown", "totalRating", "pageCount")
-      SELECT 
-        tau."userId",
-        COALESCE(uvs.total_up, 0) as total_up,
-        COALESCE(uvs.total_down, 0) as total_down,
-        COALESCE(uas.total_rating, 0) as total_rating,
-        COALESCE(uas.page_count, 0) as page_count
-      FROM temp_affected_users tau
-      LEFT JOIN user_attribution_stats uas ON tau."userId" = uas."userId"
-      LEFT JOIN user_vote_stats uvs ON tau."userId" = uvs."userId"
-      ON CONFLICT ("userId") DO UPDATE SET
-        "totalUp" = EXCLUDED."totalUp",
-        "totalDown" = EXCLUDED."totalDown",
-        "totalRating" = EXCLUDED."totalRating",
-        "pageCount" = EXCLUDED."pageCount"
-    `;
-
-    // 删除临时表
-    await this.prisma.$executeRaw`
-      DROP TABLE temp_affected_users
-    `;
-
-    console.log(`✅ UserStats updated for ${affectedUsers.length} affected users`);
-  }
-
-  /**
-   * 更新SearchIndex - 增强版，支持搜索向量预计算和随机句子提取
-   */
-  private async updateSearchIndex(changeSet: Array<{ id: number; lastChange: Date }>) {
-    if (changeSet.length === 0) return;
-
-    console.log(`🔍 Updating enhanced SearchIndex for ${changeSet.length} page versions...`);
-
-    // 获取需要更新的唯一pageId列表
-    const pageIds = await this.prisma.$queryRaw<Array<{ pageId: number }>>`
-      SELECT DISTINCT pv."pageId" as "pageId"
-      FROM "PageVersion" pv
-      WHERE pv.id = ANY(${changeSet.map(c => c.id)}::int[])
-        AND pv."validTo" IS NULL 
-        AND pv."isDeleted" = false
-    `;
-
-    if (pageIds.length === 0) return;
-
-    const uniquePageIds = pageIds.map(p => p.pageId);
-    console.log(`🔄 Updating enhanced search index for ${uniquePageIds.length} unique pages...`);
-
-    // 分批处理，避免单次操作过大
-    const batchSize = 500; // 减少批次大小，因为处理更复杂
-    let processed = 0;
-    let enhancedCount = 0;
-
-    for (let i = 0; i < uniquePageIds.length; i += batchSize) {
-      const batch = uniquePageIds.slice(i, i + batchSize);
-      
-      console.log(`  📦 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(uniquePageIds.length/batchSize)} (${batch.length} pages)...`);
-      
-      // 1. 删除当前批次的现有搜索索引条目
-      await this.prisma.$executeRaw`
-        DELETE FROM "SearchIndex" 
-        WHERE "pageId" = ANY(${batch}::int[])
-      `;
-
-      // 2. 获取原始数据用于处理
-      const rawData = await this.prisma.$queryRaw<Array<{
-        pageId: number;
-        title: string | null;
-        url: string;
-        tags: string[];
-        textContent: string | null;
-        source: string | null;
-      }>>`
-        WITH latest_versions AS (
-          SELECT pv."pageId",
-                 pv.title,
-                 p.url,
-                 pv.tags,
-                 pv."textContent",
-                 pv.source,
-                 ROW_NUMBER() OVER (PARTITION BY pv."pageId" ORDER BY pv."updatedAt" DESC) as rn
-          FROM "PageVersion" pv
-          JOIN "Page" p ON p.id = pv."pageId"
-          WHERE pv."pageId" = ANY(${batch}::int[])
-            AND pv."validTo" IS NULL 
-            AND pv."isDeleted" = false
-        )
-        SELECT "pageId", title, url, tags, "textContent", source
-        FROM latest_versions
-        WHERE rn = 1
-      `;
-
-      if (rawData.length === 0) continue;
-
-      // 3. 处理每个页面的数据 - 预计算增强字段
-      const enhancedData = rawData.map(row => {
-        try {
-          // 使用TextProcessor计算增强字段
-          const randomSentences = TextProcessor.extractRandomSentences(row.textContent || '', 4);
-          const contentStats = TextProcessor.calculateContentStats(
-            row.title || '',
-            row.textContent || '',
-            row.source || ''
-          );
-
-          return {
-            pageId: row.pageId,
-            title: row.title,
-            url: row.url,
-            tags: row.tags,
-            text_content: row.textContent,
-            source_content: row.source,
-            random_sentences: randomSentences,
-            content_stats: contentStats,
-            updatedAt: new Date()
-          };
-        } catch (error) {
-          console.warn(`⚠️  Failed to enhance page ${row.pageId}:`, error);
-          // 降级到基础数据
-          return {
-            pageId: row.pageId,
-            title: row.title,
-            url: row.url,
-            tags: row.tags,
-            text_content: row.textContent,
-            source_content: row.source,
-            random_sentences: [],
-            content_stats: {},
-            updatedAt: new Date()
-          };
-        }
-      });
-
-      // 4. 直接插入到SearchIndex，避免临时表问题
-      for (const row of enhancedData) {
-        try {
-          // 使用数据库函数计算搜索向量并直接插入
-          await this.prisma.$executeRaw`
-            INSERT INTO "SearchIndex" (
-              "pageId", title, url, tags, text_content, source_content, 
-              search_vector, random_sentences, content_stats, "updatedAt"
-            ) VALUES (
-              ${row.pageId},
-              ${row.title},
-              ${row.url},
-              ${row.tags}::text[],
-              ${row.text_content},
-              ${row.source_content},
-              calculate_search_vector_enhanced(${row.title}, ${row.text_content}, ${row.source_content}),
-              ${row.random_sentences}::text[],
-              ${JSON.stringify(row.content_stats)}::jsonb,
-              ${row.updatedAt}
-            )
-            ON CONFLICT ("pageId") DO UPDATE SET
-              title = EXCLUDED.title,
-              url = EXCLUDED.url,
-              tags = EXCLUDED.tags,
-              text_content = EXCLUDED.text_content,
-              source_content = EXCLUDED.source_content,
-              search_vector = EXCLUDED.search_vector,
-              random_sentences = EXCLUDED.random_sentences,
-              content_stats = EXCLUDED.content_stats,
-              "updatedAt" = EXCLUDED."updatedAt"
-          `;
-          enhancedCount++;
-        } catch (error) {
-          console.warn(`⚠️  Failed to insert enhanced data for page ${row.pageId}:`, error);
-        }
-      }
-
-      processed += batch.length;
-      console.log(`  📈 Progress: ${processed}/${uniquePageIds.length} (${Math.round(processed/uniquePageIds.length*100)}%) - enhanced ${enhancedData.length} pages`);
-    }
-
-    console.log(`✅ Enhanced SearchIndex updated for ${uniquePageIds.length} pages`);
-    console.log(`🎯 Successfully enhanced ${enhancedCount}/${processed} pages with advanced features`);
+    // 导入 UserRatingJob
+    const { UserRatingSystem } = await import('./UserRatingJob.js');
     
-    // 8. 更新统计信息
-    await this.prisma.$executeRaw`ANALYZE "SearchIndex"`;
+    // 创建 UserRatingSystem 实例并运行完整的评分计算
+    const ratingSystem = new UserRatingSystem(this.prisma);
+    await ratingSystem.updateUserRatingsAndRankings();
+
+    console.log(`✅ UserStats updated with complete rating calculations`);
   }
+
 
   /**
    * 更新日聚合数据
@@ -597,7 +538,7 @@ export class IncrementalAnalyzeJob {
         daily_user_attributions AS (
           SELECT 
             a."userId",
-            COUNT(DISTINCT pv."pageId") FILTER (WHERE a.type = 'author') as pages_created,
+            COUNT(DISTINCT pv."pageId") FILTER (WHERE a.type = 'AUTHOR') as pages_created,
             MAX(a."date") as last_attribution
           FROM "Attribution" a
           JOIN "PageVersion" pv ON a."pageVerId" = pv.id
@@ -639,6 +580,255 @@ export class IncrementalAnalyzeJob {
     }
 
     console.log(`✅ Daily aggregates updated for ${dateRange.length} days`);
+  }
+
+  /**
+   * 更新用户数据完整性
+   * 基于变更集中涉及的用户进行增量更新
+   */
+  private async updateUserDataCompleteness(changeSet: Array<{ id: number; lastChange: Date }>) {
+    if (changeSet.length === 0) return;
+    
+    console.log('🔧 Updating user data completeness...');
+    
+    // 从变更集中提取受影响的用户
+    const pageVersionIds = changeSet.map(c => c.id);
+    
+    const affectedUsers = await this.prisma.$queryRaw<Array<{ userId: number }>>`
+      SELECT DISTINCT "userId" 
+      FROM (
+        -- 投票的用户
+        SELECT v."userId"
+        FROM "Vote" v
+        WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
+          AND v."userId" IS NOT NULL
+        
+        UNION
+        
+        -- 创建修订的用户
+        SELECT r."userId"
+        FROM "Revision" r
+        WHERE r."pageVersionId" = ANY(${pageVersionIds}::int[])
+          AND r."userId" IS NOT NULL
+        
+        UNION
+        
+        -- 页面归属的用户
+        SELECT a."userId"
+        FROM "Attribution" a
+        WHERE a."pageVerId" = ANY(${pageVersionIds}::int[])
+          AND a."userId" IS NOT NULL
+      ) affected_users
+    `;
+    
+    if (affectedUsers.length === 0) return;
+    
+    const userIds = affectedUsers.map(u => u.userId);
+    console.log(`  📝 Updating data completeness for ${userIds.length} affected users`);
+    
+    // 执行用户数据完整性更新
+    const job = new UserDataCompletenessJob(this.prisma);
+    
+    // 针对特定用户进行更新
+    await this.prisma.$executeRaw`
+      WITH vote_activity AS (
+        SELECT 
+          "userId",
+          MIN(timestamp) as first_vote,
+          MAX(timestamp) as last_vote
+        FROM "Vote"
+        WHERE "userId" = ANY(${userIds}::int[])
+        GROUP BY "userId"
+      ),
+      revision_activity AS (
+        SELECT 
+          "userId",
+          MIN(timestamp) as first_revision,
+          MAX(timestamp) as last_revision
+        FROM "Revision"
+        WHERE "userId" = ANY(${userIds}::int[])
+        GROUP BY "userId"
+      ),
+      attribution_activity AS (
+        SELECT 
+          "userId",
+          MIN(date) as first_attribution,
+          MAX(date) as last_attribution
+        FROM "Attribution"
+        WHERE "userId" = ANY(${userIds}::int[])
+          AND date IS NOT NULL
+        GROUP BY "userId"
+      ),
+      user_activity AS (
+        SELECT 
+          u.id as "userId",
+          LEAST(
+            COALESCE(va.first_vote, '9999-12-31'::timestamp),
+            COALESCE(ra.first_revision, '9999-12-31'::timestamp),
+            COALESCE(aa.first_attribution, '9999-12-31'::timestamp)
+          ) as first_activity,
+          GREATEST(
+            COALESCE(va.last_vote, '1900-01-01'::timestamp),
+            COALESCE(ra.last_revision, '1900-01-01'::timestamp),
+            COALESCE(aa.last_attribution, '1900-01-01'::timestamp)
+          ) as last_activity
+        FROM "User" u
+        LEFT JOIN vote_activity va ON u.id = va."userId"
+        LEFT JOIN revision_activity ra ON u.id = ra."userId"
+        LEFT JOIN attribution_activity aa ON u.id = aa."userId"
+        WHERE u.id = ANY(${userIds}::int[])
+      )
+      UPDATE "User" u
+      SET 
+        "firstActivityAt" = CASE 
+          WHEN ua.first_activity < '9999-12-31'::timestamp 
+          THEN COALESCE(u."firstActivityAt", ua.first_activity)
+          ELSE u."firstActivityAt"
+        END,
+        "lastActivityAt" = CASE 
+          WHEN ua.last_activity > '1900-01-01'::timestamp 
+          THEN GREATEST(COALESCE(u."lastActivityAt", '1900-01-01'::timestamp), ua.last_activity)
+          ELSE u."lastActivityAt"
+        END,
+        "username" = CASE 
+          WHEN u."username" IS NULL AND u."wikidotId" < 0 
+          THEN CONCAT('guest_', ABS(u."wikidotId"))
+          WHEN u."username" IS NULL AND u."displayName" IS NULL 
+          THEN '(user deleted)'
+          WHEN u."username" IS NULL AND u."displayName" IS NOT NULL 
+          THEN LOWER(REPLACE(u."displayName", ' ', '_'))
+          ELSE u."username"
+        END
+      FROM user_activity ua
+      WHERE u.id = ua."userId"
+    `;
+    
+    console.log('✅ User data completeness updated');
+  }
+
+  /**
+   * 更新用户社交分析
+   * 基于变更集中涉及的用户进行增量更新
+   */
+  private async updateUserSocialAnalysis(changeSet: Array<{ id: number; lastChange: Date }>) {
+    if (changeSet.length === 0) return;
+    
+    console.log('🔍 Updating user social analysis...');
+    
+    // 从变更集中提取受影响的用户
+    const pageVersionIds = changeSet.map(c => c.id);
+    
+    // 找出有新投票活动的用户
+    const votingUsers = await this.prisma.$queryRaw<Array<{ userId: number }>>`
+      SELECT DISTINCT v."userId"
+      FROM "Vote" v
+      WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
+        AND v."userId" IS NOT NULL
+        AND v.direction != 0
+    `;
+    
+    if (votingUsers.length === 0) {
+      console.log('  ⏭️ No voting activity to analyze, skipping...');
+      return;
+    }
+    
+    const userIds = votingUsers.map(u => u.userId);
+    console.log(`  📊 Analyzing social patterns for ${userIds.length} users`);
+    
+    // 执行社交分析更新
+    const job = new UserSocialAnalysisJob(this.prisma);
+    
+    // 更新标签偏好（仅针对有新投票的用户）
+    await this.prisma.$executeRaw`
+      WITH user_tag_votes AS (
+        SELECT 
+          v."userId",
+          unnest(pv.tags) as tag,
+          v.direction,
+          v.timestamp
+        FROM "Vote" v
+        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+        WHERE v."userId" = ANY(${userIds}::int[])
+          AND v.direction != 0
+          AND pv.tags IS NOT NULL
+          AND array_length(pv.tags, 1) > 0
+      ),
+      tag_stats AS (
+        SELECT 
+          "userId",
+          tag,
+          COUNT(*) FILTER (WHERE direction = 1) as upvote_count,
+          COUNT(*) FILTER (WHERE direction = -1) as downvote_count,
+          COUNT(*) as total_votes,
+          MAX(timestamp) as last_vote_at
+        FROM user_tag_votes
+        WHERE tag NOT IN ('页面', '重定向', '管理', '_cc')
+        GROUP BY "userId", tag
+        HAVING COUNT(*) >= 3
+      )
+      INSERT INTO "UserTagPreference" (
+        "userId", tag, "upvoteCount", "downvoteCount", 
+        "totalVotes", "lastVoteAt", "createdAt", "updatedAt"
+      )
+      SELECT 
+        "userId", tag, upvote_count, downvote_count,
+        total_votes, last_vote_at, NOW(), NOW()
+      FROM tag_stats
+      ON CONFLICT ("userId", tag) DO UPDATE SET
+        "upvoteCount" = EXCLUDED."upvoteCount",
+        "downvoteCount" = EXCLUDED."downvoteCount",
+        "totalVotes" = EXCLUDED."totalVotes",
+        "lastVoteAt" = EXCLUDED."lastVoteAt",
+        "updatedAt" = NOW()
+    `;
+    
+    // 更新用户投票交互（基于新的投票活动）
+    await this.prisma.$executeRaw`
+      WITH vote_interactions AS (
+        SELECT 
+          v."userId" as from_user_id,
+          a."userId" as to_user_id,
+          v.direction,
+          v.timestamp
+        FROM "Vote" v
+        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+        JOIN "Attribution" a ON a."pageVerId" = pv.id
+        WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
+          AND v."userId" IS NOT NULL 
+          AND a."userId" IS NOT NULL
+          AND v."userId" != a."userId"
+          AND v.direction != 0
+          AND a.type = 'AUTHOR'
+      ),
+      interaction_stats AS (
+        SELECT 
+          from_user_id,
+          to_user_id,
+          COUNT(*) FILTER (WHERE direction = 1) as upvote_count,
+          COUNT(*) FILTER (WHERE direction = -1) as downvote_count,
+          COUNT(*) as total_votes,
+          MAX(timestamp) as last_vote_at
+        FROM vote_interactions
+        GROUP BY from_user_id, to_user_id
+      )
+      INSERT INTO "UserVoteInteraction" (
+        "fromUserId", "toUserId", "upvoteCount", "downvoteCount",
+        "totalVotes", "lastVoteAt", "createdAt", "updatedAt"
+      )
+      SELECT 
+        from_user_id, to_user_id, upvote_count, downvote_count,
+        total_votes, last_vote_at, NOW(), NOW()
+      FROM interaction_stats
+      WHERE total_votes > 0
+      ON CONFLICT ("fromUserId", "toUserId") DO UPDATE SET
+        "upvoteCount" = "UserVoteInteraction"."upvoteCount" + EXCLUDED."upvoteCount",
+        "downvoteCount" = "UserVoteInteraction"."downvoteCount" + EXCLUDED."downvoteCount",
+        "totalVotes" = "UserVoteInteraction"."totalVotes" + EXCLUDED."totalVotes",
+        "lastVoteAt" = GREATEST("UserVoteInteraction"."lastVoteAt", EXCLUDED."lastVoteAt"),
+        "updatedAt" = NOW()
+    `;
+    
+    console.log('✅ User social analysis updated');
   }
 
   /**
@@ -710,6 +900,396 @@ export class IncrementalAnalyzeJob {
     } catch (error) {
       console.error('❌ Failed to refresh materialized views:', error);
       // 非关键性操作，继续执行其他任务
+    }
+  }
+
+  /**
+   * 更新搜索索引
+   */
+  private async updateSearchIndex() {
+    console.log('🔍 Updating search index...');
+    
+    try {
+      // const result = await updateSearchIndexIncremental();
+      // console.log(`✅ Search index updated: ${result.pagesUpdated} pages, ${result.usersUpdated} users`);
+      console.log('⚠️ Search index update temporarily disabled');
+    } catch (error) {
+      console.error('❌ Failed to update search index:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 更新系列统计
+   */
+  private async updateSeriesStats() {
+    console.log('📊 Updating series statistics...');
+    
+    try {
+      // 获取所有SCP-CN页面
+      const scpPages = await this.prisma.$queryRaw<Array<{
+        url: string;
+        pageId: number;
+        rating: number | null;
+      }>>`
+        SELECT 
+          p.url,
+          p.id as "pageId",
+          pv.rating
+        FROM "Page" p
+        INNER JOIN "PageVersion" pv ON p.id = pv."pageId"
+        WHERE pv."validTo" IS NULL 
+          AND pv."isDeleted" = false
+          AND p.url ~ '/scp-cn-[0-9]{3,4}($|/)'
+          AND p.url NOT LIKE '%deleted:%'
+          AND '原创' = ANY(pv.tags)
+          AND NOT ('待删除' = ANY(pv.tags))
+          AND NOT ('待刪除' = ANY(pv.tags))
+      `;
+      
+      // 统计每个系列的使用情况
+      const seriesUsage = new Map<number, {
+        usedSlots: number;
+        milestonePageId?: number;
+        milestoneRating?: number;
+      }>();
+      
+      for (const page of scpPages) {
+        const match = page.url.match(/\/scp-cn-(\d{3,4})(?:$|\/)/);
+        if (match) {
+          const num = parseInt(match[1]);
+          let seriesNumber: number;
+          
+          if (num >= 1 && num <= 999) {
+            seriesNumber = 1;
+          } else if (num >= 1000 && num <= 9999) {
+            seriesNumber = Math.floor(num / 1000) + 1;
+          } else {
+            continue; // 超出范围
+          }
+          
+          const stats = seriesUsage.get(seriesNumber) || { usedSlots: 0 };
+          stats.usedSlots++;
+          
+          // 记录里程碑页面（评分最高的页面）
+          if (!stats.milestonePageId || (page.rating && page.rating > (stats.milestoneRating || 0))) {
+            stats.milestonePageId = page.pageId;
+            stats.milestoneRating = page.rating || 0;
+          }
+          
+          seriesUsage.set(seriesNumber, stats);
+        }
+      }
+      
+      // 更新数据库
+      for (let seriesNumber = 1; seriesNumber <= 10; seriesNumber++) {
+        const stats = seriesUsage.get(seriesNumber) || { usedSlots: 0 };
+        // 系列1使用编号 002-999，共 998 个槽位；其余系列 000-999，共 1000 个
+        const totalSlots = seriesNumber === 1 ? 998 : 1000;
+        const usagePercentage = (stats.usedSlots / totalSlots) * 100;
+        const isOpen = seriesNumber <= 6; // 根据实际情况调整
+        
+        await this.prisma.seriesStats.upsert({
+          where: { seriesNumber },
+          update: {
+            isOpen,
+            usedSlots: stats.usedSlots,
+            usagePercentage,
+            milestonePageId: stats.milestonePageId,
+            lastUpdated: new Date()
+          },
+          create: {
+            seriesNumber,
+            isOpen,
+            totalSlots,
+            usedSlots: stats.usedSlots,
+            usagePercentage,
+            milestonePageId: stats.milestonePageId,
+            lastUpdated: new Date()
+          }
+        });
+      }
+      
+      console.log('✅ Series statistics updated');
+    } catch (error) {
+      console.error('❌ Failed to update series statistics:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 为标签生成稳定的整数ID
+   */
+  private getTagId(tagName: string): number {
+    let hash = 0;
+    for (let i = 0; i < tagName.length; i++) {
+      const char = tagName.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+
+  /**
+   * 更新趋势统计
+   */
+  private async updateTrendingStats() {
+    console.log('📈 Updating trending statistics...');
+    
+    try {
+      // 清理过期的趋势数据（可选）
+      // 保留最近的数据用于历史分析
+      await this.prisma.trendingStats.deleteMany({
+        where: {
+          calculatedAt: {
+            lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // 删除超过7天的数据
+          }
+        }
+      });
+      
+      // 1. 24小时热门页面（按Wilson分数增量）
+      const trending24h = await this.prisma.$queryRaw<Array<{
+        pageId: number;
+        title: string;
+        currentRating: number;
+        currentWilson: number;
+        prevWilson: number;
+        wilsonGain: number;
+        newVotes: number;
+      }>>`
+        WITH current_stats AS (
+          SELECT 
+            pv."pageId",
+            pv.title,
+            pv.rating as current_rating,
+            ps."wilson95" as current_wilson
+          FROM "PageVersion" pv
+          JOIN "PageStats" ps ON pv.id = ps."pageVersionId"
+          WHERE pv."validTo" IS NULL 
+            AND pv."isDeleted" = false
+        ),
+        votes_24h AS (
+          SELECT 
+            pv."pageId",
+            COUNT(*) as new_votes,
+            COUNT(*) FILTER (WHERE v.direction = 1) as new_upvotes,
+            COUNT(*) FILTER (WHERE v.direction = -1) as new_downvotes
+          FROM "Vote" v
+          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+          WHERE v."timestamp" >= NOW() - INTERVAL '24 hours'
+            AND pv."validTo" IS NULL
+          GROUP BY pv."pageId"
+        ),
+        prev_stats AS (
+          SELECT 
+            pv."pageId",
+            f_wilson_lower_bound(
+              COUNT(*) FILTER (WHERE v.direction = 1 AND v."timestamp" < NOW() - INTERVAL '24 hours'),
+              COUNT(*) FILTER (WHERE v.direction = -1 AND v."timestamp" < NOW() - INTERVAL '24 hours')
+            ) as prev_wilson
+          FROM "PageVersion" pv
+          LEFT JOIN "Vote" v ON v."pageVersionId" = pv.id
+          WHERE pv."validTo" IS NULL
+          GROUP BY pv."pageId"
+        )
+        SELECT 
+          cs."pageId",
+          cs.title,
+          cs.current_rating,
+          cs.current_wilson,
+          COALESCE(ps.prev_wilson, 0) as prev_wilson,
+          cs.current_wilson - COALESCE(ps.prev_wilson, 0) as wilson_gain,
+          COALESCE(v24.new_votes, 0) as new_votes
+        FROM current_stats cs
+        LEFT JOIN votes_24h v24 ON cs."pageId" = v24."pageId"
+        LEFT JOIN prev_stats ps ON cs."pageId" = ps."pageId"
+        WHERE v24.new_votes > 0
+        ORDER BY wilson_gain DESC
+        LIMIT 20
+      `;
+      
+      // 保存24小时趋势
+      for (let i = 0; i < trending24h.length; i++) {
+        const item = trending24h[i];
+        await this.prisma.trendingStats.upsert({
+          where: {
+            statType_period_entityId_entityType: {
+              statType: 'wilson_gain',
+              period: '24h',
+              entityId: item.pageId,
+              entityType: 'page'
+            }
+          },
+          update: {
+            name: item.title || `Page ${item.pageId}`,
+            score: new Prisma.Decimal(item.wilsonGain || 0),
+            metadata: {
+              currentRating: item.currentRating,
+              currentWilson: item.currentWilson,
+              prevWilson: item.prevWilson,
+              newVotes: item.newVotes,
+              rank: i + 1
+            },
+            calculatedAt: new Date()
+          },
+          create: {
+            statType: 'wilson_gain',
+            name: item.title || `Page ${item.pageId}`,
+            entityId: item.pageId,
+            entityType: 'page',
+            score: new Prisma.Decimal(item.wilsonGain || 0),
+            period: '24h',
+            metadata: {
+              currentRating: item.currentRating,
+              currentWilson: item.currentWilson,
+              prevWilson: item.prevWilson,
+              newVotes: item.newVotes,
+              rank: i + 1
+            },
+            calculatedAt: new Date()
+          }
+        });
+      }
+      
+      // 2. 7天热门页面（按总投票数）
+      const trending7d = await this.prisma.$queryRaw<Array<{
+        pageId: number;
+        title: string;
+        rating: number;
+        voteCount: number;
+        recentVotes: number;
+      }>>`
+        SELECT 
+          p.id as "pageId",
+          pv.title,
+          pv.rating,
+          pv."voteCount",
+          COUNT(v.id) as recent_votes
+        FROM "Page" p
+        JOIN "PageVersion" pv ON p.id = pv."pageId" AND pv."validTo" IS NULL
+        JOIN "Vote" v ON v."pageVersionId" = pv.id
+        WHERE v."timestamp" >= NOW() - INTERVAL '7 days'
+          AND pv."isDeleted" = false
+        GROUP BY p.id, pv.title, pv.rating, pv."voteCount"
+        ORDER BY recent_votes DESC
+        LIMIT 20
+      `;
+      
+      // 保存7天趋势
+      for (let i = 0; i < trending7d.length; i++) {
+        const item = trending7d[i];
+        await this.prisma.trendingStats.upsert({
+          where: {
+            statType_period_entityId_entityType: {
+              statType: 'vote_activity',
+              period: '7d',
+              entityId: item.pageId,
+              entityType: 'page'
+            }
+          },
+          update: {
+            name: item.title || `Page ${item.pageId}`,
+            score: new Prisma.Decimal(item.recentVotes || 0),
+            metadata: {
+              rating: item.rating,
+              totalVotes: item.voteCount,
+              recentVotes: item.recentVotes,
+              rank: i + 1
+            },
+            calculatedAt: new Date()
+          },
+          create: {
+            statType: 'vote_activity',
+            name: item.title || `Page ${item.pageId}`,
+            entityId: item.pageId,
+            entityType: 'page',
+            score: new Prisma.Decimal(item.recentVotes || 0),
+            period: '7d',
+            metadata: {
+              rating: item.rating,
+              totalVotes: item.voteCount,
+              recentVotes: item.recentVotes,
+              rank: i + 1
+            },
+            calculatedAt: new Date()
+          }
+        });
+      }
+      
+      // 3. 热门标签（7天内）
+      const trendingTags = await this.prisma.$queryRaw<Array<{
+        tag: string;
+        pageCount: number;
+        totalVotes: number;
+        avgRating: number;
+      }>>`
+        SELECT 
+          unnest(pv.tags) as tag,
+          COUNT(DISTINCT pv."pageId") as page_count,
+          SUM(vote_count.votes_7d) as total_votes,
+          AVG(pv.rating) as avg_rating
+        FROM "PageVersion" pv
+        JOIN (
+          SELECT 
+            v."pageVersionId",
+            COUNT(*) as votes_7d
+          FROM "Vote" v
+          WHERE v."timestamp" >= NOW() - INTERVAL '7 days'
+          GROUP BY v."pageVersionId"
+        ) vote_count ON pv.id = vote_count."pageVersionId"
+        WHERE pv."validTo" IS NULL 
+          AND pv."isDeleted" = false
+        GROUP BY tag
+        HAVING COUNT(DISTINCT pv."pageId") >= 3
+        ORDER BY total_votes DESC
+        LIMIT 10
+      `;
+      
+      // 保存标签趋势
+      for (let i = 0; i < trendingTags.length; i++) {
+        const item = trendingTags[i];
+        const tagId = this.getTagId(item.tag);
+        
+        await this.prisma.trendingStats.upsert({
+          where: {
+            statType_period_entityId_entityType: {
+              statType: 'tag_activity',
+              period: '7d',
+              entityId: tagId,
+              entityType: 'tag'
+            }
+          },
+          update: {
+            name: item.tag,
+            score: new Prisma.Decimal(item.totalVotes || 0),
+            metadata: {
+              pageCount: item.pageCount,
+              avgRating: item.avgRating,
+              rank: i + 1
+            },
+            calculatedAt: new Date()
+          },
+          create: {
+            statType: 'tag_activity',
+            name: item.tag,
+            entityId: tagId,
+            entityType: 'tag',
+            score: new Prisma.Decimal(item.totalVotes || 0),
+            period: '7d',
+            metadata: {
+              pageCount: item.pageCount,
+              avgRating: item.avgRating,
+              rank: i + 1
+            },
+            calculatedAt: new Date()
+          }
+        });
+      }
+      
+      console.log('✅ Trending statistics updated');
+    } catch (error) {
+      console.error('❌ Failed to update trending statistics:', error);
+      throw error;
     }
   }
 
@@ -1033,7 +1613,7 @@ export class IncrementalAnalyzeJob {
             u."displayName"
           FROM "Page" p
           JOIN "PageVersion" pv ON p.id = pv."pageId" AND pv."validTo" IS NULL
-          LEFT JOIN "Attribution" a ON pv.id = a."pageVerId" AND a.type = 'author'
+          LEFT JOIN "Attribution" a ON pv.id = a."pageVerId" AND a.type = 'AUTHOR'
           LEFT JOIN "User" u ON a."userId" = u.id
           WHERE pv.tags @> ARRAY[${tag}] AND NOT pv."isDeleted"
           ORDER BY pv.rating DESC
@@ -1574,7 +2154,7 @@ export class IncrementalAnalyzeJob {
       JOIN "Attribution" a ON u.id = a."userId"
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE pv."validTo" IS NULL AND NOT pv."isDeleted"
-        AND a.type = 'author'
+        AND a.type = 'AUTHOR'
       GROUP BY u.id, u."displayName"
       ORDER BY "pageCount" DESC
       LIMIT 1
@@ -1619,7 +2199,7 @@ export class IncrementalAnalyzeJob {
       JOIN "Attribution" a ON u.id = a."userId"
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE pv."validTo" IS NULL AND NOT pv."isDeleted"
-        AND a.type = 'author'
+        AND a.type = 'AUTHOR'
         AND pv.rating IS NOT NULL
       GROUP BY u.id, u."displayName"
       HAVING COUNT(DISTINCT pv."pageId") >= 3  -- 至少3个页面才有意义

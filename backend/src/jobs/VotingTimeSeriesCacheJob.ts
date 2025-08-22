@@ -1,4 +1,6 @@
+// src/jobs/VotingTimeSeriesCacheJob.ts
 import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../utils/db-connection.js';
 import { VotingTimeSeriesService } from '../services/VotingTimeSeriesService';
 
 /**
@@ -11,7 +13,7 @@ export class VotingTimeSeriesCacheJob {
   private votingService: VotingTimeSeriesService;
 
   constructor(prisma?: PrismaClient) {
-    this.prisma = prisma || new PrismaClient();
+    this.prisma = prisma || getPrismaClient();
     this.votingService = new VotingTimeSeriesService(this.prisma);
   }
 
@@ -95,11 +97,41 @@ export class VotingTimeSeriesCacheJob {
     const usersToUpdate = await this.votingService.getUsersNeedingCacheUpdate(lookbackHours);
     console.log(`👥 Found ${usersToUpdate.length} users needing attribution voting cache updates`);
 
-    if (usersToUpdate.length > 0) {
-      await this.votingService.batchUpdateUserAttributionVotingCache(usersToUpdate, batchSize);
+    // 🆕 Smart detection: Find users that have attributions but no cache yet
+    const usersNeedingInitialCache = await this.prisma.$queryRaw<Array<{ userId: number }>>`
+      SELECT DISTINCT u.id as "userId"
+      FROM "User" u
+      JOIN "Attribution" a ON u.id = a."userId"
+      JOIN "PageVersion" pv ON a."pageVerId" = pv.id
+      WHERE u."attributionVotingTimeSeriesCache" IS NULL  -- 没有缓存
+        AND a.type = 'AUTHOR'
+        AND pv."validTo" IS NULL
+        AND NOT pv."isDeleted"
+        AND EXISTS (
+          SELECT 1 FROM "Vote" v
+          WHERE v."pageVersionId" = pv.id
+          LIMIT 1
+        )  -- 确保页面有投票记录
+      ORDER BY u.id
+    `;
+
+    console.log(`🆕 Found ${usersNeedingInitialCache.length} users needing INITIAL attribution cache generation`);
+
+    // 合并需要更新的用户列表
+    const allUsersToUpdate = [
+      ...usersToUpdate,
+      ...usersNeedingInitialCache.map(u => u.userId)
+    ];
+
+    // 去重
+    const uniqueUsersToUpdate = [...new Set(allUsersToUpdate)];
+    console.log(`📊 Total unique users to process: ${uniqueUsersToUpdate.length} (${usersToUpdate.length} recent + ${usersNeedingInitialCache.length} initial)`);
+
+    if (uniqueUsersToUpdate.length > 0) {
+      await this.votingService.batchUpdateUserAttributionVotingCache(uniqueUsersToUpdate, batchSize);
     }
 
-    console.log(`✅ Incremental update completed - updated ${pagesToUpdate.length} pages and ${usersToUpdate.length} users`);
+    console.log(`✅ Incremental update completed - updated ${uniquePagesToUpdate.length} pages and ${uniqueUsersToUpdate.length} users`);
   }
 
   /**

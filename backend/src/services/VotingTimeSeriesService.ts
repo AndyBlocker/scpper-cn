@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../utils/db-connection.js';
 
 /**
  * Interface for voting time series data structure
@@ -20,7 +21,7 @@ export class VotingTimeSeriesService {
   private prisma: PrismaClient;
 
   constructor(prisma?: PrismaClient) {
-    this.prisma = prisma || new PrismaClient();
+    this.prisma = prisma || getPrismaClient();
   }
 
 

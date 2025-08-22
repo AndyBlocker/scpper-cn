@@ -17,7 +17,9 @@ export function buildAliasQuery(pages, options = {}) {
     variables[varUrl] = page.url || page.wikidotInfo?.url;
 
     // 根据实际数量和限制动态设置first参数，避免浪费
-    const revFirst = Math.min(page.revisionCount ?? 0, revisionLimit);
+    // 注意：revisionCount不包含PAGE_CREATED revision，所以实际数量要+1
+    const actualRevisionCount = (page.revisionCount ?? 0) + 1;
+    const revFirst = Math.min(actualRevisionCount, revisionLimit);
     const voteFirst = Math.min(page.voteCount ?? 0, voteLimit);
 
     // 只有在需要的时候才包含revisions和votes查询
@@ -36,7 +38,11 @@ export function buildAliasQuery(pages, options = {}) {
             }
             comment
           } 
-        } 
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }` : '';
     
     const votePart = voteFirst > 0 ? 
@@ -53,7 +59,11 @@ export function buildAliasQuery(pages, options = {}) {
               }
             }
           } 
-        } 
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }` : '';
 
     queries.push(`

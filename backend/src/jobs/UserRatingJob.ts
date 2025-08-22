@@ -1,3 +1,4 @@
+// src/jobs/UserRatingJob.ts
 import { PrismaClient } from '@prisma/client';
 
 /**
@@ -9,6 +10,44 @@ export class UserRatingSystem {
 
   constructor(prisma: PrismaClient) {
     this.prisma = prisma;
+  }
+
+  /**
+   * 确保所有用户都有UserStats记录
+   */
+  private async ensureUserStatsExist(): Promise<void> {
+    console.log('📋 确保所有用户都有UserStats记录...');
+    
+    // 插入缺失的UserStats记录
+    await this.prisma.$executeRawUnsafe(`
+      INSERT INTO "UserStats" (
+        "userId", 
+        "totalUp", "totalDown", "totalRating",
+        "scpRating", "scpPageCount",
+        "translationRating", "translationPageCount",
+        "goiRating", "goiPageCount",
+        "storyRating", "storyPageCount",
+        "wanderersRating", "wanderersPageCount",
+        "artRating", "artPageCount",
+        "pageCount", "overallRating"
+      )
+      SELECT 
+        u.id,
+        0, 0, 0,
+        0, 0,
+        0, 0,
+        0, 0,
+        0, 0,
+        0, 0,
+        0, 0,
+        0, 0
+      FROM "User" u
+      LEFT JOIN "UserStats" us ON u.id = us."userId"
+      WHERE us."userId" IS NULL
+      ON CONFLICT ("userId") DO NOTHING
+    `);
+    
+    console.log('✅ UserStats记录创建完成');
   }
 
   /**
@@ -41,24 +80,28 @@ export class UserRatingSystem {
   private async calculateUserRatings(): Promise<void> {
     console.log('📊 计算用户rating...');
     
+    // 首先确保所有有attribution的用户都有UserStats记录
+    await this.ensureUserStatsExist();
+    
     // 使用复杂SQL一次性计算所有用户的rating
     await this.prisma.$executeRawUnsafe(`
-      WITH page_attributions AS (
-        -- 获取所有有效页面的attribution信息
-        SELECT 
-          pv.id as page_version_id,
+      WITH unique_page_attributions AS (
+        -- 对每个用户的每个页面，只取一条记录（避免重复计算）
+        SELECT DISTINCT ON (a."userId", pv."pageId")
+          a."userId",
+          pv."pageId",
           pv.rating,
-          pv.tags,
-          a."userId"
-        FROM "PageVersion" pv
-        INNER JOIN "Attribution" a ON a."pageVerId" = pv.id
+          pv.tags
+        FROM "Attribution" a
+        INNER JOIN "PageVersion" pv ON a."pageVerId" = pv.id
         WHERE pv."validTo" IS NULL 
           AND pv."isDeleted" = false
           AND pv.rating IS NOT NULL
           AND a."userId" IS NOT NULL
+        ORDER BY a."userId", pv."pageId", a.id  -- 使用 attribution id 保证稳定的选择
       ),
       user_contributions AS (
-        -- 计算每个用户的贡献 (每个作者获得完整的页面评分)
+        -- 计算每个用户的贡献 (每个页面只计算一次)
         SELECT 
           "userId",
           -- Overall统计
@@ -76,18 +119,9 @@ export class UserRatingSystem {
             THEN 1 
           END) as scp_pages,
           
-          -- 翻译分类 (不包含原创和掩藏页的页面)
-          SUM(CASE 
-            WHEN NOT (tags @> ARRAY['原创']) 
-                 AND NOT (tags @> ARRAY['掩藏页'])
-            THEN rating::float
-            ELSE 0 
-          END) as translation_rating,
-          COUNT(CASE 
-            WHEN NOT (tags @> ARRAY['原创']) 
-                 AND NOT (tags @> ARRAY['掩藏页'])
-            THEN 1 
-          END) as translation_pages,
+          -- 翻译分类统计（暂时保留但不使用）
+          0 as translation_rating,
+          0 as translation_pages,
           
           -- GOI格式分类 (原创 + goi格式)
           SUM(CASE 
@@ -133,12 +167,13 @@ export class UserRatingSystem {
             THEN 1 
           END) as art_pages
           
-        FROM page_attributions
+        FROM unique_page_attributions
         GROUP BY "userId"
       )
       UPDATE "UserStats" us
       SET 
         "overallRating" = uc.overall_rating,
+        "totalRating" = uc.overall_rating::int,
         "pageCount" = uc.total_pages,
         "scpRating" = uc.scp_rating,
         "scpPageCount" = uc.scp_pages,

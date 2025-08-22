@@ -3,7 +3,7 @@
 import { Command } from 'commander';
 import { sync } from './sync.js';
 import { query } from './query.js';
-import { analyze } from '../jobs/AnalyzeJob.js';
+import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 
 const program = new Command();
 
@@ -42,9 +42,12 @@ program
   .command('analyze')
   .description('Calculate Wilson scores and controversy metrics')
   .option('--since <date>', 'Only analyze pages updated since date (YYYY-MM-DD)')
+  .option('--full', 'Force full analysis instead of incremental')
   .action(async (options) => {
-    const since = options.since ? new Date(options.since) : undefined;
-    await analyze({ since });
+    // Note: --since option is not directly supported by IncrementalAnalyzeJob
+    // but --full forces a complete analysis which is equivalent to the old behavior
+    const forceFullAnalysis = options.full || options.since;
+    await analyzeIncremental({ forceFullAnalysis });
   });
 
 program.parse();

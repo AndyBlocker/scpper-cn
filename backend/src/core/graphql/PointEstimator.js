@@ -4,13 +4,14 @@ import { MAX_FIRST } from '../../config/RateLimitConfig.js';
 
 export const RateLimitCosts = {
   wikidotPage: 1,
-  attributions: 2,
+  attributions: 10,
   alternateTitles: 1,
-  children: 1,
+  children: 10,  // Array field, potentially multiple items
+  parent: 1,     // Added parent cost
   source: 1,
   textContent: 1,
-  revisionEdge: 1,
-  voteEdge: 1,
+  revisionEdge: 5,  // Cost per edge in the revisions connection
+  voteEdge: 3,      // Cost per edge in the votes connection
 };
 
 
@@ -23,6 +24,7 @@ export class PointEstimator {
       includeAttributions = true,
       includeAlternateTitles = true,
       includeChildren = false,
+      includeParent = true,  // Always included in WikidotPageBasic
       includeSource = false,
       includeTextContent = false,
       multiplier = 1,
@@ -37,6 +39,7 @@ export class PointEstimator {
     if (includeAttributions)    cost += RateLimitCosts.attributions;
     if (includeAlternateTitles) cost += RateLimitCosts.alternateTitles;
     if (includeChildren)        cost += RateLimitCosts.children;
+    if (includeParent)          cost += RateLimitCosts.parent;
     if (includeSource)          cost += RateLimitCosts.source;
     if (includeTextContent)     cost += RateLimitCosts.textContent;
 
@@ -44,11 +47,13 @@ export class PointEstimator {
     const revTotal  = Math.max(0, pageBasic.revisionCount ?? 0);
     const voteTotal = Math.max(0, pageBasic.voteCount    ?? 0);
 
-    const revPages  = Math.ceil(revTotal  / revisionLimit);
-    const votePages = Math.ceil(voteTotal / voteLimit);
+    // 使用实际数量计算，但加上最小系数5，并且不超过limit
+    const MIN_FACTOR = 5;
+    const actualRevisions = Math.min(revTotal + MIN_FACTOR, revisionLimit);
+    const actualVotes = Math.min(voteTotal + MIN_FACTOR, voteLimit);
 
-    cost += revPages  * revisionLimit * RateLimitCosts.revisionEdge;
-    cost += votePages * voteLimit    * RateLimitCosts.voteEdge;
+    cost += actualRevisions * RateLimitCosts.revisionEdge;
+    cost += actualVotes * RateLimitCosts.voteEdge;
 
     return cost * multiplier;
   }
