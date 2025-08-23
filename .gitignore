@@ -79,5 +79,5 @@ uploads/
 # One-time scripts cache
 backend/cache/
 
-# BFF directory (removed from project)
-BFF/
+bff/docs/
+bff/tests/

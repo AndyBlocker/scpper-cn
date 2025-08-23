@@ -173,6 +173,15 @@ export class IncrementalAnalyzeJob {
    * 运行单个分析任务
    */
   private async runTask(taskName: string, forceFullAnalysis = false, options: { forceFullHistory?: boolean } = {}) {
+    // Acquire task-level advisory lock to avoid concurrent runs of the same task
+    const lockResult = await this.prisma.$queryRaw<Array<{ locked: boolean }>>`
+      SELECT pg_try_advisory_lock(hashtext(${taskName})) as locked
+    `;
+    if (!lockResult[0]?.locked) {
+      console.log(`⏭️ Task ${taskName}: another worker holds the lock, skipping...`);
+      return;
+    }
+
     try {
       // 获取变更集（受影响的 pageVersionId）
       const changeSet = await this.getChangeSet(taskName, forceFullAnalysis);
@@ -247,6 +256,11 @@ export class IncrementalAnalyzeJob {
     } catch (error) {
       console.error(`❌ Task ${taskName} failed:`, error);
       throw error;
+    } finally {
+      // Release advisory lock
+      await this.prisma.$executeRaw`
+        SELECT pg_advisory_unlock(hashtext(${taskName}))
+      `;
     }
   }
 
@@ -282,7 +296,7 @@ export class IncrementalAnalyzeJob {
       return result;
     }
 
-    // 增量查询：找出自水位线后变更的 pageVersion
+    // 增量查询：找出自水位线后变更的 pageVersion（包含等于游标时间的记录，避免并列时间戳被跳过）
     // 修复：确保正确处理 PageVersion 的更新
     const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
       WITH cursor_check AS (
@@ -293,7 +307,7 @@ export class IncrementalAnalyzeJob {
         SELECT v."pageVersionId" AS id, max(v."timestamp") AS changed_at
         FROM "Vote" v
         CROSS JOIN cursor_check c
-        WHERE v."timestamp" > c.cursor_ts
+        WHERE v."timestamp" >= c.cursor_ts
         GROUP BY v."pageVersionId"
       ),
       -- 检查修订版本变化
@@ -301,7 +315,7 @@ export class IncrementalAnalyzeJob {
         SELECT r."pageVersionId" AS id, max(r."timestamp") AS changed_at
         FROM "Revision" r
         CROSS JOIN cursor_check c
-        WHERE r."timestamp" > c.cursor_ts
+        WHERE r."timestamp" >= c.cursor_ts
         GROUP BY r."pageVersionId"
       ),
       -- 检查归属变化
@@ -309,7 +323,7 @@ export class IncrementalAnalyzeJob {
         SELECT a."pageVerId" AS id, max(a."date") AS changed_at
         FROM "Attribution" a
         CROSS JOIN cursor_check c
-        WHERE a."date" IS NOT NULL AND a."date" > c.cursor_ts
+        WHERE a."date" IS NOT NULL AND a."date" >= c.cursor_ts
         GROUP BY a."pageVerId"
       ),
       -- 检查页面版本本身的更新（重要：包括新创建的页面）
@@ -317,7 +331,7 @@ export class IncrementalAnalyzeJob {
         SELECT pv.id, pv."updatedAt" AS changed_at
         FROM "PageVersion" pv
         CROSS JOIN cursor_check c
-        WHERE pv."updatedAt" > c.cursor_ts
+        WHERE pv."updatedAt" >= c.cursor_ts
           AND pv."validTo" IS NULL
           AND pv."isDeleted" = false
       ),
@@ -327,7 +341,7 @@ export class IncrementalAnalyzeJob {
         FROM "Page" p
         JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
         CROSS JOIN cursor_check c
-        WHERE p."updatedAt" > c.cursor_ts
+        WHERE p."updatedAt" >= c.cursor_ts
           AND pv."isDeleted" = false
       )
       SELECT id, max(changed_at) AS "lastChange"
@@ -784,32 +798,46 @@ export class IncrementalAnalyzeJob {
     
     // 更新用户投票交互（基于新的投票活动）
     await this.prisma.$executeRaw`
-      WITH vote_interactions AS (
+      WITH affected_pairs AS (
+        SELECT DISTINCT 
+          v."userId" AS from_user_id,
+          a."userId" AS to_user_id
+        FROM "Vote" v
+        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+        JOIN "Attribution" a ON a."pageVerId" = pv.id AND a.type = 'AUTHOR'
+        WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
+          AND v."userId" IS NOT NULL
+          AND a."userId" IS NOT NULL
+          AND v."userId" != a."userId"
+          AND v.direction != 0
+      ),
+      all_interactions AS (
         SELECT 
-          v."userId" as from_user_id,
-          a."userId" as to_user_id,
+          v."userId" AS from_user_id,
+          a."userId" AS to_user_id,
           v.direction,
           v.timestamp
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN "Attribution" a ON a."pageVerId" = pv.id
-        WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
-          AND v."userId" IS NOT NULL 
+        JOIN "Attribution" a ON a."pageVerId" = pv.id AND a.type = 'AUTHOR'
+        WHERE v."userId" IS NOT NULL
           AND a."userId" IS NOT NULL
           AND v."userId" != a."userId"
           AND v.direction != 0
-          AND a.type = 'AUTHOR'
       ),
       interaction_stats AS (
         SELECT 
-          from_user_id,
-          to_user_id,
-          COUNT(*) FILTER (WHERE direction = 1) as upvote_count,
-          COUNT(*) FILTER (WHERE direction = -1) as downvote_count,
-          COUNT(*) as total_votes,
-          MAX(timestamp) as last_vote_at
-        FROM vote_interactions
-        GROUP BY from_user_id, to_user_id
+          ai.from_user_id,
+          ai.to_user_id,
+          COUNT(*) FILTER (WHERE ai.direction = 1) AS upvote_count,
+          COUNT(*) FILTER (WHERE ai.direction = -1) AS downvote_count,
+          COUNT(*) AS total_votes,
+          MAX(ai.timestamp) AS last_vote_at
+        FROM all_interactions ai
+        JOIN affected_pairs ap
+          ON ai.from_user_id = ap.from_user_id
+         AND ai.to_user_id = ap.to_user_id
+        GROUP BY ai.from_user_id, ai.to_user_id
       )
       INSERT INTO "UserVoteInteraction" (
         "fromUserId", "toUserId", "upvoteCount", "downvoteCount",
@@ -821,10 +849,10 @@ export class IncrementalAnalyzeJob {
       FROM interaction_stats
       WHERE total_votes > 0
       ON CONFLICT ("fromUserId", "toUserId") DO UPDATE SET
-        "upvoteCount" = "UserVoteInteraction"."upvoteCount" + EXCLUDED."upvoteCount",
-        "downvoteCount" = "UserVoteInteraction"."downvoteCount" + EXCLUDED."downvoteCount",
-        "totalVotes" = "UserVoteInteraction"."totalVotes" + EXCLUDED."totalVotes",
-        "lastVoteAt" = GREATEST("UserVoteInteraction"."lastVoteAt", EXCLUDED."lastVoteAt"),
+        "upvoteCount" = EXCLUDED."upvoteCount",
+        "downvoteCount" = EXCLUDED."downvoteCount",
+        "totalVotes" = EXCLUDED."totalVotes",
+        "lastVoteAt" = EXCLUDED."lastVoteAt",
         "updatedAt" = NOW()
     `;
     
@@ -2246,47 +2274,41 @@ export class IncrementalAnalyzeJob {
     userId?: number | null;
     metadata?: any;
   }) {
-    const existing = await this.prisma.interestingFacts.findFirst({
+    // Use atomic upsert keyed by the compound unique constraint
+    return await this.prisma.interestingFacts.upsert({
       where: {
-        category: data.category,
-        type: data.type,
-        dateContext: data.dateContext,
-        tagContext: data.tagContext,
-        rank: data.rank
-      }
-    });
-
-    if (existing) {
-      return await this.prisma.interestingFacts.update({
-        where: { id: existing.id },
-        data: {
-          title: data.title,
-          description: data.description,
-          value: data.value,
-          pageId: data.pageId,
-          userId: data.userId,
-          metadata: data.metadata,
-          calculatedAt: new Date()
-        }
-      });
-    } else {
-      return await this.prisma.interestingFacts.create({
-        data: {
+        category_type_dateContext_tagContext_rank: {
           category: data.category,
           type: data.type,
-          title: data.title,
-          description: data.description,
-          value: data.value,
-          pageId: data.pageId,
-          userId: data.userId,
-          dateContext: data.dateContext,
-          tagContext: data.tagContext,
-          rank: data.rank,
-          metadata: data.metadata,
-          calculatedAt: new Date()
+          dateContext: data.dateContext || null,
+          tagContext: data.tagContext || null,
+          rank: data.rank
         }
-      });
-    }
+      },
+      update: {
+        title: data.title,
+        description: data.description,
+        value: data.value,
+        pageId: data.pageId ?? null,
+        userId: data.userId ?? null,
+        metadata: data.metadata,
+        calculatedAt: new Date()
+      },
+      create: {
+        category: data.category,
+        type: data.type,
+        title: data.title,
+        description: data.description,
+        value: data.value,
+        pageId: data.pageId ?? null,
+        userId: data.userId ?? null,
+        dateContext: data.dateContext || null,
+        tagContext: data.tagContext || null,
+        rank: data.rank,
+        metadata: data.metadata,
+        calculatedAt: new Date()
+      }
+    });
   }
 
   /**
