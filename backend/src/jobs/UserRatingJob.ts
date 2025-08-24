@@ -120,9 +120,16 @@ export class UserRatingSystem {
             THEN 1 
           END) as scp_pages,
           
-          -- 翻译分类统计（暂时保留但不使用）
-          0 as translation_rating,
-          0 as translation_pages,
+          -- 翻译分类（定义：不包含“原创”标签的页面）
+          SUM(CASE 
+            WHEN NOT (cv.tags @> ARRAY['原创'])
+            THEN cv.rating::float
+            ELSE 0 
+          END) as translation_rating,
+          COUNT(CASE 
+            WHEN NOT (cv.tags @> ARRAY['原创']) 
+            THEN 1 
+          END) as translation_pages,
           
           -- GOI格式分类 (原创 + goi格式)
           SUM(CASE 

@@ -20,6 +20,7 @@ export class DirtyQueueStore {
     rating: number | null;
     voteCount: number | null;
     revisionCount: number | null;
+    commentCount: number | null;
     tags: string[];
     isDeleted: boolean;
     estimatedCost: number;
@@ -43,6 +44,7 @@ export class DirtyQueueStore {
         rating: meta.rating,
         voteCount: meta.voteCount,
         revisionCount: meta.revisionCount,
+        commentCount: meta.commentCount,
         tags: meta.tags,
         isDeleted: meta.isDeleted,
         estimatedCost: meta.estimatedCost,
@@ -61,6 +63,7 @@ export class DirtyQueueStore {
         rating: meta.rating,
         voteCount: meta.voteCount,
         revisionCount: meta.revisionCount,
+        commentCount: meta.commentCount,
         tags: meta.tags,
         isDeleted: meta.isDeleted,
         estimatedCost: meta.estimatedCost,
@@ -267,6 +270,9 @@ export class DirtyQueueStore {
     if (currentAttrCount !== stagingAttrCount) {
       changes.push('attribution_changed');
     }
+
+    // commentCount should NOT trigger Phase B; update happens directly in Phase A
+    // So we intentionally do NOT add a change reason for commentCount differences
     
     return changes;
   }
@@ -284,6 +290,9 @@ export class DirtyQueueStore {
     if (currentVersion.revisionCount !== staging.revisionCount) {
       changes.push('revision_count_changed');
     }
+
+    // commentCount differences should not trigger Phase B
+    // Do not push any change here for commentCount
     
     // 不再在这里判断是否需要PhaseC
     // PhaseC应该只在PhaseB无法获取所有数据时才使用

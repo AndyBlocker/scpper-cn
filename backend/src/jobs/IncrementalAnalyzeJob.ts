@@ -2274,41 +2274,50 @@ export class IncrementalAnalyzeJob {
     userId?: number | null;
     metadata?: any;
   }) {
-    // Use atomic upsert keyed by the compound unique constraint
-    return await this.prisma.interestingFacts.upsert({
+    // Find existing record with the same unique constraint values
+    const existing = await this.prisma.interestingFacts.findFirst({
       where: {
-        category_type_dateContext_tagContext_rank: {
-          category: data.category,
-          type: data.type,
-          dateContext: data.dateContext || null,
-          tagContext: data.tagContext || null,
-          rank: data.rank
-        }
-      },
-      update: {
-        title: data.title,
-        description: data.description,
-        value: data.value,
-        pageId: data.pageId ?? null,
-        userId: data.userId ?? null,
-        metadata: data.metadata,
-        calculatedAt: new Date()
-      },
-      create: {
         category: data.category,
         type: data.type,
-        title: data.title,
-        description: data.description,
-        value: data.value,
-        pageId: data.pageId ?? null,
-        userId: data.userId ?? null,
-        dateContext: data.dateContext || null,
-        tagContext: data.tagContext || null,
-        rank: data.rank,
-        metadata: data.metadata,
-        calculatedAt: new Date()
+        dateContext: data.dateContext,
+        tagContext: data.tagContext,
+        rank: data.rank
       }
     });
+
+    if (existing) {
+      // Update existing record
+      return await this.prisma.interestingFacts.update({
+        where: { id: existing.id },
+        data: {
+          title: data.title,
+          description: data.description,
+          value: data.value,
+          pageId: data.pageId ?? null,
+          userId: data.userId ?? null,
+          metadata: data.metadata,
+          calculatedAt: new Date()
+        }
+      });
+    } else {
+      // Create new record
+      return await this.prisma.interestingFacts.create({
+        data: {
+          category: data.category,
+          type: data.type,
+          title: data.title,
+          description: data.description,
+          value: data.value,
+          pageId: data.pageId ?? null,
+          userId: data.userId ?? null,
+          dateContext: data.dateContext,
+          tagContext: data.tagContext,
+          rank: data.rank,
+          metadata: data.metadata,
+          calculatedAt: new Date()
+        }
+      });
+    }
   }
 
   /**

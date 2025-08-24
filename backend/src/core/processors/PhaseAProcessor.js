@@ -79,6 +79,7 @@ export class PhaseAProcessor {
           rating: node.rating !== null && node.rating !== undefined ? parseInt(node.rating) : null,
           voteCount: node.voteCount !== null && node.voteCount !== undefined ? parseInt(node.voteCount) : null,
           revisionCount: node.revisionCount !== null && node.revisionCount !== undefined ? parseInt(node.revisionCount) : null,
+          commentCount: node.commentCount !== null && node.commentCount !== undefined ? parseInt(node.commentCount) : null,
           tags: node.tags || [],
           isDeleted: node.isDeleted || false,
           estimatedCost: estCost,
@@ -109,6 +110,26 @@ export class PhaseAProcessor {
             }
           } catch (e) {
             Logger.warn('Phase A attribution import failed', { url: node.url, err: e instanceof Error ? e.message : String(e) });
+          }
+        }
+        
+        // Best-effort commentCount update in Phase A: if page exists, write directly
+        if (node.wikidotId && node.commentCount !== null && node.commentCount !== undefined) {
+          try {
+            const wikidotId = parseInt(node.wikidotId);
+            const page = await this.store.prisma.page.findUnique({
+              where: { wikidotId },
+              include: { versions: { where: { validTo: null }, take: 1 } }
+            });
+            const currentVersion = page?.versions?.[0];
+            if (currentVersion) {
+              await this.store.prisma.pageVersion.update({
+                where: { id: currentVersion.id },
+                data: { commentCount: parseInt(node.commentCount) }
+              });
+            }
+          } catch (e) {
+            Logger.warn('Phase A commentCount update failed', { url: node.url, err: e instanceof Error ? e.message : String(e) });
           }
         }
         
@@ -199,6 +220,7 @@ export class PhaseAProcessor {
         rating: node.rating,
         voteCount: node.voteCount,
         revisionCount: node.revisionCount,
+        commentCount: node.commentCount ?? null,
         tags: node.tags,
         isDeleted: node.isDeleted || false,
         estimatedCost: estCost,
@@ -211,6 +233,26 @@ export class PhaseAProcessor {
         voteUp: null,
         voteDown: null,
       });
+      
+      // Best-effort commentCount update in Phase A test batch
+      if (node.wikidotId && node.commentCount !== null && node.commentCount !== undefined) {
+        try {
+          const wikidotId = parseInt(node.wikidotId);
+          const page = await this.store.prisma.page.findUnique({
+            where: { wikidotId },
+            include: { versions: { where: { validTo: null }, take: 1 } }
+          });
+          const currentVersion = page?.versions?.[0];
+          if (currentVersion) {
+            await this.store.prisma.pageVersion.update({
+              where: { id: currentVersion.id },
+              data: { commentCount: parseInt(node.commentCount) }
+            });
+          }
+        } catch (e) {
+          Logger.warn('Phase A commentCount update failed (test batch)', { url: node.url, err: e instanceof Error ? e.message : String(e) });
+        }
+      }
       
       totalCostInBatch += estCost;
       processedCount++;

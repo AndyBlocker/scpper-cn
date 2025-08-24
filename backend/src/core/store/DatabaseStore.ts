@@ -170,7 +170,8 @@ export class DatabaseStore {
             validTo: null,
             tags: [],
             rating: null,
-            voteCount: null
+            voteCount: null,
+            commentCount: null
           }
         });
         
@@ -255,6 +256,7 @@ export class DatabaseStore {
           rating: data.rating ?? null,
           voteCount: data.voteCount ?? null,
           revisionCount: data.revisionCount ?? null,
+          commentCount: data.commentCount ?? null,
           tags: data.tags || [],
           category: data.category ?? null,
           attributionCount: data.attributionCount || null,
@@ -300,6 +302,7 @@ export class DatabaseStore {
             rating: data.rating ?? null,
             voteCount: data.voteCount ?? null,
             revisionCount: data.revisionCount ?? null,
+            commentCount: data.commentCount ?? null,
             tags: data.tags || [],
             category: data.category ?? null,
             attributionCount: data.attributionCount || null,
@@ -321,6 +324,7 @@ export class DatabaseStore {
           rating: data.rating ?? undefined,
           voteCount: data.voteCount ?? undefined,
           revisionCount: data.revisionCount ?? undefined,
+          commentCount: data.commentCount ?? undefined,
           tags: data.tags ?? undefined,
           category: data.category ?? undefined,
           updatedAt: new Date()
