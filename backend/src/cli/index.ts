@@ -21,7 +21,11 @@ program
   .option('--phase <phase>', 'Run specific phase only (a, b, c)', 'all')
   .option('--concurrency <n>', 'Number of concurrent requests', '4')
   .option('--test', 'Test mode (first batch only)')
-  .action(async (options) => { await sync(options as any); });
+  .action(async (options) => { 
+    // Backward-compat: map --test to testMode boolean expected by sync()
+    const mapped = { ...options, testMode: Boolean((options as any).test) } as any;
+    await sync(mapped); 
+  });
 
 program
   .command('query')

@@ -138,6 +138,7 @@ export class PageVersionStore {
           rating: data.rating ?? null,
           voteCount: data.voteCount ?? null,
           revisionCount: data.revisionCount ?? null,
+          commentCount: data.commentCount ?? null,
           attributionCount: data.attributions?.length ?? null,
           tags: data.tags || [],
           category: data.category ?? null,
@@ -179,6 +180,12 @@ export class PageVersionStore {
     }
     if (forceUpdateStats || data.revisionCount !== undefined) {
       updateData.revisionCount = data.revisionCount ?? null;
+    }
+    if (data.commentCount !== undefined) {
+      updateData.commentCount = data.commentCount ?? null;
+    }
+    if (data.commentCount !== undefined) {
+      updateData.commentCount = data.commentCount ?? null;
     }
 
     await this.prisma.pageVersion.update({

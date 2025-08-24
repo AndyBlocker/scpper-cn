@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* 默认浅色模式 */
+  :root {
+    color-scheme: light;
+  }
+  
+  html {
+    @apply bg-neutral-50 text-neutral-900;
+  }
+  
+  /* 深色模式 */
+  html.dark {
+    color-scheme: dark;
+    @apply bg-neutral-950 text-neutral-100;
+  }
+  
+  /* 浅色模式显式声明 */
+  html.light {
+    color-scheme: light;
+    @apply bg-neutral-50 text-neutral-900;
+  }
+}
+
+@layer components {
+  /* 滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-neutral-700 dark:bg-neutral-600 rounded;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-neutral-600 dark:bg-neutral-500;
+  }
+  
+  /* 消除输入框默认样式 */
+  input[type="search"]::-webkit-search-decoration,
+  input[type="search"]::-webkit-search-cancel-button,
+  input[type="search"]::-webkit-search-results-button,
+  input[type="search"]::-webkit-search-results-decoration {
+    -webkit-appearance: none;
+  }
+  
+  /* 选中文本样式 */
+  ::selection {
+    @apply bg-emerald-500/30 text-emerald-900 dark:bg-emerald-400/30 dark:text-emerald-100;
+  }
+  
+  /* 过渡动画 */
+  * {
+    @apply transition-colors duration-200;
+  }
+  
+  /* 禁用图片拖拽 */
+  img {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+}
+
+

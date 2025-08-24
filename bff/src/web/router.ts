@@ -6,6 +6,7 @@ import { usersRouter } from './routes/users.js';
 import { searchRouter } from './routes/search.js';
 import { aggregateRouter } from './routes/aggregate.js';
 import { statsRouter, extendStatsRouter } from './routes/stats.js';
+import { quotesRouter } from './routes/quotes.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -15,6 +16,7 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/aggregate', aggregateRouter(pool, redis));
   router.use('/stats', statsRouter(pool, redis));
   router.use('/stats', extendStatsRouter(pool, redis));
+  router.use('/quotes', quotesRouter(pool, redis));
   return router;
 }
 

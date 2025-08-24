@@ -49,6 +49,8 @@ temp/
 .nuxt/
 .turbo/
 
+.output/
+
 # TypeScript
 *.tsbuildinfo
 
@@ -81,3 +83,7 @@ backend/cache/
 
 bff/docs/
 bff/tests/
+
+.cursor/
+deploy.sh
+nginx.conf
