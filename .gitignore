@@ -49,6 +49,8 @@ temp/
 .nuxt/
 .turbo/
 
+.data/
+
 .output/
 
 # TypeScript
