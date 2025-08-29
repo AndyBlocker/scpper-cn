@@ -40,9 +40,29 @@ async function setupPGroongaSearch() {
               WHERE "validTo" IS NULL`
       },
       {
-        name: 'User displayName 索引',
-        sql: `CREATE INDEX IF NOT EXISTS idx_user_displayname_pgroonga 
-              ON "User" USING pgroonga ("displayName")`
+        name: 'User displayName 索引(重建为 Bigram+NFKC)',
+        sql: `
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_indexes 
+              WHERE schemaname = 'public' AND indexname = 'idx_user_displayname_pgroonga'
+            ) THEN
+              BEGIN
+                EXECUTE 'DROP INDEX IF EXISTS idx_user_displayname_pgroonga';
+              EXCEPTION WHEN OTHERS THEN
+                RAISE NOTICE '索引删除失败或不存在: %', SQLERRM;
+              END;
+            END IF;
+          END$$;
+
+          CREATE INDEX IF NOT EXISTS idx_user_displayname_pgroonga
+          ON "User" USING pgroonga ("displayName")
+          WITH (
+            tokenizer = 'TokenBigramSplitSymbolAlpha',
+            normalizer = 'NormalizerNFKC100("unify_alphabet", true, "unify_symbol", true)'
+          );
+        `
       }
     ];
 

@@ -18,21 +18,39 @@
         </button>
       </div>
       <div class="flex gap-2">
-        <button 
-          @click="viewMode = 'full'" 
-          :class="['px-3 py-1 text-xs rounded', viewMode === 'full' ? 'bg-emerald-600 text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
-        >
-          全部历史
-        </button>
-        <button 
-          @click="viewMode = 'compact'" 
-          :class="['px-3 py-1 text-xs rounded', viewMode === 'compact' ? 'bg-emerald-600 text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
-        >
-          紧凑视图
-        </button>
+        <template v-if="showViewToggle">
+          <button 
+            @click="viewMode = 'full'" 
+            :class="['px-3 py-1 text-xs rounded', viewMode === 'full' ? 'bg-emerald-600 text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
+          >
+            全部历史
+          </button>
+          <button 
+            @click="viewMode = 'compact'" 
+            :class="['px-3 py-1 text-xs rounded', viewMode === 'compact' ? 'bg-emerald-600 text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
+          >
+            紧凑视图
+          </button>
+        </template>
+        <template v-else>
+          <button 
+            disabled
+            :class="['px-3 py-1 text-xs rounded bg-emerald-600 text-white opacity-80 cursor-default']"
+          >
+            全部历史
+          </button>
+        </template>
       </div>
     </div>
-    <canvas ref="chartCanvas"></canvas>
+    <div class="relative" :style="canvasStyle">
+      <div v-if="chartError" class="absolute inset-0 flex items-center justify-center text-xs text-red-600 dark:text-red-400 z-10 bg-transparent">
+        {{ chartError }}
+      </div>
+      <div v-if="props.debug && debugInfo" class="absolute top-0 left-0 m-1 p-1 rounded bg-white/80 dark:bg-black/50 text-[10px] leading-[1.15] text-neutral-700 dark:text-neutral-300 z-10 max-w-[75%] whitespace-pre-wrap pointer-events-none">
+        {{ debugInfo }}
+      </div>
+      <canvas ref="chartCanvas" class="absolute inset-0 w-full h-full"></canvas>
+    </div>
   </div>
 </template>
 
@@ -51,7 +69,8 @@ import {
   LineController,
   BarController,
   Filler,
-  type ChartOptions
+  type ChartOptions,
+  type Plugin
 } from 'chart.js'
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import 'chartjs-adapter-date-fns'
@@ -94,13 +113,19 @@ interface Props {
   compact?: boolean
   allowPageMarkers?: boolean
   targetTotal?: number
+  dense?: boolean        // 紧凑模式（更矮）
+  heightPx?: number      // 手动指定像素高度（优先级最高）
+  debug?: boolean        // 调试开关：覆盖图和控制台输出
 }
 
 const props = withDefaults(defineProps<Props>(), {
   title: '评分历史趋势',
   compact: false,
   allowPageMarkers: false,
-  targetTotal: undefined
+  targetTotal: undefined,
+  dense: false,
+  heightPx: undefined,
+  debug: false
 })
 
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
@@ -108,6 +133,44 @@ let chartInstance: ChartJS | null = null
 const viewMode = ref<'full' | 'compact'>(props.compact ? 'compact' : 'full')
 const showPages = ref(false)
 // no-op
+const chartError = ref<string | null>(null)
+const debugInfo = ref<string>('')
+
+const canvasStyle = computed(() => {
+  if (typeof props.heightPx === 'number' && !Number.isNaN(props.heightPx)) {
+    return { height: `${props.heightPx}px` }
+  }
+  return { height: props.dense ? 'clamp(280px, 38vh, 400px)' : 'clamp(300px, 42vh, 420px)' }
+})
+
+// 计算数据起始日期（包含 firstActivityDate 和数据本身的最早日期）
+const earliestDataDate = computed(() => {
+  const dates: number[] = []
+  if (props.firstActivityDate) {
+    const t = new Date(props.firstActivityDate).getTime()
+    if (!Number.isNaN(t)) dates.push(t)
+  }
+  if (props.data && props.data.length > 0) {
+    for (const item of props.data) {
+      const tt = new Date(item.date).getTime()
+      if (!Number.isNaN(tt)) dates.push(tt)
+    }
+  }
+  if (dates.length === 0) return undefined as unknown as Date | undefined
+  return new Date(Math.min(...dates))
+})
+
+// 是否展示视图切换（仅当起始日期早于 2022-05-01 时展示，并默认紧凑视图）
+const showViewToggle = computed(() => {
+  const d = earliestDataDate.value
+  if (!d) return false
+  return d < COMPACT_EARLIEST
+})
+
+// 根据起始日期默认视图模式（不影响用户手动切换，且当隐藏切换时强制为 full）
+watch(showViewToggle, (val) => {
+  viewMode.value = val ? 'compact' : 'full'
+}, { immediate: true })
 
 // 硬编码需要隐藏柱状图的日期范围
 const HIDDEN_DATE_RANGES = [
@@ -120,19 +183,218 @@ const shouldHideBar = (date: Date): boolean => {
   return HIDDEN_DATE_RANGES.some(range => date >= range.start && date <= range.end)
 }
 
+// 根据可视范围自动选择时间刻度单位
+const pickTimeUnit = (min?: Date, max?: Date) => {
+  if (!min || !max) return 'month' as const
+  const days = (max.getTime() - min.getTime()) / 86400000
+  // prefer day up to ~90 days for better readability on short ranges
+  if (days <= 90) return 'day'
+  // Cap at week for larger spans
+  return 'week'
+}
+
+// 生成累计曲线的渐变填充
+const makeAreaGradient = (chart: ChartJS, isDark: boolean) => {
+  const { ctx, chartArea } = chart as any
+  if (!chartArea) return 'transparent'
+  const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom)
+  g.addColorStop(0, isDark ? 'rgba(16,185,129,0.25)' : 'rgba(5,150,105,0.25)')
+  g.addColorStop(1, isDark ? 'rgba(16,185,129,0.03)' : 'rgba(5,150,105,0.03)')
+  return g
+}
+
+// 负值区域的淡红色填充
+const makeAreaGradientRed = (chart: ChartJS, isDark: boolean) => {
+  const { ctx, chartArea } = chart as any
+  if (!chartArea) return 'transparent'
+  const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom)
+  g.addColorStop(0, isDark ? 'rgba(239,68,68,0.25)' : 'rgba(220,38,38,0.25)')
+  g.addColorStop(1, isDark ? 'rgba(239,68,68,0.03)' : 'rgba(220,38,38,0.03)')
+  return g
+}
+
+// 按 0 轴拆分的双色填充（上方淡绿、下方淡红）
+const makeSplitGradientByZero = (chart: ChartJS, isDark: boolean) => {
+  const anyChart: any = chart
+  const { ctx, chartArea } = anyChart
+  if (!chartArea) return 'transparent'
+  const yScale = anyChart.scales?.y1
+  if (!yScale) return makeAreaGradient(chart, isDark)
+  const zeroY = yScale.getPixelForValue(0)
+  const top = chartArea.top
+  const bottom = chartArea.bottom
+  const span = bottom - top
+  if (span <= 0) return makeAreaGradient(chart, isDark)
+  let t = (zeroY - top) / span
+  if (!isFinite(t)) t = 0.5
+  t = Math.max(0, Math.min(1, t))
+
+  const g = ctx.createLinearGradient(0, top, 0, bottom)
+  const greenStrong = isDark ? 'rgba(16,185,129,0.25)' : 'rgba(5,150,105,0.25)'
+  const greenNearZero = isDark ? 'rgba(16,185,129,0.06)' : 'rgba(5,150,105,0.06)'
+  const redStrong = isDark ? 'rgba(239,68,68,0.25)' : 'rgba(220,38,38,0.25)'
+  const redLight = isDark ? 'rgba(239,68,68,0.03)' : 'rgba(220,38,38,0.03)'
+
+  if (t <= 0) {
+    // 全部在 0 之上 → 仅绿色
+    g.addColorStop(0, greenStrong)
+    g.addColorStop(1, greenNearZero)
+    return g
+  }
+  if (t >= 1) {
+    // 全部在 0 之下 → 仅红色
+    g.addColorStop(0, redStrong)
+    g.addColorStop(1, redLight)
+    return g
+  }
+  // 上半段：绿色从顶部渐变到接近 0
+  g.addColorStop(0, greenStrong)
+  g.addColorStop(t, greenNearZero)
+  // 在 0 处切换到红色（双重 stop 制造清晰分界）
+  g.addColorStop(t, redStrong)
+  // 下半段：红色向底部变浅
+  g.addColorStop(1, redLight)
+  return g
+}
+
+// 简单整数格式化
+const formatInt = (v: number) => Math.round(Number(v || 0)).toString()
+
+// 柱状数值显示（仅在可读时）
+const barValueLabelPlugin: Plugin<'bar'> = {
+  id: 'barValueLabelPlugin',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart as any
+    chart.data.datasets.forEach((ds, dsIndex) => {
+      // 仅处理柱状
+      if ((ds as any).type && (ds as any).type !== 'bar') return
+      const meta = chart.getDatasetMeta(dsIndex)
+      meta.data.forEach((elem: any, i: number) => {
+        const y = elem.y
+        const h = Math.abs(elem.base - y)
+        if (h < 18) return
+        const raw = (ds.data as any)[i]
+        if (!raw || raw.y == null) return
+        const value = formatInt(raw.y)
+        ctx.save()
+        ctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = raw.y >= 0 ? 'bottom' : 'top'
+        ctx.fillStyle = '#111827'
+        const dy = raw.y >= 0 ? -3 : 3
+        ctx.fillText(value, elem.x, y + dy)
+        ctx.restore()
+      })
+    })
+  }
+}
+
+// （移除）悬停竖向参考线
+
+// 不再显示右上角“累计：xxxx”徽章（移除插件）
+
+type Ext = { pos: number; neg: number } // neg 是“负侧幅度”的绝对值
+
+const getExt = (arr: number[]): Ext => {
+  let pos = 0, neg = 0
+  for (const v of arr) {
+    if (v > 0) pos = Math.max(pos, v)
+    else if (v < 0) neg = Math.max(neg, -v)
+  }
+  return { pos, neg }
+}
+
+// 在给定比值 r=pos/neg 条件下，覆盖数据所需的最小范围（min,max）
+const alignedFor = (e: Ext, r: number) => {
+  if (e.pos === 0 && e.neg === 0) return { min: -1, max: 1 }
+  // 方案A：以正侧为主
+  const posA = Math.max(e.pos, r * e.neg)
+  const negA = posA / r
+  const spanA = posA + negA
+  // 方案B：以负侧为主
+  const negB = Math.max(e.neg, e.pos / r)
+  const posB = r * negB
+  const spanB = posB + negB
+  const useA = spanA <= spanB
+  const pos = useA ? posA : posB
+  const neg = useA ? negA : negB
+  return { min: -neg, max: pos }
+}
+
+const linkZeroRanges = (
+  barVals: number[],
+  lineVals: number[],
+  opts = { rMax: 10, padBar: 0.12, padLine: 0.08 }
+) => {
+  const extB = getExt(barVals)
+  const extL = getExt(lineVals)
+  const natSpanB = (extB.pos + extB.neg) || 1
+  const natSpanL = (extL.pos + extL.neg) || 1
+
+  const safeRatio = (e: Ext) => {
+    if (e.neg === 0 && e.pos === 0) return 1
+    if (e.neg === 0) return 1e6
+    if (e.pos === 0) return 1e-6
+    return e.pos / e.neg
+  }
+
+  const rBar = safeRatio(extB)
+  const rLine = safeRatio(extL)
+  const gm = Math.sqrt(rBar * rLine)
+  const clamp = (r: number) => Math.min(opts.rMax, Math.max(1 / opts.rMax, r))
+
+  // 一组候选比值（可按需增减）
+  const candidates = Array.from(new Set([gm, rBar, rLine, 1, 2, 0.5, 3, 1 / 3].map(clamp)))
+
+  let bestR = candidates[0], bestScore = Number.POSITIVE_INFINITY
+  for (const r of candidates) {
+    const br = alignedFor(extB, r)
+    const lr = alignedFor(extL, r)
+    const spanB = br.max - br.min
+    const spanL = lr.max - lr.min
+    // “扩张成本” = 对两轴各自天然跨度的放大倍数之和
+    const expansion = (spanB / natSpanB) + (spanL / natSpanL)
+    // 负侧过度膨胀惩罚（避免把负半边拉成空白）
+    const NEG_CAP = 4
+    const negPenalty =
+      ((-br.min) / Math.max(extB.neg || 1, 1) > NEG_CAP ? 0.7 : 0) +
+      ((-lr.min) / Math.max(extL.neg || 1, 1) > NEG_CAP ? 0.7 : 0)
+    const score = expansion + negPenalty
+
+    if (score < bestScore) { bestScore = score; bestR = r }
+  }
+
+  // 用最优 r 得到最终范围，并加一点 padding
+  const br = alignedFor(extB, bestR)
+  const lr = alignedFor(extL, bestR)
+  const pad = (range: { min: number; max: number }, p: number) => {
+    const span = range.max - range.min
+    return { min: range.min - span * p, max: range.max + span * p }
+  }
+  const b = pad(br, opts.padBar)
+  const l = pad(lr, opts.padLine)
+
+  return { barMin: b.min, barMax: b.max, lineMin: l.min, lineMax: l.max }
+}
+
 const createChart = () => {
+  chartError.value = null
+  debugInfo.value = ''
   if (!chartCanvas.value || !props.data || props.data.length === 0) return
   
   // 销毁旧图表实例
   if (chartInstance) {
     chartInstance.destroy()
+    chartInstance = null
   }
 
   const isDark = document.documentElement.classList.contains('dark')
   
   // 准备数据 - 使用实际日期作为x轴
   let chartData = props.data.map(item => {
-    const date = new Date(item.date)
+    const rawDate = new Date(item.date)
+    // Normalize to UTC midnight to avoid DST/timezone drift and ensure exact alignment per day
+    const date = new Date(Date.UTC(rawDate.getUTCFullYear(), rawDate.getUTCMonth(), rawDate.getUTCDate()))
     const hideBar = shouldHideBar(date)
     return {
       x: date,
@@ -143,8 +405,22 @@ const createChart = () => {
       originalDownvotes: item.downvotes,
       hideBar: hideBar,
       pages: item.pages || []
-    }
+    } as any
   })
+  // 过滤无效数据点（无效日期或非有限数值）
+  const rawCount = chartData.length
+  chartData = chartData.filter((d: any) => {
+    const t = (d.x instanceof Date) ? d.x.getTime() : NaN
+    return Number.isFinite(t) && Number.isFinite(d.upvotes) && Number.isFinite(d.downvotes) && Number.isFinite(d.cumulative)
+  })
+  const filteredCount = chartData.length
+  if (!chartData || chartData.length === 0) {
+    chartError.value = '暂无可绘制数据'
+    if (props.debug) {
+      console.warn('[RatingHistoryChart] no drawable data', { rawCount, filteredCount, data: props.data?.slice?.(0, 5) })
+    }
+    return
+  }
   
   // 首个真实投票出现的时间索引（用于全部历史模式下的连接线与标记投影）
   const firstVoteIndex = chartData.findIndex(d => Number((d as any).originalUpvotes) > 0 || Number((d as any).originalDownvotes) > 0)
@@ -175,11 +451,9 @@ const createChart = () => {
     firstCumulativeRaw = Number((baseList[0] as any).cumulative) || 0
     const lastDataDate = new Date(baseList[baseList.length - 1].x)
     
-    // 向前扩展3个月，向后扩展1个月
+    // 紧凑模式：不做额外延伸，按数据边界渲染
     minDate = new Date(firstDataDate)
-    minDate.setMonth(minDate.getMonth() - 3)
     maxDate = new Date(lastDataDate)
-    maxDate.setMonth(maxDate.getMonth() + 1)
     
     // 紧凑视图不显示灰色虚线
     connectionStartDate = undefined
@@ -203,76 +477,39 @@ const createChart = () => {
   // 紧凑模式下，仅使用范围内的数据进行绘制与轴范围计算
   const isInRange = (d: any) => !minDate || !maxDate ? true : (d.x >= minDate && d.x <= maxDate)
   const displayData = viewMode.value === 'compact' ? chartData.filter(isInRange) : chartData
+  // 用可见范围（或数据本身范围）选择时间单位，短到天，长到年
+  let visibleMin: Date | undefined = minDate ?? (displayData.length > 0 ? new Date(Math.min(...displayData.map(d => (d.x as Date).getTime()))) : undefined)
+  let visibleMax: Date | undefined = maxDate ?? (displayData.length > 0 ? new Date(Math.max(...displayData.map(d => (d.x as Date).getTime()))) : undefined)
+  // 如果只有单个点，扩展时间范围，避免时间轴 min==max 导致渲染/刻度异常
+  let singlePointExpanded = false
+  if (visibleMin && visibleMax && visibleMin.getTime() === visibleMax.getTime()) {
+    const center = visibleMin.getTime()
+    const DAY = 86400000
+    visibleMin = new Date(center - DAY)
+    visibleMax = new Date(center + DAY)
+    singlePointExpanded = true
+  }
+  const timeUnit = pickTimeUnit(visibleMin, visibleMax)
   // 若提供目标总分，按差值平移累计曲线，使末端累计与目标一致
   const lastCumulative = displayData.length > 0 ? Number(displayData[displayData.length - 1].cumulative) : 0
   const offset = typeof props.targetTotal === 'number' && !Number.isNaN(props.targetTotal)
     ? Number(props.targetTotal) - lastCumulative
     : 0
+  // 为 X 轴增加极小左右留白
+  const spanMs = (visibleMax && visibleMin) ? (visibleMax.getTime() - visibleMin.getTime()) : 0
+  const padMs = spanMs > 0 ? Math.max(1, Math.round(spanMs * 0.01)) : 0
+  const paddedMin = visibleMin ? (visibleMin.getTime() - padMs) : undefined
+  const paddedMax = visibleMax ? (visibleMax.getTime() + padMs) : undefined
 
   // 分别计算bar和line的范围
-  const barValues = displayData.flatMap(d => [d.upvotes, d.downvotes])
+  const barValues = displayData
+    .filter(d => !d.hideBar)
+    .flatMap(d => [d.upvotes, d.downvotes])
   const lineValues = displayData.map(d => d.cumulative + offset)
   
-  const maxBar = Math.max(...barValues, 0)
-  const minBar = Math.min(...barValues, 0)
-  const maxLine = Math.max(...lineValues, 0)
-  const minLine = Math.min(...lineValues, 0)
-  
-  // 确保0点对齐的计算：两个轴的正负比例必须相同
-  // 计算每个轴的正负范围
-  const barPositiveRange = Math.abs(maxBar)
-  const barNegativeRange = Math.abs(minBar)
-  const linePositiveRange = Math.abs(maxLine)
-  const lineNegativeRange = Math.abs(minLine)
-  
-  // 计算正负比例
-  const barRatio = barNegativeRange > 0 ? barPositiveRange / barNegativeRange : 1
-  const lineRatio = lineNegativeRange > 0 ? linePositiveRange / lineNegativeRange : 1
-  
-  // 使用最大的比例来确保两个轴都能显示完整数据
-  const maxRatio = Math.max(barRatio, lineRatio)
-  
-  // 根据比例调整范围，确保0点对齐
-  let adjustedBarMin = 0, adjustedBarMax = 0
-  let adjustedLineMin = 0, adjustedLineMax = 0
-  
-  if (barNegativeRange > 0 || barPositiveRange > 0) {
-    if (barNegativeRange === 0) {
-      adjustedBarMax = barPositiveRange * 1.1
-      adjustedBarMin = -adjustedBarMax / maxRatio
-    } else if (barPositiveRange === 0) {
-      adjustedBarMin = minBar * 1.1
-      adjustedBarMax = -adjustedBarMin * maxRatio
-    } else {
-      // 有正有负，根据maxRatio调整
-      if (barRatio >= maxRatio) {
-        adjustedBarMax = maxBar * 1.1
-        adjustedBarMin = -adjustedBarMax / barRatio
-      } else {
-        adjustedBarMin = minBar * 1.1
-        adjustedBarMax = -adjustedBarMin * maxRatio
-      }
-    }
-  }
-  
-  if (lineNegativeRange > 0 || linePositiveRange > 0) {
-    if (lineNegativeRange === 0) {
-      adjustedLineMax = linePositiveRange * 1.1
-      adjustedLineMin = -adjustedLineMax / maxRatio
-    } else if (linePositiveRange === 0) {
-      adjustedLineMin = minLine * 1.1
-      adjustedLineMax = -adjustedLineMin * maxRatio
-    } else {
-      // 有正有负，根据maxRatio调整
-      if (lineRatio >= maxRatio) {
-        adjustedLineMax = maxLine * 1.1
-        adjustedLineMin = -adjustedLineMax / lineRatio
-      } else {
-        adjustedLineMin = minLine * 1.1
-        adjustedLineMax = -adjustedLineMin * maxRatio
-      }
-    }
-  }
+  // 使用“带上限的零对齐”算法来计算两轴范围
+  const { barMin: adjustedBarMin, barMax: adjustedBarMax, lineMin: adjustedLineMin, lineMax: adjustedLineMax } =
+    linkZeroRanges(barValues, lineValues, { rMax: 10, padBar: 0.12, padLine: 0.08 })
   
   const datasets: any[] = [
     {
@@ -283,6 +520,11 @@ const createChart = () => {
       borderWidth: 1,
       barPercentage: 0.8,
       categoryPercentage: 0.9,
+      borderSkipped: false,
+      maxBarThickness: Math.max(2, Math.floor(28 - Math.min(20, displayData.length / 20))),
+      // Overlay bars for up/down at the same X center instead of grouping side-by-side
+      grouped: false,
+      order: 1
     },
     {
       label: '反对票',
@@ -292,10 +534,21 @@ const createChart = () => {
       borderWidth: 1,
       barPercentage: 0.8,
       categoryPercentage: 0.9,
+      borderSkipped: false,
+      maxBarThickness: Math.max(2, Math.floor(28 - Math.min(20, displayData.length / 20))),
+      grouped: false,
+      order: 1
     },
     {
       label: '累计评分',
       type: 'line' as const,
+      // 使用内置 above/below 相对 origin 的填充，确保与 0 轴像素级对齐
+      fill: {
+        target: 'origin',
+        above: (ctx: any) => makeAreaGradient(ctx.chart, isDark),
+        below: (ctx: any) => makeAreaGradientRed(ctx.chart, isDark)
+      } as any,
+      backgroundColor: 'transparent',
       data: displayData.map(d => {
         // 在全部历史模式下，在首个真实投票之前隐藏绿色累计线，以避免与灰色虚线重复
         if (firstDataDateGlobal && (d.x as Date) < firstDataDateGlobal) {
@@ -304,12 +557,21 @@ const createChart = () => {
         return { x: d.x, y: d.cumulative + offset }
       }),
       borderColor: isDark ? '#10b981' : '#059669',
-      backgroundColor: 'transparent',
+      segment: {
+        borderColor: (ctx: any) => {
+          const dy = (ctx.p1?.parsed?.y ?? 0) - (ctx.p0?.parsed?.y ?? 0)
+          return dy >= 0
+            ? (isDark ? '#10b981' : '#059669')
+            : (isDark ? '#ef4444' : '#dc2626')
+        }
+      },
       tension: 0.2,
-      pointRadius: showPages.value ? 0 : 2,
+      // 页面标记模式下，隐藏累计评分的点，避免非标记日期出现圆点浮现
+      pointRadius: (ctx: any) => displayData.length > 140 ? 0 : (showPages.value ? 0 : 2),
       pointBackgroundColor: isDark ? '#10b981' : '#059669',
       pointHoverRadius: 4,
       yAxisID: 'y1',
+      order: 2
     }
   ]
   
@@ -338,6 +600,7 @@ const createChart = () => {
       pointRadius: 0,
       yAxisID: 'y1',
       showLine: true,
+      order: 2,
     })
   }
 
@@ -369,11 +632,13 @@ const createChart = () => {
         backgroundColor: isDark ? '#3b82f6' : '#2563eb',
         pointRadius: 4,
         pointHoverRadius: 6,
+        pointHitRadius: 10,
         pointBorderColor: isDark ? '#ffffff' : '#ffffff',
         pointBorderWidth: 2,
         pointStyle: 'circle',
         showLine: false,
         yAxisID: 'y1',
+        order: 3,
       })
     }
   }
@@ -383,16 +648,22 @@ const createChart = () => {
   const options: ChartOptions<'bar'> = {
     responsive: true,
     maintainAspectRatio: false,
-    interaction: showPages.value ? { mode: 'nearest' as const, intersect: true } : { mode: 'index' as const, intersect: false },
+    resizeDelay: 120,
+    layout: { padding: { top: 6, right: 8, bottom: 2, left: 6 } },
+    // 页面标记模式下仅在标记点上触发 tooltip，其余情况使用 index 联动
+    interaction: (showPages.value
+      ? { mode: 'nearest' as const, intersect: true, axis: 'x' as const }
+      : { mode: 'index' as const, intersect: false, axis: 'x' as const }
+    ) as any,
+    animation: { duration: 260, easing: 'easeOutCubic' },
     plugins: {
       legend: {
         display: true,
         position: 'top' as const,
         labels: {
           color: isDark ? '#d1d5db' : '#374151',
-          font: {
-            size: 12
-          },
+          font: { size: 11 },
+          boxWidth: 10,
           filter: function(item) {
             // 隐藏"起始连接"和空标签（页面标记）
             return Boolean(item.text) && item.text !== '起始连接'
@@ -405,72 +676,56 @@ const createChart = () => {
         bodyColor: isDark ? '#d1d5db' : '#4b5563',
         borderColor: isDark ? '#374151' : '#e5e7eb',
         borderWidth: 1,
+        bodyFont: { size: 11 },
+        titleFont: { size: 12 },
         displayColors: false,
+        // 仅隐藏“起始连接”。当显示页面标记时：
+        // - tooltip 仅在页面标记点触发（保留空 label 的点）
+        // - 屏蔽所有分数数据（支持票/反对票/累计）
         filter: function(item) {
-          // 当开启页面标记时，仅在页面标记点显示tooltip
-          if (showPages.value) {
-            const idx = (item as any).datasetIndex
-            if (typeof idx === 'number') {
-              const ds: any = (item.chart as any).data.datasets[idx]
-              const isMarker = ds && ds.label === '' && ds.showLine === false && ds.pointRadius === 4
-              return Boolean(isMarker)
-            }
-            return false
-          }
+          const dsLabel = (item as any).dataset?.label ?? (item as any).chart?.data?.datasets?.[(item as any).datasetIndex]?.label
+          if (dsLabel === '起始连接') return false
+          if (showPages.value) return dsLabel === ''
           return true
         },
         callbacks: {
           title: function(context) {
             if (!context || context.length === 0) return ''
             const item: any = context[0]
-            const xVal = (item.parsed && item.parsed.x) ? item.parsed.x : (item.raw && item.raw.x)
+            const raw = item.raw || {}
+            const xVal = (raw.x != null) ? raw.x : (item.parsed && item.parsed.x)
             if (!xVal) return ''
             const date = new Date(xVal)
-            return date.toLocaleDateString('zh-CN', { 
-              year: 'numeric', 
-              month: 'short', 
-              day: 'numeric' 
-            })
+            return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
           },
           label: function(context) {
-            let label = context.dataset.label || ''
-            if (label === '起始连接' || label === '') return ''
-            
+            if (showPages.value) return ''
+            const dsLabel = (context as any).dataset?.label ?? (context as any).chart?.data?.datasets?.[(context as any).datasetIndex]?.label ?? ''
+            if (!dsLabel || dsLabel === '起始连接') return ''
+            let label = dsLabel + ': '
             const idx = context.dataIndex
             const dataPoint = displayData[idx]
-            
-            if (label) {
-              label += ': '
-            }
-            
             if (context.parsed && context.parsed.y !== null) {
-              if (label.includes('支持票')) {
-                label += dataPoint.originalUpvotes
-              } else if (label.includes('反对票')) {
-                label += dataPoint.originalDownvotes
+              if (dsLabel.includes('支持票')) {
+                label += dataPoint?.originalUpvotes ?? 0
+              } else if (dsLabel.includes('反对票')) {
+                label += dataPoint?.originalDownvotes ?? 0
               } else {
-                label += context.parsed.y.toFixed(0)
+                label += Math.round(context.parsed.y).toString()
               }
             }
-            
             return label
           },
           beforeBody: function(context) {
             if (!showPages.value) return
-            const item = context && context[0]
+            const item: any = context && context[0]
             if (!item) return
-            // 页面标记数据集识别：空label+圆点+不连线
-            const dsIdx: any = (item as any).datasetIndex
-            if (typeof dsIdx !== 'number') return
-            const ds: any = (item.chart as any).data.datasets[dsIdx]
-            const isMarker = ds && ds.label === '' && ds.showLine === false && ds.pointRadius === 4
-            if (!isMarker) return
-            const raw: any = (item.raw as any)
-            const pages = raw && raw.pages
-            if (pages && pages.length > 0) {
+            const raw = item.raw || {}
+            const pages = Array.isArray(raw.pages) ? raw.pages : []
+            if (pages.length > 0) {
               return pages.map((p: any) => `• ${p.title || 'Untitled'}`)
             }
-            return
+            return ['（无页面标记）']
           }
         }
       }
@@ -479,28 +734,36 @@ const createChart = () => {
       x: {
         type: 'time' as const,
         time: {
-          unit: 'month',
-          displayFormats: {
-            month: 'yy年M月'
-          },
+          unit: timeUnit,
+          round: 'day' as const,
+          displayFormats: { day: 'M月d日', week: 'yy年M月', month: 'yy年M月', year: 'yyyy年' },
           tooltipFormat: 'yyyy年MM月dd日'
         },
+        offset: false,
+        bounds: viewMode.value === 'compact' ? 'data' : 'ticks',
+        // 紧凑模式用数据边界，全部历史用刻度边界以减少拥挤
         adapters: {
           date: {
             locale: zhCN
           }
         },
-        min: minDate?.getTime(),
-        max: maxDate?.getTime(),
+        min: paddedMin,
+        max: paddedMax,
         grid: {
-          color: isDark ? '#374151' : '#e5e7eb',
+          color: (ctx: any) => {
+            const c = isDark ? '#374151' : '#e5e7eb'
+            return c
+          },
         },
         ticks: {
+          // Ensure exact daily alignment (UTC) and centered bars at day ticks
+          source: 'data' as any,
           color: isDark ? '#9ca3af' : '#6b7280',
           maxRotation: 45,
           minRotation: 0,
           autoSkip: true,
-          maxTicksLimit: 20
+          maxTicksLimit: 14,
+          font: { size: 10 }
         }
       },
       y: {
@@ -516,18 +779,23 @@ const createChart = () => {
         min: adjustedBarMin,
         max: adjustedBarMax,
         grid: {
-          color: isDark ? '#374151' : '#e5e7eb',
+          color: (ctx: any) => {
+            const c = isDark ? '#374151' : '#e5e7eb'
+            return ctx.tick.value === 0 ? (isDark ? '#9ca3af' : '#9ca3af') : c
+          },
+          lineWidth: (ctx: any) => ctx.tick.value === 0 ? 2 : 1,
         },
         ticks: {
           color: isDark ? '#9ca3af' : '#6b7280',
-          stepSize: 1,  // 强制步长为1，确保只显示整数
+          stepSize: (adjustedBarMax - adjustedBarMin) <= 20 ? 1 : undefined,
           callback: function(value) {
             // 只显示整数刻度
             if (Number.isInteger(value)) {
               return Math.abs(Number(value)).toString()
             }
             return  // 跳过非整数，返回undefined
-          }
+          },
+          font: { size: 10 }
         }
       },
       y1: {
@@ -544,29 +812,70 @@ const createChart = () => {
         max: adjustedLineMax,
         grid: {
           drawOnChartArea: false,
+          color: (ctx: any) => {
+            const c = isDark ? '#374151' : '#e5e7eb'
+            return ctx.tick.value === 0 ? (isDark ? '#9ca3af' : '#9ca3af') : c
+          },
+          lineWidth: (ctx: any) => ctx.tick.value === 0 ? 2 : 1,
         },
         ticks: {
           color: isDark ? '#9ca3af' : '#6b7280',
-          stepSize: 1,  // 强制步长为1，确保只显示整数
+          stepSize: (adjustedLineMax - adjustedLineMin) <= 20 ? 1 : undefined,
           callback: function(value) {
             // 只显示整数刻度
             if (Number.isInteger(value)) {
               return value.toString()
             }
             return  // 跳过非整数，返回undefined
-          }
+          },
+          font: { size: 10 }
         }
       }
     }
   }
 
   const ctx = chartCanvas.value.getContext('2d')
-  if (ctx) {
-    chartInstance = new ChartJS(ctx, {
-      type: 'bar',
-      data: chartConfig,
-      options: options as any
-    })
+  try {
+    if (ctx) {
+      chartInstance = new ChartJS(ctx, {
+        type: 'bar',
+        data: chartConfig,
+        options: options as any
+      })
+    }
+    // 调试输出：覆盖和控制台
+    if (props.debug) {
+      const toIso = (d?: Date) => d ? new Date(d).toISOString() : 'n/a'
+      debugInfo.value = [
+        `mode=${viewMode.value} showToggle=${showViewToggle.value}`,
+        `raw=${rawCount} filtered=${filteredCount} display=${displayData.length}`,
+        `firstVoteIndex=${firstVoteIndex} firstActivity=${props.firstActivityDate || 'n/a'}`,
+        `minDate=${toIso(minDate)} maxDate=${toIso(maxDate)}`,
+        `visibleMin=${toIso(visibleMin)} visibleMax=${toIso(visibleMax)} unit=${timeUnit}`,
+        `singlePointExpanded=${singlePointExpanded}`,
+        `bar[min,max]=[${adjustedBarMin.toFixed(2)},${adjustedBarMax.toFixed(2)}]`,
+        `line[min,max]=[${adjustedLineMin.toFixed(2)},${adjustedLineMax.toFixed(2)}]`,
+        `offset=${offset} lastCum=${lastCumulative}`,
+      ].join('\n')
+      console.groupCollapsed('[RatingHistoryChart] debug')
+      console.log('mode', viewMode.value, 'showToggle', showViewToggle.value)
+      console.log('counts', { rawCount, filteredCount, display: displayData.length })
+      console.log('firstVoteIndex', firstVoteIndex, 'firstActivityDate', props.firstActivityDate)
+      console.log('range', { minDate: minDate && toIso(minDate), maxDate: maxDate && toIso(maxDate), visibleMin: visibleMin && toIso(visibleMin), visibleMax: visibleMax && toIso(visibleMax), timeUnit, singlePointExpanded })
+      console.log('scales', { adjustedBarMin, adjustedBarMax, adjustedLineMin, adjustedLineMax })
+      console.log('offset/lastCum', { offset, lastCumulative })
+      console.log('sample displayData (first 5)', displayData.slice(0, 5).map((d:any) => ({ x: toIso(d.x), up: d.upvotes, down: d.downvotes, cum: d.cumulative, hideBar: d.hideBar })))
+      console.groupEnd()
+    }
+  } catch (e: any) {
+    if (chartInstance) {
+      chartInstance.destroy()
+      chartInstance = null
+    }
+    chartError.value = '图表渲染失败'
+    if (props.debug) {
+      console.error('[RatingHistoryChart] render error', e)
+    }
   }
 }
 
@@ -594,6 +903,7 @@ let themeObserver: MutationObserver | null = null
 onMounted(() => {
   createChart()
   themeObserver = observeTheme()
+  // 交给 Chart.js 自身的 responsive 处理尺寸变化，不再额外绑定 ResizeObserver 以避免递归触发
 })
 
 onUnmounted(() => {
@@ -607,7 +917,4 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-canvas {
-  max-height: 400px;
-}
 </style>

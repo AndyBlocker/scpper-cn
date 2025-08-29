@@ -5,20 +5,86 @@ import type { RedisClientType } from 'redis';
 export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
 
-  // GET /users/by-rank
+  // GET /users/by-rank?category=overall|scp|story|goi|translation|wanderers|art
   router.get('/by-rank', async (req, res, next) => {
     try {
-      const { limit = '20', offset = '0' } = req.query as Record<string, string>;
-      const sql = `
-        SELECT u.id, u."displayName", us."overallRank" AS rank, us."overallRating"
+      const { limit = '20', offset = '0', category = 'overall', sortBy = 'rank', sortDir } = req.query as Record<string, string>;
+      const categoryMap: Record<string, { rank: string; rating: string }> = {
+        overall: { rank: 'overallRank', rating: 'overallRating' },
+        scp: { rank: 'scpRank', rating: 'scpRating' },
+        story: { rank: 'storyRank', rating: 'storyRating' },
+        goi: { rank: 'goiRank', rating: 'goiRating' },
+        translation: { rank: 'translationRank', rating: 'translationRating' },
+        wanderers: { rank: 'wanderersRank', rating: 'wanderersRating' },
+        art: { rank: 'artRank', rating: 'artRating' },
+      };
+      const fields = categoryMap[category] || categoryMap.overall;
+      const countField = fields.rank === 'overallRank'
+        ? 'pageCount'
+        : fields.rank === 'scpRank' ? 'scpPageCount'
+        : fields.rank === 'storyRank' ? 'storyPageCount'
+        : fields.rank === 'goiRank' ? 'goiPageCount'
+        : fields.rank === 'translationRank' ? 'translationPageCount'
+        : fields.rank === 'wanderersRank' ? 'wanderersPageCount'
+        : fields.rank === 'artRank' ? 'artPageCount'
+        : 'pageCount';
+
+      // Determine ORDER BY clause safely via whitelist
+      const sort = (sortBy || 'rank').toLowerCase();
+      const dir = (sortDir && sortDir.toLowerCase() === 'desc') ? 'DESC' : (sort === 'rank' ? 'ASC' : 'DESC');
+      const orderMapping: Record<string, string> = {
+        rank: 'rank',
+        rating: 'rating',
+        count: '"catCount"',
+        mean: '"catMean"',
+        up: '"totalUp"',
+        down: '"totalDown"',
+        name: 'u."displayName"'
+      };
+      const orderExpr = orderMapping[sort] || 'rank';
+
+      const listSql = `
+        SELECT 
+          u.id, 
+          u."displayName", 
+          u."wikidotId", 
+          us."${fields.rank}" AS rank, 
+          us."${fields.rating}" AS rating,
+          us."pageCount" AS "pageCount",
+          us."totalRating" AS "totalRating",
+          CASE 
+            WHEN COALESCE(us."pageCount", 0) > 0 THEN (COALESCE(us."totalRating", 0))::float / NULLIF(us."pageCount", 0)::float
+            ELSE 0::float
+          END AS "meanRating",
+          us."totalUp" AS "totalUp",
+          us."totalDown" AS "totalDown",
+          us."favTag" AS "favTag",
+          us."scpPageCount" AS "scpPageCount",
+          us."storyPageCount" AS "storyPageCount",
+          us."goiPageCount" AS "goiPageCount",
+          us."translationPageCount" AS "translationPageCount",
+          us."wanderersPageCount" AS "wanderersPageCount",
+          us."artPageCount" AS "artPageCount",
+          us."ratingUpdatedAt" AS "ratingUpdatedAt",
+          us."${countField}" AS "catCount",
+          CASE WHEN COALESCE(us."${countField}", 0) > 0 THEN (COALESCE(us."${fields.rating}", 0))::float / NULLIF(us."${countField}", 0)::float ELSE 0::float END AS "catMean"
         FROM "User" u
         JOIN "UserStats" us ON us."userId" = u.id
-        WHERE us."overallRank" IS NOT NULL
-        ORDER BY us."overallRank" ASC
+        WHERE us."${fields.rank}" IS NOT NULL
+        ORDER BY ${orderExpr} ${dir}, us."${fields.rank}" ASC
         LIMIT $1::int OFFSET $2::int
       `;
-      const { rows } = await pool.query(sql, [limit, offset]);
-      res.json(rows);
+      const countSql = `
+        SELECT COUNT(*)::int AS total
+        FROM "UserStats" us
+        WHERE us."${fields.rank}" IS NOT NULL
+      `;
+      const [{ rows: list }, { rows: countRows }] = await Promise.all([
+        pool.query(listSql, [limit, offset]),
+        pool.query(countSql)
+      ]);
+      const total = (countRows[0]?.total as number) || 0;
+      res.json({ total, items: list });
     } catch (err) {
       next(err);
     }
@@ -48,7 +114,127 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
       `;
       const { rows } = await pool.query(sql, [wikidotIdInt]);
       if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-      res.json(rows[0]);
+
+      // Enrich with last activity details (latest of vote or revision)
+      const lastActivitySql = `
+        WITH last_vote AS (
+          SELECT 
+            v.timestamp,
+            'VOTE'::text AS type,
+            pv."wikidotId" AS "pageWikidotId",
+            pv.title AS "pageTitle",
+            v.direction AS direction,
+            NULL::text AS "revisionType",
+            NULL::text AS comment
+          FROM "Vote" v
+          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+          JOIN "User" u ON v."userId" = u.id
+          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+          ORDER BY v.timestamp DESC
+          LIMIT 1
+        ),
+        last_rev AS (
+          SELECT 
+            r.timestamp,
+            'REVISION'::text AS type,
+            pv."wikidotId" AS "pageWikidotId",
+            pv.title AS "pageTitle",
+            NULL::int AS direction,
+            r.type::text AS "revisionType",
+            r.comment::text AS comment
+          FROM "Revision" r
+          JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+          JOIN "User" u ON r."userId" = u.id
+          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+          ORDER BY r.timestamp DESC
+          LIMIT 1
+        )
+        SELECT * FROM (
+          SELECT * FROM last_vote
+          UNION ALL
+          SELECT * FROM last_rev
+        ) t
+        ORDER BY timestamp DESC
+        LIMIT 1
+      `;
+
+      // Enrich with first activity details (earliest of vote or revision)
+      const firstActivitySql = `
+        WITH first_vote AS (
+          SELECT 
+            v.timestamp,
+            'VOTE'::text AS type,
+            pv."wikidotId" AS "pageWikidotId",
+            pv.title AS "pageTitle",
+            v.direction AS direction,
+            NULL::text AS "revisionType",
+            NULL::text AS comment
+          FROM "Vote" v
+          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+          JOIN "User" u ON v."userId" = u.id
+          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+          ORDER BY v.timestamp ASC
+          LIMIT 1
+        ),
+        first_rev AS (
+          SELECT 
+            r.timestamp,
+            'REVISION'::text AS type,
+            pv."wikidotId" AS "pageWikidotId",
+            pv.title AS "pageTitle",
+            NULL::int AS direction,
+            r.type::text AS "revisionType",
+            r.comment::text AS comment
+          FROM "Revision" r
+          JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+          JOIN "User" u ON r."userId" = u.id
+          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+          ORDER BY r.timestamp ASC
+          LIMIT 1
+        )
+        SELECT * FROM (
+          SELECT * FROM first_vote
+          UNION ALL
+          SELECT * FROM first_rev
+        ) t
+        ORDER BY timestamp ASC
+        LIMIT 1
+      `;
+
+      let payload: any = rows[0];
+      try {
+        const [laRes, faRes] = await Promise.all([
+          pool.query(lastActivitySql, [wikidotIdInt]),
+          pool.query(firstActivitySql, [wikidotIdInt])
+        ]);
+        const la = laRes.rows[0];
+        const fa = faRes.rows[0];
+        if (la) {
+          payload = {
+            ...payload,
+            lastActivityType: la.type,
+            lastActivityPageWikidotId: la.pageWikidotId,
+            lastActivityPageTitle: la.pageTitle,
+            lastActivityDirection: la.direction,
+            lastActivityRevisionType: la.revisionType,
+            lastActivityComment: la.comment,
+          };
+        }
+        if (fa) {
+          payload = {
+            ...payload,
+            firstActivityPageWikidotId: fa.pageWikidotId,
+            firstActivityPageTitle: fa.pageTitle,
+            firstActivityDirection: fa.direction,
+            firstActivityRevisionType: fa.revisionType,
+            firstActivityComment: fa.comment,
+          };
+        }
+      } catch (e) {
+        // best-effort enrichment; ignore errors and return base payload
+      }
+
+      res.json(payload);
     } catch (err) {
       next(err);
     }
@@ -162,14 +348,17 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             pv.rating,
             pv.tags,
             pv."voteCount",
+            pv."commentCount",
             pv."createdAt",
-            0::int AS "commentCount",
             pv."revisionCount",
+            ps."wilson95",
+            ps."controversy",
             CASE WHEN pv."validTo" IS NOT NULL THEN true ELSE false END AS "isDeleted",
             pv."validTo" AS "deletedAt"
           FROM "Attribution" a
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           JOIN "Page" p ON p.id = pv."pageId"
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           JOIN "User" u ON a."userId" = u.id
           WHERE u."wikidotId" = $1
             AND ($2::boolean = true OR pv."validTo" IS NULL)
@@ -180,8 +369,61 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
         LIMIT $4::int OFFSET $5::int
       `;
       const { rows } = await pool.query(sql, [wikidotIdInt, includeDeleted === 'true', type || null, limit, offset]);
-      // strip createdAt helper column
-      res.json(rows.map(({ createdAt, ...rest }) => rest));
+      // return createdAt so frontend can display date
+      res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /api/users/:wikidotId/page-counts
+  // Returns precise counts for tabs used on the user page
+  router.get('/:wikidotId/page-counts', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params as Record<string, string>;
+      const wikidotIdInt = parseInt(wikidotId, 10);
+      if (isNaN(wikidotIdInt)) {
+        return res.status(400).json({ error: 'Invalid wikidotId' });
+      }
+      const { includeDeleted = 'true' } = req.query as Record<string, string>;
+      const sql = `
+        WITH latest_user_pages AS (
+          SELECT DISTINCT ON (pv."wikidotId")
+            pv."wikidotId",
+            pv.tags,
+            pv."validTo"
+          FROM "Attribution" a
+          JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+          JOIN "User" u ON a."userId" = u.id
+          WHERE u."wikidotId" = $1
+          ORDER BY pv."wikidotId", pv."createdAt" DESC
+        )
+        SELECT 
+          COUNT(*) AS total,
+          COUNT(*) FILTER (
+            WHERE ('原创' = ANY(COALESCE(tags, ARRAY[]::text[])))
+              AND NOT ('掩盖页' = ANY(COALESCE(tags, ARRAY[]::text[])))
+          ) AS original,
+          COUNT(*) FILTER (
+            WHERE NOT ('原创' = ANY(COALESCE(tags, ARRAY[]::text[])))
+              AND NOT ('作者' = ANY(COALESCE(tags, ARRAY[]::text[])))
+              AND NOT ('掩盖页' = ANY(COALESCE(tags, ARRAY[]::text[])))
+          ) AS translation,
+          COUNT(*) FILTER (
+            WHERE ('作者' = ANY(COALESCE(tags, ARRAY[]::text[])))
+               OR ('掩盖页' = ANY(COALESCE(tags, ARRAY[]::text[])))
+          ) AS other
+        FROM latest_user_pages
+        WHERE ($2::boolean = true OR "validTo" IS NULL)
+      `;
+      const { rows } = await pool.query(sql, [wikidotIdInt, includeDeleted === 'true']);
+      const row = rows[0] || { total: 0, original: 0, translation: 0, other: 0 };
+      res.json({
+        total: Number(row.total || 0),
+        original: Number(row.original || 0),
+        translation: Number(row.translation || 0),
+        other: Number(row.other || 0)
+      });
     } catch (err) {
       next(err);
     }
@@ -208,6 +450,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
         JOIN "Page" p ON pv."pageId" = p.id
         JOIN "User" u ON v."userId" = u.id
         WHERE u."wikidotId" = $1
+          AND pv."validTo" IS NULL AND pv."isDeleted" = false
         ORDER BY v.timestamp DESC
         LIMIT $2::int OFFSET $3::int
       `;
@@ -240,6 +483,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
         JOIN "Page" p ON pv."pageId" = p.id
         JOIN "User" u ON r."userId" = u.id
         WHERE u."wikidotId" = $1
+          AND pv."validTo" IS NULL AND pv."isDeleted" = false
         ORDER BY r.timestamp DESC
         LIMIT $2::int OFFSET $3::int
       `;
@@ -271,7 +515,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM "Attribution" a
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           JOIN "User" u ON a."userId" = u.id
-          WHERE u."wikidotId" = $1
+          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
         ),
         user_related_pages AS (
           -- 包含该用户的所有归属类型，用于页面标记（按优先级推断标记日期）
@@ -304,7 +548,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM "Attribution" a
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           JOIN "User" u ON a."userId" = u.id
-          WHERE u."wikidotId" = $1
+          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
           ORDER BY pv."wikidotId", pv."createdAt" DESC
         ),
         vote_history AS (
@@ -317,6 +561,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM "Vote" v
           JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
           WHERE pv."wikidotId" IN (SELECT "wikidotId" FROM user_all_pages)
+            AND pv."validTo" IS NULL AND pv."isDeleted" = false
           GROUP BY DATE_TRUNC('${granularity}', v.timestamp)
         ),
         pages_created AS (

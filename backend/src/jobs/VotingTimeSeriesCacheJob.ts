@@ -1,5 +1,5 @@
 // src/jobs/VotingTimeSeriesCacheJob.ts
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '../utils/db-connection.js';
 import { VotingTimeSeriesService } from '../services/VotingTimeSeriesService';
 
@@ -140,13 +140,13 @@ export class VotingTimeSeriesCacheJob {
   private async fullRebuild(batchSize: number) {
     console.log('🔄 Starting full voting cache rebuild...');
 
-    // Get all pages with votes
+    // Get all pages with votes on current version
     const pagesWithVotes = await this.prisma.$queryRaw<Array<{ pageId: number }>>`
       SELECT DISTINCT pv."pageId" as "pageId"
       FROM "Vote" v
       JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-      ORDER BY pv."pageId"
-    `;
+      WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+      ORDER BY pv."pageId"`;
 
     console.log(`📄 Found ${pagesWithVotes.length} pages with voting activity`);
 
@@ -161,13 +161,13 @@ export class VotingTimeSeriesCacheJob {
       FROM "Attribution" a
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE a."userId" IS NOT NULL
+        AND pv."validTo" IS NULL AND pv."isDeleted" = false
         AND EXISTS (
           SELECT 1 FROM "Vote" v
-          JOIN "PageVersion" pv2 ON v."pageVersionId" = pv2.id
-          WHERE pv2."pageId" = pv."pageId"
+          WHERE v."pageVersionId" = pv.id
+          LIMIT 1
         )
-      ORDER BY a."userId"
-    `;
+      ORDER BY a."userId"`;
 
     console.log(`👥 Found ${usersWithAttributions.length} users with attributions on voted pages`);
 
@@ -243,7 +243,7 @@ export class VotingTimeSeriesCacheJob {
         }
       },
       data: {
-        votingTimeSeriesCache: null,
+        votingTimeSeriesCache: Prisma.DbNull,
         votingCacheUpdatedAt: null
       }
     });
@@ -256,7 +256,7 @@ export class VotingTimeSeriesCacheJob {
         }
       },
       data: {
-        attributionVotingTimeSeriesCache: null,
+        attributionVotingTimeSeriesCache: Prisma.DbNull,
         attributionVotingCacheUpdatedAt: null
       }
     });

@@ -9,15 +9,140 @@ export function statsRouter(pool: Pool, _redis: RedisClientType | null) {
 	router.get('/site/latest', async (_req, res, next) => {
 		try {
 			const sql = `
-				SELECT date, "totalUsers", "activeUsers", "totalPages", "totalVotes",
-				       "newUsersToday", "newPagesToday", "newVotesToday"
-				FROM "SiteStats"
-				ORDER BY date DESC
+				SELECT 
+					s.date, 
+					s."totalUsers", 
+					s."activeUsers", -- 约定为近60天活跃
+					s."totalPages", 
+					s."totalVotes",
+					s."newUsersToday", 
+					s."newPagesToday", 
+					s."newVotesToday",
+					-- 参考口径：近30/60/90天活跃用户（基于当前日期）
+					(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '30 days') AS "activeUsers30",
+					(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '60 days') AS "activeUsers60",
+					(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '90 days') AS "activeUsers90"
+				FROM "SiteStats" s
+				ORDER BY s.date DESC
 				LIMIT 1
 			`;
 			const { rows } = await pool.query(sql);
 			if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
 			res.json(rows[0]);
+		} catch (err) {
+			next(err);
+		}
+	});
+
+	// GET /stats/site/overview
+	router.get('/site/overview', async (_req, res, next) => {
+		try {
+			// Always compute all-time totals for overview display (full period)
+			const siteSql = `
+				SELECT 
+					date, 
+					"updatedAt",
+					"totalUsers", 
+					"activeUsers", 
+					"totalPages", 
+					"totalVotes"
+				FROM "SiteStats"
+				ORDER BY date DESC
+				LIMIT 1
+			`;
+
+			const contributorsSql = `
+			  SELECT COUNT(DISTINCT u."userId")::int AS count FROM (
+			    SELECT r."userId" FROM "Revision" r WHERE r."userId" IS NOT NULL
+			    UNION
+			    SELECT a."userId" FROM "Attribution" a WHERE a."userId" IS NOT NULL
+			  ) u
+			`;
+			const authorsSql = `SELECT COUNT(DISTINCT a."userId")::int AS count FROM "Attribution" a JOIN "PageVersion" pv ON pv.id = a."pageVerId" WHERE a."userId" IS NOT NULL AND pv."validTo" IS NULL AND '原创' = ANY(pv.tags)`;
+			const pageOriginalsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND '原创' = ANY(pv.tags)`;
+			const pageTranslationsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND NOT ('原创' = ANY(pv.tags))`;
+			const votesPositiveSql = `
+				SELECT COUNT(*)::bigint AS count
+				FROM "Vote" v
+				JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+				WHERE v.direction > 0 AND pv."validTo" IS NULL AND pv."isDeleted" = false`;
+			const votesNegativeSql = `
+				SELECT COUNT(*)::bigint AS count
+				FROM "Vote" v
+				JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+				WHERE v.direction < 0 AND pv."validTo" IS NULL AND pv."isDeleted" = false`;
+			const revisionsTotalSql = `
+				SELECT COUNT(*)::bigint AS count
+				FROM "Revision" r
+				JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+				WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
+
+			const [siteRow, contributorsRow, authorsRow, originalsRow, translationsRow, votesPosRow, votesNegRow, revisionsRow] = await Promise.all([
+				pool.query(siteSql).then(r => r.rows[0] || null),
+				pool.query(contributorsSql).then(r => r.rows[0] || { count: 0 }),
+				pool.query(authorsSql).then(r => r.rows[0] || { count: 0 }),
+				pool.query(pageOriginalsSql).then(r => r.rows[0] || { count: 0 }),
+				pool.query(pageTranslationsSql).then(r => r.rows[0] || { count: 0 }),
+				pool.query(votesPositiveSql).then(r => r.rows[0] || { count: 0n }),
+				pool.query(votesNegativeSql).then(r => r.rows[0] || { count: 0n }),
+				pool.query(revisionsTotalSql).then(r => r.rows[0] || { count: 0n })
+			]);
+
+			if (!siteRow) return res.status(404).json({ error: 'not_found' });
+
+			const upvotes = Number(votesPosRow.count || 0);
+			const downvotes = Number(votesNegRow.count || 0);
+			const totalVotes = upvotes + downvotes;
+
+			return res.json({
+				date: siteRow.date,
+				updatedAt: siteRow.updatedAt,
+				users: {
+					total: siteRow.totalUsers || 0,
+					active: siteRow.activeUsers || 0,
+					contributors: Number(contributorsRow.count || 0),
+					authors: Number(authorsRow.count || 0)
+				},
+				pages: {
+					total: siteRow.totalPages || 0,
+					originals: Number(originalsRow.count || 0),
+					translations: Number(translationsRow.count || 0)
+				},
+				votes: { total: totalVotes, upvotes, downvotes },
+				revisions: { total: Number(revisionsRow.count || 0) }
+			});
+		} catch (err) {
+			next(err);
+		}
+	});
+
+	// GET /stats/site/overview/series
+	router.get('/site/overview/series', async (req, res, next) => {
+		try {
+			const { startDate, endDate, limit = '365', offset = '0' } = req.query as Record<string, string>;
+			const defaultStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+			const effectiveStart = (startDate && startDate.trim()) ? startDate : defaultStart;
+			const sql = `
+				SELECT date,
+				       "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+				       "pagesTotal", "pagesOriginals", "pagesTranslations",
+				       "votesUp", "votesDown", "revisionsTotal"
+				FROM "SiteOverviewDaily"
+				WHERE ($1::date IS NULL OR date >= $1::date)
+				  AND ($2::date IS NULL OR date <= $2::date)
+				ORDER BY date ASC
+				LIMIT $3::int OFFSET $4::int
+			`;
+			const params = [effectiveStart, endDate || null, limit, offset];
+			const { rows } = await pool.query(sql, params);
+			const mapped = rows.map((r: any) => ({
+				date: r.date,
+				users: { total: r.usersTotal, active: r.usersActive, contributors: r.usersContributors, authors: r.usersAuthors },
+				pages: { total: r.pagesTotal, originals: r.pagesOriginals, translations: r.pagesTranslations },
+				votes: { total: (r.votesUp || 0) + (r.votesDown || 0), upvotes: r.votesUp, downvotes: r.votesDown },
+				revisions: { total: r.revisionsTotal }
+			}));
+			res.json(mapped);
 		} catch (err) {
 			next(err);
 		}
@@ -58,12 +183,71 @@ export function statsRouter(pool: Pool, _redis: RedisClientType | null) {
 		}
 	});
 
+	// GET /stats/site/series?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&limit=&offset=
+	router.get('/site/series', async (req, res, next) => {
+		try {
+			const { startDate, endDate, limit = '365', offset = '0' } = req.query as Record<string, string>;
+			// 默认近90天
+			const defaultStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+			const effectiveStart = (startDate && startDate.trim()) ? startDate : defaultStart;
+			const sql = `
+				SELECT 
+					date, 
+					"totalUsers", 
+					"activeUsers", -- 近60天活跃
+					"totalPages", 
+					"totalVotes",
+					"newUsersToday", 
+					"newPagesToday", 
+					"newVotesToday"
+				FROM "SiteStats"
+				WHERE ($1::date IS NULL OR date >= $1::date)
+				  AND ($2::date IS NULL OR date <= $2::date)
+				ORDER BY date ASC
+				LIMIT $3::int OFFSET $4::int
+			`;
+			const params = [effectiveStart, endDate || null, limit, offset];
+			const { rows } = await pool.query(sql, params);
+			res.json(rows);
+		} catch (err) {
+			next(err);
+		}
+	});
+
 	return router;
 }
 
 // Additional stats endpoints
 export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 	const router = Router();
+
+  // GET /stats/category-benchmarks
+  // Read precomputed payload from LeaderboardCache written by backend Analyze
+  router.get('/category-benchmarks', async (_req, res, next) => {
+    try {
+      const sql = `
+        SELECT payload, "updatedAt", "expiresAt"
+        FROM "LeaderboardCache"
+        WHERE key = $1::text AND period = $2::text
+        LIMIT 1
+      `;
+      // Try v2 first
+      let resRow: any | null = null;
+      {
+        const { rows } = await pool.query(sql, ['category_benchmarks_author_rating_v2', 'daily']);
+        if (rows.length > 0) resRow = rows[0];
+      }
+      // Fallback to v1 if v2 absent
+      if (!resRow) {
+        const { rows } = await pool.query(sql, ['category_benchmarks_author_rating', 'daily']);
+        if (rows.length > 0) resRow = rows[0];
+      }
+      if (!resRow) return res.status(404).json({ error: 'not_found' });
+      res.json(resRow);
+    } catch (err) {
+      next(err);
+    }
+  });
 
 	// GET /stats/pages/:wikidotId (PageStats for current version)
 	router.get('/pages/:wikidotId', async (req, res, next) => {

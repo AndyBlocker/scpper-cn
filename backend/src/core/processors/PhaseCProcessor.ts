@@ -177,8 +177,8 @@ export class PhaseCProcessor {
     reasons: string[], 
     onComplete: (wikidotId: number, success: boolean) => Promise<void>
   ): Promise<void> {
-    let afterRev: string | undefined = undefined;
-    let afterVote: string | undefined = undefined;
+    let afterRev: string | null | undefined = null;
+    let afterVote: string | null | undefined = null;
     let requestCount = 0;
     const collected: CollectedData = { url, wikidotId, revisions: [], votes: [] };
     let success = false;

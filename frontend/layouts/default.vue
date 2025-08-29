@@ -1,37 +1,127 @@
 <template>
   <div class="min-h-screen bg-neutral-50 dark:bg-neutral-950">
     <header class="bg-white dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800 sticky top-0 z-50">
-      <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 justify-between">
-        <div class="flex items-center gap-3">
-          <div class="font-bold text-lg text-neutral-800 dark:text-neutral-100">SCPPER-CN</div>
+      <div class="max-w-7xl mx-auto px-4 py-4 flex items-center gap-3 sm:gap-6">
+        <div class="flex items-center gap-4 whitespace-nowrap">
+          <NuxtLink to="/" class="font-bold text-lg text-neutral-800 dark:text-neutral-100 hover:text-emerald-600 dark:hover:text-emerald-400">SCPPER-CN</NuxtLink>
+          <NuxtLink to="/ranking" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-emerald-600 dark:hover:text-emerald-400 whitespace-nowrap">
+            <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 13h4v7H4v-7zm6-6h4v13h-4V7zm6 3h4v10h-4V10z" />
+            </svg>
+            <span class="hidden sm:inline">排行</span>
+          </NuxtLink>
         </div>
-        <form class="relative w-full max-w-md" @submit.prevent="onSearch">
-          <input 
-            v-model="q" 
-            @input="handleInput"
-            @focus="handleFocus"
-            @blur="handleBlur"
-            @keydown="handleKeyDown"
-            placeholder="搜索页面 / 用户 / 标签…" 
-            class="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all" 
-          />
-          <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-700 p-1">
+        <div class="flex items-center gap-2 ml-auto w-auto sm:w-full sm:justify-end">
+          <!-- Mobile: search icon button -->
+          <button
+            @click="openMobileSearch"
+            class="p-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:shadow-md transition-all text-neutral-700 dark:text-neutral-300 sm:hidden"
+            aria-label="打开搜索"
+            title="打开搜索"
+          >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </button>
-          <!-- 搜索建议框 -->
-          <div v-if="showSuggestions" class="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
+          <form class="relative flex-1 max-w-md hidden sm:block" @submit.prevent="onSearch">
+            <input 
+              v-model="q" 
+              @input="handleInput"
+              @focus="handleFocus"
+              @blur="handleBlur"
+              @keydown="handleKeyDown"
+              placeholder="搜索页面 / 用户 / 标签…" 
+              class="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all" 
+            />
+            <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-700 p-1">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </button>
+            <!-- 搜索建议框 -->
+            <div v-if="showSuggestions" class="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
+              <div v-if="suggestionsLoading" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">搜索中...</div>
+              <div v-else-if="suggestions.length === 0 && q.length >= 2" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">没有找到相关结果</div>
+              <div v-else>
+                <a 
+                  v-for="(item, index) in suggestions" 
+                  :key="item.wikidotId || item.id"
+                  :href="item.type === 'user' ? `/user/${item.wikidotId}` : `/page/${item.wikidotId}`"
+                  @click.prevent="selectSuggestion(item)"
+                  @mouseenter="selectedIndex = index"
+                  class="block px-4 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer transition-colors"
+                  :class="{ 'bg-emerald-50 dark:bg-emerald-900/20': selectedIndex === index }"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="font-medium text-sm text-neutral-800 dark:text-neutral-200 truncate">{{ item.title || item.displayName }}</div>
+                    <div class="text-xs text-neutral-500 dark:text-neutral-400 ml-2">{{ item.type || 'page' }}</div>
+                  </div>
+                  <div v-if="item.snippet" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1" v-html="item.snippet"></div>
+                </a>
+              </div>
+            </div>
+          </form>
+          <button
+            @click="toggleTheme"
+            class="p-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:shadow-md transition-all text-neutral-700 dark:text-neutral-300"
+            aria-label="切换主题"
+            title="切换主题"
+          >
+            <svg v-if="currentTheme === 'dark'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v2m0 14v2m4.22-12.22l1.42-1.42M6.34 17.66l-1.42 1.42M21 12h-2M5 12H3m12.66 5.66l1.42 1.42M6.34 6.34L4.92 4.92M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+    <!-- Mobile search overlay -->
+    <div v-if="isMobileSearchOpen" class="fixed inset-0 z-[70]">
+      <div class="absolute inset-0 bg-black/50" @click="closeMobileSearch" />
+      <div class="absolute inset-0 flex flex-col">
+        <div class="bg-white dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800">
+          <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-2">
+            <form class="relative flex-1" @submit.prevent="onSearch">
+              <input
+                ref="mobileInputRef"
+                v-model="q"
+                @input="handleInput"
+                @keydown="handleKeyDown"
+                placeholder="搜索页面 / 用户 / 标签…"
+                class="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+              />
+              <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-700 p-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </button>
+            </form>
+            <button
+              @click="closeMobileSearch"
+              class="p-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg text-neutral-700 dark:text-neutral-300"
+              aria-label="关闭搜索"
+              title="关闭搜索"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto bg-white dark:bg-neutral-900">
+          <div class="max-w-7xl mx-auto px-4 py-2">
             <div v-if="suggestionsLoading" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">搜索中...</div>
             <div v-else-if="suggestions.length === 0 && q.length >= 2" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">没有找到相关结果</div>
             <div v-else>
-              <a 
-                v-for="(item, index) in suggestions" 
+              <a
+                v-for="(item, index) in suggestions"
                 :key="item.wikidotId || item.id"
                 :href="item.type === 'user' ? `/user/${item.wikidotId}` : `/page/${item.wikidotId}`"
                 @click.prevent="selectSuggestion(item)"
                 @mouseenter="selectedIndex = index"
-                class="block px-4 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer transition-colors"
+                class="block px-4 py-3 border-b border-neutral-200/70 dark:border-neutral-800/70 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
                 :class="{ 'bg-emerald-50 dark:bg-emerald-900/20': selectedIndex === index }"
               >
                 <div class="flex items-center justify-between">
@@ -42,14 +132,9 @@
               </a>
             </div>
           </div>
-        </form>
-        <div class="flex items-center gap-3">
-          <button @click="toggleTheme" class="px-3 py-1.5 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:shadow-md transition-all text-sm font-medium text-neutral-700 dark:text-neutral-300">
-            {{ themeLabel }}
-          </button>
         </div>
       </div>
-    </header>
+    </div>
     <main class="max-w-7xl mx-auto px-4 py-6">
       <slot />
     </main>
@@ -59,7 +144,8 @@
 
 <script setup lang="ts">
 const q = ref('');
-const themeLabel = ref('浅色');
+const isMobileSearchOpen = ref(false);
+const mobileInputRef = ref<HTMLInputElement | null>(null);
 const showSuggestions = ref(false);
 const suggestions = ref<any[]>([]);
 const suggestionsLoading = ref(false);
@@ -75,11 +161,9 @@ const applyTheme = (mode: string) => {
     if (mode === 'light') {
       root.classList.remove('dark');
       root.classList.add('light');
-      themeLabel.value = '🌙 深色';
     } else {
       root.classList.remove('light');
       root.classList.add('dark');
-      themeLabel.value = '☀️ 浅色';
     }
     localStorage.setItem('theme', mode);
     currentTheme.value = mode;
@@ -102,10 +186,36 @@ onMounted(() => {
   applyTheme(saved);
 });
 
+const openMobileSearch = () => {
+  isMobileSearchOpen.value = true;
+  if (process.client) {
+    document.body.style.overflow = 'hidden';
+  }
+  nextTick(() => {
+    mobileInputRef.value?.focus();
+  });
+};
+
+const closeMobileSearch = () => {
+  isMobileSearchOpen.value = false;
+  showSuggestions.value = false;
+  if (process.client) {
+    document.body.style.overflow = '';
+  }
+};
+
+const openSearch = openMobileSearch; // backward alias if needed
+const toggleMobileSearch = () => {
+  if (isMobileSearchOpen.value) closeMobileSearch(); else openMobileSearch();
+};
+
 function onSearch() {
   const term = q.value.trim();
   if (!term) return;
   showSuggestions.value = false;
+  if (isMobileSearchOpen.value) {
+    closeMobileSearch();
+  }
   navigateTo({ path: '/search', query: { q: term } });
 }
 
@@ -169,7 +279,12 @@ const handleKeyDown = (e: KeyboardEvent) => {
     e.preventDefault();
     selectSuggestion(suggestions.value[selectedIndex.value]);
   } else if (e.key === 'Escape') {
-    showSuggestions.value = false;
+    if (isMobileSearchOpen.value) {
+      e.preventDefault();
+      closeMobileSearch();
+    } else {
+      showSuggestions.value = false;
+    }
   }
 };
 
@@ -177,8 +292,33 @@ const selectSuggestion = (item: any) => {
   const path = item.type === 'user' ? `/user/${item.wikidotId}` : `/page/${item.wikidotId}`;
   showSuggestions.value = false;
   q.value = '';
+  if (isMobileSearchOpen.value) {
+    closeMobileSearch();
+  }
   navigateTo(path);
 };
+
+// 监听全局 ESC 关闭移动搜索浮层
+const handleGlobalKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && isMobileSearchOpen.value) {
+    e.preventDefault();
+    closeMobileSearch();
+  }
+};
+
+watch(isMobileSearchOpen, (open) => {
+  if (!process.client) return;
+  if (open) {
+    document.addEventListener('keydown', handleGlobalKeydown);
+  } else {
+    document.removeEventListener('keydown', handleGlobalKeydown);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (!process.client) return;
+  document.removeEventListener('keydown', handleGlobalKeydown);
+});
 </script>
 
 

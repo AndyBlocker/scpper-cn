@@ -1,0 +1,841 @@
+{
+  "base": "http://localhost:4396",
+  "generatedAt": "2025-08-27T16:20:34.482Z",
+  "results": {
+    "health": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/healthz",
+      "data": {
+        "ok": true
+      }
+    },
+    "pages_list": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/pages?limit=5&sortKey=WIKIDOT_CREATED_AT&sortOrder=DESC",
+      "data": [
+        {
+          "wikidotId": 1459662701,
+          "url": "http://scp-wiki-cn.wikidot.com/chrono-matrix-s-personnel-file",
+          "title": "人事档案：Chrono Matrix",
+          "rating": 7,
+          "voteCount": 11,
+          "category": "_default",
+          "tags": [
+            "作者"
+          ],
+          "createdAt": "2025-08-27T08:12:10.826Z",
+          "revisionCount": 8,
+          "attributionCount": 1
+        },
+        {
+          "wikidotId": 1459970926,
+          "url": "http://scp-wiki-cn.wikidot.com/hideyama-monokuro",
+          "title": "英山的艺作页三：Monochro-Yama",
+          "rating": 68,
+          "voteCount": 70,
+          "category": "_default",
+          "tags": [
+            "原创",
+            "成人内容",
+            "艺术作品"
+          ],
+          "createdAt": "2025-08-27T08:12:04.658Z",
+          "revisionCount": 5,
+          "attributionCount": 1
+        },
+        {
+          "wikidotId": 1460023168,
+          "url": "http://scp-wiki-cn.wikidot.com/i-am-narrater",
+          "title": "Narrater的人事档案",
+          "rating": 45,
+          "voteCount": 45,
+          "category": "_default",
+          "tags": [
+            "作者"
+          ],
+          "createdAt": "2025-08-27T08:12:02.712Z",
+          "revisionCount": 54,
+          "attributionCount": 1
+        },
+        {
+          "wikidotId": 51328635,
+          "url": "http://scp-wiki-cn.wikidot.com/scp-1361",
+          "title": "SCP-1361",
+          "rating": 4,
+          "voteCount": 4,
+          "category": "_default",
+          "tags": [
+            "safe",
+            "scp",
+            "嗅觉影响",
+            "成瘾性",
+            "无定形",
+            "活物",
+            "自我复制",
+            "食物",
+            "crom:series-2"
+          ],
+          "createdAt": "2025-08-27T08:11:49.060Z",
+          "revisionCount": 7,
+          "attributionCount": 1
+        },
+        {
+          "wikidotId": 1312538769,
+          "url": "http://scp-wiki-cn.wikidot.com/scp-cn-1093",
+          "title": "Site-19",
+          "rating": 81,
+          "voteCount": 97,
+          "category": "_default",
+          "tags": [
+            "scp",
+            "uiu",
+            "不可摧毁",
+            "原创",
+            "基金会制",
+            "建筑",
+            "机密分级",
+            "移情作用",
+            "精神影响",
+            "超维度",
+            "通讯"
+          ],
+          "createdAt": "2025-08-27T08:11:42.888Z",
+          "revisionCount": 28,
+          "attributionCount": 1
+        }
+      ]
+    },
+    "pages_by_url_missing_param": {
+      "ok": false,
+      "status": 400,
+      "url": "http://localhost:4396/pages/by-url",
+      "data": {
+        "error": "url is required"
+      }
+    },
+    "pages_matching_sample": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/pages/matching?url=http://scp-wiki-cn.wikidot.com/scp-173&limit=5",
+      "data": [
+        {
+          "wikidotId": 24203721,
+          "url": "http://scp-wiki-cn.wikidot.com/scp-173",
+          "title": "SCP-173",
+          "rating": 1984,
+          "tags": [
+            "euclid",
+            "scp",
+            "敌意",
+            "自主",
+            "观察影响",
+            "雕像-最初之作",
+            "雕塑",
+            "crom:series-1"
+          ]
+        }
+      ]
+    },
+    "pages_random": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/pages/random",
+      "data": {
+        "wikidotId": 1402703534,
+        "url": "http://scp-wiki-cn.wikidot.com/cz-contest-iv-hub",
+        "title": "SCP-CS竞赛4",
+        "rating": 4,
+        "voteCount": 4,
+        "category": "_default",
+        "tags": [
+          "cs",
+          "cs竞赛4",
+          "中心",
+          "竞赛"
+        ],
+        "createdAt": "2025-08-24T08:23:18.518Z",
+        "revisionCount": 3,
+        "attributionCount": 1
+      }
+    },
+    "aggregate_pages": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/aggregate/pages?ratingGte=10",
+      "data": {
+        "_count": 14069
+      }
+    },
+    "users_by_rank": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/users/by-rank?limit=5",
+      "data": {
+        "total": 2469,
+        "items": [
+          {
+            "id": 14399,
+            "displayName": "W Asriel",
+            "wikidotId": 3317001,
+            "rank": 1,
+            "rating": "16002.00",
+            "pageCount": 416,
+            "totalRating": 16002,
+            "meanRating": 38.46634615384615,
+            "totalUp": 0,
+            "totalDown": 0,
+            "favTag": null,
+            "scpPageCount": 60,
+            "storyPageCount": 52,
+            "goiPageCount": 2,
+            "translationPageCount": 256,
+            "wanderersPageCount": 14,
+            "artPageCount": 1,
+            "ratingUpdatedAt": "2025-08-27T02:47:52.596Z",
+            "catCount": 416,
+            "catMean": 38.46634615384615
+          },
+          {
+            "id": 15336,
+            "displayName": "Kcorena",
+            "wikidotId": 3396110,
+            "rank": 2,
+            "rating": "15668.00",
+            "pageCount": 112,
+            "totalRating": 15668,
+            "meanRating": 139.89285714285714,
+            "totalUp": 0,
+            "totalDown": 0,
+            "favTag": null,
+            "scpPageCount": 49,
+            "storyPageCount": 13,
+            "goiPageCount": 2,
+            "translationPageCount": 21,
+            "wanderersPageCount": 0,
+            "artPageCount": 5,
+            "ratingUpdatedAt": "2025-08-27T02:47:52.596Z",
+            "catCount": 112,
+            "catMean": 139.89285714285714
+          },
+          {
+            "id": 32399,
+            "displayName": "ashausesall",
+            "wikidotId": 1546989,
+            "rank": 3,
+            "rating": "15668.00",
+            "pageCount": 1125,
+            "totalRating": 15668,
+            "meanRating": 13.927111111111111,
+            "totalUp": 0,
+            "totalDown": 0,
+            "favTag": null,
+            "scpPageCount": 10,
+            "storyPageCount": 3,
+            "goiPageCount": 0,
+            "translationPageCount": 1111,
+            "wanderersPageCount": 0,
+            "artPageCount": 0,
+            "ratingUpdatedAt": "2025-08-27T02:47:52.596Z",
+            "catCount": 1125,
+            "catMean": 13.927111111111111
+          },
+          {
+            "id": 13831,
+            "displayName": "breaddddd",
+            "wikidotId": 3471238,
+            "rank": 4,
+            "rating": "15580.00",
+            "pageCount": 169,
+            "totalRating": 15580,
+            "meanRating": 92.18934911242603,
+            "totalUp": 0,
+            "totalDown": 0,
+            "favTag": null,
+            "scpPageCount": 58,
+            "storyPageCount": 5,
+            "goiPageCount": 18,
+            "translationPageCount": 33,
+            "wanderersPageCount": 6,
+            "artPageCount": 12,
+            "ratingUpdatedAt": "2025-08-27T02:47:52.596Z",
+            "catCount": 169,
+            "catMean": 92.18934911242603
+          },
+          {
+            "id": 13591,
+            "displayName": "MScarlet",
+            "wikidotId": 1745583,
+            "rank": 5,
+            "rating": "15513.00",
+            "pageCount": 533,
+            "totalRating": 15513,
+            "meanRating": 29.105065666041277,
+            "totalUp": 0,
+            "totalDown": 0,
+            "favTag": null,
+            "scpPageCount": 24,
+            "storyPageCount": 32,
+            "goiPageCount": 6,
+            "translationPageCount": 451,
+            "wanderersPageCount": 1,
+            "artPageCount": 1,
+            "ratingUpdatedAt": "2025-08-27T02:47:52.596Z",
+            "catCount": 533,
+            "catMean": 29.105065666041277
+          }
+        ]
+      }
+    },
+    "search_pages": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/search/pages?query=SCP&limit=5",
+      "data": {
+        "results": [
+          {
+            "id": 22080,
+            "wikidotId": 819633699,
+            "pageId": 22080,
+            "title": "事件记录CN-1499-2-B",
+            "url": "http://scp-wiki-cn.wikidot.com/scp-cn-1499-test",
+            "firstPublishedAt": "2019-06-22T00:59:23.000Z",
+            "rating": 3,
+            "voteCount": 3,
+            "revisionCount": 9,
+            "commentCount": 1,
+            "tags": [
+              "原创",
+              "合作",
+              "补充材料"
+            ],
+            "score": 0,
+            "validFrom": "2025-08-24T10:45:49.671Z",
+            "wilson95": 0.5571541164260652,
+            "controversy": 0,
+            "firstRevisionAt": "2019-06-22T00:59:23.000Z",
+            "snippet": "是不阅读<span class=\"keyword\">SCP</span>-CN-1499而导致的后果，希望大家引以为戒。——Dr.Legend\n\n\n格式：\n\n受试者：\n描述：你是怎么发现的<span class=\"keyword\">SCP</span>-CN-1499，又许了什么愿\n结果：<span class=\"keyword\">SCP</span>-CN-1499是 窗外观察到<span class=\"keyword\">SCP</span>-CN-1499并向其许愿想要一根雪糕。\n结果：随后Dr.T手中出现一根雪糕，在其吃掉后被传送至[数据删除]，经鉴定该雪糕为失踪的<span class=\"keyword\">SCP</span>-CN-434。\n附 .Pollux\n描述：Dr.Pollux在Site-CN-75-C1院落内进行梅西耶马拉松活动时无意观察到<span class=\"keyword\">SCP</span>-CN-1499并抱怨称“眼不见心不烦”\n结果：Dr.Pollux的近视度数上升到了1500度"
+          },
+          {
+            "id": 22101,
+            "wikidotId": 1306319690,
+            "pageId": 22101,
+            "title": "SCP-CN-1517",
+            "url": "http://scp-wiki-cn.wikidot.com/scp-cn-1517",
+            "firstPublishedAt": "2020-12-24T20:07:45.000Z",
+            "rating": 75,
+            "voteCount": 85,
+            "revisionCount": 12,
+            "commentCount": 12,
+            "tags": [
+              "2021新人竞赛",
+              "safe",
+              "scp",
+              "wondertainment博士",
+              "人造物品",
+              "原创",
+              "强迫性",
+              "感知影响",
+              "模因",
+              "神经性",
+              "精神影响",
+              "认知危害"
+            ],
+            "score": 0,
+            "validFrom": "2025-08-24T10:46:01.926Z",
+            "wilson95": 0.8741835103900599,
+            "controversy": 0.22145328719723184,
+            "firstRevisionAt": "2020-12-24T20:07:45.000Z",
+            "snippet": "著作信息\n\n\n\n\n<span class=\"keyword\">SCP</span>-CN-1517 - Wondertainment博士的小小成年人套装\n作者：Keyest\n插图：遵循CC-BY-3.0协议，作者Mark，来源见此。\n更多作品：http://<span class=\"keyword\">scp</span>-wiki-cn.wikidot.com/ keyest\n更多信息请移步评论区。\n\n\n\n\n\n\n\n\n\n\n\n项目编号：<span class=\"keyword\">SCP</span>-CN-1517\n项目等级：Safe\n特殊收容措施：<span class=\"keyword\">SCP</span>-CN-1517被收容于Site-CN-██的标准异常物品收容柜中。任何 详见附录1517-4，通告。\n\n\n被两名儿童穿戴着的<span class=\"keyword\">SCP</span>-CN-1517，摄于收容前。图片已做模糊处理。\n\n\n \n描述：<span class=\"keyword\">SCP</span>-CN-1517是一套具有异常性质的衣物的统称。其中"
+          },
+          {
+            "id": 24917,
+            "wikidotId": 69396071,
+            "pageId": 24917,
+            "title": "SCP-CN-560",
+            "url": "http://scp-wiki-cn.wikidot.com/scp-cn-560",
+            "firstPublishedAt": "2018-03-28T06:20:21.000Z",
+            "rating": 6,
+            "voteCount": 20,
+            "revisionCount": 14,
+            "commentCount": 15,
+            "tags": [
+              "euclid",
+              "scp",
+              "原创",
+              "听觉影响",
+              "建筑",
+              "精神影响",
+              "视觉性",
+              "认知危害"
+            ],
+            "score": 0,
+            "validFrom": "2025-08-24T11:24:32.535Z",
+            "wilson95": 0.44954923906088123,
+            "controversy": 0.91,
+            "firstRevisionAt": "2018-03-28T06:20:21.000Z",
+            "snippet": "项目编号：<span class=\"keyword\">SCP</span>-CN-560\n项目等级：Euclid\n特殊收容措施：项目目前所在的大楼目前已被就地改造为Site-CN-560.项目所在的区域已被封锁，除实验外禁止任何人 重新建立临时收容站。\n对项目的实验需经1名四级人员书面批准。\n\n\n\n描述：<span class=\"keyword\">SCP</span>-CN-560是1座外观时常改变的小建筑物，一般以符合项目所在区域形式的“安 绝对人流密度较低\n[已编辑]\n\n<span class=\"keyword\">SCP</span>-CN-560-1是项目内部出现的不定数目的人形实体的总称。<span class=\"keyword\">SCP</span>-CN-560-1的外观一般呈现为符合<span class=\"keyword\">SCP</span>-CN-560外观的安保人员，目前被"
+          },
+          {
+            "id": 24608,
+            "wikidotId": 1457025663,
+            "pageId": 24608,
+            "title": "SCP-CN-3886",
+            "url": "http://scp-wiki-cn.wikidot.com/scp-cn-3886",
+            "firstPublishedAt": "2024-10-08T07:11:54.000Z",
+            "rating": 10,
+            "voteCount": 16,
+            "revisionCount": 13,
+            "commentCount": 7,
+            "tags": [
+              "2024新秀竞赛",
+              "scp",
+              "原创",
+              "无效化",
+              "超维度",
+              "门径"
+            ],
+            "score": 0,
+            "validFrom": "2025-08-24T11:20:21.368Z",
+            "wilson95": 0.5958845200884082,
+            "controversy": 0.609375,
+            "firstRevisionAt": "2024-10-08T07:11:54.000Z",
+            "snippet": "为4/3886级机密。禁止未经授权的访问。\n\n你已经被警告过了\n \n \n\n项目编号：<span class=\"keyword\">SCP</span>-CN-3886\n项目等级：Neutralized\n特殊收容措施：“刺针”项目已基本关停，仅保 ██日，所有跨叙事层的通路都被截断，项目被重分级为无效化。\n附录1：<span class=\"keyword\">SCP</span>-CN-3886递送实验记录\n\n\n序号\n路径文本\n叙事层中目的地\n干预措施\n结果\n分析\n\n 令提前返回。\n初步确认描述文本的充实程度是叙事层稳定度的关键因素\n\n\n3\n<span class=\"keyword\">SCP</span>-███的介绍文件\n特殊收容措施部分\n无\n和人员失去联络，推定已损失\n递"
+          },
+          {
+            "id": 3318,
+            "wikidotId": 44183227,
+            "pageId": 3318,
+            "title": "SCP-083-D",
+            "url": "http://scp-wiki-cn.wikidot.com/decomm:scp-083-d",
+            "firstPublishedAt": "2016-06-03T00:08:15.000Z",
+            "rating": 0,
+            "voteCount": 0,
+            "revisionCount": 11,
+            "commentCount": 2,
+            "tags": [
+              "keter",
+              "safe",
+              "scp",
+              "人形生物",
+              "掠食性",
+              "智能",
+              "活物",
+              "自我修复",
+              "被废除"
+            ],
+            "score": 0,
+            "validFrom": "2025-08-24T08:24:58.004Z",
+            "wilson95": 0,
+            "controversy": 0,
+            "firstRevisionAt": "2016-06-03T00:08:15.000Z",
+            "snippet": "项目编号：<span class=\"keyword\">SCP</span>-083-D\n项目等级：Decommissioned\n特殊收容措施：<span class=\"keyword\">SCP</span>-083在0700到1900应被锁在其收容区域之中，其余时候他可以自由在其余的收容站点之中漫步， 。它的收容措施要按照<span class=\"keyword\">SCP</span>-083所要求的进行装潢和布置，只要他的要求不违背标准<span class=\"keyword\">SCP</span>收容协议。\n访问者只允许在1100-1400之间进入<span class=\"keyword\">SCP</span>-083的收容区域。但是 ，请告知所有的女性人员对于<span class=\"keyword\">SCP</span>-083不建议进行感情接触。如果你觉得已经对<span class=\"keyword\">SCP</span>-083开始投入了感情，请立刻与工作人员之中的心理专家马上进行联系。我"
+          }
+        ],
+        "total": 21906
+      }
+    },
+    "search_users": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/search/users?query=Dr&limit=5",
+      "data": {
+        "results": [
+          {
+            "id": 14064,
+            "wikidotId": 4142571,
+            "displayName": "Dr Hormress",
+            "rank": 9,
+            "totalRating": 13227,
+            "pageCount": 90
+          },
+          {
+            "id": 14636,
+            "wikidotId": 6127045,
+            "displayName": "Dr Fishbone",
+            "rank": 68,
+            "totalRating": 2563,
+            "pageCount": 56
+          },
+          {
+            "id": 15477,
+            "wikidotId": 6335947,
+            "displayName": "Dr Roger_F_XL",
+            "rank": 97,
+            "totalRating": 1916,
+            "pageCount": 43
+          },
+          {
+            "id": 15893,
+            "wikidotId": 3449998,
+            "displayName": "Dr-wengwan",
+            "rank": 100,
+            "totalRating": 1868,
+            "pageCount": 11
+          },
+          {
+            "id": 14867,
+            "wikidotId": 2148894,
+            "displayName": "Dr Vodka Skyy",
+            "rank": 119,
+            "totalRating": 1610,
+            "pageCount": 13
+          }
+        ],
+        "total": 513
+      }
+    },
+    "stats_site_latest": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/stats/site/latest",
+      "data": {
+        "date": "2025-08-26T16:00:00.000Z",
+        "totalUsers": 28736,
+        "activeUsers": 6471,
+        "totalPages": 31251,
+        "totalVotes": 930348,
+        "newUsersToday": 0,
+        "newPagesToday": 1,
+        "newVotesToday": 69,
+        "activeUsers30": "3849",
+        "activeUsers60": "6368",
+        "activeUsers90": "7283"
+      }
+    },
+    "stats_series": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/stats/series",
+      "data": [
+        {
+          "seriesNumber": 1,
+          "isOpen": true,
+          "totalSlots": 998,
+          "usedSlots": 998,
+          "usagePercentage": 100,
+          "milestonePageId": 32317,
+          "lastUpdated": "2025-08-26T18:48:47.616Z"
+        },
+        {
+          "seriesNumber": 2,
+          "isOpen": true,
+          "totalSlots": 1000,
+          "usedSlots": 993,
+          "usagePercentage": 99.3,
+          "milestonePageId": 32368,
+          "lastUpdated": "2025-08-26T18:48:47.620Z"
+        },
+        {
+          "seriesNumber": 3,
+          "isOpen": true,
+          "totalSlots": 1000,
+          "usedSlots": 975,
+          "usagePercentage": 97.5,
+          "milestonePageId": 32484,
+          "lastUpdated": "2025-08-26T18:48:47.622Z"
+        },
+        {
+          "seriesNumber": 4,
+          "isOpen": true,
+          "totalSlots": 1000,
+          "usedSlots": 834,
+          "usagePercentage": 83.39999999999999,
+          "milestonePageId": 32623,
+          "lastUpdated": "2025-08-26T18:48:47.624Z"
+        },
+        {
+          "seriesNumber": 5,
+          "isOpen": true,
+          "totalSlots": 1000,
+          "usedSlots": 0,
+          "usagePercentage": 0,
+          "milestonePageId": null,
+          "lastUpdated": "2025-08-26T18:48:47.626Z"
+        },
+        {
+          "seriesNumber": 6,
+          "isOpen": true,
+          "totalSlots": 1000,
+          "usedSlots": 0,
+          "usagePercentage": 0,
+          "milestonePageId": null,
+          "lastUpdated": "2025-08-26T18:48:47.628Z"
+        },
+        {
+          "seriesNumber": 7,
+          "isOpen": false,
+          "totalSlots": 1000,
+          "usedSlots": 0,
+          "usagePercentage": 0,
+          "milestonePageId": null,
+          "lastUpdated": "2025-08-26T18:48:47.630Z"
+        },
+        {
+          "seriesNumber": 8,
+          "isOpen": false,
+          "totalSlots": 1000,
+          "usedSlots": 0,
+          "usagePercentage": 0,
+          "milestonePageId": null,
+          "lastUpdated": "2025-08-26T18:48:47.632Z"
+        },
+        {
+          "seriesNumber": 9,
+          "isOpen": false,
+          "totalSlots": 1000,
+          "usedSlots": 0,
+          "usagePercentage": 0,
+          "milestonePageId": null,
+          "lastUpdated": "2025-08-26T18:48:47.633Z"
+        },
+        {
+          "seriesNumber": 10,
+          "isOpen": false,
+          "totalSlots": 1000,
+          "usedSlots": 0,
+          "usagePercentage": 0,
+          "milestonePageId": null,
+          "lastUpdated": "2025-08-26T18:48:47.635Z"
+        }
+      ]
+    },
+    "stats_trending": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/stats/trending?statType=top_pages&period=30d&limit=5",
+      "data": []
+    },
+    "stats_leaderboard_missing": {
+      "ok": false,
+      "status": 400,
+      "url": "http://localhost:4396/stats/leaderboard?key=&period=",
+      "data": {
+        "error": "key and period are required"
+      }
+    },
+    "pages_by_id": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/pages/by-id?wikidotId=1459662701",
+      "data": {
+        "wikidotId": 1459662701,
+        "url": "http://scp-wiki-cn.wikidot.com/chrono-matrix-s-personnel-file",
+        "id": 33517,
+        "pageId": 2588,
+        "title": "人事档案：Chrono Matrix",
+        "rating": 7,
+        "voteCount": 11,
+        "revisionCount": 8,
+        "commentCount": 6,
+        "textContent": "$ login O5-9\n\n注意：冒充监督者议会成员者将被立即处死。如果你是错误地输入了登陆信息，在致命视觉安保模因启动前你现在有10秒钟时间退出此页面。否则，请输入你的认证口令。请注意如在60秒内没有输入正确口令将导致机动特遣队被派往你所在位置。\n\nPassword: ******************\n\n口令有效，进行下一步认证……\n请插入数字密钥……有效！\n虹膜扫描就绪，请靠近扫描窗……有效！\n欢迎，O5-9。\n今天没有待办事项。\n\n$ findf --type=personnelfile --lastname=Matrix --branch=CN\n\n命中 2 个结果，载入文档……\n\n\n\nChrono Matrix\nRife Matrix\n\n\n\n\n\nimage.jpg\n\n\n代号：Chrono Matrix\n性别：男\n年龄：24岁\n安保权限等级：4级\n职务：Site-CN-810 驻站 RAISA 技术员\n学历：本科\n内部邮件地址：pcs.asiar|0mc#pcs.asiar|0mc\n负责项目：\n\n\n项目编号\n项目等级\n内部代号\n\n\nSCP-CN-3560\nEuclid\n纸上传说\n\n\nSCP-CN-3561\nEuclid\n正在装修的房间\n\n\nSCP-CN-3562\nThaumiel\n镇魂幡\n\n\nSCP-CN-3563\n等待分级\n现实竞争\n\n\nSCP-CN-3406\nEuclid\nHomo Dugentia\n\n\nSCP-CN-40k-J\n卡车\n赞美伟大的泥头车之神\n\n\n相关事件：\n\n活的Site-CN-810\n人类的时代\n\n翻译：\n\n收容精神学指南\n\n\n+ [需要5级权限]\n\n- [授予访问权限]\n\n\n备注：\n一般称为Chrono，熟人都知道Matrix是他随手填上去的假姓氏，当然，名字也是假的。\n照理说原名和其他数据应该存在人事部的纸质备份区的，但是我去查过了，那档案盒里的纸全是白纸，什么都没印。\n注册数据库用户的时候，他花了1小时找到一个够短的用户名cm0。\n据信其在RAISA、Site-CN-810均有职务。\n安保权限等级为4级，持有三种不同权限等级（2、3、4）的数字身份认证令牌。\n其人有一名直系亲属（妹妹）亦在基金会供职，代号：Rife Matrix。\n－－人事部\n\n\n\n\n\n\n\n\n_\n\n\n\n\n✉ 新邮件 (1)\n\n\n\n\n\n\n\nSubject:\nFrom:\nTo: 05-9 <05+9@command.scp>\n\n\n已拦截致命安保模因\n\n9，你又打开这个了，对吗？\n你答应过我，我们各退一步，不要深究，就可以相安无事。\n我的目标和基金会是一致的，你也知道。我就不把你那些小心思在拿出来讲了。\n关掉这个页面吧，你再怎么盯着这里看也不会有结果的。再说，下令把档案抹掉的，就是你本人啊。\n\n你深情的，\nChrono Matrix\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nimage.jpg\n\n\n代号：Rife Matrix\n性别：女\n年龄：22岁\n安保权限等级：3级\n职务：Site-CN-999 收容专家组 副组长\n学历：博士\n内部邮件地址：pcs.asiar|fr-mr#pcs.asiar|fr-mr\n负责项目：\n\n\n项目编号\n项目等级\n\n\n[数据删除]\nKeter\n\n\n\n\n\n\n//<![CDATA[\nOZONE.dom.onDomReady(function(){\n        var tabViewf8766e51a525bf402c18e8c33a2f09ab = new YAHOO.widget.TabView('wiki-tabview-f8766e51a525bf402c18e8c33a2f09ab');\n                }, \"dummy-ondomready-block\");\n        \n//]]>\n\n\n哈，我就知道，肯定会有人看这个。\n所以我留了一手，就这样。\n\n\n$ logout\n\n没有要保存的工作区。\n已安全注销，现在您可以安全的关闭计算机了。",
+        "source": "[!-- 一部分警告和提示文字是从 https://scp-wiki-cn.wikidot.com/scp-2317 复制并修改来的 --]\n\n[[>]]\n[[module rate]]\n[[/>]]\n\n> {{$ @@login O5-9@@}}\n\n**注意：冒充监督者议会成员者将被立即处死。如果你是错误地输入了登陆信息，在致命视觉安保模因启动前你现在有10秒钟时间退出此页面。否则，请输入你的认证口令。请注意如在60秒内没有输入正确口令将导致机动特遣队被派往你所在位置。**\n\n> {{Password: @@******************@@}}\n\n口令有效，进行下一步认证……\n\n请插入数字密钥……有效！\n\n虹膜扫描就绪，请靠近扫描窗……有效！\n\n欢迎，O5-9。\n\n今天没有待办事项。\n\n> {{$ @@findf --type=personnelfile --lastname=Matrix --branch=CN@@}}\n\n命中 2 个结果，载入文档……\n\n[[tabview]]\n[[tab Chrono Matrix]]\n\n|| image.jpg ||\n\n代号：Chrono Matrix\n\n性别：男\n\n年龄：24岁\n\n安保权限等级：4级\n\n职务：Site-CN-810 驻站 RAISA 技术员\n\n学历：本科\n\n内部邮件地址：cm0@raisa.scp\n\n负责项目：\n||~ 项目编号 ||~ 项目等级||~ 内部代号||\n|| [[[SCP-CN-3560]]] || Euclid || 纸上传说 ||\n|| [[[SCP-CN-3561]]] || Euclid || 正在装修的房间 ||\n|| [[[SCP-CN-3562]]] || Thaumiel || 镇魂幡 ||\n|| [[[SCP-CN-3563]]] || 等待分级 || 现实竞争 ||\n|| [[[SCP-CN-3406]]] || Euclid || Homo Dugentia ||\n|| [[[cn40k-contextaddmirror|SCP-CN-40k]]]-J || 卡车 || 赞美伟大的泥头车之神 ||\n\n相关事件：\n* [[[living-site-cn-810|]]]\n* [[[another-beginning|]]]\n\n翻译：\n* [[[containment-psychiatry-orientation|]]]\n\n[[collapsible show=\"+ [需要5级权限]\" hide=\"- [授予访问权限]\"]]\n\n> **备注：**\n> 一般称为Chrono，熟人都知道Matrix是他随手填上去的假姓氏，当然，名字也是假的。\n>\n> 照理说原名和其他数据应该存在人事部的纸质备份区的，但是我去查过了，那档案盒里的纸全是白纸，什么都没印。\n> \n> 注册数据库用户的时候，他花了1小时找到一个够短的用户名[[*user cm0]]。\n> \n> 据信其在RAISA、Site-CN-810均有职务。\n> \n> 安保权限等级为4级，持有三种不同权限等级（2、3、4）的数字身份认证令牌。\n> \n> 其人有一名直系亲属（妹妹）亦在基金会供职，代号：Rife Matrix。\n>\n> －－人事部\n\n[[module css]]\n        .notification-container {\n            position: fixed;\n            top: 20px;\n            right: 20px;\n            z-index: 1000;\n        }\n        \n        .mail-notification {\n            background-color: white;\n            color: black;\n            font-weight: bold;\n            padding: 12px 20px;\n            border-radius: 4px;\n            border: 3px solid #b00;\n            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);\n            display: flex;\n            align-items: center;\n            position: relative;\n            transform: translateX(150%);\n            animation: slideIn 0.5s ease-out 5s forwards;\n        }\n        \n        .mail-icon {\n            margin-right: 10px;\n            font-size: 18px;\n        }\n        \n        /* 闪烁红点 */\n        .red-dot {\n            position: absolute;\n            top: -5px;\n            right: -5px;\n            width: 10px;\n            height: 10px;\n            background-color: red;\n            border-radius: 50%;\n            animation: blink 1s infinite 5.5s;\n        }\n        \n        @keyframes slideIn {\n            from {\n                transform: translateX(150%);\n            }\n            to {\n                transform: translateX(0);\n            }\n        }\n        \n        @keyframes blink {\n            0% { opacity: 1; }\n            50% { opacity: 0; }\n            100% { opacity: 1; }\n        }\n\n        .fixed-mail-block .unfolded .notification-container { display: none; }\n[[/module]]\n\n[!-- BEGIN OF COLMOD : MAIL BLOCK --]\n[[div_ class=\"fixed-mail-block colmod-block\"]]\n[[ul]][[li class=\"folded\"]][[ul]]_[[/ul]][[div class=\"colmod-link-top\"]]\n[[div_ class=\"foldable-list-container\"]]\n[!-- BEGIN OF COLMOD LINK --]\n    [[div_ class=\"notification-container\"]]\n        [[div_ class=\"mail-notification\"]]\n            [[a href=\"#u-fixed-mail-content\"]] [[span class=\"mail-icon\"]]✉[[/span]] [[span]]新邮件 (1)[[/span]] [[/a]]\n            [[div_ class=\"red-dot\"]]\n            [[/div]]\n        [[/div]]\n    [[/div]]\n[!-- END OF COLMOD LINK --]\n[[/div]][[/div]][[div class=\"colmod-content\"]]\n\n[[div id=\"u-fixed-mail-content\" class=\"blockquote\"]]\nSubject:\nFrom:\nTo: 05-9 <{{@@05+9@command.scp@@}}>\n------\n> 已拦截致命安保模因\n9，你又打开这个了，对吗？\n\n你答应过我，我们各退一步，不要深究，就可以相安无事。\n\n我的目标和基金会是一致的，你也知道。我就不把你那些小心思在拿出来讲了。\n\n关掉这个页面吧，你再怎么盯着这里看也不会有结果的。再说，下令把档案抹掉的，就是你本人啊。\n\n[[>]]\n你深情的，\nChrono Matrix\n[[/>]]\n[[/div]]\n\n[[/div]][[div class=\"colmod-link-end\"]]\n[[div_ class=\"foldable-list-container\"]]\n[[/div]][[/div]][[/li]][[/ul]][[/div]]\n[!-- END OF COLMOD : MAIL BLOCK --]\n\n\n[[/collapsible]]\n\n[[/tab]]\n\n[[tab Rife Matrix]]\n\n|| image.jpg ||\n\n代号：Rife Matrix\n\n性别：女\n\n年龄：22岁\n\n安保权限等级：3级\n\n职务：Site-CN-999 收容专家组 副组长\n\n学历：博士\n\n内部邮件地址：rm-rf@raisa.scp\n\n负责项目：\n||~ 项目编号 ||~ 项目等级||\n|| [数据删除] || Keter ||\n\n[[/tab]]\n[[/tabview]]\n\n[[div style=\"color: transparent;\"]]\n\n哈，我就知道，肯定会有人看这个。\n\n所以我留了一手，就这样。\n\n[[/div]]\n\n> {{$ @@logout@@}}\n\n没有要保存的工作区。\n\n已安全注销，现在您可以安全的关闭计算机了。",
+        "tags": [
+          "作者"
+        ],
+        "validFrom": "2025-08-27T08:12:10.826Z",
+        "validTo": null,
+        "isDeleted": false,
+        "createdAt": "2025-08-27T08:12:10.826Z",
+        "updatedAt": "2025-08-27T08:12:10.826Z",
+        "category": "_default",
+        "attributionCount": 1
+      }
+    },
+    "pages_revisions": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/pages/1459662701/revisions?limit=5",
+      "data": [
+        {
+          "revisionId": 616309,
+          "wikidotId": 1531799795,
+          "timestamp": "2025-08-27T04:56:14.000Z",
+          "type": "SOURCE_CHANGED",
+          "comment": "add: cn3563 - 现实竞争",
+          "userId": 14551,
+          "userDisplayName": "cm0",
+          "userWikidotId": 8012099,
+          "revisionNumber": null,
+          "hasSource": false
+        },
+        {
+          "revisionId": 616308,
+          "wikidotId": 1531607443,
+          "timestamp": "2025-08-16T21:31:42.000Z",
+          "type": "SOURCE_CHANGED",
+          "comment": "",
+          "userId": 14551,
+          "userDisplayName": "cm0",
+          "userWikidotId": 8012099,
+          "revisionNumber": null,
+          "hasSource": false
+        },
+        {
+          "revisionId": 28198,
+          "wikidotId": 1531607443,
+          "timestamp": "2025-08-16T21:31:42.000Z",
+          "type": "SOURCE_CHANGED",
+          "comment": "",
+          "userId": 14551,
+          "userDisplayName": "cm0",
+          "userWikidotId": 8012099,
+          "revisionNumber": null,
+          "hasSource": false
+        },
+        {
+          "revisionId": 616307,
+          "wikidotId": 1530025141,
+          "timestamp": "2025-05-09T11:53:45.000Z",
+          "type": "SOURCE_CHANGED",
+          "comment": "",
+          "userId": 14551,
+          "userDisplayName": "cm0",
+          "userWikidotId": 8012099,
+          "revisionNumber": null,
+          "hasSource": false
+        },
+        {
+          "revisionId": 28197,
+          "wikidotId": 1530025141,
+          "timestamp": "2025-05-09T11:53:45.000Z",
+          "type": "SOURCE_CHANGED",
+          "comment": "",
+          "userId": 14551,
+          "userDisplayName": "cm0",
+          "userWikidotId": 8012099,
+          "revisionNumber": null,
+          "hasSource": false
+        }
+      ]
+    },
+    "pages_votes_fuzzy": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/pages/1459662701/votes/fuzzy?limit=5",
+      "data": [
+        {
+          "userId": 14225,
+          "direction": 1,
+          "timestamp": "2025-05-06T16:00:00.000Z",
+          "userDisplayName": "rain autumn",
+          "userWikidotId": 6353534
+        },
+        {
+          "userId": 13991,
+          "direction": 1,
+          "timestamp": "2025-05-06T16:00:00.000Z",
+          "userDisplayName": "Nightingale_FZ",
+          "userWikidotId": 6348925
+        },
+        {
+          "userId": 13978,
+          "direction": 1,
+          "timestamp": "2025-05-06T16:00:00.000Z",
+          "userDisplayName": "lechangliu",
+          "userWikidotId": 8083537
+        },
+        {
+          "userId": 13674,
+          "direction": -1,
+          "timestamp": "2025-05-06T16:00:00.000Z",
+          "userDisplayName": "gudagudaorder123",
+          "userWikidotId": 5230157
+        },
+        {
+          "userId": 15477,
+          "direction": 1,
+          "timestamp": "2025-05-06T16:00:00.000Z",
+          "userDisplayName": "Dr Roger_F_XL",
+          "userWikidotId": 6335947
+        }
+      ]
+    },
+    "pages_ratings_cumulative": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/pages/1459662701/ratings/cumulative",
+      "data": [
+        {
+          "date": "2025-05-06T16:00:00.000Z",
+          "cumulativeRating": "2"
+        },
+        {
+          "date": "2025-05-07T16:00:00.000Z",
+          "cumulativeRating": "3"
+        },
+        {
+          "date": "2025-05-08T16:00:00.000Z",
+          "cumulativeRating": "3"
+        },
+        {
+          "date": "2025-05-09T16:00:00.000Z",
+          "cumulativeRating": "4"
+        }
+      ]
+    },
+    "stats_pages_daily": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/stats/pages/1459662701/daily?limit=5",
+      "data": [
+        {
+          "date": "2025-08-16T16:00:00.000Z",
+          "votesUp": 0,
+          "votesDown": 0,
+          "totalVotes": 0,
+          "uniqueVoters": 0,
+          "revisions": 1
+        },
+        {
+          "date": "2025-05-09T16:00:00.000Z",
+          "votesUp": 1,
+          "votesDown": 0,
+          "totalVotes": 1,
+          "uniqueVoters": 1,
+          "revisions": 0
+        },
+        {
+          "date": "2025-05-08T16:00:00.000Z",
+          "votesUp": 0,
+          "votesDown": 0,
+          "totalVotes": 0,
+          "uniqueVoters": 1,
+          "revisions": 1
+        },
+        {
+          "date": "2025-05-07T16:00:00.000Z",
+          "votesUp": 1,
+          "votesDown": 0,
+          "totalVotes": 1,
+          "uniqueVoters": 1,
+          "revisions": 0
+        },
+        {
+          "date": "2025-05-06T16:00:00.000Z",
+          "votesUp": 5,
+          "votesDown": 3,
+          "totalVotes": 8,
+          "uniqueVoters": 8,
+          "revisions": 6
+        }
+      ]
+    },
+    "stats_site_by_date": {
+      "ok": true,
+      "status": 200,
+      "url": "http://localhost:4396/stats/site?date=2025-08-26",
+      "data": {
+        "date": "2025-08-25T16:00:00.000Z",
+        "totalUsers": 28728,
+        "activeUsers": 6487,
+        "totalPages": 31241,
+        "totalVotes": 924199,
+        "newUsersToday": 5,
+        "newPagesToday": 6,
+        "newVotesToday": 414
+      }
+    }
+  }
+}

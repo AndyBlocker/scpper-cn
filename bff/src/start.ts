@@ -5,6 +5,7 @@ import pinoHttp from 'pino-http';
 import { Pool } from 'pg';
 import { createClient } from 'redis';
 import { buildRouter } from './web/router.js';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 
 export async function createServer() {
   const app = express();
@@ -13,6 +14,10 @@ export async function createServer() {
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
   app.use(pinoHttp());
+
+  // Proxy avatar to avatar-agent early to avoid interference
+  // Important: include '/avatar' in target so that Express mount path truncation is compensated.
+  app.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200/avatar', changeOrigin: false, xfwd: true }));
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL || process.env.PG_DATABASE_URL });
   let redis: any = null;

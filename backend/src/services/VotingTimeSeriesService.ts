@@ -49,6 +49,8 @@ export class VotingTimeSeriesService {
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
         WHERE pv."pageId" = ${pageId}
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
         GROUP BY DATE(v."timestamp")
         ORDER BY DATE(v."timestamp")
       ),
@@ -96,6 +98,8 @@ export class VotingTimeSeriesService {
         FROM "Attribution" a
         JOIN "PageVersion" pv ON a."pageVerId" = pv.id
         WHERE a."userId" = ${userId}
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
       ),
       daily_votes AS (
         SELECT 
@@ -106,6 +110,7 @@ export class VotingTimeSeriesService {
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
         JOIN user_pages up ON pv."pageId" = up."pageId"
+        WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
         GROUP BY DATE(v."timestamp")
         ORDER BY DATE(v."timestamp")
       ),
