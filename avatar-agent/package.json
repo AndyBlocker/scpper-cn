@@ -1,0 +1,31 @@
+{
+  "name": "avatar-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --env-file=.env --watch --enable-source-maps dist/index.js",
+    "predev": "npm run build",
+    "lint": "echo \"(add eslint later)\"",
+    "prune": "node dist/scripts/prune.js",
+    "stat": "AVATAR_ROOT=/home/andyblocker/scpper-cn/.data/avatar-agent/avatars node dist/scripts/stat.js",
+    "stat:pretty": "AVATAR_ROOT=/home/andyblocker/scpper-cn/.data/avatar-agent/avatars node dist/scripts/stat.js --pretty"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1",
+    "fs-extra": "^11.2.0",
+    "mime-types": "^2.1.35",
+    "pino": "^9.3.2",
+    "undici": "^6.19.6"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20.10"
+  }
+}

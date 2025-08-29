@@ -27,6 +27,7 @@
     "db:reset": "prisma migrate reset",
     "db:clear": "node --import tsx/esm scripts/clear-data.ts",
     "schema:fetch": "node --import tsx/esm scripts/fetch-graphql-schema.ts",
+    "cleanup:high-count": "node --import tsx/esm scripts/cleanup-high-count-pages.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json"
   },

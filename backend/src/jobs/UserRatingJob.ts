@@ -85,14 +85,18 @@ export class UserRatingSystem {
     
     // 使用复杂SQL一次性计算所有用户的rating
     await this.prisma.$executeRawUnsafe(`
-      WITH pages_attr_on_current AS (
-        -- 仅统计用户在“当前版本”上存在归属的页面（按用户-页面去重）
-        SELECT DISTINCT a."userId", pv."pageId"
+      WITH user_page_roles AS (
+        -- 每个用户-页面的角色汇总：有任何归属即视为作者
+        SELECT 
+          a."userId",
+          pv."pageId",
+          MAX(CASE WHEN a.type IS NOT NULL THEN 1 ELSE 0 END) AS has_author
         FROM "Attribution" a
-        INNER JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+        JOIN "PageVersion" pv ON pv.id = a."pageVerId"
         WHERE a."userId" IS NOT NULL
           AND pv."validTo" IS NULL
           AND pv."isDeleted" = false
+        GROUP BY a."userId", pv."pageId"
       ),
       current_versions AS (
         -- 当前版本（用于读取rating和tags）
@@ -103,98 +107,65 @@ export class UserRatingSystem {
           AND pv.rating IS NOT NULL
       ),
       user_contributions AS (
-        -- 将“当前版本有归属”的页面映射到其当前版本聚合
+        -- 将用户-页面角色与当前版本合并，根据角色与标签分类聚合
         SELECT 
-          pac."userId" as "userId",
-          SUM(cv.rating::float) as overall_rating,
-          COUNT(*) as total_pages,
-          
-          -- SCP分类 (原创 + scp)
-          SUM(CASE 
-            WHEN cv.tags @> ARRAY['原创', 'scp'] 
-            THEN cv.rating::float
-            ELSE 0 
-          END) as scp_rating,
-          COUNT(CASE 
-            WHEN cv.tags @> ARRAY['原创', 'scp'] 
-            THEN 1 
-          END) as scp_pages,
-          
-          -- 翻译分类（定义：不包含“原创”标签的页面）
-          SUM(CASE 
-            WHEN NOT (cv.tags @> ARRAY['原创'])
-            THEN cv.rating::float
-            ELSE 0 
-          END) as translation_rating,
-          COUNT(CASE 
-            WHEN NOT (cv.tags @> ARRAY['原创']) 
-            THEN 1 
-          END) as translation_pages,
-          
-          -- GOI格式分类 (原创 + goi格式)
-          SUM(CASE 
-            WHEN cv.tags @> ARRAY['原创', 'goi格式'] 
-            THEN cv.rating::float
-            ELSE 0 
-          END) as goi_rating,
-          COUNT(CASE 
-            WHEN cv.tags @> ARRAY['原创', 'goi格式'] 
-            THEN 1 
-          END) as goi_pages,
-          
-          -- 故事分类 (原创 + 故事)
-          SUM(CASE 
-            WHEN cv.tags @> ARRAY['原创', '故事'] 
-            THEN cv.rating::float
-            ELSE 0 
-          END) as story_rating,
-          COUNT(CASE 
-            WHEN cv.tags @> ARRAY['原创', '故事'] 
-            THEN 1 
-          END) as story_pages,
-          
-          -- Wanderers/图书馆分类 (原创 + wanderers)
-          SUM(CASE 
-            WHEN cv.tags @> ARRAY['原创', 'wanderers'] 
-            THEN cv.rating::float
-            ELSE 0 
-          END) as wanderers_rating,
-          COUNT(CASE 
-            WHEN cv.tags @> ARRAY['原创', 'wanderers'] 
-            THEN 1 
-          END) as wanderers_pages,
-          
-          -- 艺术作品分类 (原创 + 艺术作品)
-          SUM(CASE 
-            WHEN cv.tags @> ARRAY['原创', '艺术作品'] 
-            THEN cv.rating::float
-            ELSE 0 
-          END) as art_rating,
-          COUNT(CASE 
-            WHEN cv.tags @> ARRAY['原创', '艺术作品'] 
-            THEN 1 
-          END) as art_pages
-        FROM pages_attr_on_current pac
-        INNER JOIN current_versions cv ON cv."pageId" = pac."pageId"
-        GROUP BY pac."userId"
+          upr."userId" as "userId",
+          -- 总分：有归属即计入
+          SUM(CASE WHEN upr.has_author = 1 THEN cv.rating::float ELSE 0 END) as overall_rating,
+          COUNT(CASE WHEN upr.has_author = 1 THEN 1 END) as total_pages,
+
+          -- SCP分类 (仅作者/提交者，且标签包含 原创 + scp)
+          SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN cv.rating::float ELSE 0 END) as scp_rating,
+          COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN 1 END) as scp_pages,
+
+          -- 翻译分类：标签判定（非“原创”且排除“作者/掩盖页”），作者为任一有归属的用户
+          SUM(CASE WHEN upr.has_author = 1
+                     AND NOT (cv.tags @> ARRAY['原创'])
+                     AND NOT (cv.tags @> ARRAY['作者'])
+                     AND NOT (cv.tags @> ARRAY['掩盖页'])
+                   THEN cv.rating::float ELSE 0 END) as translation_rating,
+          COUNT(CASE WHEN upr.has_author = 1
+                      AND NOT (cv.tags @> ARRAY['原创'])
+                      AND NOT (cv.tags @> ARRAY['作者'])
+                      AND NOT (cv.tags @> ARRAY['掩盖页'])
+                   THEN 1 END) as translation_pages,
+
+          -- GOI格式分类 (仅作者/提交者，原创 + goi格式)
+          SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','goi格式'] THEN cv.rating::float ELSE 0 END) as goi_rating,
+          COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','goi格式'] THEN 1 END) as goi_pages,
+
+          -- 故事分类 (仅作者/提交者，原创 + 故事)
+          SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','故事'] THEN cv.rating::float ELSE 0 END) as story_rating,
+          COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','故事'] THEN 1 END) as story_pages,
+
+          -- Wanderers/图书馆分类 (仅作者/提交者，原创 + wanderers)
+          SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','wanderers'] THEN cv.rating::float ELSE 0 END) as wanderers_rating,
+          COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','wanderers'] THEN 1 END) as wanderers_pages,
+
+          -- 艺术作品分类 (仅作者/提交者，原创 + 艺术作品)
+          SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','艺术作品'] THEN cv.rating::float ELSE 0 END) as art_rating,
+          COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','艺术作品'] THEN 1 END) as art_pages
+        FROM user_page_roles upr
+        JOIN current_versions cv ON cv."pageId" = upr."pageId"
+        GROUP BY upr."userId"
       )
       UPDATE "UserStats" us
       SET 
-        "overallRating" = uc.overall_rating,
-        "totalRating" = uc.overall_rating::int,
-        "pageCount" = uc.total_pages,
-        "scpRating" = uc.scp_rating,
-        "scpPageCount" = uc.scp_pages,
-        "translationRating" = uc.translation_rating,
-        "translationPageCount" = uc.translation_pages,
-        "goiRating" = uc.goi_rating,
-        "goiPageCount" = uc.goi_pages,
-        "storyRating" = uc.story_rating,
-        "storyPageCount" = uc.story_pages,
-        "wanderersRating" = uc.wanderers_rating,
-        "wanderersPageCount" = uc.wanderers_pages,
-        "artRating" = uc.art_rating,
-        "artPageCount" = uc.art_pages
+        "overallRating" = COALESCE(uc.overall_rating, 0),
+        "totalRating" = COALESCE(uc.overall_rating, 0)::int,
+        "pageCount" = COALESCE(uc.total_pages, 0),
+        "scpRating" = COALESCE(uc.scp_rating, 0),
+        "scpPageCount" = COALESCE(uc.scp_pages, 0),
+        "translationRating" = COALESCE(uc.translation_rating, 0),
+        "translationPageCount" = COALESCE(uc.translation_pages, 0),
+        "goiRating" = COALESCE(uc.goi_rating, 0),
+        "goiPageCount" = COALESCE(uc.goi_pages, 0),
+        "storyRating" = COALESCE(uc.story_rating, 0),
+        "storyPageCount" = COALESCE(uc.story_pages, 0),
+        "wanderersRating" = COALESCE(uc.wanderers_rating, 0),
+        "wanderersPageCount" = COALESCE(uc.wanderers_pages, 0),
+        "artRating" = COALESCE(uc.art_rating, 0),
+        "artPageCount" = COALESCE(uc.art_pages, 0)
       FROM user_contributions uc
       WHERE us."userId" = uc."userId"
     `);
@@ -501,6 +472,8 @@ export class UserRatingSystem {
       translation_users: bigint;
       goi_users: bigint;
       story_users: bigint;
+      wanderers_users: bigint;
+      art_users: bigint;
     }>>`
       SELECT 
         COUNT(*) as total_users,

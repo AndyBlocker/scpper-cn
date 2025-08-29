@@ -2,8 +2,10 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { getPrismaClient } from '../utils/db-connection';
 import { VotingTimeSeriesCacheJob } from './VotingTimeSeriesCacheJob';
+import { runDailySiteOverview } from './DailySiteOverviewJob.js';
 import { UserDataCompletenessJob } from './UserDataCompletenessJob';
 import { UserSocialAnalysisJob } from './UserSocialAnalysisJob';
+import { computeUserCategoryBenchmarks } from './UserCategoryBenchmarksJob';
 // @ts-ignore - importing from scripts folder
 // import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
@@ -45,7 +47,10 @@ export class IncrementalAnalyzeJob {
         'user_activity_records',
         'search_index',
         'series_stats',
-        'trending_stats'
+        'trending_stats',
+        'site_overview_daily',
+        // 新增：作者分类基准
+        'category_benchmarks'
       ];
 
       const tasksToRun = options.tasks || availableTasks;
@@ -149,6 +154,24 @@ export class IncrementalAnalyzeJob {
             await this.prisma.trendingStats.deleteMany({});
             console.log('  ✓ TrendingStats cleared');
             break;
+          case 'site_overview_daily':
+            // 非破坏性汇总，清空后可由任务重建
+            if ((this.prisma as any).siteOverviewDaily) {
+              await (this.prisma as any).siteOverviewDaily.deleteMany({});
+              console.log('  ✓ SiteOverviewDaily cleared');
+            } else {
+              console.log('  ⚠️ SiteOverviewDaily model not found in Prisma client, skipping');
+            }
+            break;
+          case 'category_benchmarks':
+            // 仅清理本任务键，避免影响其它榜单缓存
+            await this.prisma.leaderboardCache.deleteMany({
+              where: {
+                key: { in: ['category_benchmarks_author_rating_v2', 'category_benchmarks_author_rating'] }
+              }
+            });
+            console.log('  ✓ Category benchmarks cache cleared');
+            break;
           case 'materialized_views':
             // 物化视图需要先DROP再重建，这里只记录日志
             console.log('  ⚠️ Materialized views will be refreshed (not dropped)');
@@ -187,8 +210,17 @@ export class IncrementalAnalyzeJob {
       const changeSet = await this.getChangeSet(taskName, forceFullAnalysis);
       
       if (changeSet.length === 0 && !forceFullAnalysis) {
-        console.log(`⏭️ Task ${taskName}: No changes detected, skipping...`);
-        return;
+        const alwaysRunTasks = new Set([
+          'site_overview_daily',
+          'category_benchmarks',
+          'materialized_views',
+          'series_stats',
+          'trending_stats',
+        ]);
+        if (!alwaysRunTasks.has(taskName)) {
+          console.log(`⏭️ Task ${taskName}: No changes detected, skipping...`);
+          return;
+        }
       }
 
       console.log(`🔍 Task ${taskName}: Processing ${changeSet.length} changed page versions`);
@@ -245,6 +277,13 @@ export class IncrementalAnalyzeJob {
           break;
         case 'trending_stats':
           await this.updateTrendingStats();
+          break;
+        case 'site_overview_daily':
+          // Compute or refresh daily overview snapshots for recent days
+          await runDailySiteOverview({ startDate: undefined, endDate: undefined });
+          break;
+        case 'category_benchmarks':
+          await computeUserCategoryBenchmarks(this.prisma);
           break;
         default:
           console.warn(`⚠️ Unknown task: ${taskName}`);
@@ -466,7 +505,7 @@ export class IncrementalAnalyzeJob {
         WITH vote_dates AS (
           SELECT date(v."timestamp") as date
           FROM "Vote" v
-          WHERE v."timestamp" >= '2022-05-14'
+          WHERE v."timestamp" >= '2022-01-01'
           GROUP BY date(v."timestamp")
         )
         SELECT date FROM vote_dates
@@ -507,6 +546,8 @@ export class IncrementalAnalyzeJob {
           FROM "Revision" r
           JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
           WHERE date(r."timestamp") = ${date}::date
+            AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false
           GROUP BY pv."pageId"
         )
         INSERT INTO "PageDailyStats" ("pageId", date, votes_up, votes_down, total_votes, unique_voters, revisions)
@@ -873,12 +914,24 @@ export class IncrementalAnalyzeJob {
       SELECT 
         ${today}::date as date,
         (SELECT COUNT(*) FROM "User") as "totalUsers",
-        (SELECT COUNT(*) FROM "User" WHERE "firstActivityAt" IS NOT NULL) as "activeUsers",
+        -- 60-day active users: any user with lastActivityAt within past 60 days
+        (SELECT COUNT(*) FROM "User" WHERE "lastActivityAt" IS NOT NULL AND "lastActivityAt" >= (${today}::date - INTERVAL '60 days')) as "activeUsers",
         (SELECT COUNT(*) FROM "Page") as "totalPages",
-        (SELECT COUNT(*) FROM "Vote") as "totalVotes",
+        (
+          SELECT COUNT(*)
+          FROM "Vote" v
+          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+          WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+        ) as "totalVotes",
         (SELECT COUNT(*) FROM "User" WHERE date("firstActivityAt") = ${today}::date) as "newUsersToday",
         (SELECT COUNT(*) FROM "Page" WHERE date("firstPublishedAt") = ${today}::date) as "newPagesToday",
-        (SELECT COUNT(*) FROM "Vote" WHERE date("timestamp") = ${today}::date) as "newVotesToday",
+        (
+          SELECT COUNT(*)
+          FROM "Vote" v
+          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+          WHERE date(v."timestamp") = ${today}::date
+            AND pv."validTo" IS NULL AND pv."isDeleted" = false
+        ) as "newVotesToday",
         now() as "updatedAt"
       ON CONFLICT (date) DO UPDATE SET
         "totalUsers" = EXCLUDED."totalUsers",
@@ -1358,7 +1411,12 @@ export class IncrementalAnalyzeJob {
         (SELECT COUNT(*) FROM "Page") as pages,
         (SELECT COUNT(*) FROM "PageVersion") as page_versions,
         (SELECT COUNT(*) FROM "User") as users,
-        (SELECT COUNT(*) FROM "Vote") as votes,
+        (
+          SELECT COUNT(*)
+          FROM "Vote" v
+          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+          WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+        ) as votes,
         (SELECT COUNT(*) FROM "Revision") as revisions,
         (SELECT COUNT(*) FROM "PageStats") as analyzed_pages,
         (SELECT COUNT(*) FROM "UserStats") as analyzed_users,

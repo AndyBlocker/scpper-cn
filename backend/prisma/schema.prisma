@@ -523,3 +523,27 @@ model LeaderboardCache {
   @@index([expiresAt])
 }
 
+/// Daily site-wide overview snapshot (non-destructive addition)
+model SiteOverviewDaily {
+  id                 Int      @id @default(autoincrement())
+  date               DateTime @unique @db.Date
+  // Users
+  usersTotal         Int      @default(0)
+  usersActive        Int      @default(0)
+  usersContributors  Int      @default(0)
+  usersAuthors       Int      @default(0)
+  // Pages
+  pagesTotal         Int      @default(0)
+  pagesOriginals     Int      @default(0)
+  pagesTranslations  Int      @default(0)
+  // Votes (daily increments)
+  votesUp            Int      @default(0)
+  votesDown          Int      @default(0)
+  // Revisions (daily increments)
+  revisionsTotal     Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([date])
+}
+

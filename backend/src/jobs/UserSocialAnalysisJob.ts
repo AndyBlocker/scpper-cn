@@ -81,6 +81,8 @@ export class UserSocialAnalysisJob {
             AND v.direction != 0
             AND pv.tags IS NOT NULL
             AND array_length(pv.tags, 1) > 0
+            AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false
         ),
         tag_stats AS (
           SELECT 
@@ -171,6 +173,8 @@ export class UserSocialAnalysisJob {
             AND v."userId" != a."userId"
             AND v.direction != 0
             AND a.type = 'AUTHOR'
+            AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false
             AND (${conditions})
         ),
         interaction_stats AS (
@@ -292,6 +296,8 @@ export class UserSocialAnalysisJob {
             AND v."userId" != a."userId"
             AND v.direction != 0
             AND a.type = 'AUTHOR'
+            AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false
             AND v.timestamp >= NOW() - INTERVAL '7 days'
         ),
         outdated_interactions AS (
