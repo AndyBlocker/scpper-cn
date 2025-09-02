@@ -338,13 +338,58 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
       if (isNaN(wikidotIdInt)) {
         return res.status(400).json({ error: 'Invalid wikidotId' });
       }
-      const { type, limit = '20', offset = '0', includeDeleted = 'false' } = req.query as Record<string, string>;
+      const { tab = 'all', limit = '20', offset = '0', includeDeleted = 'false' } = req.query as Record<string, string>;
+
+      // Build tab-specific filters
+      const excludedCats = ['log-of-anomalous-items-cn', 'short-stories'];
+      const tabLower = String(tab).toLowerCase();
+      let tabCond = '';
+      const params: any[] = [wikidotIdInt, includeDeleted === 'true'];
+      switch (tabLower) {
+        case 'author':
+          tabCond = ` AND a.type IN ('AUTHOR','SUBMITTER')
+                      AND ('原创' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                      AND NOT ('掩盖页' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                      AND NOT ('段落' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                      AND NOT (pv.category = ANY($3::text[]))`;
+          params.push(excludedCats);
+          break;
+        case 'translator':
+          tabCond = ` AND NOT ('原创' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                      AND NOT ('作者' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                      AND NOT ('掩盖页' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                      AND NOT ('段落' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                      AND NOT (pv.category = ANY($3::text[]))`;
+          params.push(excludedCats);
+          break;
+        case 'other':
+          tabCond = ` AND (('作者' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                        OR ('掩盖页' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
+                        OR ('段落' = ANY(COALESCE(pv.tags, ARRAY[]::text[]))))
+                      AND NOT (pv.category = ANY($3::text[]))`;
+          params.push(excludedCats);
+          break;
+        case 'short_stories':
+          tabCond = ` AND pv.category = $3::text`;
+          params.push('short-stories');
+          break;
+        case 'anomalous_log':
+          tabCond = ` AND pv.category = $3::text`;
+          params.push('log-of-anomalous-items-cn');
+          break;
+        case 'all':
+        default:
+          tabCond = '';
+          break;
+      }
+
       const sql = `
         SELECT * FROM (
           SELECT DISTINCT ON (pv."wikidotId")
             pv."wikidotId",
             p."currentUrl" AS url,
             pv.title,
+            pv.category,
             pv.rating,
             pv.tags,
             pv."voteCount",
@@ -362,13 +407,14 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           JOIN "User" u ON a."userId" = u.id
           WHERE u."wikidotId" = $1
             AND ($2::boolean = true OR pv."validTo" IS NULL)
-            AND ($3::text IS NULL OR a.type = $3)
+            ${tabCond}
           ORDER BY pv."wikidotId", pv."createdAt" DESC
         ) t
         ORDER BY t."createdAt" DESC
-        LIMIT $4::int OFFSET $5::int
+        LIMIT $${params.length + 1}::int OFFSET $${params.length + 2}::int
       `;
-      const { rows } = await pool.query(sql, [wikidotIdInt, includeDeleted === 'true', type || null, limit, offset]);
+      params.push(limit, offset);
+      const { rows } = await pool.query(sql, params);
       // return createdAt so frontend can display date
       res.json(rows);
     } catch (err) {
@@ -391,6 +437,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           SELECT DISTINCT ON (pv."wikidotId")
             pv."wikidotId",
             pv.tags,
+            pv.category,
             pv."validTo"
           FROM "Attribution" a
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
@@ -403,25 +450,39 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           COUNT(*) FILTER (
             WHERE ('原创' = ANY(COALESCE(tags, ARRAY[]::text[])))
               AND NOT ('掩盖页' = ANY(COALESCE(tags, ARRAY[]::text[])))
+              AND NOT ('段落' = ANY(COALESCE(tags, ARRAY[]::text[])))
+              AND NOT (category IN ('log-of-anomalous-items-cn','short-stories'))
           ) AS original,
           COUNT(*) FILTER (
             WHERE NOT ('原创' = ANY(COALESCE(tags, ARRAY[]::text[])))
               AND NOT ('作者' = ANY(COALESCE(tags, ARRAY[]::text[])))
               AND NOT ('掩盖页' = ANY(COALESCE(tags, ARRAY[]::text[])))
+              AND NOT ('段落' = ANY(COALESCE(tags, ARRAY[]::text[])))
+              AND NOT (category IN ('log-of-anomalous-items-cn','short-stories'))
           ) AS translation,
+          COUNT(*) FILTER (
+            WHERE category = 'short-stories'
+          ) AS "shortStories",
+          COUNT(*) FILTER (
+            WHERE category = 'log-of-anomalous-items-cn'
+          ) AS "anomalousLog",
           COUNT(*) FILTER (
             WHERE ('作者' = ANY(COALESCE(tags, ARRAY[]::text[])))
                OR ('掩盖页' = ANY(COALESCE(tags, ARRAY[]::text[])))
+               OR ('段落' = ANY(COALESCE(tags, ARRAY[]::text[])))
+               AND NOT (category IN ('log-of-anomalous-items-cn','short-stories'))
           ) AS other
         FROM latest_user_pages
         WHERE ($2::boolean = true OR "validTo" IS NULL)
       `;
       const { rows } = await pool.query(sql, [wikidotIdInt, includeDeleted === 'true']);
-      const row = rows[0] || { total: 0, original: 0, translation: 0, other: 0 };
+      const row = rows[0] || { total: 0, original: 0, translation: 0, shortStories: 0, anomalousLog: 0, other: 0 };
       res.json({
         total: Number(row.total || 0),
         original: Number(row.original || 0),
         translation: Number(row.translation || 0),
+        shortStories: Number(row.shortStories || 0),
+        anomalousLog: Number(row.anomalousLog || 0),
         other: Number(row.other || 0)
       });
     } catch (err) {
@@ -653,6 +714,118 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
       const { rows } = await pool.query(sql, [wikidotIdInt]);
       
       // 直接返回数据，前端会处理隐藏逻辑
+      res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /api/users/:wikidotId/relations/users?direction=targets|sources&polarity=liker|hater&limit=&offset=
+  // direction: targets -> 我喜欢谁 (我投给谁)；sources -> 谁喜欢我 (谁投给我)
+  // Returns aggregated author interactions with liker/hater sorting
+  router.get('/:wikidotId/relations/users', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params as Record<string, string>;
+      const wikidotIdInt = parseInt(wikidotId, 10);
+      if (isNaN(wikidotIdInt)) {
+        return res.status(400).json({ error: 'Invalid wikidotId' });
+      }
+      const { polarity = 'liker', direction = 'targets', limit = '20', offset = '0' } = req.query as Record<string, string>;
+
+      const dirInput = String(direction || 'targets').toLowerCase();
+      const dir = ['sources', 'source', 'from', 'incoming'].includes(dirInput) ? 'sources' : 'targets';
+      const polInput = String(polarity || 'liker').toLowerCase();
+      const isHater = ['hater', 'haters', 'hate', 'down', 'dv', 'negative'].includes(polInput);
+      const orderClause = isHater
+        ? 'uvi."downvoteCount" DESC, uvi."upvoteCount" ASC, uvi."totalVotes" DESC, uvi."lastVoteAt" DESC NULLS LAST'
+        : 'uvi."upvoteCount" DESC, uvi."downvoteCount" ASC, uvi."totalVotes" DESC, uvi."lastVoteAt" DESC NULLS LAST';
+
+      let sql: string;
+      if (dir === 'sources') {
+        // 谁喜欢我：others -> me
+        sql = `
+          SELECT 
+            uvi."fromUserId" AS "userId",
+            uFromSrc."displayName",
+            uFromSrc."wikidotId",
+            uvi."upvoteCount",
+            uvi."downvoteCount",
+            uvi."totalVotes",
+            uvi."lastVoteAt",
+            uvi."upvoteCount" AS uv,
+            uvi."downvoteCount" AS dv,
+            JSON_BUILD_ARRAY(uvi."upvoteCount", uvi."downvoteCount") AS pair
+          FROM "UserVoteInteraction" uvi
+          JOIN "User" uMe ON uMe."wikidotId" = $1
+          JOIN "User" uFromSrc ON uFromSrc.id = uvi."fromUserId"
+          WHERE uvi."toUserId" = uMe.id
+          ORDER BY ${orderClause}
+          LIMIT $2::int OFFSET $3::int
+        `;
+      } else {
+        // 我喜欢谁：me -> others
+        sql = `
+          SELECT 
+            uvi."toUserId" AS "userId",
+            uTo."displayName",
+            uTo."wikidotId",
+            uvi."upvoteCount",
+            uvi."downvoteCount",
+            uvi."totalVotes",
+            uvi."lastVoteAt",
+            uvi."upvoteCount" AS uv,
+            uvi."downvoteCount" AS dv,
+            JSON_BUILD_ARRAY(uvi."upvoteCount", uvi."downvoteCount") AS pair
+          FROM "UserVoteInteraction" uvi
+          JOIN "User" uMe ON uMe."wikidotId" = $1
+          JOIN "User" uTo ON uTo.id = uvi."toUserId"
+          WHERE uvi."fromUserId" = uMe.id
+          ORDER BY ${orderClause}
+          LIMIT $2::int OFFSET $3::int
+        `;
+      }
+      const { rows } = await pool.query(sql, [wikidotIdInt, limit, offset]);
+      res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /api/users/:wikidotId/relations/tags?polarity=liker|hater&limit=&offset=
+  // Returns tags that the given user has voted on (aggregated by tag), sorted by liker/hater rules
+  router.get('/:wikidotId/relations/tags', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params as Record<string, string>;
+      const wikidotIdInt = parseInt(wikidotId, 10);
+      if (isNaN(wikidotIdInt)) {
+        return res.status(400).json({ error: 'Invalid wikidotId' });
+      }
+      const { polarity = 'liker', limit = '20', offset = '0' } = req.query as Record<string, string>;
+
+      const polInput = String(polarity || 'liker').toLowerCase();
+      const isHater = ['hater', 'haters', 'hate', 'down', 'dv', 'negative'].includes(polInput);
+      const orderClause = isHater
+        ? 'utp."downvoteCount" DESC, utp."upvoteCount" ASC, utp."totalVotes" DESC, utp."lastVoteAt" DESC NULLS LAST'
+        : 'utp."upvoteCount" DESC, utp."downvoteCount" ASC, utp."totalVotes" DESC, utp."lastVoteAt" DESC NULLS LAST';
+
+      const sql = `
+        SELECT 
+          utp.tag,
+          utp."upvoteCount",
+          utp."downvoteCount",
+          utp."totalVotes",
+          utp."lastVoteAt",
+          utp."upvoteCount" AS uv,
+          utp."downvoteCount" AS dv,
+          JSON_BUILD_ARRAY(utp."upvoteCount", utp."downvoteCount") AS pair
+        FROM "UserTagPreference" utp
+        JOIN "User" u ON u.id = utp."userId"
+        WHERE u."wikidotId" = $1
+          AND utp."tag" <> '原创'
+        ORDER BY ${orderClause}
+        LIMIT $2::int OFFSET $3::int
+      `;
+      const { rows } = await pool.query(sql, [wikidotIdInt, limit, offset]);
       res.json(rows);
     } catch (err) {
       next(err);

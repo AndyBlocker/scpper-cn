@@ -36,7 +36,14 @@ export default defineNuxtConfig({
     head: {
       title: 'SCPPER-CN',
       meta: [
-        { name: 'viewport', content: 'width=device-width, initial-scale=1' }
+        { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+        { name: 'theme-color', content: '#0A0A0B', media: '(prefers-color-scheme: dark)' },
+        { name: 'theme-color', content: '#F6F6F7', media: '(prefers-color-scheme: light)' }
+      ],
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/icons/favicon-light.svg', media: '(prefers-color-scheme: light)' },
+        { rel: 'icon', type: 'image/svg+xml', href: '/icons/favicon-dark.svg', media: '(prefers-color-scheme: dark)' },
+        { rel: 'mask-icon', href: '/icons/safari-pinned-tab.svg', color: '#10B981' }
       ],
       script: [
         {
@@ -44,9 +51,12 @@ export default defineNuxtConfig({
           innerHTML: `
             (function() {
               const theme = localStorage.getItem('theme') || 'dark';
+              const scheme = 'emerald';
               const root = document.documentElement;
               root.classList.remove('light', 'dark');
+              root.classList.forEach(function(c){ if(c && c.startsWith('scheme-')) root.classList.remove(c); });
               root.classList.add(theme === 'light' ? 'light' : 'dark');
+              root.classList.add('scheme-' + scheme);
             })();
           `,
           type: 'text/javascript'

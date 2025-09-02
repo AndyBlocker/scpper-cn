@@ -21,13 +21,13 @@
         <template v-if="showViewToggle">
           <button 
             @click="viewMode = 'full'" 
-            :class="['px-3 py-1 text-xs rounded', viewMode === 'full' ? 'bg-emerald-600 text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
+            :class="['px-3 py-1 text-xs rounded', viewMode === 'full' ? 'bg-[rgb(var(--accent-strong))] text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
           >
             全部历史
           </button>
           <button 
             @click="viewMode = 'compact'" 
-            :class="['px-3 py-1 text-xs rounded', viewMode === 'compact' ? 'bg-emerald-600 text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
+            :class="['px-3 py-1 text-xs rounded', viewMode === 'compact' ? 'bg-[rgb(var(--accent-strong))] text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
           >
             紧凑视图
           </button>
@@ -35,7 +35,7 @@
         <template v-else>
           <button 
             disabled
-            :class="['px-3 py-1 text-xs rounded bg-emerald-600 text-white opacity-80 cursor-default']"
+            :class="['px-3 py-1 text-xs rounded bg-[rgb(var(--accent-strong))] text-white opacity-80 cursor-default']"
           >
             全部历史
           </button>
@@ -193,23 +193,31 @@ const pickTimeUnit = (min?: Date, max?: Date) => {
   return 'week'
 }
 
-// 生成累计曲线的渐变填充
+// 生成累计曲线的渐变填充（使用 CSS 变量）
 const makeAreaGradient = (chart: ChartJS, isDark: boolean) => {
   const { ctx, chartArea } = chart as any
   if (!chartArea) return 'transparent'
   const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom)
-  g.addColorStop(0, isDark ? 'rgba(16,185,129,0.25)' : 'rgba(5,150,105,0.25)')
-  g.addColorStop(1, isDark ? 'rgba(16,185,129,0.03)' : 'rgba(5,150,105,0.03)')
+  const cs = getComputedStyle(document.documentElement)
+  const toRGB = (s: string) => (s || '').trim().split(/\s+/).join(',')
+  const accent = toRGB(cs.getPropertyValue('--accent')) || '16,185,129'
+  const accentStrong = toRGB(cs.getPropertyValue('--accent-strong')) || '5,150,105'
+  g.addColorStop(0, isDark ? `rgba(${accent},0.25)` : `rgba(${accentStrong},0.25)`)
+  g.addColorStop(1, isDark ? `rgba(${accent},0.03)` : `rgba(${accentStrong},0.03)`)
   return g
 }
 
-// 负值区域的淡红色填充
+// 负值区域的淡红色填充（使用 CSS 变量）
 const makeAreaGradientRed = (chart: ChartJS, isDark: boolean) => {
   const { ctx, chartArea } = chart as any
   if (!chartArea) return 'transparent'
   const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom)
-  g.addColorStop(0, isDark ? 'rgba(239,68,68,0.25)' : 'rgba(220,38,38,0.25)')
-  g.addColorStop(1, isDark ? 'rgba(239,68,68,0.03)' : 'rgba(220,38,38,0.03)')
+  const cs = getComputedStyle(document.documentElement)
+  const toRGB = (s: string) => (s || '').trim().split(/\s+/).join(',')
+  const danger = toRGB(cs.getPropertyValue('--danger')) || '239,68,68'
+  const dangerStrong = toRGB(cs.getPropertyValue('--danger-strong')) || '220,38,38'
+  g.addColorStop(0, isDark ? `rgba(${danger},0.25)` : `rgba(${dangerStrong},0.25)`)
+  g.addColorStop(1, isDark ? `rgba(${danger},0.03)` : `rgba(${dangerStrong},0.03)`)
   return g
 }
 
@@ -229,11 +237,17 @@ const makeSplitGradientByZero = (chart: ChartJS, isDark: boolean) => {
   if (!isFinite(t)) t = 0.5
   t = Math.max(0, Math.min(1, t))
 
+  const cs = getComputedStyle(document.documentElement)
+  const toRGB = (s: string) => (s || '').trim().split(/\s+/).join(',')
+  const accent = toRGB(cs.getPropertyValue('--accent')) || '16,185,129'
+  const accentStrong = toRGB(cs.getPropertyValue('--accent-strong')) || '5,150,105'
+  const danger = toRGB(cs.getPropertyValue('--danger')) || '239,68,68'
+  const dangerStrong = toRGB(cs.getPropertyValue('--danger-strong')) || '220,38,38'
   const g = ctx.createLinearGradient(0, top, 0, bottom)
-  const greenStrong = isDark ? 'rgba(16,185,129,0.25)' : 'rgba(5,150,105,0.25)'
-  const greenNearZero = isDark ? 'rgba(16,185,129,0.06)' : 'rgba(5,150,105,0.06)'
-  const redStrong = isDark ? 'rgba(239,68,68,0.25)' : 'rgba(220,38,38,0.25)'
-  const redLight = isDark ? 'rgba(239,68,68,0.03)' : 'rgba(220,38,38,0.03)'
+  const greenStrong = isDark ? `rgba(${accent},0.25)` : `rgba(${accentStrong},0.25)`
+  const greenNearZero = isDark ? `rgba(${accent},0.06)` : `rgba(${accentStrong},0.06)`
+  const redStrong = isDark ? `rgba(${danger},0.25)` : `rgba(${dangerStrong},0.25)`
+  const redLight = isDark ? `rgba(${danger},0.03)` : `rgba(${dangerStrong},0.03)`
 
   if (t <= 0) {
     // 全部在 0 之上 → 仅绿色
@@ -388,7 +402,16 @@ const createChart = () => {
     chartInstance = null
   }
 
-  const isDark = document.documentElement.classList.contains('dark')
+  const root = document.documentElement
+  const isDark = root.classList.contains('dark')
+  const cs = getComputedStyle(root)
+  const toRGB = (s: string) => (s || '').trim().split(/\s+/).join(',')
+  const accent = toRGB(cs.getPropertyValue('--accent')) || '16,185,129'
+  const accentStrong = toRGB(cs.getPropertyValue('--accent-strong')) || '5,150,105'
+  const danger = toRGB(cs.getPropertyValue('--danger')) || '239,68,68'
+  const dangerStrong = toRGB(cs.getPropertyValue('--danger-strong')) || '220,38,38'
+  const slate400 = toRGB(cs.getPropertyValue('--slate-400')) || '148,163,184'
+  const slate500 = toRGB(cs.getPropertyValue('--slate-500')) || '100,116,139'
   
   // 准备数据 - 使用实际日期作为x轴
   let chartData = props.data.map(item => {
@@ -480,6 +503,12 @@ const createChart = () => {
   // 用可见范围（或数据本身范围）选择时间单位，短到天，长到年
   let visibleMin: Date | undefined = minDate ?? (displayData.length > 0 ? new Date(Math.min(...displayData.map(d => (d.x as Date).getTime()))) : undefined)
   let visibleMax: Date | undefined = maxDate ?? (displayData.length > 0 ? new Date(Math.max(...displayData.map(d => (d.x as Date).getTime()))) : undefined)
+  // 在“全部历史”模式下，若存在首个活动时间（连接线的起点），将 X 轴最小值扩展到该时间
+  if (viewMode.value === 'full' && connectionStartDate) {
+    if (!visibleMin || connectionStartDate.getTime() < visibleMin.getTime()) {
+      visibleMin = new Date(connectionStartDate)
+    }
+  }
   // 如果只有单个点，扩展时间范围，避免时间轴 min==max 导致渲染/刻度异常
   let singlePointExpanded = false
   if (visibleMin && visibleMax && visibleMin.getTime() === visibleMax.getTime()) {
@@ -515,8 +544,8 @@ const createChart = () => {
     {
       label: '支持票',
       data: displayData.map(d => ({ x: d.x, y: d.hideBar ? null : d.upvotes })),
-      backgroundColor: isDark ? 'rgba(34, 197, 94, 0.8)' : 'rgba(22, 163, 74, 0.8)',
-      borderColor: isDark ? '#22c55e' : '#16a34a',
+      backgroundColor: isDark ? `rgba(${accent},0.8)` : `rgba(${accentStrong},0.8)`,
+      borderColor: isDark ? `rgb(${accent})` : `rgb(${accentStrong})`,
       borderWidth: 1,
       barPercentage: 0.8,
       categoryPercentage: 0.9,
@@ -529,8 +558,8 @@ const createChart = () => {
     {
       label: '反对票',
       data: displayData.map(d => ({ x: d.x, y: d.hideBar ? null : d.downvotes })),
-      backgroundColor: isDark ? 'rgba(239, 68, 68, 0.8)' : 'rgba(220, 38, 38, 0.8)',
-      borderColor: isDark ? '#ef4444' : '#dc2626',
+      backgroundColor: isDark ? `rgba(${danger},0.8)` : `rgba(${dangerStrong},0.8)`,
+      borderColor: isDark ? `rgb(${danger})` : `rgb(${dangerStrong})`,
       borderWidth: 1,
       barPercentage: 0.8,
       categoryPercentage: 0.9,
@@ -556,19 +585,19 @@ const createChart = () => {
         }
         return { x: d.x, y: d.cumulative + offset }
       }),
-      borderColor: isDark ? '#10b981' : '#059669',
+      borderColor: isDark ? `rgb(${accent})` : `rgb(${accentStrong})`,
       segment: {
         borderColor: (ctx: any) => {
           const dy = (ctx.p1?.parsed?.y ?? 0) - (ctx.p0?.parsed?.y ?? 0)
           return dy >= 0
-            ? (isDark ? '#10b981' : '#059669')
-            : (isDark ? '#ef4444' : '#dc2626')
+            ? (isDark ? `rgb(${accent})` : `rgb(${accentStrong})`)
+            : (isDark ? `rgb(${danger})` : `rgb(${dangerStrong})`)
         }
       },
       tension: 0.2,
       // 页面标记模式下，隐藏累计评分的点，避免非标记日期出现圆点浮现
       pointRadius: (ctx: any) => displayData.length > 140 ? 0 : (showPages.value ? 0 : 2),
-      pointBackgroundColor: isDark ? '#10b981' : '#059669',
+      pointBackgroundColor: isDark ? `rgb(${accent})` : `rgb(${accentStrong})`,
       pointHoverRadius: 4,
       yAxisID: 'y1',
       order: 2
@@ -594,7 +623,7 @@ const createChart = () => {
       label: '起始连接',
       type: 'line' as const,
       data: connectionLine,
-      borderColor: isDark ? 'rgba(156, 163, 175, 0.5)' : 'rgba(107, 114, 128, 0.5)',
+      borderColor: isDark ? `rgba(${slate400},0.5)` : `rgba(${slate500},0.5)`,
       borderDash: [5, 5],
       backgroundColor: 'transparent',
       pointRadius: 0,

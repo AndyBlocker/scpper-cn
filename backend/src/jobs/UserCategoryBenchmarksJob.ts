@@ -4,8 +4,11 @@ type CategoryKey = 'scp' | 'story' | 'goi' | 'translation' | 'wanderers' | 'art'
 
 export type CategoryBenchmark = {
   category: CategoryKey;
+  p05Rating: number;    // 该分类用户rating的5分位（仅count>0）
   p50Rating: number;    // 该分类用户rating的50分位（仅count>0）
+  p90Rating: number;    // 该分类用户rating的90分位（仅count>0）
   p95Rating: number;    // 该分类用户rating的95分位（仅count>0）
+  p99Rating: number;    // 该分类用户rating的99分位（仅count>0）
   avgRating: number;    // 平均rating
   tau: number;          // 稳健尺度（MAD 或其近似），用于 asinh 变换
   nAuthors: number;     // 参与计算的作者数（该分类作品数>0）
@@ -14,8 +17,8 @@ export type CategoryBenchmark = {
 export type CategoryBenchmarksPayload = {
   asOf: string; // ISO 时间
   benchmarks: Record<CategoryKey, CategoryBenchmark>;
-  method: 'asinh_p50_p95_v2' | 'legacy_linear_p50_p95';
-  version: 2;
+  method: 'asinh_piecewise_p50_p95_p99_v3' | 'asinh_p50_p95_v2' | 'legacy_linear_p50_p95';
+  version: 3;
 };
 
 /**
@@ -27,8 +30,11 @@ export async function computeUserCategoryBenchmarks(prisma: PrismaClient): Promi
   // 单次 SQL 计算所有分类的统计量
   const rows = await prisma.$queryRaw<Array<{
     category: string;
+    p05_rating: number | null;
     p50_rating: number | null;
+    p90_rating: number | null;
     p95_rating: number | null;
+    p99_rating: number | null;
     avg_rating: number | null;
     n_authors: number | null;
     tau: number | null;
@@ -55,39 +61,36 @@ export async function computeUserCategoryBenchmarks(prisma: PrismaClient): Promi
     stats AS (
       SELECT 
         c.category,
+        PERCENTILE_CONT(0.05) WITHIN GROUP (ORDER BY c.rating) AS p05_rating,
+        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY c.rating) AS p25_rating,
         PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY c.rating) AS p50_rating,
-        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY c.rating) AS p95_rating,
+        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY c.rating) AS p75_rating,
+        PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY c.rating) AS p90_rating,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY c.rating) AS p95_rating,
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY c.rating) AS p99_rating,
         AVG(c.rating) AS avg_rating,
         COUNT(*) AS n_authors
       FROM combined c
       GROUP BY c.category
-    ),
-    dev AS (
-      SELECT c.category, ABS(c.rating - s.p50_rating) AS abs_dev
-      FROM combined c
-      JOIN stats s ON s.category = c.category
-    ),
-    mad AS (
-      SELECT d.category, PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY d.abs_dev) AS mad
-      FROM dev d
-      GROUP BY d.category
     )
     SELECT 
       s.category,
+      s.p05_rating,
       s.p50_rating,
+      s.p90_rating,
       s.p95_rating,
+      s.p99_rating,
       s.avg_rating,
       s.n_authors,
-      COALESCE(NULLIF(m.mad, 0), 1e-6) AS tau
+      GREATEST(1e-6, NULLIF(s.p75_rating - s.p25_rating, 0) / 1.349) AS tau
     FROM stats s
-    LEFT JOIN mad m ON m.category = s.category
   `;
 
   // 组装 payload
   const nowIso = new Date().toISOString();
   const normalize = (v: number | null | undefined): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-  const emptyBench: CategoryBenchmark = { category: 'scp', p50Rating: 0, p95Rating: 0, avgRating: 0, tau: 1e-6, nAuthors: 0 };
+  const emptyBench: CategoryBenchmark = { category: 'scp', p05Rating: 0, p50Rating: 0, p90Rating: 0, p95Rating: 0, p99Rating: 0, avgRating: 0, tau: 1e-6, nAuthors: 0 };
   const byCat = new Map<CategoryKey, CategoryBenchmark>();
 
   (['scp','story','goi','translation','wanderers','art'] as CategoryKey[]).forEach((k) => {
@@ -99,8 +102,11 @@ export async function computeUserCategoryBenchmarks(prisma: PrismaClient): Promi
     if (!byCat.has(cat)) continue;
     byCat.set(cat, {
       category: cat,
+      p05Rating: normalize(r.p05_rating),
       p50Rating: normalize(r.p50_rating),
+      p90Rating: normalize(r.p90_rating),
       p95Rating: normalize(r.p95_rating),
+      p99Rating: normalize(r.p99_rating),
       avgRating: normalize(r.avg_rating),
       tau: Math.max(1e-6, normalize(r.tau)),
       nAuthors: Math.max(0, Number(r.n_authors || 0))
@@ -110,12 +116,12 @@ export async function computeUserCategoryBenchmarks(prisma: PrismaClient): Promi
   const payload: CategoryBenchmarksPayload = {
     asOf: nowIso,
     benchmarks: Object.fromEntries(Array.from(byCat.entries())) as Record<CategoryKey, CategoryBenchmark>,
-    method: 'asinh_p50_p95_v2',
-    version: 2
+    method: 'asinh_piecewise_p50_p95_p99_v3',
+    version: 3
   };
 
   // Upsert into LeaderboardCache
-  const key = 'category_benchmarks_author_rating_v2';
+  const key = 'category_benchmarks_author_rating_v3';
   const period = 'daily';
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // +24h
 

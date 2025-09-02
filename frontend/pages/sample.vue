@@ -1,8 +1,8 @@
 <template>
     <div class="space-y-8">
-      <header class="flex items-center justify-between border-b-2 border-emerald-100 dark:border-emerald-900/30 pb-3">
+      <header class="flex items-center justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3">
         <div class="flex items-center gap-3">
-          <div class="h-8 w-1 bg-emerald-600 rounded" />
+          <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
           <h1 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">Card 组件样例（v2）</h1>
         </div>
         <span class="text-xs text-neutral-500 dark:text-neutral-400">示例用于展示新版视觉与尺寸</span>

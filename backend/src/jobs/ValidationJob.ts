@@ -40,7 +40,7 @@ export async function validateUserStats(prisma: PrismaClient, limit: number = 20
       GROUP BY a."userId", pv."pageId"
     ),
     current_versions AS (
-      SELECT pv."pageId", pv.rating, pv.tags
+      SELECT pv."pageId", pv.rating, pv.tags, pv.category
       FROM "PageVersion" pv
       WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND pv.rating IS NOT NULL
     ),
@@ -71,9 +71,23 @@ export async function validateUserStats(prisma: PrismaClient, limit: number = 20
         COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','艺术作品'] THEN 1 END) AS art_count_expected,
         SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','艺术作品'] THEN cv.rating::float ELSE 0 END) AS art_rating_expected,
 
-        -- translation (tag-based; any association; tags NOT containing 原创)
-        COUNT(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1) AND NOT (cv.tags @> ARRAY['原创']) THEN 1 END) AS translation_count_expected,
-        SUM(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1) AND NOT (cv.tags @> ARRAY['原创']) THEN cv.rating::float ELSE 0 END) AS translation_rating_expected
+        -- translation (tag-based; any association; tags NOT containing 原创/作者/掩盖页/段落/补充材料; exclude categories)
+        COUNT(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1)
+                     AND NOT (cv.tags @> ARRAY['原创'])
+                     AND NOT (cv.tags @> ARRAY['作者'])
+                     AND NOT (cv.tags @> ARRAY['掩盖页'])
+                     AND NOT (cv.tags @> ARRAY['段落'])
+                     AND NOT (cv.tags @> ARRAY['补充材料'])
+                     AND NOT (cv.category IN ('log-of-anomalous-items-cn','short-stories'))
+                   THEN 1 END) AS translation_count_expected,
+        SUM(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1)
+                     AND NOT (cv.tags @> ARRAY['原创'])
+                     AND NOT (cv.tags @> ARRAY['作者'])
+                     AND NOT (cv.tags @> ARRAY['掩盖页'])
+                     AND NOT (cv.tags @> ARRAY['段落'])
+                     AND NOT (cv.tags @> ARRAY['补充材料'])
+                     AND NOT (cv.category IN ('log-of-anomalous-items-cn','short-stories'))
+                 THEN cv.rating::float ELSE 0 END) AS translation_rating_expected
       FROM user_page_roles upr
       JOIN current_versions cv ON cv."pageId" = upr."pageId"
       GROUP BY upr."userId"

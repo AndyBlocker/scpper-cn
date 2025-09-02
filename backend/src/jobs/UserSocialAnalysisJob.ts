@@ -153,13 +153,15 @@ export class UserSocialAnalysisJob {
     // 批量处理用户对
     for (let i = 0; i < userPairs.length; i += batchSize) {
       const batch = userPairs.slice(i, i + batchSize);
-      
-      // 构建查询条件
-      const conditions = batch.map(pair => `(v."userId" = ${pair.fromUserId} AND a."userId" = ${pair.toUserId})`).join(' OR ');
-      
-      // 使用 SQL 批量计算用户间的投票交互
-      await this.prisma.$executeRaw`
-        WITH vote_interactions AS (
+
+      // 使用 VALUES 构建成对的 from/to 列表并进行半连接，避免文本条件拼接导致的类型问题
+      const valuesSql = batch.map(p => `(${Number(p.fromUserId)}, ${Number(p.toUserId)})`).join(', ');
+
+      const sql = `
+        WITH pair_list(from_user_id, to_user_id) AS (
+          VALUES ${valuesSql}
+        ),
+        vote_interactions AS (
           SELECT 
             v."userId" as from_user_id,
             a."userId" as to_user_id,
@@ -168,14 +170,14 @@ export class UserSocialAnalysisJob {
           FROM "Vote" v
           JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
           JOIN "Attribution" a ON a."pageVerId" = pv.id
+          JOIN pair_list pl ON pl.from_user_id = v."userId" AND pl.to_user_id = a."userId"
           WHERE v."userId" IS NOT NULL 
             AND a."userId" IS NOT NULL
             AND v."userId" != a."userId"
             AND v.direction != 0
-            AND a.type = 'AUTHOR'
+            -- any attribution type
             AND pv."validTo" IS NULL
             AND pv."isDeleted" = false
-            AND (${conditions})
         ),
         interaction_stats AS (
           SELECT 
@@ -216,6 +218,8 @@ export class UserSocialAnalysisJob {
           "lastVoteAt" = EXCLUDED."lastVoteAt",
           "updatedAt" = NOW()
       `;
+
+      await this.prisma.$executeRawUnsafe(sql);
       
       if ((i + batch.length) % 5000 === 0) {
         console.log(`  📈 Progress: ${i + batch.length}/${userPairs.length} user pairs processed`);
@@ -295,7 +299,7 @@ export class UserSocialAnalysisJob {
             AND a."userId" IS NOT NULL
             AND v."userId" != a."userId"
             AND v.direction != 0
-            AND a.type = 'AUTHOR'
+            -- any attribution type
             AND pv."validTo" IS NULL
             AND pv."isDeleted" = false
             AND v.timestamp >= NOW() - INTERVAL '7 days'
@@ -327,16 +331,17 @@ export class UserSocialAnalysisJob {
       unique_tags: bigint;
       avg_tags_per_user: number;
     }>>`
-      SELECT 
-        COUNT(*) as total_preferences,
-        COUNT(DISTINCT "userId") as unique_users,
-        COUNT(DISTINCT tag) as unique_tags,
-        AVG(tags_per_user) as avg_tags_per_user
-      FROM (
-        SELECT "userId", COUNT(*) as tags_per_user
-        FROM "UserTagPreference"
-        GROUP BY "userId"
-      ) user_tag_counts
+      SELECT
+        (SELECT COUNT(*) FROM "UserTagPreference") as total_preferences,
+        (SELECT COUNT(DISTINCT "userId") FROM "UserTagPreference") as unique_users,
+        (SELECT COUNT(DISTINCT tag) FROM "UserTagPreference") as unique_tags,
+        (
+          SELECT AVG(tags_per_user) FROM (
+            SELECT "userId", COUNT(*) as tags_per_user
+            FROM "UserTagPreference"
+            GROUP BY "userId"
+          ) s
+        ) as avg_tags_per_user
     `;
     
     const tagStat = tagStats[0];

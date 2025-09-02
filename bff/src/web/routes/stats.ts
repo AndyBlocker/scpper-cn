@@ -231,9 +231,14 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
         WHERE key = $1::text AND period = $2::text
         LIMIT 1
       `;
-      // Try v2 first
+      // Try v3 first, then v2, then v1
       let resRow: any | null = null;
       {
+        const { rows } = await pool.query(sql, ['category_benchmarks_author_rating_v3', 'daily']);
+        if (rows.length > 0) resRow = rows[0];
+      }
+      // Fallback to v2 if v3 absent
+      if (!resRow) {
         const { rows } = await pool.query(sql, ['category_benchmarks_author_rating_v2', 'daily']);
         if (rows.length > 0) resRow = rows[0];
       }

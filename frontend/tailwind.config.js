@@ -12,6 +12,13 @@ export default {
   theme: {
     extend: {
       colors: {
+        // CSS variable driven colors
+        'accent': 'rgb(var(--accent) / <alpha-value>)',
+        'accent-strong': 'rgb(var(--accent-strong) / <alpha-value>)',
+        'accent-weak': 'rgb(var(--accent-weak) / <alpha-value>)',
+        'primary': 'rgb(var(--primary) / <alpha-value>)',
+        'danger': 'rgb(var(--danger) / <alpha-value>)',
+        'danger-strong': 'rgb(var(--danger-strong) / <alpha-value>)',
         neutral: {
           950: '#0a0a0b'
         }
