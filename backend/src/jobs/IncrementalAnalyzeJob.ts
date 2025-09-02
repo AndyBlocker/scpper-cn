@@ -279,8 +279,25 @@ export class IncrementalAnalyzeJob {
           await this.updateTrendingStats();
           break;
         case 'site_overview_daily':
-          // Compute or refresh daily overview snapshots for recent days
-          await runDailySiteOverview({ startDate: undefined, endDate: undefined });
+          // Compute or refresh daily overview snapshots
+          if (forceFullAnalysis) {
+            // Full history rebuild: derive earliest date from UserDailyStats or Votes
+            const rows = await this.prisma.$queryRaw<Array<{ min_date: Date | null }>>`
+              WITH candidates AS (
+                SELECT MIN(date) AS d FROM "UserDailyStats"
+                UNION ALL
+                SELECT MIN(date(v."timestamp")) AS d FROM "Vote" v
+              )
+              SELECT MIN(d) AS min_date FROM candidates
+            `;
+            const minDate = rows?.[0]?.min_date ? new Date(rows[0].min_date) : new Date('2022-01-01');
+            await runDailySiteOverview({ startDate: minDate.toISOString().slice(0,10), endDate: undefined });
+          } else {
+            // Incremental: recompute recent 30 days window for stability
+            const end = new Date();
+            const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+            await runDailySiteOverview({ startDate: start.toISOString().slice(0,10), endDate: end.toISOString().slice(0,10) });
+          }
           break;
         case 'category_benchmarks':
           await computeUserCategoryBenchmarks(this.prisma);
@@ -807,6 +824,8 @@ export class IncrementalAnalyzeJob {
           AND v.direction != 0
           AND pv.tags IS NOT NULL
           AND array_length(pv.tags, 1) > 0
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
       ),
       tag_stats AS (
         SELECT 
@@ -845,7 +864,7 @@ export class IncrementalAnalyzeJob {
           a."userId" AS to_user_id
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN "Attribution" a ON a."pageVerId" = pv.id AND a.type = 'AUTHOR'
+        JOIN "Attribution" a ON a."pageVerId" = pv.id
         WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
           AND v."userId" IS NOT NULL
           AND a."userId" IS NOT NULL
@@ -860,11 +879,13 @@ export class IncrementalAnalyzeJob {
           v.timestamp
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN "Attribution" a ON a."pageVerId" = pv.id AND a.type = 'AUTHOR'
+        JOIN "Attribution" a ON a."pageVerId" = pv.id
         WHERE v."userId" IS NOT NULL
           AND a."userId" IS NOT NULL
           AND v."userId" != a."userId"
           AND v.direction != 0
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
       ),
       interaction_stats AS (
         SELECT 

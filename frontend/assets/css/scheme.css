@@ -1,0 +1,137 @@
+/* Centralized color scheme for light/dark themes */
+@layer base {
+  :root {
+    /* base */
+    --bg: 246 246 247;          /* neutral-50 */
+    --fg: 23 23 23;             /* neutral-900 */
+    --muted: 115 115 115;       /* neutral-500 */
+    --muted-strong: 64 64 64;   /* neutral-700 */
+    --panel: 255 255 255;       /* white */
+    --panel-border: 229 231 235;/* neutral-200 */
+
+    /* brand / accent (emerald) */
+    --accent: 16 185 129;       /* emerald-500 */
+    --accent-strong: 5 150 105; /* emerald-600 */
+    --accent-weak: 110 231 183; /* emerald-300 */
+
+    /* info / primary (blue) */
+    --primary: 59 130 246;      /* blue-500 */
+    --primary-strong: 37 99 235;/* blue-600 */
+
+    /* success (green) */
+    --success: 34 197 94;       /* green-500 */
+    --success-strong: 22 163 74;/* green-600 */
+
+    /* danger (red) */
+    --danger: 220 38 38;        /* red-600 */
+    --danger-strong: 185 28 28; /* red-700 */
+
+    /* slate neutrals for charts */
+    --slate-300: 203 213 225;   /* slate-300 */
+    --slate-400: 148 163 184;   /* slate-400 */
+    --slate-500: 100 116 139;   /* slate-500 */
+
+    /* chart helpers (alpha via rgb/rgba at use site) */
+    --chart-user-fill: var(--accent);      /* use with alpha */
+    --chart-user-line: var(--accent-strong);
+    --chart-avg-fill: var(--slate-400);
+    --chart-avg-line: var(--slate-500);
+    --chart-grid-light: 0 0 0;  /* black base */
+    --chart-grid-dark: 255 255 255; /* white base */
+  }
+
+  html.dark {
+    --bg: 10 10 11;             /* neutral-950 */
+    --fg: 245 245 245;          /* neutral-100 */
+    --muted: 163 163 163;       /* neutral-400 */
+    --muted-strong: 115 115 115;/* neutral-500 */
+    --panel: 23 23 23;          /* neutral-900 */
+    --panel-border: 38 38 38;   /* neutral-800 */
+
+    --accent: 16 185 129;       /* emerald-500 */
+    --accent-strong: 5 150 105; /* emerald-600 */
+    --accent-weak: 52 211 153;  /* emerald-400 */
+
+    --primary: 59 130 246;      /* blue-500 */
+    --primary-strong: 37 99 235;/* blue-600 */
+
+    --success: 16 185 129;      /* emerald-500 */
+    --success-strong: 16 185 129;/* keep same */
+
+    --danger: 239 68 68;        /* red-500 */
+    --danger-strong: 239 68 68; /* red-500 */
+
+    --slate-300: 203 213 225;
+    --slate-400: 148 163 184;
+    --slate-500: 100 116 139;
+
+    --chart-user-fill: var(--accent);
+    --chart-user-line: var(--accent-weak);
+    --chart-avg-fill: var(--slate-400);
+    --chart-avg-line: var(--slate-500);
+  }
+
+  /* Named color schemes: apply with class on <html> e.g., scheme-emerald */
+  html.scheme-emerald {
+    --accent: 5 150 105;        /* emerald-600 */
+    --accent-strong: 4 120 87;  /* emerald-700 */
+    --accent-weak: 52 211 153;  /* emerald-400 */
+  }
+  html.dark.scheme-emerald {
+    --accent: 16 185 129;       /* emerald-500 */
+    --accent-strong: 5 150 105; /* emerald-600 */
+    --accent-weak: 52 211 153;  /* emerald-400 */
+  }
+
+  html.scheme-indigo {
+    --accent: 99 102 241;       /* indigo-500 */
+    --accent-strong: 79 70 229; /* indigo-600 */
+    --accent-weak: 165 180 252; /* indigo-300 */
+  }
+  html.dark.scheme-indigo {
+    --accent: 129 140 248;      /* indigo-400 */
+    --accent-strong: 99 102 241;/* indigo-500 */
+    --accent-weak: 165 180 252; /* indigo-300 */
+  }
+
+  html.scheme-rose {
+    --accent: 244 63 94;        /* rose-500 */
+    --accent-strong: 225 29 72; /* rose-600 */
+    --accent-weak: 251 113 133; /* rose-400 */
+  }
+  html.dark.scheme-rose {
+    --accent: 248 113 113;      /* rose-400 */
+    --accent-strong: 244 63 94; /* rose-500 */
+    --accent-weak: 254 205 211; /* rose-200 */
+  }
+
+  html.scheme-amber {
+    --accent: 245 158 11;       /* amber-500 */
+    --accent-strong: 217 119 6; /* amber-600 */
+    --accent-weak: 252 211 77;  /* amber-300 */
+  }
+  html.dark.scheme-amber {
+    --accent: 251 191 36;       /* amber-400 */
+    --accent-strong: 245 158 11;/* amber-500 */
+    --accent-weak: 253 230 138; /* amber-200 */
+  }
+
+  html.scheme-violet {
+    --accent: 139 92 246;       /* violet-500 */
+    --accent-strong: 124 58 237;/* violet-600 */
+    --accent-weak: 196 181 253; /* violet-300 */
+  }
+  html.dark.scheme-violet {
+    --accent: 167 139 250;      /* violet-400 */
+    --accent-strong: 139 92 246;/* violet-500 */
+    --accent-weak: 216 180 254; /* violet-200 */
+  }
+
+  /* Tie primary to accent for all named schemes */
+  html[class*="scheme-"] {
+    --primary: var(--accent);
+    --primary-strong: var(--accent-strong);
+  }
+}
+
+

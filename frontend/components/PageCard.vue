@@ -48,7 +48,7 @@
         <!-- tags (one-line clamp, subtle) -->
         <div v-if="internalTags.length" class="text-[11px] text-neutral-500 dark:text-neutral-400 flex flex-nowrap gap-1 overflow-hidden whitespace-nowrap">
           <span v-for="t in visibleTags" :key="t"
-                class="inline-block px-1.5 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800/60 text-emerald-700 dark:text-emerald-400">
+                class="inline-block px-1.5 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800/60 text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))]">
             #{{ t }}
           </span>
           <span v-if="tagsMoreCount>0" class="text-[10px] text-neutral-500 dark:text-neutral-400">+{{ tagsMoreCount }}</span>
@@ -57,7 +57,7 @@
         <!-- excerpt (max 3 lines) -> enforce uniform height across cards -->
         <div>
           <div class="h-[48px] overflow-hidden flex items-center">
-            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 line-clamp-3 italic border-l border-emerald-500/30 pl-2">
+            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 line-clamp-3 italic border-l border-[rgba(var(--accent),0.3)] pl-2">
               "{{ excerpt }}"
             </p>
           </div>
@@ -85,12 +85,12 @@
           <svg :width="'100%'" height="48" viewBox="0 0 300 48" preserveAspectRatio="none">
             <defs>
               <linearGradient :id="`gradient-${wikidotId || 'pg'}`" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" style="stop-color:#10b981;stop-opacity:0.28" />
-                <stop offset="100%" style="stop-color:#10b981;stop-opacity:0" />
+                <stop offset="0%" :style="{ stopColor: 'rgb(var(--accent))', stopOpacity: 0.28 }" />
+                <stop offset="100%" :style="{ stopColor: 'rgb(var(--accent))', stopOpacity: 0 }" />
               </linearGradient>
             </defs>
             <polyline :points="computedSparkPoints || ''" :fill="`url(#gradient-${wikidotId || 'pg'})`" stroke="none" />
-            <polyline :points="computedSparkLine || ''" fill="none" stroke="#10b981" stroke-width="2" />
+            <polyline :points="computedSparkLine || ''" fill="none" :stroke="'rgb(var(--accent))'" stroke-width="2" />
           </svg>
         </div>
         <div v-else class="mt-1 h-12 border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800 rounded flex items-center justify-center">
@@ -110,7 +110,7 @@
             <span v-if="authorsMoreCount>0" class="text-xs text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
           </div>
           <div v-if="internalTags.length" class="text-[11px] text-neutral-500 dark:text-neutral-400 flex flex-nowrap gap-1 overflow-hidden whitespace-nowrap">
-            <span v-for="t in visibleTags" :key="t" class="inline-block px-1.5 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800/60 text-emerald-700 dark:text-emerald-400">#{{ t }}</span>
+            <span v-for="t in visibleTags" :key="t" class="inline-block px-1.5 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800/60 text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))]">#{{ t }}</span>
             <span v-if="tagsMoreCount>0" class="text-[10px] text-neutral-500 dark:text-neutral-400">+{{ tagsMoreCount }}</span>
           </div>
           <div v-if="snippetHtml" class="text-[12px] text-neutral-600 dark:text-neutral-400 line-clamp-3" v-html="snippetHtml"></div>
@@ -319,6 +319,8 @@
     const v = Number(controversy.value ?? 0)
     return Number.isFinite(v) ? v.toFixed(3) : '0.000'
   })
+
+  
   
   /* Base class tweaks: lighter borders, slightly tighter padding on md/sm */
   const baseClass = 'relative min-w-0 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition-all duration-200'
@@ -326,20 +328,20 @@
     if (variant.value === 'lg') {
       return [
         baseClass,
-        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-emerald-500' : '',
+        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
         'p-5 md:p-6 flex flex-col gap-3'
       ].join(' ')
     }
     if (variant.value === 'md') {
       return [
         baseClass,
-        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-emerald-500' : '',
+        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
         'p-3 flex flex-col gap-2'
       ].join(' ')
     }
     return [
       baseClass,
-      to.value ? 'hover:shadow-sm cursor-pointer focus:outline-none focus:ring-2 ring-emerald-500' : '',
+      to.value ? 'hover:shadow-sm cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
       'p-2.5 flex flex-col gap-1'
     ].join(' ')
   })

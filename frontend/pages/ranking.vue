@@ -19,8 +19,8 @@
             type="button"
             :aria-pressed="pageSize === s"
             @click="setPageSize(s)"
-            class="px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
-            :class="pageSize === s ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
+            class="px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
+            :class="pageSize === s ? 'bg-[rgb(var(--accent))] text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
           >
             {{ s }}
           </button>
@@ -46,9 +46,9 @@
             type="button"
             :aria-selected="category === key"
             @click="category = key"
-            class="px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
+            class="px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
             :class="category === key
-              ? 'bg-emerald-600 text-white'
+              ? 'bg-[rgb(var(--accent))] text-white'
               : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
           >
             {{ label }}
@@ -66,8 +66,8 @@
             type="button"
             :aria-pressed="pageSize === s"
             @click="setPageSize(s)"
-            class="px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
-            :class="pageSize === s ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
+            class="px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
+            :class="pageSize === s ? 'bg-[rgb(var(--accent))] text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
           >
             {{ s }}
           </button>
@@ -136,7 +136,7 @@
                 <button
                   type="button"
                   class="th-btn justify-end hover:bg-neutral-50 dark:hover:bg-neutral-800/40"
-                  :class="sortedHeadClass('rating')"
+                  :class="sortedHeadClass(sortBy)"
                   :aria-expanded="mobileSortOpen ? 'true' : 'false'"
                   @click="mobileSortOpen = !mobileSortOpen"
                   title="选择排序指标"
@@ -206,7 +206,7 @@
         <div class="mt-4">
           <button
             type="button"
-            class="px-3 py-1.5 text-xs rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            class="px-3 py-1.5 text-xs rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]"
             @click="setSortDefault('rating'); goToPage(1)"
           >
             重置筛选
@@ -244,7 +244,7 @@
               :display-name="u.displayName"
               :subtitle="u.favTag ? ('#'+u.favTag) : undefined"
               :sm-avatar-size="22"
-              sm-text-class="text-[13px] leading-none font-medium text-emerald-700 dark:text-emerald-300 truncate max-w-[160px]"
+              sm-text-class="text-[13px] leading-none font-medium text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))] truncate max-w-[160px]"
             />
           </div>
 
@@ -255,7 +255,7 @@
               <div class="hidden md:flex md:items-center md:col-start-1 md:col-span-2 h-full">
                 <div class="h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
                   <div
-                    class="h-full rounded-full bg-emerald-500 dark:bg-emerald-500 transition-[width] duration-200"
+                    class="h-full rounded-full bg-[rgb(var(--accent))] transition-[width] duration-200"
                     :style="{ width: metricPercent(u) + '%' }"
                     role="progressbar"
                     :aria-valuenow="Math.round(metricPercent(u))"
@@ -276,9 +276,19 @@
                 <span class="pr-2">{{ formatMean(u.catMean ?? u.meanRating) }}</span>
               </div>
 
-              <!-- 总分（居中） -->
-              <div class="col-span-1 md:col-start-5 flex items-center justify-center h-full text-center text-sm text-neutral-900 dark:text-neutral-100 tabular-nums font-semibold cell-rating whitespace-nowrap">
-                {{ formatInt(u.rating ?? u.overallRating) }}
+              <!-- 指标值（移动端为当前选择；桌面为总分） -->
+              <div class="col-span-1 md:col-start-5 h-full">
+                <!-- 移动端：当前选择的指标 -->
+                <div
+                  class="flex md:hidden items-center justify-center h-full text-center text-sm text-neutral-900 dark:text-neutral-100 tabular-nums font-semibold whitespace-nowrap"
+                  :class="sortBy==='count' ? 'cell-count' : sortBy==='mean' ? 'cell-mean' : 'cell-rating'"
+                >
+                  {{ formatMetric(u) }}
+                </div>
+                <!-- 桌面：总分固定显示在最后一列 -->
+                <div class="hidden md:flex items-center justify-center h-full text-center text-sm text-neutral-900 dark:text-neutral-100 tabular-nums font-semibold cell-rating whitespace-nowrap">
+                  {{ formatInt(u.rating ?? u.overallRating) }}
+                </div>
               </div>
             </div>
           </div>
@@ -297,7 +307,7 @@
             <button
               @click="goToPage(page - 1)"
               :disabled="page === 1"
-              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
             >
               上一页
             </button>
@@ -305,15 +315,15 @@
               v-for="p in visiblePages"
               :key="p"
               @click="goToPage(p)"
-              class="min-w-[2rem] text-center px-2 py-1 border border-neutral-200 dark:border-neutral-700 rounded focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
-              :class="p === page ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
+              class="min-w-[2rem] text-center px-2 py-1 border border-neutral-200 dark:border-neutral-700 rounded focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
+              :class="p === page ? 'bg-[rgb(var(--accent))] text-white border-[rgb(var(--accent))]' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
             >
               {{ p }}
             </button>
             <button
               @click="goToPage(page + 1)"
               :disabled="page === totalPages"
-              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
             >
               下一页
             </button>
@@ -573,7 +583,7 @@ function rankBadgeClass(rank: number) {
 }
 function sortedHeadClass(key: string) {
   const active = sortBy.value === key;
-  return active ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200' : '';
+  return active ? 'bg-[rgba(var(--accent),0.14)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]' : '';
 }
 function formatInt(v?: unknown): string {
   const n = Number(v);
@@ -584,6 +594,13 @@ function formatMean(v?: unknown): string {
   const n = Number(v);
   if (!Number.isFinite(n)) return '—';
   return Number(n.toFixed(1)).toFixed(1);
+}
+
+// 根据当前排序指标格式化展示值（移动端使用）
+function formatMetric(u: RankUser): string {
+  if (sortBy.value === 'count') return formatInt(u.catCount ?? u.pageCount);
+  if (sortBy.value === 'mean') return formatMean(u.catMean ?? u.meanRating);
+  return formatInt(u.rating ?? u.overallRating);
 }
 
 useHead({ title: '作者排行 - SCPPER-CN' });
@@ -619,11 +636,11 @@ useHead({ title: '作者排行 - SCPPER-CN' });
   top: 0; bottom: 0;                      /* 覆盖整行高度（包含 py） */
   left: var(--hl-left, -9999px);          /* 未测量前隐藏 */
   width: var(--hl-width, 0);
-  background-color: rgba(16,185,129,0.14);
+  background-color: rgba(var(--accent),0.14);
   pointer-events: none;
   border-radius: 0px;                     /* 需要无圆角可设为 0 */
 }
-.dark .rank-row::before{ background-color: rgba(5,150,105,0.22); }
+.dark .rank-row::before{ background-color: rgba(var(--accent-strong),0.22); }
 
 /* —— 表头列高亮（仅在右侧网格内） —— */
 .metric-head-grid{ position: relative; }
@@ -633,11 +650,11 @@ useHead({ title: '作者排行 - SCPPER-CN' });
   top: 0; bottom: 0;
   left: var(--hhl-left, -9999px);
   width: var(--hhl-width, 0);
-  background-color: rgba(16,185,129,0.14);
+  background-color: rgba(var(--accent),0.14);
   pointer-events: none;
   border-radius: 6px;
 }
-.dark .metric-head-grid::before{ background-color: rgba(5,150,105,0.22); }
+.dark .metric-head-grid::before{ background-color: rgba(var(--accent-strong),0.22); }
 
 /* —— 表头按钮（填满单元格，不影响列高亮） —— */
 .th-btn{

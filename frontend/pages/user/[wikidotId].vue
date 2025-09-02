@@ -2,7 +2,7 @@
   <div>
     <div v-if="userPending || statsPending" class="p-8 text-center">
       <div class="inline-flex items-center gap-2">
-        <svg class="w-5 h-5 animate-spin text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
         </svg>
         <span class="text-neutral-600 dark:text-neutral-400">加载中...</span>
@@ -13,13 +13,15 @@
     </div>
     <div v-else class="space-y-6">
       <!-- Header -->
-      <div class="flex items-center justify-between border-b-2 border-emerald-100 dark:border-emerald-900/30 pb-3 mb-4">
+      <div class="flex items-center justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3 mb-4">
         <div class="flex items-center gap-3">
-          <div class="h-8 w-1 bg-emerald-600 rounded" />
+          <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
           <h2 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">用户详情</h2>
         </div>
-        <NuxtLink to="/" class="text-sm text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-medium">← 返回主页</NuxtLink>
+        <NuxtLink to="/" class="text-sm text-[rgb(var(--accent))] hover:opacity-90 font-medium">← 返回主页</NuxtLink>
       </div>
+
+      
 
       <!-- User Info and Overall Stats -->
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -40,7 +42,7 @@
               </div>
             </div>
             <div v-if="stats?.rank" class="text-right shrink-0">
-              <div class="text-2xl sm:text-3xl font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap overflow-hidden">#{{ stats.rank }}</div>
+              <div class="text-2xl sm:text-3xl font-bold text-[rgb(var(--accent))] whitespace-nowrap overflow-hidden">#{{ stats.rank }}</div>
               <div class="text-xs text-neutral-600 dark:text-neutral-400">综合排名</div>
             </div>
           </div>
@@ -53,41 +55,51 @@
               <div v-if="user?.firstActivityType" class="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
                 {{ formatActivityType(user.firstActivityType) }}
               </div>
-              <div v-if="user?.firstActivityPageWikidotId || user?.firstActivityPageTitle" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
-                <NuxtLink :to="`/page/${user.firstActivityPageWikidotId}`" class="hover:text-emerald-600 dark:hover:text-emerald-400">
-                  {{ user.firstActivityPageTitle || '未知页面' }}
-                </NuxtLink>
-                <span v-if="user?.firstActivityType === 'VOTE'" :class="[
-                  'ml-1 font-bold',
-                  Number(user?.firstActivityDirection || 0) > 0 ? 'text-green-600 dark:text-green-400' : Number(user?.firstActivityDirection || 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-neutral-500 dark:text-neutral-500'
-                ]">
-                  {{ Number(user?.firstActivityDirection || 0) > 0 ? '+1' : Number(user?.firstActivityDirection || 0) < 0 ? '-1' : '0' }}
-                </span>
-                <span v-else-if="user?.firstActivityType === 'REVISION' && user?.firstActivityRevisionType" class="ml-1 text-neutral-500 dark:text-neutral-500">— {{ formatRevisionType(user.firstActivityRevisionType) }}</span>
-                <span v-if="user?.firstActivityComment" class="text-neutral-500 dark:text-neutral-500 ml-1 truncate">— {{ user.firstActivityComment }}</span>
+              <div v-if="user?.firstActivityPageWikidotId || user?.firstActivityPageTitle" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
+                <div class="flex flex-wrap items-start gap-1">
+                  <NuxtLink :to="`/page/${user.firstActivityPageWikidotId}`" class="hover:text-[rgb(var(--accent))] truncate max-w-full block">
+                    {{ user.firstActivityPageTitle || '未知页面' }}
+                  </NuxtLink>
+                  <span v-if="user?.firstActivityType === 'VOTE'" :class="[
+                    'font-bold shrink-0',
+                    Number(user?.firstActivityDirection || 0) > 0 ? 'text-green-600 dark:text-green-400' : Number(user?.firstActivityDirection || 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-neutral-500 dark:text-neutral-500'
+                  ]">
+                    {{ Number(user?.firstActivityDirection || 0) > 0 ? '+1' : Number(user?.firstActivityDirection || 0) < 0 ? '-1' : '0' }}
+                  </span>
+                  <span v-else-if="user?.firstActivityType === 'REVISION' && user?.firstActivityRevisionType" class="text-neutral-500 dark:text-neutral-500 shrink-0">— {{ formatRevisionType(user.firstActivityRevisionType) }}</span>
+                </div>
+                <div v-if="user?.firstActivityComment" class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">
+                  — {{ user.firstActivityComment }}
+                </div>
               </div>
             </div>
             <div v-if="user?.lastActivityAt" class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3">
               <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">最近活动</div>
               <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatDate(user.lastActivityAt) }}</div>
-              <div v-if="user?.lastActivityType === 'VOTE' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
-                投票 · 
-                <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-emerald-600 dark:hover:text-emerald-400">
-                  {{ user.lastActivityPageTitle || '未知页面' }}
-                </NuxtLink>
-                <span :class="[
-                  'ml-1 font-bold',
-                  Number(user?.lastActivityDirection || 0) > 0 ? 'text-green-600 dark:text-green-400' : Number(user?.lastActivityDirection || 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-neutral-500 dark:text-neutral-500'
-                ]">
-                  {{ Number(user?.lastActivityDirection || 0) > 0 ? '+1' : Number(user?.lastActivityDirection || 0) < 0 ? '-1' : '0' }}
-                </span>
+              <div v-if="user?.lastActivityType === 'VOTE' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
+                <div class="flex flex-wrap items-start gap-1">
+                  <span class="shrink-0">投票 ·</span>
+                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[rgb(var(--accent))] truncate max-w-full block">
+                    {{ user.lastActivityPageTitle || '未知页面' }}
+                  </NuxtLink>
+                  <span :class="[
+                    'font-bold shrink-0',
+                    Number(user?.lastActivityDirection || 0) > 0 ? 'text-green-600 dark:text-green-400' : Number(user?.lastActivityDirection || 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-neutral-500 dark:text-neutral-500'
+                  ]">
+                    {{ Number(user?.lastActivityDirection || 0) > 0 ? '+1' : Number(user?.lastActivityDirection || 0) < 0 ? '-1' : '0' }}
+                  </span>
+                </div>
               </div>
-              <div v-else-if="user?.lastActivityType === 'REVISION' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
-                {{ formatRevisionType(user?.lastActivityRevisionType || '') }} · 
-                <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-emerald-600 dark:hover:text-emerald-400">
-                  {{ user.lastActivityPageTitle || '未知页面' }}
-                </NuxtLink>
-                <span v-if="user?.lastActivityComment" class="text-neutral-500 dark:text-neutral-500 ml-1 truncate">— {{ user.lastActivityComment }}</span>
+              <div v-else-if="user?.lastActivityType === 'REVISION' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
+                <div class="flex flex-wrap items-start gap-1">
+                  <span class="shrink-0">{{ formatRevisionType(user?.lastActivityRevisionType || '') }} ·</span>
+                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[rgb(var(--accent))] truncate max-w-full block">
+                    {{ user.lastActivityPageTitle || '未知页面' }}
+                  </NuxtLink>
+                </div>
+                <div v-if="user?.lastActivityComment" class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">
+                  — {{ user.lastActivityComment }}
+                </div>
               </div>
             </div>
           </div>
@@ -123,10 +135,10 @@
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">分类表现</h3>
             <div class="inline-flex rounded-md overflow-hidden border border-neutral-200 dark:border-neutral-800">
               <button type="button" class="px-2 py-1 text-xs"
-                :class="categoryView==='list' ? 'bg-emerald-600 text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
+                :class="categoryView==='list' ? 'bg-[rgb(var(--accent))] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
                 @click="categoryView='list'">列表</button>
               <button type="button" class="px-2 py-1 text-xs"
-                :class="categoryView==='radar' ? 'bg-emerald-600 text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
+                :class="categoryView==='radar' ? 'bg-[rgb(var(--accent))] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
                 @click="categoryView='radar'">雷达</button>
             </div>
           </div>
@@ -176,6 +188,7 @@
         </ClientOnly>
       </div>
 
+      
       <!-- Works Tabs -->
       <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900 shadow-sm">
         <div class="border-b border-neutral-200 dark:border-neutral-800">
@@ -187,7 +200,7 @@
               :class="[
                 'py-3 px-1 border-b-2 font-medium text-sm transition-colors',
                 activeTab === tab.key
-                  ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                  ? 'border-[rgb(var(--accent))] text-[rgb(var(--accent))]'
                   : 'border-transparent text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-300'
               ]"
             >
@@ -212,7 +225,7 @@
         <!-- Works List -->
         <div class="p-6">
           <div v-if="worksPending" class="text-center py-8">
-            <svg class="w-5 h-5 animate-spin text-emerald-600 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 animate-spin text-[rgb(var(--accent))] mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </div>
@@ -252,6 +265,86 @@
         </div>
       </div>
 
+      <!-- Preferences Summary (2x2 on desktop, 1x4 on mobile) - moved below Works and above Recent Activity -->
+      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">偏好一览</h3>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Favorite Authors with avatar -->
+          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
+            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最喜欢的作者</div>
+            <div v-if="favAuthors && favAuthors.length > 0" class="space-y-2">
+              <div v-for="a in favAuthors" :key="`fa-${a.userId}`" class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 min-w-0">
+                  <UserAvatar :wikidot-id="a.wikidotId" :name="a.displayName || String(a.wikidotId || a.userId)" :size="24" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800" />
+                  <NuxtLink :to="`/user/${a.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                    {{ a.displayName || a.wikidotId || a.userId }}
+                  </NuxtLink>
+                </div>
+                <div class="text-xs shrink-0 inline-flex items-center gap-1">
+                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ a.uv }}</span>
+                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ a.dv }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
+            <div class="flex items-center justify-end gap-2 mt-3">
+              <button @click="prevFavAuthorsPage" :disabled="prefAuthorsOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
+              <button @click="nextFavAuthorsPage" :disabled="!hasMoreFavAuthors" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
+            </div>
+          </div>
+
+          <!-- Most Hated Authors (hidden content with centered placeholder) -->
+          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
+            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最讨厌的作者</div>
+            <div class="flex items-center justify-center text-xs text-neutral-500 dark:text-neutral-400 h-10">-- 暂无数据 --</div>
+          </div>
+
+          <!-- Favorite Tags -->
+          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
+            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最喜欢的标签</div>
+            <div v-if="favTags && favTags.length > 0" class="space-y-2">
+              <div v-for="t in favTags" :key="`ft-${t.tag}`" class="flex items-center justify-between">
+                <NuxtLink :to="`/search?tags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                  #{{ t.tag }}
+                </NuxtLink>
+                <div class="text-xs shrink-0 inline-flex items-center gap-1">
+                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ t.uv }}</span>
+                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ t.dv }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
+            <div class="flex items-center justify-end gap-2 mt-3">
+              <button @click="prevFavTagsPage" :disabled="prefFavTagsOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
+              <button @click="nextFavTagsPage" :disabled="!hasMoreFavTags" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
+            </div>
+          </div>
+
+          <!-- Most Hated Tags -->
+          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
+            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最讨厌的标签</div>
+            <div v-if="hateTags && hateTags.length > 0" class="space-y-2">
+              <div v-for="t in hateTags" :key="`ht-${t.tag}`" class="flex items-center justify-between">
+                <NuxtLink :to="`/search?excludeTags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                  #{{ t.tag }}
+                </NuxtLink>
+                <div class="text-xs shrink-0 inline-flex items-center gap-1">
+                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ t.dv }}</span>
+                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ t.uv }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
+            <div class="flex items-center justify-end gap-2 mt-3">
+              <button @click="prevHateTagsPage" :disabled="prefHateTagsOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
+              <button @click="nextHateTagsPage" :disabled="!hasMoreHateTags" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Recent Activity -->
       <div class="space-y-6">
         <!-- Recent Votes -->
@@ -260,9 +353,14 @@
           <div class="space-y-2">
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               <div v-for="vote in recentVotes" :key="`${vote.timestamp}-${vote.pageWikidotId}`" 
-                   class="flex items-center justify-between p-2 bg-neutral-50 dark:bg-neutral-800 rounded">
+                   :class="[
+                     'flex items-center justify-between p-2 rounded',
+                     vote.direction > 0 ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/40' :
+                     vote.direction < 0 ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40' :
+                     'bg-neutral-50 dark:bg-neutral-800'
+                   ]">
                 <div class="flex-1 min-w-0">
-                  <NuxtLink :to="`/page/${vote.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-emerald-600 dark:hover:text-emerald-400 truncate block">
+                  <NuxtLink :to="`/page/${vote.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate block">
                     {{ vote.pageTitle || 'Untitled' }}
                   </NuxtLink>
                   <div class="text-xs text-neutral-600 dark:text-neutral-400">{{ formatRelativeTime(vote.timestamp) }}</div>
@@ -297,7 +395,7 @@
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
             <div v-for="revision in recentRevisions" :key="`${revision.timestamp}-${revision.pageWikidotId}`" 
                  class="p-2 bg-neutral-50 dark:bg-neutral-800 rounded">
-              <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-emerald-600 dark:hover:text-emerald-400 truncate block">
+              <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate block">
                 {{ revision.pageTitle || 'Untitled' }}
               </NuxtLink>
               <div class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
@@ -331,7 +429,7 @@
               <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatRecordType(record.recordType) }}</div>
               <div v-if="record.achievedAt" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">{{ formatDate(record.achievedAt) }}</div>
             </div>
-            <div v-if="record.value" class="text-lg font-bold text-emerald-600 dark:text-emerald-400">{{ Number(record.value).toFixed(0) }}</div>
+            <div v-if="record.value" class="text-lg font-bold text-[rgb(var(--accent))]">{{ Number(record.value).toFixed(0) }}</div>
           </div>
         </div>
       </div>
@@ -383,6 +481,72 @@ const { data: user, pending: userPending, error: userError } = await useAsyncDat
   { watch: [() => route.params.wikidotId] }
 );
 
+// Relations: authors and tags (liker/hater)
+// Preferences pagination state
+const prefAuthorsPageSize = ref(5)
+const prefAuthorsOffset = ref(0)
+const prefTagsPageSize = ref(5)
+const prefFavTagsOffset = ref(0)
+const prefHateTagsOffset = ref(0)
+
+if (typeof window !== 'undefined') {
+  const computePrefSize = () => (window.innerWidth >= 768 ? 5 : 5)
+  const setSizes = () => {
+    const size = computePrefSize()
+    if (prefAuthorsPageSize.value !== size) {
+      prefAuthorsPageSize.value = size
+      prefAuthorsOffset.value = 0
+    }
+    if (prefTagsPageSize.value !== size) {
+      prefTagsPageSize.value = size
+      prefFavTagsOffset.value = 0
+      prefHateTagsOffset.value = 0
+    }
+  }
+  setSizes()
+  window.addEventListener('resize', setSizes)
+}
+
+const { data: likerAuthors } = await useAsyncData(
+  () => `user-liker-authors-${wikidotId.value}-${prefAuthorsPageSize.value}-${prefAuthorsOffset.value}`,
+  () => $bff(`/users/${wikidotId.value}/relations/users`, { params: { direction: 'targets', polarity: 'liker', limit: prefAuthorsPageSize.value, offset: prefAuthorsOffset.value } }),
+  { watch: [() => route.params.wikidotId, () => prefAuthorsPageSize.value, () => prefAuthorsOffset.value] }
+);
+const { data: haterAuthors } = await useAsyncData(
+  () => `user-hater-authors-${wikidotId.value}-${prefAuthorsPageSize.value}-${prefAuthorsOffset.value}`,
+  () => $bff(`/users/${wikidotId.value}/relations/users`, { params: { direction: 'targets', polarity: 'hater', limit: prefAuthorsPageSize.value, offset: prefAuthorsOffset.value } }),
+  { watch: [() => route.params.wikidotId, () => prefAuthorsPageSize.value, () => prefAuthorsOffset.value] }
+);
+const { data: likerTags } = await useAsyncData(
+  () => `user-liker-tags-${wikidotId.value}-${prefTagsPageSize.value}-${prefFavTagsOffset.value}`,
+  () => $bff(`/users/${wikidotId.value}/relations/tags`, { params: { polarity: 'liker', limit: prefTagsPageSize.value, offset: prefFavTagsOffset.value } }),
+  { watch: [() => route.params.wikidotId, () => prefTagsPageSize.value, () => prefFavTagsOffset.value] }
+);
+const { data: haterTags } = await useAsyncData(
+  () => `user-hater-tags-${wikidotId.value}-${prefTagsPageSize.value}-${prefHateTagsOffset.value}`,
+  () => $bff(`/users/${wikidotId.value}/relations/tags`, { params: { polarity: 'hater', limit: prefTagsPageSize.value, offset: prefHateTagsOffset.value } }),
+  { watch: [() => route.params.wikidotId, () => prefTagsPageSize.value, () => prefHateTagsOffset.value] }
+);
+
+// Picks for UI (page by API sorting); filter out '原创'
+const favAuthors = computed(() => (Array.isArray(likerAuthors.value) ? likerAuthors.value : []))
+// hater authors content intentionally hidden per requirements
+const favTags = computed(() => (Array.isArray(likerTags.value) ? likerTags.value.filter((t:any)=> t && t.tag !== '原创').map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
+const hateTags = computed(() => (Array.isArray(haterTags.value) ? haterTags.value.filter((t:any)=> t && t.tag !== '原创').map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
+
+// Has more flags & pager actions
+const hasMoreFavAuthors = computed(() => Array.isArray(likerAuthors.value) && likerAuthors.value.length === prefAuthorsPageSize.value)
+function nextFavAuthorsPage(){ if (hasMoreFavAuthors.value) prefAuthorsOffset.value += prefAuthorsPageSize.value }
+function prevFavAuthorsPage(){ prefAuthorsOffset.value = Math.max(0, prefAuthorsOffset.value - prefAuthorsPageSize.value) }
+
+const hasMoreFavTags = computed(() => Array.isArray(likerTags.value) && likerTags.value.length === prefTagsPageSize.value)
+function nextFavTagsPage(){ if (hasMoreFavTags.value) prefFavTagsOffset.value += prefTagsPageSize.value }
+function prevFavTagsPage(){ prefFavTagsOffset.value = Math.max(0, prefFavTagsOffset.value - prefTagsPageSize.value) }
+
+const hasMoreHateTags = computed(() => Array.isArray(haterTags.value) && haterTags.value.length === prefTagsPageSize.value)
+function nextHateTagsPage(){ if (hasMoreHateTags.value) prefHateTagsOffset.value += prefTagsPageSize.value }
+function prevHateTagsPage(){ prefHateTagsOffset.value = Math.max(0, prefHateTagsOffset.value - prefTagsPageSize.value) }
+
 // Fetch user stats
 const { data: stats, pending: statsPending } = await useAsyncData(
   () => `user-stats-${wikidotId.value}`,
@@ -394,14 +558,16 @@ const { data: stats, pending: statsPending } = await useAsyncData(
 const { data: works, pending: worksPending, refresh: refreshWorks } = await useAsyncData(
   () => `user-works-${wikidotId.value}-${activeTab.value}`,
   async () => {
-    // 'all' 标签页不传递type参数，后端会返回所有类型
-    // 其他标签页传递对应的type参数进行过滤
     const params: any = { 
-      limit: 100, // Fetch more for client-side pagination
-      includeDeleted: 'true' // 包含已删除的页面
+      limit: 100, 
+      includeDeleted: 'true',
+      tab: (activeTab.value === 'SHORT_STORIES') ? 'short_stories'
+         : (activeTab.value === 'ANOMALOUS_LOG') ? 'anomalous_log'
+         : (activeTab.value === 'AUTHOR') ? 'author'
+         : (activeTab.value === 'TRANSLATOR') ? 'translator'
+         : (activeTab.value === 'OTHER') ? 'other'
+         : 'all'
     };
-    
-    // 不再让后端过滤，全部拉取后本地按标签过滤
     return await $bff(`/users/${wikidotId.value}/pages`, { params });
   },
   { watch: [() => route.params.wikidotId, activeTab] }
@@ -525,18 +691,44 @@ function hasTag(work: any, tag: string): boolean {
 const isOriginal = (w: any) => hasTag(w, '原创')
 const isAuthorPage = (w: any) => hasTag(w, '作者')
 const isCoverPage = (w: any) => hasTag(w, '掩盖页')
+const isParagraph = (w: any) => hasTag(w, '段落')
 
-const filterOriginal = (w: any) => isOriginal(w) && !isCoverPage(w)
-const filterTranslation = (w: any) => !isOriginal(w) && !isAuthorPage(w) && !isCoverPage(w)
-const filterOther = (w: any) => isAuthorPage(w) || isCoverPage(w)
+const isShortStories = (w: any) => (w?.category === 'short-stories')
+const isAnomalousLog = (w: any) => (w?.category === 'log-of-anomalous-items-cn')
+
+// Exclude short-stories & anomalous-log from original/translation/other
+const filterOriginal = (w: any) => isOriginal(w) && !isCoverPage(w) && !isParagraph(w) && !isShortStories(w) && !isAnomalousLog(w)
+const filterTranslation = (w: any) => !isOriginal(w) && !isAuthorPage(w) && !isCoverPage(w) && !isParagraph(w) && !isShortStories(w) && !isAnomalousLog(w)
+const filterOther = (w: any) => (isAuthorPage(w) || isCoverPage(w) || isParagraph(w)) && !isShortStories(w) && !isAnomalousLog(w)
+
+// Category-based tabs
+
+// Hide-zero tabs: compute counts safely from BFF counts if available, else local
+const shortStoriesCount = computed(() => {
+  if (tabCounts.value && typeof tabCounts.value.shortStories === 'number') return tabCounts.value.shortStories
+  return allWorks.value.filter(isShortStories).length
+})
+const anomalousLogCount = computed(() => {
+  if (tabCounts.value && typeof tabCounts.value.anomalousLog === 'number') return tabCounts.value.anomalousLog
+  return allWorks.value.filter(isAnomalousLog).length
+})
 
 // Work tabs configuration
-const workTabs = computed(() => [
-  { key: 'all', label: '全部作品', count: (tabCounts.value && typeof tabCounts.value.total === 'number') ? tabCounts.value.total : allWorks.value.length },
-  { key: 'AUTHOR', label: '原创', count: (tabCounts.value && typeof tabCounts.value.original === 'number') ? tabCounts.value.original : allWorks.value.filter(filterOriginal).length },
-  { key: 'TRANSLATOR', label: '翻译', count: (tabCounts.value && typeof tabCounts.value.translation === 'number') ? tabCounts.value.translation : allWorks.value.filter(filterTranslation).length },
-  { key: 'OTHER', label: '其他', count: (tabCounts.value && typeof tabCounts.value.other === 'number') ? tabCounts.value.other : allWorks.value.filter(filterOther).length },
-]);
+const workTabs = computed(() => {
+  const tabs = [
+    { key: 'all', label: '全部作品', count: (tabCounts.value && typeof tabCounts.value.total === 'number') ? tabCounts.value.total : allWorks.value.length },
+    { key: 'AUTHOR', label: '原创', count: (tabCounts.value && typeof tabCounts.value.original === 'number') ? tabCounts.value.original : allWorks.value.filter(filterOriginal).length },
+    { key: 'TRANSLATOR', label: '翻译', count: (tabCounts.value && typeof tabCounts.value.translation === 'number') ? tabCounts.value.translation : allWorks.value.filter(filterTranslation).length },
+  ] as Array<{key:string,label:string,count:number}>
+  const ss = shortStoriesCount.value
+  if (ss > 0) tabs.push({ key: 'SHORT_STORIES', label: '三句话外围', count: ss })
+  const al = anomalousLogCount.value
+  if (al > 0) tabs.push({ key: 'ANOMALOUS_LOG', label: '异常物品记录', count: al })
+  const otherCount = (tabCounts.value && typeof tabCounts.value.other === 'number') ? tabCounts.value.other : allWorks.value.filter(filterOther).length
+  tabs.push({ key: 'OTHER', label: '其他', count: otherCount })
+  // hide tabs with zero count except 'all'
+  return tabs.filter(t => t.key === 'all' || (t.count || 0) > 0)
+})
 
 const currentTabLabel = computed(() => {
   const tab = workTabs.value.find(t => t.key === activeTab.value);
@@ -550,6 +742,12 @@ const filteredWorks = computed(() => {
   }
   if (activeTab.value === 'TRANSLATOR') {
     return all.filter(filterTranslation)
+  }
+  if (activeTab.value === 'SHORT_STORIES') {
+    return all.filter(isShortStories)
+  }
+  if (activeTab.value === 'ANOMALOUS_LOG') {
+    return all.filter(isAnomalousLog)
   }
   if (activeTab.value === 'OTHER') {
     return all.filter(filterOther)
@@ -598,6 +796,12 @@ const totalPages = computed(() => {
 watch(activeTab, () => {
   currentPage.value = 1;
 });
+
+// Ensure active tab is visible; if hidden by zero-count, reset to 'all'
+watch(workTabs, (tabs) => {
+  const exists = tabs.some(t => t.key === activeTab.value)
+  if (!exists) activeTab.value = 'all'
+})
 
 // Helper functions
 function formatDate(dateStr: string) {
@@ -667,6 +871,7 @@ function normalizeWork(work: any) {
   return {
     wikidotId: work.wikidotId,
     title: work.title,
+    category: work.category,
     tags: work.tags,
     rating: work.rating,
     commentCount: work.commentCount ?? work.revisionCount,

@@ -51,13 +51,12 @@ export class DailySiteOverviewJob {
        WHERE u."firstActivityAt" IS NOT NULL AND u."firstActivityAt" <= $1::timestamptz`,
       dateEnd
     );
+    // Active users (rolling 60-day distinct based on UserDailyStats)
     const usersActiveRow = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(
-      `SELECT COUNT(*)::bigint AS count
-       FROM "User" u
-       WHERE u."lastActivityAt" IS NOT NULL
-         AND u."lastActivityAt" >= ($1::timestamptz - INTERVAL '60 days')
-         AND u."lastActivityAt" <= $1::timestamptz`,
-      dateEnd
+      `SELECT COUNT(DISTINCT uds."userId")::bigint AS count
+       FROM "UserDailyStats" uds
+       WHERE uds.date BETWEEN ($1::date - INTERVAL '59 days') AND $1::date`,
+      dateStr
     );
 
     // contributors snapshot: unique users whose earliest contribution event (revision or attribution) is <= day end

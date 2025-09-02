@@ -1,22 +1,22 @@
+// ecosystem.config.js
 module.exports = {
   apps: [
     {
       name: 'scpper-nuxt',
-      script: 'node_modules/nuxt/bin/nuxt.mjs',
-      args: 'start --port 9876 --host 0.0.0.0',
+      port: 9876,
+      script: '.output/server/index.mjs',
       cwd: __dirname,
       env: {
+        PORT: 9876,
+        NITRO_PORT: 9876,
         NODE_ENV: 'production',
         NITRO_PRESET: 'node-server',
-        // 生产环境使用 /api 相对路径
-        BFF_BASE: process.env.BFF_BASE || '/api'
+        BFF_BASE: process.env.BFF_BASE || '/api',
       },
       instances: 1,
       exec_mode: 'fork',
-      max_memory_restart: '512M',
-      watch: false
-    }
-  ]
-};
-
-
+      max_memory_restart: '1024M',
+      watch: false,
+    },
+  ],
+}

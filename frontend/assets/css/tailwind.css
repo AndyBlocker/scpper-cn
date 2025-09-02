@@ -1,3 +1,6 @@
+/* import color scheme variables */
+@import './scheme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -54,7 +57,8 @@
   
   /* 选中文本样式 */
   ::selection {
-    @apply bg-emerald-500/30 text-emerald-900 dark:bg-emerald-400/30 dark:text-emerald-100;
+    background-color: rgba(var(--accent), 0.30);
+    color: rgb(var(--fg));
   }
   
   /* 过渡动画 */
@@ -67,6 +71,15 @@
     -webkit-user-drag: none;
     user-select: none;
   }
+
+  /* Snippet keyword highlight (PGroonga snippet_html -> <span class="keyword">) */
+  html.light .keyword {
+    @apply rounded px-0.5;
+    background-color: #fde68a !important; /* amber-200 */
+    color: #111827 !important;           /* neutral-900 */
+  }
+  html.dark .keyword {
+    background-color: rgba(234, 179, 8, 0.35) !important; /* amber-400 @ ~35% */
+    color: #f5f5f5 !important;                             /* neutral-100 */
+  }
 }
-
-

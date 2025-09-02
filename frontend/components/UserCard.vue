@@ -17,7 +17,7 @@
           </div>
         </div>
         <div :class="rankPositionClass">
-          <div v-if="rank != null" class="text-base font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">#{{ rank }}</div>
+          <div v-if="rank != null" class="text-base font-semibold text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))] tabular-nums leading-none">#{{ rank }}</div>
           <div v-else-if="totalsText" class="text-xs text-neutral-500 dark:text-neutral-400 leading-none">{{ totalsText }}</div>
           <div v-else-if="metaRight != null" class="text-xs text-neutral-500 dark:text-neutral-400 leading-none">{{ metaRight }}</div>
         </div>
@@ -48,7 +48,7 @@
         <div v-if="categoryRanksNorm.length" class="mt-3 grid grid-cols-2 gap-2 w-full">
           <div v-for="r in categoryRanksNorm" :key="r.name" class="border border-neutral-200 dark:border-neutral-800 rounded px-2 py-1 text-xs flex items-center justify-between">
             <span class="truncate text-neutral-600 dark:text-neutral-300">{{ r.name }}</span>
-            <span class="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">#{{ r.rank }}</span>
+            <span class="font-semibold text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))] tabular-nums">#{{ r.rank }}</span>
           </div>
         </div>
       </template>
@@ -195,9 +195,9 @@
       if (variant.value === 'md') return [to.value ? 'cursor-pointer' : '', 'self-start flex items-center justify-between gap-2 min-w-0'].join(' ')
       return [to.value ? 'cursor-pointer' : '', 'self-start flex items-center gap-2 min-w-0'].join(' ')
     }
-    if (variant.value === 'lg') return [baseClass, to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-emerald-500' : '', 'p-5 md:p-6 flex flex-col relative'].join(' ')
-    if (variant.value === 'md') return [baseClass, to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-emerald-500' : '', 'p-3 flex items-center justify-between gap-2'].join(' ')
-    return ['relative self-start justify-self-start inline-flex items-center gap-1.5 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900', to.value ? 'hover:shadow-sm cursor-pointer focus:outline-none focus:ring-2 ring-emerald-500' : '', 'px-2 py-1 min-h-[26px] w-auto', props.smBgClass || ''].join(' ')
+    if (variant.value === 'lg') return [baseClass, to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '', 'p-5 md:p-6 flex flex-col relative'].join(' ')
+    if (variant.value === 'md') return [baseClass, to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '', 'p-3 flex items-center justify-between gap-2'].join(' ')
+    return ['relative self-start justify-self-start inline-flex items-center gap-1.5 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900', to.value ? 'hover:shadow-sm cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '', 'px-2 py-1 min-h-[26px] w-auto', props.smBgClass || ''].join(' ')
   })
   
   const rankPositionClass = computed(() => {
@@ -207,12 +207,12 @@
   })
   
   const nameClass = computed(() => {
-    if (variant.value === 'lg') return 'text-base font-medium text-emerald-700 dark:text-emerald-300'
-    if (variant.value === 'md') return 'text-[13px] font-medium text-emerald-700 dark:text-emerald-300'
-    return 'text-[12px] font-medium text-emerald-700 dark:text-emerald-300'
+    if (variant.value === 'lg') return 'text-base font-medium text-[rgb(var(--accent))]'
+    if (variant.value === 'md') return 'text-[13px] font-medium text-[rgb(var(--accent))]'
+    return 'text-[12px] font-medium text-[rgb(var(--accent))]'
   })
   
-  const nameSmClass = computed(() => (props.smTextClass && props.smTextClass.trim()) ? props.smTextClass : 'text-[12px] leading-none font-medium text-emerald-700 dark:text-emerald-300 truncate max-w-[140px]')
+  const nameSmClass = computed(() => (props.smTextClass && props.smTextClass.trim()) ? props.smTextClass : 'text-[12px] leading-none font-medium text-[rgb(var(--accent))] truncate max-w-[140px]')
   
   const avatarSize = computed(() => {
     if (variant.value === 'lg') return 44

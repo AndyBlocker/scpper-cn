@@ -35,25 +35,33 @@ type UserStatsLike = {
 
 type CategoryBenchmark = {
   category: CategoryKey
+  p05Rating: number
   p50Rating: number
+  p90Rating: number
   p95Rating: number
+  p99Rating: number
   avgRating: number
+  tau?: number
   nAuthors: number
 }
 
 type CategoryBenchmarksPayload = {
   asOf: string
   benchmarks: Record<CategoryKey, CategoryBenchmark>
-  method?: string
+  method?: 'asinh_piecewise_p50_p95_p99_v3' | 'asinh_p50_p95_v2' | 'legacy_linear_p50_p95'
   version?: number
 }
 
 const props = defineProps<{ userStats: UserStatsLike | null | undefined }>()
 
+type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
 const { $bff } = useNuxtApp()
-const { data: resp, pending } = await useAsyncData(
+const bff = $bff as unknown as BffFetcher
+
+type Envelope<T> = { payload: T; updatedAt?: string; expiresAt?: string }
+const { data: resp, pending } = await useAsyncData<Envelope<CategoryBenchmarksPayload>>(
   () => 'stats-category-benchmarks',
-  () => $bff('/stats/category-benchmarks'),
+  () => bff<Envelope<CategoryBenchmarksPayload>>('/stats/category-benchmarks'),
   { server: false }
 )
 
@@ -80,6 +88,33 @@ function linearMap(v: number, p50: number, p95: number) {
   if (!Number.isFinite(denom) || Math.abs(denom) < 1e-6) return 50
   const s = 50 + 50 * (v - p50) / denom
   return Math.min(100, Math.max(0, s))
+}
+
+// v3 分段 asinh 映射：p50→50；p95→90；p99→100，低端压缩到 0–50
+function piecewiseAsinhMap(v: number, b: {
+  p05Rating: number; p50Rating: number; p95Rating: number; p99Rating: number; tau?: number
+}) {
+  const clamp = (x: number) => Math.max(0, Math.min(100, x))
+  const t = Math.max(1e-6, Number(b.tau) || 1)
+  const g = (x: number) => Math.asinh(Number(x || 0) / t)
+
+  const y = g(v)
+  const y05 = g(b.p05Rating || 0)
+  const y50 = g(b.p50Rating || 0)
+  const y95 = g(b.p95Rating || 1)
+  const y99 = g(b.p99Rating || (b.p95Rating || 1) + 1e-6)
+
+  const safe = (a: number, c: number) => Math.abs(c - a) < 1e-6 ? 1e-6 : (c - a)
+
+  if (v <= b.p50Rating) {
+    return clamp(50 * (y - y05) / safe(y05, y50))
+  } else if (v <= b.p95Rating) {
+    return clamp(50 + 40 * (y - y50) / safe(y50, y95))
+  } else {
+    const beta = 0.7
+    const tail = Math.pow((y - y95) / safe(y95, y99), beta)
+    return clamp(90 + 10 * tail)
+  }
 }
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -116,15 +151,34 @@ function buildDatasets() {
   for (const k of catKeys) {
     const b = p.benchmarks[k]
     const userScore = counts[k] > 0
-      ? (p.method === 'asinh_p50_p95_v2'
-          ? asinhMap(ratings[k] || 0, b?.p50Rating || 0, b?.p95Rating || 1, (b as any)?.tau || 1)
-          : linearMap(ratings[k] || 0, b?.p50Rating || 0, b?.p95Rating || 1))
+      ? (
+          p.method === 'asinh_piecewise_p50_p95_p99_v3'
+            ? piecewiseAsinhMap(ratings[k] || 0, {
+                p05Rating: b?.p05Rating || 0,
+                p50Rating: b?.p50Rating || 0,
+                p95Rating: b?.p95Rating || 1,
+                p99Rating: b?.p99Rating || (b?.p95Rating || 1) + 1e-6,
+                tau: (b as any)?.tau
+              })
+            : (p.method === 'asinh_p50_p95_v2'
+                ? asinhMap(ratings[k] || 0, b?.p50Rating || 0, b?.p95Rating || 1, (b as any)?.tau || 1)
+                : linearMap(ratings[k] || 0, b?.p50Rating || 0, b?.p95Rating || 1)
+              )
+        )
       : 0
     user.push(Number.isFinite(userScore) ? userScore : 0)
     siteAvg.push(50)
-    const topScore = p.method === 'asinh_p50_p95_v2'
-      ? asinhMap(b?.avgRating || 0, b?.p50Rating || 0, b?.p95Rating || 1, (b as any)?.tau || 1)
-      : linearMap(b?.avgRating || 0, b?.p50Rating || 0, b?.p95Rating || 1)
+    const topScore = p.method === 'asinh_piecewise_p50_p95_p99_v3'
+      ? piecewiseAsinhMap(b?.avgRating || 0, {
+          p05Rating: b?.p05Rating || 0,
+          p50Rating: b?.p50Rating || 0,
+          p95Rating: b?.p95Rating || 1,
+          p99Rating: b?.p99Rating || (b?.p95Rating || 1) + 1e-6,
+          tau: (b as any)?.tau
+        })
+      : (p.method === 'asinh_p50_p95_v2'
+          ? asinhMap(b?.avgRating || 0, b?.p50Rating || 0, b?.p95Rating || 1, (b as any)?.tau || 1)
+          : linearMap(b?.avgRating || 0, b?.p50Rating || 0, b?.p95Rating || 1))
     top10.push(Number.isFinite(topScore) ? topScore : 0)
   }
   return { user, siteAvg, top10 }
@@ -141,10 +195,16 @@ function renderChart() {
   const { user, siteAvg } = buildDatasets()
   const dark = isDark()
 
-  const userColor = dark ? 'rgba(16,185,129,0.45)' : 'rgba(16,185,129,0.35)'
-  const userBorder = dark ? 'rgba(16,185,129,0.9)' : 'rgba(5,150,105,1)'
-  const avgColor = dark ? 'rgba(148,163,184,0.20)' : 'rgba(148,163,184,0.18)'
-  const avgBorder = dark ? 'rgba(148,163,184,0.7)' : 'rgba(100,116,139,0.9)'
+  const cs = getComputedStyle(document.documentElement)
+  const toRGB = (s: string) => (s || '').trim().split(/\s+/).join(',')
+  const accent = toRGB(cs.getPropertyValue('--accent')) || '16,185,129'
+  const accentStrong = toRGB(cs.getPropertyValue('--accent-strong')) || '5,150,105'
+  const slate400 = toRGB(cs.getPropertyValue('--slate-400')) || '148,163,184'
+  const slate500 = toRGB(cs.getPropertyValue('--slate-500')) || '100,116,139'
+  const userColor = dark ? `rgba(${accent},0.45)` : `rgba(${accent},0.35)`
+  const userBorder = dark ? `rgba(${accent},0.9)` : `rgb(${accentStrong})`
+  const avgColor = dark ? `rgba(${slate400},0.20)` : `rgba(${slate400},0.18)`
+  const avgBorder = dark ? `rgba(${slate400},0.7)` : `rgb(${slate500})`
 
   if (chart) { chart.destroy() }
   chart = new ChartJS(ctx, {
@@ -182,8 +242,20 @@ function renderChart() {
   })
 }
 
+let themeObserver: MutationObserver | null = null
+
+function observeThemeChanges() {
+  if (typeof window === 'undefined') return null
+  const observer = new MutationObserver(() => {
+    renderChart()
+  })
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+  return observer
+}
+
 onMounted(() => {
   renderChart()
+  themeObserver = observeThemeChanges()
 })
 
 watch([payload, () => props.userStats], () => {
@@ -192,6 +264,7 @@ watch([payload, () => props.userStats], () => {
 
 onUnmounted(() => {
   if (chart) { chart.destroy(); chart = null }
+  if (themeObserver) { themeObserver.disconnect(); themeObserver = null }
 })
 </script>
 

@@ -21,7 +21,12 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         includeSnippet = 'true',
         includeDate = 'true'
       } = req.query as Record<string, string>;
-      if (!query) return res.status(400).json({ error: 'query is required' });
+      
+      // 如果没有query但有其他过滤条件（如tags），则允许搜索
+      const hasFilters = tags || excludeTags || ratingMin || ratingMax;
+      if (!query && !hasFilters) {
+        return res.status(400).json({ error: 'query or filters are required' });
+      }
 
       const wantTotal = String(includeTotal).toLowerCase() === 'true';
       const wantSnippet = String(includeSnippet).toLowerCase() === 'true';
@@ -50,7 +55,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           WHERE pv."validTo" IS NULL
-            AND (pv.title &@~ $1 OR pv."textContent" &@~ $1)
+            AND ($1::text IS NULL OR pv.title &@~ $1 OR pv."textContent" &@~ $1)
             AND ($2::text[] IS NULL OR pv.tags @> $2::text[])
             AND ($3::text[] IS NULL OR NOT (pv.tags && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
@@ -61,16 +66,17 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           ORDER BY 
             CASE WHEN $8 = 'rating' THEN NULL END,
             CASE WHEN $8 = 'recent' THEN NULL END,
-            CASE WHEN $8 IS NULL OR $8 = 'relevance' THEN (CASE WHEN lower(split_part(url, '/', 4)) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
-            CASE WHEN $8 IS NULL OR $8 = 'relevance' THEN (CASE WHEN lower(title) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
-            CASE WHEN $8 IS NULL OR $8 = 'relevance' THEN (CASE WHEN title &@~ $1 THEN 1 ELSE 0 END) END DESC NULLS LAST,
-            CASE WHEN $8 IS NULL OR $8 = 'relevance' THEN (
-              score
+            CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN lower(split_part(url, '/', 4)) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
+            CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN lower(title) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
+            CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN title &@~ $1 THEN 1 ELSE 0 END) END DESC NULLS LAST,
+            CASE WHEN ($8 IS NULL OR $8 = 'relevance') THEN (
+              CASE WHEN $1 IS NOT NULL THEN score ELSE 0 END
               + LN(1 + COALESCE("voteCount", 0)) * 0.05
               + LN(1 + COALESCE("commentCount", 0)) * 0.03
             ) END DESC NULLS LAST,
             CASE WHEN $8 = 'rating' THEN rating END DESC NULLS LAST,
-            CASE WHEN $8 = 'recent' THEN "validFrom" END DESC
+            CASE WHEN $8 = 'recent' THEN "validFrom" END DESC,
+            rating DESC NULLS LAST
           LIMIT $6::int OFFSET $7::int
         )
       `;
@@ -80,9 +86,12 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           SELECT l.*, l."firstPublishedAt" AS "firstRevisionAt", sn.snippet
           FROM limited l
           LEFT JOIN LATERAL (
-            SELECT array_to_string(
+            SELECT CASE 
+              WHEN $1 IS NOT NULL THEN array_to_string(
                      pgroonga_snippet_html(pv."textContent", pgroonga_query_extract_keywords($1), 200), ' '
-                   ) AS snippet
+                   )
+              ELSE NULL
+            END AS snippet
             FROM "PageVersion" pv
             WHERE pv.id = l.id
           ) sn ON TRUE
@@ -93,7 +102,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         `;
 
       const params = [
-        query,
+        query || null,
         tags ? (Array.isArray(tags) ? (tags as any) : [tags]) : null,
         excludeTags ? (Array.isArray(excludeTags) ? (excludeTags as any) : [excludeTags]) : null,
         ratingMin || null,
@@ -110,13 +119,13 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
               `SELECT COUNT(*) AS total
                FROM "PageVersion" pv
                WHERE pv."validTo" IS NULL
-                 AND (pv.title &@~ $1 OR pv."textContent" &@~ $1)
+                 AND ($1::text IS NULL OR pv.title &@~ $1 OR pv."textContent" &@~ $1)
                  AND ($2::text[] IS NULL OR pv.tags @> $2::text[])
                  AND ($3::text[] IS NULL OR NOT (pv.tags && $3::text[]))
                  AND ($4::int IS NULL OR pv.rating >= $4)
                  AND ($5::int IS NULL OR pv.rating <= $5)`,
               [
-                query,
+                query || null,
                 tags ? (Array.isArray(tags) ? (tags as any) : [tags]) : null,
                 excludeTags ? (Array.isArray(excludeTags) ? (excludeTags as any) : [excludeTags]) : null,
                 ratingMin || null,
@@ -158,13 +167,13 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           COALESCE(us."pageCount", 0) AS "pageCount"
         FROM "User" u
         LEFT JOIN "UserStats" us ON u.id = us."userId"
-        WHERE (u."displayName" &@~ $1) OR (LOWER(u."displayName") ILIKE LOWER('%' || $1 || '%'))
+        WHERE u."displayName" &@~ $1
         ORDER BY us."totalRating" DESC NULLS LAST
         LIMIT $2::int OFFSET $3::int
       `;
       const [rowsRes, totalRes] = await Promise.all([
         pool.query(sql, [query, limit, offset]),
-        wantTotal ? pool.query(`SELECT COUNT(*) AS total FROM "User" WHERE ("displayName" &@~ $1) OR (LOWER("displayName") ILIKE LOWER('%' || $1 || '%'))`, [query]) : Promise.resolve(null as any)
+        wantTotal ? pool.query(`SELECT COUNT(*) AS total FROM "User" WHERE "displayName" &@~ $1`, [query]) : Promise.resolve(null as any)
       ]);
       const results = rowsRes.rows;
       const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
@@ -261,7 +270,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           pgroonga_score(u.tableoid, u.ctid) AS score
         FROM "User" u
         LEFT JOIN "UserStats" us ON u.id = us."userId"
-        WHERE (u."displayName" &@~ $1) OR (LOWER(u."displayName") ILIKE LOWER('%' || $1 || '%'))
+        WHERE u."displayName" &@~ $1
         ORDER BY score DESC NULLS LAST, us."totalRating" DESC NULLS LAST
         LIMIT $2::int OFFSET $3::int
       `;
@@ -281,7 +290,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
       const userCountSql = `
         SELECT COUNT(*) AS total
         FROM "User" u
-        WHERE (u."displayName" &@~ $1) OR (LOWER(u."displayName") ILIKE LOWER('%' || $1 || '%'))
+        WHERE u."displayName" &@~ $1
       `;
 
       const [pageRes, userRes, pageCountRes, userCountRes] = await Promise.all([
@@ -364,6 +373,56 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           orderBy
         }
       });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /search/tags
+  router.get('/tags', async (req, res, next) => {
+    try {
+      const { query, limit = '20' } = req.query as Record<string, string>;
+      
+      if (!query || query.trim().length < 1) {
+        return res.json({ results: [] });
+      }
+      
+      const searchQuery = query.trim();
+      
+      // 搜索匹配的标签，按使用频率排序
+      const sql = `
+        WITH tag_stats AS (
+          SELECT 
+            tag,
+            COUNT(*) as usage_count,
+            COUNT(DISTINCT pv."pageId") as page_count
+          FROM "PageVersion" pv
+          CROSS JOIN LATERAL UNNEST(pv.tags) AS t(tag)
+          WHERE pv."validTo" IS NULL
+            AND t.tag ILIKE '%' || $1 || '%'
+          GROUP BY tag
+        )
+        SELECT 
+          tag,
+          usage_count,
+          page_count
+        FROM tag_stats
+        ORDER BY 
+          CASE WHEN LOWER(tag) = LOWER($1) THEN 0 ELSE 1 END,
+          usage_count DESC,
+          tag ASC
+        LIMIT $2::int
+      `;
+      
+      const { rows } = await pool.query(sql, [searchQuery, limit]);
+      
+      const results = rows.map((row: any) => ({
+        tag: row.tag,
+        usageCount: Number(row.usage_count || 0),
+        pageCount: Number(row.page_count || 0)
+      }));
+      
+      res.json({ results });
     } catch (err) {
       next(err);
     }

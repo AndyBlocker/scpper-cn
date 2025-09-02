@@ -7,6 +7,7 @@ import { searchRouter } from './routes/search.js';
 import { aggregateRouter } from './routes/aggregate.js';
 import { statsRouter, extendStatsRouter } from './routes/stats.js';
 import { quotesRouter } from './routes/quotes.js';
+import { analyticsRouter } from './routes/analytics.js';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
@@ -17,6 +18,7 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/aggregate', aggregateRouter(pool, redis));
   router.use('/stats', statsRouter(pool, redis));
   router.use('/stats', extendStatsRouter(pool, redis));
+  router.use('/analytics', analyticsRouter(pool, redis));
   router.use('/quotes', quotesRouter(pool, redis));
   // Proxy avatar endpoints to avatar-agent service
   router.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200', changeOrigin: false, xfwd: true }));

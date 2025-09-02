@@ -4,7 +4,7 @@
     <!-- Loading -->
     <div v-if="pagePending" class="p-10 text-center">
       <div class="inline-flex items-center gap-2">
-        <svg class="w-5 h-5 animate-spin text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <svg class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
         </svg>
@@ -63,7 +63,7 @@
                 <UserCard
                   size="sm"
                   :wikidot-id="(person?.userWikidotId ?? 0)"
-                  :display-name="person?.displayName || 'Anonymous'"
+                  :display-name="person?.displayName || '(account deleted)'"
                   :to="person?.userWikidotId ? `/user/${person.userWikidotId}` : null"
                   :avatar="true"
                 />
@@ -88,8 +88,9 @@
 
         <div class="inline-flex items-center gap-2 flex-wrap">
           <template v-for="t in allTags" :key="t">
-            <NuxtLink :to="`/search?q=%23${encodeURIComponent(t)}`"
-                      class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">#{{ t }}</NuxtLink>
+            <NuxtLink :to="`/search?tags=${encodeURIComponent(t)}`"
+                      class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-800/40 transition-colors"
+                      :title="`查看包含「${t}」标签的所有页面`">#{{ t }}</NuxtLink>
           </template>
         </div>
       </section>
@@ -109,7 +110,7 @@
             <div class="text-red-600 dark:text-red-400 text-right">↓ {{ downvotes }}</div>
           </div>
           <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden flex">
-            <div class="h-full bg-emerald-500" :style="{ width: upvotePct + '%' }" aria-hidden="true"></div>
+            <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: upvotePct + '%' }" aria-hidden="true"></div>
             <div class="h-full bg-red-500" :style="{ width: downvotePct + '%' }" aria-hidden="true"></div>
           </div>
         </div>
@@ -124,7 +125,7 @@
           </div>
           <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">总票数 {{ totalVotes }}</div>
           <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-            <div class="h-full bg-emerald-500" :style="{ width: likeRatioPct + '%' }" aria-hidden="true"></div>
+            <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: likeRatioPct + '%' }" aria-hidden="true"></div>
           </div>
         </div>
 
@@ -140,7 +141,7 @@
             在相同票数下更稳健的支持率估计
           </div>
           <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-            <div class="h-full bg-emerald-500" :style="{ width: Math.max(0, Math.min(100, wilsonLB * 100)) + '%' }" aria-hidden="true"></div>
+            <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: Math.max(0, Math.min(100, wilsonLB * 100)) + '%' }" aria-hidden="true"></div>
           </div>
         </div>
 
@@ -204,7 +205,7 @@
                       <UserCard
                         size="sm"
                         :wikidot-id="rev.userWikidotId || null"
-                        :display-name="rev.userDisplayName || '匿名'"
+                        :display-name="rev.userDisplayName || '(account deleted)'"
                         :to="rev.userWikidotId ? `/user/${rev.userWikidotId}` : null"
                         :avatar="true"
                       />
@@ -212,7 +213,7 @@
                   </div>
                   <div class="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap shrink-0">{{ formatRelativeTime(rev.timestamp) }}</div>
                 </div>
-                <div v-if="rev.comment" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 truncate">{{ rev.comment }}</div>
+                <div v-if="rev.comment" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">{{ rev.comment }}</div>
               </div>
             </div>
 
@@ -254,8 +255,10 @@
                 v-for="v in recentVotes"
                 :key="`${v.timestamp}-${v.userId || v.userWikidotId}`"
                 :class="[
-                  'p-2 rounded border border-neutral-200 dark:border-neutral-800',
-                  v.direction > 0 ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-red-50 dark:bg-red-900/20'
+                  'p-2 rounded',
+                  v.direction > 0 ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/40' :
+                  v.direction < 0 ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40' :
+                  'bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-800'
                 ]"
               >
                 <div class="flex items-center gap-2">
@@ -263,7 +266,7 @@
                     <UserCard
                       size="sm"
                       :wikidot-id="v.userWikidotId || null"
-                      :display-name="v.userDisplayName || '匿名'"
+                      :display-name="v.userDisplayName || '(account deleted)'"
                       :to="v.userWikidotId ? `/user/${v.userWikidotId}` : null"
                       :avatar="true"
                     />
@@ -373,7 +376,7 @@
                 忽略空白
               </label>
               <button @click="runDiff"
-                      class="text-xs px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-800">
+                      class="text-xs px-2 py-1 rounded bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))] hover:bg-[rgba(var(--accent),0.18)]">
                 生成对比
               </button>
             </div>
@@ -401,12 +404,12 @@
             <div v-for="(part, idx) in diffParts" :key="idx"
                  :class="[
                    'whitespace-pre-wrap',
-                   part.added ? 'bg-emerald-100/60 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300' :
+                   part.added ? 'bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]' :
                    part.removed ? 'bg-red-100/60 dark:bg-red-900/30 text-red-800 dark:text-red-300' :
                    'text-neutral-800 dark:text-neutral-200'
                  ]">
               <span class="select-none text-[10px] mr-1"
-                    :class="part.added ? 'text-emerald-600' : part.removed ? 'text-red-600' : 'text-transparent'">
+                    :class="part.added ? 'text-[rgb(var(--accent))]' : part.removed ? 'text-red-600' : 'text-transparent'">
                 {{ part.added ? '+' : part.removed ? '-' : '·' }}
               </span>{{ part.value }}
             </div>
@@ -748,7 +751,7 @@ function formatRevisionType(type: string) {
 function revisionTypeClass(type: string) {
   const t = String(type || '')
   if (t === 'PAGE_CREATED' || t === 'PAGE_RESTORED') {
-    return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
+    return 'bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]'
   }
   if (t === 'PAGE_EDITED') {
     return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'

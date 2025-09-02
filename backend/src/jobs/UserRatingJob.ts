@@ -99,8 +99,8 @@ export class UserRatingSystem {
         GROUP BY a."userId", pv."pageId"
       ),
       current_versions AS (
-        -- 当前版本（用于读取rating和tags）
-        SELECT pv."pageId", pv.rating, pv.tags
+        -- 当前版本（用于读取rating、tags、category）
+        SELECT pv."pageId", pv.rating, pv.tags, pv.category
         FROM "PageVersion" pv
         WHERE pv."validTo" IS NULL
           AND pv."isDeleted" = false
@@ -114,35 +114,41 @@ export class UserRatingSystem {
           SUM(CASE WHEN upr.has_author = 1 THEN cv.rating::float ELSE 0 END) as overall_rating,
           COUNT(CASE WHEN upr.has_author = 1 THEN 1 END) as total_pages,
 
-          -- SCP分类 (仅作者/提交者，且标签包含 原创 + scp)
+          -- SCP分类 (且标签包含 原创 + scp)
           SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN cv.rating::float ELSE 0 END) as scp_rating,
           COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN 1 END) as scp_pages,
 
-          -- 翻译分类：标签判定（非“原创”且排除“作者/掩盖页”），作者为任一有归属的用户
+          -- 翻译分类：标签判定（非“原创”且排除“作者/掩盖页/段落/补充材料”），并排除特定分类，作者为任一有归属的用户
           SUM(CASE WHEN upr.has_author = 1
                      AND NOT (cv.tags @> ARRAY['原创'])
                      AND NOT (cv.tags @> ARRAY['作者'])
                      AND NOT (cv.tags @> ARRAY['掩盖页'])
+                     AND NOT (cv.tags @> ARRAY['段落'])
+                     AND NOT (cv.tags @> ARRAY['补充材料'])
+                     AND NOT (cv.category IN ('log-of-anomalous-items-cn','short-stories'))
                    THEN cv.rating::float ELSE 0 END) as translation_rating,
           COUNT(CASE WHEN upr.has_author = 1
                       AND NOT (cv.tags @> ARRAY['原创'])
                       AND NOT (cv.tags @> ARRAY['作者'])
                       AND NOT (cv.tags @> ARRAY['掩盖页'])
+                      AND NOT (cv.tags @> ARRAY['段落'])
+                      AND NOT (cv.tags @> ARRAY['补充材料'])
+                      AND NOT (cv.category IN ('log-of-anomalous-items-cn','short-stories'))
                    THEN 1 END) as translation_pages,
 
-          -- GOI格式分类 (仅作者/提交者，原创 + goi格式)
+          -- GOI格式分类 (原创 + goi格式)
           SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','goi格式'] THEN cv.rating::float ELSE 0 END) as goi_rating,
           COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','goi格式'] THEN 1 END) as goi_pages,
 
-          -- 故事分类 (仅作者/提交者，原创 + 故事)
+          -- 故事分类 (原创 + 故事)
           SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','故事'] THEN cv.rating::float ELSE 0 END) as story_rating,
           COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','故事'] THEN 1 END) as story_pages,
 
-          -- Wanderers/图书馆分类 (仅作者/提交者，原创 + wanderers)
+          -- Wanderers/图书馆分类 (原创 + wanderers)
           SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','wanderers'] THEN cv.rating::float ELSE 0 END) as wanderers_rating,
           COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','wanderers'] THEN 1 END) as wanderers_pages,
 
-          -- 艺术作品分类 (仅作者/提交者，原创 + 艺术作品)
+          -- 艺术作品分类 (原创 + 艺术作品)
           SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','艺术作品'] THEN cv.rating::float ELSE 0 END) as art_rating,
           COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','艺术作品'] THEN 1 END) as art_pages
         FROM user_page_roles upr

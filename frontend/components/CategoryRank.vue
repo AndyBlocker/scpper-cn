@@ -8,7 +8,7 @@
       <span class="text-sm font-bold text-neutral-900 dark:text-neutral-100">{{ safeRating }}</span>
       <span
         v-if="rank !== null && rank !== undefined && rank !== '-'"
-        class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+        class="text-xs px-2 py-0.5 rounded-full bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]"
       >
         #{{ rank }}
       </span>
