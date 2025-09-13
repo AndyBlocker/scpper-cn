@@ -318,6 +318,10 @@ export class DatabaseStore {
       Logger.info(`✅ Created new version for page ${pageId}`);
     } else {
       // 不需要新版本时，更新快照字段
+      if (!currentVersion) {
+        Logger.warn(`No current version found for page ${pageId} when updating snapshot fields`);
+        return;
+      }
       await this.prisma.pageVersion.update({
         where: { id: currentVersion.id },
         data: {
@@ -516,6 +520,57 @@ export class DatabaseStore {
     try {
       await this.clearDirtyFlag(wikidotId, 'C');
     } catch {}
+  }
+
+  /**
+   * Reconcile DB pages against current staging snapshot and mark deletions.
+   * - Unseen in this run: pages present in DB (not deleted) but missing in staging → mark deleted
+   * - URL reused by different wikidotId: staging shows same URL but different wikidotId → mark old page deleted
+   */
+  async reconcileAndMarkDeletions(): Promise<{ unseenCount: number; urlReusedCount: number }> {
+    const unseenPages = await this.prisma.$queryRaw<Array<{ id: number; wikidotId: number; currentUrl: string }>>`
+      SELECT p.id, p."wikidotId", p."currentUrl"
+      FROM "Page" p
+      WHERE p."isDeleted" = false
+        AND (p."currentUrl" ~ '^https?://scp-wiki-cn\\.wikidot\\.com/' OR p."url" ~ '^https?://scp-wiki-cn\\.wikidot\\.com/')
+        AND NOT EXISTS (
+          SELECT 1 FROM "PageMetaStaging" s WHERE s."wikidotId" = p."wikidotId"
+        )
+    `;
+
+    const urlReusedPages = await this.prisma.$queryRaw<Array<{ id: number; wikidotId: number; currentUrl: string; newWikidotId: number }>>`
+      SELECT p.id, p."wikidotId", p."currentUrl", s."wikidotId" AS "newWikidotId"
+      FROM "Page" p
+      INNER JOIN "PageMetaStaging" s ON s.url = p."currentUrl"
+      WHERE p."isDeleted" = false
+        AND s."wikidotId" IS NOT NULL
+        AND s."wikidotId" <> p."wikidotId"
+    `;
+
+    let unseenCount = 0;
+    for (const row of unseenPages) {
+      try {
+        await this.markPageDeleted(row.id);
+        unseenCount++;
+      } catch (e) {
+        // continue best-effort
+      }
+    }
+
+    let urlReusedCount = 0;
+    // Avoid double-marking by skipping those already in unseen set
+    const unseenIds = new Set(unseenPages.map(r => r.id));
+    for (const row of urlReusedPages) {
+      if (unseenIds.has(row.id)) continue;
+      try {
+        await this.markPageDeleted(row.id);
+        urlReusedCount++;
+      } catch (e) {
+        // continue best-effort
+      }
+    }
+
+    return { unseenCount, urlReusedCount };
   }
 
   /**
