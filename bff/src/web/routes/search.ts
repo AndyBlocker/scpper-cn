@@ -37,16 +37,18 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         WITH base AS (
           SELECT 
             pv.id,
-            pv."wikidotId",
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             pv."pageId",
             pv.title,
             p."currentUrl" AS url,
             p."firstPublishedAt" AS "firstPublishedAt",
-            pv.rating,
-            pv."voteCount",
+            CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END AS rating,
+            CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END AS "voteCount",
             pv."revisionCount",
-            pv."commentCount",
-            pv.tags,
+            CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END AS "commentCount",
+            CASE WHEN pv."isDeleted" THEN COALESCE(prev.tags, ARRAY[]::text[]) ELSE COALESCE(pv.tags, ARRAY[]::text[]) END AS tags,
+            pv."isDeleted" AS "isDeleted",
+            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
             pgroonga_score(pv.tableoid, pv.ctid) AS score,
             pv."validFrom",
             ps."wilson95",
@@ -54,6 +56,14 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM "PageVersion" pv
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          LEFT JOIN LATERAL (
+            SELECT rating, "voteCount", "commentCount", tags
+            FROM "PageVersion" pv_prev
+            WHERE pv_prev."pageId" = pv."pageId"
+              AND pv_prev."isDeleted" = false
+            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+            LIMIT 1
+          ) prev ON TRUE
           WHERE pv."validTo" IS NULL
             AND ($1::text IS NULL OR pv.title &@~ $1 OR pv."textContent" &@~ $1)
             AND ($2::text[] IS NULL OR pv.tags @> $2::text[])
@@ -215,7 +225,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         WITH base AS (
           SELECT 
             pv.id,
-            pv."wikidotId",
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             pv."pageId",
             pv.title,
             p."currentUrl" AS url,
@@ -227,6 +237,8 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             pv.tags,
             pgroonga_score(pv.tableoid, pv.ctid) AS score,
             pv."validFrom",
+            pv."isDeleted" AS "isDeleted",
+            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
             ps."wilson95",
             ps."controversy"
           FROM "PageVersion" pv
@@ -312,6 +324,8 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         revisionCount: r.revisionCount,
         commentCount: r.commentCount,
         tags: r.tags,
+        isDeleted: r.isDeleted === true,
+        deletedAt: r.deletedAt || null,
         snippet: r.snippet,
         wilson95: typeof r.wilson95 === 'number' ? r.wilson95 : null,
         controversy: typeof r.controversy === 'number' ? r.controversy : null,

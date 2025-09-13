@@ -879,6 +879,7 @@ function normalizeWork(work: any) {
     controversy: work.controversy,
     voteCount: work.voteCount,
     isDeleted: !!work.isDeleted,
+    deletedAt: work.deletedAt || (work.validTo || null),
     createdDate: (work.createdAt ? new Date(work.createdAt).toISOString().slice(0,10) : undefined)
   }
 }

@@ -87,7 +87,11 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const { url } = req.query as Record<string, string>;
       if (!url) return res.status(400).json({ error: 'url is required' });
       const sql = `
-        SELECT pv."wikidotId", p."currentUrl" AS url, pv.*
+        SELECT 
+          COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
+          p."currentUrl" AS url,
+          pv.*,
+          CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
         FROM "PageVersion" pv
         JOIN "Page" p ON pv."pageId" = p.id
         WHERE pv."validTo" IS NULL AND p."currentUrl" = $1
@@ -107,10 +111,14 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const { wikidotId } = req.query as Record<string, string>;
       if (!wikidotId) return res.status(400).json({ error: 'wikidotId is required' });
       const sql = `
-        SELECT pv."wikidotId", p."currentUrl" AS url, pv.*
+        SELECT 
+          COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
+          p."currentUrl" AS url,
+          pv.*,
+          CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
         FROM "PageVersion" pv
         JOIN "Page" p ON pv."pageId" = p.id
-        WHERE pv."validTo" IS NULL AND pv."wikidotId" = $1
+        WHERE pv."validTo" IS NULL AND p."wikidotId" = $1
         LIMIT 1
       `;
       const { rows } = await pool.query(sql, [wikidotId]);
@@ -132,7 +140,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         ), path AS (
           SELECT regexp_replace(url, '^https?://[^/]+', '') AS p FROM input
         )
-        SELECT pv."wikidotId", p."currentUrl" AS url, pv.title, pv.rating, pv.tags
+        SELECT COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId", p."currentUrl" AS url, pv.title, pv.rating, pv.tags
         FROM "PageVersion" pv
         JOIN "Page" p ON pv."pageId" = p.id, path
         WHERE pv."validTo" IS NULL AND p."currentUrl" LIKE ('http://%' || path.p)
@@ -155,7 +163,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       if (limit === '1') {
         const sql = `
           SELECT 
-            pv."wikidotId",
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
             pv.rating,
@@ -165,7 +173,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv.tags,
             pv."createdAt",
             pv."revisionCount",
-            pv."attributionCount"
+            pv."attributionCount",
+            pv."isDeleted" AS "isDeleted",
+            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
           FROM "PageVersion" pv
           JOIN "Page" p ON pv."pageId" = p.id
           WHERE pv."validTo" IS NULL
@@ -185,7 +195,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         // Query 1: Get 1 high-scoring (>=50) original page
         const highScoringOriginalSql = `
           SELECT 
-            pv."wikidotId",
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
             pv.rating,
@@ -196,7 +206,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."createdAt",
             pv."revisionCount",
             pv."attributionCount",
-            pv."textContent"
+            pv."textContent",
+            pv."isDeleted" AS "isDeleted",
+            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
           FROM "PageVersion" pv
           JOIN "Page" p ON pv."pageId" = p.id
           WHERE pv."validTo" IS NULL
@@ -211,7 +223,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         // Query 2: Get 3 other original pages
         const otherOriginalSql = `
           SELECT 
-            pv."wikidotId",
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
             pv.rating,
@@ -222,7 +234,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."createdAt",
             pv."revisionCount",
             pv."attributionCount",
-            pv."textContent"
+            pv."textContent",
+            pv."isDeleted" AS "isDeleted",
+            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
           FROM "PageVersion" pv
           JOIN "Page" p ON pv."pageId" = p.id
           WHERE pv."validTo" IS NULL
@@ -237,7 +251,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         // Query 3: Get 2 non-original (translation) pages
         const translationSql = `
           SELECT 
-            pv."wikidotId",
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
             pv.rating,
@@ -248,7 +262,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."createdAt",
             pv."revisionCount",
             pv."attributionCount",
-            pv."textContent"
+            pv."textContent",
+            pv."isDeleted" AS "isDeleted",
+            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
           FROM "PageVersion" pv
           JOIN "Page" p ON pv."pageId" = p.id
           WHERE pv."validTo" IS NULL

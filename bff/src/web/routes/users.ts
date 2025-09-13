@@ -385,8 +385,8 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
 
       const sql = `
         SELECT * FROM (
-          SELECT DISTINCT ON (pv."wikidotId")
-            pv."wikidotId",
+          SELECT DISTINCT ON (pv."pageId")
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
             pv.category,
@@ -398,17 +398,27 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."revisionCount",
             ps."wilson95",
             ps."controversy",
-            CASE WHEN pv."validTo" IS NOT NULL THEN true ELSE false END AS "isDeleted",
-            pv."validTo" AS "deletedAt"
+            COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) AS "isDeleted",
+            CASE 
+              WHEN COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) THEN COALESCE(latest."deletedAt", pv."validTo") 
+              ELSE NULL 
+            END AS "deletedAt"
           FROM "Attribution" a
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           JOIN "Page" p ON p.id = pv."pageId"
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           JOIN "User" u ON a."userId" = u.id
+          LEFT JOIN LATERAL (
+            SELECT pv2."isDeleted" AS "isDeleted", pv2."validFrom" AS "deletedAt"
+            FROM "PageVersion" pv2
+            WHERE pv2."pageId" = pv."pageId" AND pv2."validTo" IS NULL
+            ORDER BY pv2.id DESC
+            LIMIT 1
+          ) latest ON TRUE
           WHERE u."wikidotId" = $1
             AND ($2::boolean = true OR pv."validTo" IS NULL)
             ${tabCond}
-          ORDER BY pv."wikidotId", pv."createdAt" DESC
+          ORDER BY pv."pageId", pv."createdAt" DESC
         ) t
         ORDER BY t."createdAt" DESC
         LIMIT $${params.length + 1}::int OFFSET $${params.length + 2}::int
