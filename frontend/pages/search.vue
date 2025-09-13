@@ -314,6 +314,8 @@ function normalizePage(p: any) {
     commentCount: p.commentCount ?? p.revisionCount,
     controversy: p.controversy,
     snippetHtml: p.snippet || null,
+    isDeleted: Boolean(p.isDeleted),
+    deletedAt: p.deletedAt || null,
     createdDate: toISODate(p.firstRevisionAt || p.createdAt || p.validFrom)
   };
 }

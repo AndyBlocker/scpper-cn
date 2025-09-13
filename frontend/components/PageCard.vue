@@ -24,8 +24,8 @@
         </div>
       </div>
 
-      <!-- lg top-right date overlay -->
-      <div v-if="variant === 'lg' && displayDate" class="absolute top-4 right-3 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap leading-6">
+      <!-- lg top-right date overlay (avoid overlap with deleted badge) -->
+      <div v-if="variant === 'lg' && displayDate && !isDeleted" class="absolute top-4 right-3 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap leading-6">
         {{ displayDate }}
       </div>
   
@@ -118,7 +118,10 @@
   
         <!-- right stats 2x2 + date -->
         <div class="grid grid-cols-2 gap-1.5 items-start w-[164px]">
-          <div v-if="displayDate" class="col-span-2 text-[11px] text-neutral-500 dark:text-neutral-400 text-right mb-1">{{ displayDate }}</div>
+          <div v-if="displayDate" class="col-span-2 text-[11px] text-neutral-500 dark:text-neutral-400 text-right mb-1">
+            <span v-if="!isDeleted">{{ displayDate }}</span>
+            <span v-else class="invisible">0000-00-00</span>
+          </div>
           <div class="stat-soft">
             <div class="stat-label">Rating</div>
             <div class="stat-num">{{ displayRating }}</div>
@@ -144,11 +147,12 @@
           <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)" bare />
           <span v-if="authorsMoreCount>0" class="text-[11px] text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
         </div>
+        <div v-if="displayDate && !isDeleted" class="text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">{{ displayDate }}</div>
       </div>
   
       <!-- deletion mark -->
-      <div v-if="isDeleted" class="absolute top-2 right-2 text-[10px] px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
-        已删除
+      <div v-if="isDeleted" class="absolute top-2 right-2 z-10 text-[10px] px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+        已删除<span v-if="deletedDate"> · {{ deletedDate }}</span>
       </div>
     </component>
   </template>
@@ -162,6 +166,7 @@
     tags?: string[]
     authors?: string
     createdDate?: string
+    deletedAt?: string | null
     excerpt?: string
     rating?: number
     voteCount?: number
@@ -218,6 +223,12 @@
   const controversy = computed(() => props.controversy ?? props.p?.controversy)
   const snippetHtml = computed(() => props.p?.snippetHtml ?? props.snippetHtml ?? null)
   const isDeleted = computed(() => Boolean(props.p?.isDeleted ?? props.isDeleted))
+  const deletedDate = computed(() => {
+    const raw = (props.p as any)?.deletedAt
+    if (!raw) return ''
+    const d = new Date(raw)
+    return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10)
+  })
   
   const displayRating = computed(() => Number(props.rating ?? props.p?.rating ?? 0) || 0)
   const displayComments = computed(() => Number(props.comments ?? props.p?.commentCount ?? (props.p as any)?.revisionCount ?? 0) || 0)

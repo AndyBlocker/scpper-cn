@@ -20,7 +20,7 @@
     <!-- Content -->
     <div v-else class="space-y-6">
       <!-- Title + Actions -->
-      <header class="flex items-start justify-between gap-3">
+      <header class="flex items-start justify-between gap-3 relative">
         <h1 class="text-[22px] leading-snug font-bold text-neutral-900 dark:text-neutral-100">
           {{ page?.title || 'Untitled' }}
         </h1>
@@ -37,6 +37,14 @@
             </svg>
             ID {{ page?.wikidotId }}
           </button>
+
+          <span v-if="page?.isDeleted" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100/90 dark:bg-red-900/40 text-red-700 dark:text-red-300 border border-red-200/80 dark:border-red-800">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+            </svg>
+            <span>已删除</span>
+            <span v-if="deletedDate" class="text-[11px] opacity-80">· {{ deletedDate }}</span>
+          </span>
 
           <a v-if="page?.url"
              :href="page.url" target="_blank" rel="noopener"
@@ -473,6 +481,12 @@ const revTotalPages = computed(() => {
   const total = Number(page.value?.revisionCount || 0)
   if (!total || !pageSize.value) return 1
   return Math.max(1, Math.ceil(total / pageSize.value))
+})
+const deletedDate = computed(() => {
+  const raw = page.value?.deletedAt
+  if (!raw) return ''
+  const d = new Date(raw)
+  return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10)
 })
 const revPageNumbers = computed(() => [1,2,3,4].filter(n => n <= revTotalPages.value))
 function goRevPage(n:number){
