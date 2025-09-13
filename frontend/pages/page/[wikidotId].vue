@@ -47,7 +47,7 @@
           </span>
 
           <a v-if="page?.url"
-             :href="page.url" target="_blank" rel="noopener"
+             :href="sourceUrlHttps" target="_blank" rel="noopener"
              class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700">
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
@@ -55,6 +55,18 @@
               <line x1="10" y1="14" x2="21" y2="3"/>
             </svg>
             源页面
+            <span class="ml-1 pl-1 inline-flex items-center border-l border-neutral-200 dark:border-neutral-700">
+              <span
+                @click.stop.prevent="copySourceUrl"
+                :title="copiedSource ? '已复制' : '复制 URL'"
+                :class="['inline-flex items-center gap-0.5 px-1 py-0.5 rounded transition-colors', copiedSource ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'bg-neutral-200/60 dark:bg-neutral-700/60 text-neutral-600 dark:text-neutral-300']"
+              >
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </span>
+            </span>
           </a>
         </div>
       </header>
@@ -710,6 +722,10 @@ async function runDiff(){
 }
 
 // ===== Derived & UI helpers =====
+const sourceUrlHttps = computed<string>(() => {
+  const raw = String(page.value?.url || '')
+  return raw.replace(/^http:\/\//i, 'https://')
+})
 const createdDate = computed(() => {
   const fr = firstRev.value && firstRev.value[0]
   if (fr && fr.timestamp) return fr.timestamp
@@ -805,6 +821,17 @@ function copyId(){
   }).catch(() => {})
 }
 // removed share functionality
+
+const copiedSource = ref(false)
+async function copySourceUrl(){
+  const url = sourceUrlHttps.value || ''
+  if (!url) return
+  try {
+    await navigator.clipboard?.writeText(url)
+    copiedSource.value = true
+    setTimeout(() => { copiedSource.value = false }, 1200)
+  } catch {}
+}
 
 // Tags - show all
 const allTags = computed(() => Array.isArray(page.value?.tags) ? page.value!.tags : [])
