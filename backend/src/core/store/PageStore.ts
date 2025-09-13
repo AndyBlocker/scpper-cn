@@ -130,6 +130,14 @@ export class PageStore {
    */
   async markPageDeleted(pageId: number): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
+      // 标记 Page 为已删除
+      try {
+        await tx.page.update({
+          where: { id: pageId },
+          data: { isDeleted: true, updatedAt: new Date() }
+        });
+      } catch {}
+
       // 获取当前版本
       const currentVersion = await tx.pageVersion.findFirst({
         where: {
@@ -166,13 +174,6 @@ export class PageStore {
         }
       });
 
-      // 更新SearchIndex - 标记为已删除（表可能不存在，使用原生SQL并忽略错误）
-      try {
-        await tx.$executeRaw`UPDATE "SearchIndex" SET "isDeleted" = true, "validTo" = now(), "updatedAt" = now() WHERE "pageId" = ${pageId}`;
-      } catch {
-        Logger.debug(`SearchIndex not found for page ${pageId}, skipping update`);
-      }
-
       Logger.info(`✅ Marked page ${pageId} as deleted`);
     });
   }
@@ -208,13 +209,6 @@ export class PageStore {
           updatedAt: timestamp
         }
       });
-
-      // 更新SearchIndex - 更新URL（表可能不存在，使用原生SQL并忽略错误）
-      try {
-        await tx.$executeRaw`UPDATE "SearchIndex" SET url = ${newUrl}, "updatedAt" = now() WHERE "pageId" = ${pageId}`;
-      } catch {
-        Logger.debug(`SearchIndex not found for page ${pageId}, skipping URL update`);
-      }
 
       Logger.info(`✅ Renamed page ${pageId}: ${oldUrl} -> ${newUrl}`);
     });

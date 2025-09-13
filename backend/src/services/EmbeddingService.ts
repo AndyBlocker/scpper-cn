@@ -340,22 +340,35 @@ while True:
   }
 
   private async updatePageEmbedding(pageId: number): Promise<void> {
-    // Calculate average embedding from chunks
-    const result = await this.prisma.$queryRaw<any[]>`
-      WITH chunk_embeddings AS (
-        SELECT embedding 
-        FROM "SearchChunk" 
+    try {
+      // Skip if SearchIndex doesn't exist
+      const exists: Array<{ to_regclass: string | null }> = await this.prisma.$queryRaw`
+        SELECT to_regclass('public.SearchIndex')
+      `;
+      if (!exists || exists[0]?.to_regclass == null) {
+        Logger.debug('SearchIndex table not found, skipping page embedding update');
+        return;
+      }
+
+      // Calculate average embedding from chunks and update
+      await this.prisma.$queryRaw<any[]>`
+        WITH chunk_embeddings AS (
+          SELECT embedding 
+          FROM "SearchChunk" 
+          WHERE "pageId" = ${pageId}
+        ),
+        avg_embedding AS (
+          SELECT AVG(embedding) as avg_emb
+          FROM chunk_embeddings
+        )
+        UPDATE "SearchIndex"
+        SET embedding = (SELECT avg_emb FROM avg_embedding),
+            "updatedAt" = CURRENT_TIMESTAMP
         WHERE "pageId" = ${pageId}
-      ),
-      avg_embedding AS (
-        SELECT AVG(embedding) as avg_emb
-        FROM chunk_embeddings
-      )
-      UPDATE "SearchIndex"
-      SET embedding = (SELECT avg_emb FROM avg_embedding),
-          "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "pageId" = ${pageId}
-    `;
+      `;
+    } catch (e) {
+      Logger.debug('Skipping updatePageEmbedding due to missing table or other error');
+    }
   }
 
   async processMultipleDocuments(documents: Array<{id: number, text: string, lang?: string}>): Promise<void> {

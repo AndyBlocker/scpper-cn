@@ -1,9 +1,11 @@
 // @ts-ignore JS module without types
+// @ts-ignore JS module without types
 import { PhaseAProcessor } from '../core/processors/PhaseAProcessor.js';
 import { PhaseBProcessor } from '../core/processors/PhaseBProcessor.js';
 import { PhaseCProcessor } from '../core/processors/PhaseCProcessor.js';
 import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 import ora from 'ora';
+import { DatabaseStore } from '../core/store/DatabaseStore.js';
 
 type SyncOptions = {
   full?: boolean;
@@ -66,6 +68,12 @@ export async function sync({
       console.log(`   - Phase B: ${phaseARes.queueStats.phaseB} pages`);
       console.log(`   - Phase C: ${phaseARes.queueStats.phaseC} pages`);
       console.log(`   - Deleted: ${phaseARes.queueStats.deleted} pages`);
+
+      // Reconcile unseen and URL-reused pages and mark deletions now
+      const db = new DatabaseStore();
+      const rec = await db.reconcileAndMarkDeletions();
+      console.log(`🧾 Reconciliation: marked ${rec.unseenCount} unseen and ${rec.urlReusedCount} url-reused pages as deleted`);
+      await db.disconnect();
     }
 
     if ((testMode && phase === 'all') || (!testMode && (phase === 'all' || phase === 'b'))) {
