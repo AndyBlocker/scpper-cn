@@ -394,7 +394,41 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             pv.tags,
             pv."voteCount",
             pv."commentCount",
-            pv."createdAt",
+            -- Effective created date for this user and page with priority:
+            -- (AUTHOR/SUBMITTER -> PAGE_CREATED) else -> earliest attribution date
+            -- else -> earliest revision by this user
+            -- fallback -> PAGE_CREATED
+            COALESCE(
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM "Attribution" aa
+                JOIN "PageVersion" pvx ON aa."pageVerId" = pvx.id
+                WHERE pvx."pageId" = pv."pageId" AND aa."userId" = u.id AND aa.type IN ('AUTHOR','SUBMITTER')
+              ) THEN (
+                SELECT MIN(r2.timestamp)
+                FROM "Revision" r2
+                JOIN "PageVersion" pva ON r2."pageVersionId" = pva.id
+                WHERE pva."pageId" = pv."pageId" AND r2.type = 'PAGE_CREATED'
+              ) ELSE NULL END,
+              (
+                SELECT MIN(a2.date)
+                FROM "Attribution" a2
+                JOIN "PageVersion" pvA ON a2."pageVerId" = pvA.id
+                WHERE pvA."pageId" = pv."pageId" AND a2."userId" = u.id AND a2.date IS NOT NULL
+              ),
+              (
+                SELECT MIN(r.timestamp)
+                FROM "Revision" r
+                JOIN "PageVersion" pvR ON r."pageVersionId" = pvR.id
+                WHERE pvR."pageId" = pv."pageId" AND r."userId" = u.id
+              ),
+              (
+                SELECT MIN(r3.timestamp)
+                FROM "Revision" r3
+                JOIN "PageVersion" pv3 ON r3."pageVersionId" = pv3.id
+                WHERE pv3."pageId" = pv."pageId" AND r3.type = 'PAGE_CREATED'
+              )
+            ) AS "createdAt",
             pv."revisionCount",
             ps."wilson95",
             ps."controversy",
