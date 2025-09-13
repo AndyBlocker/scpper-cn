@@ -108,7 +108,7 @@
 
         <div class="inline-flex items-center gap-2 flex-wrap">
           <template v-for="t in allTags" :key="t">
-            <NuxtLink :to="`/search?tags=${encodeURIComponent(t)}`"
+            <NuxtLink :to="{ path: '/search', query: { tags: [t] } }"
                       class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-800/40 transition-colors"
                       :title="`查看包含「${t}」标签的所有页面`">#{{ t }}</NuxtLink>
           </template>
