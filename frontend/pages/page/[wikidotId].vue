@@ -250,6 +250,18 @@
                   :class="['text-xs px-2 py-1 rounded border', (revPage + 1 === n) ? 'bg-neutral-200 dark:bg-neutral-700 border-neutral-300 dark:border-neutral-700' : 'bg-neutral-100 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-800']"
                 >{{ n }}</button>
               </div>
+              <div class="hidden sm:flex items-center gap-1">
+                <input
+                  v-model.number="revJumpPage"
+                  type="number"
+                  :min="1"
+                  :max="revTotalPages"
+                  placeholder="页码"
+                  @keyup.enter="jumpToRevPage"
+                  class="w-16 text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
+                />
+                <button @click="jumpToRevPage" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800">跳转</button>
+              </div>
               <button @click="nextRevPage" :disabled="!hasMoreRevisions"
                       class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
             </div>
@@ -307,6 +319,18 @@
                   @click="goVotePage(n)"
                   :class="['text-xs px-2 py-1 rounded border', (currentVotePage === n) ? 'bg-neutral-200 dark:bg-neutral-700 border-neutral-300 dark:border-neutral-700' : 'bg-neutral-100 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-800']"
                 >{{ n }}</button>
+              </div>
+              <div class="hidden sm:flex items-center gap-1">
+                <input
+                  v-model.number="voteJumpPage"
+                  type="number"
+                  :min="1"
+                  :max="voteTotalPages"
+                  placeholder="页码"
+                  @keyup.enter="jumpToVotePage"
+                  class="w-16 text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
+                />
+                <button @click="jumpToVotePage" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800">跳转</button>
               </div>
               <button @click="nextVotePage" :disabled="!hasMoreVotes" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
             </div>
@@ -483,14 +507,19 @@ const pageSize = ref(3)
 const revPage = ref(0)
 const { data: revisionsPaged } = await useAsyncData(
   () => `revs-${wikidotId.value}-${revPage.value}-${pageSize.value}`,
-  () => $bff(`/pages/${wikidotId.value}/revisions`, { params: { limit: pageSize.value, offset: revPage.value * pageSize.value, order: 'DESC' } }),
+  () => $bff(`/pages/${wikidotId.value}/revisions`, { params: { limit: pageSize.value, offset: revPage.value * pageSize.value, order: 'DESC', scope: 'latest' } }),
   { watch: [() => route.params.wikidotId, () => revPage.value, () => pageSize.value] }
 )
 const hasMoreRevisions = computed(() => Array.isArray(revisionsPaged.value) && revisionsPaged.value.length === pageSize.value)
 function nextRevPage(){ if (hasMoreRevisions.value) revPage.value += 1 }
 function prevRevPage(){ if (revPage.value > 0) revPage.value -= 1 }
+const { data: revisionsCount } = await useAsyncData(
+  () => `revs-count-${wikidotId.value}`,
+  () => $bff(`/pages/${wikidotId.value}/revisions/count`, { params: { scope: 'latest' } }),
+  { watch: [() => route.params.wikidotId] }
+)
 const revTotalPages = computed(() => {
-  const total = Number(page.value?.revisionCount || 0)
+  const total = Number((revisionsCount as any).value?.total ?? page.value?.revisionCount ?? 0)
   if (!total || !pageSize.value) return 1
   return Math.max(1, Math.ceil(total / pageSize.value))
 })
@@ -504,6 +533,14 @@ const revPageNumbers = computed(() => [1,2,3,4].filter(n => n <= revTotalPages.v
 function goRevPage(n:number){
   const idx = Math.max(1, Math.min(revTotalPages.value, n)) - 1
   revPage.value = idx
+}
+const revJumpPage = ref<number | null>(null)
+function jumpToRevPage(){
+  const raw = Number(revJumpPage.value)
+  if (!Number.isFinite(raw)) return
+  const target = Math.max(1, Math.min(revTotalPages.value, Math.trunc(raw)))
+  revPage.value = target - 1
+  revJumpPage.value = target
 }
 
 const { data: firstRev } = await useAsyncData(
@@ -584,8 +621,13 @@ const { data: recentVotes } = await useAsyncData(
 )
 const hasMoreVotes = computed(() => Array.isArray(recentVotes.value) && recentVotes.value.length === votePageSize.value)
 const currentVotePage = computed(() => (voteOffset.value / votePageSize.value) + 1)
+const { data: voteFuzzyCount } = await useAsyncData(
+  () => `page-votes-count-${wikidotId.value}`,
+  () => $bff(`/pages/${wikidotId.value}/votes/fuzzy/count`),
+  { watch: [() => route.params.wikidotId] }
+)
 const voteTotalPages = computed(() => {
-  const total = Number(totalVotes.value)
+  const total = Number((voteFuzzyCount as any).value?.total ?? 0)
   if (!total || !votePageSize.value) return 1
   return Math.max(1, Math.ceil(total / votePageSize.value))
 })
@@ -596,6 +638,14 @@ function goVotePage(n:number){
 }
 function nextVotePage(){ if (hasMoreVotes.value) voteOffset.value += votePageSize.value }
 function prevVotePage(){ voteOffset.value = Math.max(0, voteOffset.value - votePageSize.value) }
+const voteJumpPage = ref<number | null>(null)
+function jumpToVotePage(){
+  const raw = Number(voteJumpPage.value)
+  if (!Number.isFinite(raw)) return
+  const target = Math.max(1, Math.min(voteTotalPages.value, Math.trunc(raw)))
+  voteOffset.value = (target - 1) * votePageSize.value
+  voteJumpPage.value = target
+}
 
 const selectedVersion = ref<number | null>(null)
 // removed revision selection; only page version is used
