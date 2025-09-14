@@ -372,14 +372,46 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   });
 
   // GET /api/wikidot-pages/:wikidotId/revisions
-  // query: limit, offset, order=ASC|DESC, type (optional exact match), includeSource=true|false
+  // query: limit, offset, order=ASC|DESC, type (optional exact match), includeSource=true|false, scope=all|latest
   router.get('/:wikidotId/revisions', async (req, res, next) => {
     try {
-      const { limit = '20', offset = '0', order = 'DESC', type, includeSource = 'false' } = req.query as Record<string, string>;
+      const { limit = '20', offset = '0', order = 'DESC', type, includeSource = 'false', scope = 'all' } = req.query as Record<string, string>;
       const { wikidotId } = req.params as Record<string, string>;
       const dir = (order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
       const withSource = (includeSource || '').toLowerCase() === 'true';
-      const sql = `
+      const scopeLatest = (scope || '').toLowerCase() === 'latest';
+      const sql = scopeLatest ? `
+        WITH current_pv AS (
+          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1::int AND "validTo" IS NULL LIMIT 1
+        )
+        SELECT 
+          r.id              AS "revisionId",
+          r."wikidotId",
+          r.timestamp,
+          r.type,
+          r.comment,
+          r."userId",
+          u."displayName" AS "userDisplayName",
+          u."wikidotId"   AS "userWikidotId",
+          sv."revisionNumber" AS "revisionNumber",
+          COALESCE(sv."hasSource", false) AS "hasSource"${withSource ? ', sv.source' : ''}
+        FROM "Revision" r
+        JOIN current_pv cp ON r."pageVersionId" = cp.id
+        LEFT JOIN "User" u ON u.id = r."userId"
+        LEFT JOIN LATERAL (
+          SELECT 
+            s."revisionNumber",
+            ${withSource ? 's.source,' : ''}
+            (s.source IS NOT NULL) AS "hasSource"
+          FROM "SourceVersion" s
+          WHERE s."revisionId" = r.id
+          ORDER BY s."isLatest" DESC, s.timestamp DESC
+          LIMIT 1
+        ) sv ON TRUE
+        WHERE ($4::text IS NULL OR r.type = $4::text)
+        ORDER BY r.timestamp ${dir}
+        LIMIT $2::int OFFSET $3::int
+      ` : `
         SELECT 
           r.id              AS "revisionId",
           r."wikidotId",
@@ -411,6 +443,35 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       `;
       const { rows } = await pool.query(sql, [wikidotId, limit, offset, type || null]);
       res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /api/wikidot-pages/:wikidotId/revisions/count
+  // query: type (optional), scope=all|latest
+  router.get('/:wikidotId/revisions/count', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params as Record<string, string>;
+      const { type, scope = 'all' } = req.query as Record<string, string>;
+      const scopeLatest = (scope || '').toLowerCase() === 'latest';
+      const sql = scopeLatest ? `
+        WITH current_pv AS (
+          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1::int AND "validTo" IS NULL LIMIT 1
+        )
+        SELECT COUNT(*)::int AS total
+        FROM "Revision" r
+        JOIN current_pv cp ON r."pageVersionId" = cp.id
+        WHERE ($2::text IS NULL OR r.type = $2::text)
+      ` : `
+        SELECT COUNT(*)::int AS total
+        FROM "Revision" r
+        JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+        WHERE pv."wikidotId" = $1::int
+          AND ($2::text IS NULL OR r.type = $2::text)
+      `;
+      const { rows } = await pool.query(sql, [wikidotId, type || null]);
+      res.json(rows[0] || { total: 0 });
     } catch (err) {
       next(err);
     }
@@ -506,11 +567,32 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT d."userId", d.direction, d.latest_ts AS timestamp, u."displayName" AS "userDisplayName", u."wikidotId" AS "userWikidotId"
         FROM dedup d
         JOIN "User" u ON u.id = d."userId"
-        ORDER BY d.latest_ts ASC
+        ORDER BY d.latest_ts DESC
         LIMIT $2::int OFFSET $3::int
       `;
       const { rows } = await pool.query(sql, [wikidotId, limit, offset]);
       res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /api/wikidot-pages/:wikidotId/votes/fuzzy/count
+  router.get('/:wikidotId/votes/fuzzy/count', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params as Record<string, string>;
+      const sql = `
+        WITH pv AS (
+          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1 ORDER BY id DESC LIMIT 1
+        ), dedup AS (
+          SELECT v."userId", v.direction, v.timestamp::date AS day, MAX(v.timestamp) AS latest_ts
+          FROM "Vote" v JOIN pv ON v."pageVersionId" = pv.id
+          GROUP BY v."userId", v.direction, v.timestamp::date
+        )
+        SELECT COUNT(*)::int AS total FROM dedup
+      `;
+      const { rows } = await pool.query(sql, [wikidotId]);
+      res.json(rows[0] || { total: 0 });
     } catch (err) {
       next(err);
     }
