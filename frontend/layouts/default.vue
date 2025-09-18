@@ -54,9 +54,9 @@
               @blur="handleBlur"
               @keydown="handleKeyDown"
               placeholder="搜索页面 / 用户 / 标签…" 
-              class="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all" 
+              class="w-full bg-white/80 dark:bg-neutral-900/70 border border-neutral-200 dark:border-neutral-800 rounded-full px-5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all backdrop-blur placeholder:text-neutral-400 dark:placeholder:text-neutral-500" 
             />
-            <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 text-[rgb(var(--accent-strong))] hover:text-[rgb(var(--accent))] p-1">
+            <button type="submit" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[rgb(var(--accent-strong))] hover:text-[rgb(var(--accent))] p-1">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
@@ -114,7 +114,7 @@
                 @input="handleInput"
                 @keydown="handleKeyDown"
                 placeholder="搜索页面 / 用户 / 标签…"
-                class="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                class="w-full bg-white/85 dark:bg-neutral-900/70 border border-neutral-200 dark:border-neutral-800 rounded-full px-5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all backdrop-blur placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
               />
               <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 text-[rgb(var(--accent-strong))] hover:text-[rgb(var(--accent))] p-1">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

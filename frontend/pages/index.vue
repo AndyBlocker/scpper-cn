@@ -15,26 +15,26 @@
           <div class="mt-2 flex items-center justify-between gap-3">
             <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.users?.total || 0).toLocaleString() }}</div>
             <svg v-if="overviewSparks.usersTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.usersTotal" fill="none" :stroke="sparkStroke" stroke-width="2" />
+              <polyline :points="overviewSparks.usersTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
             </svg>
           </div>
           <div class="mt-2 text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
             <div class="flex items-center justify-between gap-3">
               <span>{{ Number(overview?.users?.active || 0).toLocaleString() }} 活跃</span>
               <svg v-if="overviewSparks.usersActive" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.usersActive" fill="none" :stroke="sparkStroke" stroke-width="1.5" />
+                <polyline :points="overviewSparks.usersActive" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </div>
             <div class="flex items-center justify-between gap-3">
               <span>{{ Number(overview?.users?.contributors || 0).toLocaleString() }} 贡献者</span>
               <svg v-if="overviewSparks.usersContributors" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.usersContributors" fill="none" :stroke="sparkStroke" stroke-width="1.5" />
+                <polyline :points="overviewSparks.usersContributors" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </div>
             <div class="flex items-center justify-between gap-3">
               <span>{{ Number(overview?.users?.authors || 0).toLocaleString() }} 作者</span>
               <svg v-if="overviewSparks.usersAuthors" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.usersAuthors" fill="none" :stroke="sparkStroke" stroke-width="1.5" />
+                <polyline :points="overviewSparks.usersAuthors" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </div>
           </div>
@@ -46,20 +46,20 @@
           <div class="mt-2 flex items-center justify-between gap-3">
             <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.pages?.total || 0).toLocaleString() }}</div>
             <svg v-if="overviewSparks.pagesTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.pagesTotal" fill="none" :stroke="sparkStroke" stroke-width="2" />
+              <polyline :points="overviewSparks.pagesTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
             </svg>
           </div>
           <div class="mt-2 text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
             <div class="flex items-center justify-between gap-3">
               <span>{{ Number(overview?.pages?.originals || 0).toLocaleString() }} 原创</span>
               <svg v-if="overviewSparks.pagesOriginals" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.pagesOriginals" fill="none" :stroke="sparkStroke" stroke-width="1.5" />
+                <polyline :points="overviewSparks.pagesOriginals" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </div>
             <div class="flex items-center justify-between gap-3">
               <span>{{ Number(overview?.pages?.translations || 0).toLocaleString() }} 翻译</span>
               <svg v-if="overviewSparks.pagesTranslations" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.pagesTranslations" fill="none" :stroke="sparkStroke" stroke-width="1.5" />
+                <polyline :points="overviewSparks.pagesTranslations" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </div>
           </div>
@@ -71,20 +71,20 @@
           <div class="mt-2 flex items-center justify-between gap-3">
             <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.votes?.total || 0).toLocaleString() }}</div>
             <svg v-if="overviewSparks.votesTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.votesTotal" fill="none" :stroke="sparkStroke" stroke-width="2" />
+              <polyline :points="overviewSparks.votesTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
             </svg>
           </div>
           <div class="mt-2 text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
             <div class="flex items-center justify-between gap-3">
               <span>{{ Number(overview?.votes?.upvotes || 0).toLocaleString() }} 支持</span>
               <svg v-if="overviewSparks.votesUp" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.votesUp" fill="none" :stroke="sparkStroke" stroke-width="1.5" />
+                <polyline :points="overviewSparks.votesUp" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </div>
             <div class="flex items-center justify-between gap-3">
               <span>{{ Number(overview?.votes?.downvotes || 0).toLocaleString() }} 反对</span>
               <svg v-if="overviewSparks.votesDown" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.votesDown" fill="none" :stroke="sparkStroke" stroke-width="1.5" />
+                <polyline :points="overviewSparks.votesDown" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </div>
           </div>
@@ -96,7 +96,7 @@
           <div class="mt-2 flex items-center justify-between gap-3">
             <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.revisions?.total || 0).toLocaleString() }}</div>
             <svg v-if="overviewSparks.revisionsTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.revisionsTotal" fill="none" :stroke="sparkStroke" stroke-width="2" />
+              <polyline :points="overviewSparks.revisionsTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
             </svg>
           </div>
         </div>
