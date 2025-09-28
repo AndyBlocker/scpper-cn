@@ -1,6 +1,13 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+const command = process.env.NUXT_COMMAND || process.env.npm_lifecycle_event || '';
+const isDevCommand = command === 'dev';
+// Keep dev server artifacts out of the production output directories.
+const buildDir = isDevCommand ? '.nuxt-dev' : '.nuxt';
+const outputDir = isDevCommand ? '.output-dev' : '.output';
+
 export default defineNuxtConfig({
   srcDir: '.',
+  buildDir,
   compatibilityDate: '2025-08-23',
   modules: [
     '@nuxtjs/tailwindcss'
@@ -17,6 +24,9 @@ export default defineNuxtConfig({
     }
   },
   nitro: {
+    output: {
+      dir: outputDir
+    },
     preset: 'node-server',
     // 在生产环境代理 /api 请求到 BFF 服务
     devProxy: {
@@ -68,5 +78,3 @@ export default defineNuxtConfig({
     }
   }
 });
-
-
