@@ -60,13 +60,18 @@ export default defineNuxtConfig({
           id: 'theme-init',
           innerHTML: `
             (function() {
-              const theme = localStorage.getItem('theme') || 'dark';
-              const scheme = 'emerald';
-              const root = document.documentElement;
-              root.classList.remove('light', 'dark');
-              root.classList.forEach(function(c){ if(c && c.startsWith('scheme-')) root.classList.remove(c); });
-              root.classList.add(theme === 'light' ? 'light' : 'dark');
-              root.classList.add('scheme-' + scheme);
+              try {
+                var stored = localStorage.getItem('theme');
+                var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                var theme = stored || (prefersDark ? 'dark' : 'light');
+                var scheme = 'emerald';
+                var root = document.documentElement;
+                root.classList.remove('light', 'dark');
+                Array.prototype.slice.call(root.classList).forEach(function(c){ if(c && c.indexOf('scheme-')===0) root.classList.remove(c); });
+                root.classList.add(theme === 'light' ? 'light' : 'dark');
+                root.classList.add('scheme-' + scheme);
+                if (!stored) localStorage.setItem('theme', theme);
+              } catch (_) {}
             })();
           `,
           type: 'text/javascript'

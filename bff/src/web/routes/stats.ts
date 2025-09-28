@@ -258,18 +258,42 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 	router.get('/pages/:wikidotId', async (req, res, next) => {
 		try {
 			const { wikidotId } = req.params as Record<string, string>;
-			const sql = `
-				WITH pv AS (
-					SELECT id FROM "PageVersion"
-					WHERE "wikidotId" = $1::int
-					ORDER BY id DESC
-					LIMIT 1
-				)
-				SELECT ps."uv", ps."dv", ps."wilson95", ps."controversy", ps."likeRatio"
-				FROM "PageStats" ps
-				JOIN pv ON ps."pageVersionId" = pv.id
-			`;
-			const { rows } = await pool.query(sql, [wikidotId]);
+			const pageRes = await pool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
+			if (pageRes.rows.length === 0) return res.status(404).json({ error: 'not_found' });
+			const pageId = pageRes.rows[0].id;
+
+			const currentRes = await pool.query(
+				`SELECT id, "isDeleted"
+				   FROM "PageVersion"
+				  WHERE "pageId" = $1 AND "validTo" IS NULL
+				  ORDER BY id DESC
+				  LIMIT 1`,
+				[pageId]
+			);
+			const current = currentRes.rows[0] ?? null;
+			let targetId = current?.id ?? null;
+			const currentDeleted = current?.isDeleted === true;
+			if (!targetId || currentDeleted) {
+				const fallbackRes = await pool.query(
+					`SELECT id
+					   FROM "PageVersion"
+					  WHERE "pageId" = $1 AND "isDeleted" = false
+					  ORDER BY "validFrom" DESC NULLS LAST, id DESC
+					  LIMIT 1`,
+					[pageId]
+				);
+				if (fallbackRes.rows.length > 0) {
+					targetId = fallbackRes.rows[0].id;
+				}
+			}
+			if (!targetId) return res.status(404).json({ error: 'not_found' });
+
+			const { rows } = await pool.query(
+				`SELECT ps."uv", ps."dv", ps."wilson95", ps."controversy", ps."likeRatio"
+				   FROM "PageStats" ps
+				  WHERE ps."pageVersionId" = $1`,
+				[targetId]
+			);
 			if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
 			res.json(rows[0]);
 		} catch (err) {
@@ -282,23 +306,20 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 		try {
 			const { wikidotId } = req.params as Record<string, string>;
 			const { startDate, endDate, limit = '100', offset = '0' } = req.query as Record<string, string>;
+			const pageRes = await pool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
+			if (pageRes.rows.length === 0) return res.status(404).json({ error: 'not_found' });
+			const pageId = pageRes.rows[0].id;
 			const sql = `
-				WITH p AS (
-					SELECT pv."pageId" AS id
-					FROM "PageVersion" pv
-					WHERE pv."wikidotId" = $1::int
-					ORDER BY pv.id DESC LIMIT 1
-				)
 				SELECT date, "votes_up" AS "votesUp", "votes_down" AS "votesDown", "total_votes" AS "totalVotes",
 				       "unique_voters" AS "uniqueVoters", revisions
 				FROM "PageDailyStats" pds
-				JOIN p ON p.id = pds."pageId"
-				WHERE ($2::date IS NULL OR pds.date >= $2::date)
+				WHERE pds."pageId" = $1
+				  AND ($2::date IS NULL OR pds.date >= $2::date)
 				  AND ($3::date IS NULL OR pds.date <= $3::date)
 				ORDER BY pds.date DESC
 				LIMIT $4::int OFFSET $5::int
 			`;
-			const { rows } = await pool.query(sql, [wikidotId, startDate || null, endDate || null, limit, offset]);
+			const { rows } = await pool.query(sql, [pageId, startDate || null, endDate || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -490,6 +511,5 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 
 	return router;
 }
-
 
 

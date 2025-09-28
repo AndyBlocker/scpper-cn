@@ -90,7 +90,7 @@
               </linearGradient>
             </defs>
             <polyline :points="computedSparkPoints || ''" :fill="`url(#gradient-${wikidotId || 'pg'})`" stroke="none" />
-            <polyline :points="computedSparkLine || ''" fill="none" :stroke="'rgb(var(--accent))'" stroke-width="2" />
+            <polyline :points="computedSparkLine || ''" fill="none" :stroke="'rgb(var(--accent))'" stroke-width="1.5" stroke-linecap="round" />
           </svg>
         </div>
         <div v-else class="mt-1 h-12 border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800 rounded flex items-center justify-center">
