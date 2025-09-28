@@ -11,7 +11,7 @@
         <!-- 简介 -->
         <div class="rounded-lg p-5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
-            scpper-cn是基于CROM提供的数据数据制作的，SCP基金会中文维基数据分析网站。
+            SCPPER-CN是基于CROM提供的数据数据制作的，SCP基金会中文维基数据分析网站。
           </p>
         </div>
 
@@ -27,15 +27,38 @@
             <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">CC-BY-SA 3.0</a>
             授权协议。
           </p>
-          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
-            网站图标由 breaddddd 创作，遵循CC-BY-SA 3.0授权协议。
+          <p class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            网站图标由
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="3471238" :display-name="'breaddddd'" bare />
+            创作，遵循
+            <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">CC-BY-SA 3.0</a>
+            授权协议。
           </p>
         </div>
 
         <!-- 作者的话 -->
         <div class="rounded-lg p-5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
           <h2 class="text-base font-semibold text-neutral-800 dark:text-neutral-100">作者的话</h2>
-          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">breaddddd：面！</p>
+
+          <p class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="3471238" :display-name="'breaddddd'" bare/>
+            ：面！
+          </p>
+        </div>
+
+
+        <!-- 赞助者的话-->
+        <div class="rounded-lg p-5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+          <h2 class="text-base font-semibold text-neutral-800 dark:text-neutral-100">赞助者的话</h2>
+          <!-- Small UserCard + 一句话-->
+          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8584266" :display-name="'DVA24'" bare />
+            ：加个赞助者就行了，没必要写太多。 -- 2025.9.17 
+          </p>
+          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
+            感谢以上赞助者对网站的支持！
+          </p>
+
         </div>
 
         <!-- 正在计划的功能 -->
@@ -83,7 +106,7 @@
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
               <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="12" cy="12" r="8" stroke-width="2" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
               用户投票关系展示
             </li>

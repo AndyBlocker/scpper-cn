@@ -91,3 +91,5 @@ bff/tests/
 .cursor/
 deploy.sh
 nginx.conf
+
+AGENTS.md
