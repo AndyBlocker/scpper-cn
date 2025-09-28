@@ -2,21 +2,21 @@
 @layer base {
   :root {
     /* base */
-    --bg: 246 246 247;          /* neutral-50 */
+    --bg: 244 246 249;          /* soft cool gray */
     --fg: 23 23 23;             /* neutral-900 */
-    --muted: 115 115 115;       /* neutral-500 */
-    --muted-strong: 64 64 64;   /* neutral-700 */
+    --muted: 110 118 129;       /* neutral with cool tint */
+    --muted-strong: 55 65 81;   /* slate-700 */
     --panel: 255 255 255;       /* white */
-    --panel-border: 229 231 235;/* neutral-200 */
+    --panel-border: 224 231 240;/* cool gray */
 
-    /* brand / accent (emerald) */
-    --accent: 16 185 129;       /* emerald-500 */
-    --accent-strong: 5 150 105; /* emerald-600 */
-    --accent-weak: 110 231 183; /* emerald-300 */
+    /* brand / accent (macOS blue) */
+    --accent: 10 132 255;       /* #0A84FF */
+    --accent-strong: 0 96 220;  /* #0060DC */
+    --accent-weak: 166 200 255; /* #A6C8FF */
 
-    /* info / primary (blue) */
-    --primary: 59 130 246;      /* blue-500 */
-    --primary-strong: 37 99 235;/* blue-600 */
+    /* info / primary */
+    --primary: var(--accent);
+    --primary-strong: var(--accent-strong);
 
     /* success (green) */
     --success: 34 197 94;       /* green-500 */
@@ -41,19 +41,19 @@
   }
 
   html.dark {
-    --bg: 10 10 11;             /* neutral-950 */
-    --fg: 245 245 245;          /* neutral-100 */
-    --muted: 163 163 163;       /* neutral-400 */
-    --muted-strong: 115 115 115;/* neutral-500 */
-    --panel: 23 23 23;          /* neutral-900 */
-    --panel-border: 38 38 38;   /* neutral-800 */
+    --bg: 10 11 15;             /* deep neutral */
+    --fg: 245 245 247;          /* soft white */
+    --muted: 156 163 175;       /* slate-400 */
+    --muted-strong: 118 131 146;/* slate-500 */
+    --panel: 24 26 32;          /* near-neutral */
+    --panel-border: 46 50 64;   /* cool dark */
 
-    --accent: 16 185 129;       /* emerald-500 */
-    --accent-strong: 5 150 105; /* emerald-600 */
-    --accent-weak: 52 211 153;  /* emerald-400 */
+    --accent: 64 156 255;       /* #409CFF */
+    --accent-strong: 10 132 255;/* #0A84FF */
+    --accent-weak: 118 188 255; /* #76BCFF */
 
-    --primary: 59 130 246;      /* blue-500 */
-    --primary-strong: 37 99 235;/* blue-600 */
+    --primary: var(--accent);
+    --primary-strong: var(--accent-strong);
 
     --success: 16 185 129;      /* emerald-500 */
     --success-strong: 16 185 129;/* keep same */
@@ -127,11 +127,20 @@
     --accent-weak: 216 180 254; /* violet-200 */
   }
 
+  html.scheme-aurora {
+    --accent: 10 132 255;
+    --accent-strong: 0 96 220;
+    --accent-weak: 166 200 255;
+  }
+  html.dark.scheme-aurora {
+    --accent: 64 156 255;
+    --accent-strong: 10 132 255;
+    --accent-weak: 118 188 255;
+  }
+
   /* Tie primary to accent for all named schemes */
   html[class*="scheme-"] {
     --primary: var(--accent);
     --primary-strong: var(--accent-strong);
   }
 }
-
-

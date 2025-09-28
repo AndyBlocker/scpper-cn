@@ -5,6 +5,110 @@ import type { RedisClientType } from 'redis';
 export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
 
+  async function mergeDeletedWithLatestLiveVersion(row: any) {
+    if (!row || row.isDeleted !== true || !row.pageId) return row;
+
+    const fallbackSql = `
+      SELECT rating, "voteCount", "revisionCount", "commentCount", "attributionCount", tags, title, category, "wikidotId"
+      FROM "PageVersion"
+      WHERE "pageId" = $1 AND "isDeleted" = false
+      ORDER BY "validFrom" DESC NULLS LAST, id DESC
+      LIMIT 1
+    `;
+
+    const { rows: prevRows } = await pool.query(fallbackSql, [row.pageId]);
+    if (prevRows.length === 0) return row;
+
+    const prev = prevRows[0];
+    const merged = { ...row };
+    const fieldsToCopy = [
+      'rating',
+      'voteCount',
+      'revisionCount',
+      'commentCount',
+      'attributionCount',
+      'tags',
+      'title',
+      'category'
+    ] as const;
+
+    for (const key of fieldsToCopy) {
+      if (prev[key] !== undefined) {
+        merged[key] = prev[key];
+      }
+    }
+
+    if (!merged.wikidotId && prev.wikidotId) {
+      merged.wikidotId = prev.wikidotId;
+    }
+
+    merged.isDeleted = true;
+    return merged;
+  }
+
+  interface PageContext {
+    pageId: number;
+    currentVersionId: number | null;
+    currentIsDeleted: boolean;
+    effectiveVersionId: number | null;
+    effectiveIsDeleted: boolean;
+  }
+
+  async function resolvePageContextByWikidotId(input: string | number): Promise<PageContext | null> {
+    const wikidotId = Number(input);
+    if (!Number.isFinite(wikidotId)) return null;
+
+    const { rows: pageRows } = await pool.query(
+      'SELECT id FROM "Page" WHERE "wikidotId" = $1 LIMIT 1',
+      [wikidotId]
+    );
+    if (pageRows.length === 0) return null;
+    const pageId = pageRows[0].id;
+
+    const { rows: currentRows } = await pool.query(
+      `SELECT id, "isDeleted"
+         FROM "PageVersion"
+         WHERE "pageId" = $1 AND "validTo" IS NULL
+         ORDER BY id DESC
+         LIMIT 1`,
+      [pageId]
+    );
+    const current = currentRows[0] ?? null;
+
+    let effective = current;
+    if (!effective) {
+      const { rows: anyRows } = await pool.query(
+        `SELECT id, "isDeleted"
+           FROM "PageVersion"
+           WHERE "pageId" = $1
+           ORDER BY "validFrom" DESC NULLS LAST, id DESC
+           LIMIT 1`,
+        [pageId]
+      );
+      effective = anyRows[0] ?? null;
+    } else if (effective.isDeleted) {
+      const { rows: liveRows } = await pool.query(
+        `SELECT id, "isDeleted"
+           FROM "PageVersion"
+           WHERE "pageId" = $1 AND "isDeleted" = false
+           ORDER BY "validFrom" DESC NULLS LAST, id DESC
+           LIMIT 1`,
+        [pageId]
+      );
+      if (liveRows.length > 0) {
+        effective = liveRows[0];
+      }
+    }
+
+    return {
+      pageId,
+      currentVersionId: current?.id ?? null,
+      currentIsDeleted: current?.isDeleted ?? false,
+      effectiveVersionId: effective?.id ?? null,
+      effectiveIsDeleted: effective?.isDeleted ?? false
+    };
+  }
+
   // GET /api/pages
   router.get('/', async (req, res, next) => {
     try {
@@ -99,7 +203,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       `;
       const { rows } = await pool.query(sql, [url]);
       if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-      res.json(rows[0]);
+      const row = rows[0];
+      const merged = await mergeDeletedWithLatestLiveVersion(row);
+      res.json(merged);
     } catch (err) {
       next(err);
     }
@@ -123,7 +229,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       `;
       const { rows } = await pool.query(sql, [wikidotId]);
       if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-      res.json(rows[0]);
+      const row = rows[0];
+      const merged = await mergeDeletedWithLatestLiveVersion(row);
+      res.json(merged);
     } catch (err) {
       next(err);
     }
@@ -380,38 +488,47 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const dir = (order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
       const withSource = (includeSource || '').toLowerCase() === 'true';
       const scopeLatest = (scope || '').toLowerCase() === 'latest';
-      const sql = scopeLatest ? `
-        WITH current_pv AS (
-          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1::int AND "validTo" IS NULL LIMIT 1
-        )
-        SELECT 
-          r.id              AS "revisionId",
-          r."wikidotId",
-          r.timestamp,
-          r.type,
-          r.comment,
-          r."userId",
-          u."displayName" AS "userDisplayName",
-          u."wikidotId"   AS "userWikidotId",
-          sv."revisionNumber" AS "revisionNumber",
-          COALESCE(sv."hasSource", false) AS "hasSource"${withSource ? ', sv.source' : ''}
-        FROM "Revision" r
-        JOIN current_pv cp ON r."pageVersionId" = cp.id
-        LEFT JOIN "User" u ON u.id = r."userId"
-        LEFT JOIN LATERAL (
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.pageId) return res.status(404).json({ error: 'not_found' });
+
+      if (scopeLatest) {
+        if (!context.effectiveVersionId) {
+          return res.json([]);
+        }
+        const sql = `
           SELECT 
-            s."revisionNumber",
-            ${withSource ? 's.source,' : ''}
-            (s.source IS NOT NULL) AS "hasSource"
-          FROM "SourceVersion" s
-          WHERE s."revisionId" = r.id
-          ORDER BY s."isLatest" DESC, s.timestamp DESC
-          LIMIT 1
-        ) sv ON TRUE
-        WHERE ($4::text IS NULL OR r.type = $4::text)
-        ORDER BY r.timestamp ${dir}
-        LIMIT $2::int OFFSET $3::int
-      ` : `
+            r.id              AS "revisionId",
+            r."wikidotId",
+            r.timestamp,
+            r.type,
+            r.comment,
+            r."userId",
+            u."displayName" AS "userDisplayName",
+            u."wikidotId"   AS "userWikidotId",
+            sv."revisionNumber" AS "revisionNumber",
+            COALESCE(sv."hasSource", false) AS "hasSource"${withSource ? ', sv.source' : ''}
+          FROM "Revision" r
+          LEFT JOIN "User" u ON u.id = r."userId"
+          LEFT JOIN LATERAL (
+            SELECT 
+              s."revisionNumber",
+              ${withSource ? 's.source,' : ''}
+              (s.source IS NOT NULL) AS "hasSource"
+            FROM "SourceVersion" s
+            WHERE s."revisionId" = r.id
+            ORDER BY s."isLatest" DESC, s.timestamp DESC
+            LIMIT 1
+          ) sv ON TRUE
+          WHERE r."pageVersionId" = $1
+            AND ($4::text IS NULL OR r.type = $4::text)
+          ORDER BY r.timestamp ${dir}
+          LIMIT $2::int OFFSET $3::int
+        `;
+        const { rows } = await pool.query(sql, [context.effectiveVersionId, limit, offset, type || null]);
+        return res.json(rows);
+      }
+
+      const sql = `
         SELECT 
           r.id              AS "revisionId",
           r."wikidotId",
@@ -436,12 +553,12 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           ORDER BY s."isLatest" DESC, s.timestamp DESC
           LIMIT 1
         ) sv ON TRUE
-        WHERE pv."wikidotId" = $1
+        WHERE pv."pageId" = $1
           AND ($4::text IS NULL OR r.type = $4::text)
         ORDER BY r.timestamp ${dir}
         LIMIT $2::int OFFSET $3::int
       `;
-      const { rows } = await pool.query(sql, [wikidotId, limit, offset, type || null]);
+      const { rows } = await pool.query(sql, [context.pageId, limit, offset, type || null]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -455,22 +572,29 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const { wikidotId } = req.params as Record<string, string>;
       const { type, scope = 'all' } = req.query as Record<string, string>;
       const scopeLatest = (scope || '').toLowerCase() === 'latest';
-      const sql = scopeLatest ? `
-        WITH current_pv AS (
-          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1::int AND "validTo" IS NULL LIMIT 1
-        )
-        SELECT COUNT(*)::int AS total
-        FROM "Revision" r
-        JOIN current_pv cp ON r."pageVersionId" = cp.id
-        WHERE ($2::text IS NULL OR r.type = $2::text)
-      ` : `
-        SELECT COUNT(*)::int AS total
-        FROM "Revision" r
-        JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
-        WHERE pv."wikidotId" = $1::int
-          AND ($2::text IS NULL OR r.type = $2::text)
-      `;
-      const { rows } = await pool.query(sql, [wikidotId, type || null]);
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.pageId) return res.json({ total: 0 });
+
+      if (scopeLatest) {
+        if (!context.effectiveVersionId) return res.json({ total: 0 });
+        const { rows } = await pool.query(
+          `SELECT COUNT(*)::int AS total
+             FROM "Revision" r
+            WHERE r."pageVersionId" = $1
+              AND ($2::text IS NULL OR r.type = $2::text)`,
+          [context.effectiveVersionId, type || null]
+        );
+        return res.json(rows[0] || { total: 0 });
+      }
+
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::int AS total
+           FROM "Revision" r
+           JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+          WHERE pv."pageId" = $1
+            AND ($2::text IS NULL OR r.type = $2::text)`,
+        [context.pageId, type || null]
+      );
       res.json(rows[0] || { total: 0 });
     } catch (err) {
       next(err);
@@ -481,23 +605,20 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   router.get('/:wikidotId/attributions', async (req, res, next) => {
     try {
       const { wikidotId } = req.params as Record<string, string>;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) return res.json([]);
       const sql = `
-        WITH pv AS (
-          SELECT id FROM "PageVersion"
-          WHERE "wikidotId" = $1::int
-          ORDER BY id DESC LIMIT 1
-        )
         SELECT DISTINCT ON (u.id)
           u.id AS "userId",
           u."displayName",
           u."wikidotId" AS "userWikidotId",
           a.type
         FROM "Attribution" a
-        JOIN pv ON a."pageVerId" = pv.id
         JOIN "User" u ON u.id = a."userId"
+        WHERE a."pageVerId" = $1
         ORDER BY u.id, a.type ASC
       `;
-      const { rows } = await pool.query(sql, [wikidotId]);
+      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -556,12 +677,13 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const { limit = '100', offset = '0' } = req.query as Record<string, string>;
       const { wikidotId } = req.params as Record<string, string>;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) return res.json([]);
       const sql = `
-        WITH pv AS (
-          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1 ORDER BY id DESC LIMIT 1
-        ), dedup AS (
+        WITH dedup AS (
           SELECT v."userId", v.direction, v.timestamp::date AS day, MAX(v.timestamp) AS latest_ts
-          FROM "Vote" v JOIN pv ON v."pageVersionId" = pv.id
+          FROM "Vote" v
+          WHERE v."pageVersionId" = $1
           GROUP BY v."userId", v.direction, v.timestamp::date
         )
         SELECT d."userId", d.direction, d.latest_ts AS timestamp, u."displayName" AS "userDisplayName", u."wikidotId" AS "userWikidotId"
@@ -570,7 +692,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         ORDER BY d.latest_ts DESC
         LIMIT $2::int OFFSET $3::int
       `;
-      const { rows } = await pool.query(sql, [wikidotId, limit, offset]);
+      const { rows } = await pool.query(sql, [context.effectiveVersionId, limit, offset]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -581,17 +703,18 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   router.get('/:wikidotId/votes/fuzzy/count', async (req, res, next) => {
     try {
       const { wikidotId } = req.params as Record<string, string>;
-      const sql = `
-        WITH pv AS (
-          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1 ORDER BY id DESC LIMIT 1
-        ), dedup AS (
-          SELECT v."userId", v.direction, v.timestamp::date AS day, MAX(v.timestamp) AS latest_ts
-          FROM "Vote" v JOIN pv ON v."pageVersionId" = pv.id
-          GROUP BY v."userId", v.direction, v.timestamp::date
-        )
-        SELECT COUNT(*)::int AS total FROM dedup
-      `;
-      const { rows } = await pool.query(sql, [wikidotId]);
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) return res.json({ total: 0 });
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::int AS total
+           FROM (
+             SELECT v."userId", v.direction, v.timestamp::date AS day
+             FROM "Vote" v
+             WHERE v."pageVersionId" = $1
+             GROUP BY v."userId", v.direction, v.timestamp::date
+           ) dedup`,
+        [context.effectiveVersionId]
+      );
       res.json(rows[0] || { total: 0 });
     } catch (err) {
       next(err);
@@ -685,16 +808,19 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   router.get('/:wikidotId/source', async (req, res, next) => {
     try {
       const { wikidotId } = req.params as Record<string, string>;
-      // 1) 优先取当前PV的源码
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context) return res.status(404).json({ error: 'not_found' });
+      const targetVersionId = context.effectiveVersionId ?? context.currentVersionId;
+      if (!targetVersionId) return res.status(404).json({ error: 'not_found' });
+
       const pv = await pool.query(
-        `SELECT pv.id AS "pageVersionId", pv.source
-         FROM "PageVersion" pv
-         WHERE pv."wikidotId" = $1::int AND pv."validTo" IS NULL
-         LIMIT 1`,
-        [wikidotId]
+        `SELECT pv.source
+           FROM "PageVersion" pv
+          WHERE pv.id = $1
+          LIMIT 1`,
+        [targetVersionId]
       );
       if (pv.rows.length === 0) return res.status(404).json({ error: 'not_found' });
-      const pageVersionId = pv.rows[0].pageVersionId;
       if (pv.rows[0].source) return res.json({ source: pv.rows[0].source, origin: 'pageVersion' });
 
       // 2) 否则回退到最新一条带源码的修订
@@ -704,7 +830,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
          WHERE r."pageVersionId" = $1::int AND r.source IS NOT NULL
          ORDER BY r.timestamp DESC
          LIMIT 1`,
-        [pageVersionId]
+        [targetVersionId]
       );
       if (lastWithSource.rows.length > 0) {
         const r = lastWithSource.rows[0];
@@ -767,9 +893,14 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       // 不使用 Redis 缓存（按需再启用）
 
       // 取候选集合（打齐标签与作者重合信息）
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) return res.json([]);
+
       const sql = `
         WITH target AS (
           SELECT 
+            pv.id,
+            pv."pageId",
             pv.tags,
             pv."createdAt",
             pv.category,
@@ -779,7 +910,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
               WHERE a."pageVerId" = pv.id
             ) AS authors
           FROM "PageVersion" pv
-          WHERE pv."wikidotId" = $1::int AND pv."validTo" IS NULL
+          WHERE pv.id = $1
           LIMIT 1
         ),
         tag_freq AS (
@@ -865,7 +996,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
         CROSS JOIN target t
         WHERE pv."validTo" IS NULL
-          AND pv."wikidotId" <> $1::int
+          AND pv."pageId" <> t."pageId"
           AND (
             -- 必须存在至少一个未被排除的标签重合，或作者重合
             EXISTS (
@@ -893,7 +1024,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       `;
 
       const excludedTagsParam = (Array.isArray(excludedTags) && excludedTags.length > 0) ? excludedTags : null;
-      const { rows } = await pool.query(sql, [wikidotId, candidateLimit, sameCategoryOnly, excludeUserPages, excludedTagsParam]);
+      const { rows } = await pool.query(sql, [context.effectiveVersionId, candidateLimit, sameCategoryOnly, excludeUserPages, excludedTagsParam]);
 
       // Node 层打分 + 过滤 + 多样性重排
       type Rec = any & { tag_overlap: number; tag_overlap_weighted?: number; author_overlap: number; matched_tags: string[]; matched_authors: Array<{userId:number;displayName:string|null;wikidotId:number|null}> };
@@ -1052,12 +1183,13 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   router.get('/:wikidotId/ratings/cumulative', async (req, res, next) => {
     try {
       const { wikidotId } = req.params as Record<string, string>;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) return res.json([]);
       const sql = `
-        WITH pv AS (
-          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1 ORDER BY id DESC LIMIT 1
-        ), daily AS (
+        WITH daily AS (
           SELECT date_trunc('day', v.timestamp) AS day, SUM(v.direction) AS delta
-          FROM "Vote" v JOIN pv ON v."pageVersionId" = pv.id
+          FROM "Vote" v
+          WHERE v."pageVersionId" = $1
           GROUP BY 1
         )
         SELECT day::timestamptz AS date,
@@ -1065,7 +1197,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         FROM daily
         ORDER BY day ASC
       `;
-      const { rows } = await pool.query(sql, [wikidotId]);
+      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1076,6 +1208,8 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   router.get('/:wikidotId/attributions', async (req, res, next) => {
     try {
       const { wikidotId } = req.params;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) return res.json([]);
       const sql = `
         SELECT 
           a.type,
@@ -1085,12 +1219,11 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           u."displayName",
           u."wikidotId" as "userWikidotId"
         FROM "Attribution" a
-        JOIN "PageVersion" pv ON a."pageVerId" = pv.id
         LEFT JOIN "User" u ON a."userId" = u.id
-        WHERE pv."wikidotId" = $1 AND pv."validTo" IS NULL
+        WHERE a."pageVerId" = $1
         ORDER BY a.type, a."order"
       `;
-      const { rows } = await pool.query(sql, [wikidotId]);
+      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1101,19 +1234,18 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   router.get('/:wikidotId/vote-distribution', async (req, res, next) => {
     try {
       const { wikidotId } = req.params;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) return res.json({ upvotes: 0, downvotes: 0, novotes: 0, total: 0 });
       const sql = `
-        WITH pv AS (
-          SELECT id FROM "PageVersion" WHERE "wikidotId" = $1 AND "validTo" IS NULL LIMIT 1
-        )
         SELECT 
           COUNT(CASE WHEN v.direction = 1 THEN 1 END) as upvotes,
           COUNT(CASE WHEN v.direction = -1 THEN 1 END) as downvotes,
           COUNT(CASE WHEN v.direction = 0 THEN 1 END) as novotes,
           COUNT(*) as total
         FROM "Vote" v
-        JOIN pv ON v."pageVersionId" = pv.id
+        WHERE v."pageVersionId" = $1
       `;
-      const { rows } = await pool.query(sql, [wikidotId]);
+      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
       res.json(rows[0] || { upvotes: 0, downvotes: 0, novotes: 0, total: 0 });
     } catch (err) {
       next(err);
@@ -1125,18 +1257,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const { wikidotId } = req.params;
       const { limit = '10' } = req.query as Record<string, string>;
-      
-      // Get page ID first
-      const pageIdResult = await pool.query(
-        `SELECT p.id FROM "Page" p JOIN "PageVersion" pv ON p.id = pv."pageId" WHERE pv."wikidotId" = $1 LIMIT 1`,
-        [wikidotId]
-      );
-      
-      if (pageIdResult.rows.length === 0) {
-        return res.status(404).json({ error: 'not_found' });
-      }
-      
-      const pageId = pageIdResult.rows[0].id;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.pageId) return res.status(404).json({ error: 'not_found' });
+      const pageId = context.pageId;
       
       // Get various records
       const sql = `
@@ -1185,6 +1308,8 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ error: 'Invalid wikidotId' });
       }
       const { granularity = 'week' } = req.query as Record<string, string>;
+      const context = await resolvePageContextByWikidotId(wikidotIdInt);
+      if (!context || !context.pageId) return res.json([]);
       
       // 获取页面的投票历史，按周或月聚合（无时间限制，获取全部历史数据）
       const dateLabel = granularity === 'month' ? 'YYYY-MM-DD' : 'YYYY-MM-DD';
@@ -1199,7 +1324,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             SUM(v.direction) as net_change
           FROM "Vote" v
           JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          WHERE pv."wikidotId" = $1
+          WHERE pv."pageId" = $1
           GROUP BY DATE_TRUNC('${granularity}', v.timestamp)
         ),
         cumulative AS (
@@ -1221,7 +1346,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         FROM cumulative
         ORDER BY period
       `;
-      const { rows } = await pool.query(sql, [wikidotIdInt]);
+      const { rows } = await pool.query(sql, [context.pageId]);
       
       // 直接返回数据，前端会处理隐藏逻辑
       res.json(rows);
@@ -1232,5 +1357,3 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
 
   return router;
 }
-
-

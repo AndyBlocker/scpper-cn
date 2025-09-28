@@ -1,158 +1,190 @@
 <template>
   <div class="space-y-8">
-    <section>
-      <div class="flex items-center justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3 mb-4">
-        <div class="flex items-center gap-3">
-          <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
-          <h2 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">站点总览</h2>
-        </div>
-        <span class="text-sm text-neutral-500 dark:text-neutral-400" :title="overviewUpdatedAtFull">上次更新时间：{{ overviewUpdatedAtRelative }}</span>
-      </div>
-      <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <!-- Users Block -->
-        <div class="relative rounded-lg p-5 overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 hover:shadow-md transition-all duration-200">
-          <div class="text-xs font-medium text-neutral-600 dark:text-neutral-400">用户</div>
-          <div class="mt-2 flex items-center justify-between gap-3">
-            <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.users?.total || 0).toLocaleString() }}</div>
-            <svg v-if="overviewSparks.usersTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.usersTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+    <!-- Overview metrics -->
+    <section class="space-y-6">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-4">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(var(--accent),0.14)] text-[rgb(var(--accent))] shadow-[0_10px_24px_rgba(10,132,255,0.18)]">
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0h6" />
             </svg>
           </div>
-          <div class="mt-2 text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
+          <div>
+            <h2 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">站点总览</h2>
+          </div>
+        </div>
+        <span class="text-sm text-neutral-500 dark:text-neutral-400" :title="overviewUpdatedAtFull">上次更新：{{ overviewUpdatedAtRelative }}</span>
+      </div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <!-- Users Block -->
+        <div class="relative overflow-hidden rounded-2xl border border-white/60 bg-white/75 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.10)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_32px_70px_rgba(15,23,42,0.16)] before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top,_rgba(var(--accent),0.18),_transparent_70%)] before:opacity-0 before:transition-opacity before:content-[''] dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_36px_80px_rgba(0,0,0,0.55)] hover:before:opacity-100">
+          <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">用户</div>
+          <div class="mt-4 flex items-end justify-between gap-3">
+            <div class="text-3xl font-semibold text-neutral-900 dark:text-neutral-50">{{ Number(overview?.users?.total || 0).toLocaleString() }}</div>
+            <svg v-if="overviewSparks.usersTotal" width="96" height="28" viewBox="0 0 100 24" preserveAspectRatio="none">
+              <polyline :points="overviewSparks.usersTotal" fill="none" :stroke="sparkStroke" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </div>
+          <div class="mt-4 space-y-2 text-xs text-neutral-600 dark:text-neutral-400">
             <div class="flex items-center justify-between gap-3">
-              <span>{{ Number(overview?.users?.active || 0).toLocaleString() }} 活跃</span>
-              <svg v-if="overviewSparks.usersActive" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.usersActive" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
+              <span class="font-medium text-neutral-700 dark:text-neutral-300">活跃</span>
+              <div class="flex items-center gap-2">
+                <span>{{ Number(overview?.users?.active || 0).toLocaleString() }}</span>
+                <svg v-if="overviewSparks.usersActive" width="80" height="18" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <polyline :points="overviewSparks.usersActive" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </div>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span>{{ Number(overview?.users?.contributors || 0).toLocaleString() }} 贡献者</span>
-              <svg v-if="overviewSparks.usersContributors" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.usersContributors" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
+              <span class="font-medium text-neutral-700 dark:text-neutral-300">贡献者</span>
+              <div class="flex items-center gap-2">
+                <span>{{ Number(overview?.users?.contributors || 0).toLocaleString() }}</span>
+                <svg v-if="overviewSparks.usersContributors" width="80" height="18" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <polyline :points="overviewSparks.usersContributors" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </div>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span>{{ Number(overview?.users?.authors || 0).toLocaleString() }} 作者</span>
-              <svg v-if="overviewSparks.usersAuthors" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.usersAuthors" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
+              <span class="font-medium text-neutral-700 dark:text-neutral-300">作者</span>
+              <div class="flex items-center gap-2">
+                <span>{{ Number(overview?.users?.authors || 0).toLocaleString() }}</span>
+                <svg v-if="overviewSparks.usersAuthors" width="80" height="18" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <polyline :points="overviewSparks.usersAuthors" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Pages Block -->
-        <div class="relative rounded-lg p-5 overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 hover:shadow-md transition-all duration-200">
-          <div class="text-xs font-medium text-neutral-600 dark:text-neutral-400">页面</div>
-          <div class="mt-2 flex items-center justify-between gap-3">
-            <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.pages?.total || 0).toLocaleString() }}</div>
-            <svg v-if="overviewSparks.pagesTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.pagesTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+        <div class="relative overflow-hidden rounded-2xl border border-white/60 bg-white/75 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.10)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_32px_70px_rgba(15,23,42,0.16)] before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top,_rgba(166,200,255,0.28),_transparent_72%)] before:opacity-0 before:transition-opacity before:content-[''] dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_36px_80px_rgba(0,0,0,0.55)] hover:before:opacity-100">
+          <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">页面</div>
+          <div class="mt-4 flex items-end justify-between gap-3">
+            <div class="text-3xl font-semibold text-neutral-900 dark:text-neutral-50">{{ Number(overview?.pages?.total || 0).toLocaleString() }}</div>
+            <svg v-if="overviewSparks.pagesTotal" width="96" height="28" viewBox="0 0 100 24" preserveAspectRatio="none">
+              <polyline :points="overviewSparks.pagesTotal" fill="none" :stroke="sparkStroke" stroke-width="1.8" stroke-linecap="round" />
             </svg>
           </div>
-          <div class="mt-2 text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
+          <div class="mt-4 space-y-2 text-xs text-neutral-600 dark:text-neutral-400">
             <div class="flex items-center justify-between gap-3">
-              <span>{{ Number(overview?.pages?.originals || 0).toLocaleString() }} 原创</span>
-              <svg v-if="overviewSparks.pagesOriginals" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.pagesOriginals" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
+              <span class="font-medium text-neutral-700 dark:text-neutral-300">原创</span>
+              <div class="flex items-center gap-2">
+                <span>{{ Number(overview?.pages?.originals || 0).toLocaleString() }}</span>
+                <svg v-if="overviewSparks.pagesOriginals" width="80" height="18" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <polyline :points="overviewSparks.pagesOriginals" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </div>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span>{{ Number(overview?.pages?.translations || 0).toLocaleString() }} 翻译</span>
-              <svg v-if="overviewSparks.pagesTranslations" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.pagesTranslations" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
+              <span class="font-medium text-neutral-700 dark:text-neutral-300">翻译</span>
+              <div class="flex items-center gap-2">
+                <span>{{ Number(overview?.pages?.translations || 0).toLocaleString() }}</span>
+                <svg v-if="overviewSparks.pagesTranslations" width="80" height="18" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <polyline :points="overviewSparks.pagesTranslations" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Votes Block -->
-        <div class="relative rounded-lg p-5 overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 hover:shadow-md transition-all duration-200">
-          <div class="text-xs font-medium text-neutral-600 dark:text-neutral-400">投票</div>
-          <div class="mt-2 flex items-center justify-between gap-3">
-            <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.votes?.total || 0).toLocaleString() }}</div>
-            <svg v-if="overviewSparks.votesTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.votesTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+        <div class="relative overflow-hidden rounded-2xl border border-white/60 bg-white/75 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.10)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_32px_70px_rgba(15,23,42,0.16)] before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top,_rgba(10,132,255,0.16),_transparent_70%)] before:opacity-0 before:transition-opacity before:content-[''] dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_36px_80px_rgba(0,0,0,0.55)] hover:before:opacity-100">
+          <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">投票</div>
+          <div class="mt-4 flex items-end justify-between gap-3">
+            <div class="text-3xl font-semibold text-neutral-900 dark:text-neutral-50">{{ Number(overview?.votes?.total || 0).toLocaleString() }}</div>
+            <svg v-if="overviewSparks.votesTotal" width="96" height="28" viewBox="0 0 100 24" preserveAspectRatio="none">
+              <polyline :points="overviewSparks.votesTotal" fill="none" :stroke="sparkStroke" stroke-width="1.8" stroke-linecap="round" />
             </svg>
           </div>
-          <div class="mt-2 text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
+          <div class="mt-4 space-y-2 text-xs text-neutral-600 dark:text-neutral-400">
             <div class="flex items-center justify-between gap-3">
-              <span>{{ Number(overview?.votes?.upvotes || 0).toLocaleString() }} 支持</span>
-              <svg v-if="overviewSparks.votesUp" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.votesUp" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
+              <span class="font-medium text-neutral-700 dark:text-neutral-300">upvote</span>
+              <div class="flex items-center gap-2">
+                <span>{{ Number(overview?.votes?.upvotes || 0).toLocaleString() }}</span>
+                <svg v-if="overviewSparks.votesUp" width="80" height="18" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <polyline :points="overviewSparks.votesUp" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </div>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span>{{ Number(overview?.votes?.downvotes || 0).toLocaleString() }} 反对</span>
-              <svg v-if="overviewSparks.votesDown" width="80" height="20" viewBox="0 0 100 24" preserveAspectRatio="none">
-                <polyline :points="overviewSparks.votesDown" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
+              <span class="font-medium text-neutral-700 dark:text-neutral-300">downvote</span>
+              <div class="flex items-center gap-2">
+                <span>{{ Number(overview?.votes?.downvotes || 0).toLocaleString() }}</span>
+                <svg v-if="overviewSparks.votesDown" width="80" height="18" viewBox="0 0 100 24" preserveAspectRatio="none">
+                  <polyline :points="overviewSparks.votesDown" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Revisions Block -->
-        <div class="relative rounded-lg p-5 overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 hover:shadow-md transition-all duration-200">
-          <div class="text-xs font-medium text-neutral-600 dark:text-neutral-400">修订</div>
-          <div class="mt-2 flex items-center justify-between gap-3">
-            <div class="text-3xl font-bold text-neutral-900 dark:text-neutral-100">{{ Number(overview?.revisions?.total || 0).toLocaleString() }}</div>
-            <svg v-if="overviewSparks.revisionsTotal" width="80" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <polyline :points="overviewSparks.revisionsTotal" fill="none" :stroke="sparkStroke" stroke-width="1.5" stroke-linecap="round" />
+        <div class="relative overflow-hidden rounded-2xl border border-white/60 bg-white/75 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.10)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_32px_70px_rgba(15,23,42,0.16)] before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top,_rgba(118,188,255,0.24),_transparent_68%)] before:opacity-0 before:transition-opacity before:content-[''] dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_36px_80px_rgba(0,0,0,0.55)] hover:before:opacity-100">
+          <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">修订</div>
+          <div class="mt-4 flex items-end justify-between gap-3">
+            <div class="text-3xl font-semibold text-neutral-900 dark:text-neutral-50">{{ Number(overview?.revisions?.total || 0).toLocaleString() }}</div>
+            <svg v-if="overviewSparks.revisionsTotal" width="96" height="28" viewBox="0 0 100 24" preserveAspectRatio="none">
+              <polyline :points="overviewSparks.revisionsTotal" fill="none" :stroke="sparkStroke" stroke-width="1.8" stroke-linecap="round" />
             </svg>
           </div>
         </div>
       </div>
     </section>
 
-    <section>
-      <div class="flex items-center justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3 mb-4">
-        <div class="flex items-center gap-3">
-          <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
-          <h2 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">随机页面</h2>
+    <!-- Random picks -->
+    <section class="space-y-6">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-4">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(var(--accent),0.14)] text-[rgb(var(--accent))] shadow-[0_10px_24px_rgba(10,132,255,0.18)]">
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-7" />
+            </svg>
+          </div>
+          <div>
+            <h2 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">随机页面</h2>
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">从随机推荐中发现值得一读的作品。</p>
+          </div>
         </div>
-        <button 
-          @click="refreshRandomPages" 
-          :disabled="loadingPages"
-          class="flex items-center gap-2 px-4 py-2 bg-[rgb(var(--accent))] hover:bg-[rgba(var(--accent),0.9)] disabled:bg-[rgba(var(--accent),0.5)] text-white rounded-lg transition-colors text-sm font-medium"
+        <button
+          @click="refreshRandomPages"
+          class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.28)] bg-white/80 px-4 py-2 text-sm font-medium text-[rgb(var(--accent))] shadow-[0_12px_28px_rgba(10,132,255,0.15)] transition-all hover:-translate-y-0.5 hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent-strong))] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(var(--accent),0.5)] dark:bg-neutral-950/70 dark:focus:ring-offset-neutral-950"
         >
-          <svg 
-            class="w-4 h-4" 
-            :class="{ 'animate-spin': loadingPages }"
-            fill="none" 
-            stroke="currentColor" 
-            viewBox="0 0 24 24"
-          >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-7" />
           </svg>
-          {{ loadingPages ? '刷新中...' : '刷新' }}
+          刷新推荐
         </button>
       </div>
-      <div v-if="loadingPages" class="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        <div v-for="i in 6" :key="i" class="animate-pulse">
-          <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-white dark:bg-neutral-900">
-            <div class="h-6 bg-neutral-200 dark:bg-neutral-700 rounded mb-3"></div>
-            <div class="h-4 bg-neutral-200 dark:bg-neutral-700 rounded w-3/4 mb-2"></div>
-            <div class="h-16 bg-neutral-200 dark:bg-neutral-700 rounded"></div>
+      <div class="rounded-[28px] border border-white/60 bg-white/65 p-6 shadow-[0_28px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_36px_80px_rgba(0,0,0,0.55)]">
+        <div v-if="loadingPages" class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div v-for="i in 6" :key="i" class="animate-pulse rounded-2xl border border-white/60 bg-white/70 p-5 dark:border-white/10 dark:bg-neutral-900/70">
+            <div class="mb-4 h-6 rounded-full bg-neutral-200/70 dark:bg-neutral-700/60"></div>
+            <div class="mb-3 h-4 w-3/4 rounded-full bg-neutral-200/60 dark:bg-neutral-700/50"></div>
+            <div class="h-20 rounded-2xl bg-neutral-200/50 dark:bg-neutral-800/50"></div>
+          </div>
+        </div>
+        <div v-else-if="pages.length > 0" class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <PageCard v-for="p in pages" :key="p.wikidotId" :p="p" :authors="p.authorObjs" :comments="Number(p.commentCount ?? 0)" size="lg" />
+        </div>
+        <div v-else class="flex flex-col items-center gap-4 rounded-2xl border border-white/70 bg-white/70 px-6 py-12 text-center text-neutral-500 dark:border-white/10 dark:bg-neutral-900/70 dark:text-neutral-300">
+          <svg class="h-12 w-12 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <div class="space-y-2">
+            <p class="text-sm">暂时没有推荐内容，试试刷新？</p>
+            <button
+              @click="refreshRandomPages"
+              class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-5 py-2 text-sm font-medium text-white shadow-[0_14px_36px_rgba(10,132,255,0.35)] transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_44px_rgba(10,132,255,0.45)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(var(--accent),0.65)] dark:focus:ring-offset-neutral-950"
+            >
+              再来一次
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-7" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
-      <div v-else-if="pages.length > 0" class="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        <PageCard v-for="p in pages" :key="p.wikidotId" :p="p" :authors="p.authorObjs" :comments="Number(p.commentCount ?? 0)" size="lg" />
-      </div>
-      <div v-else class="mt-3 p-8 text-center text-neutral-500 dark:text-neutral-400">
-        <svg class="w-12 h-12 mx-auto mb-3 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <p class="text-sm">暂无页面数据</p>
-        <button 
-          @click="refreshRandomPages" 
-          class="mt-3 px-4 py-2 bg-[rgb(var(--accent))] hover:bg-[rgba(var(--accent),0.9)] text-white rounded-lg text-sm"
-        >
-          加载随机页面
-        </button>
-      </div>
     </section>
-
-    
   </div>
 </template>
 
@@ -320,9 +352,9 @@ const overviewSparks = computed<Record<string, string | null>>(() => {
 
 // stroke color derived from CSS variables
 const sparkStroke = computed(() => {
-  if (typeof window === 'undefined') return '#10b981'
+  if (typeof window === 'undefined') return '#0a84ff'
   const cs = getComputedStyle(document.documentElement)
-  const accent = (cs.getPropertyValue('--accent').trim() || '16 185 129').replace(/\s+/g, ' ')
+  const accent = (cs.getPropertyValue('--accent').trim() || '10 132 255').replace(/\s+/g, ' ')
   return `rgb(${accent})`
 })
 
