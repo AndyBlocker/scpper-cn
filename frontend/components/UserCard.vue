@@ -1,5 +1,13 @@
 <template>
-    <component :is="linkComponent" :to="to || undefined" :class="rootClass">
+    <component
+      :is="linkComponent"
+      v-bind="linkBindings"
+      :class="rootClass"
+      :role="bareRole"
+      :tabindex="bareTabIndex"
+      @click="handleBareClick"
+      @keydown="handleBareKeydown"
+    >
       <div class="flex items-center gap-3 min-w-0 relative w-full" :class="variant === 'lg' ? 'pr-14' : ''" v-if="variant !== 'sm'">
         <UserAvatar
           v-if="avatar"
@@ -69,8 +77,9 @@
     </component>
   </template>
   
-  <script setup lang="ts">
-  import { computed, resolveComponent } from 'vue'
+<script setup lang="ts">
+import { computed, resolveComponent } from 'vue'
+import { navigateTo } from 'nuxt/app'
   
   type UserCardSize = 'lg'|'md'|'sm'|'L'|'M'|'S'
   
@@ -113,7 +122,32 @@
     if (id == null || !Number.isFinite(idNum) || idNum <= 0) return null
     return `/user/${id}`
   })
-  const linkComponent = computed(() => (to.value ? (resolveComponent('NuxtLink') as any) : 'div'))
+  const nuxtLink = resolveComponent('NuxtLink') as any
+  const shouldUseNuxtLink = computed(() => Boolean(to.value) && !props.bare)
+  const linkComponent = computed(() => (shouldUseNuxtLink.value ? nuxtLink : 'div'))
+  const linkBindings = computed(() => (shouldUseNuxtLink.value ? { to: to.value } : {}))
+  const bareInteractive = computed(() => Boolean(to.value) && props.bare)
+  const bareRole = computed(() => (bareInteractive.value ? 'link' : undefined))
+  const bareTabIndex = computed(() => (bareInteractive.value ? 0 : undefined))
+
+  const triggerNavigation = () => {
+    if (bareInteractive.value && to.value) navigateTo(to.value)
+  }
+
+  const handleBareClick = (event: MouseEvent) => {
+    if (!bareInteractive.value) return
+    event.preventDefault()
+    event.stopPropagation()
+    triggerNavigation()
+  }
+
+  const handleBareKeydown = (event: KeyboardEvent) => {
+    if (!bareInteractive.value) return
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    event.stopPropagation()
+    triggerNavigation()
+  }
   
   const wikidotIdText = computed(() => (wikidotId.value != null && String(wikidotId.value)) || '')
   const totalsText = computed(() => {

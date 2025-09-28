@@ -408,6 +408,8 @@ const createChart = () => {
   const toRGB = (s: string) => (s || '').trim().split(/\s+/).join(',')
   const accent = toRGB(cs.getPropertyValue('--accent')) || '16,185,129'
   const accentStrong = toRGB(cs.getPropertyValue('--accent-strong')) || '5,150,105'
+  const success = toRGB(cs.getPropertyValue('--success')) || '34,197,94'
+  const successStrong = toRGB(cs.getPropertyValue('--success-strong')) || '22,163,74'
   const danger = toRGB(cs.getPropertyValue('--danger')) || '239,68,68'
   const dangerStrong = toRGB(cs.getPropertyValue('--danger-strong')) || '220,38,38'
   const slate400 = toRGB(cs.getPropertyValue('--slate-400')) || '148,163,184'
@@ -544,8 +546,8 @@ const createChart = () => {
     {
       label: '支持票',
       data: displayData.map(d => ({ x: d.x, y: d.hideBar ? null : d.upvotes })),
-      backgroundColor: isDark ? `rgba(${accent},0.8)` : `rgba(${accentStrong},0.8)`,
-      borderColor: isDark ? `rgb(${accent})` : `rgb(${accentStrong})`,
+      backgroundColor: isDark ? `rgba(${success},0.85)` : `rgba(${successStrong},0.85)`,
+      borderColor: isDark ? `rgb(${success})` : `rgb(${successStrong})`,
       borderWidth: 1,
       barPercentage: 0.8,
       categoryPercentage: 0.9,
