@@ -1,0 +1,4 @@
+[submodule "external/ftml"]
+	path = external/ftml
+	url = https://github.com/AndyBlocker/ftml.git
+	branch = main
