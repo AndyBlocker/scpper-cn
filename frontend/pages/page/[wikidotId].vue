@@ -22,7 +22,7 @@
       <!-- Title + Actions -->
       <header class="flex items-start justify-between gap-3 relative">
         <h1 class="text-[22px] leading-snug font-bold text-neutral-900 dark:text-neutral-100">
-          {{ page?.title || 'Untitled' }}
+          {{ pageDisplayTitle }}
         </h1>
         <div class="flex items-center gap-2 shrink-0">
           <button
@@ -175,8 +175,6 @@
           </div>
         </div>
       </section>
-
-
       <!-- Chart -->
       <section v-if="Array.isArray(ratingHistory) && ratingHistory.length" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
         <div class="flex items-center justify-between mb-4">
@@ -377,6 +375,80 @@
         <div v-else class="text-center py-4 text-neutral-500 dark:text-neutral-400">
           暂无推荐
         </div>
+      </section>
+
+      <section
+        v-if="pageImagesPending || hasPageImages"
+        class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm"
+      >
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">相关图片</h3>
+            <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              第 {{ pageImagePage }} / {{ pageImageTotalPages }} 页 · 展示 {{ pageImageRangeLabel }} · 共 {{ pageImages.length }} 张
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+            <div class="inline-flex items-center gap-2">
+              <span class="hidden sm:inline">每行数量</span>
+              <div class="inline-flex overflow-hidden rounded-full border border-neutral-200 dark:border-neutral-700 bg-neutral-100/60 dark:bg-neutral-800/60">
+                <button
+                  v-for="option in pageImageSizeOptions"
+                  :key="option.value"
+                  type="button"
+                  @click="pageImageColumns = option.value"
+                  :class="[
+                    'px-3 py-1 font-medium transition-colors',
+                    pageImageColumns === option.value
+                      ? 'bg-white dark:bg-neutral-700 text-[rgb(var(--accent))] shadow'
+                      : 'text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))]'
+                  ]"
+                >
+                  {{ option.label }} ({{ option.value }})
+                </button>
+              </div>
+            </div>
+            <div class="inline-flex items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-neutral-600 dark:text-neutral-300 hover:border-[rgb(var(--accent))] hover:text-[rgb(var(--accent))] disabled:opacity-40"
+                @click="pageImagePage = Math.max(1, pageImagePage - 1)"
+                :disabled="pageImagePage <= 1"
+              >上一页</button>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-neutral-600 dark:text-neutral-300 hover:border-[rgb(var(--accent))] hover:text-[rgb(var(--accent))] disabled:opacity-40"
+                @click="pageImagePage = Math.min(pageImageTotalPages, pageImagePage + 1)"
+                :disabled="pageImagePage >= pageImageTotalPages"
+              >下一页</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="pageImagesPending" class="mt-6 text-sm text-neutral-500 dark:text-neutral-400">正在加载图片…</div>
+        <div v-else-if="hasPageImages" class="page-images-grid mt-4" :style="pageImageGridStyle">
+          <figure
+            v-for="img in paginatedPageImages"
+            :key="img.pageVersionImageId || img.normalizedUrl || img.originUrl"
+            class="group space-y-2"
+          >
+            <div
+              class="relative w-full overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900/40"
+              :style="img.aspectStyle"
+            >
+              <img
+                :src="img.imageSrc"
+                :alt="img.label || pageDisplayTitle"
+                loading="lazy"
+                class="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+              >
+            </div>
+            <figcaption class="text-xs text-neutral-600 dark:text-neutral-400 truncate">
+              {{ img.label || '图片资源' }}
+            </figcaption>
+          </figure>
+        </div>
+        <div v-else class="mt-6 text-sm text-neutral-500 dark:text-neutral-400">暂无图片。</div>
       </section>
 
       <!-- Source Viewer -->
@@ -585,10 +657,32 @@ declare const useAsyncData: any
 declare const useNuxtApp: any
 declare const useRoute: any
 declare const definePageMeta: any
+declare const useRuntimeConfig: any
 declare const process: any
 
 const route = useRoute();
 const {$bff} = useNuxtApp();
+const runtimeConfig = useRuntimeConfig();
+
+const rawBffBase = (runtimeConfig?.public as any)?.bffBase ?? '/api';
+const normalizedBffBase = (() => {
+  const base = typeof rawBffBase === 'string' ? rawBffBase.trim() : '/api';
+  if (!base) return '';
+  if (base === '/') return '';
+  return base.replace(/\/+$/u, '');
+})();
+
+const resolveAssetPath = (path?: string | null, fallback?: string | null) => {
+  const primary = path ?? '';
+  const fallbackUrl = fallback ?? '';
+  const candidate = primary || fallbackUrl;
+  if (!candidate) return '';
+  if (/^https?:/i.test(candidate)) return candidate;
+  if (candidate.startsWith('//')) return `https:${candidate}`;
+  const prefix = normalizedBffBase;
+  const suffix = candidate.startsWith('/') ? candidate : `/${candidate}`;
+  return `${prefix}${suffix}`;
+};
 
 definePageMeta({ key: (route:any) => route.fullPath })
 
@@ -606,6 +700,114 @@ const { data: page, pending: pagePending, error: pageError } = await useAsyncDat
   () => $bff(`/pages/by-id`, { params: { wikidotId: wikidotId.value } }),
   { watch: [() => route.params.wikidotId] }
 )
+
+const pageDisplayTitle = computed(() => {
+  const base = typeof page.value?.title === 'string' ? page.value!.title!.trim() : ''
+  const alt = typeof (page.value as any)?.alternateTitle === 'string' ? (page.value as any).alternateTitle.trim() : ''
+  if (alt) return base ? `${base} - ${alt}` : alt
+  return base || 'Untitled'
+})
+
+const { data: pageImagesData, pending: pageImagesPending } = await useAsyncData(
+  () => `page-images-${wikidotId.value}`,
+  () => $bff(`/pages/${wikidotId.value}/images`),
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
+)
+
+const pageImagesRaw = computed(() => {
+  const images = pageImagesData.value
+  return Array.isArray(images) ? images : []
+})
+
+const pageImages = computed(() => {
+  const raw = pageImagesRaw.value
+  return raw.map((img: any) => {
+    const width = Number(img.width ?? img.assetWidth ?? 0)
+    const height = Number(img.height ?? img.assetHeight ?? 0)
+    const ratio = width > 0 && height > 0 ? width / height : null
+    const orientation = ratio == null ? 'unknown' : ratio >= 1.7 ? 'wide' : ratio <= 0.65 ? 'tall' : 'normal'
+    const aspectStyle = ratio == null
+      ? 'aspect-ratio: 4 / 3;'
+      : orientation === 'wide'
+        ? 'aspect-ratio: 16 / 9;'
+        : orientation === 'tall'
+          ? 'aspect-ratio: 3 / 4;'
+          : 'aspect-ratio: 4 / 3;'
+    const labelSource = img.displayUrl || img.normalizedUrl || img.originUrl || ''
+    let label = labelSource
+    if (label) {
+      try {
+        const parsed = new URL(label)
+        const pathname = parsed.pathname.replace(/\/+$/u, '') || '/'
+        label = `${parsed.hostname}${pathname}`
+      } catch {
+        label = label.replace(/^https?:\/\//i, '')
+      }
+    }
+    const imageSrc = resolveAssetPath(img.imageUrl, labelSource)
+    if (!imageSrc) return null
+
+    return {
+      ...img,
+      width,
+      height,
+      ratio,
+      orientation,
+      aspectStyle,
+      label,
+      imageSrc
+    }
+  }).filter(Boolean)
+})
+
+const hasPageImages = computed(() => pageImages.value.length > 0)
+
+const pageImageSizeOptions = [
+  { label: '小', value: 9 },
+  { label: '中', value: 6 },
+  { label: '大', value: 3 }
+]
+
+const pageImageColumns = ref<number>(6)
+const pageImageRows = computed(() => {
+  const cols = pageImageColumns.value
+  if (cols >= 9) return 5
+  if (cols >= 6) return 4
+  return 3
+})
+const pageImagesPerPage = computed(() => Math.max(1, pageImageColumns.value * pageImageRows.value))
+const pageImagePage = ref(1)
+const pageImageTotalPages = computed(() => {
+  if (!pageImages.value.length) return 1
+  return Math.max(1, Math.ceil(pageImages.value.length / pageImagesPerPage.value))
+})
+
+const paginatedPageImages = computed(() => {
+  const pageIndex = Math.max(1, Math.min(pageImagePage.value, pageImageTotalPages.value)) - 1
+  const start = pageIndex * pageImagesPerPage.value
+  return pageImages.value.slice(start, start + pageImagesPerPage.value)
+})
+
+const pageImageRangeLabel = computed(() => {
+  if (!pageImages.value.length) return '0'
+  const start = (Math.max(1, pageImagePage.value) - 1) * pageImagesPerPage.value + 1
+  const end = Math.min(pageImages.value.length, start + pageImagesPerPage.value - 1)
+  return `${start} - ${end}`
+})
+
+const pageImageGridStyle = computed(() => ({
+  '--columns': String(Math.max(1, Math.min(pageImageColumns.value, 12)))
+}))
+
+watch(pageImages, () => {
+  if (pageImagePage.value > pageImageTotalPages.value) {
+    pageImagePage.value = pageImageTotalPages.value
+  }
+})
+
+watch(pageImageColumns, () => {
+  pageImagePage.value = 1
+})
 
 const { data: stats } = await useAsyncData(
   () => `stats-${wikidotId.value}`,
@@ -1458,7 +1660,7 @@ function downloadSource(){
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${page.value?.title || 'source'}.txt`
+    a.download = `${pageDisplayTitle.value || 'source'}.txt`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -1527,6 +1729,30 @@ onBeforeUnmount(() => {
 @media (min-width: 640px) {
   .diff-select--narrow {
     max-width: 4.5rem;
+  }
+}
+
+.page-images-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(var(--columns, 6), minmax(0, 1fr));
+}
+
+@media (max-width: 1024px) {
+  .page-images-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .page-images-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .page-images-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
   }
 }
 </style>

@@ -1,15 +1,105 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { buildPageImagePath } from '../pageImagesConfig.js';
 
 export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
 
+  const imageSelectionSql = `
+    SELECT
+      pvi."pageVersionId" AS "pageVersionId",
+      pvi.id                AS "pageVersionImageId",
+      pvi."originUrl"      AS "originUrl",
+      pvi."displayUrl"     AS "displayUrl",
+      pvi."normalizedUrl"  AS "normalizedUrl",
+      ia.id                 AS "assetId",
+      ia."mimeType"        AS "mimeType",
+      ia.width              AS width,
+      ia.height             AS height,
+      ia.bytes              AS bytes,
+      ia."canonicalUrl"    AS "canonicalUrl"
+    FROM "PageVersionImage" pvi
+    JOIN "ImageAsset" ia ON ia.id = pvi."imageAssetId"
+    WHERE pvi."pageVersionId" = ANY($1::int[])
+      AND pvi.status = 'RESOLVED'
+      AND pvi."imageAssetId" IS NOT NULL
+      AND ia."storagePath" IS NOT NULL
+      AND ia."status" = 'READY'
+    ORDER BY pvi."pageVersionId", pvi.id
+  `;
+
+  const extractPageVersionId = (row: any): number | null => {
+    if (!row) return null;
+    const raw = row.pageVersionId ?? row.id ?? null;
+    if (raw === null || raw === undefined) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const groupImagesByPageVersion = async (ids: number[]): Promise<Map<number, any[]>> => {
+    if (ids.length === 0) {
+      return new Map();
+    }
+    const { rows } = await pool.query(imageSelectionSql, [ids]);
+    const grouped = new Map<number, any[]>();
+    for (const row of rows) {
+      const entry = {
+        pageVersionImageId: row.pageVersionImageId,
+        assetId: row.assetId,
+        originUrl: row.originUrl,
+        displayUrl: row.displayUrl,
+        normalizedUrl: row.normalizedUrl,
+        mimeType: row.mimeType,
+        width: row.width,
+        height: row.height,
+        bytes: row.bytes,
+        canonicalUrl: row.canonicalUrl,
+        imageUrl: buildPageImagePath(row.assetId)
+      };
+      const list = grouped.get(row.pageVersionId);
+      if (list) {
+        list.push(entry);
+      } else {
+        grouped.set(row.pageVersionId, [entry]);
+      }
+    }
+    return grouped;
+  };
+
+  const hydrateRowsWithImages = async (rows: any[]): Promise<void> => {
+    if (!rows || rows.length === 0) return;
+    const ids = Array.from(new Set(
+      rows
+        .map(extractPageVersionId)
+        .filter((id): id is number => id !== null)
+    ));
+    const grouped = await groupImagesByPageVersion(ids);
+    for (const row of rows) {
+      if (!row) continue;
+      const id = extractPageVersionId(row);
+      row.images = id != null ? (grouped.get(id) ?? []) : [];
+    }
+  };
+
   async function mergeDeletedWithLatestLiveVersion(row: any) {
-    if (!row || row.isDeleted !== true || !row.pageId) return row;
+    if (!row) return row;
+    await hydrateRowsWithImages([row]);
+    if (row.isDeleted !== true || !row.pageId) return row;
 
     const fallbackSql = `
-      SELECT rating, "voteCount", "revisionCount", "commentCount", "attributionCount", tags, title, category, "wikidotId"
+      SELECT
+        pv.id AS "pageVersionId",
+        pv.rating,
+        pv."voteCount",
+        pv."revisionCount",
+        pv."commentCount",
+        pv."attributionCount",
+        pv.tags,
+        pv.title,
+        pv."alternateTitle",
+        pv.category,
+        pv."wikidotId"
       FROM "PageVersion"
       WHERE "pageId" = $1 AND "isDeleted" = false
       ORDER BY "validFrom" DESC NULLS LAST, id DESC
@@ -20,6 +110,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     if (prevRows.length === 0) return row;
 
     const prev = prevRows[0];
+    await hydrateRowsWithImages([prev]);
     const merged = { ...row };
     const fieldsToCopy = [
       'rating',
@@ -29,7 +120,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       'attributionCount',
       'tags',
       'title',
-      'category'
+      'alternateTitle',
+      'category',
+      'images'
     ] as const;
 
     for (const key of fieldsToCopy) {
@@ -43,6 +136,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     }
 
     merged.isDeleted = true;
+    if (!Array.isArray(merged.images)) {
+      merged.images = [];
+    }
     return merged;
   }
 
@@ -142,6 +238,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           pv."wikidotId",
           p."currentUrl" AS url,
           pv.title,
+          pv."alternateTitle",
           pv.rating,
           pv."voteCount",
           pv.category,
@@ -194,6 +291,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT 
           COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
           p."currentUrl" AS url,
+          pv.id AS "pageVersionId",
           pv.*,
           CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
         FROM "PageVersion" pv
@@ -220,6 +318,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT 
           COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
           p."currentUrl" AS url,
+          pv.id AS "pageVersionId",
           pv.*,
           CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
         FROM "PageVersion" pv
@@ -248,7 +347,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         ), path AS (
           SELECT regexp_replace(url, '^https?://[^/]+', '') AS p FROM input
         )
-        SELECT COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId", p."currentUrl" AS url, pv.title, pv.rating, pv.tags
+        SELECT COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId", p."currentUrl" AS url, pv.title, pv."alternateTitle", pv.rating, pv.tags
         FROM "PageVersion" pv
         JOIN "Page" p ON pv."pageId" = p.id, path
         WHERE pv."validTo" IS NULL AND p."currentUrl" LIKE ('http://%' || path.p)
@@ -274,6 +373,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
+            pv."alternateTitle",
             pv.rating,
             pv."commentCount",
             pv."voteCount",
@@ -306,6 +406,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
+            pv."alternateTitle",
             pv.rating,
             pv."commentCount",
             pv."voteCount",
@@ -334,6 +435,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
+            pv."alternateTitle",
             pv.rating,
             pv."commentCount",
             pv."voteCount",
@@ -362,6 +464,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
+            pv."alternateTitle",
             pv.rating,
             pv."commentCount",
             pv."voteCount",
@@ -455,6 +558,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           pv."wikidotId",
           p."currentUrl" AS url,
           pv.title,
+          pv."alternateTitle",
           pv.rating,
           pv."voteCount",
           pv.category,
@@ -638,6 +742,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           pv."createdAt",
           pv."validTo",
           pv.title,
+          pv."alternateTitle",
           pv.rating,
           pv."revisionCount",
           ${withSource ? 'pv.source AS source,' : ''}
@@ -927,6 +1032,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           pv."wikidotId",
           p."currentUrl" AS url,
           pv.title,
+          pv."alternateTitle",
           pv.rating,
           pv."commentCount",
           pv."voteCount",
@@ -1174,6 +1280,22 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       // 输出：去掉中间计算字段，保留 similarity
       const payload = finalList.map(({ tag_overlap, tag_overlap_weighted, author_overlap, matched_tags, matched_authors, ...rest }) => rest);
       res.json(payload);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/:wikidotId/images', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params as Record<string, string>;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context) return res.json([]);
+
+      const targetId = context.effectiveVersionId ?? context.currentVersionId;
+      if (!targetId) return res.json([]);
+
+      const grouped = await groupImagesByPageVersion([targetId]);
+      res.json(grouped.get(targetId) ?? []);
     } catch (err) {
       next(err);
     }

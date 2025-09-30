@@ -177,6 +177,7 @@
     sparkPoints?: string | null
     snippetHtml?: string | null
     isDeleted?: boolean
+    alternateTitle?: string | null
   }
   
   type PageCardSize = 'lg' | 'md' | 'sm' | 'L' | 'M' | 'S'
@@ -203,6 +204,7 @@
     snippetHtml?: string | null
     badge?: 'new' | 'hot' | null
     isDeleted?: boolean
+    alternateTitle?: string | null
   }
   
   const props = defineProps<Props>()
@@ -216,7 +218,19 @@
   })
   
   const wikidotId = computed(() => props.p?.wikidotId ?? props.wikidotId)
-  const displayTitle = computed(() => props.title ?? props.p?.title ?? '')
+  const rawTitle = computed(() => (props.title ?? props.p?.title ?? '').toString().trim())
+  const rawAlternate = computed(() => {
+    const direct = (props as any).alternateTitle
+    if (typeof direct === 'string' && direct.trim()) return direct.trim()
+    const fromP = (props.p as any)?.alternateTitle
+    return typeof fromP === 'string' && fromP.trim() ? fromP.trim() : ''
+  })
+  const displayTitle = computed(() => {
+    const base = rawTitle.value
+    const alt = rawAlternate.value
+    if (alt) return base ? `${base} - ${alt}` : alt
+    return base
+  })
   const internalTags = computed<string[]>(() => (props.tags ?? props.p?.tags ?? []).filter(Boolean))
   const createdDate = computed(() => (props as any).dateISO ?? (props as any).dateIso ?? props.p?.createdDate ?? '')
   const excerpt = computed(() => props.excerpt ?? props.p?.excerpt ?? '')

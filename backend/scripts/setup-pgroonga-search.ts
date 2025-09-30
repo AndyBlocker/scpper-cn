@@ -40,6 +40,11 @@ async function setupPGroongaSearch() {
               WHERE "validTo" IS NULL`
       },
       {
+        name: 'Page currentUrl PGroonga 索引',
+        sql: `CREATE INDEX IF NOT EXISTS idx_page_current_url_pgroonga 
+              ON "Page" USING pgroonga ("currentUrl")`
+      },
+      {
         name: 'User displayName 索引(删除旧索引)',
         sql: `DROP INDEX IF EXISTS idx_user_displayname_pgroonga`
       },
@@ -76,7 +81,7 @@ async function setupPGroongaSearch() {
       SELECT tablename, indexname
       FROM pg_indexes
       WHERE schemaname = 'public'
-        AND tablename IN ('PageVersion', 'User')
+        AND tablename IN ('PageVersion', 'Page', 'User')
         AND (
           indexname LIKE '%pgroonga%' 
           OR indexname LIKE '%tags%'

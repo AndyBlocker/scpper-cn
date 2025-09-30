@@ -123,6 +123,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             'VOTE'::text AS type,
             pv."wikidotId" AS "pageWikidotId",
             pv.title AS "pageTitle",
+            pv."alternateTitle" AS "pageAlternateTitle",
             v.direction AS direction,
             NULL::text AS "revisionType",
             NULL::text AS comment
@@ -139,6 +140,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             'REVISION'::text AS type,
             pv."wikidotId" AS "pageWikidotId",
             pv.title AS "pageTitle",
+            pv."alternateTitle" AS "pageAlternateTitle",
             NULL::int AS direction,
             r.type::text AS "revisionType",
             r.comment::text AS comment
@@ -166,6 +168,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             'VOTE'::text AS type,
             pv."wikidotId" AS "pageWikidotId",
             pv.title AS "pageTitle",
+            pv."alternateTitle" AS "pageAlternateTitle",
             v.direction AS direction,
             NULL::text AS "revisionType",
             NULL::text AS comment
@@ -182,6 +185,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             'REVISION'::text AS type,
             pv."wikidotId" AS "pageWikidotId",
             pv.title AS "pageTitle",
+            pv."alternateTitle" AS "pageAlternateTitle",
             NULL::int AS direction,
             r.type::text AS "revisionType",
             r.comment::text AS comment
@@ -389,6 +393,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
             pv.title,
+            pv."alternateTitle",
             pv.category,
             pv.rating,
             pv.tags,
@@ -549,6 +554,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           v.direction,
           pv."wikidotId" as "pageWikidotId",
           pv.title as "pageTitle",
+          pv."alternateTitle" as "pageAlternateTitle",
           p."currentUrl" as "pageUrl"
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
@@ -582,6 +588,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           r.comment,
           pv."wikidotId" as "pageWikidotId",
           pv.title as "pageTitle",
+          pv."alternateTitle" as "pageAlternateTitle",
           p."currentUrl" as "pageUrl"
         FROM "Revision" r
         JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
@@ -627,6 +634,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           SELECT DISTINCT ON (pv."wikidotId")
                  pv."wikidotId",
                  pv.title,
+                 pv."alternateTitle",
                  -- 是否为作者或提交者，用于优先采用页面创建时间
                  EXISTS (
                    SELECT 1 FROM "Attribution" aa
@@ -878,5 +886,3 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
 
   return router;
 }
-
-

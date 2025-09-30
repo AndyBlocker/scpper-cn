@@ -31,17 +31,190 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
       const wantTotal = String(includeTotal).toLowerCase() === 'true';
       const wantSnippet = String(includeSnippet).toLowerCase() === 'true';
       const wantDate = String(includeDate).toLowerCase() === 'true';
+      const trimmedQuery = query ? query.trim() : '';
+      const hasQuery = trimmedQuery.length > 0;
+      const limitInt = Math.max(0, Number(limit) | 0) || 20;
+      const offsetInt = Math.max(0, Number(offset) | 0);
+      const candidateLimit = Math.max(limitInt * 8, 200);
+      const includeTagsArray = tags
+        ? (Array.isArray(tags) ? (tags as string[]) : [tags as string])
+        : null;
+      const excludeTagsArray = excludeTags
+        ? (Array.isArray(excludeTags) ? (excludeTags as string[]) : [excludeTags as string])
+        : null;
 
-      // Limit-then-enrich: compute Top-N first, then attach optional fields
+      if (!hasQuery) {
       const baseSql = `
-        WITH base AS (
+          WITH base AS (
+            SELECT 
+              pv.id,
+              COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
+              pv."pageId",
+              pv.title,
+              pv."alternateTitle",
+              p."currentUrl" AS url,
+              p."firstPublishedAt" AS "firstRevisionAt",
+              CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END AS rating,
+              CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END AS "voteCount",
+              pv."revisionCount",
+              CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END AS "commentCount",
+              CASE WHEN pv."isDeleted" THEN COALESCE(prev.tags, ARRAY[]::text[]) ELSE COALESCE(pv.tags, ARRAY[]::text[]) END AS tags,
+              pv."isDeleted" AS "isDeleted",
+              CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
+              pv."validFrom",
+              ps."wilson95",
+              ps."controversy"
+            FROM "PageVersion" pv
+            JOIN "Page" p ON pv."pageId" = p.id
+            LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+            LEFT JOIN LATERAL (
+              SELECT rating, "voteCount", "commentCount", tags
+              FROM "PageVersion" pv_prev
+              WHERE pv_prev."pageId" = pv."pageId"
+                AND pv_prev."isDeleted" = false
+              ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+              LIMIT 1
+            ) prev ON TRUE
+            WHERE pv."validTo" IS NULL
+              AND ($1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $1::text[])
+              AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
+              AND ($3::int IS NULL OR pv.rating >= $3)
+              AND ($4::int IS NULL OR pv.rating <= $4)
+          )
+        `;
+
+        const finalSql = `${baseSql}
+          SELECT b.*
+          FROM base b
+          ORDER BY 
+            CASE WHEN $5 = 'rating' THEN b.rating END DESC NULLS LAST,
+            CASE WHEN $5 = 'recent' THEN COALESCE(b."firstRevisionAt", b."validFrom") END DESC,
+            b.rating DESC NULLS LAST,
+            b."firstRevisionAt" DESC NULLS LAST,
+            b.id DESC
+          LIMIT $6::int OFFSET $7::int
+        `;
+
+        const params = [
+          includeTagsArray,
+          excludeTagsArray,
+          ratingMin || null,
+          ratingMax || null,
+          orderBy,
+          limitInt,
+          offsetInt
+        ];
+
+        const [{ rows }, totalRes] = await Promise.all([
+          pool.query(finalSql, params),
+          wantTotal
+            ? pool.query(
+                `SELECT COUNT(*) AS total
+                 FROM "PageVersion" pv
+                 WHERE pv."validTo" IS NULL
+                  AND ($1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $1::text[])
+                  AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
+                  AND ($3::int IS NULL OR pv.rating >= $3)
+                  AND ($4::int IS NULL OR pv.rating <= $4)`,
+                [includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null]
+              )
+            : Promise.resolve(null as any)
+        ]);
+
+        const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
+        const results = rows.map((r: any) => {
+          if (!wantDate) {
+            const { firstRevisionAt, ...rest } = r;
+            return rest;
+          }
+          return r;
+        });
+
+        return res.json(total !== undefined ? { results, total } : { results });
+      }
+
+      const baseSql = `
+        WITH url_hits AS (
+          SELECT pv.id AS pv_id,
+                 1.0 AS weight,
+                 NULL::double precision AS score,
+                 'url'::text AS source
+          FROM "Page" p
+          JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
+          WHERE $1::text IS NOT NULL
+            AND p."currentUrl" &@~ pgroonga_query_escape($1)
+          LIMIT $9::int
+        ),
+        title_hits AS (
+          SELECT pv.id AS pv_id,
+                 0.9 AS weight,
+                 pgroonga_score(pv.tableoid, pv.ctid) AS score,
+                 'title'::text AS source
+          FROM "PageVersion" pv
+          WHERE pv."validTo" IS NULL
+            AND pv.title &@~ pgroonga_query_escape($1)
+          ORDER BY score DESC
+          LIMIT $9::int
+        ),
+        alternate_hits AS (
+          SELECT pv.id AS pv_id,
+                 0.8 AS weight,
+                 pgroonga_score(pv.tableoid, pv.ctid) AS score,
+                 'alternate'::text AS source
+          FROM "PageVersion" pv
+          WHERE pv."validTo" IS NULL
+            AND pv."alternateTitle" IS NOT NULL
+            AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
+          ORDER BY score DESC
+          LIMIT $9::int
+        ),
+        text_hits AS (
+          SELECT pv.id AS pv_id,
+                 0.5 AS weight,
+                 pgroonga_score(pv.tableoid, pv.ctid) AS score,
+                 'text'::text AS source
+          FROM "PageVersion" pv
+          WHERE pv."validTo" IS NULL
+            AND pv."textContent" &@~ pgroonga_query_escape($1)
+          ORDER BY score DESC
+          LIMIT $9::int
+        ),
+        candidates AS (
+          SELECT * FROM url_hits
+          UNION ALL
+          SELECT * FROM title_hits
+          UNION ALL
+          SELECT * FROM alternate_hits
+          UNION ALL
+          SELECT * FROM text_hits
+        ),
+        filtered AS (
+          SELECT
+            c.pv_id,
+            MAX(c.weight) AS weight,
+            MAX(c.score) AS score,
+            MAX(CASE WHEN c.source = 'url' THEN 1 ELSE 0 END) AS has_url,
+            MAX(CASE WHEN c.source = 'title' THEN 1 ELSE 0 END) AS has_title,
+            MAX(CASE WHEN c.source = 'alternate' THEN 1 ELSE 0 END) AS has_alt,
+            MAX(CASE WHEN c.source = 'text' THEN 1 ELSE 0 END) AS has_text
+          FROM candidates c
+          JOIN "PageVersion" pv ON pv.id = c.pv_id
+          WHERE pv."validTo" IS NULL
+            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($4::int IS NULL OR pv.rating >= $4)
+            AND ($5::int IS NULL OR pv.rating <= $5)
+          GROUP BY c.pv_id
+        ),
+        ranked AS (
           SELECT 
             pv.id,
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             pv."pageId",
             pv.title,
+            pv."alternateTitle",
             p."currentUrl" AS url,
-            p."firstPublishedAt" AS "firstPublishedAt",
+            p."firstPublishedAt" AS "firstRevisionAt",
             CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END AS rating,
             CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END AS "voteCount",
             pv."revisionCount",
@@ -49,11 +222,22 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             CASE WHEN pv."isDeleted" THEN COALESCE(prev.tags, ARRAY[]::text[]) ELSE COALESCE(pv.tags, ARRAY[]::text[]) END AS tags,
             pv."isDeleted" AS "isDeleted",
             CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
-            pgroonga_score(pv.tableoid, pv.ctid) AS score,
             pv."validFrom",
             ps."wilson95",
-            ps."controversy"
-          FROM "PageVersion" pv
+            ps."controversy",
+            f.weight,
+            f.score,
+            f.has_url,
+            f.has_title,
+            f.has_alt,
+            f.has_text,
+            CASE WHEN lower(split_part(p."currentUrl", '/', 4)) = lower($1) THEN 1 ELSE 0 END AS host_match,
+            CASE WHEN lower(p."currentUrl") = lower($1) THEN 1 ELSE 0 END AS exact_url,
+            CASE WHEN lower(pv.title) = lower($1) THEN 1 ELSE 0 END AS exact_title,
+            CASE WHEN pv.title &@~ pgroonga_query_escape($1) THEN 1 ELSE 0 END AS title_hit,
+            CASE WHEN pv."alternateTitle" IS NOT NULL AND pv."alternateTitle" &@~ pgroonga_query_escape($1) THEN 1 ELSE 0 END AS alt_hit
+          FROM filtered f
+          JOIN "PageVersion" pv ON pv.id = f.pv_id
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           LEFT JOIN LATERAL (
@@ -64,95 +248,155 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
             LIMIT 1
           ) prev ON TRUE
-          WHERE pv."validTo" IS NULL
-            AND ($1::text IS NULL OR pv.title &@~ $1 OR pv."textContent" &@~ $1)
-            AND ($2::text[] IS NULL OR pv.tags @> $2::text[])
-            AND ($3::text[] IS NULL OR NOT (pv.tags && $3::text[]))
-            AND ($4::int IS NULL OR pv.rating >= $4)
-            AND ($5::int IS NULL OR pv.rating <= $5)
-        ),
-        limited AS (
-          SELECT * FROM base
-          ORDER BY 
-            CASE WHEN $8 = 'rating' THEN NULL END,
-            CASE WHEN $8 = 'recent' THEN NULL END,
-            CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN lower(split_part(url, '/', 4)) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
-            CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN lower(title) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
-            CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN title &@~ $1 THEN 1 ELSE 0 END) END DESC NULLS LAST,
-            CASE WHEN ($8 IS NULL OR $8 = 'relevance') THEN (
-              CASE WHEN $1 IS NOT NULL THEN score ELSE 0 END
-              + LN(1 + COALESCE("voteCount", 0)) * 0.05
-              + LN(1 + COALESCE("commentCount", 0)) * 0.03
-            ) END DESC NULLS LAST,
-            CASE WHEN $8 = 'rating' THEN rating END DESC NULLS LAST,
-            CASE WHEN $8 = 'recent' THEN "validFrom" END DESC,
-            rating DESC NULLS LAST
-          LIMIT $6::int OFFSET $7::int
         )
       `;
 
       const finalSql = wantSnippet
         ? `${baseSql}
-          SELECT l.*, l."firstPublishedAt" AS "firstRevisionAt", sn.snippet
-          FROM limited l
+          SELECT r.*, sn.snippet
+          FROM ranked r
           LEFT JOIN LATERAL (
             SELECT CASE 
-              WHEN $1 IS NOT NULL THEN array_to_string(
-                     pgroonga_snippet_html(pv."textContent", pgroonga_query_extract_keywords($1), 200), ' '
-                   )
+              WHEN $1 IS NOT NULL THEN COALESCE(
+                array_to_string(pgroonga_snippet_html(pv."alternateTitle", pgroonga_query_extract_keywords(pgroonga_query_escape($1)), 200), ' '),
+                array_to_string(pgroonga_snippet_html(pv."textContent", pgroonga_query_extract_keywords(pgroonga_query_escape($1)), 200), ' '),
+                LEFT(pv."textContent", 200)
+              )
               ELSE NULL
             END AS snippet
             FROM "PageVersion" pv
-            WHERE pv.id = l.id
+            WHERE pv.id = r.id
           ) sn ON TRUE
+          ORDER BY 
+            CASE WHEN $8 = 'rating' THEN NULL END,
+            CASE WHEN $8 = 'recent' THEN NULL END,
+            r.host_match DESC NULLS LAST,
+            r.exact_url DESC NULLS LAST,
+            r.exact_title DESC NULLS LAST,
+            r.title_hit DESC NULLS LAST,
+            r.alt_hit DESC NULLS LAST,
+            r.has_url DESC NULLS LAST,
+            r.has_title DESC NULLS LAST,
+            r.has_alt DESC NULLS LAST,
+            r.has_text DESC NULLS LAST,
+            CASE WHEN ($8 IS NULL OR $8 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
+            CASE WHEN $8 = 'rating' THEN r.rating END DESC NULLS LAST,
+            CASE WHEN $8 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
+            r.rating DESC NULLS LAST,
+            r.id DESC
+          LIMIT $6::int OFFSET $7::int
         `
         : `${baseSql}
-          SELECT l.*, l."firstPublishedAt" AS "firstRevisionAt"
-          FROM limited l
+          SELECT r.*
+          FROM ranked r
+          ORDER BY 
+            CASE WHEN $8 = 'rating' THEN NULL END,
+            CASE WHEN $8 = 'recent' THEN NULL END,
+            r.host_match DESC NULLS LAST,
+            r.exact_url DESC NULLS LAST,
+            r.exact_title DESC NULLS LAST,
+            r.title_hit DESC NULLS LAST,
+            r.alt_hit DESC NULLS LAST,
+            r.has_url DESC NULLS LAST,
+            r.has_title DESC NULLS LAST,
+            r.has_alt DESC NULLS LAST,
+            r.has_text DESC NULLS LAST,
+            CASE WHEN ($8 IS NULL OR $8 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
+            CASE WHEN $8 = 'rating' THEN r.rating END DESC NULLS LAST,
+            CASE WHEN $8 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
+            r.rating DESC NULLS LAST,
+            r.id DESC
+          LIMIT $6::int OFFSET $7::int
         `;
 
       const params = [
-        query || null,
-        tags ? (Array.isArray(tags) ? (tags as any) : [tags]) : null,
-        excludeTags ? (Array.isArray(excludeTags) ? (excludeTags as any) : [excludeTags]) : null,
+        trimmedQuery,
+        includeTagsArray,
+        excludeTagsArray,
         ratingMin || null,
         ratingMax || null,
-        limit,
-        offset,
-        orderBy
+        limitInt,
+        offsetInt,
+        orderBy,
+        candidateLimit
       ];
 
       const [{ rows }, totalRes] = await Promise.all([
         pool.query(finalSql, params),
         wantTotal
           ? pool.query(
-              `SELECT COUNT(*) AS total
-               FROM "PageVersion" pv
-               WHERE pv."validTo" IS NULL
-                 AND ($1::text IS NULL OR pv.title &@~ $1 OR pv."textContent" &@~ $1)
-                 AND ($2::text[] IS NULL OR pv.tags @> $2::text[])
-                 AND ($3::text[] IS NULL OR NOT (pv.tags && $3::text[]))
-                 AND ($4::int IS NULL OR pv.rating >= $4)
-                 AND ($5::int IS NULL OR pv.rating <= $5)`,
-              [
-                query || null,
-                tags ? (Array.isArray(tags) ? (tags as any) : [tags]) : null,
-                excludeTags ? (Array.isArray(excludeTags) ? (excludeTags as any) : [excludeTags]) : null,
-                ratingMin || null,
-                ratingMax || null
-              ]
+              `WITH url_hits AS (
+                 SELECT pv.id AS pv_id
+                 FROM "Page" p
+                 JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
+                 WHERE $1::text IS NOT NULL
+                   AND p."currentUrl" &@~ pgroonga_query_escape($1)
+               ),
+               title_hits AS (
+                 SELECT pv.id AS pv_id
+                 FROM "PageVersion" pv
+                 WHERE pv."validTo" IS NULL
+                   AND pv.title &@~ pgroonga_query_escape($1)
+               ),
+               alternate_hits AS (
+                 SELECT pv.id AS pv_id
+                 FROM "PageVersion" pv
+                 WHERE pv."validTo" IS NULL
+                   AND pv."alternateTitle" IS NOT NULL
+                   AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
+               ),
+               text_hits AS (
+                 SELECT pv.id AS pv_id
+                 FROM "PageVersion" pv
+                 WHERE pv."validTo" IS NULL
+                   AND pv."textContent" &@~ pgroonga_query_escape($1)
+               ),
+               candidates AS (
+                 SELECT pv_id FROM url_hits
+                 UNION
+                 SELECT pv_id FROM title_hits
+                 UNION
+                 SELECT pv_id FROM alternate_hits
+                 UNION
+                 SELECT pv_id FROM text_hits
+               ),
+               filtered AS (
+                 SELECT pv.id
+                 FROM "PageVersion" pv
+                 JOIN candidates c ON c.pv_id = pv.id
+                 WHERE pv."validTo" IS NULL
+                   AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+                   AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                   AND ($4::int IS NULL OR pv.rating >= $4)
+                   AND ($5::int IS NULL OR pv.rating <= $5)
+               )
+               SELECT COUNT(*) AS total FROM filtered`,
+              [trimmedQuery, includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null]
             )
           : Promise.resolve(null as any)
       ]);
 
       const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
-      // If includeDate=false, strip the firstRevisionAt to reduce payload size
       const results = rows.map((r: any) => {
+        const {
+          firstRevisionAt,
+          weight,
+          score,
+          has_url,
+          has_title,
+          has_alt,
+          has_text,
+          host_match,
+          exact_url,
+          exact_title,
+          title_hit,
+          alt_hit,
+          ...rest
+        } = r;
         if (!wantDate) {
-          const { firstRevisionAt, ...rest } = r;
           return rest;
         }
-        return r;
+        return { firstRevisionAt, ...rest };
       });
 
       res.json(total !== undefined ? { results, total } : { results });
@@ -177,13 +421,13 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           COALESCE(us."pageCount", 0) AS "pageCount"
         FROM "User" u
         LEFT JOIN "UserStats" us ON u.id = us."userId"
-        WHERE u."displayName" &@~ $1
+        WHERE u."displayName" &@~ pgroonga_query_escape($1)
         ORDER BY us."totalRating" DESC NULLS LAST
         LIMIT $2::int OFFSET $3::int
       `;
       const [rowsRes, totalRes] = await Promise.all([
         pool.query(sql, [query, limit, offset]),
-        wantTotal ? pool.query(`SELECT COUNT(*) AS total FROM "User" WHERE "displayName" &@~ $1`, [query]) : Promise.resolve(null as any)
+        wantTotal ? pool.query(`SELECT COUNT(*) AS total FROM "User" WHERE "displayName" &@~ pgroonga_query_escape($1)`, [query]) : Promise.resolve(null as any)
       ]);
       const results = rowsRes.rows;
       const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
@@ -222,12 +466,19 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
       const userCap = Math.max(0, Number(userLimit ?? ((totalLimit || 20) - pageCap)) | 0);
 
       const pageSql = `
-        WITH base AS (
+        WITH url_hits AS (
+          SELECT id
+          FROM "Page"
+          WHERE $1::text IS NOT NULL
+            AND "currentUrl" &@~ pgroonga_query_escape($1)
+        ),
+        base AS (
           SELECT 
             pv.id,
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             pv."pageId",
             pv.title,
+            pv."alternateTitle",
             p."currentUrl" AS url,
             p."firstPublishedAt" AS "firstRevisionAt",
             pv.rating,
@@ -244,8 +495,13 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM "PageVersion" pv
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          LEFT JOIN url_hits uh ON uh.id = pv."pageId"
           WHERE pv."validTo" IS NULL
-            AND (pv.title &@~ $1 OR pv."textContent" &@~ $1)
+            AND (
+              pv.title &@~ pgroonga_query_escape($1)
+              OR (pv."alternateTitle" IS NOT NULL AND pv."alternateTitle" &@~ pgroonga_query_escape($1))
+              OR uh.id IS NOT NULL
+            )
             AND ($2::text[] IS NULL OR pv.tags @> $2::text[])
             AND ($3::text[] IS NULL OR NOT (pv.tags && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
@@ -255,9 +511,14 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         ORDER BY 
           CASE WHEN $8 = 'rating' THEN NULL END,
           CASE WHEN $8 = 'recent' THEN NULL END,
+          CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN lower(split_part(url, '/', 4)) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
+          CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN lower(url) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
+          CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN lower(title) = lower($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
+          CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN title &@~ pgroonga_query_escape($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
+          CASE WHEN ($8 IS NULL OR $8 = 'relevance') AND $1 IS NOT NULL THEN (CASE WHEN "alternateTitle" IS NOT NULL AND "alternateTitle" &@~ pgroonga_query_escape($1) THEN 1 ELSE 0 END) END DESC NULLS LAST,
           CASE WHEN $8 IS NULL OR $8 = 'relevance' THEN score END DESC NULLS LAST,
           CASE WHEN $8 = 'rating' THEN rating END DESC NULLS LAST,
-          CASE WHEN $8 = 'recent' THEN "validFrom" END DESC
+          CASE WHEN $8 = 'recent' THEN COALESCE("firstRevisionAt", "validFrom") END DESC
         LIMIT $6::int OFFSET $7::int
       `;
       const pageParams = [
@@ -282,7 +543,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           pgroonga_score(u.tableoid, u.ctid) AS score
         FROM "User" u
         LEFT JOIN "UserStats" us ON u.id = us."userId"
-        WHERE u."displayName" &@~ $1
+        WHERE u."displayName" &@~ pgroonga_query_escape($1)
         ORDER BY score DESC NULLS LAST, us."totalRating" DESC NULLS LAST
         LIMIT $2::int OFFSET $3::int
       `;
@@ -290,10 +551,22 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
 
       // total counts (without LIMIT/OFFSET)
       const pageCountSql = `
+        WITH url_hits AS (
+          SELECT id
+          FROM "Page"
+          WHERE $1::text IS NOT NULL
+            AND "currentUrl" &@~ pgroonga_query_escape($1)
+        )
         SELECT COUNT(*) AS total
         FROM "PageVersion" pv
+        JOIN "Page" p ON pv."pageId" = p.id
+        LEFT JOIN url_hits uh ON uh.id = pv."pageId"
         WHERE pv."validTo" IS NULL
-          AND (pv.title &@~ $1 OR pv."textContent" &@~ $1)
+          AND (
+            pv.title &@~ pgroonga_query_escape($1)
+            OR (pv."alternateTitle" IS NOT NULL AND pv."alternateTitle" &@~ pgroonga_query_escape($1))
+            OR uh.id IS NOT NULL
+          )
           AND ($2::text[] IS NULL OR pv.tags @> $2::text[])
           AND ($3::text[] IS NULL OR NOT (pv.tags && $3::text[]))
           AND ($4::int IS NULL OR pv.rating >= $4)
@@ -302,7 +575,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
       const userCountSql = `
         SELECT COUNT(*) AS total
         FROM "User" u
-        WHERE u."displayName" &@~ $1
+        WHERE u."displayName" &@~ pgroonga_query_escape($1)
       `;
 
       const [pageRes, userRes, pageCountRes, userCountRes] = await Promise.all([
@@ -312,12 +585,13 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         pool.query(userCountSql, [query])
       ]);
 
-      const pages = (pageRes.rows || []).map((r) => ({
+      const pages = (pageRes.rows || []).map((r, index) => ({
         type: 'page' as const,
         id: r.id,
         wikidotId: r.wikidotId,
         pageId: r.pageId,
         title: r.title,
+        alternateTitle: typeof r.alternateTitle === 'string' ? r.alternateTitle : null,
         url: r.url,
         rating: r.rating,
         voteCount: r.voteCount,
@@ -331,9 +605,10 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         controversy: typeof r.controversy === 'number' ? r.controversy : null,
         firstRevisionAt: r.firstRevisionAt || null,
         textScore: typeof r.score === 'number' ? r.score : null,
-        popularityScore: typeof r.rating === 'number' ? r.rating : 0
+        popularityScore: typeof r.rating === 'number' ? r.rating : 0,
+        orderIndex: index
       }));
-      const users = (userRes.rows || []).map((r) => ({
+      const users = (userRes.rows || []).map((r, index) => ({
         type: 'user' as const,
         id: r.id,
         wikidotId: r.wikidotId,
@@ -342,7 +617,8 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         totalRating: r.totalRating ?? 0,
         pageCount: r.pageCount ?? 0,
         textScore: typeof r.score === 'number' ? r.score : null,
-        popularityScore: typeof r.totalRating === 'number' ? r.totalRating : 0
+        popularityScore: typeof r.totalRating === 'number' ? r.totalRating : 0,
+        orderIndex: index
       }));
 
       // Build merged list with a simple hybrid score
@@ -371,16 +647,27 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           break;
         case 'relevance':
         default:
-          sorted = hybrid.sort((a, b) => b.combinedScore - a.combinedScore);
+          sorted = hybrid.sort((a, b) =>
+            a.type === b.type
+              ? (a.orderIndex ?? 0) - (b.orderIndex ?? 0)
+              : a.type === 'page'
+                ? -1
+                : 1
+          );
           break;
       }
 
       const sliced = totalOffset > 0 ? sorted.slice(totalOffset, totalOffset + (totalLimit || 20)) : sorted.slice(0, (totalLimit || 20));
 
+      const sanitizedResults = sliced.map((item) => {
+        const { orderIndex, ...rest } = item as any;
+        return rest;
+      });
+
       const totalPages = Number(pageCountRes.rows?.[0]?.total || 0);
       const totalUsers = Number(userCountRes.rows?.[0]?.total || 0);
       res.json({
-        results: sliced,
+        results: sanitizedResults,
         meta: {
           counts: { pages: totalPages, users: totalUsers },
           usedCaps: { pageLimit: pageCap, userLimit: userCap },
@@ -444,5 +731,3 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
 
   return router;
 }
-
-

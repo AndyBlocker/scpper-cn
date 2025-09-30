@@ -201,7 +201,7 @@ type SiteOverviewRich = {
   votes: { total: number; upvotes: number; downvotes: number };
   revisions: { total: number };
 };
-type BasicPage = { wikidotId: number; title?: string; rating?: number; voteCount?: number; category?: string; tags?: string[]; createdAt?: string; revisionCount?: number; attributionCount?: number; url?: string; textContent?: string };
+type BasicPage = { wikidotId: number; title?: string; alternateTitle?: string; rating?: number; voteCount?: number; category?: string; tags?: string[]; createdAt?: string; revisionCount?: number; attributionCount?: number; url?: string; textContent?: string };
 type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>;
 const config = useRuntimeConfig();
 const nuxtApp = useNuxtApp();
@@ -522,5 +522,4 @@ const refreshRandomPages = async () => {
   }
 };
 </script>
-
 

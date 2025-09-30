@@ -192,7 +192,11 @@ export class PhaseCProcessor {
         const page = res.page;
 
         if (!page) {
-          await this.store.markDeletedByWikidotId(wikidotId);
+          Logger.warn('Phase C: Remote page missing, skipping deletion', {
+            url,
+            wikidotId,
+            reasons,
+          });
           success = true;
           await onComplete(wikidotId, success);
           return;

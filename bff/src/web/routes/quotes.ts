@@ -15,6 +15,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT 
           pv."wikidotId",
           pv.title,
+          pv."alternateTitle",
           pv."textContent",
           pv.rating,
           p."currentUrl" AS url
@@ -68,6 +69,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
             source: {
               wikidotId: page.wikidotId,
               title: page.title,
+              alternateTitle: page.alternateTitle,
               url: page.url,
               rating: page.rating
             }
@@ -80,6 +82,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
           source: {
             wikidotId: page.wikidotId,
             title: page.title,
+            alternateTitle: page.alternateTitle,
             url: page.url,
             rating: page.rating
           }
@@ -94,6 +97,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
         source: {
           wikidotId: page.wikidotId,
           title: page.title,
+          alternateTitle: page.alternateTitle,
           url: page.url,
           rating: page.rating
         }
@@ -114,6 +118,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT 
           pv."wikidotId",
           pv.title,
+          pv."alternateTitle",
           pv."textContent",
           pv.rating,
           p."currentUrl" AS url
@@ -149,6 +154,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
           source: {
             wikidotId: page.wikidotId,
             title: page.title,
+            alternateTitle: page.alternateTitle,
             url: page.url,
             rating: page.rating
           },
@@ -165,6 +171,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
         source: {
           wikidotId: page.wikidotId,
           title: page.title,
+          alternateTitle: page.alternateTitle,
           url: page.url,
           rating: page.rating
         }

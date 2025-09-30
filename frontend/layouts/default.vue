@@ -10,7 +10,7 @@
           <div class="flex items-center gap-4 whitespace-nowrap">
             <NuxtLink to="/" class="flex items-center gap-2 group">
               <BrandIcon class="w-8 h-8 text-neutral-900 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))] transition-colors" />
-              <span class="font-bold text-lg text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
+              <span class="hidden sm:inline font-bold text-lg text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
             </NuxtLink>
             <NuxtLink to="/ranking" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
               <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -29,6 +29,14 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
               </svg>
               <span class="hidden sm:inline">标签</span>
+            </NuxtLink>
+            <NuxtLink to="/gallery" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
+              <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="4" width="18" height="16" rx="2" ry="2" stroke-width="2" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12l2.5 3 3.5-5 4 6" />
+                <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" />
+              </svg>
+              <span class="hidden sm:inline">随机画廊</span>
             </NuxtLink>
             <NuxtLink to="/about" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
               <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -71,18 +79,29 @@
                 <div v-else>
                   <a
                     v-for="(item, index) in suggestions"
-                    :key="item.wikidotId || item.id"
-                    :href="item.type === 'user' ? `/user/${item.wikidotId}` : `/page/${item.wikidotId}`"
+                    :key="item.key"
+                    :href="item.href"
                     @click.prevent="selectSuggestion(item)"
                     @mouseenter="selectedIndex = index"
                     class="block px-4 py-2 hover:bg-[rgba(var(--accent),0.08)] dark:hover:bg-[rgba(var(--accent),0.20)] cursor-pointer transition-colors"
                     :class="{ 'bg-[rgba(var(--accent),0.08)] dark:bg-[rgba(var(--accent),0.20)]': selectedIndex === index }"
                   >
-                    <div class="flex items-center justify-between">
-                      <div class="font-medium text-sm text-neutral-800 dark:text-neutral-200 truncate">{{ item.title || item.displayName }}</div>
-                      <div class="text-xs text-neutral-500 dark:text-neutral-400 ml-2">{{ item.type || 'page' }}</div>
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="min-w-0 flex-1">
+                        <div class="font-medium text-sm text-neutral-800 dark:text-neutral-200 truncate">
+                          <span>{{ item.title }}</span>
+                          <span v-if="item.subtitle" class="text-neutral-500 dark:text-neutral-400"> - {{ item.subtitle }}</span>
+                        </div>
+                        <div
+                          v-if="item.snippet"
+                          class="mt-1 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400"
+                          v-html="item.snippet"
+                        ></div>
+                      </div>
+                      <span class="ml-2 shrink-0 rounded-full border border-[rgba(var(--accent),0.25)] bg-[rgba(var(--accent),0.08)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))] dark:border-[rgba(var(--accent),0.35)] dark:bg-[rgba(var(--accent),0.18)]">
+                        {{ item.badge }}
+                      </span>
                     </div>
-                    <div v-if="item.snippet" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1" v-html="item.snippet"></div>
                   </a>
                 </div>
               </div>
@@ -143,18 +162,29 @@
               <div v-else>
                 <a
                   v-for="(item, index) in suggestions"
-                  :key="item.wikidotId || item.id"
-                  :href="item.type === 'user' ? `/user/${item.wikidotId}` : `/page/${item.wikidotId}`"
+                  :key="item.key"
+                  :href="item.href"
                   @click.prevent="selectSuggestion(item)"
                   @mouseenter="selectedIndex = index"
                   class="block px-4 py-3 border-b border-neutral-200/70 dark:border-neutral-800/70 hover:bg-[rgba(var(--accent),0.08)] dark:hover:bg-[rgba(var(--accent),0.20)] transition-colors"
                   :class="{ 'bg-[rgba(var(--accent),0.08)] dark:bg-[rgba(var(--accent),0.20)]': selectedIndex === index }"
                 >
-                  <div class="flex items-center justify-between">
-                    <div class="font-medium text-sm text-neutral-800 dark:text-neutral-200 truncate">{{ item.title || item.displayName }}</div>
-                    <div class="text-xs text-neutral-500 dark:text-neutral-400 ml-2">{{ item.type || 'page' }}</div>
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                      <div class="font-medium text-sm text-neutral-800 dark:text-neutral-200 truncate">
+                        <span>{{ item.title }}</span>
+                        <span v-if="item.subtitle" class="text-neutral-500 dark:text-neutral-400"> - {{ item.subtitle }}</span>
+                      </div>
+                      <div
+                        v-if="item.snippet"
+                        class="mt-1 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400"
+                        v-html="item.snippet"
+                      ></div>
+                    </div>
+                    <span class="ml-2 shrink-0 rounded-full border border-[rgba(var(--accent),0.25)] bg-[rgba(var(--accent),0.08)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))] dark:border-[rgba(var(--accent),0.35)] dark:bg-[rgba(var(--accent),0.18)]">
+                      {{ item.badge }}
+                    </span>
                   </div>
-                  <div v-if="item.snippet" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1" v-html="item.snippet"></div>
                 </a>
               </div>
             </div>
@@ -188,7 +218,24 @@ const q = ref('');
 const isMobileSearchOpen = ref(false);
 const mobileInputRef = ref<HTMLInputElement | null>(null);
 const showSuggestions = ref(false);
-const suggestions = ref<any[]>([]);
+type SearchPreviewType = 'page' | 'user'
+
+interface SearchPreviewItem {
+  key: string;
+  type: SearchPreviewType;
+  title: string;
+  subtitle: string | null;
+  snippet: string | null;
+  href: string;
+  badge: string;
+}
+
+const TYPE_BADGE_LABELS: Record<SearchPreviewType, string> = {
+  page: '页面',
+  user: '用户'
+};
+
+const suggestions = ref<SearchPreviewItem[]>([]);
 const suggestionsLoading = ref(false);
 const selectedIndex = ref(-1);
 type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
@@ -274,6 +321,39 @@ function onSearch() {
 // 搜索建议功能
 let searchTimeout: NodeJS.Timeout | null = null;
 
+const normalizeSuggestion = (raw: any): SearchPreviewItem | null => {
+  if (!raw) return null;
+  const type: SearchPreviewType = raw.type === 'user' ? 'user' : 'page';
+  const primaryId = raw.wikidotId ?? raw.wikidotID ?? raw.id;
+  if (primaryId === undefined || primaryId === null) return null;
+  const key = String(primaryId);
+
+  const rawTitle = typeof raw.title === 'string' ? raw.title.trim() : '';
+  const rawDisplayName = typeof raw.displayName === 'string' ? raw.displayName.trim() : '';
+  const rawAlternate = typeof raw.alternateTitle === 'string' ? raw.alternateTitle.trim() : '';
+
+  const title = type === 'user'
+    ? (rawDisplayName || rawTitle || key)
+    : (rawTitle || rawDisplayName || rawAlternate || key);
+
+  const subtitle = type === 'page' && rawAlternate && rawAlternate !== title ? rawAlternate : null;
+  const snippet = typeof raw.snippet === 'string' && raw.snippet.trim().length > 0 ? raw.snippet : null;
+
+  const href = type === 'user'
+    ? `/user/${key}`
+    : `/page/${key}`;
+
+  return {
+    key,
+    type,
+    title,
+    subtitle,
+    snippet,
+    href,
+    badge: TYPE_BADGE_LABELS[type]
+  };
+};
+
 const handleInput = () => {
   selectedIndex.value = -1;
   
@@ -295,7 +375,10 @@ const handleInput = () => {
     
     try {
       const data = await $bff('/search/all', { params: { query, limit: 10 } });
-      suggestions.value = data.results || [];
+      const normalized = (data?.results ?? [])
+        .map(normalizeSuggestion)
+        .filter((item): item is SearchPreviewItem => !!item);
+      suggestions.value = normalized;
     } catch (error) {
       console.error('获取搜索建议失败:', error);
       suggestions.value = [];
@@ -340,8 +423,8 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 };
 
-const selectSuggestion = (item: any) => {
-  const path = item.type === 'user' ? `/user/${item.wikidotId}` : `/page/${item.wikidotId}`;
+const selectSuggestion = (item: SearchPreviewItem) => {
+  const path = item.href;
   showSuggestions.value = false;
   q.value = '';
   if (isMobileSearchOpen.value) {
