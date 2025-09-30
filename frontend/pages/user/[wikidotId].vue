@@ -361,7 +361,7 @@
                    ]">
                 <div class="flex-1 min-w-0">
                   <NuxtLink :to="`/page/${vote.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate block">
-                    {{ vote.pageTitle || 'Untitled' }}
+                    {{ composeTitle(vote.pageTitle, vote.pageAlternateTitle) || 'Untitled' }}
                   </NuxtLink>
                   <div class="text-xs text-neutral-600 dark:text-neutral-400">{{ formatRelativeTime(vote.timestamp) }}</div>
                 </div>
@@ -396,7 +396,7 @@
             <div v-for="revision in recentRevisions" :key="`${revision.timestamp}-${revision.pageWikidotId}`" 
                  class="p-2 bg-neutral-50 dark:bg-neutral-800 rounded">
               <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate block">
-                {{ revision.pageTitle || 'Untitled' }}
+                {{ composeTitle(revision.pageTitle, revision.pageAlternateTitle) || 'Untitled' }}
               </NuxtLink>
               <div class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
                 {{ formatRevisionType(revision.type) }} · {{ formatRelativeTime(revision.timestamp) }}
@@ -867,10 +867,18 @@ function formatRecordType(type: string) {
 
 // Removed inline CategoryRank to avoid hydration mismatch
 
+function composeTitle(title?: string | null, alternateTitle?: string | null) {
+  const base = typeof title === 'string' ? title.trim() : ''
+  const alt = typeof alternateTitle === 'string' ? alternateTitle.trim() : ''
+  if (alt) return base ? `${base} - ${alt}` : alt
+  return base
+}
+
 function normalizeWork(work: any) {
   return {
     wikidotId: work.wikidotId,
     title: work.title,
+    alternateTitle: work.alternateTitle,
     category: work.category,
     tags: work.tags,
     rating: work.rating,
@@ -884,4 +892,3 @@ function normalizeWork(work: any) {
   }
 }
 </script>
-

@@ -285,6 +285,13 @@ const showTagSuggestions = ref(false);
 const showExcludeTagSuggestions = ref(false);
 let tagSearchTimeout: NodeJS.Timeout | null = null;
 let excludeTagSearchTimeout: NodeJS.Timeout | null = null;
+let tagRequestSeq = 0;
+let excludeTagRequestSeq = 0;
+const suggestionStabilizeDelay = 120;
+
+const delay = (ms: number) => new Promise<void>((resolve) => {
+  setTimeout(resolve, ms);
+});
 
 // 搜索结果
 const userResults = ref<any[]>([])
@@ -307,6 +314,7 @@ function normalizePage(p: any) {
   return {
     wikidotId: p.wikidotId,
     title: p.title,
+    alternateTitle: p.alternateTitle,
     authors: p.authors,
     tags: p.tags,
     rating: p.rating,
@@ -333,12 +341,17 @@ const searchTags = () => {
   }
 
   tagSearchTimeout = setTimeout(async () => {
+    const requestId = ++tagRequestSeq;
     try {
       const resp = await bff('/search/tags', { params: { query, limit: 10 } });
+      await delay(suggestionStabilizeDelay);
+      if (requestId !== tagRequestSeq) return;
       tagSuggestions.value = resp.results || [];
     } catch (err) {
       console.error('搜索标签失败:', err);
-      tagSuggestions.value = [];
+      if (requestId === tagRequestSeq) {
+        tagSuggestions.value = [];
+      }
     }
   }, 300);
 };
@@ -355,12 +368,17 @@ const searchExcludeTags = () => {
   }
 
   excludeTagSearchTimeout = setTimeout(async () => {
+    const requestId = ++excludeTagRequestSeq;
     try {
       const resp = await bff('/search/tags', { params: { query, limit: 10 } });
+      await delay(suggestionStabilizeDelay);
+      if (requestId !== excludeTagRequestSeq) return;
       excludeTagSuggestions.value = resp.results || [];
     } catch (err) {
       console.error('搜索排除标签失败:', err);
-      excludeTagSuggestions.value = [];
+      if (requestId === excludeTagRequestSeq) {
+        excludeTagSuggestions.value = [];
+      }
     }
   }, 300);
 };

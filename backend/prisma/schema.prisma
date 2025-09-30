@@ -9,6 +9,28 @@ datasource db {
   extensions = [pgroonga]
 }
 
+enum PageVersionImageStatus {
+  PENDING
+  QUEUED
+  FETCHING
+  RESOLVED
+  FAILED
+}
+
+enum ImageAssetStatus {
+  PENDING
+  FETCHING
+  READY
+  FAILED
+}
+
+enum ImageIngestJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 model Attribution {
   id          Int         @id @default(autoincrement())
   pageVerId   Int
@@ -139,6 +161,7 @@ model PageVersion {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   category         String?
+  alternateTitle   String?
   attributionCount Int?
   attributions     Attribution[]
   stats            PageStats?
@@ -146,11 +169,73 @@ model PageVersion {
   revisions        Revision[]
   sourceVersions   SourceVersion[]
   votes            Vote[]
+  images           PageVersionImage[]
 
   @@index([pageId])
   @@index([rating])
   @@index([validTo])
   @@index([wikidotId])
+}
+
+model ImageAsset {
+  id             Int                  @id @default(autoincrement())
+  hashSha256     String?              @unique
+  perceptualHash String?
+  mimeType       String?
+  width          Int?
+  height         Int?
+  bytes          Int?
+  storagePath    String?
+  canonicalUrl   String?
+  sourceHosts    String[]             @default([])
+  status         ImageAssetStatus     @default(PENDING)
+  firstSeenAt    DateTime             @default(now())
+  lastFetchedAt  DateTime?
+  errorMessage   String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  images         PageVersionImage[]
+}
+
+model PageVersionImage {
+  id               Int                    @id @default(autoincrement())
+  pageVersionId    Int
+  originUrl        String
+  normalizedUrl    String
+  displayUrl       String?
+  status           PageVersionImageStatus @default(PENDING)
+  imageAssetId     Int?
+  extractedAt      DateTime               @default(now())
+  lastQueuedAt     DateTime?
+  lastFetchedAt    DateTime?
+  failureCount     Int                    @default(0)
+  lastError        String?
+  metadata         Json?
+  pageVersion      PageVersion            @relation(fields: [pageVersionId], references: [id], onDelete: Cascade)
+  imageAsset       ImageAsset?            @relation(fields: [imageAssetId], references: [id])
+  ingestJob        ImageIngestJob?          @relation("ImageIngestJobForImage")
+
+  @@unique([pageVersionId, normalizedUrl])
+  @@index([status])
+  @@index([imageAssetId])
+}
+
+model ImageIngestJob {
+  id                  Int                 @id @default(autoincrement())
+  pageVersionImageId  Int                 @unique
+  status              ImageIngestJobStatus @default(PENDING)
+  priority            Int                 @default(100)
+  attempts            Int                 @default(0)
+  nextRunAt           DateTime            @default(now())
+  lockedAt            DateTime?
+  lockedBy            String?
+  lastError           String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  pageVersionImage    PageVersionImage    @relation("ImageIngestJobForImage", fields: [pageVersionImageId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRunAt])
+  @@index([lockedAt])
 }
 
 model Revision {
@@ -546,4 +631,3 @@ model SiteOverviewDaily {
 
   @@index([date])
 }
-

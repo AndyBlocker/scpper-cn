@@ -17,6 +17,7 @@ interface PageSearchResult {
   wikidotId: number;
   pageId: number;
   title: string;
+  alternateTitle: string | null;
   url: string;
   rating: number | null;
   tags: string[];
@@ -67,7 +68,7 @@ export class PGroongaSearchService {
     // 构建 WHERE 条件
     const whereConditions: string[] = [
       `pv."validTo" IS NULL`,
-      `(pv.title &@~ $1 OR pv."textContent" &@~ $1)`
+      `(pv.title &@~ pgroonga_query_escape($1) OR (pv."alternateTitle" IS NOT NULL AND pv."alternateTitle" &@~ pgroonga_query_escape($1)) OR pv."textContent" &@~ pgroonga_query_escape($1))`
     ];
     const params: any[] = [query];
     let paramIndex = 2;
@@ -133,11 +134,13 @@ export class PGroongaSearchService {
         pv."wikidotId",
         pv."pageId",
         pv.title,
+        pv."alternateTitle",
         p."currentUrl" as url,
         pv.rating,
         pv.tags,
         COALESCE(
-          pgroonga_snippet_html(pv."textContent", pgroonga_query_extract_keywords($1), 200),
+          pgroonga_snippet_html(pv."alternateTitle", pgroonga_query_extract_keywords(pgroonga_query_escape($1)), 200),
+          pgroonga_snippet_html(pv."textContent", pgroonga_query_extract_keywords(pgroonga_query_escape($1)), 200),
           LEFT(pv."textContent", 200)
         ) as snippet,
         pgroonga_score(tableoid, ctid) as score
@@ -173,7 +176,7 @@ export class PGroongaSearchService {
     const countResult = await this.prisma.$queryRaw<Array<{total: bigint}>>`
       SELECT COUNT(*) as total
       FROM "User" u
-      WHERE u."displayName" &@~ ${query}
+      WHERE u."displayName" &@~ pgroonga_query_escape(${query})
     `;
     const total = Number(countResult[0].total);
 
@@ -187,7 +190,7 @@ export class PGroongaSearchService {
         COALESCE(us."pageCount", 0) as "pageCount"
       FROM "User" u
       LEFT JOIN "UserStats" us ON u.id = us."userId"
-      WHERE u."displayName" &@~ ${query}
+      WHERE u."displayName" &@~ pgroonga_query_escape(${query})
       ORDER BY us."totalRating" DESC NULLS LAST
       LIMIT ${limit} OFFSET ${offset}
     `;
@@ -228,7 +231,7 @@ export class PGroongaSearchService {
       SELECT DISTINCT title
       FROM "PageVersion"
       WHERE "validTo" IS NULL
-        AND title &@~ ${query}
+        AND title &@~ pgroonga_query_escape(${query})
         AND title IS NOT NULL
       ORDER BY 
         pgroonga_score(tableoid, ctid) DESC,

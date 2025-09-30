@@ -175,7 +175,7 @@ export class PageStore {
       });
 
       Logger.info(`✅ Marked page ${pageId} as deleted`);
-    });
+    }, { timeout: 20000 });
   }
 
   /**

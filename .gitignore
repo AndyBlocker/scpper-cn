@@ -86,7 +86,6 @@ uploads/
 backend/cache/
 
 bff/docs/
-bff/tests/
 
 .cursor/
 deploy.sh

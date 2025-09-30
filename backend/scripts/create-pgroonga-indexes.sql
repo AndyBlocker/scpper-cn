@@ -32,6 +32,11 @@ CREATE INDEX IF NOT EXISTS idx_user_displayname_pgroonga
 ON "User" 
 USING pgroonga ("displayName");
 
+-- 为 Page 表 URL 创建 PGroonga 索引
+CREATE INDEX IF NOT EXISTS idx_page_current_url_pgroonga 
+ON "Page" 
+USING pgroonga ("currentUrl");
+
 -- 输出索引创建结果
 SELECT 
     schemaname,
@@ -40,7 +45,7 @@ SELECT
     indexdef
 FROM pg_indexes
 WHERE schemaname = 'public'
-  AND tablename IN ('PageVersion', 'User')
+  AND tablename IN ('PageVersion', 'User', 'Page')
   AND (
     indexname LIKE '%pgroonga%' 
     OR indexname LIKE '%tags%'

@@ -38,6 +38,9 @@ export class CoreQueries {
         parent {
           url
         }
+        alternateTitles {
+          title
+        }
         attributions {
           type
           user {

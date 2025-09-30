@@ -3,6 +3,7 @@ import { Logger } from '../../utils/Logger.js';
 import { SourceVersionService } from '../../services/SourceVersionService.js';
 import { shouldCreateNewVersion } from './versionRules.js';
 import { AttributionService } from './AttributionService.js';
+import { PageVersionImageService } from '../../services/PageVersionImageService.js';
 
 /**
  * 页面版本操作存储类
@@ -11,10 +12,12 @@ import { AttributionService } from './AttributionService.js';
 export class PageVersionStore {
   private sourceVersionService: SourceVersionService;
   private attributionService: AttributionService;
+  private pageVersionImageService: PageVersionImageService;
 
   constructor(private prisma: PrismaClient) {
     this.sourceVersionService = new SourceVersionService(prisma);
     this.attributionService = new AttributionService(prisma);
+    this.pageVersionImageService = new PageVersionImageService(prisma);
   }
 
   /**
@@ -91,6 +94,10 @@ export class PageVersionStore {
           textContent: data.textContent
         }
       );
+    }
+
+    if (typeof data.source === 'string') {
+      await this.pageVersionImageService.syncPageVersionImages(targetVersionId, data.source);
     }
 
     // 处理归属

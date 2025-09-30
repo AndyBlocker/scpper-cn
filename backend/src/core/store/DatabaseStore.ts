@@ -528,6 +528,12 @@ export class DatabaseStore {
    * - URL reused by different wikidotId: staging shows same URL but different wikidotId → mark old page deleted
    */
   async reconcileAndMarkDeletions(): Promise<{ unseenCount: number; urlReusedCount: number }> {
+    const stagingCount = await this.prisma.pageMetaStaging.count();
+    if (stagingCount === 0) {
+      Logger.warn('Staging snapshot empty; skipping deletion reconciliation to avoid false positives');
+      return { unseenCount: 0, urlReusedCount: 0 };
+    }
+
     const unseenPages = await this.prisma.$queryRaw<Array<{ id: number; wikidotId: number; currentUrl: string }>>`
       SELECT p.id, p."wikidotId", p."currentUrl"
       FROM "Page" p
@@ -546,6 +552,18 @@ export class DatabaseStore {
         AND s."wikidotId" IS NOT NULL
         AND s."wikidotId" <> p."wikidotId"
     `;
+
+    const SAFETY_DELETE_THRESHOLD = 500; // avoid mass deletions when upstream data is suspicious
+
+    if (unseenPages.length > SAFETY_DELETE_THRESHOLD) {
+      Logger.error(`Detected ${unseenPages.length} unseen pages (> ${SAFETY_DELETE_THRESHOLD}); skipping deletion reconciliation`);
+      return { unseenCount: 0, urlReusedCount: 0 };
+    }
+
+    if (urlReusedPages.length > SAFETY_DELETE_THRESHOLD) {
+      Logger.error(`Detected ${urlReusedPages.length} URL reuse conflicts (> ${SAFETY_DELETE_THRESHOLD}); skipping deletion reconciliation`);
+      return { unseenCount: 0, urlReusedCount: 0 };
+    }
 
     let unseenCount = 0;
     for (const row of unseenPages) {

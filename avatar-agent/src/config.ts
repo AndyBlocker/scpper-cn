@@ -1,4 +1,28 @@
-import { resolve } from "node:path";
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+type EnvLoaderProcess = typeof process & {
+  loadEnvFile?: (path?: string) => Record<string, string> | undefined;
+};
+
+const maybeLoadEnvFile = (target?: string): boolean => {
+  const loader = (process as EnvLoaderProcess).loadEnvFile;
+  if (typeof loader !== 'function') return false;
+  try {
+    loader(target);
+    return true;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code === 'ENOENT') return false;
+    throw error;
+  }
+};
+
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+maybeLoadEnvFile(resolve(moduleDir, '../../.env'))
+  || maybeLoadEnvFile(resolve(moduleDir, '../.env'))
+  || maybeLoadEnvFile(resolve(process.cwd(), '.env'))
+  || maybeLoadEnvFile();
 
 function num(name: string, def: number) {
   const v = process.env[name];
@@ -44,6 +68,19 @@ export const cfg = {
 
   pruneKeepDays: num("PRUNE_KEEP_DAYS", 120),
   pruneDiskWatermark: num("PRUNE_DISK_WATERMARK", 80),
+
+  imageCache: {
+    enabled: bool("PAGE_IMAGE_WORKER_ENABLED", false),
+    databaseUrl: str("PAGE_IMAGE_DATABASE_URL", process.env.DATABASE_URL || ""),
+    assetRoot: resolve(str("PAGE_IMAGE_ROOT", "./.data/page-images")),
+    concurrency: num("PAGE_IMAGE_WORKER_CONCURRENCY", 1),
+    fetchDelayMs: num("PAGE_IMAGE_FETCH_DELAY_MS", 2500),
+    idleDelayMs: num("PAGE_IMAGE_IDLE_DELAY_MS", 5000),
+    requestTimeoutMs: num("PAGE_IMAGE_REQUEST_TIMEOUT_MS", 10000),
+    retryBaseMs: num("PAGE_IMAGE_RETRY_BASE_MS", 60000),
+    retryMaxMs: num("PAGE_IMAGE_RETRY_MAX_MS", 3600000),
+    maxBytes: num("PAGE_IMAGE_MAX_BYTES", 5 * 1024 * 1024),
+    userAgent: str("PAGE_IMAGE_USER_AGENT", "scpper-image-cache/1.0"),
+    storageMode: str("PAGE_IMAGE_STORAGE_MODE", "hash"),
+  }
 };
-
-

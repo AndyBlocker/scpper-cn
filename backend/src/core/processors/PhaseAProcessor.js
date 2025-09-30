@@ -9,6 +9,12 @@ import { Progress } from '../../utils/Progress.js';
 
 const cq = new CoreQueries();
 
+const extractAlternateTitle = (node) => {
+  if (!node || !Array.isArray(node.alternateTitles)) return null;
+  const first = node.alternateTitles.find((entry) => typeof entry?.title === 'string' && entry.title.trim().length > 0);
+  return first ? first.title.trim() : null;
+};
+
 let PHASE_A_BATCHSIZE = 100
 
 // 获取总量的查询
@@ -62,6 +68,32 @@ export class PhaseAProcessor {
 
       // Process all pages in this batch (no skipping)
       for (const { node } of edges) {
+        let currentVersionCache;
+        let currentVersionLoaded = false;
+
+        const loadCurrentVersion = async () => {
+          if (currentVersionLoaded) return currentVersionCache;
+          currentVersionLoaded = true;
+
+          if (!node.wikidotId) {
+            currentVersionCache = null;
+            return currentVersionCache;
+          }
+
+          const wikidotId = parseInt(node.wikidotId);
+          if (Number.isNaN(wikidotId)) {
+            currentVersionCache = null;
+            return currentVersionCache;
+          }
+          const page = await this.store.prisma.page.findUnique({
+            where: { wikidotId },
+            include: { versions: { where: { validTo: null }, take: 1 } }
+          });
+
+          currentVersionCache = page?.versions?.[0] ?? null;
+          return currentVersionCache;
+        };
+
         // 估算完整采集 cost，使用更准确的参数
         const estCost = PointEstimator.estimatePageCost(
           node,
@@ -95,12 +127,7 @@ export class PhaseAProcessor {
         // Best-effort attribution import in Phase A: if page exists, write attributions to current version
         if (Array.isArray(node.attributions) && node.attributions.length > 0 && node.wikidotId) {
           try {
-            const wikidotId = parseInt(node.wikidotId);
-            const page = await this.store.prisma.page.findUnique({
-              where: { wikidotId },
-              include: { versions: { where: { validTo: null }, take: 1 } }
-            });
-            const currentVersion = page?.versions?.[0];
+            const currentVersion = await loadCurrentVersion();
             if (currentVersion) {
               await this.attrService.importAttributions(currentVersion.id, node.attributions);
               await this.store.prisma.pageVersion.update({
@@ -116,12 +143,7 @@ export class PhaseAProcessor {
         // Best-effort commentCount update in Phase A: if page exists, write directly
         if (node.wikidotId && node.commentCount !== null && node.commentCount !== undefined) {
           try {
-            const wikidotId = parseInt(node.wikidotId);
-            const page = await this.store.prisma.page.findUnique({
-              where: { wikidotId },
-              include: { versions: { where: { validTo: null }, take: 1 } }
-            });
-            const currentVersion = page?.versions?.[0];
+            const currentVersion = await loadCurrentVersion();
             if (currentVersion) {
               await this.store.prisma.pageVersion.update({
                 where: { id: currentVersion.id },
@@ -132,7 +154,27 @@ export class PhaseAProcessor {
             Logger.warn('Phase A commentCount update failed', { url: node.url, err: e instanceof Error ? e.message : String(e) });
           }
         }
-        
+
+        // Update alternate title directly on the latest PageVersion when available
+        if (node.wikidotId) {
+          try {
+            const currentVersion = await loadCurrentVersion();
+            if (currentVersion && !currentVersion.isDeleted) {
+              const alternateTitle = extractAlternateTitle(node);
+              const existingAlternateTitle = currentVersion.alternateTitle ?? null;
+
+              if (alternateTitle !== existingAlternateTitle) {
+                await this.store.prisma.pageVersion.update({
+                  where: { id: currentVersion.id },
+                  data: { alternateTitle }
+                });
+              }
+            }
+          } catch (e) {
+            Logger.warn('Phase A alternateTitle update failed', { url: node.url, err: e instanceof Error ? e.message : String(e) });
+          }
+        }
+
         totalCostInBatch += estCost;
         processedCount++;
         if (bar) bar.increment(1);
@@ -203,6 +245,32 @@ export class PhaseAProcessor {
 
     // Process all pages in this test batch
     for (const { node } of edges) {
+      let currentVersionCache;
+      let currentVersionLoaded = false;
+
+      const loadCurrentVersion = async () => {
+        if (currentVersionLoaded) return currentVersionCache;
+        currentVersionLoaded = true;
+
+        if (!node.wikidotId) {
+          currentVersionCache = null;
+          return currentVersionCache;
+        }
+
+        const wikidotId = parseInt(node.wikidotId);
+        if (Number.isNaN(wikidotId)) {
+          currentVersionCache = null;
+          return currentVersionCache;
+        }
+        const page = await this.store.prisma.page.findUnique({
+          where: { wikidotId },
+          include: { versions: { where: { validTo: null }, take: 1 } }
+        });
+
+        currentVersionCache = page?.versions?.[0] ?? null;
+        return currentVersionCache;
+      };
+
       // 估算完整采集 cost，使用更准确的参数
       const estCost = PointEstimator.estimatePageCost(
         node,
@@ -237,12 +305,7 @@ export class PhaseAProcessor {
       // Best-effort commentCount update in Phase A test batch
       if (node.wikidotId && node.commentCount !== null && node.commentCount !== undefined) {
         try {
-          const wikidotId = parseInt(node.wikidotId);
-          const page = await this.store.prisma.page.findUnique({
-            where: { wikidotId },
-            include: { versions: { where: { validTo: null }, take: 1 } }
-          });
-          const currentVersion = page?.versions?.[0];
+          const currentVersion = await loadCurrentVersion();
           if (currentVersion) {
             await this.store.prisma.pageVersion.update({
               where: { id: currentVersion.id },
@@ -253,7 +316,27 @@ export class PhaseAProcessor {
           Logger.warn('Phase A commentCount update failed (test batch)', { url: node.url, err: e instanceof Error ? e.message : String(e) });
         }
       }
-      
+
+      // Update alternate title directly on the latest PageVersion when available (test mode)
+      if (node.wikidotId) {
+        try {
+          const currentVersion = await loadCurrentVersion();
+          if (currentVersion && !currentVersion.isDeleted) {
+            const alternateTitle = extractAlternateTitle(node);
+            const existingAlternateTitle = currentVersion.alternateTitle ?? null;
+
+            if (alternateTitle !== existingAlternateTitle) {
+              await this.store.prisma.pageVersion.update({
+                where: { id: currentVersion.id },
+                data: { alternateTitle }
+              });
+            }
+          }
+        } catch (e) {
+          Logger.warn('Phase A alternateTitle update failed (test batch)', { url: node.url, err: e instanceof Error ? e.message : String(e) });
+        }
+      }
+
       totalCostInBatch += estCost;
       processedCount++;
       if (bar) bar.increment(1);

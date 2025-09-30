@@ -93,8 +93,8 @@
 
             <!-- todo -->
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="12" cy="12" r="8" stroke-width="2" />
+              <svg class="w-4 h-4 text-[rgb(var(--accent))]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
               SCP作品Alternative Title展示
             </li>
@@ -118,7 +118,7 @@
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
               <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="12" cy="12" r="8" stroke-width="2" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
               图片资源获取
             </li>

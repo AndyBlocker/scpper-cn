@@ -20,6 +20,7 @@ interface PageToProcess {
   reasons: string[];
   actualRevisionCount: number;
   actualVoteCount: number;
+  stagingIsDeleted: boolean | null;
 }
 
 export class PhaseBProcessor {
@@ -101,6 +102,7 @@ export class PhaseBProcessor {
           reasons: dirtyPage.reasons,
           actualRevisionCount: actualRevCount,
           actualVoteCount: actualVoteCount,
+          stagingIsDeleted: stagingData?.isDeleted ?? null,
         });
       }
       
@@ -187,6 +189,7 @@ export class PhaseBProcessor {
     
     let savedCount = 0;
     let deletedCount = 0;
+    let skippedCount = 0;
     const CHUNK_SIZE = 50;
     
     for (let i = 0; i < bucket.length; i += CHUNK_SIZE) {
@@ -197,8 +200,26 @@ export class PhaseBProcessor {
         await this.store.prisma.$transaction(async (tx) => {
           for (const page of chunk) {
             const alias = aliasByUrl.get(page.url);
-            const pageData = res[alias!];
-            
+            const pageData = alias ? res[alias] : undefined;
+            const flaggedByStaging = page.stagingIsDeleted === true;
+            const flaggedByReason = page.reasons.includes('page_deleted');
+
+            if (!pageData) {
+              if (flaggedByStaging || flaggedByReason) {
+                await this.store.markDeletedByWikidotId(page.wikidotId);
+                deletedCount++;
+              } else {
+                Logger.warn('Phase B: Skipping deletion for missing remote page data', {
+                  url: page.url,
+                  wikidotId: page.wikidotId,
+                  reasons: page.reasons,
+                });
+                await this.store.clearDirtyFlag(page.wikidotId, 'B');
+                skippedCount++;
+              }
+              continue;
+            }
+
             if (pageData) {
               const revisionsCount = pageData.revisions?.edges?.length || 0;
               const votesCount = pageData.fuzzyVoteRecords?.edges?.length || 0;
@@ -220,9 +241,6 @@ export class PhaseBProcessor {
                 await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons);
               }
               savedCount++;
-            } else {
-              await this.store.markDeletedByWikidotId(page.wikidotId);
-              deletedCount++;
             }
           }
         }, { 
@@ -234,7 +252,26 @@ export class PhaseBProcessor {
         for (const page of chunk) {
           try {
             const alias = aliasByUrl.get(page.url);
-            const pageData = res[alias!];
+            const pageData = alias ? res[alias] : undefined;
+            const flaggedByStaging = page.stagingIsDeleted === true;
+            const flaggedByReason = page.reasons.includes('page_deleted');
+
+            if (!pageData) {
+              if (flaggedByStaging || flaggedByReason) {
+                await this.store.markDeletedByWikidotId(page.wikidotId);
+                deletedCount++;
+              } else {
+                Logger.warn('Phase B: Skipping deletion for missing remote page data (retry path)', {
+                  url: page.url,
+                  wikidotId: page.wikidotId,
+                  reasons: page.reasons,
+                });
+                await this.store.clearDirtyFlag(page.wikidotId, 'B');
+                skippedCount++;
+              }
+              continue;
+            }
+
             if (pageData) {
               const revisionsCount = pageData.revisions?.edges?.length || 0;
               const votesCount = pageData.fuzzyVoteRecords?.edges?.length || 0;
@@ -254,9 +291,6 @@ export class PhaseBProcessor {
                 await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons);
               }
               savedCount++;
-            } else {
-              await this.store.markDeletedByWikidotId(page.wikidotId);
-              deletedCount++;
             }
           } catch (individualError) {
             Logger.error(`❌ Failed to process individual page ${page.url}:`, individualError);
@@ -271,8 +305,8 @@ export class PhaseBProcessor {
       }
     }
 
-    const totalProcessedInBatch = savedCount + deletedCount;
-    Logger.info(`✅ Batch ${bucketNumber} completed: ${savedCount} saved, ${deletedCount} deleted`);
+    const totalProcessedInBatch = savedCount + deletedCount + skippedCount;
+    Logger.info(`✅ Batch ${bucketNumber} completed: ${savedCount} saved, ${deletedCount} deleted, ${skippedCount} skipped`);
     
     return totalProcessedInBatch;
   }
