@@ -189,6 +189,21 @@
       </div>
 
       
+      <!-- Activity Heatmap -->
+      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-4">
+          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">过去一年活跃热力图</h3>
+          <span class="text-xs text-neutral-500 dark:text-neutral-400">绿色越深代表当天的投票与创作更多</span>
+        </div>
+        <UserActivityHeatmap
+          :records="activityHeatmapRecords"
+          :requested-range="activityHeatmapRange"
+          :pending="userDailyStatsPending"
+          :error="userDailyStatsError"
+        />
+      </div>
+
+      
       <!-- Works Tabs -->
       <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900 shadow-sm">
         <div class="border-b border-neutral-200 dark:border-neutral-800">
@@ -445,6 +460,21 @@ import { computed, ref, watch } from 'vue'
 declare const useAsyncData: any
 declare const useNuxtApp: any
 declare const useRoute: any
+declare const useState: any
+
+type UserDailyStatRecord = {
+  date: string;
+  votesCast?: number | null;
+  pagesCreated?: number | null;
+  revisions?: number | null;
+  lastActivity?: string | null;
+};
+
+type HeatmapRange = {
+  startIso: string;
+  endIso: string;
+};
+
 // 简易调试开关（可通过 window.__DEV_DEBUG__ = true 打开）
 // @ts-ignore
 const __DEV_DEBUG__ = typeof window !== 'undefined' && (window as any).__DEV_DEBUG__ === true
@@ -452,6 +482,11 @@ const route = useRoute();
 const {$bff} = useNuxtApp();
 
 const wikidotId = computed(() => route.params.wikidotId as string);
+const activityHeatmapRange = useState<HeatmapRange>(`user-activity-range-${wikidotId.value}`, computeHeatmapFetchRange);
+
+watch(() => wikidotId.value, () => {
+  activityHeatmapRange.value = computeHeatmapFetchRange();
+});
 const activeTab = ref('all');
 const currentPage = ref(1);
 const categoryView = ref<'list'|'radar'>('list')
@@ -674,6 +709,32 @@ const { data: ratingHistory } = await useAsyncData(
   { watch: [() => route.params.wikidotId] }
 );
 
+const { data: userDailyStats, pending: userDailyStatsPending, error: userDailyStatsError } = await useAsyncData(
+  () => `user-daily-stats-${wikidotId.value}`,
+  async () => {
+    const id = user.value?.id;
+    if (!id) return [];
+    const range = activityHeatmapRange.value;
+    if (!range?.startIso || !range?.endIso) return [];
+    return await $bff(`/stats/users/${id}/daily`, {
+      params: {
+        startDate: range.startIso,
+        endDate: range.endIso,
+        limit: '400'
+      }
+    });
+  },
+  { watch: [() => user.value?.id, () => activityHeatmapRange.value] }
+);
+
+const activityHeatmapRecords = computed<UserDailyStatRecord[]>(() => {
+  if (!Array.isArray(userDailyStats.value)) return [];
+  return (userDailyStats.value as UserDailyStatRecord[]).map((record) => ({
+    ...record,
+    revisions: typeof record.revisions === 'number' ? record.revisions : Number(record.revisions ?? 0)
+  }));
+});
+
 // Precise tab counts from BFF (fallback to local if unavailable)
 const { data: tabCounts } = await useAsyncData(
   () => `user-tab-counts-${wikidotId.value}`,
@@ -804,6 +865,22 @@ watch(workTabs, (tabs) => {
 })
 
 // Helper functions
+function computeHeatmapFetchRange(): HeatmapRange {
+  const end = new Date();
+  end.setUTCHours(0, 0, 0, 0);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 364);
+  return {
+    startIso: formatDateParam(start),
+    endIso: formatDateParam(end)
+  };
+}
+
+function formatDateParam(date: Date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+
 function formatDate(dateStr: string) {
   if (!dateStr) return 'N/A';
   const date = new Date(dateStr);

@@ -30,10 +30,16 @@ jest.mock('pg', () => {
 				{ date: '2025-08-21', votesUp: 15, votesDown: 4, totalVotes: 19, uniqueVoters: 18, revisions: 0 }
 			];
 		}
-		if (sql.includes('FROM "UserDailyStats"')) {
+		if (sql.includes('FROM "Vote"') && sql.includes('"lastVote"')) {
 			return [
-				{ date: '2025-08-20', votesCast: 5, pagesCreated: 0, lastActivity: '2025-08-20T10:00:00Z' },
-				{ date: '2025-08-21', votesCast: 7, pagesCreated: 1, lastActivity: '2025-08-21T09:00:00Z' }
+				{ date: '2025-08-21', votesCast: 7, lastVote: '2025-08-21T11:00:00Z' },
+				{ date: '2025-08-20', votesCast: 5, lastVote: '2025-08-20T10:00:00Z' }
+			];
+		}
+		if (sql.includes('FROM "Revision"') && sql.includes('"revisionCount"')) {
+			return [
+				{ date: '2025-08-21', revisionCount: 3, pagesCreated: 1, lastRevision: '2025-08-21T09:30:00Z' },
+				{ date: '2025-08-20', revisionCount: 2, pagesCreated: 0, lastRevision: '2025-08-20T08:45:00Z' }
 			];
 		}
 		if (sql.includes('FROM "TrendingStats"')) {
@@ -99,6 +105,7 @@ describe('Aggregate/Users/Stats routes', () => {
 		const app = await createServer();
 		const res = await request(app).get('/stats/users/1/daily?limit=2').expect(200);
 		expect(res.body[0]).toHaveProperty('votesCast');
+		expect(res.body[0]).toHaveProperty('revisions');
 	});
 
 	test('GET /stats/trending returns trending list', async () => {
@@ -113,5 +120,3 @@ describe('Aggregate/Users/Stats routes', () => {
 		expect(res.body).toHaveProperty('payload');
 	});
 });
-
-
