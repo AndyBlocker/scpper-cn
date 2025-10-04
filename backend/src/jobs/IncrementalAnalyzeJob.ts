@@ -209,19 +209,23 @@ export class IncrementalAnalyzeJob {
       // 获取变更集（受影响的 pageVersionId）
       const changeSet = await this.getChangeSet(taskName, forceFullAnalysis);
       
-      if (changeSet.length === 0 && !forceFullAnalysis) {
-        const alwaysRunTasks = new Set([
-          'site_overview_daily',
-          'category_benchmarks',
-          'materialized_views',
-          'series_stats',
-          'trending_stats',
-        ]);
-        if (!alwaysRunTasks.has(taskName)) {
-          console.log(`⏭️ Task ${taskName}: No changes detected, skipping...`);
-          return;
-        }
+    if (changeSet.length === 0 && !forceFullAnalysis) {
+      const alwaysRunTasks = new Set([
+        'site_overview_daily',
+        'category_benchmarks',
+        'materialized_views',
+        'series_stats',
+        'trending_stats',
+      ]);
+      if (taskName === 'site_stats') {
+        await this.refreshSiteStatsTimestamp();
+        return;
       }
+      if (!alwaysRunTasks.has(taskName)) {
+        console.log(`⏭️ Task ${taskName}: No changes detected, skipping...`);
+        return;
+      }
+    }
 
       console.log(`🔍 Task ${taskName}: Processing ${changeSet.length} changed page versions`);
 
@@ -966,6 +970,36 @@ export class IncrementalAnalyzeJob {
     `;
 
     console.log('✅ Site statistics updated');
+  }
+
+  /**
+   * Refresh SiteStats.updatedAt when no changes occurred but we still ran the scheduler.
+   */
+  private async refreshSiteStatsTimestamp() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const updatedToday = await this.prisma.$executeRaw<number>`
+      UPDATE "SiteStats"
+      SET "updatedAt" = now()
+      WHERE date = ${today}::date
+    `;
+
+    if (!updatedToday) {
+      await this.prisma.$executeRaw`
+        UPDATE "SiteStats" AS s
+        SET "updatedAt" = now()
+        FROM (
+          SELECT date
+          FROM "SiteStats"
+          ORDER BY date DESC
+          LIMIT 1
+        ) latest
+        WHERE s.date = latest.date
+      `;
+    }
+
+    console.log('⏱️ Site statistics timestamp refreshed (no data changes)');
   }
 
   /**

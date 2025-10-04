@@ -12,10 +12,9 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
       },
-      cron_restart: '0 */2 * * *',
+      cron_restart: '0 * * * *',
       watch: false,
     },
   ],
 }
-
 

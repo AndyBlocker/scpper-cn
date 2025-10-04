@@ -1,11 +1,13 @@
 // @ts-ignore JS module without types
 // @ts-ignore JS module without types
+import type { PrismaClient } from '@prisma/client';
 import { PhaseAProcessor } from '../core/processors/PhaseAProcessor.js';
 import { PhaseBProcessor } from '../core/processors/PhaseBProcessor.js';
 import { PhaseCProcessor } from '../core/processors/PhaseCProcessor.js';
 import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 import ora from 'ora';
 import { DatabaseStore } from '../core/store/DatabaseStore.js';
+import { getPrismaClient } from '../utils/db-connection.js';
 
 type SyncOptions = {
   full?: boolean;
@@ -13,6 +15,25 @@ type SyncOptions = {
   concurrency?: string;
   testMode?: boolean;
 };
+
+const SYNC_LOCK_KEY = 'scpper-sync-global';
+
+async function acquireSyncLock(prisma: PrismaClient): Promise<boolean> {
+  const rows = await prisma.$queryRaw<Array<{ locked: boolean }>>`
+    SELECT pg_try_advisory_lock(hashtext(${SYNC_LOCK_KEY})) AS locked
+  `;
+  return Boolean(rows[0]?.locked);
+}
+
+async function releaseSyncLock(prisma: PrismaClient): Promise<void> {
+  try {
+    await prisma.$executeRaw`
+      SELECT pg_advisory_unlock(hashtext(${SYNC_LOCK_KEY}))
+    `;
+  } catch (err) {
+    console.warn('⚠️ Failed to release sync advisory lock:', err);
+  }
+}
 
 export async function sync({ 
   full, 
@@ -22,8 +43,16 @@ export async function sync({
 }: SyncOptions) {
   const startTime = Date.now();
   const results: { phaseA?: { totalScanned: number; elapsedTime: number; speed: string; queueStats: any } } = {};
+  const prisma = getPrismaClient();
+  let lockHeld = false;
 
   try {
+    lockHeld = await acquireSyncLock(prisma);
+    if (!lockHeld) {
+      console.warn('⚠️ Sync skipped because another run is still in progress.');
+      return { skipped: true };
+    }
+
     // 如果只运行analyze阶段
     if (phase === 'analyze') {
       console.log('📊 Running Analysis Only...');
@@ -109,6 +138,10 @@ export async function sync({
   } catch (error) {
     console.error('❌ Synchronization failed:', error);
     throw error;
+  } finally {
+    if (lockHeld) {
+      await releaseSyncLock(prisma);
+    }
   }
 }
 
