@@ -10,6 +10,7 @@ import { validateUserStats } from '../jobs/ValidationJob.js';
 import { Logger } from '../utils/Logger.js';
 import { PageVersionImageService } from '../services/PageVersionImageService.js';
 import { showImagesProgress } from './images-progress.js';
+import { countComponentIncludeUsage } from './include-usage.js';
 
 const program = new Command();
 
@@ -185,6 +186,14 @@ program
   .option('--json', '以 JSON 格式输出结果')
   .action(async (options) => {
     await showImagesProgress({ json: Boolean(options.json) });
+  });
+
+program
+  .command('include-usage')
+  .description('统计 [[include :site:components]] 的使用次数（缺省站点视为 scp-wiki-cn）')
+  .option('--default-site <text>', '当缺少站点名时使用的默认站点', 'scp-wiki-cn')
+  .action(async (options) => {
+    await countComponentIncludeUsage({ defaultSite: options.defaultSite });
   });
 
 // Global error handlers for robust CLI processes
