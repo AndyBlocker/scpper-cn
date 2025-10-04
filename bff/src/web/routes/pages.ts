@@ -100,9 +100,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         pv."alternateTitle",
         pv.category,
         pv."wikidotId"
-      FROM "PageVersion"
-      WHERE "pageId" = $1 AND "isDeleted" = false
-      ORDER BY "validFrom" DESC NULLS LAST, id DESC
+      FROM "PageVersion" pv
+      WHERE pv."pageId" = $1 AND pv."isDeleted" = false
+      ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC
       LIMIT 1
     `;
 
@@ -141,6 +141,29 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     }
     return merged;
   }
+
+  const selectLatestPageVersion = async (whereClause: string, params: unknown[]): Promise<any | null> => {
+    const sql = `
+      SELECT
+        pv.id AS "pageVersionId",
+        p."wikidotId" AS "pageWikidotId",
+        p."currentUrl" AS url,
+        pv.*,
+        CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
+      FROM "PageVersion" pv
+      JOIN "Page" p ON pv."pageId" = p.id
+      WHERE ${whereClause}
+      ORDER BY pv."validTo" IS NULL DESC, pv."validFrom" DESC NULLS LAST, pv.id DESC
+      LIMIT 1
+    `;
+    const { rows } = await pool.query(sql, params);
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    if (!row.wikidotId && row.pageWikidotId) {
+      row.wikidotId = row.pageWikidotId;
+    }
+    return row;
+  };
 
   interface PageContext {
     pageId: number;
@@ -287,22 +310,13 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const { url } = req.query as Record<string, string>;
       if (!url) return res.status(400).json({ error: 'url is required' });
-      const sql = `
-        SELECT 
-          COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
-          p."currentUrl" AS url,
-          pv.id AS "pageVersionId",
-          pv.*,
-          CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
-        FROM "PageVersion" pv
-        JOIN "Page" p ON pv."pageId" = p.id
-        WHERE pv."validTo" IS NULL AND p."currentUrl" = $1
-        LIMIT 1
-      `;
-      const { rows } = await pool.query(sql, [url]);
-      if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-      const row = rows[0];
+      const row = await selectLatestPageVersion('p."currentUrl" = $1', [url]);
+      if (!row) return res.status(404).json({ error: 'not_found' });
       const merged = await mergeDeletedWithLatestLiveVersion(row);
+      if (!merged.wikidotId && row.pageWikidotId) {
+        merged.wikidotId = row.pageWikidotId;
+      }
+      delete merged.pageWikidotId;
       res.json(merged);
     } catch (err) {
       next(err);
@@ -314,22 +328,13 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const { wikidotId } = req.query as Record<string, string>;
       if (!wikidotId) return res.status(400).json({ error: 'wikidotId is required' });
-      const sql = `
-        SELECT 
-          COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
-          p."currentUrl" AS url,
-          pv.id AS "pageVersionId",
-          pv.*,
-          CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
-        FROM "PageVersion" pv
-        JOIN "Page" p ON pv."pageId" = p.id
-        WHERE pv."validTo" IS NULL AND p."wikidotId" = $1
-        LIMIT 1
-      `;
-      const { rows } = await pool.query(sql, [wikidotId]);
-      if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-      const row = rows[0];
+      const row = await selectLatestPageVersion('p."wikidotId" = $1', [wikidotId]);
+      if (!row) return res.status(404).json({ error: 'not_found' });
       const merged = await mergeDeletedWithLatestLiveVersion(row);
+      if (!merged.wikidotId && row.pageWikidotId) {
+        merged.wikidotId = row.pageWikidotId;
+      }
+      delete merged.pageWikidotId;
       res.json(merged);
     } catch (err) {
       next(err);

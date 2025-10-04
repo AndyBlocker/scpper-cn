@@ -331,18 +331,88 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 		try {
 			const { id } = req.params as Record<string, string>;
 			const { startDate, endDate, limit = '100', offset = '0' } = req.query as Record<string, string>;
-			const sql = `
-				SELECT date, "votes_cast" AS "votesCast", "pages_created" AS "pagesCreated",
-				       "last_activity" AS "lastActivity"
-				FROM "UserDailyStats"
-				WHERE "userId" = $1::int
-				  AND ($2::date IS NULL OR date >= $2::date)
-				  AND ($3::date IS NULL OR date <= $3::date)
-				ORDER BY date DESC
-				LIMIT $4::int OFFSET $5::int
+			const limitInt = Math.max(0, Math.min(parseInt(limit, 10) || 100, 1000));
+			const offsetInt = Math.max(0, parseInt(offset, 10) || 0);
+
+			const votesSql = `
+				SELECT date(v."timestamp") AS date,
+				       COUNT(*)::int AS "votesCast",
+				       MAX(v."timestamp") AS "lastVote"
+				FROM "Vote" v
+				WHERE v."userId" = $1::int
+				  AND ($2::date IS NULL OR date(v."timestamp") >= $2::date)
+				  AND ($3::date IS NULL OR date(v."timestamp") <= $3::date)
+				GROUP BY date(v."timestamp")
 			`;
-			const { rows } = await pool.query(sql, [id, startDate || null, endDate || null, limit, offset]);
-			res.json(rows);
+			const revisionsSql = `
+				SELECT date(r."timestamp") AS date,
+				       COUNT(*)::int AS "revisionCount",
+				       COUNT(*) FILTER (WHERE r.type = 'PAGE_CREATED')::int AS "pagesCreated",
+				       MAX(r."timestamp") AS "lastRevision"
+				FROM "Revision" r
+				WHERE r."userId" = $1::int
+				  AND ($2::date IS NULL OR date(r."timestamp") >= $2::date)
+				  AND ($3::date IS NULL OR date(r."timestamp") <= $3::date)
+				GROUP BY date(r."timestamp")
+			`;
+
+			const [votesRes, revisionsRes] = await Promise.all([
+				pool.query(votesSql, [id, startDate || null, endDate || null]),
+				pool.query(revisionsSql, [id, startDate || null, endDate || null])
+			]);
+
+			const merged = new Map<string, {
+				date: string;
+				votesCast: number;
+				pagesCreated: number;
+				revisions: number;
+				lastActivity: Date | null;
+			}>();
+
+			for (const row of votesRes.rows) {
+				const key = formatDateKey(row.date);
+				if (!key) continue;
+				const existing = merged.get(key) ?? {
+					date: key,
+					votesCast: 0,
+					pagesCreated: 0,
+					revisions: 0,
+					lastActivity: null
+				};
+				existing.votesCast = Number(row.votesCast || 0);
+				const lastVote = toDate(row.lastVote);
+				if (lastVote && (!existing.lastActivity || lastVote > existing.lastActivity)) {
+					existing.lastActivity = lastVote;
+				}
+				merged.set(key, existing);
+			}
+
+			for (const row of revisionsRes.rows) {
+				const key = formatDateKey(row.date);
+				if (!key) continue;
+				const existing = merged.get(key) ?? {
+					date: key,
+					votesCast: 0,
+					pagesCreated: 0,
+					revisions: 0,
+					lastActivity: null
+				};
+				existing.pagesCreated = Number(row.pagesCreated || 0);
+				existing.revisions = Number(row.revisionCount || 0);
+				const lastRevision = toDate(row.lastRevision);
+				if (lastRevision && (!existing.lastActivity || lastRevision > existing.lastActivity)) {
+					existing.lastActivity = lastRevision;
+				}
+				merged.set(key, existing);
+			}
+
+			const sorted = Array.from(merged.values()).sort((a, b) => (a.date < b.date ? 1 : -1));
+			const sliced = sorted.slice(offsetInt, offsetInt + limitInt).map((row) => ({
+				...row,
+				lastActivity: row.lastActivity ? row.lastActivity.toISOString() : null
+			}));
+
+			res.json(sliced);
 		} catch (err) {
 			next(err);
 		}
@@ -512,4 +582,24 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 	return router;
 }
 
+function formatDateKey(input: unknown): string {
+	if (!input) return '';
+	if (typeof input === 'string') {
+		return input.length >= 10 ? input.slice(0, 10) : input;
+	}
+	if (input instanceof Date) {
+		const date = new Date(input.getTime());
+		date.setUTCHours(0, 0, 0, 0);
+		return date.toISOString().slice(0, 10);
+	}
+	return String(input);
+}
 
+function toDate(value: unknown): Date | null {
+	if (!value) return null;
+	if (value instanceof Date) {
+		return Number.isNaN(value.getTime()) ? null : value;
+	}
+	const parsed = new Date(value as string);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}

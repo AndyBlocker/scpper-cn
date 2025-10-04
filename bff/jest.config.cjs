@@ -4,8 +4,10 @@ module.exports = {
   testMatch: ['**/tests/**/*.test.ts'],
   testPathIgnorePatterns: ['/node_modules/'],
   moduleNameMapper: {
-    '^\./web/router\.js$': '<rootDir>/src/web/router.ts',
-    '^\./routes/(.*)\.js$': '<rootDir>/src/web/routes/$1.ts'
+    '^\\./web/router\\.js$': '<rootDir>/src/web/router.ts',
+    '^\\./routes/(.*)\\.js$': '<rootDir>/src/web/routes/$1.ts',
+    '^\\./pageImagesConfig\\.js$': '<rootDir>/src/web/pageImagesConfig.ts',
+    '^\\.\\./pageImagesConfig\\.js$': '<rootDir>/src/web/pageImagesConfig.ts'
   }
 };
 
