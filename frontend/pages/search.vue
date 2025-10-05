@@ -64,19 +64,33 @@
                     </button>
                   </div>
                 </div>
-                <div v-if="searchForm.includeTags.length > 0" class="flex flex-wrap gap-2 mt-2">
-                  <span 
-                    v-for="tag in searchForm.includeTags" 
-                    :key="tag"
-                    class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-sm"
-                  >
-                    #{{ tag }}
-                    <button @click="removeIncludeTag(tag)" type="button" class="hover:text-blue-800 dark:hover:text-blue-300">
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                      </svg>
-                    </button>
-                  </span>
+                <label class="mt-2 flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400 select-none">
+                  <input
+                    id="only-include-tags"
+                    v-model="searchForm.onlyIncludeTags"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-neutral-300 dark:border-neutral-600 text-[rgb(var(--accent))] focus:ring-[rgb(var(--accent))]"
+                  />
+                  <span>仅包含</span>
+                </label>
+                <div v-if="searchForm.includeTags.length > 0" class="mt-2 space-y-1">
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">
+                    {{ searchForm.onlyIncludeTags ? '仅包含这些tag' : '包含这些tag' }}
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <span 
+                      v-for="tag in searchForm.includeTags" 
+                      :key="tag"
+                      class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-sm"
+                    >
+                      #{{ tag }}
+                      <button @click="removeIncludeTag(tag)" type="button" class="hover:text-blue-800 dark:hover:text-blue-300">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                      </button>
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -271,6 +285,7 @@ const searchForm = ref({
   query: '',
   includeTags: [] as string[],
   excludeTags: [] as string[],
+  onlyIncludeTags: false,
   ratingMin: '',
   ratingMax: '',
   orderBy: 'relevance'
@@ -432,6 +447,7 @@ const clearForm = () => {
     query: '',
     includeTags: [],
     excludeTags: [],
+    onlyIncludeTags: false,
     ratingMin: '',
     ratingMax: '',
     orderBy: 'relevance'
@@ -500,6 +516,7 @@ const performAdvancedSearch = () => {
   
   if (query) searchParams.query = query;
   if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
+  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
   if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
   if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
   if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
@@ -514,7 +531,7 @@ const initializeFromQuery = () => {
   const query = route.query;
   
   // 检查是否是高级搜索
-  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax || (query.orderBy && query.orderBy !== 'relevance') || query.advanced;
+  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax || (query.orderBy && query.orderBy !== 'relevance') || query.advanced || String(query.onlyIncludeTags || '').toLowerCase() === 'true';
   
   if (hasAdvancedParams || !query.q) {
     showAdvanced.value = true;
@@ -523,6 +540,7 @@ const initializeFromQuery = () => {
     searchForm.value.query = String((query as any).query ?? query.q ?? '');
     searchForm.value.includeTags = query.tags ? (Array.isArray(query.tags) ? query.tags as string[] : [query.tags as string]) : [];
     searchForm.value.excludeTags = query.excludeTags ? (Array.isArray(query.excludeTags) ? query.excludeTags as string[] : [query.excludeTags as string]) : [];
+    searchForm.value.onlyIncludeTags = ['true', '1', 'yes'].includes(String(query.onlyIncludeTags || '').toLowerCase());
     searchForm.value.ratingMin = String(query.ratingMin || '');
     searchForm.value.ratingMax = String(query.ratingMax || '');
     searchForm.value.orderBy = String(query.orderBy || 'relevance');
@@ -571,6 +589,7 @@ const performSearch = async () => {
   const searchParams: any = {};
   if (searchForm.value.query) searchParams.query = searchForm.value.query;
   if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
+  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
   if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
   if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
   if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
@@ -599,6 +618,7 @@ watch(userPageIndex, () => {
   const searchParams: any = {};
   if (searchForm.value.query) searchParams.query = searchForm.value.query;
   if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
+  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
   if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
   if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
   if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
@@ -613,6 +633,7 @@ watch(pagePageIndex, () => {
   const searchParams: any = {};
   if (searchForm.value.query) searchParams.query = searchForm.value.query;
   if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
+  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
   if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
   if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
   if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
