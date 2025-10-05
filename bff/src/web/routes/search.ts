@@ -16,6 +16,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         excludeTags,
         ratingMin,
         ratingMax,
+        onlyIncludeTags,
         orderBy = 'relevance',
         includeTotal = 'true',
         includeSnippet = 'true',
@@ -42,6 +43,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
       const excludeTagsArray = excludeTags
         ? (Array.isArray(excludeTags) ? (excludeTags as string[]) : [excludeTags as string])
         : null;
+      const enforceExactTags = ['true', '1', 'yes'].includes(String(onlyIncludeTags || '').toLowerCase()) && !!(includeTagsArray && includeTagsArray.length > 0);
 
       if (!hasQuery) {
       const baseSql = `
@@ -80,6 +82,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
               AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
               AND ($3::int IS NULL OR pv.rating >= $3)
               AND ($4::int IS NULL OR pv.rating <= $4)
+              AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $1::text[])
           )
         `;
 
@@ -87,12 +90,12 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           SELECT b.*
           FROM base b
           ORDER BY 
-            CASE WHEN $5 = 'rating' THEN b.rating END DESC NULLS LAST,
-            CASE WHEN $5 = 'recent' THEN COALESCE(b."firstRevisionAt", b."validFrom") END DESC,
+            CASE WHEN $6 = 'rating' THEN b.rating END DESC NULLS LAST,
+            CASE WHEN $6 = 'recent' THEN COALESCE(b."firstRevisionAt", b."validFrom") END DESC,
             b.rating DESC NULLS LAST,
             b."firstRevisionAt" DESC NULLS LAST,
             b.id DESC
-          LIMIT $6::int OFFSET $7::int
+          LIMIT $7::int OFFSET $8::int
         `;
 
         const params = [
@@ -100,6 +103,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           excludeTagsArray,
           ratingMin || null,
           ratingMax || null,
+          enforceExactTags,
           orderBy,
           limitInt,
           offsetInt
@@ -115,8 +119,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                   AND ($1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $1::text[])
                   AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
                   AND ($3::int IS NULL OR pv.rating >= $3)
-                  AND ($4::int IS NULL OR pv.rating <= $4)`,
-                [includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null]
+                  AND ($4::int IS NULL OR pv.rating <= $4)
+                  AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $1::text[])`,
+                [includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null, enforceExactTags]
               )
             : Promise.resolve(null as any)
         ]);
@@ -147,7 +152,8 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
-          LIMIT $9::int
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+          LIMIT $10::int
         ),
         title_hits AS (
           SELECT pv.id AS pv_id,
@@ -161,8 +167,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
           ORDER BY score DESC
-          LIMIT $9::int
+          LIMIT $10::int
         ),
         alternate_hits AS (
           SELECT pv.id AS pv_id,
@@ -177,8 +184,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
           ORDER BY score DESC
-          LIMIT $9::int
+          LIMIT $10::int
         ),
         text_hits AS (
           SELECT pv.id AS pv_id,
@@ -192,8 +200,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
           ORDER BY score DESC
-          LIMIT $9::int
+          LIMIT $10::int
         ),
         candidates AS (
           SELECT * FROM url_hits
@@ -220,6 +229,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
           GROUP BY c.pv_id
         ),
         ranked AS (
@@ -292,8 +302,8 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
               AND $1 IS NOT NULL
           ) sn ON TRUE
           ORDER BY 
-            CASE WHEN $8 = 'rating' THEN NULL END,
-            CASE WHEN $8 = 'recent' THEN NULL END,
+            CASE WHEN $9 = 'rating' THEN NULL END,
+            CASE WHEN $9 = 'recent' THEN NULL END,
             r.host_match DESC NULLS LAST,
             r.exact_url DESC NULLS LAST,
             r.exact_title DESC NULLS LAST,
@@ -303,19 +313,19 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             r.has_title DESC NULLS LAST,
             r.has_alt DESC NULLS LAST,
             r.has_text DESC NULLS LAST,
-            CASE WHEN ($8 IS NULL OR $8 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
-            CASE WHEN $8 = 'rating' THEN r.rating END DESC NULLS LAST,
-            CASE WHEN $8 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
+            CASE WHEN ($9 IS NULL OR $9 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
+            CASE WHEN $9 = 'rating' THEN r.rating END DESC NULLS LAST,
+            CASE WHEN $9 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
             r.rating DESC NULLS LAST,
             r.id DESC
-          LIMIT $6::int OFFSET $7::int
+          LIMIT $7::int OFFSET $8::int
         `
         : `${baseSql}
           SELECT r.*
           FROM ranked r
           ORDER BY 
-            CASE WHEN $8 = 'rating' THEN NULL END,
-            CASE WHEN $8 = 'recent' THEN NULL END,
+            CASE WHEN $9 = 'rating' THEN NULL END,
+            CASE WHEN $9 = 'recent' THEN NULL END,
             r.host_match DESC NULLS LAST,
             r.exact_url DESC NULLS LAST,
             r.exact_title DESC NULLS LAST,
@@ -325,12 +335,12 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             r.has_title DESC NULLS LAST,
             r.has_alt DESC NULLS LAST,
             r.has_text DESC NULLS LAST,
-            CASE WHEN ($8 IS NULL OR $8 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
-            CASE WHEN $8 = 'rating' THEN r.rating END DESC NULLS LAST,
-            CASE WHEN $8 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
+            CASE WHEN ($9 IS NULL OR $9 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
+            CASE WHEN $9 = 'rating' THEN r.rating END DESC NULLS LAST,
+            CASE WHEN $9 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
             r.rating DESC NULLS LAST,
             r.id DESC
-          LIMIT $6::int OFFSET $7::int
+          LIMIT $7::int OFFSET $8::int
         `;
 
       const params = [
@@ -339,6 +349,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         excludeTagsArray,
         ratingMin || null,
         ratingMax || null,
+        enforceExactTags,
         limitInt,
         offsetInt,
         orderBy,
@@ -349,7 +360,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         pool.query(finalSql, params),
         wantTotal
           ? pool.query(
-              `WITH url_hits AS (
+               `WITH url_hits AS (
                  SELECT pv.id AS pv_id
                  FROM "Page" p
                  JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
@@ -359,6 +370,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
                    AND ($4::int IS NULL OR pv.rating >= $4)
                    AND ($5::int IS NULL OR pv.rating <= $5)
+                   AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
                ),
                 title_hits AS (
                   SELECT pv.id AS pv_id
@@ -369,6 +381,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                     AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
                     AND ($4::int IS NULL OR pv.rating >= $4)
                     AND ($5::int IS NULL OR pv.rating <= $5)
+                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
                 ),
                 alternate_hits AS (
                   SELECT pv.id AS pv_id
@@ -380,6 +393,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                     AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
                     AND ($4::int IS NULL OR pv.rating >= $4)
                     AND ($5::int IS NULL OR pv.rating <= $5)
+                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
                 ),
                 text_hits AS (
                   SELECT pv.id AS pv_id
@@ -390,6 +404,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                     AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
                     AND ($4::int IS NULL OR pv.rating >= $4)
                     AND ($5::int IS NULL OR pv.rating <= $5)
+                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
                 ),
                candidates AS (
                  SELECT pv_id FROM url_hits
@@ -409,9 +424,10 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
                    AND ($4::int IS NULL OR pv.rating >= $4)
                    AND ($5::int IS NULL OR pv.rating <= $5)
+                   AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
                )
                SELECT COUNT(*) AS total FROM filtered`,
-              [trimmedQuery, includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null]
+              [trimmedQuery, includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null, enforceExactTags]
             )
           : Promise.resolve(null as any)
       ]);

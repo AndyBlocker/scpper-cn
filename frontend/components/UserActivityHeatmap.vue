@@ -264,10 +264,10 @@ const summary = computed(() => {
 
 const palette: Record<number, string> = {
   0: 'bg-neutral-100 dark:bg-neutral-800 border-neutral-200/70 dark:border-neutral-700/60',
-  1: 'bg-green-100 dark:bg-green-900/40 border-green-200/70 dark:border-green-900/50',
-  2: 'bg-green-200 dark:bg-green-800/60 border-green-300/70 dark:border-green-800/70',
-  3: 'bg-green-400 dark:bg-green-700 border-green-500 dark:border-green-600 text-white',
-  4: 'bg-green-600 dark:bg-green-500 border-green-700 dark:border-green-400 text-white'
+  1: 'heatmap-level-1',
+  2: 'heatmap-level-2',
+  3: 'heatmap-level-3',
+  4: 'heatmap-level-4'
 };
 
 const futureCellClass = 'border-dashed border-neutral-200/80 dark:border-neutral-700/60 bg-transparent opacity-60 cursor-default';
@@ -371,3 +371,53 @@ function inferEnd() {
   return now;
 }
 </script>
+
+<style scoped>
+.heatmap-level-1 {
+  background-color: #aceebb;
+  border-color: #8cd79f;
+  color: #134c28;
+}
+
+.dark .heatmap-level-1 {
+  background-color: #152f22;
+  border-color: #244833;
+  color: #b9f4cb;
+}
+
+.heatmap-level-2 {
+  background-color: #4ac26b;
+  border-color: #3ba85a;
+  color: #0f3f1f;
+}
+
+.dark .heatmap-level-2 {
+  background-color: #18462b;
+  border-color: #26623d;
+  color: #d2f7dc;
+}
+
+.heatmap-level-3 {
+  background-color: #116329;
+  border-color: #0f5623;
+  color: #ffffff;
+}
+
+.dark .heatmap-level-3 {
+  background-color: #257a45;
+  border-color: #2f9656;
+  color: #f1fff3;
+}
+
+.heatmap-level-4 {
+  background-color: #126029;
+  border-color: #0f521f;
+  color: #ffffff;
+}
+
+.dark .heatmap-level-4 {
+  background-color: #4fd27f;
+  border-color: #39b768;
+  color: #062a16;
+}
+</style>
