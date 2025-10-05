@@ -143,6 +143,10 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
           WHERE $1::text IS NOT NULL
             AND p."currentUrl" &@~ pgroonga_query_escape($1)
+            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($4::int IS NULL OR pv.rating >= $4)
+            AND ($5::int IS NULL OR pv.rating <= $5)
           LIMIT $9::int
         ),
         title_hits AS (
@@ -153,6 +157,10 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
             AND pv.title &@~ pgroonga_query_escape($1)
+            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($4::int IS NULL OR pv.rating >= $4)
+            AND ($5::int IS NULL OR pv.rating <= $5)
           ORDER BY score DESC
           LIMIT $9::int
         ),
@@ -165,6 +173,10 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           WHERE pv."validTo" IS NULL
             AND pv."alternateTitle" IS NOT NULL
             AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
+            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($4::int IS NULL OR pv.rating >= $4)
+            AND ($5::int IS NULL OR pv.rating <= $5)
           ORDER BY score DESC
           LIMIT $9::int
         ),
@@ -176,6 +188,10 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
             AND pv."textContent" &@~ pgroonga_query_escape($1)
+            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($4::int IS NULL OR pv.rating >= $4)
+            AND ($5::int IS NULL OR pv.rating <= $5)
           ORDER BY score DESC
           LIMIT $9::int
         ),
@@ -256,16 +272,24 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           SELECT r.*, sn.snippet
           FROM ranked r
           LEFT JOIN LATERAL (
-            SELECT CASE 
-              WHEN $1 IS NOT NULL THEN COALESCE(
-                array_to_string(pgroonga_snippet_html(pv."alternateTitle", pgroonga_query_extract_keywords(pgroonga_query_escape($1)), 200), ' '),
-                array_to_string(pgroonga_snippet_html(pv."textContent", pgroonga_query_extract_keywords(pgroonga_query_escape($1)), 200), ' '),
-                LEFT(pv."textContent", 200)
-              )
-              ELSE NULL
-            END AS snippet
+            SELECT COALESCE(
+              CASE WHEN r.title_hit = 1 THEN array_to_string(pgroonga_snippet_html(pv.title, kw.keywords, 200), ' ') END,
+              CASE WHEN r.alt_hit = 1 THEN array_to_string(pgroonga_snippet_html(pv."alternateTitle", kw.keywords, 200), ' ') END,
+              CASE WHEN r.has_text = 1 THEN array_to_string(pgroonga_snippet_html(pv."textContent", kw.keywords, 200), ' ') END,
+              CASE WHEN r.has_url = 1 THEN array_to_string(pgroonga_snippet_html(p."currentUrl", kw.keywords, 200), ' ') END,
+              array_to_string(pgroonga_snippet_html(pv.title, kw.keywords, 200), ' '),
+              array_to_string(pgroonga_snippet_html(pv."alternateTitle", kw.keywords, 200), ' '),
+              array_to_string(pgroonga_snippet_html(pv."textContent", kw.keywords, 200), ' '),
+              LEFT(pv."textContent", 200),
+              pv.title
+            ) AS snippet
             FROM "PageVersion" pv
+            JOIN "Page" p ON p.id = pv."pageId"
+            LEFT JOIN LATERAL (
+              SELECT pgroonga_query_extract_keywords(pgroonga_query_escape($1)) AS keywords
+            ) kw ON TRUE
             WHERE pv.id = r.id
+              AND $1 IS NOT NULL
           ) sn ON TRUE
           ORDER BY 
             CASE WHEN $8 = 'rating' THEN NULL END,
@@ -331,26 +355,42 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                  JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
                  WHERE $1::text IS NOT NULL
                    AND p."currentUrl" &@~ pgroonga_query_escape($1)
+                   AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+                   AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                   AND ($4::int IS NULL OR pv.rating >= $4)
+                   AND ($5::int IS NULL OR pv.rating <= $5)
                ),
-               title_hits AS (
-                 SELECT pv.id AS pv_id
-                 FROM "PageVersion" pv
-                 WHERE pv."validTo" IS NULL
-                   AND pv.title &@~ pgroonga_query_escape($1)
-               ),
-               alternate_hits AS (
-                 SELECT pv.id AS pv_id
-                 FROM "PageVersion" pv
-                 WHERE pv."validTo" IS NULL
-                   AND pv."alternateTitle" IS NOT NULL
-                   AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
-               ),
-               text_hits AS (
-                 SELECT pv.id AS pv_id
-                 FROM "PageVersion" pv
-                 WHERE pv."validTo" IS NULL
-                   AND pv."textContent" &@~ pgroonga_query_escape($1)
-               ),
+                title_hits AS (
+                  SELECT pv.id AS pv_id
+                  FROM "PageVersion" pv
+                  WHERE pv."validTo" IS NULL
+                    AND pv.title &@~ pgroonga_query_escape($1)
+                    AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                    AND ($4::int IS NULL OR pv.rating >= $4)
+                    AND ($5::int IS NULL OR pv.rating <= $5)
+                ),
+                alternate_hits AS (
+                  SELECT pv.id AS pv_id
+                  FROM "PageVersion" pv
+                  WHERE pv."validTo" IS NULL
+                    AND pv."alternateTitle" IS NOT NULL
+                    AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
+                    AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                    AND ($4::int IS NULL OR pv.rating >= $4)
+                    AND ($5::int IS NULL OR pv.rating <= $5)
+                ),
+                text_hits AS (
+                  SELECT pv.id AS pv_id
+                  FROM "PageVersion" pv
+                  WHERE pv."validTo" IS NULL
+                    AND pv."textContent" &@~ pgroonga_query_escape($1)
+                    AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                    AND ($4::int IS NULL OR pv.rating >= $4)
+                    AND ($5::int IS NULL OR pv.rating <= $5)
+                ),
                candidates AS (
                  SELECT pv_id FROM url_hits
                  UNION
