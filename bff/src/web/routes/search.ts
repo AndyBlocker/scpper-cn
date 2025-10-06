@@ -5,6 +5,30 @@ import type { RedisClientType } from 'redis';
 export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
 
+  function extractExcerpt(textContent: string | null, maxLength = 160): string | null {
+    if (!textContent) return null;
+    const cleanText = textContent
+      .replace(/\[\[[^\]]*\]\]/g, '')
+      .replace(/\{\{[^}]*\}\}/g, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/^[#*\-+>|\s]+/gm, '')
+      .replace(/\n+/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    if (!cleanText) return null;
+
+    const sentences = cleanText.split(/[。！？.!?]\s*/g).filter((s) => s.length > 12);
+    const chosen = sentences.length > 0 ? sentences[Math.floor(Math.random() * sentences.length)] : cleanText;
+    const normalized = chosen.trim();
+    if (!normalized) return null;
+
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+  }
+
   // GET /search/pages
   router.get('/pages', async (req, res, next) => {
     try {
@@ -127,12 +151,49 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         ]);
 
         const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
+
+        let snippetMap: Map<number, string | null> = new Map();
+        if (wantSnippet && rows.length > 0) {
+          const pageIds = Array.from(
+            new Set(
+              rows
+                .map((row: any) => Number(row.pageId))
+                .filter((id) => Number.isInteger(id) && id > 0)
+            )
+          );
+          if (pageIds.length > 0) {
+            const snippetSql = `
+              SELECT pv."pageId" AS "pageId",
+                     SUBSTRING(pv."textContent" FOR 2000) AS "textSnippet"
+              FROM "PageVersion" pv
+              WHERE pv."validTo" IS NULL
+                AND pv."pageId" = ANY($1::int[])
+            `;
+            const { rows: snippetRows } = await pool.query(snippetSql, [pageIds]);
+            snippetMap = new Map(
+              snippetRows.map((row) => [
+                Number(row.pageId),
+                extractExcerpt(typeof row.textSnippet === 'string' ? row.textSnippet : null, 180)
+              ])
+            );
+          }
+        }
+
         const results = rows.map((r: any) => {
+          const snippet = wantSnippet ? snippetMap.get(Number(r.pageId)) ?? null : null;
           if (!wantDate) {
             const { firstRevisionAt, ...rest } = r;
-            return rest;
+            return {
+              ...rest,
+              snippet,
+              excerpt: snippet
+            };
           }
-          return r;
+          return {
+            ...r,
+            snippet,
+            excerpt: snippet
+          };
         });
 
         return res.json(total !== undefined ? { results, total } : { results });

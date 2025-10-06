@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import type { Request, Response } from 'express';
 import { pagesRouter } from './routes/pages.js';
 import { usersRouter } from './routes/users.js';
 import { searchRouter } from './routes/search.js';
@@ -27,5 +28,30 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service
   router.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200', changeOrigin: false, xfwd: true }));
+  const userBackendBase = process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455';
+  if (userBackendBase !== 'disable') {
+    const normalizedTarget = userBackendBase.replace(/\/$/, '');
+    router.use('/auth', createProxyMiddleware<Request, Response>({
+      target: `${normalizedTarget}/auth`,
+      changeOrigin: true,
+      xfwd: true,
+      on: {
+        proxyReq: (proxyReq, req) => {
+          if (!req.body || req.method === 'GET' || req.method === 'HEAD') {
+            return;
+          }
+          try {
+            const bodyData = JSON.stringify(req.body);
+            proxyReq.setHeader('Content-Type', 'application/json');
+            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+            proxyReq.end(bodyData);
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.warn('Failed to forward auth payload:', error);
+          }
+        }
+      }
+    }));
+  }
   return router;
 }

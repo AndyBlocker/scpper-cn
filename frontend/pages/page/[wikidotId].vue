@@ -299,6 +299,7 @@
                       :display-name="v.userDisplayName || '(account deleted)'"
                       :to="v.userWikidotId ? `/user/${v.userWikidotId}` : null"
                       :avatar="true"
+                      :viewer-vote="viewerLinkedId != null && Number(v.userWikidotId || 0) === viewerLinkedId ? Number(v.direction || 0) : null"
                     />
                   </div>
                   <div class="text-[11px] text-neutral-600 dark:text-neutral-400 whitespace-nowrap shrink-0 tabular-nums">{{ formatDateCompact(v.timestamp) }}</div>
@@ -651,6 +652,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { onBeforeRouteUpdate } from 'vue-router'
+import { useAuth } from '~/composables/useAuth'
 
 // Nuxt auto imports for type checker
 declare const useAsyncData: any
@@ -663,6 +665,14 @@ declare const process: any
 const route = useRoute();
 const {$bff} = useNuxtApp();
 const runtimeConfig = useRuntimeConfig();
+const { user: authUser, isAuthenticated } = useAuth()
+
+const viewerLinkedId = computed(() => {
+  const id = authUser.value?.linkedWikidotId
+  if (id == null) return null
+  const numeric = Number(id)
+  return Number.isFinite(numeric) ? numeric : null
+})
 
 const rawBffBase = (runtimeConfig?.public as any)?.bffBase ?? '/api';
 const normalizedBffBase = (() => {

@@ -7,17 +7,35 @@
     >
       <!-- Header: Title (lg only); md title inline; sm has compact header -->
       <div v-if="variant === 'lg'" class="flex items-start gap-3">
-        <div class="font-semibold text-neutral-900 dark:text-neutral-100 truncate leading-snug"
-             :class="['text-base line-clamp-2', (displayDate ? 'pr-24' : '')]"
-             :title="displayTitle">
-          {{ displayTitle || 'Untitled' }}
+        <div
+          :class="['flex min-w-0 flex-1 items-start gap-2', displayDate ? 'sm:pr-24' : '']"
+        >
+          <div
+            class="font-semibold text-neutral-900 dark:text-neutral-100 leading-snug"
+            :class="['text-base line-clamp-2 flex-1 min-w-0']"
+            :title="displayTitle"
+          >
+            {{ displayTitle || 'Untitled' }}
+          </div>
+          <span
+            v-if="viewerVoteBadge"
+            :class="['shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
+            :title="viewerVoteBadge.title"
+          >{{ viewerVoteBadge.label }}</span>
         </div>
       </div>
 
       <!-- sm header -->
       <div v-else-if="variant === 'sm'" class="flex items-center justify-between gap-2">
-        <div class="truncate text-[13px] font-medium text-neutral-900 dark:text-neutral-100" :title="displayTitle">
-          {{ displayTitle || 'Untitled' }}
+        <div class="flex min-w-0 items-center gap-2" :title="displayTitle">
+          <span class="truncate flex-1 min-w-0 text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+            {{ displayTitle || 'Untitled' }}
+          </span>
+          <span
+            v-if="viewerVoteBadge"
+            :class="['shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
+            :title="viewerVoteBadge.title"
+          >{{ viewerVoteBadge.label }}</span>
         </div>
         <div v-if="displayDate" class="text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
           {{ displayDate }}
@@ -25,7 +43,16 @@
       </div>
 
       <!-- lg top-right date overlay (avoid overlap with deleted badge) -->
-      <div v-if="variant === 'lg' && displayDate && !isDeleted" class="absolute top-4 right-3 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap leading-6">
+      <div
+        v-if="variant === 'lg' && displayDate && !isDeleted"
+        class="absolute top-4 right-3 hidden text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap leading-6 sm:block"
+      >
+        {{ displayDate }}
+      </div>
+      <div
+        v-if="variant === 'lg' && displayDate && !isDeleted"
+        class="mt-1 text-xs text-neutral-500 dark:text-neutral-400 sm:hidden"
+      >
         {{ displayDate }}
       </div>
   
@@ -102,8 +129,15 @@
       <div v-if="variant === 'md'" class="grid grid-cols-[minmax(0,1fr)_164px] gap-3 items-start">
         <div class="flex flex-col gap-1.5 min-w-0">
           <!-- inline title inside left column -->
-          <div class="font-semibold text-neutral-900 dark:text-neutral-100 text-[15px] leading-snug truncate" :title="displayTitle">
-            {{ displayTitle || 'Untitled' }}
+          <div class="flex min-w-0 items-start gap-2" :title="displayTitle">
+            <span class="font-semibold text-neutral-900 dark:text-neutral-100 text-[15px] leading-snug truncate flex-1 min-w-0">
+              {{ displayTitle || 'Untitled' }}
+            </span>
+            <span
+              v-if="viewerVoteBadge"
+              :class="['shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
+              :title="viewerVoteBadge.title"
+            >{{ viewerVoteBadge.label }}</span>
           </div>
           <div v-if="authorsVisible.length" class="flex items-center flex-wrap gap-1.5">
             <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)" bare />
@@ -158,7 +192,8 @@
   </template>
   
   <script setup lang="ts">
-  import { computed, resolveComponent } from 'vue'
+  import { computed, resolveComponent, watch } from 'vue'
+  import { useViewerVotes } from '~/composables/useViewerVotes'
   
   interface PageLike {
     wikidotId?: number | string
@@ -178,6 +213,7 @@
     snippetHtml?: string | null
     isDeleted?: boolean
     alternateTitle?: string | null
+    viewerVote?: number | null
   }
   
   type PageCardSize = 'lg' | 'md' | 'sm' | 'L' | 'M' | 'S'
@@ -205,9 +241,11 @@
     badge?: 'new' | 'hot' | null
     isDeleted?: boolean
     alternateTitle?: string | null
+    viewerVote?: number | null
   }
   
   const props = defineProps<Props>()
+  const { ensureVotes, getVote, viewerWikidotId } = useViewerVotes()
   
   const variant = computed<'lg'|'md'|'sm'>(() => {
     const s = props.size || 'md'
@@ -218,6 +256,11 @@
   })
   
   const wikidotId = computed(() => props.p?.wikidotId ?? props.wikidotId)
+  const numericPageId = computed<number | null>(() => {
+    const value = Number(wikidotId.value)
+    if (!Number.isFinite(value) || value <= 0) return null
+    return Math.trunc(value)
+  })
   const rawTitle = computed(() => (props.title ?? props.p?.title ?? '').toString().trim())
   const rawAlternate = computed(() => {
     const direct = (props as any).alternateTitle
@@ -339,6 +382,43 @@
   const computedSparkRaw = computed(() => computeSparkFromNumbers(props.sparkline ?? null))
   const computedSparkLine = computed(() => (props.sparkline && computedSparkRaw.value.line) || (props.p?.sparkLine ?? props.sparkLine ?? null))
   const computedSparkPoints = computed(() => (props.sparkline && computedSparkRaw.value.area) || (props.p?.sparkPoints ?? props.sparkPoints ?? null))
+
+  const cachedViewerVote = computed(() => {
+    const id = numericPageId.value
+    if (id == null) return undefined
+    return getVote(id)
+  })
+
+  const viewerVoteBadge = computed(() => {
+    const explicit = props.viewerVote
+    const fromPayload = (props.p as any)?.viewerVote
+    const raw = explicit ?? fromPayload ?? cachedViewerVote.value
+    if (raw == null) return null
+    const direction = Number(raw)
+    if (!Number.isFinite(direction) || direction === 0) return null
+    if (direction > 0) {
+      return {
+        label: '+1',
+        class: 'bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-300',
+        title: '你为该页面投了赞成票'
+      }
+    }
+    return {
+      label: '-1',
+      class: 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-300',
+      title: '你为该页面投了反对票'
+    }
+  })
+
+  watch(
+    [viewerWikidotId, numericPageId],
+    async ([viewer, pageId]) => {
+      if (!process.client) return
+      if (!viewer || !pageId) return
+      await ensureVotes([pageId])
+    },
+    { immediate: true }
+  )
   
   const controversyText = computed(() => {
     const v = Number(controversy.value ?? 0)
@@ -348,7 +428,7 @@
   
   
   /* Base class tweaks: lighter borders, slightly tighter padding on md/sm */
-  const baseClass = 'relative min-w-0 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition-all duration-200'
+  const baseClass = 'relative w-full max-w-full min-w-0 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition-all duration-200'
   const rootClass = computed(() => {
     if (variant.value === 'lg') {
       return [

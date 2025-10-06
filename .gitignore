@@ -92,3 +92,5 @@ deploy.sh
 nginx.conf
 
 AGENTS.md
+
+test.mjs

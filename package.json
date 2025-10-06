@@ -1,1 +1,11 @@
-{}
+{
+  "scripts": {
+    "mail:start": "node mail-agent/src/server.mjs",
+    "mail:dev": "NODE_ENV=development node --watch mail-agent/src/server.mjs",
+    "mail:test": "node mail-agent/scripts/test-send.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "nodemailer": "^7.0.6"
+  }
+}
