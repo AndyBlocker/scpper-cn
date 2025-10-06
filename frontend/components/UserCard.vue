@@ -17,7 +17,10 @@
           class="rounded-full overflow-hidden ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800"
         />
         <div class="min-w-0">
-          <div class="truncate" :class="nameClass">{{ displayName || 'Unknown' }}</div>
+          <div class="truncate flex items-center gap-1" :class="nameClass">
+            <span>{{ displayName || 'Unknown' }}</span>
+            <span v-if="viewerVoteBadge" :class="viewerVoteBadge.class" :title="viewerVoteBadge.title">{{ viewerVoteBadge.label }}</span>
+          </div>
           <div v-if="variant==='lg' && (subtitle || wikidotIdText)" class="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
             <span v-if="subtitle">{{ subtitle }}</span>
             <span v-if="subtitle && wikidotIdText" class="mx-1">·</span>
@@ -71,7 +74,10 @@
       <template v-if="variant === 'sm'">
         <div class="inline-flex items-center gap-1.5">
           <UserAvatar v-if="avatar" :wikidot-id="wikidotId" :name="displayName" :size="avatarSize" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800" />
-          <div :class="nameSmClass">{{ displayName || 'Unknown' }}</div>
+          <div :class="['flex items-center gap-1', nameSmClass]">
+            <span>{{ displayName || 'Unknown' }}</span>
+            <span v-if="viewerVoteBadge" :class="viewerVoteBadge.class" :title="viewerVoteBadge.title">{{ viewerVoteBadge.label }}</span>
+          </div>
         </div>
       </template>
     </component>
@@ -101,9 +107,10 @@ import { navigateTo } from 'nuxt/app'
     smBgClass?: string | null
     smAvatarSize?: number | null
     smTextClass?: string | null
+    viewerVote?: number | null
   }
   
-  const props = withDefaults(defineProps<Props>(), { size: 'md', avatar: true, bare: false })
+  const props = withDefaults(defineProps<Props>(), { size: 'md', avatar: true, bare: false, viewerVote: null })
   
   const variant = computed<'lg'|'md'|'sm'>(() => {
     const s = props.size || 'md'
@@ -196,6 +203,25 @@ import { navigateTo } from 'nuxt/app'
     const d = new Date(parsed)
     const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); const da = String(d.getDate()).padStart(2,'0')
     return `${y}-${m}-${da}`
+  })
+
+  const viewerVoteBadge = computed(() => {
+    const raw = props.viewerVote
+    if (raw == null) return null
+    const direction = Number(raw)
+    if (!Number.isFinite(direction) || direction === 0) return null
+    if (direction > 0) {
+      return {
+        label: '+1',
+        class: 'inline-flex items-center justify-center rounded-sm bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-300 px-1 text-[10px] font-semibold',
+        title: '你给这条记录点了赞成票'
+      }
+    }
+    return {
+      label: '-1',
+      class: 'inline-flex items-center justify-center rounded-sm bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-300 px-1 text-[10px] font-semibold',
+      title: '你给这条记录点了反对票'
+    }
   })
   
   const categoryRanksNorm = computed(() => (props.categoryRanks || []).filter(r => r && typeof r.rank === 'number').slice(0,6))

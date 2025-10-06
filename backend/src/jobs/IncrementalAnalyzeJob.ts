@@ -2052,8 +2052,8 @@ export class IncrementalAnalyzeJob {
     const highestRated = await this.prisma.$queryRaw<Array<{
       pageId: number;
       title: string;
-      rating: number;
-      voteCount: number;
+      rating: number | null;
+      voteCount: number | null;
     }>>`
       SELECT 
         p.id as "pageId",
@@ -2062,7 +2062,7 @@ export class IncrementalAnalyzeJob {
         pv."voteCount"
       FROM "Page" p
       JOIN "PageVersion" pv ON p.id = pv."pageId" AND pv."validTo" IS NULL
-      WHERE NOT pv."isDeleted"
+      WHERE NOT pv."isDeleted" AND pv.rating IS NOT NULL
       ORDER BY pv.rating DESC
       LIMIT 1
     `;
@@ -2078,7 +2078,7 @@ export class IncrementalAnalyzeJob {
         rank: 1,
         title: '历史最高评分',
         description: '网站历史上评分最高的页面',
-        value: page.rating.toString(),
+        value: page.rating == null ? undefined : page.rating.toString(),
         pageId: page.pageId,
         metadata: {
           pageTitle: page.title,
@@ -2092,8 +2092,8 @@ export class IncrementalAnalyzeJob {
     const mostVoted = await this.prisma.$queryRaw<Array<{
       pageId: number;
       title: string;
-      voteCount: number;
-      rating: number;
+      voteCount: number | null;
+      rating: number | null;
     }>>`
       SELECT 
         p.id as "pageId",
@@ -2102,7 +2102,7 @@ export class IncrementalAnalyzeJob {
         pv.rating
       FROM "Page" p
       JOIN "PageVersion" pv ON p.id = pv."pageId" AND pv."validTo" IS NULL
-      WHERE NOT pv."isDeleted"
+      WHERE NOT pv."isDeleted" AND pv."voteCount" IS NOT NULL
       ORDER BY pv."voteCount" DESC
       LIMIT 1
     `;
@@ -2118,7 +2118,7 @@ export class IncrementalAnalyzeJob {
         rank: 1,
         title: '票数最多的页面',
         description: '获得投票数最多的页面',
-        value: page.voteCount.toString(),
+        value: page.voteCount == null ? undefined : page.voteCount.toString(),
         pageId: page.pageId,
         metadata: {
           pageTitle: page.title,

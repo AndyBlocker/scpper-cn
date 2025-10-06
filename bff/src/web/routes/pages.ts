@@ -6,6 +6,64 @@ import { buildPageImagePath } from '../pageImagesConfig.js';
 export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
 
+  router.get('/vote-status', async (req, res, next) => {
+    try {
+      const idsParam = (req.query.ids ?? req.query.wikidotIds) as string | string[] | undefined;
+      const viewerParam = (req.query.viewer ?? req.query.viewerWikidotId) as string | undefined;
+
+      if (!idsParam) {
+        return res.json({ votes: {} });
+      }
+
+      const ids = (Array.isArray(idsParam) ? idsParam : String(idsParam).split(','))
+        .map((value) => Number(String(value).trim()))
+        .filter((value) => Number.isInteger(value) && value > 0);
+
+      if (ids.length === 0) {
+        return res.json({ votes: {} });
+      }
+
+      const viewerWikidotId = Number(viewerParam);
+      if (!Number.isInteger(viewerWikidotId) || viewerWikidotId <= 0) {
+        return res.json({ votes: {} });
+      }
+
+      const userResult = await pool.query<{ id: number }>(
+        'SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1',
+        [viewerWikidotId]
+      );
+
+      if (userResult.rowCount === 0) {
+        return res.json({ votes: {} });
+      }
+
+      const userId = userResult.rows[0].id;
+
+      const { rows } = await pool.query<{ pageWikidotId: number; direction: number }>(
+        `SELECT DISTINCT ON (pv."pageId")
+            pv."wikidotId" AS "pageWikidotId",
+            v.direction
+         FROM "Vote" v
+         JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
+         WHERE v."userId" = $1
+           AND pv."wikidotId" = ANY($2::int[])
+         ORDER BY pv."pageId", v.timestamp DESC`,
+        [userId, ids]
+      );
+
+      const votes: Record<number, number> = {};
+      for (const row of rows) {
+        if (row.pageWikidotId != null && Number.isFinite(row.pageWikidotId)) {
+          votes[row.pageWikidotId] = Number(row.direction || 0);
+        }
+      }
+
+      return res.json({ votes });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   const imageSelectionSql = `
     SELECT
       pvi."pageVersionId" AS "pageVersionId",

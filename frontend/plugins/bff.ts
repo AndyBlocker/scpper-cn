@@ -4,7 +4,8 @@ export default defineNuxtPlugin(() => {
 
   const api = $fetch.create({
     baseURL: bffBase,
-    headers: { accept: 'application/json' }
+    headers: { accept: 'application/json' },
+    credentials: 'include'
   });
 
   return {
@@ -13,5 +14,4 @@ export default defineNuxtPlugin(() => {
     }
   };
 });
-
 

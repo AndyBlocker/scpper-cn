@@ -18,25 +18,11 @@
               </svg>
               <span class="hidden sm:inline">排行</span>
             </NuxtLink>
-            <NuxtLink to="/analytics" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
+            <NuxtLink to="/tools" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
               <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3v18M3 12h18" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h4v4H4zM10 6h4v4h-4zM16 6h4v4h-4zM4 12h4v4H4zM10 12h4v4h-4zM16 12h4v4h-4z" />
               </svg>
-              <span class="hidden sm:inline">分析</span>
-            </NuxtLink>
-            <NuxtLink to="/tag-analytics" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
-              <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-              </svg>
-              <span class="hidden sm:inline">标签</span>
-            </NuxtLink>
-            <NuxtLink to="/gallery" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
-              <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <rect x="3" y="4" width="18" height="16" rx="2" ry="2" stroke-width="2" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12l2.5 3 3.5-5 4 6" />
-                <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" />
-              </svg>
-              <span class="hidden sm:inline">随机画廊</span>
+              <span class="hidden sm:inline">工具</span>
             </NuxtLink>
             <NuxtLink to="/about" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
               <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -119,6 +105,21 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
               </svg>
             </button>
+           <div v-if="isAuthenticated" class="flex items-center gap-2">
+              <NuxtLink
+                to="/account"
+                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/70 px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
+              >
+                <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" />
+                <span class="hidden lg:inline">{{ authUser?.displayName || authUser?.email }}</span>
+              </NuxtLink>
+            </div>
+            <div v-else class="flex items-center gap-2">
+              <NuxtLink
+                to="/auth/login"
+                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
+              >登录</NuxtLink>
+            </div>
           </div>
         </div>
       </header>
@@ -204,9 +205,11 @@
 
 <script setup lang="ts">
 import BrandIcon from '../components/BrandIcon.vue'
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'
 import { useNuxtApp, navigateTo, useHead } from 'nuxt/app'
 import { useRoute } from 'vue-router'
+import UserAvatar from '~/components/UserAvatar.vue'
+import { useAuth } from '~/composables/useAuth'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
   script: [
@@ -240,6 +243,14 @@ const suggestionsLoading = ref(false);
 const selectedIndex = ref(-1);
 type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
 const {$bff} = useNuxtApp() as unknown as { $bff: BffFetcher };
+
+const { user: authUser, isAuthenticated, fetchCurrentUser, status: authStatus } = useAuth()
+
+const avatarIdHeader = computed(() => {
+  const id = authUser.value?.linkedWikidotId
+  if (id && Number(id) > 0) return id
+  return '0'
+})
 
 // 主题状态
 const currentTheme = ref('dark');
@@ -283,6 +294,12 @@ onMounted(() => {
   
   applyTheme(saved);
   enforceDefaultScheme();
+
+  if (authStatus.value === 'unknown') {
+    fetchCurrentUser().catch((err) => {
+      console.warn('[layout] fetchCurrentUser failed', err)
+    })
+  }
 });
 
 const openMobileSearch = () => {
@@ -302,6 +319,7 @@ const closeMobileSearch = () => {
     document.body.style.overflow = '';
   }
 };
+
 
 const openSearch = openMobileSearch; // backward alias if needed
 const toggleMobileSearch = () => {
