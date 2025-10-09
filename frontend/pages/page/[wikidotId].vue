@@ -564,6 +564,11 @@
         <div class="mt-4 border-t border-neutral-100 dark:border-neutral-800"></div>
 
         <div v-if="!diffMode" class="px-6 pb-6">
+          <div class="mb-2 text-[11px] text-neutral-500 dark:text-neutral-400 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>源码字符数 {{ sourceCharacterCount }}</span>
+            <span aria-hidden="true">·</span>
+            <span>文字字数 {{ textContentCharacterCount }}</span>
+          </div>
           <pre class="source-code-block border border-neutral-200 dark:border-neutral-700 rounded bg-neutral-50 dark:bg-neutral-800 p-3 max-h-96 overflow-auto text-xs font-mono whitespace-pre-wrap select-text"
                aria-label="页面源码内容">{{ displayedSource }}</pre>
         </div>
@@ -995,6 +1000,31 @@ watch(selectedVersion, async (ver) => {
 })
 
 const displayedSource = computed(() => latestSource.value ?? '暂无源码')
+
+const sourceText = computed(() => {
+  const text = latestSource.value
+  return typeof text === 'string' ? text : ''
+})
+
+const sourceCharacterCount = computed(() => sourceText.value.length)
+
+const { data: textContentResp } = await useAsyncData(
+  () => `page-text-content-${wikidotId.value}`,
+  () => $bff(`/pages/${wikidotId.value}/text-content`),
+  { watch: [() => route.params.wikidotId] }
+)
+
+const pageTextContent = computed(() => {
+  const payload = textContentResp.value as any
+  const text = payload?.textContent
+  return typeof text === 'string' ? text : ''
+})
+
+const textContentCharacterCount = computed(() => {
+  const raw = pageTextContent.value
+  if (!raw) return 0
+  return raw.replace(/[\r\n\t]/g, '').length
+})
 
 const { data: pageVersions } = await useAsyncData(
   () => `page-versions-${wikidotId.value}`,

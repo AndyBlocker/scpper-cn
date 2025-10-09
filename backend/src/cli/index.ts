@@ -11,6 +11,7 @@ import { Logger } from '../utils/Logger.js';
 import { PageVersionImageService } from '../services/PageVersionImageService.js';
 import { showImagesProgress } from './images-progress.js';
 import { countComponentIncludeUsage } from './include-usage.js';
+import { checkRecentAlerts } from './alerts.js';
 
 const program = new Command();
 
@@ -194,6 +195,22 @@ program
   .option('--default-site <text>', '当缺少站点名时使用的默认站点', 'scp-wiki-cn')
   .action(async (options) => {
     await countComponentIncludeUsage({ defaultSite: options.defaultSite });
+  });
+
+program
+  .command('alerts')
+  .description('检查最近的页面更新是否为已注册用户生成提醒')
+  .option('--limit <n>', '回溯的最新页面更新数量（默认 20）', '20')
+  .option('--since <iso>', '使用指定的 ISO 时间戳作为起点，忽略 --limit')
+  .option('--json', '以 JSON 格式输出结果')
+  .option('--user-db-url <url>', '覆盖用户后端数据库连接，用于仅筛选已注册用户')
+  .action(async (options) => {
+    await checkRecentAlerts({
+      limit: options.limit,
+      since: options.since,
+      json: Boolean(options.json),
+      userDbUrl: options.userDbUrl
+    });
   });
 
 // Global error handlers for robust CLI processes

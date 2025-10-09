@@ -6,6 +6,7 @@ import { runDailySiteOverview } from './DailySiteOverviewJob.js';
 import { UserDataCompletenessJob } from './UserDataCompletenessJob';
 import { UserSocialAnalysisJob } from './UserSocialAnalysisJob';
 import { computeUserCategoryBenchmarks } from './UserCategoryBenchmarksJob';
+import { PageMetricMonitorJob } from './PageMetricMonitorJob';
 // @ts-ignore - importing from scripts folder
 // import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
@@ -49,6 +50,7 @@ export class IncrementalAnalyzeJob {
         'series_stats',
         'trending_stats',
         'site_overview_daily',
+        'page_metric_alerts',
         // 新增：作者分类基准
         'category_benchmarks'
       ];
@@ -208,24 +210,25 @@ export class IncrementalAnalyzeJob {
     try {
       // 获取变更集（受影响的 pageVersionId）
       const changeSet = await this.getChangeSet(taskName, forceFullAnalysis);
-      
-    if (changeSet.length === 0 && !forceFullAnalysis) {
-      const alwaysRunTasks = new Set([
-        'site_overview_daily',
-        'category_benchmarks',
-        'materialized_views',
-        'series_stats',
-        'trending_stats',
-      ]);
-      if (taskName === 'site_stats') {
-        await this.refreshSiteStatsTimestamp();
-        return;
+
+      if (changeSet.length === 0 && !forceFullAnalysis) {
+        const alwaysRunTasks = new Set([
+          'site_overview_daily',
+          'category_benchmarks',
+          'materialized_views',
+          'series_stats',
+          'trending_stats',
+          'page_metric_alerts'
+        ]);
+        if (taskName === 'site_stats') {
+          await this.refreshSiteStatsTimestamp();
+          return;
+        }
+        if (!alwaysRunTasks.has(taskName)) {
+          console.log(`⏭️ Task ${taskName}: No changes detected, skipping...`);
+          return;
+        }
       }
-      if (!alwaysRunTasks.has(taskName)) {
-        console.log(`⏭️ Task ${taskName}: No changes detected, skipping...`);
-        return;
-      }
-    }
 
       console.log(`🔍 Task ${taskName}: Processing ${changeSet.length} changed page versions`);
 
@@ -306,6 +309,11 @@ export class IncrementalAnalyzeJob {
         case 'category_benchmarks':
           await computeUserCategoryBenchmarks(this.prisma);
           break;
+        case 'page_metric_alerts': {
+          const monitor = new PageMetricMonitorJob(this.prisma);
+          await monitor.run(changeSet.map(item => item.id));
+          break;
+        }
         default:
           console.warn(`⚠️ Unknown task: ${taskName}`);
       }

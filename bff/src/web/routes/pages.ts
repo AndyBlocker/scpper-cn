@@ -972,6 +972,54 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     }
   });
 
+  // GET /api/wikidot-pages/:wikidotId/text-content - 获取页面正文文本内容（PageVersion.textContent 优先，其次 SourceVersion.textContent）
+  router.get('/:wikidotId/text-content', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params as Record<string, string>;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context) return res.status(404).json({ error: 'not_found' });
+
+      const targetVersionId = context.effectiveVersionId ?? context.currentVersionId;
+      if (!targetVersionId) return res.status(404).json({ error: 'not_found' });
+
+      const primary = await pool.query<{ textContent: string | null }>(
+        `SELECT pv."textContent"
+           FROM "PageVersion" pv
+          WHERE pv.id = $1
+          LIMIT 1`,
+        [targetVersionId]
+      );
+
+      if (primary.rowCount === 0) {
+        return res.status(404).json({ error: 'not_found' });
+      }
+
+      const primaryText = primary.rows[0]?.textContent ?? null;
+      if (typeof primaryText === 'string') {
+        return res.json({ textContent: primaryText, origin: 'pageVersion' });
+      }
+
+      const fallback = await pool.query<{ textContent: string | null }>(
+        `SELECT s."textContent"
+           FROM "SourceVersion" s
+          WHERE s."pageVersionId" = $1
+            AND s."textContent" IS NOT NULL
+          ORDER BY s."isLatest" DESC, s.timestamp DESC
+          LIMIT 1`,
+        [targetVersionId]
+      );
+
+      const fallbackText = fallback.rows[0]?.textContent ?? null;
+      if (typeof fallbackText === 'string') {
+        return res.json({ textContent: fallbackText, origin: 'sourceVersion' });
+      }
+
+      return res.json({ textContent: null, origin: 'none' });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // GET /api/wikidot-pages/:wikidotId/source - 获取该页面可用的最佳源码（PageVersion.source 优先，其次最新有源码的修订）
   router.get('/:wikidotId/source', async (req, res, next) => {
     try {

@@ -105,6 +105,85 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
               </svg>
             </button>
+            <div v-if="isAuthenticated && hasLinkedWikidot" class="relative">
+              <button
+                ref="alertsButtonRef"
+                type="button"
+                @click="toggleAlertsDropdown"
+                class="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-transparent bg-white/80 text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:bg-neutral-800/80 dark:text-neutral-300"
+                aria-label="查看提醒"
+              >
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.172V11a6 6 0 10-12 0v3.172a2 2 0 01-.6 1.428L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                <span
+                  v-if="alertsHasUnread"
+                  class="absolute -top-0.5 -right-0.5 inline-flex min-w-[18px] justify-center rounded-full bg-[rgb(var(--accent))] px-1 text-[10px] font-semibold leading-5 text-white shadow"
+                >{{ alertsUnreadCount > 99 ? '99+' : alertsUnreadCount }}</span>
+              </button>
+              <transition name="fade">
+                <div
+                  v-if="isAlertsDropdownOpen"
+                  ref="alertsDropdownRef"
+                  class="absolute right-0 mt-3 w-80 max-w-[80vw] rounded-2xl border border-neutral-200/80 bg-white/95 p-4 shadow-xl backdrop-blur dark:border-neutral-700/60 dark:bg-neutral-900/95"
+                >
+                  <div class="flex items-center justify-between gap-3">
+                    <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">信息提醒</h3>
+                    <button
+                      v-if="alertsHasUnread"
+                      type="button"
+                      class="text-xs font-medium text-[rgb(var(--accent))] hover:underline"
+                      @click="handleMarkAllAlerts"
+                    >全部已读</button>
+                  </div>
+                  <div v-if="alertsLoading" class="py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">加载中…</div>
+                  <div v-else-if="alertItems.length === 0" class="py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">暂无提醒</div>
+                  <ul v-else class="mt-3 space-y-3">
+                    <li
+                      v-for="item in alertItems"
+                      :key="item.id"
+                      class="rounded-xl border border-neutral-200/70 bg-neutral-50/80 transition hover:border-[rgba(var(--accent),0.35)] hover:bg-white dark:border-neutral-700/60 dark:bg-neutral-800/70 dark:hover:border-[rgba(var(--accent),0.4)]"
+                    >
+                      <button
+                        type="button"
+                        class="w-full px-3 py-3 text-left"
+                        :class="{ 'opacity-70': !!item.acknowledgedAt }"
+                        @click="handleAlertNavigate(item)"
+                      >
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="max-w-[70%] truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                            {{ item.pageTitle || '未知页面' }}
+                          </span>
+                          <span class="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">
+                            {{ formatAlertTime(item.detectedAt) }}
+                          </span>
+                        </div>
+                        <div class="mt-1 text-xs text-neutral-600 dark:text-neutral-300">
+                          {{ metricLabel(item.metric) }}变动
+                          <span
+                            v-if="formatAlertDelta(item)"
+                            class="ml-1 font-semibold"
+                            :class="{
+                              'text-green-600 dark:text-green-400': (item.diffValue || 0) > 0,
+                              'text-red-500 dark:text-red-400': (item.diffValue || 0) < 0
+                            }"
+                          >{{ formatAlertDelta(item) }}</span>
+                          <span v-if="item.newValue != null" class="ml-2 text-[11px] text-neutral-500 dark:text-neutral-400">当前：{{ Math.round(Number(item.newValue)) }}</span>
+                        </div>
+                        <div v-if="item.pageAlternateTitle" class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                          {{ item.pageAlternateTitle }}
+                        </div>
+                      </button>
+                    </li>
+                  </ul>
+                  <NuxtLink
+                    to="/account"
+                    class="mt-4 block text-center text-xs font-medium text-[rgb(var(--accent))] hover:underline"
+                    @click="isAlertsDropdownOpen = false"
+                  >前往账户中心查看全部</NuxtLink>
+                </div>
+              </transition>
+            </div>
            <div v-if="isAuthenticated" class="flex items-center gap-2">
               <NuxtLink
                 to="/account"
@@ -210,6 +289,7 @@ import { useNuxtApp, navigateTo, useHead } from 'nuxt/app'
 import { useRoute } from 'vue-router'
 import UserAvatar from '~/components/UserAvatar.vue'
 import { useAuth } from '~/composables/useAuth'
+import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
   script: [
@@ -245,6 +325,22 @@ type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
 const {$bff} = useNuxtApp() as unknown as { $bff: BffFetcher };
 
 const { user: authUser, isAuthenticated, fetchCurrentUser, status: authStatus } = useAuth()
+const {
+  alerts: alertItems,
+  unreadCount: alertsUnreadCount,
+  loading: alertsLoading,
+  hasUnread: alertsHasUnread,
+  fetchAlerts,
+  markAlertRead,
+  markAllAlertsRead,
+  resetState: resetAlertsState,
+  setActiveMetric: setAlertsMetric
+} = useAlerts()
+
+const isAlertsDropdownOpen = ref(false)
+const alertsButtonRef = ref<HTMLButtonElement | null>(null)
+const alertsDropdownRef = ref<HTMLDivElement | null>(null)
+const hasLinkedWikidot = computed(() => Boolean(authUser.value?.linkedWikidotId))
 
 const avatarIdHeader = computed(() => {
   const id = authUser.value?.linkedWikidotId
@@ -284,6 +380,81 @@ const toggleTheme = () => {
   applyTheme(newTheme);
 };
 
+const metricLabelMap: Record<AlertMetric, string> = {
+  COMMENT_COUNT: '评论数',
+  VOTE_COUNT: '投票数',
+  RATING: '评分',
+  REVISION_COUNT: '修订数',
+  SCORE: '得分'
+};
+
+const alertTimeFormatter = typeof Intl !== 'undefined'
+  ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  : null;
+
+function metricLabel(metric: AlertMetric): string {
+  return metricLabelMap[metric] ?? '指标';
+}
+
+function formatAlertDelta(item: AlertItem): string | null {
+  if (item.diffValue == null) return null;
+  const diff = Number(item.diffValue);
+  if (!Number.isFinite(diff)) return null;
+  const rounded = Math.round(diff);
+  if (rounded === 0) return '0';
+  const sign = rounded > 0 ? '+' : '';
+  return `${sign}${rounded}`;
+}
+
+function formatAlertTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  if (alertTimeFormatter) {
+    return alertTimeFormatter.format(date);
+  }
+  return date.toISOString();
+}
+
+const toggleAlertsDropdown = () => {
+  if (!isAuthenticated.value || !hasLinkedWikidot.value) return;
+  const next = !isAlertsDropdownOpen.value;
+  isAlertsDropdownOpen.value = next;
+  if (next) {
+    setAlertsMetric('COMMENT_COUNT');
+    void fetchAlerts('COMMENT_COUNT', true);
+  }
+};
+
+const handleAlertNavigate = (item: AlertItem) => {
+  void markAlertRead(item.id);
+  isAlertsDropdownOpen.value = false;
+  if (item.pageWikidotId) {
+    navigateTo(`/page/${item.pageWikidotId}`);
+    return;
+  }
+  if (item.pageUrl && process.client) {
+    window.open(item.pageUrl, '_blank', 'noopener');
+    return;
+  }
+  navigateTo('/account');
+};
+
+const handleMarkAllAlerts = () => {
+  void markAllAlertsRead('COMMENT_COUNT');
+};
+
+const handleAlertsDocumentClick = (event: MouseEvent) => {
+  if (!isAlertsDropdownOpen.value) return;
+  const target = event.target as Node | null;
+  if (!target) return;
+  if (alertsDropdownRef.value?.contains(target) || alertsButtonRef.value?.contains(target)) {
+    return;
+  }
+  isAlertsDropdownOpen.value = false;
+};
+
 onMounted(() => {
   // 初始化主题
   const saved = localStorage.getItem('theme') || 'dark';
@@ -295,9 +466,24 @@ onMounted(() => {
   applyTheme(saved);
   enforceDefaultScheme();
 
+  document.addEventListener('mousedown', handleAlertsDocumentClick);
+
   if (authStatus.value === 'unknown') {
-    fetchCurrentUser().catch((err) => {
+    fetchCurrentUser().then(() => {
+      if (authUser.value?.linkedWikidotId) {
+        setAlertsMetric('COMMENT_COUNT')
+        return fetchAlerts('COMMENT_COUNT', true).catch((err) => {
+          console.warn('[layout] alerts fetch after auth load failed', err)
+        })
+      }
+      return undefined
+    }).catch((err) => {
       console.warn('[layout] fetchCurrentUser failed', err)
+    })
+  } else if (authStatus.value === 'authenticated' && authUser.value?.linkedWikidotId) {
+    setAlertsMetric('COMMENT_COUNT')
+    fetchAlerts('COMMENT_COUNT').catch((err) => {
+      console.warn('[layout] initial alerts fetch failed', err)
     })
   }
 });
@@ -471,6 +657,22 @@ watch(isMobileSearchOpen, (open) => {
 onBeforeUnmount(() => {
   if (!process.client) return;
   document.removeEventListener('keydown', handleGlobalKeydown);
+  document.removeEventListener('mousedown', handleAlertsDocumentClick);
+});
+
+watch([
+  () => authStatus.value,
+  () => authUser.value?.linkedWikidotId
+], ([nextStatus, nextLinked]) => {
+  if (nextStatus === 'authenticated' && nextLinked) {
+    setAlertsMetric('COMMENT_COUNT')
+    fetchAlerts('COMMENT_COUNT', true).catch((err) => {
+      console.warn('[layout] alerts fetch on auth change failed', err)
+    })
+  } else {
+    resetAlertsState()
+    isAlertsDropdownOpen.value = false
+  }
 });
 
 // GA: route change page_view
@@ -481,5 +683,6 @@ watch(() => route.fullPath, (path) => {
   if (typeof w.gtag === 'function') {
     w.gtag('config', GA_ID, { page_path: path })
   }
+  isAlertsDropdownOpen.value = false
 })
 </script>
