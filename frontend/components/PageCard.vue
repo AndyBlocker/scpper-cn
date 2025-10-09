@@ -12,7 +12,7 @@
         >
           <div
             class="font-semibold text-neutral-900 dark:text-neutral-100 leading-snug"
-            :class="['text-base line-clamp-2 flex-1 min-w-0']"
+            :class="['text-base truncate whitespace-nowrap flex-1 min-w-0']"
             :title="displayTitle"
           >
             {{ displayTitle || 'Untitled' }}
