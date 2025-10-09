@@ -31,6 +31,20 @@ enum ImageIngestJobStatus {
   FAILED
 }
 
+enum PageMetricType {
+  COMMENT_COUNT
+  VOTE_COUNT
+  RATING
+  REVISION_COUNT
+  SCORE
+}
+
+enum PageMetricThresholdType {
+  ANY_CHANGE
+  ABSOLUTE
+  PERCENT
+}
+
 model Attribution {
   id          Int         @id @default(autoincrement())
   pageVerId   Int
@@ -102,6 +116,8 @@ model Page {
   ratingRecords         RatingRecords[]
   tagRecords            TagRecords[]
   timeMilestones        TimeMilestones[]
+  metricWatches         PageMetricWatch[]
+  metricAlerts          PageMetricAlert[]
 
   @@index([currentUrl])
   @@index([isDeleted])
@@ -238,6 +254,47 @@ model ImageIngestJob {
   @@index([lockedAt])
 }
 
+model PageMetricWatch {
+  id             Int                     @id @default(autoincrement())
+  pageId         Int
+  userId         Int
+  metric         PageMetricType
+  thresholdType  PageMetricThresholdType @default(ANY_CHANGE)
+  thresholdValue Float?
+  lastObserved   Float?
+  source         String
+  mutedAt        DateTime?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  config         Json?
+  alerts         PageMetricAlert[]
+  page           Page                    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, userId, metric, source], map: "uniq_watch_owner_metric_source")
+  @@index([userId, metric], map: "idx_watch_user_metric")
+  @@index([pageId, metric], map: "idx_watch_page_metric")
+}
+
+model PageMetricAlert {
+  id             Int             @id @default(autoincrement())
+  watchId        Int
+  pageId         Int
+  metric         PageMetricType
+  prevValue      Float?
+  newValue       Float?
+  diffValue      Float?
+  detectedAt     DateTime        @default(now())
+  acknowledgedAt DateTime?
+  createdAt      DateTime        @default(now())
+  watch          PageMetricWatch @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  page           Page            @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([watchId, detectedAt], map: "idx_alert_watch_detected_at")
+  @@index([pageId, metric], map: "idx_alert_page_metric")
+  @@index([metric, detectedAt], map: "idx_alert_metric_detected_at")
+}
+
 model Revision {
   id             Int             @id @default(autoincrement())
   pageVersionId  Int
@@ -330,11 +387,25 @@ model User {
   userDailyStats                   UserDailyStats[]
   stats                            UserStats?
   votes                            Vote[]
+  metricWatches                    PageMetricWatch[]
+  metricPreferences                UserMetricPreference[]
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
   @@index([lastActivityAt])
   @@index([attributionVotingCacheUpdatedAt])
+}
+
+model UserMetricPreference {
+  id        Int            @id @default(autoincrement())
+  userId    Int
+  metric    PageMetricType
+  config    Json?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, metric], map: "uniq_user_metric_preference")
 }
 
 model UserStats {

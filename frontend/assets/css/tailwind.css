@@ -66,9 +66,16 @@
   }
   
   /* 选中文本样式 */
-  ::selection {
-    background-color: rgba(var(--accent), 0.30);
-    color: rgb(var(--fg));
+  ::selection,
+  ::-moz-selection {
+    background-color: rgba(var(--accent), 0.55);
+    color: #0b1120; /* ensure strong contrast on highlight */
+  }
+
+  html.dark ::selection,
+  html.dark ::-moz-selection {
+    background-color: rgba(var(--accent-weak), 0.65);
+    color: #0b1120;
   }
   
   /* 过渡动画 */

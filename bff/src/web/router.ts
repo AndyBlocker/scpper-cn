@@ -13,6 +13,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import { pageImagesRouter } from './routes/page-images.js';
 import { PAGE_IMAGE_ROUTE_PREFIX } from './pageImagesConfig.js';
 import { tagsRouter } from './routes/tags.js';
+import { alertsRouter } from './routes/alerts.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -25,6 +26,7 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/analytics', analyticsRouter(pool, redis));
   router.use('/quotes', quotesRouter(pool, redis));
   router.use('/tags', tagsRouter(pool, redis));
+  router.use('/alerts', alertsRouter(pool, redis));
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service
   router.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200', changeOrigin: false, xfwd: true }));

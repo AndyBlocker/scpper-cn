@@ -345,15 +345,28 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 				GROUP BY date(v."timestamp")
 			`;
 			const revisionsSql = `
-				SELECT date(r."timestamp") AS date,
-				       COUNT(*)::int AS "revisionCount",
-				       COUNT(*) FILTER (WHERE r.type = 'PAGE_CREATED')::int AS "pagesCreated",
-				       MAX(r."timestamp") AS "lastRevision"
-				FROM "Revision" r
-				WHERE r."userId" = $1::int
-				  AND ($2::date IS NULL OR date(r."timestamp") >= $2::date)
-				  AND ($3::date IS NULL OR date(r."timestamp") <= $3::date)
-				GROUP BY date(r."timestamp")
+				WITH ranked_revisions AS (
+					SELECT
+						r."timestamp",
+						r.type,
+							ROW_NUMBER() OVER (
+								PARTITION BY pv."pageId", COALESCE(r."wikidotId", r.id)
+							ORDER BY r."timestamp" DESC, r.id DESC
+						) AS row_num
+					FROM "Revision" r
+					JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
+					WHERE r."userId" = $1::int
+					  AND ($2::date IS NULL OR date(r."timestamp") >= $2::date)
+					  AND ($3::date IS NULL OR date(r."timestamp") <= $3::date)
+				)
+				SELECT
+					date(ranked_revisions."timestamp") AS date,
+					COUNT(*)::int AS "revisionCount",
+					COUNT(*) FILTER (WHERE ranked_revisions.type = 'PAGE_CREATED')::int AS "pagesCreated",
+					MAX(ranked_revisions."timestamp") AS "lastRevision"
+				FROM ranked_revisions
+				WHERE ranked_revisions.row_num = 1
+				GROUP BY date(ranked_revisions."timestamp")
 			`;
 
 			const [votesRes, revisionsRes] = await Promise.all([
