@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto px-4 py-6">
+  <div class="mx-auto w-full max-w-6xl py-6">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <h1 class="text-xl font-bold text-neutral-900 dark:text-neutral-100">站点数据分析</h1>
       <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
@@ -18,7 +18,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6 mb-6">
       <!-- 左侧 8 类卡片（桌面 4x4，移动两列） -->
       <div class="lg:col-span-2">
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div v-for="c in categories" :key="c.key" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900">
             <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">{{ c.label }}</div>
             <div class="text-xl sm:text-2xl font-bold" :style="{ color: c.color }">{{ summary[c.key] ?? '—' }}</div>

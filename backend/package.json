@@ -29,6 +29,8 @@
     "check:alternate-title": "node --import tsx/esm scripts/check-alternate-title-sync.ts",
     "schema:fetch": "node --import tsx/esm scripts/fetch-graphql-schema.ts",
     "cleanup:high-count": "node --import tsx/esm scripts/cleanup-high-count-pages.ts",
+    "audit:pageversion-validity": "node --import tsx/esm scripts/check-pageversion-validity-window.ts",
+    "fix:pageversion-boundaries": "node --import tsx/esm scripts/fix-pageversion-boundaries.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json"
   },

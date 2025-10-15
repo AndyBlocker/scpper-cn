@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { extractPreviewCandidates, pickPreview, toPreviewPick, extractExcerptFallback } from '../utils/preview.js';
 import { buildPageImagePath } from '../pageImagesConfig.js';
 
 export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
@@ -280,11 +281,65 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     return {
       pageId,
       currentVersionId: current?.id ?? null,
-      currentIsDeleted: current?.isDeleted ?? false,
+      currentIsDeleted: Boolean(current?.isDeleted ?? false),
       effectiveVersionId: effective?.id ?? null,
-      effectiveIsDeleted: effective?.isDeleted ?? false
+      effectiveIsDeleted: Boolean(effective?.isDeleted ?? false)
     };
   }
+
+  router.get('/:wikidotId/references', async (req, res, next) => {
+    try {
+      const { wikidotId } = req.params;
+      const context = await resolvePageContextByWikidotId(wikidotId);
+      if (!context || !context.effectiveVersionId) {
+        return res.status(404).json({ error: 'not_found' });
+      }
+
+      const sql = `
+        SELECT
+          id,
+          "linkType",
+          "targetPath",
+          "targetFragment",
+          "displayTexts",
+          "rawTarget",
+          "rawText",
+          "occurrence",
+          "createdAt",
+          "updatedAt"
+        FROM "PageReference"
+        WHERE "pageVersionId" = $1
+        ORDER BY "occurrence" DESC, "targetPath" ASC, "targetFragment" ASC NULLS FIRST, id ASC
+      `;
+
+      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+
+      const references = rows.map((row) => ({
+        id: row.id,
+        linkType: row.linkType,
+        targetPath: row.targetPath,
+        targetFragment: row.targetFragment,
+        displayTexts: Array.isArray(row.displayTexts) ? row.displayTexts : [],
+        rawTarget: row.rawTarget,
+        rawText: row.rawText,
+        occurrence: Number(row.occurrence ?? 0),
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt
+      }));
+
+      res.json({
+        wikidotId: Number(wikidotId),
+        pageId: context.pageId,
+        currentVersionId: context.currentVersionId,
+        currentIsDeleted: context.currentIsDeleted,
+        effectiveVersionId: context.effectiveVersionId,
+        effectiveIsDeleted: context.effectiveIsDeleted,
+        references
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   // GET /api/pages
   router.get('/', async (req, res, next) => {
@@ -445,6 +500,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."createdAt",
             pv."revisionCount",
             pv."attributionCount",
+            pv.source,
             pv."isDeleted" AS "isDeleted",
             CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
           FROM "PageVersion" pv
@@ -458,6 +514,16 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         `;
         const { rows } = await pool.query(sql);
         if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
+        // prefer preview from source when present
+        const row = rows[0] as any;
+        const previews = extractPreviewCandidates(row?.source || null);
+        if (previews && previews.length > 0) {
+          const picked = pickPreview(previews);
+          if (picked) {
+            const pp = toPreviewPick(picked);
+            return res.json({ ...row, excerpt: pp.text });
+          }
+        }
         return res.json(rows[0]);
       }
       
@@ -478,6 +544,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."createdAt",
             pv."revisionCount",
             pv."attributionCount",
+            pv.source,
             pv."textContent",
             pv."isDeleted" AS "isDeleted",
             CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
@@ -507,6 +574,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."createdAt",
             pv."revisionCount",
             pv."attributionCount",
+            pv.source,
             pv."textContent",
             pv."isDeleted" AS "isDeleted",
             CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
@@ -536,6 +604,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             pv."createdAt",
             pv."revisionCount",
             pv."attributionCount",
+            pv.source,
             pv."textContent",
             pv."isDeleted" AS "isDeleted",
             CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
@@ -557,39 +626,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           pool.query(translationSql)
         ]);
         
-        // Helper function to extract excerpt from text content
-        const extractExcerpt = (textContent: string | null, maxLength: number = 150): string => {
-          if (!textContent || textContent.trim() === '') {
-            return '';
-          }
-          
-          // Remove common formatting and special characters
-          const cleanText = textContent
-            .replace(/\[[^\]]*\]/g, '') // Remove [bracketed] content
-            .replace(/\{\{[^}]*\}\}/g, '') // Remove {{template}} content
-            .replace(/^[#*\-+>|\s]+/gm, '') // Remove list markers and quotes
-            .replace(/\n+/g, ' ') // Replace newlines with spaces
-            .trim();
-          
-          // Try to extract complete sentences
-          const sentences = cleanText.split(/[。！？.!?]\s*/g).filter(s => s.length > 20);
-          
-          if (sentences.length > 0) {
-            // Get a random sentence
-            const randomSentence = sentences[Math.floor(Math.random() * sentences.length)];
-            if (randomSentence.length <= maxLength) {
-              return randomSentence;
-            }
-            // If sentence is too long, truncate it
-            return randomSentence.substring(0, maxLength - 3) + '...';
-          }
-          
-          // Fallback: just take the first part of the text
-          if (cleanText.length <= maxLength) {
-            return cleanText;
-          }
-          return cleanText.substring(0, maxLength - 3) + '...';
-        };
+        // Fallback uses shared util to ensure consistent behavior with homepage random
         
         // Combine results and add excerpts
         const allPages = [
@@ -597,13 +634,19 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           ...otherOriginalResult.rows,
           ...translationResult.rows
         ].map(page => {
-          const excerpt = extractExcerpt(page.textContent);
-          // Remove textContent from response to reduce payload
-          const { textContent, ...pageWithoutContent } = page;
-          return {
-            ...pageWithoutContent,
-            excerpt
-          };
+          // Prefer explicit preview blocks from source
+          let excerpt = '';
+          const candidates = extractPreviewCandidates((page as any)?.source || null);
+          if (candidates && candidates.length > 0) {
+            const picked = pickPreview(candidates);
+            if (picked) excerpt = toPreviewPick(picked).text;
+          }
+          if (!excerpt) {
+            excerpt = extractExcerptFallback((page as any)?.textContent ?? null, 150);
+          }
+          // Remove heavy fields from response to reduce payload
+          const { textContent, source, ...pageWithoutContent } = page as any;
+          return { ...pageWithoutContent, excerpt };
         });
         
         // Shuffle the combined array to mix the order
@@ -803,19 +846,67 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT 
           pv.id AS "pageVersionId",
           pv."createdAt",
+          pv."validFrom",
           pv."validTo",
           pv.title,
           pv."alternateTitle",
           pv.rating,
           pv."revisionCount",
           ${withSource ? 'pv.source AS source,' : ''}
-          CASE WHEN pv.source IS NULL THEN false ELSE true END AS "hasSource"
+          CASE WHEN pv.source IS NULL THEN false ELSE true END AS "hasSource",
+          COALESCE(attrs.attributions, '[]'::json) AS attributions
         FROM "PageVersion" pv
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(JSON_AGG(j) FILTER (WHERE j IS NOT NULL), '[]'::json) AS attributions
+          FROM (
+            SELECT DISTINCT ON (u.id)
+              JSON_BUILD_OBJECT(
+                'userId', u.id,
+                'displayName', u."displayName",
+                'userWikidotId', u."wikidotId",
+                'type', a.type
+              ) AS j
+            FROM "Attribution" a
+            JOIN "User" u ON u.id = a."userId"
+            WHERE a."pageVerId" = pv.id
+            ORDER BY u.id, a.type ASC
+          ) s
+        ) attrs ON TRUE
         WHERE pv."wikidotId" = $1::int
         ORDER BY pv.id DESC
         LIMIT $2::int OFFSET $3::int
       `;
       const { rows } = await pool.query(sql, [wikidotId, limit, offset]);
+      res.json(rows);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /api/wikidot-pages/:wikidotId/versions/:versionId/attributions
+  // List attributions for a specific PageVersion id (scoped to the given wikidotId for safety)
+  router.get('/:wikidotId/versions/:versionId/attributions', async (req, res, next) => {
+    try {
+      const { wikidotId, versionId } = req.params as Record<string, string>;
+      // Ensure the version belongs to this wikidotId
+      const check = await pool.query(
+        `SELECT 1 FROM "PageVersion" pv WHERE pv.id = $1::int AND pv."wikidotId" = $2::int LIMIT 1`,
+        [versionId, wikidotId]
+      );
+      if (check.rowCount === 0) return res.status(404).json({ error: 'not_found' });
+
+      const sql = `
+        SELECT DISTINCT ON (u.id)
+          u.id AS "userId",
+          u."displayName",
+          u."wikidotId" AS "userWikidotId",
+          a.type
+        FROM "Attribution" a
+        JOIN "User" u ON u.id = a."userId"
+        WHERE a."pageVerId" = $1
+        ORDER BY u.id, a.type ASC
+      `;
+      const { rows } = await pool.query(sql, [versionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1153,6 +1244,8 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           pv."createdAt" AS date,
           pv."revisionCount",
           pv."attributionCount",
+          pv.source,
+          SUBSTRING(pv."textContent" FOR 2000) AS "textSnippet",
           ps."wilson95",
           ps."controversy",
           -- 标签重合
@@ -1388,8 +1481,22 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         }
       }
 
-      // 输出：去掉中间计算字段，保留 similarity
-      const payload = finalList.map(({ tag_overlap, tag_overlap_weighted, author_overlap, matched_tags, matched_authors, ...rest }) => rest);
+      // 输出：去掉中间计算字段，保留 similarity，并注入 snippet：
+      // 1) 优先使用 preview；2) 否则使用与首页随机一致的 excerpt 逻辑
+      const payload = finalList.map(({ tag_overlap, tag_overlap_weighted, author_overlap, matched_tags, matched_authors, ...rest }: any) => {
+        const previews = extractPreviewCandidates(rest?.source || null);
+        let snippetHtml: string | null = null;
+        if (previews && previews.length > 0) {
+          const picked = pickPreview(previews);
+          if (picked) snippetHtml = toPreviewPick(picked).html;
+        }
+        if (!snippetHtml) {
+          const ex = extractExcerptFallback(rest?.textSnippet || null, 150);
+          if (ex) snippetHtml = toPreviewPick(ex).html;
+        }
+        const { source, textSnippet, ...clean } = rest;
+        return snippetHtml ? { ...clean, snippet: snippetHtml } : clean;
+      });
       res.json(payload);
     } catch (err) {
       next(err);
@@ -1542,7 +1649,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       }
       const { granularity = 'week' } = req.query as Record<string, string>;
       const context = await resolvePageContextByWikidotId(wikidotIdInt);
-      if (!context || !context.pageId) return res.json([]);
+      if (!context || !context.effectiveVersionId) return res.json([]);
       
       // 获取页面的投票历史，按周或月聚合（无时间限制，获取全部历史数据）
       const dateLabel = granularity === 'month' ? 'YYYY-MM-DD' : 'YYYY-MM-DD';
@@ -1557,7 +1664,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             SUM(v.direction) as net_change
           FROM "Vote" v
           JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          WHERE pv."pageId" = $1
+          WHERE v."pageVersionId" = $1
           GROUP BY DATE_TRUNC('${granularity}', v.timestamp)
         ),
         cumulative AS (
@@ -1579,7 +1686,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         FROM cumulative
         ORDER BY period
       `;
-      const { rows } = await pool.query(sql, [context.pageId]);
+      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
       
       // 直接返回数据，前端会处理隐藏逻辑
       res.json(rows);

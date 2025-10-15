@@ -18,7 +18,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
 
     if (!cleanText) return null;
 
-    const sentences = cleanText.split(/[。！？.!?]\s*/g).filter((s) => s.length > 12);
+    const sentences = (cleanText.match(/[^。！？.!?]+[。！？.!?]+/g) || [])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 12);
     const chosen = sentences.length > 0 ? sentences[Math.floor(Math.random() * sentences.length)] : cleanText;
     const normalized = chosen.trim();
     if (!normalized) return null;

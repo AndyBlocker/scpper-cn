@@ -14,6 +14,7 @@ import { pageImagesRouter } from './routes/page-images.js';
 import { PAGE_IMAGE_ROUTE_PREFIX } from './pageImagesConfig.js';
 import { tagsRouter } from './routes/tags.js';
 import { alertsRouter } from './routes/alerts.js';
+import { referencesRouter } from './routes/references.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -27,6 +28,7 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/quotes', quotesRouter(pool, redis));
   router.use('/tags', tagsRouter(pool, redis));
   router.use('/alerts', alertsRouter(pool, redis));
+  router.use('/references', referencesRouter(pool, redis));
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service
   router.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200', changeOrigin: false, xfwd: true }));
@@ -50,6 +52,27 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
           } catch (error) {
             // eslint-disable-next-line no-console
             console.warn('Failed to forward auth payload:', error);
+          }
+        }
+      }
+    }));
+    router.use('/admin', createProxyMiddleware<Request, Response>({
+      target: `${normalizedTarget}/admin`,
+      changeOrigin: true,
+      xfwd: true,
+      on: {
+        proxyReq: (proxyReq, req) => {
+          if (!req.body || req.method === 'GET' || req.method === 'HEAD') {
+            return;
+          }
+          try {
+            const bodyData = JSON.stringify(req.body);
+            proxyReq.setHeader('Content-Type', 'application/json');
+            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+            proxyReq.end(bodyData);
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.warn('Failed to forward admin payload:', error);
           }
         }
       }

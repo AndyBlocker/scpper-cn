@@ -41,8 +41,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
       
       // Extract sentences from the content
       // Split by common sentence endings (considering Chinese and English)
-      const sentences = content
-        .split(/[。！？.!?]\s*/g)
+      const sentences = (content.match(/[^。！？.!?]+[。！？.!?]+/g) || [])
         .map((s: string) => s.trim())
         .filter((s: string) => {
           const len = s.length;
@@ -140,8 +139,7 @@ export function quotesRouter(pool: Pool, _redis: RedisClientType | null) {
       const content = page.textContent || '';
       
       // Extract sentences
-      const sentences = content
-        .split(/[。！？.!?]\s*/g)
+      const sentences = (content.match(/[^。！？.!?]+[。！？.!?]+/g) || [])
         .map((s: string) => s.trim())
         .filter((s: string) => {
           const len = s.length;

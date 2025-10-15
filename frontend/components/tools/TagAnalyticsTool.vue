@@ -1,5 +1,5 @@
 <template>
-  <div class="container mx-auto px-4 py-6">
+  <div class="mx-auto w-full max-w-6xl py-6">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <h1 class="text-xl font-bold text-neutral-900 dark:text-neutral-100">标签偏好榜</h1>
       <div class="flex items-center gap-2 w-full sm:w-auto">

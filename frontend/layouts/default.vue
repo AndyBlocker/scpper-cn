@@ -36,7 +36,8 @@
           <div class="ml-auto flex w-auto items-center gap-2 sm:w-full sm:justify-end">
             <button
               @click="openMobileSearch"
-              class="p-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:shadow-md transition-all text-neutral-700 dark:text-neutral-300 sm:hidden"
+              :class="[iconButtonBaseClass, 'sm:hidden']"
+              type="button"
               aria-label="打开搜索"
               title="打开搜索"
             >
@@ -94,7 +95,8 @@
             </form>
             <button
               @click="toggleTheme"
-              class="p-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:shadow-md transition-all text-neutral-700 dark:text-neutral-300"
+              :class="iconButtonBaseClass"
+              type="button"
               aria-label="切换主题"
               title="切换主题"
             >
@@ -110,7 +112,7 @@
                 ref="alertsButtonRef"
                 type="button"
                 @click="toggleAlertsDropdown"
-                class="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-transparent bg-white/80 text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:bg-neutral-800/80 dark:text-neutral-300"
+                :class="['relative', iconButtonBaseClass]"
                 aria-label="查看提醒"
               >
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -187,7 +189,7 @@
            <div v-if="isAuthenticated" class="flex items-center gap-2">
               <NuxtLink
                 to="/account"
-                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/70 px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-sm hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
+                class="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 text-sm font-medium text-neutral-700 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-200"
               >
                 <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" />
                 <span class="hidden lg:inline">{{ authUser?.displayName || authUser?.email }}</span>
@@ -196,7 +198,7 @@
             <div v-else class="flex items-center gap-2">
               <NuxtLink
                 to="/auth/login"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
+                class="inline-flex h-10 items-center rounded-full border border-neutral-200/80 bg-white/80 px-4 text-sm font-semibold text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-300"
               >登录</NuxtLink>
             </div>
           </div>
@@ -350,6 +352,9 @@ const avatarIdHeader = computed(() => {
 
 // 主题状态
 const currentTheme = ref('dark');
+
+const iconButtonBaseClass =
+  'inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/80 bg-white/80 text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:shadow-md hover:text-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] focus:ring-offset-0 dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-300 dark:hover:border-[rgba(var(--accent),0.4)] dark:hover:shadow-md dark:hover:text-[rgb(var(--accent))]';
 
 const applyTheme = (mode: string) => {
   if (process.client) {

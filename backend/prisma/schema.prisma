@@ -186,11 +186,39 @@ model PageVersion {
   sourceVersions   SourceVersion[]
   votes            Vote[]
   images           PageVersionImage[]
+  references       PageReference[]
 
   @@index([pageId])
   @@index([rating])
   @@index([validTo])
   @@index([wikidotId])
+}
+
+model PageReference {
+  id             Int         @id @default(autoincrement())
+  pageVersionId  Int
+  linkType       String
+  targetPath     String
+  targetFragment String?
+  displayTexts   String[]    @default([])
+  rawTarget      String?
+  rawText        String?
+  occurrence     Int         @default(1)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  pageVersion    PageVersion @relation(fields: [pageVersionId], references: [id], onDelete: Cascade)
+
+  @@index([pageVersionId])
+  @@index([targetPath])
+  @@unique([pageVersionId, linkType, targetPath, targetFragment], map: "PageReference_unique_path")
+}
+
+model PageReferenceGraphSnapshot {
+  id          Int      @id @default(autoincrement())
+  label       String   @unique
+  description String?
+  generatedAt DateTime @default(now())
+  stats       Json
 }
 
 model ImageAsset {

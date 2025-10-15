@@ -577,7 +577,10 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 	router.get('/user-activity', async (req, res, next) => {
 		try {
 			const { recordType, userId, limit = '100', offset = '0' } = req.query as Record<string, string>;
-			const sql = `
+			const limitInt = Math.max(1, Math.min(parseInt(limit, 10) || 100, 500));
+			const offsetInt = Math.max(0, parseInt(offset, 10) || 0);
+			const baseParams = [recordType || null, userId || null];
+			const listSql = `
 				SELECT id, "recordType", "userId", "userDisplayName", value, context, "achievedAt", "calculatedAt"
 				FROM "UserActivityRecords"
 				WHERE ($1::text IS NULL OR "recordType" = $1::text)
@@ -585,8 +588,23 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 				ORDER BY COALESCE("achievedAt", "calculatedAt") DESC
 				LIMIT $3::int OFFSET $4::int
 			`;
-			const { rows } = await pool.query(sql, [recordType || null, userId || null, limit, offset]);
-			res.json(rows);
+			const countSql = `
+				SELECT COUNT(*)::int AS total
+				FROM "UserActivityRecords"
+				WHERE ($1::text IS NULL OR "recordType" = $1::text)
+				  AND ($2::int IS NULL OR "userId" = $2::int)
+			`;
+			const [listRes, countRes] = await Promise.all([
+				pool.query(listSql, [...baseParams, limitInt, offsetInt]),
+				pool.query(countSql, baseParams)
+			]);
+			const total = Number(countRes.rows?.[0]?.total || 0);
+			res.json({
+				items: listRes.rows,
+				total,
+				limit: limitInt,
+				offset: offsetInt
+			});
 		} catch (err) {
 			next(err);
 		}
