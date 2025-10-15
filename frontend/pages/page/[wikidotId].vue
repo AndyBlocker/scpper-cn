@@ -364,6 +364,7 @@
             :to="`/page/${rp.wikidotId}`"
             :wikidot-id="rp.wikidotId"
             :title="rp.title"
+            :snippet-html="(rp as any).snippet || null"
             :tags="Array.isArray(rp.tags) ? rp.tags : []"
             :rating="Number(rp.rating ?? 0)"
             :comments="Number(rp.commentCount ?? rp.revisionCount ?? 0)"

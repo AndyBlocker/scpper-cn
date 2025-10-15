@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { extractPreviewCandidates, pickPreview, toPreviewPick, extractExcerptFallback } from '../utils/preview.js';
 
 export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
@@ -342,7 +343,7 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
       if (isNaN(wikidotIdInt)) {
         return res.status(400).json({ error: 'Invalid wikidotId' });
       }
-      const { tab = 'all', limit = '20', offset = '0', includeDeleted = 'false' } = req.query as Record<string, string>;
+      const { tab = 'all', limit = '20', offset = '0', includeDeleted = 'true', sortBy = 'date', sortDir } = req.query as Record<string, string>;
 
       // Build tab-specific filters
       const excludedCats = ['log-of-anomalous-items-cn', 'short-stories'];
@@ -352,33 +353,33 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
       switch (tabLower) {
         case 'author':
           tabCond = ` AND a.type IN ('AUTHOR','SUBMITTER')
-                      AND ('原创' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                      AND NOT ('掩盖页' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                      AND NOT ('段落' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                      AND NOT (pv.category = ANY($3::text[]))`;
+                      AND ('原创' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                      AND NOT ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                      AND NOT ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                      AND NOT (effective_pv.category = ANY($3::text[]))`;
           params.push(excludedCats);
           break;
         case 'translator':
-          tabCond = ` AND NOT ('原创' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                      AND NOT ('作者' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                      AND NOT ('掩盖页' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                      AND NOT ('段落' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                      AND NOT (pv.category = ANY($3::text[]))`;
+          tabCond = ` AND NOT ('原创' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                      AND NOT ('作者' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                      AND NOT ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                      AND NOT ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                      AND NOT (effective_pv.category = ANY($3::text[]))`;
           params.push(excludedCats);
           break;
         case 'other':
-          tabCond = ` AND (('作者' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                        OR ('掩盖页' = ANY(COALESCE(pv.tags, ARRAY[]::text[])))
-                        OR ('段落' = ANY(COALESCE(pv.tags, ARRAY[]::text[]))))
-                      AND NOT (pv.category = ANY($3::text[]))`;
+          tabCond = ` AND (('作者' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                        OR ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                        OR ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[]))))
+                      AND NOT (effective_pv.category = ANY($3::text[]))`;
           params.push(excludedCats);
           break;
         case 'short_stories':
-          tabCond = ` AND pv.category = $3::text`;
+          tabCond = ` AND effective_pv.category = $3::text`;
           params.push('short-stories');
           break;
         case 'anomalous_log':
-          tabCond = ` AND pv.category = $3::text`;
+          tabCond = ` AND effective_pv.category = $3::text`;
           params.push('log-of-anomalous-items-cn');
           break;
         case 'all':
@@ -387,18 +388,25 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
           break;
       }
 
+      // Server-side sorting
+      const sort = String(sortBy || 'date').toLowerCase();
+      const dir = (String(sortDir || '').toLowerCase() === 'asc') ? 'ASC' : 'DESC';
+      const orderExpr = (sort === 'rating') ? 't.rating' : 't."createdAt"';
+
       const sql = `
         SELECT * FROM (
           SELECT DISTINCT ON (pv."pageId")
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
             p."currentUrl" AS url,
-            pv.title,
-            pv."alternateTitle",
-            pv.category,
-            pv.rating,
-            pv.tags,
-            pv."voteCount",
-            pv."commentCount",
+            COALESCE(effective_pv.title, live_pv.title, pv.title) AS title,
+            COALESCE(effective_pv."alternateTitle", live_pv."alternateTitle", pv."alternateTitle") AS "alternateTitle",
+            COALESCE(effective_pv.category, pv.category) AS category,
+            COALESCE(effective_pv.rating, pv.rating) AS rating,
+            COALESCE(effective_pv.tags, pv.tags) AS tags,
+            COALESCE(effective_pv."voteCount", pv."voteCount") AS "voteCount",
+            COALESCE(effective_pv."commentCount", pv."commentCount") AS "commentCount",
+            SUBSTRING(COALESCE(effective_pv."textContent", pv."textContent") FOR 2000) AS "textSnippet",
+            COALESCE(effective_pv.source, pv.source) AS source,
             -- Effective created date for this user and page with priority:
             -- (AUTHOR/SUBMITTER -> PAGE_CREATED) else -> earliest attribution date
             -- else -> earliest revision by this user
@@ -441,11 +449,36 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             CASE 
               WHEN COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) THEN COALESCE(latest."deletedAt", pv."validTo") 
               ELSE NULL 
-            END AS "deletedAt"
+            END AS "deletedAt",
+            -- Server-side group classification used by frontend tabs (effective version)
+            CASE 
+              WHEN effective_pv.category = 'short-stories' THEN 'short_stories'
+              WHEN effective_pv.category = 'log-of-anomalous-items-cn' THEN 'anomalous_log'
+              WHEN ('作者' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                OR ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                OR ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[]))) THEN 'other'
+              WHEN ('原创' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[]))) THEN 'author'
+              ELSE 'translator'
+            END AS "groupKey"
           FROM "Attribution" a
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           JOIN "Page" p ON p.id = pv."pageId"
-          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          LEFT JOIN LATERAL (
+            SELECT pv2.id, pv2.title, pv2."alternateTitle", pv2.category, pv2.rating, pv2.tags, pv2."voteCount", pv2."commentCount", pv2."textContent", pv2.source
+            FROM "PageVersion" pv2
+            WHERE pv2."pageId" = pv."pageId" AND pv2."isDeleted" = false
+            ORDER BY (pv2."validTo" IS NULL) DESC, pv2."validFrom" DESC NULLS LAST, pv2.id DESC
+            LIMIT 1
+          ) effective_pv ON TRUE
+          -- Current (live) snapshot for robust display fallback fields (no effect on inclusion)
+          LEFT JOIN LATERAL (
+            SELECT pv2.id, pv2.title, pv2."alternateTitle"
+            FROM "PageVersion" pv2
+            WHERE pv2."pageId" = pv."pageId" AND pv2."validTo" IS NULL
+            ORDER BY pv2.id DESC
+            LIMIT 1
+          ) live_pv ON TRUE
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = effective_pv.id
           JOIN "User" u ON a."userId" = u.id
           LEFT JOIN LATERAL (
             SELECT pv2."isDeleted" AS "isDeleted", pv2."validFrom" AS "deletedAt"
@@ -455,17 +488,35 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
             LIMIT 1
           ) latest ON TRUE
           WHERE u."wikidotId" = $1
-            AND ($2::boolean = true OR pv."validTo" IS NULL)
+            AND a."pageVerId" = effective_pv.id
+            AND (
+              $2::boolean = true
+              OR COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) = false
+            )
             ${tabCond}
           ORDER BY pv."pageId", pv."createdAt" DESC
         ) t
-        ORDER BY t."createdAt" DESC
+        ORDER BY ${orderExpr} ${dir}, t."createdAt" DESC, t.rating DESC
         LIMIT $${params.length + 1}::int OFFSET $${params.length + 2}::int
       `;
       params.push(limit, offset);
       const { rows } = await pool.query(sql, params);
-      // return createdAt so frontend can display date
-      res.json(rows);
+      // Inject preview snippet when present; otherwise fallback to excerpt extracted from textSnippet
+      const items = rows.map((r: any) => {
+        const previews = extractPreviewCandidates(r?.source || null);
+        let snippetHtml: string | null = null;
+        if (previews && previews.length > 0) {
+          const picked = pickPreview(previews);
+          if (picked) snippetHtml = toPreviewPick(picked).html;
+        }
+        if (!snippetHtml) {
+          const ex = extractExcerptFallback(r?.textSnippet || null, 150);
+          if (ex) snippetHtml = toPreviewPick(ex).html;
+        }
+        const { source, textSnippet, ...rest } = r;
+        return snippetHtml ? { ...rest, snippet: snippetHtml } : rest;
+      });
+      res.json(items);
     } catch (err) {
       next(err);
     }
@@ -483,16 +534,33 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
       const { includeDeleted = 'true' } = req.query as Record<string, string>;
       const sql = `
         WITH latest_user_pages AS (
-          SELECT DISTINCT ON (pv."wikidotId")
-            pv."wikidotId",
-            pv.tags,
-            pv.category,
-            pv."validTo"
+          SELECT DISTINCT ON (p."wikidotId")
+            p."wikidotId" AS "wikidotId",
+            effective_pv.tags AS tags,
+            effective_pv.category AS category,
+            effective_pv."validTo" AS "validTo",
+            COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) AS is_deleted
           FROM "Attribution" a
-          JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           JOIN "User" u ON a."userId" = u.id
+          JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+          JOIN "Page" p ON p.id = pv."pageId"
+          LEFT JOIN LATERAL (
+            SELECT pv2.id AS id, pv2.tags, pv2.category, pv2."validTo", pv2."validFrom"
+            FROM "PageVersion" pv2
+            WHERE pv2."pageId" = p.id AND pv2."isDeleted" = false
+            ORDER BY (pv2."validTo" IS NULL) DESC, pv2."validFrom" DESC NULLS LAST, pv2.id DESC
+            LIMIT 1
+          ) effective_pv ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT pv2."isDeleted" AS "isDeleted"
+            FROM "PageVersion" pv2
+            WHERE pv2."pageId" = p.id AND pv2."validTo" IS NULL
+            ORDER BY pv2.id DESC
+            LIMIT 1
+          ) latest ON TRUE
           WHERE u."wikidotId" = $1
-          ORDER BY pv."wikidotId", pv."createdAt" DESC
+            AND a."pageVerId" = effective_pv.id
+          ORDER BY p."wikidotId", effective_pv.id DESC
         )
         SELECT 
           COUNT(*) AS total,
@@ -522,7 +590,10 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
                AND NOT (category IN ('log-of-anomalous-items-cn','short-stories'))
           ) AS other
         FROM latest_user_pages
-        WHERE ($2::boolean = true OR "validTo" IS NULL)
+        WHERE (
+          $2::boolean = true
+          OR COALESCE(is_deleted, false) = false
+        )
       `;
       const { rows } = await pool.query(sql, [wikidotIdInt, includeDeleted === 'true']);
       const row = rows[0] || { total: 0, original: 0, translation: 0, shortStories: 0, anomalousLog: 0, other: 0 };
@@ -548,6 +619,8 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ error: 'Invalid wikidotId' });
       }
       const { limit = '50', offset = '0' } = req.query as Record<string, string>;
+      const limitInt = Math.max(1, Math.min(parseInt(limit, 10) || 50, 200));
+      const offsetInt = Math.max(0, parseInt(offset, 10) || 0);
       const sql = `
         SELECT 
           v.timestamp,
@@ -565,8 +638,26 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
         ORDER BY v.timestamp DESC
         LIMIT $2::int OFFSET $3::int
       `;
-      const { rows } = await pool.query(sql, [wikidotIdInt, limit, offset]);
-      res.json(rows);
+      const countSql = `
+        SELECT COUNT(*)::int AS total
+        FROM "Vote" v
+        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
+        JOIN "User" u ON v."userId" = u.id
+        WHERE u."wikidotId" = $1
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
+      `;
+      const [listRes, countRes] = await Promise.all([
+        pool.query(sql, [wikidotIdInt, limitInt, offsetInt]),
+        pool.query(countSql, [wikidotIdInt])
+      ]);
+      const total = Number(countRes.rows?.[0]?.total || 0);
+      res.json({
+        items: listRes.rows,
+        total,
+        limit: limitInt,
+        offset: offsetInt
+      });
     } catch (err) {
       next(err);
     }
@@ -581,6 +672,8 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ error: 'Invalid wikidotId' });
       }
       const { limit = '50', offset = '0' } = req.query as Record<string, string>;
+      const limitInt = Math.max(1, Math.min(parseInt(limit, 10) || 50, 200));
+      const offsetInt = Math.max(0, parseInt(offset, 10) || 0);
       const sql = `
         SELECT 
           r.timestamp,
@@ -599,8 +692,26 @@ export function usersRouter(pool: Pool, _redis: RedisClientType | null) {
         ORDER BY r.timestamp DESC
         LIMIT $2::int OFFSET $3::int
       `;
-      const { rows } = await pool.query(sql, [wikidotIdInt, limit, offset]);
-      res.json(rows);
+      const countSql = `
+        SELECT COUNT(*)::int AS total
+        FROM "Revision" r
+        JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+        JOIN "User" u ON r."userId" = u.id
+        WHERE u."wikidotId" = $1
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
+      `;
+      const [listRes, countRes] = await Promise.all([
+        pool.query(sql, [wikidotIdInt, limitInt, offsetInt]),
+        pool.query(countSql, [wikidotIdInt])
+      ]);
+      const total = Number(countRes.rows?.[0]?.total || 0);
+      res.json({
+        items: listRes.rows,
+        total,
+        limit: limitInt,
+        offset: offsetInt
+      });
     } catch (err) {
       next(err);
     }

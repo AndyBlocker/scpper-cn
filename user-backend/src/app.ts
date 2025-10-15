@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import pinoHttp from 'pino-http';
 import { authRouter } from './routes/auth.js';
+import { adminRouter } from './routes/admin.js';
 
 export function createApp() {
   const app = express();
@@ -13,6 +14,7 @@ export function createApp() {
   app.use(pinoHttp());
 
   app.use('/auth', authRouter());
+  app.use('/admin', adminRouter());
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });

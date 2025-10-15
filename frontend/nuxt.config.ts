@@ -61,16 +61,20 @@ export default defineNuxtConfig({
           innerHTML: `
             (function() {
               try {
-                var stored = localStorage.getItem('theme');
+                var storedTheme = localStorage.getItem('theme');
                 var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                var theme = stored || (prefersDark ? 'dark' : 'light');
-                var scheme = 'emerald';
+                var initialTheme = (storedTheme === 'light' || storedTheme === 'dark')
+                  ? storedTheme
+                  : (prefersDark ? 'dark' : 'light');
+                var storedScheme = localStorage.getItem('color-scheme');
+                var scheme = storedScheme && /^[-a-z]+$/.test(storedScheme) ? storedScheme : 'aurora';
                 var root = document.documentElement;
                 root.classList.remove('light', 'dark');
                 Array.prototype.slice.call(root.classList).forEach(function(c){ if(c && c.indexOf('scheme-')===0) root.classList.remove(c); });
-                root.classList.add(theme === 'light' ? 'light' : 'dark');
+                root.classList.add(initialTheme === 'light' ? 'light' : 'dark');
                 root.classList.add('scheme-' + scheme);
-                if (!stored) localStorage.setItem('theme', theme);
+                if (storedTheme !== initialTheme) localStorage.setItem('theme', initialTheme);
+                if (!storedScheme) localStorage.setItem('color-scheme', scheme);
               } catch (_) {}
             })();
           `,

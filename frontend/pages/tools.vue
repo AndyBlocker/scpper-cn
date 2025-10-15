@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-5xl mx-auto px-4 py-14 space-y-12">
+  <div class="max-w-5xl mx-auto w-full py-14 space-y-12">
     <header class="space-y-5 text-center sm:text-left">
       <div class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.35)] bg-[rgba(var(--accent),0.08)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--accent))]">
         <span>工具枢纽</span>

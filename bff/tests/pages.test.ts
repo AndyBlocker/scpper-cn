@@ -91,6 +91,51 @@ describe('Pages routes', () => {
     expect(res.body.tags).toEqual(['test-tag']);
     expect(res.body).not.toHaveProperty('pageWikidotId');
   });
+
+  test('GET /pages/:wikidotId/references returns parsed references', async () => {
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes('FROM "Page" WHERE "wikidotId" = $1')) {
+        return Promise.resolve({ rows: [{ id: 77 }] });
+      }
+      if (sql.includes('FROM "PageVersion"') && sql.includes('"validTo" IS NULL')) {
+        return Promise.resolve({ rows: [{ id: 501, isDeleted: false }] });
+      }
+      if (sql.includes('FROM "PageReference"')) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: 1,
+              linkType: 'TRIPLE',
+              targetPath: '/scp-173',
+              targetFragment: null,
+              displayTexts: ['SCP-173'],
+              rawTarget: 'scp-173',
+              rawText: '[[[scp-173]]]',
+              occurrence: 2,
+              createdAt: '2024-01-01T00:00:00.000Z',
+              updatedAt: '2024-01-02T00:00:00.000Z'
+            }
+          ]
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/pages/1460481841/references')
+      .expect(200);
+
+    expect(res.body.wikidotId).toBe(1460481841);
+    expect(res.body.pageId).toBe(77);
+    expect(res.body.effectiveVersionId).toBe(501);
+    expect(Array.isArray(res.body.references)).toBe(true);
+    expect(res.body.references[0]).toMatchObject({
+      linkType: 'TRIPLE',
+      targetPath: '/scp-173',
+      occurrence: 2
+    });
+  });
 });
 
 describe('Tags routes', () => {

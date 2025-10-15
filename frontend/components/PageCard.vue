@@ -4,6 +4,9 @@
       :to="to || undefined"
       :class="rootClass"
       :aria-label="displayTitle || 'Page'"
+      :style="rootStyle"
+      @mouseenter="onHoverEnter"
+      @mouseleave="onHoverLeave"
     >
       <!-- Header: Title (lg only); md title inline; sm has compact header -->
       <div v-if="variant === 'lg'" class="flex items-start gap-3">
@@ -147,7 +150,12 @@
             <span v-for="t in visibleTags" :key="t" class="inline-block px-1.5 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800/60 text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))]">#{{ t }}</span>
             <span v-if="tagsMoreCount>0" class="text-[10px] text-neutral-500 dark:text-neutral-400">+{{ tagsMoreCount }}</span>
           </div>
-          <div v-if="snippetHtml" class="text-[12px] text-neutral-600 dark:text-neutral-400 line-clamp-3" v-html="snippetHtml"></div>
+          <!-- snippet area (md): fixed two lines height; ellipsis on overflow -->
+          <div class="h-[32px] overflow-hidden flex items-center">
+            <div v-if="snippetHtml"
+                 class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 line-clamp-2"
+                 v-html="snippetHtml"></div>
+          </div>
         </div>
   
         <!-- right stats 2x2 + date -->
@@ -192,7 +200,8 @@
   </template>
   
   <script setup lang="ts">
-  import { computed, resolveComponent, watch } from 'vue'
+  import { computed, resolveComponent, watch, ref } from 'vue'
+  import { useNuxtApp, useRuntimeConfig } from 'nuxt/app'
   import { useViewerVotes } from '~/composables/useViewerVotes'
   
   interface PageLike {
@@ -425,15 +434,91 @@
     return Number.isFinite(v) ? v.toFixed(3) : '0.000'
   })
 
+  // ===== Hover background thumbnail (md/lg only) =====
+  const isHovering = ref(false)
+  const hoverImageUrl = ref<string | null>(null)
+  const hoverLoaded = ref(false)
+  const nuxtApp = useNuxtApp()
+  const $bff = (nuxtApp as any).$bff as (<T = any>(url: string, opts?: any) => Promise<T>)
+  const runtimeConfig = useRuntimeConfig()
+  const rawBffBase = (runtimeConfig?.public as any)?.bffBase ?? '/api'
+  const normalizedBffBase = (() => {
+    const base = typeof rawBffBase === 'string' ? rawBffBase.trim() : '/api'
+    if (!base || base === '/') return ''
+    return base.replace(/\/+$/u, '')
+  })()
+
+  function toAbsoluteAsset(path: string | null | undefined): string {
+    const candidate = String(path || '')
+    if (!candidate) return ''
+    if (/^https?:/i.test(candidate)) return candidate
+    if (candidate.startsWith('//')) return `https:${candidate}`
+    const suffix = candidate.startsWith('/') ? candidate : `/${candidate}`
+    return `${normalizedBffBase}${suffix}`
+  }
+
+  async function loadHoverImageOnce() {
+    if (hoverLoaded.value) return
+    const id = numericPageId.value
+    if (!id || !$bff) { hoverLoaded.value = true; return }
+    try {
+      const rows = await $bff<any[]>(`/pages/${id}/images`)
+      const list = Array.isArray(rows) ? rows : []
+      // Prefer reasonably sized assets
+      const filtered = list
+        .map((r) => ({
+          url: toAbsoluteAsset(r?.imageUrl || r?.displayUrl || r?.originUrl || r?.normalizedUrl || ''),
+          w: Number(r?.width || r?.asset?.width || 0),
+          h: Number(r?.height || r?.asset?.height || 0)
+        }))
+        .filter(x => !!x.url)
+
+      if (filtered.length === 0) { hoverLoaded.value = true; return }
+      const sizable = filtered.filter(x => x.w >= 480 || x.h >= 360)
+      const pool = sizable.length > 0 ? sizable : filtered
+      const pick = pool[Math.floor(Math.random() * pool.length)]
+      hoverImageUrl.value = pick?.url || null
+    } catch {
+      // ignore
+    } finally {
+      hoverLoaded.value = true
+    }
+  }
+
+  function onHoverEnter() {
+    isHovering.value = true
+    if (variant.value === 'lg' || variant.value === 'md') {
+      void loadHoverImageOnce()
+    }
+  }
+  function onHoverLeave() {
+    isHovering.value = false
+  }
+
+  const rootStyle = computed(() => {
+    const style: Record<string, string> = {}
+    if (variant.value === 'lg') style['--pc-hover-height'] = '128px'
+    else if (variant.value === 'md') style['--pc-hover-height'] = '96px'
+    const src = hoverImageUrl.value
+    if (src) {
+      style['--pc-hover-bg-image'] = `url('${src}')`
+      // Very subtle transparency to avoid affecting main content
+      style['--pc-hover-opacity'] = '0.06'
+    }
+    return style
+  })
+
   
   
   /* Base class tweaks: lighter borders, slightly tighter padding on md/sm */
-  const baseClass = 'relative w-full max-w-full min-w-0 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition-all duration-200'
+  const baseClass = 'relative w-full max-w-full min-w-0 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition-all duration-200 overflow-hidden card-hover-bg'
   const rootClass = computed(() => {
     if (variant.value === 'lg') {
       return [
         baseClass,
         to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
+        hoverImageUrl.value ? 'has-hover-bg' : '',
+        (hoverImageUrl.value && isHovering.value) ? 'is-hovering' : '',
         'p-5 md:p-6 flex flex-col gap-3'
       ].join(' ')
     }
@@ -441,6 +526,8 @@
       return [
         baseClass,
         to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
+        hoverImageUrl.value ? 'has-hover-bg' : '',
+        (hoverImageUrl.value && isHovering.value) ? 'is-hovering' : '',
         'p-3 flex flex-col gap-2'
       ].join(' ')
     }
@@ -459,5 +546,28 @@
   .stat-soft{ @apply rounded text-center bg-neutral-50 dark:bg-neutral-800/60 p-1.5; }
   .stat-num{ @apply text-[13px] leading-tight font-semibold text-neutral-800 dark:text-neutral-200 tabular-nums; }
   .stat-chip{ @apply inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800 text-[11px] text-neutral-700 dark:text-neutral-300 tabular-nums; }
+
+  /* Hover background image only near the header; extremely subtle */
+  .card-hover-bg::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: var(--pc-hover-height, 96px);
+    background-position: top center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    opacity: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .card-hover-bg.has-hover-bg.is-hovering::before {
+    background-image: var(--pc-hover-bg-image);
+    opacity: var(--pc-hover-opacity, 0.4);
+    /* Fade out quickly to keep main content almost unaffected */
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0, rgba(0,0,0,0.5) 60px, rgba(0,0,0,0) 100%);
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0, rgba(0,0,0,0.5) 60px, rgba(0,0,0,0) 100%);
+    transition: opacity .18s ease-in-out;
+  }
   </style>
   

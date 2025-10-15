@@ -453,7 +453,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 // Note: avoid importing Nuxt auto-imported composables to prevent linter conflicts
 
 // Declarations for Nuxt auto-imported globals to satisfy type checker in this environment
@@ -481,6 +481,16 @@ const __DEV_DEBUG__ = typeof window !== 'undefined' && (window as any).__DEV_DEB
 const route = useRoute();
 const {$bff} = useNuxtApp();
 
+const toItems = (payload: unknown): any[] => {
+  if (Array.isArray(payload)) {
+    return payload as any[];
+  }
+  if (payload && typeof payload === 'object' && Array.isArray((payload as any).items)) {
+    return (payload as any).items as any[];
+  }
+  return [];
+};
+
 const wikidotId = computed(() => route.params.wikidotId as string);
 const activityHeatmapRange = useState<HeatmapRange>(`user-activity-range-${wikidotId.value}`, computeHeatmapFetchRange);
 
@@ -489,6 +499,9 @@ watch(() => wikidotId.value, () => {
 });
 const activeTab = ref('all');
 const currentPage = ref(1);
+// Sorting (server-side)
+const sortField = ref<'date'|'rating'>('date')
+const sortOrder = ref<'asc'|'desc'>('desc')
 const categoryView = ref<'list'|'radar'>('list')
 // Responsive items per page for works list
 const itemsPerPage = ref(10);
@@ -589,12 +602,15 @@ const { data: stats, pending: statsPending } = await useAsyncData(
   { watch: [() => route.params.wikidotId] }
 );
 
-// Fetch user works
+// Fetch user works (server-side sorting)
 const { data: works, pending: worksPending, refresh: refreshWorks } = await useAsyncData(
-  () => `user-works-${wikidotId.value}-${activeTab.value}`,
+  () => `user-works-${wikidotId.value}-${activeTab.value}-${sortField.value}-${sortOrder.value}-${currentPage.value}-${itemsPerPage.value}`,
   async () => {
     const params: any = { 
-      limit: 100, 
+      limit: itemsPerPage.value, 
+      offset: (Math.max(1, Number(currentPage.value || 1)) - 1) * Math.max(1, Number(itemsPerPage.value || 10)),
+      sortBy: (sortField.value === 'rating') ? 'rating' : 'date',
+      sortDir: (sortOrder.value === 'asc') ? 'asc' : 'desc',
       includeDeleted: 'true',
       tab: (activeTab.value === 'SHORT_STORIES') ? 'short_stories'
          : (activeTab.value === 'ANOMALOUS_LOG') ? 'anomalous_log'
@@ -605,7 +621,7 @@ const { data: works, pending: worksPending, refresh: refreshWorks } = await useA
     };
     return await $bff(`/users/${wikidotId.value}/pages`, { params });
   },
-  { watch: [() => route.params.wikidotId, activeTab] }
+  { watch: [() => route.params.wikidotId, activeTab, () => sortField.value, () => sortOrder.value, () => currentPage.value, () => itemsPerPage.value] }
 );
 
 // Fetch recent votes with pagination (responsive page size)
@@ -627,27 +643,56 @@ if (typeof window !== 'undefined') {
   })
 }
 const userVoteOffset = ref(0)
-const { data: recentVotes } = await useAsyncData(
+const { data: userVotesPage } = await useAsyncData(
   () => `user-votes-${wikidotId.value}-${userVoteOffset.value}-${userVotePageSize.value}`,
   () => $bff(`/users/${wikidotId.value}/votes`, { params: { limit: userVotePageSize.value, offset: userVoteOffset.value } }),
   { watch: [() => route.params.wikidotId, () => userVoteOffset.value, () => userVotePageSize.value] }
 );
-const userHasMoreVotes = computed(() => Array.isArray(recentVotes.value) && recentVotes.value.length === userVotePageSize.value)
+const recentVotes = computed(() => toItems(userVotesPage.value))
+const userVoteTotal = computed(() => {
+  const payload = userVotesPage.value as any
+  if (payload && typeof payload.total === 'number' && Number.isFinite(payload.total)) {
+    return Number(payload.total)
+  }
+  return Math.max(0, userVoteOffset.value + recentVotes.value.length)
+})
+const userHasMoreVotes = computed(() => {
+  const size = Number(userVotePageSize.value || 0)
+  if (!size) return false
+  const total = userVoteTotal.value
+  if (!total) return recentVotes.value.length === size
+  return userVoteOffset.value + recentVotes.value.length < total
+})
 function nextUserVotePage() { if (userHasMoreVotes.value) userVoteOffset.value += userVotePageSize.value }
 function prevUserVotePage() { userVoteOffset.value = Math.max(0, userVoteOffset.value - userVotePageSize.value) }
 const userVoteTotalPages = computed(() => {
-  // Use votes cast by the user (not total votes received on their pages)
-  const up = Number(stats.value?.votesUp || 0)
-  const down = Number(stats.value?.votesDown || 0)
-  const total = Math.max(0, up + down)
   const size = Number(userVotePageSize.value || 0)
-  if (!total || !size) return 1
+  if (!size) return 1
+  const total = userVoteTotal.value
+  if (!total) return 1
   return Math.max(1, Math.ceil(total / size))
 })
 function goUserVotePage(n:number){
-  const idx = Math.max(1, Math.min(userVoteTotalPages.value, n)) - 1
+  const totalPages = userVoteTotalPages.value
+  if (!Number.isFinite(totalPages) || totalPages <= 0) return
+  const idx = Math.max(1, Math.min(totalPages, Number.isFinite(n) ? n : 1)) - 1
   userVoteOffset.value = idx * userVotePageSize.value
 }
+watchEffect(() => {
+  const size = Number(userVotePageSize.value || 0)
+  if (!size) return
+  const total = userVoteTotal.value
+  if (!total) {
+    if (userVoteOffset.value !== 0 && recentVotes.value.length === 0) {
+      userVoteOffset.value = 0
+    }
+    return
+  }
+  const maxOffset = Math.max(0, Math.floor((total - 1) / size) * size)
+  if (userVoteOffset.value > maxOffset) {
+    userVoteOffset.value = maxOffset
+  }
+})
 
 // Fetch recent revisions with pagination (2-3 cols responsive page size)
 const userRevPageSize = ref(10)
@@ -668,26 +713,59 @@ if (typeof window !== 'undefined') {
   })
 }
 const userRevOffset = ref(0)
-const { data: recentRevisions } = await useAsyncData(
+const { data: userRevisionsPage } = await useAsyncData(
   () => `user-revisions-${wikidotId.value}-${userRevOffset.value}-${userRevPageSize.value}`,
   () => $bff(`/users/${wikidotId.value}/revisions`, { params: { limit: userRevPageSize.value, offset: userRevOffset.value } }),
   { watch: [() => route.params.wikidotId, () => userRevOffset.value, () => userRevPageSize.value] }
 );
-const userHasMoreRevisions = computed(() => Array.isArray(recentRevisions.value) && recentRevisions.value.length === userRevPageSize.value)
+const recentRevisions = computed(() => toItems(userRevisionsPage.value))
+const userRevTotal = computed(() => {
+  const payload = userRevisionsPage.value as any
+  if (payload && typeof payload.total === 'number' && Number.isFinite(payload.total)) {
+    return Number(payload.total)
+  }
+  return Math.max(0, userRevOffset.value + recentRevisions.value.length)
+})
+const userHasMoreRevisions = computed(() => {
+  const size = Number(userRevPageSize.value || 0)
+  if (!size) return false
+  const total = userRevTotal.value
+  if (!total) return recentRevisions.value.length === size
+  return userRevOffset.value + recentRevisions.value.length < total
+})
 function nextUserRevPage() { if (userHasMoreRevisions.value) userRevOffset.value += userRevPageSize.value }
 function prevUserRevPage() { userRevOffset.value = Math.max(0, userRevOffset.value - userRevPageSize.value) }
 const userRevTotalPages = computed(() => {
-  const approxTotal = Number(stats.value?.pageCount || 0) * 4 // heuristic if no total available
-  if (!userRevPageSize.value) return 1
-  return Math.max(1, Math.ceil(approxTotal / userRevPageSize.value))
+  const size = Number(userRevPageSize.value || 0)
+  if (!size) return 1
+  const total = userRevTotal.value
+  if (!total) return 1
+  return Math.max(1, Math.ceil(total / size))
 })
 function goUserRevPage(n:number){
-  const idx = Math.max(1, Math.min(userRevTotalPages.value, n)) - 1
+  const totalPages = userRevTotalPages.value
+  if (!Number.isFinite(totalPages) || totalPages <= 0) return
+  const idx = Math.max(1, Math.min(totalPages, Number.isFinite(n) ? n : 1)) - 1
   userRevOffset.value = idx * userRevPageSize.value
 }
+watchEffect(() => {
+  const size = Number(userRevPageSize.value || 0)
+  if (!size) return
+  const total = userRevTotal.value
+  if (!total) {
+    if (userRevOffset.value !== 0 && recentRevisions.value.length === 0) {
+      userRevOffset.value = 0
+    }
+    return
+  }
+  const maxOffset = Math.max(0, Math.floor((total - 1) / size) * size)
+  if (userRevOffset.value > maxOffset) {
+    userRevOffset.value = maxOffset
+  }
+})
 
 // Fetch activity records
-const { data: activityRecords } = await useAsyncData(
+const { data: rawActivityRecords } = await useAsyncData(
   () => `user-activity-${wikidotId.value}`,
   () => $bff(`/stats/user-activity`, { 
     params: { 
@@ -697,6 +775,7 @@ const { data: activityRecords } = await useAsyncData(
   }),
   { watch: [() => user.value?.id] }
 );
+const activityRecords = computed(() => toItems(rawActivityRecords.value))
 
 // Fetch rating history
 const { data: ratingHistory } = await useAsyncData(
@@ -749,18 +828,20 @@ function hasTag(work: any, tag: string): boolean {
   return Array.isArray(work?.tags) && work.tags.includes(tag)
 }
 
-const isOriginal = (w: any) => hasTag(w, '原创')
+// Prefer server-side grouping when available
+const hasGroup = (w: any, key: string) => (w && typeof w.groupKey === 'string' && w.groupKey === key)
+const isOriginal = (w: any) => hasGroup(w, 'author') || hasTag(w, '原创')
 const isAuthorPage = (w: any) => hasTag(w, '作者')
 const isCoverPage = (w: any) => hasTag(w, '掩盖页')
 const isParagraph = (w: any) => hasTag(w, '段落')
 
-const isShortStories = (w: any) => (w?.category === 'short-stories')
-const isAnomalousLog = (w: any) => (w?.category === 'log-of-anomalous-items-cn')
+const isShortStories = (w: any) => hasGroup(w, 'short_stories') || (w?.category === 'short-stories')
+const isAnomalousLog = (w: any) => hasGroup(w, 'anomalous_log') || (w?.category === 'log-of-anomalous-items-cn')
 
 // Exclude short-stories & anomalous-log from original/translation/other
 const filterOriginal = (w: any) => isOriginal(w) && !isCoverPage(w) && !isParagraph(w) && !isShortStories(w) && !isAnomalousLog(w)
-const filterTranslation = (w: any) => !isOriginal(w) && !isAuthorPage(w) && !isCoverPage(w) && !isParagraph(w) && !isShortStories(w) && !isAnomalousLog(w)
-const filterOther = (w: any) => (isAuthorPage(w) || isCoverPage(w) || isParagraph(w)) && !isShortStories(w) && !isAnomalousLog(w)
+const filterTranslation = (w: any) => hasGroup(w, 'translator') || (!isOriginal(w) && !isAuthorPage(w) && !isCoverPage(w) && !isParagraph(w) && !isShortStories(w) && !isAnomalousLog(w))
+const filterOther = (w: any) => hasGroup(w, 'other') || ((isAuthorPage(w) || isCoverPage(w) || isParagraph(w)) && !isShortStories(w) && !isAnomalousLog(w))
 
 // Category-based tabs
 
@@ -816,39 +897,18 @@ const filteredWorks = computed(() => {
   return all
 });
 
-// Sorting
-const sortField = ref<'date'|'rating'>('date')
-const sortOrder = ref<'asc'|'desc'>('desc')
-
-const sortedWorks = computed(() => {
-  const list = filteredWorks.value.slice();
-  const sign = sortOrder.value === 'asc' ? 1 : -1
-  if (sortField.value === 'rating') {
-    list.sort((a: any, b: any) => sign * ((Number(a?.rating || 0)) - (Number(b?.rating || 0))))
-  } else {
-    // date: use createdAt if available else fallback to wikidotId numeric order
-    const getTime = (w: any) => {
-      const t = w?.createdAt || w?.validFrom || w?.firstRevisionAt || null
-      const d = t ? new Date(t) : null
-      if (d && !isNaN(d.getTime())) return d.getTime()
-      const idNum = Number(w?.wikidotId)
-      return Number.isFinite(idNum) ? idNum : 0
-    }
-    list.sort((a: any, b: any) => sign * (getTime(a) - getTime(b)))
-  }
-  return list
-})
+// Server-side sorted; keep client no-op to preserve existing bindings
+const sortedWorks = computed(() => filteredWorks.value)
 
 watch([sortField, sortOrder], () => { currentPage.value = 1 })
 
-const displayedWorks = computed(() => {
-  const list = sortedWorks.value;
-  const start = (currentPage.value - 1) * itemsPerPage.value;
-  const end = start + itemsPerPage.value;
-  return list.slice(start, end);
-});
+// Server-side pagination: displayed list equals fetched page
+const displayedWorks = computed(() => sortedWorks.value);
 
 const totalPages = computed(() => {
+  const total = (tabCounts.value && typeof tabCounts.value.total === 'number') ? Number(tabCounts.value.total) : 0;
+  if (Number.isFinite(total) && total > 0) return Math.max(1, Math.ceil(total / itemsPerPage.value));
+  // Fallback: estimate from current page size if counts unavailable
   const count = sortedWorks.value.length || 0;
   return Math.max(1, Math.ceil(count / itemsPerPage.value));
 });
@@ -963,6 +1023,7 @@ function normalizeWork(work: any) {
     wilson95: work.wilson95,
     controversy: work.controversy,
     voteCount: work.voteCount,
+    snippetHtml: work.snippet || null,
     isDeleted: !!work.isDeleted,
     deletedAt: work.deletedAt || (work.validTo || null),
     createdDate: (work.createdAt ? new Date(work.createdAt).toISOString().slice(0,10) : undefined)

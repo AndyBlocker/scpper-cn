@@ -404,4 +404,8 @@ ORDER BY COALESCE("achievedAt", "calculatedAt") DESC
 LIMIT $3 OFFSET $4;
 ```
 
+响应：
+- `items`: 匹配记录数组
+- `total`: 记录总数
+- `limit` / `offset`: 回显的分页参数
 

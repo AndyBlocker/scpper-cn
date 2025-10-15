@@ -440,5 +440,5 @@ SELECT type, "displayName", url, language, "recentlyCreatedUrl" FROM "SiteInfo";
 ### A6) UserActivityRecords 列表
 - REST: GET `/stats/user-activity?recordType=&userId=&limit=&offset=`
 - SQL 与返回：见 `bff-rest-mapping.md`。
-
+- 响应字段：`{ items: UserActivityRecord[], total: number, limit: number, offset: number }`
 
