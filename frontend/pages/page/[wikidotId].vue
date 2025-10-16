@@ -666,6 +666,7 @@ declare const useNuxtApp: any
 declare const useRoute: any
 declare const definePageMeta: any
 declare const useRuntimeConfig: any
+declare const useHead: any
 declare const process: any
 
 const route = useRoute();
@@ -679,6 +680,7 @@ const viewerLinkedId = computed(() => {
   const numeric = Number(id)
   return Number.isFinite(numeric) ? numeric : null
 })
+
 
 const rawBffBase = (runtimeConfig?.public as any)?.bffBase ?? '/api';
 const normalizedBffBase = (() => {
@@ -723,6 +725,9 @@ const pageDisplayTitle = computed(() => {
   if (alt) return base ? `${base} - ${alt}` : alt
   return base || 'Untitled'
 })
+
+// 动态设置页面标题
+useHead(() => ({ title: pageDisplayTitle.value }))
 
 const { data: pageImagesData, pending: pageImagesPending } = await useAsyncData(
   () => `page-images-${wikidotId.value}`,

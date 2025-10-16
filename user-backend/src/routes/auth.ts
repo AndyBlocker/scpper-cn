@@ -6,6 +6,7 @@ import { startRegistration, completeRegistration } from '../services/registratio
 import { issueAuthToken } from '../utils/auth-token.js';
 import { prisma } from '../db.js';
 import { requireAuth } from '../middleware/requireAuth.js';
+import { startPasswordReset, completePasswordReset } from '../services/passwordReset.js';
 
 const startSchema = z.object({
   email: z.string().email('电子邮箱格式不正确'),
@@ -42,6 +43,22 @@ const profileSchema = z.object({
 const passwordSchema = z.object({
   currentPassword: z.string().min(1, '请输入当前密码'),
   newPassword: z.string().min(8, '新密码至少 8 位').max(128, '新密码过长')
+});
+
+const resetStartSchema = z.object({
+  email: z.string().email('电子邮箱格式不正确')
+});
+
+const resetCompleteSchema = z.object({
+  email: z.string().email('电子邮箱格式不正确'),
+  code: z
+    .string()
+    .trim()
+    .regex(new RegExp(`^\\d{${config.verification.codeLength}}$`), `验证码应为 ${config.verification.codeLength} 位数字`),
+  password: z
+    .string()
+    .min(8, '密码至少 8 位')
+    .max(128, '密码长度过长')
 });
 
 function createErrorResponse(error: unknown) {
@@ -151,6 +168,31 @@ export function authRouter() {
       path: '/'
     });
     res.json({ ok: true });
+  });
+
+  // Request password reset code (always returns ok)
+  router.post('/password/reset/start', async (req, res) => {
+    try {
+      const payload = resetStartSchema.parse(req.body ?? {});
+      await startPasswordReset(payload.email);
+      res.json({ ok: true });
+    } catch (error) {
+      // Even if validation fails, keep explicit message
+      const { status, body } = createErrorResponse(error);
+      res.status(status).json(body);
+    }
+  });
+
+  // Complete password reset using email + code
+  router.post('/password/reset/complete', async (req, res) => {
+    try {
+      const payload = resetCompleteSchema.parse(req.body ?? {});
+      await completePasswordReset(payload.email, payload.code, payload.password);
+      res.json({ ok: true });
+    } catch (error) {
+      const { status, body } = createErrorResponse(error);
+      res.status(status).json(body);
+    }
   });
 
   router.get('/me', requireAuth, async (req, res) => {

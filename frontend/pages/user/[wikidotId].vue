@@ -461,6 +461,7 @@ declare const useAsyncData: any
 declare const useNuxtApp: any
 declare const useRoute: any
 declare const useState: any
+declare const useHead: any
 
 type UserDailyStatRecord = {
   date: string;
@@ -528,6 +529,15 @@ const { data: user, pending: userPending, error: userError } = await useAsyncDat
   () => $bff(`/users/by-wikidot-id`, { params: { wikidotId: wikidotId.value } }),
   { watch: [() => route.params.wikidotId] }
 );
+
+// 动态页面标题：使用用户显示名
+const userPageTitle = computed(() => {
+  const name = (user.value && (user.value as any).displayName)
+    ? String((user.value as any).displayName).trim()
+    : ''
+  return name ? '用户：' + name : '用户详情'
+})
+useHead({ title: userPageTitle })
 
 // Relations: authors and tags (liker/hater)
 // Preferences pagination state

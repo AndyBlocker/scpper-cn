@@ -19,8 +19,17 @@
       <!-- 左侧 8 类卡片（桌面 4x4，移动两列） -->
       <div class="lg:col-span-2">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div v-for="c in categories" :key="c.key" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900">
-            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">{{ c.label }}</div>
+          <div
+            v-for="c in categories"
+            :key="c.key"
+            class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 cursor-pointer hover:border-[rgb(var(--accent))]/60 transition"
+            @click="selectCategory(c.key)"
+            :aria-pressed="selectedCategory === c.key"
+          >
+            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1 flex items-center justify-between">
+              <span>{{ c.label }}</span>
+              <span v-if="selectedCategory === c.key" class="text-[10px] text-[rgb(var(--accent))]">已选择</span>
+            </div>
             <div class="text-xl sm:text-2xl font-bold" :style="{ color: c.color }">{{ summary[c.key] ?? '—' }}</div>
           </div>
         </div>
@@ -58,6 +67,43 @@
             <div class="h-60 sm:h-72 flex items-center justify-center text-neutral-500 dark:text-neutral-400">加载图表中...</div>
           </template>
         </ClientOnly>
+      </div>
+    </div>
+
+    <!-- 类目页面列表 -->
+    <div v-if="selectedCategory" class="mt-6 border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 sm:p-4 bg-white dark:bg-neutral-900">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+        <div>
+          <h2 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">类目页面 · {{ selectedCategoryLabel }}</h2>
+          <div class="text-[12px] text-neutral-500 dark:text-neutral-400 mt-1">计数含已删除页面</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-neutral-600 dark:text-neutral-300">排序</label>
+          <select v-model="categoryOrder" @change="refreshCategoryPages" class="px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 text-xs">
+            <option value="recent">最新</option>
+            <option value="rating">评分</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="relative">
+        <div v-if="categoryPages.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <PageCard v-for="p in categoryPages" :key="p.wikidotId || p.id" size="md" :p="normalizePageForCard(p)" />
+        </div>
+        <div v-else class="text-sm text-neutral-500 dark:text-neutral-400 p-4">暂无数据</div>
+        <div v-if="categoryLoading" class="absolute inset-0 rounded bg-neutral-100/70 dark:bg-neutral-800/60 flex items-center justify-center">
+          <span class="text-[12px] text-neutral-600 dark:text-neutral-300">加载中…</span>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 mt-3">
+        <button class="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+                :disabled="categoryPageIndex === 0 || categoryLoading"
+                @click="categoryPageIndex = Math.max(0, categoryPageIndex - 1); refreshCategoryPages();">上一页</button>
+        <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ categoryPageIndex + 1 }} / {{ Math.max(1, Math.ceil(categoryTotal / categoryPageSize)) }} 页（共 {{ categoryTotal }} 条）</div>
+        <button class="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+                :disabled="(categoryPageIndex + 1) >= Math.ceil(categoryTotal / categoryPageSize) || categoryLoading"
+                @click="categoryPageIndex = categoryPageIndex + 1; refreshCategoryPages();">下一页</button>
       </div>
     </div>
 
@@ -109,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useNuxtApp } from 'nuxt/app'
 
 import PieDonutChart from '~/components/PieDonutChart.vue'
@@ -117,9 +163,21 @@ import TimeSeriesLineChart from '~/components/TimeSeriesLineChart.vue'
 
 const { $bff } = useNuxtApp()
 
+// Always treat dates in Asia/Shanghai (UTC+8)
+const TZ = 'Asia/Shanghai'
+function formatYYYYMMDDInTz(d: Date, tz = TZ): string {
+  // en-CA yields YYYY-MM-DD
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d)
+}
+
 const today = new Date()
-const defaultEnd = today.toISOString().slice(0, 10)
-const defaultStart = new Date(today.getTime() - 29 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+const defaultEnd = formatYYYYMMDDInTz(today)
+const defaultStart = formatYYYYMMDDInTz(new Date(today.getTime() - 29 * 24 * 3600 * 1000))
 
 const period = ref<'day' | 'week' | 'month'>('day')
 const startDate = ref<string>(defaultStart)
@@ -135,6 +193,16 @@ const categories = [
   { key: '异常物品', label: '异常物品', color: '#ef4444' },
   { key: 'translation', label: '翻译', color: '#7c3aed' }
 ] as const
+
+// 类目选择与分页列表
+const selectedCategory = ref<string | null>(null)
+const selectedCategoryLabel = computed(() => categories.find(c => c.key === selectedCategory.value)?.label || '')
+const categoryPages = ref<any[]>([])
+const categoryTotal = ref<number>(0)
+const categoryPageIndex = ref(0)
+const categoryPageSize = 12
+const categoryOrder = ref<'recent' | 'rating'>('recent')
+const categoryLoading = ref(false)
 
 const summary = ref<Record<string, number>>({})
 const series = ref<Array<{ date: string; category: string; count: number }>>([])
@@ -245,10 +313,77 @@ async function refreshTags() {
 
 async function refreshAll() {
   await Promise.all([refreshSummary(), refreshSeries(), refreshActive(), refreshTags()])
+  if (selectedCategory.value) {
+    await refreshCategoryPages()
+  }
 }
 
 onMounted(() => {
   refreshAll()
+})
+
+function selectCategory(key: string) {
+  if (selectedCategory.value !== key) {
+    selectedCategory.value = key
+    categoryPageIndex.value = 0
+  }
+  void refreshCategoryPages()
+}
+
+function normalizePageForCard(p: any) {
+  const toISODate = (v: any) => {
+    if (!v) return null
+    const d = new Date(v)
+    return isNaN(d.getTime()) ? null : formatYYYYMMDDInTz(d)
+  }
+  return {
+    wikidotId: p.wikidotId,
+    title: p.title,
+    alternateTitle: p.alternateTitle,
+    authors: p.authors,
+    tags: p.e_tags || p.tags,
+    rating: p.rating,
+    wilson95: p.wilson95,
+    commentCount: p.commentCount ?? p.revisionCount,
+    controversy: p.controversy,
+    snippetHtml: p.snippet || null,
+    isDeleted: Boolean(p.isDeleted),
+    deletedAt: p.deletedAt || null,
+    createdDate: toISODate(p.firstRevisionAt || p.validFrom || p.createdAt)
+  }
+}
+
+async function refreshCategoryPages() {
+  if (!selectedCategory.value) return
+  categoryLoading.value = true
+  try {
+    const resp = await $bff<{ results: any[]; total: number }>('/analytics/pages/by-category', {
+      params: {
+        category: selectedCategory.value,
+        startDate: startDate.value,
+        endDate: endDate.value,
+        order: categoryOrder.value,
+        limit: categoryPageSize,
+        offset: categoryPageIndex.value * categoryPageSize
+      }
+    })
+    categoryPages.value = Array.isArray(resp?.results) ? resp.results : []
+    categoryTotal.value = Number(resp?.total || 0)
+  } catch (err) {
+    categoryPages.value = []
+    categoryTotal.value = 0
+    // eslint-disable-next-line no-console
+    console.error('[Analytics] Failed to fetch category pages', err)
+  } finally {
+    categoryLoading.value = false
+  }
+}
+
+watch([startDate, endDate], () => {
+  if (selectedCategory.value) {
+    categoryPageIndex.value = 0
+    void refreshCategoryPages()
+  }
 })
 
 </script>

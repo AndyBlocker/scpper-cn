@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { linkWikidotUser, unlinkWikidotUser } from './linkWikidot.js';
+import { adminResetPassword } from './resetPassword.js';
 import { prisma } from '../db.js';
 
 interface ParsedArgs {
@@ -35,6 +36,7 @@ function printUsage() {
   console.log(`可用命令：
   link-wikidot --email <email> --wikidotId <id> [--force] [--takeover]
   unlink-wikidot --email <email> | --wikidotId <id>
+  reset-password --email <email> --password <newPassword>
 `);
 }
 
@@ -94,6 +96,17 @@ async function main() {
           // eslint-disable-next-line no-console
           console.log(`账号 ${result.email} 已解除 wikidotId=${result.previousLinkedWikidotId}`);
         }
+        break;
+      }
+      case 'reset-password': {
+        const emailArg = rest.email;
+        const passwordArg = rest.password;
+        if (typeof emailArg !== 'string' || typeof passwordArg !== 'string') {
+          throw new Error('请同时提供 --email 和 --password');
+        }
+        const result = await adminResetPassword({ email: emailArg, password: passwordArg });
+        // eslint-disable-next-line no-console
+        console.log(`已为账号 ${result.email} 重置密码`);
         break;
       }
       default:

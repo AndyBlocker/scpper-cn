@@ -7,7 +7,22 @@
     <div class="relative z-10 flex min-h-screen flex-col">
       <header class="sticky top-0 z-50 border border-white/60 bg-white/70 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/65 dark:shadow-[0_14px_40px_rgba(0,0,0,0.45)]">
         <div class="max-w-7xl mx-auto flex items-center gap-3 px-4 py-4 sm:gap-6">
-          <div class="flex items-center gap-4 whitespace-nowrap">
+          <div class="flex items-center gap-3">
+            <!-- Mobile menu button (sidebar) -->
+            <button
+              type="button"
+              class="inline-flex items-center justify-center sm:hidden h-10 w-10 rounded-full border border-neutral-200/80 bg-white/80 text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-300"
+              aria-label="打开菜单"
+              title="打开菜单"
+              @click="openSidebar"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+
+            <!-- Desktop brand + primary nav -->
+            <div class="hidden sm:flex items-center gap-4 whitespace-nowrap">
             <NuxtLink to="/" class="flex items-center gap-2 group">
               <BrandIcon class="w-8 h-8 text-neutral-900 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))] transition-colors" />
               <span class="hidden sm:inline font-bold text-lg text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
@@ -32,6 +47,7 @@
               </svg>
               <span class="hidden sm:inline">关于</span>
             </NuxtLink>
+            </div>
           </div>
           <div class="ml-auto flex w-auto items-center gap-2 sm:w-full sm:justify-end">
             <button
@@ -93,9 +109,10 @@
                 </div>
               </div>
             </form>
+            <!-- Theme toggle hidden on mobile, moved to sidebar -->
             <button
               @click="toggleTheme"
-              :class="iconButtonBaseClass"
+              :class="[iconButtonBaseClass, 'hidden sm:inline-flex']"
               type="button"
               aria-label="切换主题"
               title="切换主题"
@@ -186,7 +203,7 @@
                 </div>
               </transition>
             </div>
-           <div v-if="isAuthenticated" class="flex items-center gap-2">
+           <div v-if="isAuthenticated" class="hidden sm:flex items-center gap-2">
               <NuxtLink
                 to="/account"
                 class="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 text-sm font-medium text-neutral-700 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-200"
@@ -195,7 +212,7 @@
                 <span class="hidden lg:inline">{{ authUser?.displayName || authUser?.email }}</span>
               </NuxtLink>
             </div>
-            <div v-else class="flex items-center gap-2">
+            <div v-else class="hidden sm:flex items-center gap-2">
               <NuxtLink
                 to="/auth/login"
                 class="inline-flex h-10 items-center rounded-full border border-neutral-200/80 bg-white/80 px-4 text-sm font-semibold text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-300"
@@ -204,6 +221,72 @@
           </div>
         </div>
       </header>
+
+      <!-- Mobile Sidebar -->
+      <transition name="fade">
+        <div v-if="isSidebarOpen" class="fixed inset-0 z-[70]">
+          <div class="absolute inset-0 bg-neutral-950/60" @click="closeSidebar" />
+          <div class="absolute left-0 top-0 h-full w-80 max-w-[85vw]">
+            <div ref="sidebarRef" class="h-full border-r border-white/60 dark:border-white/10 bg-white/90 dark:bg-neutral-900/95 backdrop-blur-xl shadow-2xl rounded-r-2xl overflow-hidden flex flex-col">
+              <div class="px-4 py-4 flex items-center justify-between border-b border-neutral-200/70 dark:border-neutral-800/60 bg-[radial-gradient(circle_at_top,_rgba(10,132,255,0.10),_transparent_70%)] dark:bg-[radial-gradient(circle_at_top,_rgba(64,156,255,0.18),_transparent_70%)]">
+                <NuxtLink to="/" @click="closeSidebar" class="inline-flex items-center gap-2 group">
+                  <BrandIcon class="w-7 h-7 text-neutral-900 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]" />
+                  <span class="font-bold text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
+                </NuxtLink>
+                <button type="button" class="p-2 rounded-lg text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/60 dark:hover:bg-neutral-800/60" @click="closeSidebar" aria-label="关闭菜单">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <nav class="flex-1 px-3 py-3 overflow-y-auto">
+                <NuxtLink to="/ranking" @click="closeSidebar" class="nav-item">
+                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 13h4v7H4v-7zm6-6h4v13h-4V7zm6 3h4v10h-4V10z"/></svg>
+                  <span>排行</span>
+                </NuxtLink>
+                <NuxtLink to="/tools" @click="closeSidebar" class="nav-item">
+                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h4v4H4zM10 6h4v4h-4zM16 6h4v4h-4zM4 12h4v4H4zM10 12h4v4h-4zM16 12h4v4h-4z"/></svg>
+                  <span>工具</span>
+                </NuxtLink>
+                <NuxtLink to="/about" @click="closeSidebar" class="nav-item">
+                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8h.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12v4"/></svg>
+                  <span>关于</span>
+                </NuxtLink>
+              </nav>
+
+              <!-- Sidebar bottom controls: account + theme -->
+              <div class="px-4 py-3 border-t border-neutral-200/70 dark:border-neutral-800/60">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    <template v-if="isAuthenticated">
+                      <NuxtLink to="/account" @click="closeSidebar" class="inline-flex items-center gap-2">
+                        <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-700" />
+                        <span class="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[10rem]">{{ authUser?.displayName || authUser?.email }}</span>
+                      </NuxtLink>
+                    </template>
+                    <template v-else>
+                      <NuxtLink to="/auth/login" @click="closeSidebar" class="inline-flex items-center gap-2 text-sm font-medium text-[rgb(var(--accent))]">
+                        登录
+                      </NuxtLink>
+                    </template>
+                  </div>
+                  <button type="button" @click="toggleTheme" :class="iconButtonBaseClass" aria-label="切换主题" title="切换主题">
+                    <svg v-if="currentTheme === 'dark'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v2m0 14v2m4.22-12.22l1.42-1.42M6.34 17.66l-1.42 1.42M21 12h-2M5 12H3m12.66 5.66l1.42 1.42M6.34 6.34L4.92 4.92M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                    <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="px-4 py-3 text-[11px] text-neutral-500 dark:text-neutral-400 border-t border-neutral-200/70 dark:border-neutral-800/60">© {{ new Date().getFullYear() }} SCPPER-CN</div>
+            </div>
+          </div>
+        </div>
+      </transition>
 
       <div v-if="isMobileSearchOpen" class="fixed inset-0 z-[70]">
         <div class="absolute inset-0 bg-neutral-950/60" @click="closeMobileSearch" />
@@ -301,6 +384,8 @@ useHead({
 })
 const q = ref('');
 const isMobileSearchOpen = ref(false);
+const isSidebarOpen = ref(false);
+const sidebarRef = ref<HTMLDivElement | null>(null);
 const mobileInputRef = ref<HTMLInputElement | null>(null);
 const showSuggestions = ref(false);
 type SearchPreviewType = 'page' | 'user'
@@ -495,9 +580,7 @@ onMounted(() => {
 
 const openMobileSearch = () => {
   isMobileSearchOpen.value = true;
-  if (process.client) {
-    document.body.style.overflow = 'hidden';
-  }
+  if (process.client) document.body.style.overflow = 'hidden';
   nextTick(() => {
     mobileInputRef.value?.focus();
   });
@@ -506,9 +589,7 @@ const openMobileSearch = () => {
 const closeMobileSearch = () => {
   isMobileSearchOpen.value = false;
   showSuggestions.value = false;
-  if (process.client) {
-    document.body.style.overflow = '';
-  }
+  if (process.client && !isSidebarOpen.value) document.body.style.overflow = '';
 };
 
 
@@ -517,9 +598,22 @@ const toggleMobileSearch = () => {
   if (isMobileSearchOpen.value) closeMobileSearch(); else openMobileSearch();
 };
 
+const openSidebar = () => {
+  isSidebarOpen.value = true;
+  if (process.client) document.body.style.overflow = 'hidden';
+};
+const closeSidebar = () => {
+  isSidebarOpen.value = false;
+  if (process.client && !isMobileSearchOpen.value) document.body.style.overflow = '';
+};
+
 function onSearch() {
   const term = q.value.trim();
-  if (!term) return;
+  if (!term) {
+    if (isMobileSearchOpen.value) closeMobileSearch();
+    navigateTo('/search');
+    return;
+  }
   showSuggestions.value = false;
   if (isMobileSearchOpen.value) {
     closeMobileSearch();
@@ -644,15 +738,22 @@ const selectSuggestion = (item: SearchPreviewItem) => {
 
 // 监听全局 ESC 关闭移动搜索浮层
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && isMobileSearchOpen.value) {
-    e.preventDefault();
-    closeMobileSearch();
+  if (e.key === 'Escape') {
+    if (isMobileSearchOpen.value) {
+      e.preventDefault();
+      closeMobileSearch();
+    }
+    if (isSidebarOpen.value) {
+      e.preventDefault();
+      closeSidebar();
+    }
   }
 };
 
-watch(isMobileSearchOpen, (open) => {
+watch([isMobileSearchOpen, isSidebarOpen], ([openSearch, openSidebar]) => {
   if (!process.client) return;
-  if (open) {
+  const anyOpen = openSearch || openSidebar;
+  if (anyOpen) {
     document.addEventListener('keydown', handleGlobalKeydown);
   } else {
     document.removeEventListener('keydown', handleGlobalKeydown);
@@ -691,3 +792,18 @@ watch(() => route.fullPath, (path) => {
   isAlertsDropdownOpen.value = false
 })
 </script>
+
+<style scoped>
+/* Sidebar nav items */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .625rem .75rem;
+  border-radius: .5rem;
+  color: rgb(51 65 85);
+}
+.dark .nav-item { color: rgb(209 213 219); }
+.nav-item:hover { background-color: rgba(2,6,23,0.06); }
+.dark .nav-item:hover { background-color: rgba(255,255,255,0.06); }
+</style>

@@ -57,6 +57,10 @@
           <NuxtLink to="/auth/register" class="text-[rgb(var(--accent))] hover:text-[rgb(var(--accent-strong))]">
             立即注册
           </NuxtLink>
+          <span class="mx-2">·</span>
+          <NuxtLink to="/auth/forgot" class="text-[rgb(var(--accent))] hover:text-[rgb(var(--accent-strong))]">
+            忘记密码？
+          </NuxtLink>
         </div>
       </form>
     </div>

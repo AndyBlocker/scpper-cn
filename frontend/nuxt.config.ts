@@ -45,6 +45,12 @@ export default defineNuxtConfig({
   app: {
     head: {
       title: 'SCPPER-CN',
+      titleTemplate: (titleChunk?: string) => {
+        const base = 'SCPPER-CN';
+        if (!titleChunk) return base;
+        // Avoid duplicating base when pages already include it
+        return titleChunk.includes(base) ? titleChunk : `${titleChunk} - ${base}`;
+      },
       meta: [
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
         { name: 'theme-color', content: '#0A0A0B', media: '(prefers-color-scheme: dark)' },
