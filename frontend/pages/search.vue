@@ -266,7 +266,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useNuxtApp } from 'nuxt/app'
+import { useNuxtApp, useHead } from 'nuxt/app'
 
 const route = useRoute();
 const router = useRouter();
@@ -512,6 +512,16 @@ const performAdvancedSearch = () => {
     return;
   }
 
+  // 若用户在输入框中输入了标签但未点击建议，仍然纳入搜索
+  const pendingInclude = tagSearchQuery.value.trim();
+  if (pendingInclude && !searchForm.value.includeTags.includes(pendingInclude)) {
+    searchForm.value.includeTags.push(pendingInclude);
+  }
+  const pendingExclude = excludeTagSearchQuery.value.trim();
+  if (pendingExclude && !searchForm.value.excludeTags.includes(pendingExclude)) {
+    searchForm.value.excludeTags.push(pendingExclude);
+  }
+
   const searchParams: any = {};
   
   if (query) searchParams.query = query;
@@ -524,6 +534,8 @@ const performAdvancedSearch = () => {
   
   // 更新URL
   router.push({ path: '/search', query: searchParams });
+  // 主动触发一次搜索，避免路由未变化时页面无响应
+  void performSearch();
 };
 
 // 根据URL参数初始化搜索
@@ -608,8 +620,8 @@ const performSearch = async () => {
   initialLoading.value = false;
 };
 
-// 监听URL变化
-watch(() => route.query, () => {
+// 监听URL变化（使用 fullPath 更稳健，避免对象复用导致不触发）
+watch(() => route.fullPath, () => {
   initializeFromQuery();
 }, { immediate: true });
 
@@ -643,4 +655,16 @@ watch(pagePageIndex, () => {
     void fetchPages(searchParams);
   }
 });
+
+// 页面标题：根据搜索条件动态更新
+const pageTitle = computed(() => {
+  const q = (searchForm.value.query || '').trim()
+  const hasTag = (searchForm.value.includeTags?.length || 0) > 0
+  if (q && hasTag) return '搜索：' + q + '（含标签）'
+  if (q) return '搜索：' + q
+  if (hasTag) return '搜索：按标签'
+  return '搜索'
+})
+
+useHead({ title: pageTitle });
 </script>

@@ -535,7 +535,7 @@ function formatActivity(value?: string | null) {
   try {
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return '—'
-    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Shanghai' })
   } catch (err) {
     return '—'
   }
