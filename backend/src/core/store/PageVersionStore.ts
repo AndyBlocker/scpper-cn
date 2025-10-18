@@ -70,6 +70,38 @@ export class PageVersionStore {
       }
     }
 
+    // Ensure Page.currentUrl stays in sync when remote URL changes
+    try {
+      const incomingUrl = typeof data.url === 'string' ? data.url : '';
+      if (incomingUrl && page.currentUrl !== incomingUrl) {
+        const newHistory = Array.isArray(page.urlHistory)
+          ? Array.from(new Set([...(page.urlHistory as string[]), page.currentUrl, incomingUrl]))
+          : [page.currentUrl, incomingUrl].filter(Boolean);
+        await this.prisma.page.update({
+          where: { id: page.id },
+          data: {
+            currentUrl: incomingUrl,
+            urlHistory: newHistory,
+            updatedAt: new Date()
+          }
+        });
+        Logger.info(`✅ Synchronized page URL for wikidotId ${data.wikidotId}: ${page.currentUrl} -> ${incomingUrl}`);
+        // Refresh the page object to reflect the new currentUrl in memory
+        page = await this.prisma.page.findUnique({
+          where: { id: page.id },
+          include: {
+            versions: {
+              where: { validTo: null },
+              orderBy: { validFrom: 'desc' },
+              take: 1
+            }
+          }
+        }) as typeof page;
+      }
+    } catch (e) {
+      Logger.warn(`Failed to sync URL for wikidotId ${data.wikidotId}: ${(e as any)?.message ?? e}`);
+    }
+
     const currentVersion = page.versions[0];
     let targetVersionId: number;
     if (!currentVersion) {

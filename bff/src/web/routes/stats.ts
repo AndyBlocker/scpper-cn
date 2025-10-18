@@ -183,6 +183,99 @@ export function statsRouter(pool: Pool, _redis: RedisClientType | null) {
 		}
 	});
 
+	// GET /stats/series/availability
+	// Combines SeriesStats with computed free numbers per series
+	router.get('/series/availability', async (_req, res, next) => {
+		try {
+			// 1) Load series stats
+			const seriesSql = `
+				SELECT "seriesNumber", "isOpen", "totalSlots", "usedSlots",
+				       "usagePercentage", "lastUpdated"
+				FROM "SeriesStats"
+				ORDER BY "seriesNumber" ASC
+			`;
+			const seriesRows = (await pool.query(seriesSql)).rows as Array<{
+				seriesNumber: number;
+				isOpen: boolean;
+				totalSlots: number;
+				usedSlots: number;
+				usagePercentage: number;
+				lastUpdated: string | Date;
+			}>;
+
+			// 2) Load all used SCP-CN numbers
+			const usedSql = `
+				SELECT p."currentUrl" AS url
+				FROM "Page" p
+				JOIN "PageVersion" pv ON p.id = pv."pageId"
+				WHERE pv."validTo" IS NULL 
+				  AND pv."isDeleted" = false
+				  AND p."currentUrl" ~ '/scp-cn-[0-9]{3,4}($|/)'
+				  AND p."currentUrl" NOT LIKE '%deleted:%'
+				  AND '原创' = ANY(pv.tags)
+				  AND NOT ('待删除' = ANY(pv.tags))
+				  AND NOT ('待刪除' = ANY(pv.tags))
+			`;
+			const usedRows = (await pool.query(usedSql)).rows as Array<{ url: string }>;
+			const used = new Set<number>();
+			for (const r of usedRows) {
+				const m = r.url.match(/\/scp-cn-(\d{3,4})(?:$|\/)/);
+				if (m) {
+					const n = parseInt(m[1], 10);
+					if (!Number.isNaN(n) && n >= 1) used.add(n);
+				}
+			}
+
+			// Helper to get numeric range for a series
+			const seriesRange = (seriesNumber: number) => {
+				if (seriesNumber === 1) return { start: 2, end: 999 };
+				return { start: (seriesNumber - 1) * 1000, end: seriesNumber * 1000 - 1 };
+			};
+
+			// If no SeriesStats exist yet, synthesize a default list from 1..10
+			const baseSeries = seriesRows.length > 0
+				? seriesRows
+				: Array.from({ length: 10 }, (_, i) => {
+					const seriesNumber = i + 1;
+					const { start, end } = seriesRange(seriesNumber);
+					let usedSlots = 0;
+					for (let n = start; n <= end; n++) if (used.has(n)) usedSlots++;
+					const totalSlots = seriesNumber === 1 ? 998 : 1000;
+					return {
+						seriesNumber,
+						isOpen: seriesNumber <= 6,
+						totalSlots,
+						usedSlots,
+						usagePercentage: totalSlots > 0 ? (usedSlots / totalSlots) * 100 : 0,
+						lastUpdated: new Date()
+					};
+				});
+
+			// 3) Build payload with free numbers per series
+			const payload = baseSeries.map((row) => {
+				const { start, end } = seriesRange(row.seriesNumber);
+				const freeNumbers: number[] = [];
+				for (let n = start; n <= end; n++) {
+					if (!used.has(n)) freeNumbers.push(n);
+				}
+				return {
+					seriesNumber: row.seriesNumber,
+					isOpen: row.isOpen,
+					totalSlots: row.totalSlots,
+					usedSlots: row.usedSlots,
+					usagePercentage: row.usagePercentage,
+					remainingSlots: Math.max(0, (row.totalSlots ?? 0) - (row.usedSlots ?? 0)),
+					lastUpdated: row.lastUpdated,
+					freeNumbers
+				};
+			});
+
+			res.json(payload);
+		} catch (err) {
+			next(err);
+		}
+	});
+
 	// GET /stats/site/series?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&limit=&offset=
 	router.get('/site/series', async (req, res, next) => {
 		try {

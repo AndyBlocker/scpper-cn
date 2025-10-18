@@ -14,6 +14,8 @@ import { pageImagesRouter } from './routes/page-images.js';
 import { PAGE_IMAGE_ROUTE_PREFIX } from './pageImagesConfig.js';
 import { tagsRouter } from './routes/tags.js';
 import { alertsRouter } from './routes/alerts.js';
+import { followsRouter } from './routes/follows.js';
+import { followAlertsRouter } from './routes/followAlerts.js';
 import { referencesRouter } from './routes/references.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
@@ -28,6 +30,8 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/quotes', quotesRouter(pool, redis));
   router.use('/tags', tagsRouter(pool, redis));
   router.use('/alerts', alertsRouter(pool, redis));
+  router.use('/follows', followsRouter(pool, redis));
+  router.use('/alerts/follow', followAlertsRouter(pool, redis));
   router.use('/references', referencesRouter(pool, redis));
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service

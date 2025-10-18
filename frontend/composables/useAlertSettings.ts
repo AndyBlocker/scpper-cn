@@ -45,7 +45,7 @@ function normalisePreferences(preferences?: AlertPreferencesResponse['preference
 
   const voteCount = Number(preferences.voteCountThreshold);
   const voteCountThreshold = Number.isFinite(voteCount) && voteCount > 0
-    ? Math.round(voteCount)
+    ? Math.min(1000, Math.round(voteCount))
     : fallback.voteCountThreshold;
 
   const revisionFilter: RevisionFilterOption = (preferences.revisionFilter ?? fallback.revisionFilter) as RevisionFilterOption;

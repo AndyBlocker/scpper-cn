@@ -11,7 +11,11 @@
     "lint": "echo \"(add eslint later)\"",
     "prune": "node dist/scripts/prune.js",
     "stat": "AVATAR_ROOT=/home/andyblocker/scpper-cn/.data/avatar-agent/avatars node dist/scripts/stat.js",
-    "stat:pretty": "AVATAR_ROOT=/home/andyblocker/scpper-cn/.data/avatar-agent/avatars node dist/scripts/stat.js --pretty"
+    "stat:pretty": "AVATAR_ROOT=/home/andyblocker/scpper-cn/.data/avatar-agent/avatars node dist/scripts/stat.js --pretty",
+    "preimage:stat": "npm run build",
+    "preimage:stat:pretty": "npm run build",
+    "image:stat": "node --env-file=.env dist/scripts/image-stat.js",
+    "image:stat:pretty": "node --env-file=.env dist/scripts/image-stat.js --pretty"
   },
   "dependencies": {
     "fastify": "^4.28.1",

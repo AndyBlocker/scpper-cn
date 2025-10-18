@@ -416,19 +416,63 @@ export class PageMetricMonitorJob {
 
     if (alerts.length > 0) {
       const now = new Date();
-      await this.prisma.pageMetricAlert.createMany({
-        data: alerts.map(alert => ({
-          watchId: alert.watchId,
-          pageId: alert.pageId,
-          metric: PageMetricType.COMMENT_COUNT,
-          prevValue: alert.prevValue,
-          newValue: alert.newValue,
-          diffValue: alert.diffValue,
-          detectedAt: now,
-          createdAt: now
-        }))
-      });
-      Logger.info(`[metric-monitor] Created ${alerts.length} comment count alerts.`);
+      const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
+      const existing = watchIds.length === 0
+        ? []
+        : await this.prisma.pageMetricAlert.findMany({
+            where: {
+              acknowledgedAt: null,
+              watchId: { in: watchIds }
+            },
+            select: { id: true, watchId: true, prevValue: true, detectedAt: true },
+            orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+          });
+
+      const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
+      for (const row of existing) {
+        if (!earliestByWatch.has(row.watchId)) {
+          earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+        }
+      }
+
+      const toCreate: typeof alerts = [];
+      const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+
+      for (const alert of alerts) {
+        const existingUnread = earliestByWatch.get(alert.watchId);
+        if (existingUnread) {
+          const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
+          const newVal = alert.newValue == null ? null : Number(alert.newValue);
+          const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
+          toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
+        } else {
+          toCreate.push(alert);
+        }
+      }
+
+      if (toCreate.length > 0) {
+        await this.prisma.pageMetricAlert.createMany({
+          data: toCreate.map(alert => ({
+            watchId: alert.watchId,
+            pageId: alert.pageId,
+            metric: PageMetricType.COMMENT_COUNT,
+            prevValue: alert.prevValue,
+            newValue: alert.newValue,
+            diffValue: alert.diffValue,
+            detectedAt: now,
+            createdAt: now
+          }))
+        });
+      }
+
+      for (const upd of toUpdate) {
+        await this.prisma.pageMetricAlert.update({
+          where: { id: upd.id },
+          data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
+        });
+      }
+
+      Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} comment count alerts.`);
     }
 
     for (const update of updates) {
@@ -560,19 +604,63 @@ export class PageMetricMonitorJob {
 
     if (alerts.length > 0) {
       const now = new Date();
-      await this.prisma.pageMetricAlert.createMany({
-        data: alerts.map(alert => ({
-          watchId: alert.watchId,
-          pageId: alert.pageId,
-          metric: PageMetricType.VOTE_COUNT,
-          prevValue: alert.prevValue,
-          newValue: alert.newValue,
-          diffValue: alert.diffValue,
-          detectedAt: now,
-          createdAt: now
-        }))
-      });
-      Logger.info(`[metric-monitor] Created ${alerts.length} vote count alerts.`);
+      const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
+      const existing = watchIds.length === 0
+        ? []
+        : await this.prisma.pageMetricAlert.findMany({
+            where: {
+              acknowledgedAt: null,
+              watchId: { in: watchIds }
+            },
+            select: { id: true, watchId: true, prevValue: true, detectedAt: true },
+            orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+          });
+
+      const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
+      for (const row of existing) {
+        if (!earliestByWatch.has(row.watchId)) {
+          earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+        }
+      }
+
+      const toCreate: typeof alerts = [];
+      const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+
+      for (const alert of alerts) {
+        const existingUnread = earliestByWatch.get(alert.watchId);
+        if (existingUnread) {
+          const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
+          const newVal = alert.newValue == null ? null : Number(alert.newValue);
+          const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
+          toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
+        } else {
+          toCreate.push(alert);
+        }
+      }
+
+      if (toCreate.length > 0) {
+        await this.prisma.pageMetricAlert.createMany({
+          data: toCreate.map(alert => ({
+            watchId: alert.watchId,
+            pageId: alert.pageId,
+            metric: PageMetricType.VOTE_COUNT,
+            prevValue: alert.prevValue,
+            newValue: alert.newValue,
+            diffValue: alert.diffValue,
+            detectedAt: now,
+            createdAt: now
+          }))
+        });
+      }
+
+      for (const upd of toUpdate) {
+        await this.prisma.pageMetricAlert.update({
+          where: { id: upd.id },
+          data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
+        });
+      }
+
+      Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} vote count alerts.`);
     }
 
     for (const update of updates) {
@@ -706,19 +794,63 @@ export class PageMetricMonitorJob {
 
     if (alerts.length > 0) {
       const now = new Date();
-      await this.prisma.pageMetricAlert.createMany({
-        data: alerts.map(alert => ({
-          watchId: alert.watchId,
-          pageId: alert.pageId,
-          metric: PageMetricType.REVISION_COUNT,
-          prevValue: alert.prevValue,
-          newValue: alert.newValue,
-          diffValue: alert.diffValue,
-          detectedAt: now,
-          createdAt: now
-        }))
-      });
-      Logger.info(`[metric-monitor] Created ${alerts.length} revision alerts.`);
+      const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
+      const existing = watchIds.length === 0
+        ? []
+        : await this.prisma.pageMetricAlert.findMany({
+            where: {
+              acknowledgedAt: null,
+              watchId: { in: watchIds }
+            },
+            select: { id: true, watchId: true, prevValue: true, detectedAt: true },
+            orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+          });
+
+      const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
+      for (const row of existing) {
+        if (!earliestByWatch.has(row.watchId)) {
+          earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+        }
+      }
+
+      const toCreate: typeof alerts = [];
+      const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+
+      for (const alert of alerts) {
+        const existingUnread = earliestByWatch.get(alert.watchId);
+        if (existingUnread) {
+          const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
+          const newVal = alert.newValue == null ? null : Number(alert.newValue);
+          const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
+          toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
+        } else {
+          toCreate.push(alert);
+        }
+      }
+
+      if (toCreate.length > 0) {
+        await this.prisma.pageMetricAlert.createMany({
+          data: toCreate.map(alert => ({
+            watchId: alert.watchId,
+            pageId: alert.pageId,
+            metric: PageMetricType.REVISION_COUNT,
+            prevValue: alert.prevValue,
+            newValue: alert.newValue,
+            diffValue: alert.diffValue,
+            detectedAt: now,
+            createdAt: now
+          }))
+        });
+      }
+
+      for (const upd of toUpdate) {
+        await this.prisma.pageMetricAlert.update({
+          where: { id: upd.id },
+          data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
+        });
+      }
+
+      Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} revision alerts.`);
     }
 
     for (const update of updates) {

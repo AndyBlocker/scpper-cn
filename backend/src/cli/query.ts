@@ -68,13 +68,13 @@ async function showNotableUnusedNumbers(prisma: PrismaClient, openSeries: any[])
   
   // Get all used numbers from all open series
   const scpPages = await prisma.$queryRaw<Array<{url: string}>>`
-    SELECT p.url
+    SELECT p."currentUrl" AS url
     FROM "Page" p
     INNER JOIN "PageVersion" pv ON p.id = pv."pageId"
     WHERE pv."validTo" IS NULL 
       AND pv."isDeleted" = false
-      AND p.url ~ '/scp-cn-[0-9]{3,4}($|/)'
-      AND p.url NOT LIKE '%deleted:%'
+      AND p."currentUrl" ~ '/scp-cn-[0-9]{3,4}($|/)'
+      AND p."currentUrl" NOT LIKE '%deleted:%'
       AND '原创' = ANY(pv.tags)
       AND NOT ('待删除' = ANY(pv.tags))
       AND NOT ('待刪除' = ANY(pv.tags))
@@ -1142,12 +1142,12 @@ SCPPER-CN Query Tool - 数据查询工具
             WHERE pv."validTo" IS NULL 
               AND pv."isDeleted" = false
               AND pv.rating IS NOT NULL
-              AND p.url ~ '/scp-cn-[0-9]{3,4}($|/)'
-              AND p.url NOT LIKE '%deleted:%'
+              AND p."currentUrl" ~ '/scp-cn-[0-9]{3,4}($|/)'
+              AND p."currentUrl" NOT LIKE '%deleted:%'
               AND '原创' = ANY(pv.tags)
               AND NOT ('待删除' = ANY(pv.tags))
               AND NOT ('待刪除' = ANY(pv.tags))
-              AND CAST(SUBSTRING(p.url FROM '/scp-cn-([0-9]{3,4})(?:$|/)') AS INTEGER) BETWEEN ${startNum} AND ${endNum}
+              AND CAST(SUBSTRING(p."currentUrl" FROM '/scp-cn-([0-9]{3,4})(?:$|/)') AS INTEGER) BETWEEN ${startNum} AND ${endNum}
           `;
 
           if (ratingStats.length > 0 && Number(ratingStats[0].page_count) > 0) {
@@ -1179,13 +1179,13 @@ SCPPER-CN Query Tool - 数据查询工具
               WHERE pv."validTo" IS NULL 
                 AND pv."isDeleted" = false
                 AND pv.rating IS NOT NULL
-                AND p.url ~ '/scp-cn-[0-9]{3,4}($|/)'
-                AND p.url NOT LIKE '%deleted:%'
+                AND p."currentUrl" ~ '/scp-cn-[0-9]{3,4}($|/)'
+                AND p."currentUrl" NOT LIKE '%deleted:%'
                 AND '原创' = ANY(pv.tags)
                 AND NOT ('待删除' = ANY(pv.tags))
                 AND NOT ('待刪除' = ANY(pv.tags))
                 AND tag != '原创'
-                AND CAST(SUBSTRING(p.url FROM '/scp-cn-([0-9]{3,4})(?:$|/)') AS INTEGER) BETWEEN ${startNum} AND ${endNum}
+                AND CAST(SUBSTRING(p."currentUrl" FROM '/scp-cn-([0-9]{3,4})(?:$|/)') AS INTEGER) BETWEEN ${startNum} AND ${endNum}
               GROUP BY tag
               ORDER BY page_count DESC, avg_rating DESC NULLS LAST
               LIMIT 10
