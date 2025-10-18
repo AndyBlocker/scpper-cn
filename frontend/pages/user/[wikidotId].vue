@@ -49,16 +49,13 @@
         <div class="lg:col-span-2 border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
           <div class="flex items-start justify-between gap-3">
             <div class="flex items-start gap-3 min-w-0 flex-1">
-              <UserAvatar :wikidot-id="wikidotId" :name="user?.displayName || 'Unknown User'" :size="56" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800" />
-              <h1 class="text-xl sm:text-2xl font-bold text-neutral-900 dark:text-neutral-100 mb-2 truncate">{{ user?.displayName || 'Unknown User' }}</h1>
-              <div class="flex flex-wrap gap-2 mb-4">
-                <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
-                  Wikidot: {{ wikidotId }}
-                </span>
-                <!-- remove @username pill per request -->
-                <span v-if="user?.isGuest" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
-                  访客
-                </span>
+              <UserAvatar :wikidot-id="wikidotId" :name="user?.displayName || 'Unknown User'" :size="56" class="shrink-0 ring-1 ring-neutral-200 dark:ring-neutral-800" />
+              <div class="min-w-0 flex-1">
+                <h1 class="text-xl sm:text-2xl font-bold text-neutral-900 dark:text-neutral-100 truncate">{{ user?.displayName || 'Unknown User' }}</h1>
+                <div class="mt-1 text-xs text-neutral-600 dark:text-neutral-400 flex items-center gap-2">
+                  <span>ID：{{ wikidotId }}</span>
+                  <span v-if="user?.isGuest" class="inline-flex items-center px-2 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">访客</span>
+                </div>
               </div>
             </div>
             <div v-if="stats?.rank" class="text-right shrink-0">
@@ -312,7 +309,7 @@
             <div v-if="favAuthors && favAuthors.length > 0" class="space-y-2">
               <div v-for="a in favAuthors" :key="`fa-${a.userId}`" class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2 min-w-0">
-                  <UserAvatar :wikidot-id="a.wikidotId" :name="a.displayName || String(a.wikidotId || a.userId)" :size="24" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800" />
+                  <UserAvatar :wikidot-id="a.wikidotId" :name="a.displayName || String(a.wikidotId || a.userId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
                   <NuxtLink :to="`/user/${a.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
                     {{ a.displayName || a.wikidotId || a.userId }}
                   </NuxtLink>
@@ -429,16 +426,17 @@
           <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">最近编辑</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
             <div v-for="revision in recentRevisions" :key="`${revision.timestamp}-${revision.pageWikidotId}`" 
-                 class="p-2 bg-neutral-50 dark:bg-neutral-800 rounded">
-              <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate block">
+                 class="p-2 rounded border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800">
+              <div class="flex items-center justify-between gap-2">
+                <span :class="['inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 w-[120px] justify-center', revisionTypeClass(revision.type)]">
+                  {{ formatRevisionType(revision.type) }}
+                </span>
+                <div class="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap shrink-0">{{ formatRelativeTime(revision.timestamp) }}</div>
+              </div>
+              <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] mt-1 block truncate">
                 {{ composeTitle(revision.pageTitle, revision.pageAlternateTitle) || 'Untitled' }}
               </NuxtLink>
-              <div class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
-                {{ formatRevisionType(revision.type) }} · {{ formatRelativeTime(revision.timestamp) }}
-              </div>
-              <div v-if="revision.comment" class="text-xs text-neutral-500 dark:text-neutral-500 mt-1 truncate">
-                {{ revision.comment }}
-              </div>
+              <div v-if="revision.comment" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">{{ revision.comment }}</div>
             </div>
           </div>
           <div class="flex items-center justify-between mt-3">
@@ -559,6 +557,32 @@ const userPageTitle = computed(() => {
     : ''
   return name ? '用户：' + name : '用户详情'
 })
+
+function revisionTypeClass(type: string) {
+  const t = String(type || '')
+  if (t === 'PAGE_CREATED' || t === 'PAGE_RESTORED') {
+    return 'bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]'
+  }
+  if (t === 'PAGE_EDITED') {
+    return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+  }
+  if (t === 'PAGE_RENAMED') {
+    return 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400'
+  }
+  if (t === 'PAGE_DELETED') {
+    return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+  }
+  if (t === 'METADATA_CHANGED') {
+    return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
+  }
+  if (t === 'TAGS_CHANGED') {
+    return 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400'
+  }
+  if (t === 'SOURCE_CHANGED') {
+    return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
+  }
+  return 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300'
+}
 useHead({ title: userPageTitle })
 
 // Follow/unfollow state
@@ -1038,6 +1062,7 @@ function formatRevisionType(type: string) {
     'PAGE_RESTORED': '恢复',
     'METADATA_CHANGED': '修改元数据',
     'TAGS_CHANGED': '修改标签',
+    'SOURCE_CHANGED': '修改来源',
   };
   return typeMap[type] || type;
 }

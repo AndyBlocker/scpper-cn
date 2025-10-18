@@ -1,6 +1,6 @@
 <template>
   <div class="w-full">
-    <div class="h-72 sm:h-80">
+    <div class="h-56 sm:h-72 md:h-80">
       <canvas ref="canvasEl" class="w-full h-full"></canvas>
     </div>
     <div v-if="loaded && payload" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
@@ -270,5 +270,4 @@ onUnmounted(() => {
 
 <style scoped>
 </style>
-
 

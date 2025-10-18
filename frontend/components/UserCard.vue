@@ -73,7 +73,7 @@
   
       <template v-if="variant === 'sm'">
         <div class="inline-flex items-center gap-1.5">
-          <UserAvatar v-if="avatar" :wikidot-id="wikidotId" :name="displayName" :size="avatarSize" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800" />
+          <UserAvatar v-if="avatar" :wikidot-id="wikidotId" :name="displayName" :size="avatarSize" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
           <div :class="['flex items-center gap-1', nameSmClass]">
             <span>{{ displayName || 'Unknown' }}</span>
             <span v-if="viewerVoteBadge" :class="viewerVoteBadge.class" :title="viewerVoteBadge.title">{{ viewerVoteBadge.label }}</span>

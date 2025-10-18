@@ -3,12 +3,12 @@
     <div v-if="!labels || labels.length === 0" class="h-64 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
       暂无数据
     </div>
-    <canvas v-else ref="canvasEl" class="w-full h-72"></canvas>
+    <canvas v-else ref="canvasEl" class="w-full" :style="canvasStyle"></canvas>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch, computed } from 'vue'
 import { useNuxtApp } from 'nuxt/app'
 
 type Dataset = {
@@ -34,6 +34,8 @@ function isDark(): boolean {
   if (typeof document === 'undefined') return false
   return document.documentElement.classList.contains('dark')
 }
+
+const canvasStyle = computed(() => ({ height: 'clamp(200px, 34vh, 340px)' }))
 
 function buildConfig() {
   const { labels, datasets, yTitle, title } = props
@@ -100,12 +102,19 @@ function render() {
   })
 }
 
+let themeObserver: MutationObserver | null = null
+
 onMounted(() => {
   render()
+  if (typeof MutationObserver !== 'undefined') {
+    themeObserver = new MutationObserver(() => { render() })
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+  }
 })
 
 onBeforeUnmount(() => {
   if (chart) { chart.destroy(); chart = null }
+  if (themeObserver) { themeObserver.disconnect(); themeObserver = null }
 })
 
 watch(() => [props.labels, props.datasets, props.title, props.yTitle], () => {
@@ -119,5 +128,3 @@ watch(() => [props.labels, props.datasets, props.title, props.yTitle], () => {
 
 <style scoped>
 </style>
-
-

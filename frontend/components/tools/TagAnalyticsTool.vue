@@ -56,7 +56,7 @@
           暂无可用的标签分布数据。
         </div>
         <div v-else>
-          <div class="h-72 sm:h-80 rounded-md bg-neutral-50 dark:bg-neutral-800 px-3 py-3">
+          <div class="h-56 sm:h-72 md:h-80 rounded-md bg-neutral-50 dark:bg-neutral-800 px-3 py-3">
             <Bar
               v-if="histogramBins.length > 0"
               :data="histogramChartData"

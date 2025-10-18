@@ -13,7 +13,7 @@
           <ul class="divide-y divide-neutral-100 dark:divide-neutral-800">
             <li v-for="(u, idx) in (lovers?.rows || [])" :key="`${tag}-lov-${idx}-${u.wikidotId}`" class="py-2 flex items-center justify-between gap-3">
               <div class="flex items-center gap-2 min-w-0">
-                <UserAvatar :wikidot-id="u.wikidotId" :name="u.displayName || String(u.wikidotId)" :size="24" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800" />
+                <UserAvatar :wikidot-id="u.wikidotId" :name="u.displayName || String(u.wikidotId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
                 <NuxtLink :to="`/user/${u.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
                   {{ u.displayName || '未知用户' }}
                 </NuxtLink>
@@ -43,7 +43,7 @@
           <ul class="divide-y divide-neutral-100 dark:divide-neutral-800">
             <li v-for="(u, idx) in (haters?.rows || [])" :key="`${tag}-hat-${idx}-${u.wikidotId}`" class="py-2 flex items-center justify-between gap-3">
               <div class="flex items-center gap-2 min-w-0">
-                <UserAvatar :wikidot-id="u.wikidotId" :name="u.displayName || String(u.wikidotId)" :size="24" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800" />
+                <UserAvatar :wikidot-id="u.wikidotId" :name="u.displayName || String(u.wikidotId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
                 <NuxtLink :to="`/user/${u.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
                   {{ u.displayName || '未知用户' }}
                 </NuxtLink>
@@ -143,5 +143,4 @@ watch(() => [props.tag, props.limit, props.offsetLovers, props.offsetHaters], fe
 
 <style scoped>
 </style>
-
 

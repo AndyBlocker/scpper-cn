@@ -1,11 +1,11 @@
 <template>
-  <div class="relative min-h-screen overflow-hidden bg-[#f6f7fb] dark:bg-[#0b0d12] text-neutral-900 dark:text-neutral-100">
+  <div class="relative min-h-screen overflow-x-hidden bg-[#f6f7fb] dark:bg-[#0b0d12] text-neutral-900 dark:text-neutral-100">
     <div
       aria-hidden="true"
       class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(10,132,255,0.18),_transparent_58%)] dark:bg-[radial-gradient(circle_at_top,_rgba(64,156,255,0.25),_rgba(11,13,18,0.92)_62%)]"
     ></div>
     <div class="relative z-10 flex min-h-screen flex-col">
-      <header class="sticky top-0 z-50 border border-white/60 bg-white/70 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/65 dark:shadow-[0_14px_40px_rgba(0,0,0,0.45)]">
+      <header ref="appHeaderRef" class="sticky top-0 z-50 border border-white/60 bg-white/70 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/65 dark:shadow-[0_14px_40px_rgba(0,0,0,0.45)]">
         <div class="max-w-7xl mx-auto flex items-center gap-3 px-4 py-4 sm:gap-6">
           <div class="flex items-center gap-3">
             <!-- Mobile menu button (sidebar) -->
@@ -150,7 +150,7 @@
                 <div
                   v-if="isAlertsDropdownOpen"
                   ref="alertsDropdownRef"
-                  class="absolute right-0 mt-3 w-80 max-w-[80vw] rounded-2xl border border-neutral-200/80 bg-white/95 p-4 shadow-xl backdrop-blur dark:border-neutral-700/60 dark:bg-neutral-900/95"
+                  class="absolute right-0 mt-3 w-80 max-w-[80vw] max-h-[70vh] overflow-y-auto overscroll-contain rounded-2xl border border-neutral-200/80 bg-white/95 p-4 shadow-xl backdrop-blur dark:border-neutral-700/60 dark:bg-neutral-900/95"
                 >
                   <div class="flex items-center justify-between gap-3">
                     <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">信息提醒</h3>
@@ -267,7 +267,7 @@
                   <div class="min-w-0">
                     <template v-if="isAuthenticated">
                       <NuxtLink to="/account" @click="closeSidebar" class="inline-flex items-center gap-2">
-                        <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" class="ring-1 ring-inset ring-neutral-200 dark:ring-neutral-700" />
+                <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" class="ring-1 ring-neutral-200 dark:ring-neutral-700" />
                         <span class="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[10rem]">{{ authUser?.displayName || authUser?.email }}</span>
                       </NuxtLink>
                     </template>
@@ -389,6 +389,13 @@ useHead({
   ]
 })
 const q = ref('');
+const appHeaderRef = ref<HTMLElement | null>(null)
+
+function updateHeaderOffset() {
+  if (!process.client) return
+  const h = appHeaderRef.value?.offsetHeight || 0
+  document.documentElement.style.setProperty('--app-header-h', `${h}px`)
+}
 const isMobileSearchOpen = ref(false);
 const isSidebarOpen = ref(false);
 const sidebarRef = ref<HTMLDivElement | null>(null);
@@ -563,6 +570,8 @@ onMounted(() => {
   enforceDefaultScheme();
 
   document.addEventListener('mousedown', handleAlertsDocumentClick);
+  updateHeaderOffset()
+  window.addEventListener('resize', updateHeaderOffset, { passive: true })
 
   if (authStatus.value === 'unknown') {
     fetchCurrentUser().then(() => {
@@ -770,6 +779,7 @@ onBeforeUnmount(() => {
   if (!process.client) return;
   document.removeEventListener('keydown', handleGlobalKeydown);
   document.removeEventListener('mousedown', handleAlertsDocumentClick);
+  window.removeEventListener('resize', updateHeaderOffset)
 });
 
 watch([

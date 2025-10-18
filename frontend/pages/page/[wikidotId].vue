@@ -1600,7 +1600,7 @@ function formatRelativeTime(dateStr: string) {
 
 function formatRevisionType(type: string) {
   const map:Record<string,string> = {
-    'PAGE_CREATED':'创建页面','PAGE_EDITED':'编辑内容','PAGE_RENAMED':'重命名','PAGE_DELETED':'删除','PAGE_RESTORED':'恢复','METADATA_CHANGED':'修改元数据','TAGS_CHANGED':'修改标签'
+    'PAGE_CREATED':'创建页面','PAGE_EDITED':'编辑内容','PAGE_RENAMED':'重命名','PAGE_DELETED':'删除','PAGE_RESTORED':'恢复','METADATA_CHANGED':'修改元数据','TAGS_CHANGED':'修改标签','SOURCE_CHANGED':'修改来源'
   }
   return map[type] || type
 }
@@ -1623,6 +1623,9 @@ function revisionTypeClass(type: string) {
   }
   if (t === 'TAGS_CHANGED') {
     return 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400'
+  }
+  if (t === 'SOURCE_CHANGED') {
+    return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
   }
   return 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300'
 }

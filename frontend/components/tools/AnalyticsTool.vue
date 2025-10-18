@@ -40,7 +40,7 @@
         <ClientOnly>
           <PieDonutChart :labels="pieLabels" :values="pieValues" :colors="pieColors" />
           <template #fallback>
-            <div class="h-60 sm:h-72 flex items-center justify-center text-neutral-500 dark:text-neutral-400">加载图表中...</div>
+            <div class="h-48 sm:h-64 md:h-72 flex items-center justify-center text-neutral-500 dark:text-neutral-400">加载图表中...</div>
           </template>
         </ClientOnly>
       </div>
@@ -53,7 +53,7 @@
         <ClientOnly>
           <TimeSeriesLineChart :key="'cat-'+period+'-'+startDate+'-'+endDate" :labels="labels" :datasets="categoryDatasets" y-title="数量" />
           <template #fallback>
-            <div class="h-60 sm:h-72 flex items-center justify-center text-neutral-500 dark:text-neutral-400">加载图表中...</div>
+            <div class="h-48 sm:h-64 md:h-72 flex items-center justify-center text-neutral-500 dark:text-neutral-400">加载图表中...</div>
           </template>
         </ClientOnly>
       </div>
