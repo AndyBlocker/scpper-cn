@@ -81,7 +81,7 @@
         <!-- excerpt (max 3 lines) -> enforce uniform height across cards -->
         <div>
           <div class="h-[48px] overflow-hidden flex items-center">
-            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 line-clamp-3 italic border-l border-[rgba(var(--accent),0.3)] pl-2">
+            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 italic border-l border-[rgba(var(--accent),0.3)] pl-2 clamp-3">
               "{{ excerpt }}"
             </p>
           </div>
@@ -149,7 +149,7 @@
           <!-- snippet area (md): fixed two lines height; ellipsis on overflow -->
           <div class="h-[32px] overflow-hidden flex items-center">
             <div v-if="snippetHtml"
-                 class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 line-clamp-2"
+                 class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 clamp-2"
                  v-html="snippetHtml"></div>
           </div>
         </div>
@@ -555,6 +555,8 @@
   </script>
   
   <style scoped>
+  .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .stat-tile{ @apply border border-neutral-200 dark:border-neutral-700 rounded p-2 text-center; }
   .stat-label{ @apply text-[10px] leading-none text-neutral-500 dark:text-neutral-400; }
   .stat-value{ @apply text-sm font-semibold text-neutral-800 dark:text-neutral-200 tabular-nums; }

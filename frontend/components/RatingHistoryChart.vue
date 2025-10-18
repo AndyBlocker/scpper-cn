@@ -140,7 +140,8 @@ const canvasStyle = computed(() => {
   if (typeof props.heightPx === 'number' && !Number.isNaN(props.heightPx)) {
     return { height: `${props.heightPx}px` }
   }
-  return { height: props.dense ? 'clamp(280px, 38vh, 400px)' : 'clamp(300px, 42vh, 420px)' }
+  // Mobile-friendly: slightly shorter default heights to avoid near-square look
+  return { height: props.dense ? 'clamp(220px, 34vh, 360px)' : 'clamp(240px, 36vh, 380px)' }
 })
 
 // 计算数据起始日期（包含 firstActivityDate 和数据本身的最早日期）

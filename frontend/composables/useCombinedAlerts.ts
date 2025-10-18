@@ -30,7 +30,7 @@ export function useCombinedAlerts() {
   const loading = useState<boolean>('alerts/combined/loading', () => false);
   const lastFetchedAt = useState<string | null>('alerts/combined/lastFetchedAt', () => null);
 
-  async function fetchCombined(limit = 20, offset = 0, force = false) {
+  async function fetchCombined(limit = 20, offset = 0, force = false, includeRead = true) {
     if (loading.value) return groups.value;
     if (!force && lastFetchedAt.value) {
       const last = new Date(lastFetchedAt.value).getTime();
@@ -38,7 +38,10 @@ export function useCombinedAlerts() {
     }
     loading.value = true;
     try {
-      const res = await $bff<CombinedAlertsResponse>('/alerts/combined', { method: 'GET', params: { limit, offset } });
+      const res = await $bff<CombinedAlertsResponse>(
+        '/alerts/combined',
+        { method: 'GET', params: { limit, offset, includeRead: includeRead ? 1 : 0 } }
+      );
       if (res?.ok && Array.isArray(res.groups)) {
         groups.value = res.groups;
         lastFetchedAt.value = new Date().toISOString();
@@ -62,15 +65,15 @@ export function useCombinedAlerts() {
       const res = await $bff<BatchReadResponse>('/alerts/read-batch', { method: 'POST', body: { ids } });
       if (res?.ok) {
         const idSet = new Set(res.ids);
-        const nextGroups: CombinedAlertGroup[] = [];
+        const ackAt = new Date().toISOString();
         for (const g of groups.value) {
-          const remaining = g.alerts.filter(a => !idSet.has(a.id));
-          if (remaining.length > 0) {
-            nextGroups.push({ ...g, alerts: remaining });
+          for (const a of g.alerts) {
+            if (idSet.has(a.id)) {
+              a.acknowledgedAt = a.acknowledgedAt ?? ackAt;
+            }
           }
         }
-        groups.value = nextGroups;
-        return res.updated || 0;
+        return res.updated ?? 0;
       }
     } catch (error) {
       console.warn('[combined-alerts] batch read failed', error);
@@ -78,7 +81,7 @@ export function useCombinedAlerts() {
     return 0;
   }
 
-  const totalUnread = computed(() => groups.value.reduce((acc, g) => acc + (Array.isArray(g.alerts) ? g.alerts.length : 0), 0));
+  const totalUnread = computed(() => groups.value.reduce((acc, g) => acc + (Array.isArray(g.alerts) ? g.alerts.filter(a => !a.acknowledgedAt).length : 0), 0));
 
   return {
     groups,

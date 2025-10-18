@@ -78,9 +78,12 @@
     color: #0b1120;
   }
   
-  /* 过渡动画 */
-  * {
+  /* 过渡动画（仅常见交互元素，避免全局性能压力） */
+  a, button, input, select, textarea {
     @apply transition-colors duration-200;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    a, button, input, select, textarea, .transition-colors { transition: none !important; }
   }
   
   /* 禁用图片拖拽 */
