@@ -21,6 +21,12 @@
               </svg>
             </button>
 
+            <!-- Mobile brand/logo + title link -->
+            <NuxtLink to="/" class="sm:hidden inline-flex items-center gap-2 group" aria-label="返回主页" title="返回主页">
+              <BrandIcon class="w-7 h-7 text-neutral-900 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))] transition-colors" />
+              <span class="font-bold text-base text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
+            </NuxtLink>
+
             <!-- Desktop brand + primary nav -->
             <div class="hidden sm:flex items-center gap-4 whitespace-nowrap">
             <NuxtLink to="/" class="flex items-center gap-2 group">

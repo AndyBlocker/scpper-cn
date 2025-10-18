@@ -187,7 +187,13 @@ export class DirtyQueueStore {
     } else {
       // 现有页面 - 检查变化
       const currentVersion = await this.getCurrentVersion(page.id);
-      
+
+      // URL 变更：当wikidotId相同但URL不同，标记进入 Phase B 以同步 Page.currentUrl
+      if (staging.url && page.currentUrl && staging.url !== page.currentUrl) {
+        needPhaseB = true;
+        reasons.push('url_changed');
+      }
+
       if (!currentVersion && !staging.isDeleted) {
         needPhaseB = true;
         reasons.push('no_current_version');

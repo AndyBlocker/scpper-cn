@@ -9,6 +9,21 @@ export default defineNuxtConfig({
   srcDir: '.',
   buildDir,
   compatibilityDate: '2025-08-23',
+  // Vite 构建参数：使用 esbuild（多线程）最小化与更高目标，显著缩短构建时间
+  vite: {
+    build: {
+      minify: 'esbuild',
+      target: 'esnext',
+      sourcemap: false,
+      cssCodeSplit: true
+    },
+    esbuild: {
+      legalComments: 'none'
+    },
+    optimizeDeps: {
+      esbuildOptions: { target: 'esnext' }
+    }
+  },
   modules: [
     '@nuxtjs/tailwindcss'
   ],

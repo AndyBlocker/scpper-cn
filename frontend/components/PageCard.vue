@@ -26,10 +26,11 @@
             :title="viewerVoteBadge.title"
           >{{ viewerVoteBadge.label }}</span>
         </div>
+        
       </div>
 
       <!-- sm header -->
-      <div v-else-if="variant === 'sm'" class="flex items-center justify-between gap-2">
+      <div v-else-if="variant === 'sm'" class="flex items-center gap-2">
         <div class="flex min-w-0 items-center gap-2" :title="displayTitle">
           <span class="truncate flex-1 min-w-0 text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
             {{ displayTitle || 'Untitled' }}
@@ -40,24 +41,17 @@
             :title="viewerVoteBadge.title"
           >{{ viewerVoteBadge.label }}</span>
         </div>
-        <div v-if="displayDate" class="text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
-          {{ displayDate }}
-        </div>
+        <div v-if="displayDate && !isDeleted" class="ml-auto text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">{{ displayDate }}</div>
       </div>
 
       <!-- lg top-right date overlay (avoid overlap with deleted badge) -->
       <div
         v-if="variant === 'lg' && displayDate && !isDeleted"
-        class="absolute top-4 right-3 hidden text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap leading-6 sm:block"
+        class="absolute top-4 right-3 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap leading-6"
       >
         {{ displayDate }}
       </div>
-      <div
-        v-if="variant === 'lg' && displayDate && !isDeleted"
-        class="mt-1 text-xs text-neutral-500 dark:text-neutral-400 sm:hidden"
-      >
-        {{ displayDate }}
-      </div>
+      <!-- mobile date below removed in favor of inline date on header row -->
   
       <!-- ===== LG =====  richer, airy left-to-right stack -->
       <div v-if="variant === 'lg'" class="flex flex-col gap-2">
@@ -129,7 +123,7 @@
       </div>
   
       <!-- ===== MD ===== tighter two-column; right becomes soft stat grid -->
-      <div v-if="variant === 'md'" class="grid grid-cols-[minmax(0,1fr)_164px] gap-3 items-start">
+      <div v-if="variant === 'md'" class="grid grid-cols-[minmax(0,1fr)_164px] gap-3 items-stretch">
         <div class="flex flex-col gap-1.5 min-w-0">
           <!-- inline title inside left column -->
           <div class="flex min-w-0 items-start gap-2" :title="displayTitle">
@@ -141,7 +135,9 @@
               :class="['shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
               :title="viewerVoteBadge.title"
             >{{ viewerVoteBadge.label }}</span>
+            
           </div>
+          
           <div v-if="authorsVisible.length" class="flex items-center flex-wrap gap-1.5">
             <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)" bare />
             <span v-if="authorsMoreCount>0" class="text-xs text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
@@ -158,27 +154,31 @@
           </div>
         </div>
   
-        <!-- right stats 2x2 + date -->
-        <div class="grid grid-cols-2 gap-1.5 items-start w-[164px]">
-          <div v-if="displayDate" class="col-span-2 text-[11px] text-neutral-500 dark:text-neutral-400 text-right mb-1">
+        <!-- right column: date at top, stats centered between date and bottom -->
+        <div class="flex flex-col w-[164px] h-full self-stretch">
+          <div v-if="displayDate" class="text-[11px] text-neutral-500 dark:text-neutral-400 text-right mb-1">
             <span v-if="!isDeleted">{{ displayDate }}</span>
             <span v-else class="invisible">0000-00-00</span>
           </div>
-          <div class="stat-soft">
-            <div class="stat-label">Rating</div>
-            <div class="stat-num">{{ displayRating }}</div>
-          </div>
-          <div class="stat-soft">
-            <div class="stat-label">评论</div>
-            <div class="stat-num">{{ displayComments }}</div>
-          </div>
-          <div class="stat-soft">
-            <div class="stat-label">Wilson</div>
-            <div class="stat-num">{{ wilsonText }}</div>
-          </div>
-          <div class="stat-soft">
-            <div class="stat-label">争议</div>
-            <div class="stat-num">{{ controversyText }}</div>
+          <div class="flex-1 flex items-center">
+            <div class="grid grid-cols-2 gap-1.5 w-full">
+              <div class="stat-soft">
+                <div class="stat-label">Rating</div>
+                <div class="stat-num">{{ displayRating }}</div>
+              </div>
+              <div class="stat-soft">
+                <div class="stat-label">评论</div>
+                <div class="stat-num">{{ displayComments }}</div>
+              </div>
+              <div class="stat-soft">
+                <div class="stat-label">Wilson</div>
+                <div class="stat-num">{{ wilsonText }}</div>
+              </div>
+              <div class="stat-soft">
+                <div class="stat-label">争议</div>
+                <div class="stat-num">{{ controversyText }}</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -189,7 +189,7 @@
           <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)" bare />
           <span v-if="authorsMoreCount>0" class="text-[11px] text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
         </div>
-        <div v-if="displayDate && !isDeleted" class="text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">{{ displayDate }}</div>
+        <!-- mobile date moved to header row for SM variant -->
       </div>
   
       <!-- deletion mark -->
@@ -201,6 +201,7 @@
   
   <script setup lang="ts">
   import { computed, resolveComponent, watch, ref } from 'vue'
+  import { orderTags } from '~/composables/useTagOrder'
   import { useNuxtApp, useRuntimeConfig } from 'nuxt/app'
   import { useViewerVotes } from '~/composables/useViewerVotes'
   
@@ -284,6 +285,7 @@
     return base
   })
   const internalTags = computed<string[]>(() => (props.tags ?? props.p?.tags ?? []).filter(Boolean))
+  const sortedTags = computed<string[]>(() => orderTags(internalTags.value))
   const createdDate = computed(() => (props as any).dateISO ?? (props as any).dateIso ?? props.p?.createdDate ?? '')
   const excerpt = computed(() => props.excerpt ?? props.p?.excerpt ?? '')
   const controversy = computed(() => props.controversy ?? props.p?.controversy)
@@ -337,13 +339,13 @@
   const authorsMoreCount = computed(() => Math.max(0, authorsList.value.length - authorsVisibleCount.value))
   
   const visibleTagsCount = computed(() => {
-    const tags = internalTags.value
+    const tags = sortedTags.value
     if (!tags.length) return 0
     if (variant.value === 'lg') return estimateCountByCharBudget(tags, 36, 2, 6, 1)
     if (variant.value === 'md') return estimateCountByCharBudget(tags, 20, 1, 4, 1)
     return 0
   })
-  const visibleTags = computed(() => internalTags.value.slice(0, visibleTagsCount.value))
+  const visibleTags = computed(() => sortedTags.value.slice(0, visibleTagsCount.value))
   const tagsMoreCount = computed(() => Math.max(0, internalTags.value.length - visibleTagsCount.value))
   
   const displayDate = computed(() => createdDate.value)
@@ -505,6 +507,11 @@
       // Very subtle transparency to avoid affecting main content
       style['--pc-hover-opacity'] = '0.06'
     }
+    // 强化“精品/主题精品”边框为金色，使用行内样式确保覆盖
+    if (hasPremiumQuality.value) {
+      style['borderColor'] = '#D4AF37'
+      style['borderWidth'] = '2px'
+    }
     return style
   })
 
@@ -512,6 +519,11 @@
   
   /* Base class tweaks: lighter borders, slightly tighter padding on md/sm */
   const baseClass = 'relative w-full max-w-full min-w-0 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition-all duration-200 overflow-hidden card-hover-bg'
+  const hasPremiumQuality = computed(() => {
+    const tags = internalTags.value
+    // Highlight when page has 精品 or 主题精品
+    return tags.includes('精品') || tags.includes('主题精品')
+  })
   const rootClass = computed(() => {
     if (variant.value === 'lg') {
       return [
@@ -519,6 +531,7 @@
         to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
         hoverImageUrl.value ? 'has-hover-bg' : '',
         (hoverImageUrl.value && isHovering.value) ? 'is-hovering' : '',
+        hasPremiumQuality.value ? 'border-[#D4AF37] dark:border-[#D4AF37]' : '',
         'p-5 md:p-6 flex flex-col gap-3'
       ].join(' ')
     }
@@ -528,12 +541,14 @@
         to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
         hoverImageUrl.value ? 'has-hover-bg' : '',
         (hoverImageUrl.value && isHovering.value) ? 'is-hovering' : '',
+        hasPremiumQuality.value ? 'border-[#D4AF37] dark:border-[#D4AF37]' : '',
         'p-3 flex flex-col gap-2'
       ].join(' ')
     }
     return [
       baseClass,
       to.value ? 'hover:shadow-sm cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
+      hasPremiumQuality.value ? 'border-[#D4AF37] dark:border-[#D4AF37]' : '',
       'p-2.5 flex flex-col gap-1'
     ].join(' ')
   })

@@ -2,7 +2,7 @@
   <div class="space-y-8">
     <!-- Overview metrics -->
     <section class="space-y-6">
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
         <div class="flex items-center gap-4">
           <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(var(--accent),0.14)] text-[rgb(var(--accent))] shadow-[0_10px_24px_rgba(10,132,255,0.18)]">
             <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -133,7 +133,7 @@
 
     <!-- Random picks -->
     <section class="space-y-6">
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
         <div class="flex items-center gap-4">
           <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(var(--accent),0.14)] text-[rgb(var(--accent))] shadow-[0_10px_24px_rgba(10,132,255,0.18)]">
             <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -142,7 +142,7 @@
           </div>
           <div>
             <h2 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">随机页面</h2>
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">从随机推荐中发现值得一读的作品。</p>
+            <p class="hidden sm:block text-sm text-neutral-500 dark:text-neutral-400">从随机推荐中发现值得一读的作品。</p>
           </div>
         </div>
         <button
@@ -522,4 +522,3 @@ const refreshRandomPages = async () => {
   }
 };
 </script>
-

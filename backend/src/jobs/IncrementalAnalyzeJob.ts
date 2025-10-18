@@ -7,6 +7,7 @@ import { UserDataCompletenessJob } from './UserDataCompletenessJob';
 import { UserSocialAnalysisJob } from './UserSocialAnalysisJob';
 import { computeUserCategoryBenchmarks } from './UserCategoryBenchmarksJob';
 import { PageMetricMonitorJob } from './PageMetricMonitorJob';
+import { UserFollowActivityJob } from './UserFollowActivityJob';
 // @ts-ignore - importing from scripts folder
 // import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
@@ -51,6 +52,7 @@ export class IncrementalAnalyzeJob {
         'trending_stats',
         'site_overview_daily',
         'page_metric_alerts',
+        'user_follow_alerts',
         // 新增：作者分类基准
         'category_benchmarks'
       ];
@@ -312,6 +314,11 @@ export class IncrementalAnalyzeJob {
         case 'page_metric_alerts': {
           const monitor = new PageMetricMonitorJob(this.prisma);
           await monitor.run(changeSet.map(item => item.id));
+          break;
+        }
+        case 'user_follow_alerts': {
+          const job = new UserFollowActivityJob(this.prisma);
+          await job.run(changeSet.map(item => item.id));
           break;
         }
         default:
@@ -1077,15 +1084,15 @@ export class IncrementalAnalyzeJob {
         rating: number | null;
       }>>`
         SELECT 
-          p.url,
+          p."currentUrl" AS url,
           p.id as "pageId",
           pv.rating
         FROM "Page" p
         INNER JOIN "PageVersion" pv ON p.id = pv."pageId"
         WHERE pv."validTo" IS NULL 
           AND pv."isDeleted" = false
-          AND p.url ~ '/scp-cn-[0-9]{3,4}($|/)'
-          AND p.url NOT LIKE '%deleted:%'
+          AND p."currentUrl" ~ '/scp-cn-[0-9]{3,4}($|/)'
+          AND p."currentUrl" NOT LIKE '%deleted:%'
           AND '原创' = ANY(pv.tags)
           AND NOT ('待删除' = ANY(pv.tags))
           AND NOT ('待刪除' = ANY(pv.tags))

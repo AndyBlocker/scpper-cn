@@ -88,6 +88,20 @@ const sections = [
             h('circle', { cx: '8.5', cy: '8.5', r: '1.5', fill: 'currentColor' })
           ])
         })
+      },
+      {
+        to: '/series-availability',
+        title: '编号系列占用/空闲',
+        description: '查看各系列使用进度，并合并显示空闲编号区间。',
+        badge: 'Series',
+        icon: defineComponent({
+          name: 'SeriesIcon',
+          setup: () => () => h('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: '2' }, [
+            h('path', { strokeLinecap: 'round', strokeLinejoin: 'round', d: 'M4 7h12' }),
+            h('path', { strokeLinecap: 'round', strokeLinejoin: 'round', d: 'M4 12h16' }),
+            h('path', { strokeLinecap: 'round', strokeLinejoin: 'round', d: 'M4 17h10' })
+          ])
+        })
       }
     ]
   },

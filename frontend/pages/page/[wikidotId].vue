@@ -657,6 +657,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { orderTags } from '~/composables/useTagOrder'
 import { onBeforeRouteUpdate } from 'vue-router'
 import { useAuth } from '~/composables/useAuth'
 
@@ -1658,8 +1659,8 @@ async function copySourceUrl(){
   } catch {}
 }
 
-// Tags - show all
-const allTags = computed(() => Array.isArray(page.value?.tags) ? page.value!.tags : [])
+// Tags - show all (ordered)
+const allTags = computed(() => orderTags(Array.isArray(page.value?.tags) ? page.value!.tags : []))
 
 // Votes derived
 const upvotes = computed(() => Number(voteDistribution.value?.upvotes ?? stats.value?.uv ?? 0))

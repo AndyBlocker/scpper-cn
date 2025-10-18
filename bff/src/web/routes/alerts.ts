@@ -686,5 +686,174 @@ export function alertsRouter(pool: Pool, _redis: RedisClientType | null) {
     }
   });
 
+  // Combined unread alerts grouped by page for the authenticated user
+  router.get('/combined', async (req, res, next) => {
+    try {
+      const authUser = await fetchAuthUser(req);
+      if (!authUser || authUser.linkedWikidotId == null) {
+        return res.status(401).json({ ok: false, error: 'unauthenticated' });
+      }
+
+      const limitParam = Number.parseInt(String(req.query.limit ?? '20'), 10);
+      const offsetParam = Number.parseInt(String(req.query.offset ?? '0'), 10);
+      const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 50)) : 20;
+      const offset = Number.isFinite(offsetParam) ? Math.max(0, offsetParam) : 0;
+
+      const countResult = await pool.query<{ count: number }>(
+        `
+          SELECT COUNT(*)::int AS count
+          FROM (
+            SELECT DISTINCT pa."pageId"
+            FROM "PageMetricAlert" pa
+            JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
+            JOIN "User" u ON u.id = pw."userId"
+            WHERE u."wikidotId" = $1
+              AND pa."acknowledgedAt" IS NULL
+          ) AS t
+        `,
+        [authUser.linkedWikidotId]
+      );
+      const totalGroups = countResult.rows[0]?.count ?? 0;
+
+      const groupRows = await pool.query<{ pageId: number; updatedAt: string }>(
+        `
+          SELECT pa."pageId" AS "pageId", MAX(pa."detectedAt") AS "updatedAt"
+          FROM "PageMetricAlert" pa
+          JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
+          JOIN "User" u ON u.id = pw."userId"
+          WHERE u."wikidotId" = $1
+            AND pa."acknowledgedAt" IS NULL
+          GROUP BY pa."pageId"
+          ORDER BY "updatedAt" DESC
+          LIMIT $2 OFFSET $3
+        `,
+        [authUser.linkedWikidotId, limit, offset]
+      );
+
+      if (groupRows.rowCount === 0) {
+        return res.json({ ok: true, total: totalGroups, groups: [] });
+      }
+
+      const pageIds = groupRows.rows.map(r => r.pageId);
+      const details = await pool.query<AlertsQueryRow>(
+        `
+          SELECT 
+            pa.id,
+            pa."metric",
+            pa."prevValue",
+            pa."newValue",
+            pa."diffValue",
+            pa."detectedAt",
+            pa."acknowledgedAt",
+            pa."pageId",
+            p."wikidotId" AS "pageWikidotId",
+            p."currentUrl" AS "pageUrl",
+            pv.title AS "pageTitle",
+            pv."alternateTitle" AS "pageAlternateTitle",
+            pw."source"
+          FROM "PageMetricAlert" pa
+          JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
+          JOIN "User" u ON u.id = pw."userId"
+          JOIN "Page" p ON p.id = pa."pageId"
+          LEFT JOIN "PageVersion" pv ON pv."pageId" = pa."pageId" AND pv."validTo" IS NULL
+          WHERE u."wikidotId" = $1
+            AND pa."acknowledgedAt" IS NULL
+            AND pa."pageId" = ANY($2::int[])
+          ORDER BY pa."detectedAt" DESC
+        `,
+        [authUser.linkedWikidotId, pageIds]
+      );
+
+      const grouped = new Map<number, any>();
+      const updatedMap = new Map<number, string>();
+      for (const r of groupRows.rows) {
+        updatedMap.set(r.pageId, r.updatedAt);
+      }
+
+      for (const row of details.rows) {
+        let group = grouped.get(row.pageId);
+        if (!group) {
+          group = {
+            pageId: row.pageId,
+            pageWikidotId: row.pageWikidotId,
+            pageUrl: row.pageUrl,
+            pageTitle: row.pageTitle,
+            pageAlternateTitle: row.pageAlternateTitle,
+            updatedAt: updatedMap.get(row.pageId) || row.detectedAt,
+            alerts: [] as any[]
+          };
+          grouped.set(row.pageId, group);
+        }
+        group.alerts.push({
+          id: row.id,
+          metric: row.metric,
+          prevValue: row.prevValue,
+          newValue: row.newValue,
+          diffValue: row.diffValue,
+          detectedAt: row.detectedAt,
+          acknowledgedAt: row.acknowledgedAt,
+          pageId: row.pageId,
+          pageWikidotId: row.pageWikidotId,
+          pageUrl: row.pageUrl,
+          pageTitle: row.pageTitle,
+          pageAlternateTitle: row.pageAlternateTitle,
+          source: row.source
+        });
+      }
+
+      // Keep original order by updatedAt desc
+      const groups = groupRows.rows
+        .map(r => grouped.get(r.pageId))
+        .filter(Boolean);
+
+      res.json({ ok: true, total: totalGroups, groups });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Batch mark alerts read (for combined view)
+  router.post('/read-batch', async (req, res, next) => {
+    try {
+      const authUser = await fetchAuthUser(req);
+      if (!authUser || authUser.linkedWikidotId == null) {
+        return res.status(401).json({ ok: false, error: 'unauthenticated' });
+      }
+
+      const idsInput = req.body?.ids;
+      if (!Array.isArray(idsInput)) {
+        return res.status(400).json({ ok: false, error: 'invalid_ids' });
+      }
+      const ids = idsInput
+        .map((v: any) => Number.parseInt(String(v), 10))
+        .filter((n: number) => Number.isFinite(n));
+      if (ids.length === 0) {
+        return res.status(400).json({ ok: false, error: 'empty_ids' });
+      }
+      if (ids.length > 500) {
+        return res.status(400).json({ ok: false, error: 'too_many_ids' });
+      }
+
+      const result = await pool.query<{ id: number }>(
+        `
+          UPDATE "PageMetricAlert" pa
+          SET "acknowledgedAt" = COALESCE(pa."acknowledgedAt", NOW())
+          FROM "PageMetricWatch" pw
+          JOIN "User" u ON u.id = pw."userId"
+          WHERE pa.id = ANY($2::int[])
+            AND pa."watchId" = pw.id
+            AND u."wikidotId" = $1
+          RETURNING pa.id
+        `,
+        [authUser.linkedWikidotId, ids]
+      );
+
+      const updatedIds = result.rows.map(r => r.id);
+      res.json({ ok: true, updated: updatedIds.length, ids: updatedIds });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   return router;
 }

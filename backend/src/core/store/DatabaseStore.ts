@@ -211,6 +211,27 @@ export class DatabaseStore {
       return;
     }
 
+    // Also keep Page.currentUrl in sync during Phase C when URL is present
+    try {
+      const incomingUrl = typeof data.url === 'string' ? data.url : '';
+      if (incomingUrl && page.currentUrl !== incomingUrl) {
+        const newHistory = Array.isArray(page.urlHistory)
+          ? Array.from(new Set([...(page.urlHistory as string[]), page.currentUrl, incomingUrl]))
+          : [page.currentUrl, incomingUrl].filter(Boolean);
+        await this.prisma.page.update({
+          where: { id: page.id },
+          data: {
+            currentUrl: incomingUrl,
+            urlHistory: newHistory,
+            updatedAt: new Date()
+          }
+        });
+        Logger.info(`✅ Phase C synchronized page URL for wikidotId ${data.wikidotId}: ${page.currentUrl} -> ${incomingUrl}`);
+      }
+    } catch (e) {
+      Logger.warn(`Phase C failed to sync URL for wikidotId ${data.wikidotId}: ${(e as any)?.message ?? e}`);
+    }
+
     const currentVersion = page.versions[0];
 
     // 导入投票和修订

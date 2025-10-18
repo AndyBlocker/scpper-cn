@@ -18,7 +18,27 @@
           <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
           <h2 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">用户详情</h2>
         </div>
-        <NuxtLink to="/" class="text-sm text-[rgb(var(--accent))] hover:opacity-90 font-medium">← 返回主页</NuxtLink>
+        <div class="flex items-center gap-3">
+          <button
+            v-if="canFollow"
+            type="button"
+            :aria-label="isFollowingThis ? '取消收藏作者' : '收藏作者'"
+            :title="isFollowingThis ? '取消收藏作者' : '收藏作者'"
+            class="inline-flex items-center justify-center h-9 w-9 rounded-full border transition shadow-sm"
+            :class="isFollowingThis
+              ? 'border-[rgba(var(--accent),0.45)] bg-[rgba(var(--accent),0.10)] text-[rgb(var(--accent))] dark:border-[rgba(var(--accent),0.45)]'
+              : 'border-neutral-200 bg-white/80 text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300'"
+            @click="toggleFollow"
+          >
+            <!-- Use the same star geometry for both states to ensure equal visual size -->
+            <svg v-if="isFollowingThis" class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.62L12 2 9.19 8.62 2 9.24l5.46 4.73L5.82 21z" />
+            </svg>
+            <svg v-else class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.62L12 2 9.19 8.62 2 9.24l5.46 4.73L5.82 21z" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       
@@ -454,6 +474,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, watchEffect } from 'vue'
+import { useAuth } from '~/composables/useAuth'
+import { useFollows } from '~/composables/useFollows'
 // Note: avoid importing Nuxt auto-imported composables to prevent linter conflicts
 
 // Declarations for Nuxt auto-imported globals to satisfy type checker in this environment
@@ -538,6 +560,27 @@ const userPageTitle = computed(() => {
   return name ? '用户：' + name : '用户详情'
 })
 useHead({ title: userPageTitle })
+
+// Follow/unfollow state
+const { isAuthenticated, user: authUser } = useAuth()
+const { fetchFollows, followUser, unfollowUser, isFollowing } = useFollows()
+const canFollow = computed(() => isAuthenticated.value && Number(authUser.value?.linkedWikidotId || 0) !== Number(wikidotId.value))
+const isFollowingThis = computed(() => isFollowing(Number(wikidotId.value)))
+async function toggleFollow() {
+  const id = Number(wikidotId.value)
+  if (!Number.isFinite(id) || id <= 0) return
+  await fetchFollows()
+  try {
+    if (isFollowingThis.value) {
+      await unfollowUser(id)
+    } else {
+      await followUser(id)
+    }
+    await fetchFollows(true)
+  } catch (e) {
+    console.warn('[user] toggle follow failed', e)
+  }
+}
 
 // Relations: authors and tags (liker/hater)
 // Preferences pagination state

@@ -91,6 +91,88 @@
         </div>
       </div>
     </section>
+    <!-- Author follow alerts section -->
+    <section class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+      <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1">
+          <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">作者关注提醒</h2>
+          <p class="text-sm text-neutral-600 dark:text-neutral-400">当你关注的作者被署名或产生修订时，将在此处提醒。</p>
+        </div>
+        <div v-if="followCombinedUnread > 0" class="inline-flex items-center rounded-full bg-[rgba(var(--accent),0.12)] px-3 py-1 text-xs font-semibold text-[rgb(var(--accent))]">未读 {{ followCombinedUnread > 99 ? '99+' : followCombinedUnread }}</div>
+      </header>
+      <div v-if="!hasLinkedWikidot" class="mt-4 rounded-2xl border border-dashed border-neutral-200 bg-white/70 px-4 py-6 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+        绑定 Wikidot 账号后，即可关注作者并接收提醒。
+      </div>
+      <div v-else class="mt-4 space-y-5">
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-xs text-neutral-500 dark:text-neutral-400">按页面聚合最近未读提醒</div>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
+              :disabled="followCombinedLoading"
+              @click="() => fetchFollowCombined(true,20,0)"
+            >{{ followCombinedLoading ? '刷新中…' : '刷新' }}</button>
+            <button
+              v-if="followCombinedUnread > 0"
+              type="button"
+              class="inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent))] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(10,132,255,0.3)] hover:-translate-y-0.5 transition disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="followCombinedLoading"
+              @click="markAllFollowRead"
+            >全部已读</button>
+          </div>
+        </div>
+        <div v-if="followCombinedLoading" class="rounded-2xl border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+          正在加载提醒…
+        </div>
+        <ul v-else-if="followCombined.length > 0" class="space-y-4">
+          <li
+            v-for="group in followCombined"
+            :key="group.pageId"
+            class="rounded-2xl border border-neutral-200 bg-white/80 p-4 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] hover:shadow-[0_15px_35px_rgba(15,23,42,0.12)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-[rgba(var(--accent),0.45)]"
+          >
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div class="space-y-1">
+                <div class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                  {{ group.pageTitle || '未知页面' }}
+                </div>
+                <div v-if="group.pageAlternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  {{ group.pageAlternateTitle }}
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <span
+                    v-for="alert in group.alerts"
+                    :key="alert.id"
+                    class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/70 px-2 py-1 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
+                  >
+                    <span>
+                      {{ alert.type === 'REVISION' ? '修订' : (alert.type === 'ATTRIBUTION_REMOVED' ? '署名移除' : '署名') }}
+                    </span>
+                  </span>
+                </div>
+              </div>
+              <div class="text-right text-xs text-neutral-500 dark:text-neutral-400 space-y-1">
+                <div>{{ formatAlertTime(group.updatedAt) }}</div>
+                <div class="inline-flex items-center justify-center rounded-full bg-[rgba(var(--accent),0.12)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(var(--accent))]">
+                  未读 {{ group.alerts.length }}
+                </div>
+              </div>
+            </div>
+            <div class="mt-3 flex items-center justify-between text-xs">
+              <NuxtLink
+                v-if="group.pageWikidotId"
+                :to="`/page/${group.pageWikidotId}`"
+                class="inline-flex items-center gap-1 font-medium text-[rgb(var(--accent))] hover:underline"
+              >查看页面</NuxtLink>
+              <span v-else class="text-neutral-500 dark:text-neutral-400">—</span>
+            </div>
+          </li>
+        </ul>
+        <div v-else class="rounded-2xl border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+          暂无提醒，去关注喜欢的作者吧～
+        </div>
+      </div>
+    </section>
 
     <section class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
       <div class="flex items-center justify-between">
@@ -144,16 +226,35 @@
     </section>
     <section class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
       <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div>
+        <div class="space-y-1">
           <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">信息提醒</h2>
-          <p class="text-sm text-neutral-600 dark:text-neutral-400">追踪拥有页面的评论动态，超过阈值时会在此处提示。</p>
+          <p class="text-sm text-neutral-600 dark:text-neutral-400">追踪拥有页面的评论、投票与修订动态，超过阈值时会在此处提示。</p>
         </div>
-        <div v-if="alertsHasUnread" class="inline-flex items-center rounded-full bg-[rgba(var(--accent),0.12)] px-3 py-1 text-xs font-semibold text-[rgb(var(--accent))]">未读 {{ alertsUnreadCount > 99 ? '99+' : alertsUnreadCount }}</div>
+        <div class="flex items-center gap-3">
+          <div class="inline-flex rounded-full border border-neutral-200 bg-white/80 p-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-900/70">
+            <button
+              type="button"
+              class="rounded-full px-3 py-1 font-semibold transition"
+              :class="viewMode === 'metric' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-600 dark:text-neutral-300'"
+              @click="viewMode = 'metric'"
+            >按指标</button>
+            <button
+              type="button"
+              class="rounded-full px-3 py-1 font-semibold transition"
+              :class="viewMode === 'combined' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-600 dark:text-neutral-300'"
+              @click="handleSwitchToCombined"
+            >按页面</button>
+          </div>
+          <div v-if="alertsHasUnread && viewMode === 'metric'" class="inline-flex items-center rounded-full bg-[rgba(var(--accent),0.12)] px-3 py-1 text-xs font-semibold text-[rgb(var(--accent))]">未读 {{ alertsUnreadCount > 99 ? '99+' : alertsUnreadCount }}</div>
+          <div v-else-if="combinedTotalUnread > 0 && viewMode === 'combined'" class="inline-flex items-center rounded-full bg-[rgba(var(--accent),0.12)] px-3 py-1 text-xs font-semibold text-[rgb(var(--accent))]">未读 {{ combinedTotalUnread > 99 ? '99+' : combinedTotalUnread }}</div>
+        </div>
       </header>
       <div v-if="!hasLinkedWikidot" class="mt-4 rounded-2xl border border-dashed border-neutral-200 bg-white/70 px-4 py-6 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
         绑定 Wikidot 账号后，即可自动跟踪自己页面的评论变动并接收提醒。
       </div>
       <div v-else class="mt-4 space-y-5">
+        <!-- Metric-based view -->
+        <template v-if="viewMode === 'metric'">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap gap-2">
             <button
@@ -227,6 +328,7 @@
                   v-model.number="voteThresholdInput"
                   type="number"
                   min="1"
+                  max="1000"
                   class="w-full rounded-full border border-neutral-200 bg-white/85 px-4 py-2 text-sm text-neutral-800 shadow-sm focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                   :disabled="voteSaving || alertPreferencesLoading"
                 >
@@ -236,7 +338,7 @@
                   :disabled="voteSaving || alertPreferencesLoading"
                 >{{ voteSaving ? '保存中…' : '保存' }}</button>
               </div>
-              <p class="text-xs text-neutral-500 dark:text-neutral-400">仅当投票数变化达到或超过该值时触发提醒。</p>
+              <p class="text-xs text-neutral-500 dark:text-neutral-400">仅当投票数变化达到或超过该值时触发提醒（范围 1–1000）。</p>
             </form>
             <form class="space-y-2" @submit.prevent="handleSaveRevisionFilter">
               <label class="text-xs font-semibold text-neutral-600 dark:text-neutral-300">修订提醒范围</label>
@@ -320,6 +422,84 @@
         <div v-else class="rounded-2xl border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
           暂无提醒，持续关注也许能带来惊喜～
         </div>
+        </template>
+
+        <!-- Combined view -->
+        <template v-else>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="text-xs text-neutral-500 dark:text-neutral-400">按页面聚合最近未读提醒</div>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
+                :disabled="combinedLoading"
+                @click="handleCombinedRefresh"
+              >{{ combinedLoading ? '刷新中…' : '刷新' }}</button>
+              <button
+                v-if="combinedTotalUnread > 0"
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent))] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(10,132,255,0.3)] hover:-translate-y-0.5 transition disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="combinedLoading"
+                @click="handleCombinedMarkAll"
+              >全部已读</button>
+            </div>
+          </div>
+          <div v-if="combinedLoading" class="rounded-2xl border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+            正在加载提醒…
+          </div>
+          <ul v-else-if="combinedGroups.length > 0" class="space-y-4">
+            <li
+              v-for="group in combinedGroups"
+              :key="group.pageId"
+              class="rounded-2xl border border-neutral-200 bg-white/80 p-4 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] hover:shadow-[0_15px_35px_rgba(15,23,42,0.12)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-[rgba(var(--accent),0.45)]"
+            >
+              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div class="space-y-1">
+                  <div class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                    {{ group.pageTitle || '未知页面' }}
+                  </div>
+                  <div v-if="group.pageAlternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {{ group.pageAlternateTitle }}
+                  </div>
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    <span
+                      v-for="alert in group.alerts"
+                      :key="alert.id"
+                      class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/70 px-2 py-1 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
+                    >
+                      <span>{{ metricLabel(alert.metric as AlertMetric) }}</span>
+                      <span v-if="formatAlertDelta(alert)" :class="{ 'text-green-600 dark:text-green-400': (alert.diffValue || 0) > 0, 'text-red-500 dark:text-red-400': (alert.diffValue || 0) < 0 }">{{ formatAlertDelta(alert) }}</span>
+                      <span v-if="alert.newValue != null">当前：{{ Math.round(Number(alert.newValue)) }}</span>
+                    </span>
+                  </div>
+                </div>
+                <div class="text-right text-xs text-neutral-500 dark:text-neutral-400 space-y-1">
+                  <div>{{ formatAlertTime(group.updatedAt) }}</div>
+                  <div class="inline-flex items-center justify-center rounded-full bg-[rgba(var(--accent),0.12)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(var(--accent))]">
+                    未读 {{ group.alerts.length }}
+                  </div>
+                </div>
+              </div>
+              <div class="mt-3 flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 font-medium text-[rgb(var(--accent))] hover:underline"
+                  @click="handleCombinedNavigate(group)"
+                >
+                  查看页面
+                </button>
+                <button
+                  type="button"
+                  class="text-neutral-500 hover:text-[rgb(var(--accent))] dark:text-neutral-400"
+                  @click="handleCombinedMarkGroup(group)"
+                >标记已读</button>
+              </div>
+            </li>
+          </ul>
+          <div v-else class="rounded-2xl border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+            暂无提醒，持续关注也许能带来惊喜～
+          </div>
+        </template>
       </div>
     </section>
   </div>
@@ -332,6 +512,8 @@ import UserAvatar from '~/components/UserAvatar.vue'
 import { useAuth } from '~/composables/useAuth'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
+import { useFollowAlerts, type FollowCombinedGroup } from '~/composables/useFollowAlerts'
+import { useCombinedAlerts, type CombinedAlertGroup } from '~/composables/useCombinedAlerts'
 
 const { user, fetchCurrentUser, updateProfile, changePassword, status, logout } = useAuth()
 const {
@@ -357,6 +539,11 @@ const {
   updatePreferences: updateAlertPreferences,
   setMetricMuted: setAlertMetricMuted
 } = useAlertSettings()
+
+// Combined (page-aggregated) alerts
+const { groups: combinedGroups, loading: combinedLoading, fetchCombined: fetchCombinedAlerts, markBatchRead: markCombinedBatch, totalUnread: combinedTotalUnread } = useCombinedAlerts()
+
+const viewMode = ref<'metric' | 'combined'>('metric')
 
 const hasLinkedWikidot = computed(() => Boolean(user.value?.linkedWikidotId))
 const metricLabelMap: Record<AlertMetric, string> = {
@@ -437,6 +624,43 @@ function handleRefreshAlerts() {
   })
 }
 
+function handleSwitchToCombined() {
+  viewMode.value = 'combined'
+  fetchCombinedAlerts(20, 0, true).catch((err) => {
+    console.warn('[account] combined alerts fetch failed', err)
+  })
+}
+
+function handleCombinedRefresh() {
+  fetchCombinedAlerts(20, 0, true).catch((err) => {
+    console.warn('[account] combined alerts refresh failed', err)
+  })
+}
+
+function handleCombinedMarkGroup(group: CombinedAlertGroup) {
+  const ids = group.alerts.map(a => a.id)
+  if (ids.length === 0) return
+  markCombinedBatch(ids).catch((err) => {
+    console.warn('[account] combined mark group read failed', err)
+  })
+}
+
+function handleCombinedMarkAll() {
+  const ids = combinedGroups.value.flatMap(g => g.alerts.map(a => a.id))
+  if (ids.length === 0) return
+  markCombinedBatch(ids).catch((err) => {
+    console.warn('[account] combined mark all read failed', err)
+  })
+}
+
+function handleCombinedNavigate(group: CombinedAlertGroup) {
+  if (group.pageWikidotId) {
+    navigateTo(`/page/${group.pageWikidotId}`)
+  } else if (group.pageUrl && process.client) {
+    window.open(group.pageUrl, '_blank', 'noopener')
+  }
+}
+
 function handleToggleMetricMute() {
   if (!hasLinkedWikidot.value) return
   if (alertPreferencesLoading.value || alertPreferencesSaving.value || metricMutePending.value) return
@@ -471,7 +695,9 @@ async function handleSaveVoteThreshold() {
   }
   voteSaving.value = true
   try {
-    await updateAlertPreferences({ voteCountThreshold: Math.max(1, Math.round(value)) })
+    const clamped = Math.max(1, Math.min(1000, Math.round(value)))
+    voteThresholdInput.value = clamped
+    await updateAlertPreferences({ voteCountThreshold: clamped })
     if (alertsActiveMetric.value === 'VOTE_COUNT') {
       await fetchAlerts('VOTE_COUNT', true)
     }
@@ -522,6 +748,9 @@ onMounted(() => {
         fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
           console.warn('[account] initial alerts fetch failed', err)
         })
+        fetchCombinedAlerts(20, 0, true).catch((err) => {
+          console.warn('[account] initial combined alerts fetch failed', err)
+        })
       }
     }).catch((err) => {
       console.warn('[account] fetchCurrentUser failed', err)
@@ -534,6 +763,12 @@ onMounted(() => {
     })
     fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
       console.warn('[account] initial alerts fetch failed', err)
+    })
+    fetchCombinedAlerts(20, 0, true).catch((err) => {
+      console.warn('[account] initial combined alerts fetch failed', err)
+    })
+    fetchFollowCombined(true, 20, 0).catch((err) => {
+      console.warn('[account] initial follow combined alerts fetch failed', err)
     })
   }
 })
@@ -551,6 +786,12 @@ watch(() => user.value?.linkedWikidotId, (next, prev) => {
     })
     fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
       console.warn('[account] alerts fetch on link change failed', err)
+    })
+    fetchCombinedAlerts(20, 0, true).catch((err) => {
+      console.warn('[account] combined alerts fetch on link change failed', err)
+    })
+    fetchFollowCombined(true, 20, 0).catch((err) => {
+      console.warn('[account] follow combined alerts fetch on link change failed', err)
     })
   }
 })
@@ -642,3 +883,5 @@ async function handleLogout() {
   navigateTo('/auth/login')
 }
 </script>
+// Follow alerts (author activity)
+const { combined: followCombined, combinedLoading: followCombinedLoading, combinedUnread: followCombinedUnread, fetchCombined: fetchFollowCombined, markAllRead: markAllFollowRead } = useFollowAlerts()
