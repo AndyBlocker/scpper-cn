@@ -77,10 +77,36 @@ export function useViewerVotes() {
     return voteMap.value[Math.trunc(numericId)]
   }
 
+  async function hydratePages(pages: Array<{ wikidotId?: number | string | null; viewerVote?: number | null }>) {
+    if (!process.client) return
+    if (!viewerWikidotId.value) return
+    if (!Array.isArray(pages) || pages.length === 0) return
+    const ids = pages
+      .map((page) => Number(page?.wikidotId))
+      .filter((id) => Number.isFinite(id) && id > 0)
+      .map((id) => Math.trunc(id))
+    if (ids.length === 0) return
+    try {
+      const voteResult = await ensureVotes(ids)
+      for (const page of pages) {
+        const id = Number(page?.wikidotId)
+        if (!Number.isFinite(id)) continue
+        const hydrated = voteResult?.[Math.trunc(id)]
+        const cached = getVote(id)
+        if (hydrated != null || cached != null || page.viewerVote != null) {
+          page.viewerVote = (hydrated ?? cached ?? page.viewerVote ?? null) as number | null
+        }
+      }
+    } catch (error) {
+      console.warn('[viewer-votes] hydratePages failed', error)
+    }
+  }
+
   return {
     ensureVotes,
     getVote,
     voteMap,
-    viewerWikidotId
+    viewerWikidotId,
+    hydratePages
   }
 }

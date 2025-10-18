@@ -8,6 +8,24 @@
       @mouseenter="onHoverEnter"
       @mouseleave="onHoverLeave"
     >
+      <button
+        v-if="favoriteAvailable"
+        type="button"
+        class="favorite-toggle"
+        :data-active="favoriteOn ? 'true' : 'false'"
+        :aria-pressed="favoriteOn"
+        :aria-label="favoriteAriaLabel"
+        @click.stop.prevent="handleFavoriteToggle"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M12 17.27l-4.146 2.181a.75.75 0 01-1.088-.79l.792-4.62-3.355-3.27a.75.75 0 01.416-1.279l4.636-.674 2.073-4.202a.75.75 0 011.344 0l2.073 4.202 4.636.674a.75.75 0 01.416 1.279l-3.355 3.27.792 4.62a.75.75 0 01-1.088.79L12 17.27z"
+            :fill="favoriteOn ? 'currentColor' : 'none'"
+          />
+        </svg>
+      </button>
       <!-- Header: Title (lg only); md title inline; sm has compact header -->
       <div v-if="variant === 'lg'" class="flex items-start gap-3">
         <div
@@ -70,12 +88,17 @@
         </div>
   
         <!-- tags (one-line clamp, subtle) -->
-        <div v-if="internalTags.length" class="text-[11px] text-neutral-500 dark:text-neutral-400 flex flex-nowrap gap-1 overflow-hidden whitespace-nowrap">
-          <span v-for="t in visibleTags" :key="t"
-                class="inline-block px-1.5 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800/60 text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))]">
-            #{{ t }}
-          </span>
-          <span v-if="tagsMoreCount>0" class="text-[10px] text-neutral-500 dark:text-neutral-400">+{{ tagsMoreCount }}</span>
+        <div v-if="internalTags.length" class="flex min-w-0 items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+          <div class="tags-track">
+            <span
+              v-for="t in visibleTags"
+              :key="t"
+              class="tag-pill"
+            >
+              <NuxtLink :to="{ path: '/search', query: { tags: [t] } }" class="tag-link">#{{ t }}</NuxtLink>
+            </span>
+          </div>
+          <span v-if="tagsMoreCount>0" class="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">+{{ tagsMoreCount }}</span>
         </div>
   
         <!-- excerpt (max 3 lines) -> enforce uniform height across cards -->
@@ -142,9 +165,17 @@
             <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)" bare />
             <span v-if="authorsMoreCount>0" class="text-xs text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
           </div>
-          <div v-if="internalTags.length" class="text-[11px] text-neutral-500 dark:text-neutral-400 flex flex-nowrap gap-1 overflow-hidden whitespace-nowrap">
-            <span v-for="t in visibleTags" :key="t" class="inline-block px-1.5 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800/60 text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))]">#{{ t }}</span>
-            <span v-if="tagsMoreCount>0" class="text-[10px] text-neutral-500 dark:text-neutral-400">+{{ tagsMoreCount }}</span>
+          <div v-if="internalTags.length" class="flex min-w-0 items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+            <div class="tags-track">
+              <span
+                v-for="t in visibleTags"
+                :key="t"
+                class="tag-pill"
+              >
+                <NuxtLink :to="{ path: '/search', query: { tags: [t] } }" class="tag-link">#{{ t }}</NuxtLink>
+              </span>
+            </div>
+            <span v-if="tagsMoreCount>0" class="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">+{{ tagsMoreCount }}</span>
           </div>
           <!-- snippet area (md): fixed two lines height; ellipsis on overflow -->
           <div class="h-[32px] overflow-hidden flex items-center">
@@ -204,6 +235,7 @@
   import { orderTags } from '~/composables/useTagOrder'
   import { useNuxtApp, useRuntimeConfig } from 'nuxt/app'
   import { useViewerVotes } from '~/composables/useViewerVotes'
+  import { useFavorites } from '~/composables/useFavorites'
   
   interface PageLike {
     wikidotId?: number | string
@@ -256,6 +288,7 @@
   
   const props = defineProps<Props>()
   const { ensureVotes, getVote, viewerWikidotId } = useViewerVotes()
+  const { isPageFavorite, togglePageFavorite } = useFavorites()
   
   const variant = computed<'lg'|'md'|'sm'>(() => {
     const s = props.size || 'md'
@@ -422,14 +455,32 @@
   })
 
   watch(
-    [viewerWikidotId, numericPageId],
-    async ([viewer, pageId]) => {
+    [viewerWikidotId, numericPageId, () => props.viewerVote],
+    async ([viewer, pageId, directVote]) => {
       if (!process.client) return
       if (!viewer || !pageId) return
+      if (directVote != null) return
+      const cached = getVote(pageId)
+      if (cached != null) return
       await ensureVotes([pageId])
     },
     { immediate: true }
   )
+  
+  function handleFavoriteToggle() {
+    const id = numericPageId.value
+    if (id == null) return
+    togglePageFavorite({
+      id,
+      title: rawTitle.value || '未命名页面',
+      alternateTitle: rawAlternate.value || null,
+      rating: displayRating.value,
+      tags: sortedTags.value,
+      commentCount: displayComments.value,
+      controversy: controversy.value != null ? Number(controversy.value) : null,
+      snippet: snippetHtml.value
+    })
+  }
   
   const controversyText = computed(() => {
     const v = Number(controversy.value ?? 0)
@@ -563,6 +614,29 @@
   .stat-soft{ @apply rounded text-center bg-neutral-50 dark:bg-neutral-800/60 p-1.5; }
   .stat-num{ @apply text-[13px] leading-tight font-semibold text-neutral-800 dark:text-neutral-200 tabular-nums; }
   .stat-chip{ @apply inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800 text-[11px] text-neutral-700 dark:text-neutral-300 tabular-nums; }
+  .favorite-toggle{
+    @apply absolute top-3 right-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white/90 text-neutral-400 transition hover:border-[rgba(var(--accent),0.45)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-500 dark:hover:text-[rgb(var(--accent))];
+    z-index: 5;
+  }
+  .favorite-toggle[data-active='true']{
+    @apply text-[rgb(var(--accent))] border-[rgba(var(--accent),0.5)] bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.18)];
+  }
+  .tag-pill{
+    @apply inline-flex shrink-0 items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-0.5 text-[11px] text-[rgb(var(--accent))] whitespace-nowrap dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-[rgb(var(--accent))];
+    max-width: 100%;
+  }
+  .tag-link{
+    @apply block max-w-full truncate text-[11px] font-medium text-[rgb(var(--accent))] hover:underline dark:text-[rgb(var(--accent))];
+  }
+  .tags-track{
+    @apply relative flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-hidden;
+  }
+  .tag-fav{
+    @apply inline-flex h-4 w-4 items-center justify-center rounded-full text-neutral-400 transition hover:text-[rgb(var(--accent))] dark:text-neutral-500;
+  }
+  .tag-pill[data-active='true'] .tag-fav{
+    @apply text-[rgb(var(--accent))];
+  }
 
   /* Hover background image only near the header; extremely subtle */
   .card-hover-bg::before {
@@ -588,3 +662,10 @@
   }
   </style>
   
+  const favoriteAvailable = computed(() => numericPageId.value != null)
+  const favoriteOn = computed(() => {
+    const id = numericPageId.value
+    if (id == null) return false
+    return isPageFavorite(id)
+  })
+  const favoriteAriaLabel = computed(() => (favoriteOn.value ? '取消收藏该页面' : '收藏该页面'))

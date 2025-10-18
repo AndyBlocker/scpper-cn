@@ -157,11 +157,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useNuxtApp } from 'nuxt/app'
+import { useViewerVotes } from '~/composables/useViewerVotes'
 
 import PieDonutChart from '~/components/PieDonutChart.vue'
 import TimeSeriesLineChart from '~/components/TimeSeriesLineChart.vue'
 
 const { $bff } = useNuxtApp()
+const { hydratePages: hydrateViewerVotes } = useViewerVotes()
 
 // Always treat dates in Asia/Shanghai (UTC+8)
 const TZ = 'Asia/Shanghai'
@@ -369,6 +371,7 @@ async function refreshCategoryPages() {
     })
     categoryPages.value = Array.isArray(resp?.results) ? resp.results : []
     categoryTotal.value = Number(resp?.total || 0)
+    await hydrateViewerVotes(categoryPages.value)
   } catch (err) {
     categoryPages.value = []
     categoryTotal.value = 0

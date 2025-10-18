@@ -255,6 +255,8 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useNuxtApp, useAsyncData } from 'nuxt/app'
+import { useViewerVotes } from '~/composables/useViewerVotes'
+import { orderTags } from '~/composables/useTagOrder'
 
 import PageCard from '~/components/PageCard.vue'
 
@@ -381,6 +383,7 @@ interface Entry {
 }
 
 const { $bff } = useNuxtApp()
+const { hydratePages: hydrateViewerVotes } = useViewerVotes()
 
 const { data: entriesData, pending: entriesPendingRef, error: entriesErrorRef } = await useAsyncData('newbee2025-entries', async () => {
   const resp = await $bff('/search/pages', {
@@ -426,7 +429,7 @@ function normalizeEntry(entry: Entry) {
     title: entry.title,
     alternateTitle: entry.alternateTitle,
     authors: entry.authors,
-    tags: entry.tags,
+    tags: orderTags(entry.tags as string[] | null | undefined),
     rating: entry.rating,
     commentCount: entry.commentCount ?? entry.revisionCount ?? null,
     controversy: entry.controversy,
@@ -726,6 +729,55 @@ const entriesByRandom = computed(() => randomEntries.value.map(normalizeEntry))
 
 const orderMode = ref<'created' | 'random'>('created')
 const displayedEntries = computed(() => (orderMode.value === 'created' ? entriesByCreated.value : entriesByRandom.value))
+
+watch(
+  () => [entriesByCreated.value, entriesByRandom.value],
+  ([created, random]) => {
+    if (!process.client) return
+    const combined: any[] = []
+    if (Array.isArray(created)) combined.push(...created)
+    if (Array.isArray(random)) combined.push(...random)
+    if (combined.length === 0) return
+    const unique: any[] = []
+    const seen = new Set<number>()
+    for (const item of combined) {
+      const id = Number(item?.wikidotId)
+      if (!Number.isFinite(id)) continue
+      const nid = Math.trunc(id)
+      if (seen.has(nid)) continue
+      seen.add(nid)
+      unique.push(item)
+    }
+    if (unique.length > 0) {
+      void hydrateViewerVotes(unique)
+    }
+  },
+  { immediate: true, flush: 'post' }
+)
+
+watch(
+  () => trackHighlights.value,
+  (highlights) => {
+    if (!process.client) return
+    if (!Array.isArray(highlights) || highlights.length === 0) return
+    const cards = highlights.map(h => h.card).filter(Boolean) as any[]
+    if (cards.length === 0) return
+    void hydrateViewerVotes(cards)
+  },
+  { immediate: true, flush: 'post' }
+)
+
+watch(
+  () => themeHighlights.value,
+  (highlights) => {
+    if (!process.client) return
+    if (!Array.isArray(highlights) || highlights.length === 0) return
+    const cards = highlights.map(h => h.card).filter(Boolean) as any[]
+    if (cards.length === 0) return
+    void hydrateViewerVotes(cards)
+  },
+  { immediate: true, flush: 'post' }
+)
 
 function refreshTrackHighlights() {
   if (rawEntries.value.length === 0) return
