@@ -83,7 +83,7 @@
     >
       <!-- 表头（粘性） -->
       <div
-        class="grid grid-cols-12 text-xs px-4 py-2 text-neutral-600 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800 sticky top-[var(--app-header-h,0px)] z-10 backdrop-blur bg-white/85 dark:bg-neutral-900/85"
+        class="grid grid-cols-12 text-xs px-4 py-2 text-neutral-600 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800 sticky top-0 z-10 backdrop-blur bg-white/85 dark:bg-neutral-900/85"
         role="row"
       >
         <!-- 排名：桌面&移动统一居中 -->

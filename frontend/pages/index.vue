@@ -191,6 +191,8 @@
 <script setup lang="ts">
 import { useRuntimeConfig, useNuxtApp, useAsyncData } from 'nuxt/app';
 import { ref, computed, onMounted } from 'vue';
+import { useViewerVotes } from '~/composables/useViewerVotes';
+import { orderTags } from '~/composables/useTagOrder';
 type SeriesInfo = { seriesNumber: number; usedSlots: number; totalSlots: number };
 type SiteOverview = { date?: string; totalUsers?: number; activeUsers?: number; totalPages?: number; totalVotes?: number };
 type SiteOverviewRich = {
@@ -206,6 +208,7 @@ type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>;
 const config = useRuntimeConfig();
 const nuxtApp = useNuxtApp();
 const bff = nuxtApp.$bff as unknown as BffFetcher;
+const { hydratePages: hydrateViewerVotesHome } = useViewerVotes();
 
 // Fetch base data and enhancements in parallel on server side
 const [{ data: overview }, { data: pagesData }] = await Promise.all([
@@ -280,6 +283,7 @@ const [{ data: overview }, { data: pagesData }] = await Promise.all([
           ...p,
           authors,
           authorObjs,
+          tags: orderTags(p.tags as string[] | null | undefined),
           createdDate,
           spark,
           sparkLine,
@@ -367,7 +371,10 @@ if (typeof window !== 'undefined') {
 
 // 更新时间（GMT+8，悬浮显示完整时间，正文为相对时间）
 const mounted = ref(false)
-onMounted(() => { mounted.value = true })
+onMounted(() => {
+  mounted.value = true
+  void hydrateViewerVotesHome(pages.value)
+})
 
 function parseDateInput(input?: string | Date | null): Date | null {
   if (!input) return null
@@ -498,6 +505,7 @@ const refreshRandomPages = async () => {
           ...p,
           authors,
           authorObjs,
+          tags: orderTags(p.tags as string[] | null | undefined),
           createdDate,
           spark,
           sparkLine,
@@ -513,6 +521,7 @@ const refreshRandomPages = async () => {
     
     // 创建新引用确保视图更新
     pages.value = [...enhancedPages];
+    await hydrateViewerVotesHome(pages.value);
     randomVersion.value++;
   } catch (error) {
     console.error('刷新随机页面失败:', error);

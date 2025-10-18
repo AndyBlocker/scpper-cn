@@ -116,72 +116,123 @@
       </section>
 
       <!-- Metrics (4 cards) -->
-      <section class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <!-- 评分 -->
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex items-start justify-between">
-            <div class="text-[12px] text-neutral-600 dark:text-neutral-400">评分</div>
-            <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="ratingTooltip">
-              {{ Number(page?.rating ?? 0).toFixed(0) }}
+      <section id="metrics" class="space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">核心指标</h2>
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              @click="copyAnchorLink('metrics')"
+              :title="copiedAnchorId === 'metrics' ? '已复制链接' : '复制该段落链接'"
+            >
+              <svg v-if="copiedAnchorId === 'metrics'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
+              </svg>
+            </button>
+          </div>
+          <span v-if="metricsUpdatedAt" class="text-xs text-neutral-500 dark:text-neutral-400">
+            更新于 {{ formatDate(metricsUpdatedAt) }}
+          </span>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <!-- 评分 -->
+          <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
+            <div class="flex items-start justify-between">
+              <div class="text-[12px] text-neutral-600 dark:text-neutral-400">评分</div>
+              <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="ratingTooltip">
+                {{ Number(page?.rating ?? 0).toFixed(0) }}
+              </div>
+            </div>
+            <div class="mt-2 grid grid-cols-2 text-[11px]">
+              <div class="text-green-600 dark:text-green-400">↑ {{ upvotes }}</div>
+              <div class="text-red-600 dark:text-red-400 text-right">↓ {{ downvotes }}</div>
+            </div>
+            <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden flex">
+              <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: upvotePct + '%' }" aria-hidden="true"></div>
+              <div class="h-full bg-red-500" :style="{ width: downvotePct + '%' }" aria-hidden="true"></div>
             </div>
           </div>
-          <div class="mt-2 grid grid-cols-2 text-[11px]">
-            <div class="text-green-600 dark:text-green-400">↑ {{ upvotes }}</div>
-            <div class="text-red-600 dark:text-red-400 text-right">↓ {{ downvotes }}</div>
-          </div>
-          <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden flex">
-            <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: upvotePct + '%' }" aria-hidden="true"></div>
-            <div class="h-full bg-red-500" :style="{ width: downvotePct + '%' }" aria-hidden="true"></div>
-          </div>
-        </div>
 
-        <!-- 支持率 -->
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex items-start justify-between">
-            <div class="text-[12px] text-neutral-600 dark:text-neutral-400">支持率</div>
-            <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="voteTooltip">
-              {{ likeRatioPct.toFixed(0) }}%
+          <!-- 支持率 -->
+          <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
+            <div class="flex items-start justify-between">
+              <div class="text-[12px] text-neutral-600 dark:text-neutral-400">支持率</div>
+              <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="voteTooltip">
+                {{ likeRatioPct.toFixed(0) }}%
+              </div>
+            </div>
+            <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">总票数 {{ totalVotes }}</div>
+            <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+              <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: likeRatioPct + '%' }" aria-hidden="true"></div>
             </div>
           </div>
-          <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">总票数 {{ totalVotes }}</div>
-          <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-            <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: likeRatioPct + '%' }" aria-hidden="true"></div>
-          </div>
-        </div>
 
-        <!-- Wilson95 下界 -->
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex items-start justify-between">
-            <div class="text-[12px] text-neutral-600 dark:text-neutral-400">Wilson 95% 下界</div>
-            <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="wilsonTooltip">
-              {{ (wilsonLB * 100).toFixed(1) }}%
+          <!-- Wilson95 下界 -->
+          <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
+            <div class="flex items-start justify-between">
+              <div class="text-[12px] text-neutral-600 dark:text-neutral-400">Wilson 95% 下界</div>
+              <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="wilsonTooltip">
+                {{ (wilsonLB * 100).toFixed(1) }}%
+              </div>
+            </div>
+            <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+              在相同票数下更稳健的支持率估计
+            </div>
+            <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+              <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: Math.max(0, Math.min(100, wilsonLB * 100)) + '%' }" aria-hidden="true"></div>
             </div>
           </div>
-          <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">
-            在相同票数下更稳健的支持率估计
-          </div>
-          <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-            <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: Math.max(0, Math.min(100, wilsonLB * 100)) + '%' }" aria-hidden="true"></div>
-          </div>
-        </div>
 
-        <!-- 争议指数 -->
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex items-start justify-between">
-            <div class="text-[12px] text-neutral-600 dark:text-neutral-400">争议指数</div>
-            <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100">
-              {{ controversyIdx.toFixed(3) }}
+          <!-- 争议指数 -->
+          <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
+            <div class="flex items-start justify-between">
+              <div class="text-[12px] text-neutral-600 dark:text-neutral-400">争议指数</div>
+              <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100">
+                {{ controversyIdx.toFixed(3) }}
+              </div>
             </div>
           </div>
         </div>
       </section>
       <!-- Chart -->
-      <section v-if="Array.isArray(ratingHistory) && ratingHistory.length" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+      <section
+        v-if="ratingHistoryPending || ratingHistoryError || (Array.isArray(ratingHistory) && ratingHistory.length)"
+        id="rating-history"
+        class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm"
+      >
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">评分趋势</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">评分趋势</h3>
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              @click="copyAnchorLink('rating-history')"
+              :title="copiedAnchorId === 'rating-history' ? '已复制链接' : '复制该段落链接'"
+            >
+              <svg v-if="copiedAnchorId === 'rating-history'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
+              </svg>
+            </button>
+          </div>
           <span class="text-xs text-neutral-500 dark:text-neutral-500">按周聚合</span>
         </div>
-        <ClientOnly>
+        <div v-if="ratingHistoryPending" class="h-64 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
+          加载图表中...
+        </div>
+        <div v-else-if="ratingHistoryError" class="rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 p-6 text-sm text-neutral-600 dark:text-neutral-400">
+          加载评分趋势失败。
+          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRatingHistory()">重试</button>
+        </div>
+        <ClientOnly v-else>
           <RatingHistoryChart
             :data="ratingHistory"
             :first-activity-date="firstRev && firstRev[0] ? firstRev[0].timestamp : ''"
@@ -199,11 +250,36 @@
       <!-- Revisions -->
       <section id="revisions" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-white dark:bg-neutral-900 shadow-sm min-h-[280px] flex flex-col">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近修订</h3>
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近修订</h3>
+              <button
+                type="button"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+                @click="copyAnchorLink('revisions')"
+                :title="copiedAnchorId === 'revisions' ? '已复制链接' : '复制该段落链接'"
+              >
+                <svg v-if="copiedAnchorId === 'revisions'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
+                </svg>
+              </button>
+            </div>
             <div class="text-xs text-neutral-500 dark:text-neutral-400">{{ (revPage + 1) }} / {{ revTotalPages }}</div>
           </div>
 
-          <div v-if="!revisionsPaged || revisionsPaged.length === 0" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
+          <div v-if="revisionsPending" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
+            正在加载修订记录…
+          </div>
+
+          <div v-else-if="revisionsError" class="flex-1 flex flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+            加载修订记录失败。
+            <button type="button" class="inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRevisions()">重试</button>
+          </div>
+
+          <div v-else-if="!revisionsPaged || revisionsPaged.length === 0" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
             暂无修订记录
           </div>
 
@@ -269,13 +345,38 @@
       </section>
 
       <!-- Recent Votes -->
-      <section class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-white dark:bg-neutral-900 shadow-sm min-h-[280px] flex flex-col">
+      <section id="votes" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-white dark:bg-neutral-900 shadow-sm min-h-[280px] flex flex-col">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近投票</h3>
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近投票</h3>
+              <button
+                type="button"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+                @click="copyAnchorLink('votes')"
+                :title="copiedAnchorId === 'votes' ? '已复制链接' : '复制该段落链接'"
+              >
+                <svg v-if="copiedAnchorId === 'votes'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
+                </svg>
+              </button>
+            </div>
             <div class="text-xs text-neutral-500 dark:text-neutral-400">{{ currentVotePage }} / {{ voteTotalPages }}</div>
           </div>
 
-          <div v-if="!recentVotes || recentVotes.length === 0" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
+          <div v-if="recentVotesPending" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
+            正在加载投票记录…
+          </div>
+
+          <div v-else-if="recentVotesError" class="flex-1 flex flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+            加载投票记录失败。
+            <button type="button" class="inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRecentVotes()">重试</button>
+          </div>
+
+          <div v-else-if="!recentVotes || recentVotes.length === 0" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
             暂无投票
           </div>
 
@@ -341,9 +442,36 @@
       
 
       <!-- Related Pages (Recommendations) -->
-      <section class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+      <section id="related" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">相关页面</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">相关页面</h3>
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              @click="copyAnchorLink('related')"
+              :title="copiedAnchorId === 'related' ? '已复制链接' : '复制该段落链接'"
+            >
+              <svg v-if="copiedAnchorId === 'related'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
+              </svg>
+            </button>
+          </div>
+          <button
+            type="button"
+            class="hidden sm:inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-xs text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+            @click="refreshRelatedPages()"
+            title="刷新推荐"
+          >
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-2M19 5a9 9 0 00-14 2" />
+            </svg>
+            刷新
+          </button>
         </div>
         <div v-if="relatedPending" class="grid grid-cols-3 gap-3">
           <div v-for="i in 3" :key="`skeleton-${i}`" class="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-neutral-900/60 animate-pulse">
@@ -356,6 +484,10 @@
             <div class="h-20 w-full bg-neutral-200/70 dark:bg-neutral-800/70 rounded"></div>
           </div>
         </div>
+        <div v-else-if="relatedError" class="rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 p-6 text-sm text-neutral-600 dark:text-neutral-400">
+          加载推荐失败。
+          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRelatedPages()">重试</button>
+        </div>
         <div v-else-if="relatedPages && relatedPages.length > 0" class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <PageCard
             v-for="rp in relatedPages.slice(0, 3)"
@@ -365,7 +497,7 @@
             :wikidot-id="rp.wikidotId"
             :title="rp.title"
             :snippet-html="(rp as any).snippet || null"
-            :tags="Array.isArray(rp.tags) ? rp.tags : []"
+            :tags="orderTags(Array.isArray(rp.tags) ? rp.tags : [])"
             :rating="Number(rp.rating ?? 0)"
             :comments="Number(rp.commentCount ?? rp.revisionCount ?? 0)"
             :wilson95="typeof rp.wilson95 === 'number' ? rp.wilson95 : undefined"
@@ -380,17 +512,37 @@
       </section>
 
       <section
-        v-if="pageImagesPending || hasPageImages"
+        v-if="pageImagesPending || hasPageImages || pageImagesError"
+        id="page-images"
         class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm"
       >
         <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">相关图片</h3>
-            <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">相关图片</h3>
+              <button
+                type="button"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+                @click="copyAnchorLink('page-images')"
+                :title="copiedAnchorId === 'page-images' ? '已复制链接' : '复制该段落链接'"
+              >
+                <svg v-if="copiedAnchorId === 'page-images'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
+                </svg>
+              </button>
+            </div>
+            <p v-if="hasPageImages" class="text-xs text-neutral-500 dark:text-neutral-400">
               第 {{ pageImagePage }} / {{ pageImageTotalPages }} 页 · 展示 {{ pageImageRangeLabel }} · 共 {{ pageImages.length }} 张
             </p>
+            <p v-else class="text-xs text-neutral-500 dark:text-neutral-400">
+              暂无可用图片资源。
+            </p>
           </div>
-          <div class="flex flex-wrap items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+          <div v-if="hasPageImages" class="flex flex-wrap items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
             <div class="inline-flex items-center gap-2">
               <span class="hidden sm:inline">每行数量</span>
               <div class="inline-flex overflow-hidden rounded-full border border-neutral-200 dark:border-neutral-700 bg-neutral-100/60 dark:bg-neutral-800/60">
@@ -428,6 +580,10 @@
         </div>
 
         <div v-if="pageImagesPending" class="mt-6 text-sm text-neutral-500 dark:text-neutral-400">正在加载图片…</div>
+        <div v-else-if="pageImagesError" class="mt-6 rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 p-6 text-sm text-neutral-600 dark:text-neutral-400">
+          加载图片失败。
+          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshPageImages()">重试</button>
+        </div>
         <div v-else-if="hasPageImages" class="page-images-grid mt-4" :style="pageImageGridStyle">
           <figure
             v-for="img in paginatedPageImages"
@@ -454,9 +610,25 @@
       </section>
 
       <!-- Source Viewer -->
-      <section class="border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900 shadow-sm">
+      <section id="page-source" class="border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900 shadow-sm">
         <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-6 pt-6">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">页面源码</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">页面源码</h3>
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              @click="copyAnchorLink('page-source')"
+              :title="copiedAnchorId === 'page-source' ? '已复制链接' : '复制该段落链接'"
+            >
+              <svg v-if="copiedAnchorId === 'page-source'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
+              </svg>
+            </button>
+          </div>
           <div class="flex flex-wrap items-center gap-3">
             <button @click="toggleDiffMode"
                     class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700">
@@ -657,9 +829,11 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useHead } from '#imports'
 import { orderTags } from '~/composables/useTagOrder'
 import { onBeforeRouteUpdate } from 'vue-router'
 import { useAuth } from '~/composables/useAuth'
+import { useViewerVotes } from '~/composables/useViewerVotes'
 
 // Nuxt auto imports for type checker
 declare const useAsyncData: any
@@ -667,13 +841,16 @@ declare const useNuxtApp: any
 declare const useRoute: any
 declare const definePageMeta: any
 declare const useRuntimeConfig: any
-declare const useHead: any
 declare const process: any
 
 const route = useRoute();
 const {$bff} = useNuxtApp();
 const runtimeConfig = useRuntimeConfig();
 const { user: authUser, isAuthenticated } = useAuth()
+const { hydratePages: hydrateViewerVotes } = useViewerVotes()
+const PAGE_ANCHOR_KEY = '__page__'
+const copiedAnchorId = ref<string | null>(null)
+let anchorCopyTimer: ReturnType<typeof setTimeout> | null = null
 
 const viewerLinkedId = computed(() => {
   const id = authUser.value?.linkedWikidotId
@@ -727,10 +904,17 @@ const pageDisplayTitle = computed(() => {
   return base || 'Untitled'
 })
 
-// 动态设置页面标题
-useHead(() => ({ title: pageDisplayTitle.value }))
+const metricsUpdatedAt = computed(() => {
+  const record = page.value as any
+  if (!record) return null
+  const raw = record.updatedAt || record.validFrom || record.createdAt || null
+  if (!raw) return null
+  if (typeof raw === 'string') return raw
+  const date = new Date(raw)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+})
 
-const { data: pageImagesData, pending: pageImagesPending } = await useAsyncData(
+const { data: pageImagesData, pending: pageImagesPending, error: pageImagesError, refresh: refreshPageImages } = await useAsyncData(
   () => `page-images-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/images`),
   { watch: [() => route.params.wikidotId], server: false, lazy: true }
@@ -783,6 +967,44 @@ const pageImages = computed(() => {
 })
 
 const hasPageImages = computed(() => pageImages.value.length > 0)
+
+const primaryImageUrl = computed(() => {
+  const firstImage = pageImages.value[0]
+  if (firstImage?.imageSrc) return firstImage.imageSrc as string
+  const record = page.value as any
+  if (record && Array.isArray(record.images) && record.images.length > 0) {
+    const fallback = record.images[0]
+    const candidate = typeof fallback === 'string'
+      ? fallback
+      : fallback?.imageUrl || fallback?.normalizedUrl || fallback?.originUrl || ''
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return resolveAssetPath(candidate, candidate)
+    }
+  }
+  const direct = typeof record?.primaryImageUrl === 'string'
+    ? record.primaryImageUrl
+    : typeof record?.coverImageUrl === 'string'
+      ? record.coverImageUrl
+      : ''
+  if (direct && typeof direct === 'string') {
+    return resolveAssetPath(direct)
+  }
+  return ''
+})
+
+const canonicalUrl = computed(() => {
+  const basePath = (route.fullPath || '').split('#')[0] || ''
+  const normalizedPath = basePath.startsWith('/') ? basePath : `/${basePath}`
+  if (process && process.client && typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}${normalizedPath}`
+  }
+  const siteBase = (runtimeConfig?.public as any)?.siteBase
+  if (typeof siteBase === 'string' && siteBase.trim()) {
+    const sanitized = siteBase.replace(/\/+$/u, '')
+    return `${sanitized}${normalizedPath}`
+  }
+  return ''
+})
 
 const pageImageSizeOptions = [
   { label: '小', value: 9 },
@@ -841,7 +1063,7 @@ const { data: stats } = await useAsyncData(
 
 const pageSize = ref(3)
 const revPage = ref(0)
-const { data: revisionsPaged } = await useAsyncData(
+const { data: revisionsPaged, pending: revisionsPending, error: revisionsError, refresh: refreshRevisions } = await useAsyncData(
   () => `revs-${wikidotId.value}-${revPage.value}-${pageSize.value}`,
   () => $bff(`/pages/${wikidotId.value}/revisions`, { params: { limit: pageSize.value, offset: revPage.value * pageSize.value, order: 'DESC', scope: 'latest' } }),
   { watch: [() => route.params.wikidotId, () => revPage.value, () => pageSize.value] }
@@ -901,7 +1123,7 @@ const ratingGranularity = computed(() => {
   return 'week'
 })
 
-const { data: ratingHistory } = await useAsyncData(
+const { data: ratingHistory, pending: ratingHistoryPending, error: ratingHistoryError, refresh: refreshRatingHistory } = await useAsyncData(
   () => `page-rating-history-${wikidotId.value}-${ratingGranularity.value}`,
   () => $bff(`/pages/${wikidotId.value}/rating-history`, { params: { granularity: ratingGranularity.value } }),
   { watch: [() => route.params.wikidotId, () => ratingGranularity.value] }
@@ -924,10 +1146,20 @@ const { data: voteDistribution } = await useAsyncData(
 // removed related-records fetch
 
 // Recommendations (related pages) - 非阻塞加载
-const { data: relatedPages, pending: relatedPending } = useAsyncData(
+const { data: relatedPages, pending: relatedPending, error: relatedError, refresh: refreshRelatedPages } = useAsyncData(
   () => `related-pages-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/recommendations`, { params: { limit: 6, strategy: 'both', diversity: 'simple' } }),
   { watch: [() => route.params.wikidotId], server: false, lazy: true }
+)
+
+watch(
+  () => relatedPages.value,
+  (pages) => {
+    if (!process.client) return
+    if (!Array.isArray(pages) || pages.length === 0) return
+    void hydrateViewerVotes(pages as any[])
+  },
+  { immediate: true, flush: 'post' }
 )
 
 const votePageSize = ref(10)
@@ -950,7 +1182,7 @@ function recalcPageSizes() {
   voteOffset.value = 0
 }
 const voteOffset = ref(0)
-const { data: recentVotes } = await useAsyncData(
+const { data: recentVotes, pending: recentVotesPending, error: recentVotesError, refresh: refreshRecentVotes } = await useAsyncData(
   () => `page-votes-${wikidotId.value}-${voteOffset.value}-${votePageSize.value}`,
   () => $bff(`/pages/${wikidotId.value}/votes/fuzzy`, { params: { limit: votePageSize.value, offset: voteOffset.value } }),
   { watch: [() => route.params.wikidotId, () => voteOffset.value, () => votePageSize.value] }
@@ -1031,6 +1263,49 @@ const textContentCharacterCount = computed(() => {
   const raw = pageTextContent.value
   if (!raw) return 0
   return raw.replace(/[\r\n\t]/g, '').length
+})
+
+const seoDescription = computed(() => {
+  const record = page.value as any
+  const candidates: Array<unknown> = [
+    record?.summary,
+    record?.description,
+    record?.excerpt,
+    record?.alternateTitle,
+    pageTextContent.value
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const sanitized = candidate.replace(/\s+/g, ' ').trim()
+      if (sanitized) {
+        return sanitized.length > 160 ? `${sanitized.slice(0, 157)}…` : sanitized
+      }
+    }
+  }
+  return `${pageDisplayTitle.value} - SCPPER-CN 页面详情`
+})
+
+useHead(() => {
+  const description = seoDescription.value
+  const image = primaryImageUrl.value
+  const url = canonicalUrl.value
+  const meta = [
+    { name: 'description', content: description, key: 'description' },
+    { property: 'og:title', content: pageDisplayTitle.value, key: 'og:title' },
+    { property: 'og:description', content: description, key: 'og:description' }
+  ]
+  if (image) {
+    meta.push({ property: 'og:image', content: image, key: 'og:image' })
+  }
+  if (url) {
+    meta.push({ property: 'og:url', content: url, key: 'og:url' })
+  }
+  const link = url ? [{ rel: 'canonical', href: url, key: 'canonical' }] : []
+  return {
+    title: pageDisplayTitle.value,
+    meta,
+    link
+  }
 })
 
 const { data: pageVersions } = await useAsyncData(
@@ -1600,7 +1875,7 @@ function formatRelativeTime(dateStr: string) {
 
 function formatRevisionType(type: string) {
   const map:Record<string,string> = {
-    'PAGE_CREATED':'创建页面','PAGE_EDITED':'编辑内容','PAGE_RENAMED':'重命名','PAGE_DELETED':'删除','PAGE_RESTORED':'恢复','METADATA_CHANGED':'修改元数据','TAGS_CHANGED':'修改标签','SOURCE_CHANGED':'修改来源'
+    'PAGE_CREATED':'创建页面','PAGE_EDITED':'编辑内容','PAGE_RENAMED':'重命名','PAGE_DELETED':'删除','PAGE_RESTORED':'恢复','METADATA_CHANGED':'修改元数据','TAGS_CHANGED':'修改标签','SOURCE_CHANGED':'编辑内容'
   }
   return map[type] || type
 }
@@ -1639,6 +1914,38 @@ function formatRecordType(type: string) {
     LONGEST_CONTENT:'最长内容', MOST_COMPLEX:'最复杂'
   }
   return map[type] || type
+}
+
+async function copyAnchorLink(sectionId?: string) {
+  if (!process.client) return
+  const hash = sectionId ? `#${sectionId}` : ''
+  const basePath = route.fullPath.split('#')[0]
+  const origin = window?.location?.origin || ''
+  const url = `${origin}${basePath}${hash}`
+  const mark = sectionId ?? PAGE_ANCHOR_KEY
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = url
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    copiedAnchorId.value = mark
+    if (anchorCopyTimer) clearTimeout(anchorCopyTimer)
+    anchorCopyTimer = setTimeout(() => {
+      if (copiedAnchorId.value === mark) copiedAnchorId.value = null
+    }, 2000)
+  } catch (error) {
+    console.warn('[page-detail] copy link failed', error)
+    window.prompt('请复制链接', url)
+  }
 }
 
 const copiedId = ref(false)
@@ -1733,6 +2040,10 @@ onBeforeUnmount(() => {
   if (diffScheduleHandle) {
     clearTimeout(diffScheduleHandle)
     diffScheduleHandle = null
+  }
+  if (anchorCopyTimer) {
+    clearTimeout(anchorCopyTimer)
+    anchorCopyTimer = null
   }
 })
 </script>

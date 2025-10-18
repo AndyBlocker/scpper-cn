@@ -474,6 +474,8 @@
 import { computed, ref, watch, watchEffect } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 import { useFollows } from '~/composables/useFollows'
+import { useViewerVotes } from '~/composables/useViewerVotes'
+import { orderTags } from '~/composables/useTagOrder'
 // Note: avoid importing Nuxt auto-imported composables to prevent linter conflicts
 
 // Declarations for Nuxt auto-imported globals to satisfy type checker in this environment
@@ -501,6 +503,7 @@ type HeatmapRange = {
 const __DEV_DEBUG__ = typeof window !== 'undefined' && (window as any).__DEV_DEBUG__ === true
 const route = useRoute();
 const {$bff} = useNuxtApp();
+const { hydratePages: hydrateViewerVotes } = useViewerVotes()
 
 const toItems = (payload: unknown): any[] => {
   if (Array.isArray(payload)) {
@@ -982,6 +985,16 @@ watch([sortField, sortOrder], () => { currentPage.value = 1 })
 // Server-side pagination: displayed list equals fetched page
 const displayedWorks = computed(() => sortedWorks.value);
 
+watch(
+  () => works.value,
+  (newWorks) => {
+    if (!process.client) return
+    if (!Array.isArray(newWorks) || newWorks.length === 0) return
+    void hydrateViewerVotes(newWorks as any[])
+  },
+  { immediate: true, flush: 'post' }
+)
+
 const totalPages = computed(() => {
   const total = (tabCounts.value && typeof tabCounts.value.total === 'number') ? Number(tabCounts.value.total) : 0;
   if (Number.isFinite(total) && total > 0) return Math.max(1, Math.ceil(total / itemsPerPage.value));
@@ -1062,7 +1075,7 @@ function formatRevisionType(type: string) {
     'PAGE_RESTORED': '恢复',
     'METADATA_CHANGED': '修改元数据',
     'TAGS_CHANGED': '修改标签',
-    'SOURCE_CHANGED': '修改来源',
+    'SOURCE_CHANGED': '编辑内容',
   };
   return typeMap[type] || type;
 }
@@ -1095,7 +1108,7 @@ function normalizeWork(work: any) {
     title: work.title,
     alternateTitle: work.alternateTitle,
     category: work.category,
-    tags: work.tags,
+    tags: orderTags(work.tags as string[] | null | undefined),
     rating: work.rating,
     commentCount: work.commentCount ?? work.revisionCount,
     wilson95: work.wilson95,

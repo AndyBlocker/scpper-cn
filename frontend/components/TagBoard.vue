@@ -1,7 +1,12 @@
 <template>
   <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900">
     <div class="px-3 py-2 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
-      <div class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">{{ tag }}</div>
+      <NuxtLink
+        :to="`/tag/${encodeURIComponent(tag)}`"
+        class="text-sm font-semibold text-neutral-700 hover:text-[rgb(var(--accent))] dark:text-neutral-300"
+      >
+        #{{ tag }}
+      </NuxtLink>
       <div class="text-xs text-neutral-500 dark:text-neutral-400" v-if="lovers && haters">共 {{ Math.max(lovers.total, haters.total) }} 人</div>
     </div>
     <div class="p-3">
@@ -143,4 +148,3 @@ watch(() => [props.tag, props.limit, props.offsetLovers, props.offsetHaters], fe
 
 <style scoped>
 </style>
-

@@ -93,6 +93,47 @@
       </div>
     </section>
 
+    <section class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+      <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1">
+          <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">我的收藏</h2>
+          <p class="text-sm text-neutral-600 dark:text-neutral-400">快速访问常看的页面，记录来自本站的灵感。</p>
+        </div>
+        <div class="flex items-center gap-4 text-xs text-neutral-500 dark:text-neutral-400">
+          <span>页面 {{ favoritePageCards.length }}</span>
+        </div>
+      </header>
+      <div v-if="!hasFavorites" class="mt-6 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/70 px-6 py-12 text-center text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
+        还没有收藏内容。浏览页面时，点击右上角的星标即可收藏。
+      </div>
+      <div v-else class="mt-6">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">页面收藏</h3>
+          <span v-if="favoritePageOverflow > 0" class="text-xs text-neutral-400 dark:text-neutral-500">
+            另有 {{ favoritePageOverflow }} 篇收藏可在本地继续浏览
+          </span>
+        </div>
+        <div v-if="favoritePagePreview.length === 0" class="mt-3 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/70 px-4 py-8 text-center text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
+          暂无页面收藏。
+        </div>
+        <div v-else class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div v-for="page in favoritePagePreview" :key="`fav-page-${page.wikidotId}`" class="relative">
+            <PageCard :p="page" size="md" />
+            <button
+              type="button"
+              class="absolute -top-2 -right-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white bg-white text-neutral-400 shadow dark:border-neutral-800 dark:bg-neutral-900/90 dark:text-neutral-500 hover:text-rose-500 dark:hover:text-rose-400"
+              @click.prevent.stop="handleRemoveFavoritePage(page.wikidotId)"
+              aria-label="取消收藏"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Advanced: collapse rarely-used settings -->
     <section class="rounded-3xl border border-white/60 bg-white/80 p-0 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
       <button
@@ -536,11 +577,15 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { navigateTo } from 'nuxt/app'
 import UserAvatar from '~/components/UserAvatar.vue'
+import PageCard from '~/components/PageCard.vue'
 import { useAuth } from '~/composables/useAuth'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
 import { useFollowAlerts, type FollowCombinedGroup } from '~/composables/useFollowAlerts'
 import { useCombinedAlerts, type CombinedAlertGroup } from '~/composables/useCombinedAlerts'
+import { useFavorites } from '~/composables/useFavorites'
+import { useViewerVotes } from '~/composables/useViewerVotes'
+import { orderTags } from '~/composables/useTagOrder'
 
 const { user, fetchCurrentUser, updateProfile, changePassword, status, logout } = useAuth()
 const {
@@ -572,6 +617,34 @@ const { groups: combinedGroups, loading: combinedLoading, fetchCombined: fetchCo
 
 // Follow alerts (author activity)
 const { combined: followCombined, combinedLoading: followCombinedLoading, combinedUnread: followCombinedUnread, fetchCombined: fetchFollowCombined, markAllRead: markAllFollowRead } = useFollowAlerts()
+
+const { favoritePages, removePageFavorite } = useFavorites()
+const { hydratePages: hydrateViewerVotes } = useViewerVotes()
+
+const favoritePageCards = computed(() => favoritePages.value.map((p) => ({
+  wikidotId: p.id,
+  title: p.title,
+  alternateTitle: p.alternateTitle,
+  rating: p.rating ?? undefined,
+  commentCount: p.commentCount ?? undefined,
+  controversy: p.controversy ?? undefined,
+  tags: orderTags(p.tags || []),
+  snippetHtml: p.snippet ?? null
+})))
+
+const hasFavorites = computed(() => favoritePageCards.value.length > 0)
+const favoritePagePreview = computed(() => favoritePageCards.value.slice(0, 9))
+const favoritePageOverflow = computed(() => Math.max(0, favoritePageCards.value.length - favoritePagePreview.value.length))
+
+watch(
+  () => favoritePageCards.value,
+  (cards) => {
+    if (!process.client) return
+    if (!Array.isArray(cards) || cards.length === 0) return
+    void hydrateViewerVotes(cards as any[])
+  },
+  { immediate: true, flush: 'post' }
+)
 
 const viewMode = ref<'metric' | 'combined'>('combined')
 const alertSource = ref<'page' | 'follow'>('page')
@@ -647,6 +720,10 @@ function handleMetricChange(metric: AlertMetric) {
   fetchAlerts(metric).catch((err) => {
     console.warn('[account] alerts fetch on metric change failed', err)
   })
+}
+
+function handleRemoveFavoritePage(id: number) {
+  removePageFavorite(id)
 }
 
 function handleRefreshAlerts() {

@@ -202,61 +202,142 @@
       <div v-if="initialLoading" class="text-sm text-neutral-600 dark:text-neutral-400">搜索中…</div>
       <div v-else-if="error" class="text-sm text-red-600 dark:text-red-400">搜索失败，请稍后重试</div>
       <div v-else>
-        <div class="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
-          找到用户 <span class="font-semibold text-[rgb(var(--accent))]">{{ totalUsers }}</span>
-          ，页面 <span class="font-semibold text-[rgb(var(--accent))]">{{ totalPages }}</span>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="text-sm text-neutral-600 dark:text-neutral-400">
+            找到用户 <span class="font-semibold text-[rgb(var(--accent))]">{{ totalUsers }}</span>
+            ，页面 <span class="font-semibold text-[rgb(var(--accent))]">{{ totalPages }}</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+              :disabled="csvPending || pageResults.length === 0"
+              @click="exportCsv"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
+              </svg>
+              <span>{{ csvPending ? '导出中…' : '导出 CSV' }}</span>
+            </button>
+            <div class="inline-flex rounded-full border border-neutral-200 bg-white/80 p-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-900/70">
+              <button
+                type="button"
+                class="rounded-full px-3 py-1 font-semibold transition"
+                :class="layoutMode === 'card' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-300'"
+                :aria-pressed="layoutMode === 'card'"
+                @click="layoutMode = 'card'"
+              >卡片</button>
+              <button
+                type="button"
+                class="rounded-full px-3 py-1 font-semibold transition"
+                :class="layoutMode === 'list' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-300'"
+                :aria-pressed="layoutMode === 'list'"
+                @click="layoutMode = 'list'"
+              >列表</button>
+            </div>
+          </div>
         </div>
-        <!-- Users on top -->
-        <div v-if="totalUsers > 0 || usersLoading">
-          <div class="text-xs text-neutral-500 dark:text-neutral-400 mb-2">用户</div>
-          <div class="relative">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <template v-for="u in userResults" :key="u.wikidotId || u.id">
-                <UserCard
-                  size="md"
-                  :wikidot-id="u.wikidotId"
-                  :display-name="u.displayName"
-                  :rank="u.rank"
-                  :totals="{ totalRating: u.totalRating, works: u.pageCount }"
-                />
-              </template>
+
+        <div class="space-y-8">
+          <section v-if="totalUsers > 0 || usersLoading" class="space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">用户</div>
+              <div class="text-[11px] text-neutral-400 dark:text-neutral-500">共 {{ totalUsers }}</div>
             </div>
-            <div v-if="usersLoading" class="absolute inset-0 rounded bg-neutral-100/70 dark:bg-neutral-800/60 flex items-center justify-center">
-              <span class="text-[12px] text-neutral-600 dark:text-neutral-300">加载中…</span>
+            <div v-if="usersLoading && userResults.length === 0" class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              <div v-for="i in 6" :key="`user-skel-${i}`" class="h-24 rounded-2xl border border-neutral-200 bg-neutral-100/70 animate-pulse dark:border-neutral-800 dark:bg-neutral-800/40"></div>
             </div>
-          </div>
-          <div class="flex items-center justify-end gap-2 mt-3">
-            <button class="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
-                    :disabled="userPageIndex === 0 || usersLoading"
-                    @click="userPageIndex = Math.max(0, userPageIndex - 1)">上一页</button>
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ userPageIndex + 1 }} / {{ Math.max(1, Math.ceil(totalUsers / userPageSize)) }} 页</div>
-            <button class="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
-                    :disabled="(userPageIndex + 1) >= Math.ceil(totalUsers / userPageSize) || usersLoading"
-                    @click="userPageIndex = userPageIndex + 1">下一页</button>
-          </div>
-        </div>
-        <!-- Pages below -->
-        <div v-if="totalPages > 0 || pagesLoading" class="mt-5">
-          <div class="text-xs text-neutral-500 dark:text-neutral-400 mb-2">页面</div>
-          <div class="relative">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <template v-for="p in pageResults" :key="p.wikidotId || p.id">
-                <PageCard size="md" :p="normalizePage(p)" />
-              </template>
+            <div v-else-if="userResults.length === 0" class="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/80 px-4 py-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
+              暂无用户符合条件。
             </div>
-            <div v-if="pagesLoading" class="absolute inset-0 rounded bg-neutral-100/70 dark:bg-neutral-800/60 flex items-center justify-center">
-              <span class="text-[12px] text-neutral-600 dark:text-neutral-300">加载中…</span>
+            <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <UserCard
+                v-for="u in userResults"
+                :key="u.wikidotId || u.id"
+                size="md"
+                :wikidot-id="u.wikidotId"
+                :display-name="u.displayName"
+                :rank="u.rank"
+                :totals="{ totalRating: u.totalRating, works: u.pageCount }"
+              />
             </div>
-          </div>
-          <div class="flex items-center justify-end gap-2 mt-3">
-            <button class="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
-                    :disabled="pagePageIndex === 0 || pagesLoading"
-                    @click="pagePageIndex = Math.max(0, pagePageIndex - 1)">上一页</button>
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ pagePageIndex + 1 }} / {{ Math.max(1, Math.ceil(totalPages / pagePageSize)) }} 页</div>
-            <button class="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
-                    :disabled="(pagePageIndex + 1) >= Math.ceil(totalPages / pagePageSize) || pagesLoading"
-                    @click="pagePageIndex = pagePageIndex + 1">下一页</button>
-          </div>
+            <div v-if="userLoadingMore" class="flex items-center justify-center text-xs text-neutral-500 dark:text-neutral-400">
+              正在载入更多用户…
+            </div>
+            <div v-else-if="userHasMore" class="flex flex-col items-center gap-2">
+              <button
+                type="button"
+                class="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                @click="loadMoreUsers"
+              >加载更多用户</button>
+              <div ref="userSentinelRef" class="h-1 w-full"></div>
+            </div>
+          </section>
+
+          <section class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">页面</div>
+              <div class="text-[11px] text-neutral-400 dark:text-neutral-500">共 {{ totalPages }}</div>
+            </div>
+            <div v-if="pagesLoading && pageResults.length === 0" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div v-for="i in 6" :key="`page-skel-${i}`" class="h-48 rounded-2xl border border-neutral-200 bg-neutral-100/70 animate-pulse dark:border-neutral-800 dark:bg-neutral-800/40"></div>
+            </div>
+            <div v-else-if="pageResults.length === 0" class="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/80 px-4 py-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
+              暂无页面符合条件。
+            </div>
+            <div v-else>
+              <div v-if="layoutMode === 'card'" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <PageCard size="md" v-for="p in pageResults" :key="p.wikidotId || p.id" :p="p" />
+              </div>
+              <div v-else class="space-y-3">
+                <article
+                  v-for="p in pageResults"
+                  :key="`list-${p.wikidotId || p.title}`"
+                  class="rounded-2xl border border-neutral-200 bg-white/85 px-4 py-3 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70"
+                >
+                  <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div class="space-y-1 min-w-0">
+                      <NuxtLink :to="`/page/${p.wikidotId}`" class="text-sm font-semibold text-neutral-900 hover:text-[rgb(var(--accent))] dark:text-neutral-100">
+                        {{ p.title || 'Untitled' }}
+                      </NuxtLink>
+                      <div v-if="p.alternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
+                        {{ p.alternateTitle }}
+                      </div>
+                      <div v-if="Array.isArray(p.tags) && p.tags.length" class="flex flex-wrap gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                        <span
+                          v-for="tag in p.tags"
+                          :key="`list-tag-${p.wikidotId}-${tag}`"
+                          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-0.5 text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-[rgb(var(--accent))]"
+                        >
+                          <NuxtLink :to="{ path: '/search', query: { tags: [tag] } }" class="text-[11px] font-medium hover:underline">#{{ tag }}</NuxtLink>
+                        </span>
+                      </div>
+                    </div>
+                    <div class="flex shrink-0 flex-wrap items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+                      <span>Rating <span class="font-semibold text-neutral-800 dark:text-neutral-200">{{ Number(p.rating ?? 0).toFixed(0) }}</span></span>
+                      <span>评论 {{ p.commentCount ?? 0 }}</span>
+                      <span v-if="p.createdDate">发表于 {{ p.createdDate }}</span>
+                    </div>
+                  </div>
+                  <div v-if="p.snippetHtml" class="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400 max-h-24 overflow-hidden" v-html="p.snippetHtml"></div>
+                </article>
+              </div>
+            </div>
+            <div v-if="pageLoadingMore" class="flex items-center justify-center text-xs text-neutral-500 dark:text-neutral-400">
+              正在载入更多页面…
+            </div>
+            <div v-else-if="pageHasMore" class="flex flex-col items-center gap-2">
+              <button
+                type="button"
+                class="rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                @click="loadMorePages"
+              >加载更多页面</button>
+              <div ref="pageSentinelRef" class="h-1 w-full"></div>
+            </div>
+            <div v-else>
+              <div ref="pageSentinelRef" class="h-0 w-full"></div>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -264,12 +345,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, onMounted } from 'vue'
+import { ref, watch, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useNuxtApp, useHead } from 'nuxt/app'
+import { useNuxtApp, useHead, useState } from 'nuxt/app'
+import { orderTags } from '~/composables/useTagOrder'
+import { useViewerVotes } from '~/composables/useViewerVotes'
 
 const route = useRoute();
 const router = useRouter();
+const currentQueryKey = computed(() => route.fullPath || '')
 type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
 const { $bff } = useNuxtApp();
 const bff = $bff as unknown as BffFetcher
@@ -313,12 +397,70 @@ const userResults = ref<any[]>([])
 const pageResults = ref<any[]>([])
 const totalUsers = ref(0)
 const totalPages = ref(0)
-const userPageIndex = ref(0) // 0-based
-const pagePageIndex = ref(0)
-const userPageSize = 12
-const pagePageSize = 12
 const usersLoading = ref(false)
 const pagesLoading = ref(false)
+const USER_BATCH_SIZE = 12
+const PAGE_BATCH_SIZE = 18
+const userOffset = ref(0)
+const pageOffset = ref(0)
+const userHasMore = ref(false)
+const pageHasMore = ref(false)
+const userLoadingMore = ref(false)
+const pageLoadingMore = ref(false)
+const lastSearchParams = ref<Record<string, any>>({})
+const layoutModeState = useState<'card' | 'list'>('search-layout-mode', () => {
+  if (process.client) {
+    const saved = localStorage.getItem('scpper:search:layout')
+    if (saved === 'list' || saved === 'card') return saved
+  }
+  return 'card'
+})
+const layoutMode = ref<'card' | 'list'>(layoutModeState.value)
+
+watch(layoutMode, (mode) => {
+  layoutModeState.value = mode
+  if (process.client) {
+    try {
+      localStorage.setItem('scpper:search:layout', mode)
+    } catch (error) {
+      console.warn('[search] failed to persist layout mode', error)
+    }
+  }
+  updateCache()
+})
+
+const searchCache = useState<{
+  key: string
+  pages: any[]
+  users: any[]
+  totalPages: number
+  totalUsers: number
+  pageOffset: number
+  userOffset: number
+  pageHasMore: boolean
+  userHasMore: boolean
+  layout: 'card' | 'list'
+  scrollY: number
+}>('search-cache', () => ({
+  key: '',
+  pages: [] as any[],
+  users: [] as any[],
+  totalPages: 0,
+  totalUsers: 0,
+  pageOffset: 0,
+  userOffset: 0,
+  pageHasMore: false,
+  userHasMore: false,
+  layout: layoutMode.value as 'card' | 'list',
+  scrollY: 0
+}))
+const restoringScroll = ref(false)
+const pageSentinelRef = ref<HTMLElement | null>(null)
+const userSentinelRef = ref<HTMLElement | null>(null)
+let pageObserver: IntersectionObserver | null = null
+let userObserver: IntersectionObserver | null = null
+const csvPending = ref(false)
+const { hydratePages } = useViewerVotes()
 
 function normalizePage(p: any) {
   const toISODate = (v: any) => {
@@ -331,7 +473,7 @@ function normalizePage(p: any) {
     title: p.title,
     alternateTitle: p.alternateTitle,
     authors: p.authors,
-    tags: p.tags,
+    tags: orderTags(p.tags as string[] | null | undefined),
     rating: p.rating,
     wilson95: p.wilson95,
     commentCount: p.commentCount ?? p.revisionCount,
@@ -456,47 +598,284 @@ const clearForm = () => {
   excludeTagSearchQuery.value = '';
 };
 
+function hasSearchCriteria(): boolean {
+  return Boolean(searchForm.value.query?.trim())
+    || searchForm.value.includeTags.length > 0
+    || searchForm.value.excludeTags.length > 0
+    || Boolean(searchForm.value.ratingMin)
+    || Boolean(searchForm.value.ratingMax)
+}
+
+function buildSearchParamsFromForm(includeDefaultsForOrder = false): Record<string, any> {
+  const params: Record<string, any> = {}
+  const query = searchForm.value.query.trim()
+  if (query) params.query = query
+  if (searchForm.value.includeTags.length > 0) params.tags = [...searchForm.value.includeTags]
+  if (searchForm.value.onlyIncludeTags) params.onlyIncludeTags = 'true'
+  if (searchForm.value.excludeTags.length > 0) params.excludeTags = [...searchForm.value.excludeTags]
+  if (searchForm.value.ratingMin) params.ratingMin = searchForm.value.ratingMin
+  if (searchForm.value.ratingMax) params.ratingMax = searchForm.value.ratingMax
+  if (includeDefaultsForOrder || (searchForm.value.orderBy && searchForm.value.orderBy !== 'relevance')) {
+    params.orderBy = searchForm.value.orderBy || 'relevance'
+  }
+  return params
+}
+
 // 搜索功能
-async function fetchUsers(params: any) {
-  usersLoading.value = true;
+async function fetchUsers(params: Record<string, any> | null = null, options: { append?: boolean } = {}) {
+  const append = options.append ?? false
+  const baseParams = params ?? lastSearchParams.value
+  const offset = append ? userOffset.value : 0
+  const includeTotal = offset === 0
+  const limit = USER_BATCH_SIZE
+  if (append) {
+    userLoadingMore.value = true
+  } else {
+    usersLoading.value = true
+  }
   try {
-    const resp = await bff('/search/users', { params: { ...params, limit: userPageSize, offset: userPageIndex.value * userPageSize, includeTotal: userPageIndex.value === 0 } });
-    userResults.value = resp.results || resp || [];
-    if (typeof resp.total === 'number') totalUsers.value = Number(resp.total || 0);
+    const resp = await bff('/search/users', { params: { ...baseParams, limit, offset, includeTotal } })
+    const rows = Array.isArray(resp?.results) ? resp.results : (Array.isArray(resp) ? resp : [])
+    if (append && rows.length > 0) {
+      userResults.value = userResults.value.concat(rows)
+    } else if (!append) {
+      userResults.value = rows
+    }
+    const fetched = rows.length
+    if (includeTotal && typeof resp?.total === 'number') {
+      totalUsers.value = Number(resp.total || 0)
+    } else if (!includeTotal && typeof resp?.total === 'number') {
+      totalUsers.value = Number(resp.total || totalUsers.value)
+    } else if (!append) {
+      totalUsers.value = rows.length
+    }
+    const total = typeof resp?.total === 'number' ? Number(resp.total || 0) : (append ? userOffset.value + fetched : fetched)
+    userOffset.value = offset + fetched
+    userHasMore.value = total ? userOffset.value < total : fetched === limit
   } catch (err) {
-    console.error('搜索用户失败:', err);
-    userResults.value = [];
-    totalUsers.value = 0;
-    error.value = true;
+    console.error('搜索用户失败:', err)
+    if (!append) {
+      userResults.value = []
+      totalUsers.value = 0
+      error.value = true
+    }
   } finally {
-    usersLoading.value = false;
+    if (append) {
+      userLoadingMore.value = false
+    } else {
+      usersLoading.value = false
+    }
+    updateCache()
   }
 }
 
-async function fetchPages(params: any) {
-  pagesLoading.value = true;
+async function fetchPages(params: Record<string, any> | null = null, options: { append?: boolean } = {}) {
+  const append = options.append ?? false
+  const baseParams = params ?? lastSearchParams.value
+  const offset = append ? pageOffset.value : 0
+  const includeTotal = offset === 0
+  const limit = PAGE_BATCH_SIZE
+  if (append) {
+    pageLoadingMore.value = true
+  } else {
+    pagesLoading.value = true
+  }
   try {
-    const searchParams = {
-      ...params,
-      limit: pagePageSize,
-      offset: pagePageIndex.value * pagePageSize,
-      includeTotal: pagePageIndex.value === 0,
-      includeSnippet: true,
-      includeDate: pagePageIndex.value === 0
-    } as Record<string, any>;
-
-    const resp = await bff('/search/pages', { params: searchParams });
-    pageResults.value = resp.results || resp || [];
-    if (typeof resp.total === 'number') totalPages.value = Number(resp.total || 0);
+    const resp = await bff('/search/pages', {
+      params: {
+        ...baseParams,
+        limit,
+        offset,
+        includeTotal,
+        includeSnippet: true,
+        includeDate: includeTotal
+      }
+    })
+    const rowsRaw = Array.isArray(resp?.results) ? resp.results : (Array.isArray(resp) ? resp : [])
+    const rows = rowsRaw.map(normalizePage)
+    await hydratePages(rows)
+    if (append && rows.length > 0) {
+      pageResults.value = pageResults.value.concat(rows)
+    } else if (!append) {
+      pageResults.value = rows
+    }
+    const fetched = rows.length
+    if (includeTotal && typeof resp?.total === 'number') {
+      totalPages.value = Number(resp.total || 0)
+    } else if (!includeTotal && typeof resp?.total === 'number') {
+      totalPages.value = Number(resp.total || totalPages.value)
+    } else if (!append) {
+      totalPages.value = rows.length
+    }
+    const total = typeof resp?.total === 'number' ? Number(resp.total || 0) : (append ? pageOffset.value + fetched : fetched)
+    pageOffset.value = offset + fetched
+    pageHasMore.value = total ? pageOffset.value < total : fetched === limit
   } catch (err) {
-    console.error('搜索页面失败:', err);
-    pageResults.value = [];
-    totalPages.value = 0;
-    error.value = true;
+    console.error('搜索页面失败:', err)
+    if (!append) {
+      pageResults.value = []
+      totalPages.value = 0
+      error.value = true
+    }
   } finally {
-    pagesLoading.value = false;
+    if (append) {
+      pageLoadingMore.value = false
+    } else {
+      pagesLoading.value = false
+    }
+    updateCache()
   }
 }
+
+function resetPagination() {
+  userOffset.value = 0
+  pageOffset.value = 0
+  userHasMore.value = false
+  pageHasMore.value = false
+  userResults.value = []
+  pageResults.value = []
+  userLoadingMore.value = false
+  pageLoadingMore.value = false
+}
+
+function updateCache() {
+  searchCache.value = {
+    key: currentQueryKey.value,
+    pages: [...pageResults.value],
+    users: [...userResults.value],
+    totalPages: totalPages.value,
+    totalUsers: totalUsers.value,
+    pageOffset: pageOffset.value,
+    userOffset: userOffset.value,
+    pageHasMore: pageHasMore.value,
+    userHasMore: userHasMore.value,
+    layout: layoutMode.value,
+    scrollY: process.client ? window.scrollY : searchCache.value.scrollY
+  }
+}
+
+function restoreFromCacheIfAvailable(key: string) {
+  if (!key || searchCache.value.key !== key) return false
+  pageResults.value = [...searchCache.value.pages]
+  userResults.value = [...searchCache.value.users]
+  totalPages.value = searchCache.value.totalPages
+  totalUsers.value = searchCache.value.totalUsers
+  pageOffset.value = searchCache.value.pageOffset
+  userOffset.value = searchCache.value.userOffset
+  pageHasMore.value = searchCache.value.pageHasMore
+  userHasMore.value = searchCache.value.userHasMore
+  layoutMode.value = searchCache.value.layout
+  layoutModeState.value = searchCache.value.layout
+  lastSearchParams.value = buildSearchParamsFromForm(true)
+  searchPerformed.value = true
+  initialLoading.value = false
+  if (process.client) {
+    restoringScroll.value = true
+    nextTick(() => {
+      window.scrollTo({ top: searchCache.value.scrollY || 0 })
+      restoringScroll.value = false
+    })
+  }
+  return true
+}
+
+async function loadMorePages() {
+  if (!pageHasMore.value || pageLoadingMore.value || pagesLoading.value) return
+  await fetchPages(null, { append: true })
+}
+
+async function loadMoreUsers() {
+  if (!userHasMore.value || userLoadingMore.value || usersLoading.value) return
+  await fetchUsers(null, { append: true })
+}
+
+async function exportCsv() {
+  if (!pageResults.value.length) return
+  csvPending.value = true
+  try {
+    const headers = ['wikidotId', '标题', '别名', 'Rating', '评论数', '标签', '创建日期']
+    const rows = pageResults.value.map((p) => {
+      const id = p.wikidotId ?? ''
+      const title = (p.title || '').replace(/"/g, '""')
+      const alt = (p.alternateTitle || '').replace(/"/g, '""')
+      const rating = p.rating ?? ''
+      const comments = p.commentCount ?? ''
+      const tags = Array.isArray(p.tags) ? p.tags.join(' ') : ''
+      const created = p.createdDate || ''
+      return [id, `"${title}"`, alt ? `"${alt}"` : '', rating, comments, `"${tags.replace(/"/g, '""')}"`, created]
+    })
+    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `search-results-${Date.now()}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    console.error('导出 CSV 失败:', err)
+  } finally {
+    csvPending.value = false
+  }
+}
+
+function setupPageObserver() {
+  if (!process.client || typeof IntersectionObserver === 'undefined') return
+  if (pageObserver) pageObserver.disconnect()
+  pageObserver = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting)) {
+      void loadMorePages()
+    }
+  }, { rootMargin: '320px 0px' })
+  if (pageSentinelRef.value) pageObserver.observe(pageSentinelRef.value)
+}
+
+function setupUserObserver() {
+  if (!process.client || typeof IntersectionObserver === 'undefined') return
+  if (userObserver) userObserver.disconnect()
+  userObserver = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting)) {
+      void loadMoreUsers()
+    }
+  }, { rootMargin: '320px 0px' })
+  if (userSentinelRef.value) userObserver.observe(userSentinelRef.value)
+}
+
+watch(pageSentinelRef, (newEl, oldEl) => {
+  if (!process.client || !pageObserver) return
+  if (oldEl) pageObserver.unobserve(oldEl)
+  if (newEl) pageObserver.observe(newEl)
+})
+
+watch(userSentinelRef, (newEl, oldEl) => {
+  if (!process.client || !userObserver) return
+  if (oldEl) userObserver.unobserve(oldEl)
+  if (newEl) userObserver.observe(newEl)
+})
+
+onMounted(() => {
+  setupPageObserver()
+  setupUserObserver()
+  if (searchCache.value.layout && layoutMode.value !== searchCache.value.layout) {
+    layoutMode.value = searchCache.value.layout
+  }
+})
+
+onBeforeUnmount(() => {
+  if (pageObserver) {
+    pageObserver.disconnect()
+    pageObserver = null
+  }
+  if (userObserver) {
+    userObserver.disconnect()
+    userObserver = null
+  }
+  if (process.client) {
+    searchCache.value.scrollY = window.scrollY
+  }
+})
 
 const performAdvancedSearch = () => {
   const query = searchForm.value.query.trim();
@@ -522,139 +901,87 @@ const performAdvancedSearch = () => {
     searchForm.value.excludeTags.push(pendingExclude);
   }
 
-  const searchParams: any = {};
-  
-  if (query) searchParams.query = query;
-  if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
-  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
-  if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
-  if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
-  if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
-  if (searchForm.value.orderBy !== 'relevance') searchParams.orderBy = searchForm.value.orderBy;
+  const searchParams = buildSearchParamsFromForm();
   
   // 更新URL
   router.push({ path: '/search', query: searchParams });
-  // 主动触发一次搜索，避免路由未变化时页面无响应
-  void performSearch();
 };
 
 // 根据URL参数初始化搜索
 const initializeFromQuery = () => {
-  const query = route.query;
-  
-  // 检查是否是高级搜索
-  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax || (query.orderBy && query.orderBy !== 'relevance') || query.advanced || String(query.onlyIncludeTags || '').toLowerCase() === 'true';
-  
-  if (hasAdvancedParams || !query.q) {
-    showAdvanced.value = true;
-    
-    // 初始化高级搜索表单（兼容 query 与 q 两种参数名）
-    searchForm.value.query = String((query as any).query ?? query.q ?? '');
-    searchForm.value.includeTags = query.tags ? (Array.isArray(query.tags) ? query.tags as string[] : [query.tags as string]) : [];
-    searchForm.value.excludeTags = query.excludeTags ? (Array.isArray(query.excludeTags) ? query.excludeTags as string[] : [query.excludeTags as string]) : [];
-    searchForm.value.onlyIncludeTags = ['true', '1', 'yes'].includes(String(query.onlyIncludeTags || '').toLowerCase());
-    searchForm.value.ratingMin = String(query.ratingMin || '');
-    searchForm.value.ratingMax = String(query.ratingMax || '');
-    searchForm.value.orderBy = String(query.orderBy || 'relevance');
-    
-    // 高级搜索模式下，即使没有搜索条件也显示空的搜索结果状态
-    if (searchForm.value.query || searchForm.value.includeTags.length > 0) {
-      performSearch();
-    } else {
-      searchPerformed.value = true; // 显示空的搜索状态，而不是隐藏搜索结果区域
-    }
-  } else {
-    // 简单搜索模式
-    showAdvanced.value = false;
-    // 简单搜索模式，兼容 query 与 q
-    searchForm.value.query = String((query as any).query ?? query.q ?? '');
-    
-    if (searchForm.value.query) {
-      performSearch();
-    }
+  const query = route.query
+  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax || (query.orderBy && query.orderBy !== 'relevance') || query.advanced || String(query.onlyIncludeTags || '').toLowerCase() === 'true'
+
+  showAdvanced.value = Boolean(hasAdvancedParams || !query.q)
+
+  searchForm.value.query = String((query as any).query ?? query.q ?? '')
+  searchForm.value.includeTags = query.tags ? (Array.isArray(query.tags) ? query.tags as string[] : [String(query.tags)]) : []
+  searchForm.value.excludeTags = query.excludeTags ? (Array.isArray(query.excludeTags) ? query.excludeTags as string[] : [String(query.excludeTags)]) : []
+  searchForm.value.onlyIncludeTags = ['true', '1', 'yes'].includes(String(query.onlyIncludeTags || '').toLowerCase())
+  searchForm.value.ratingMin = String(query.ratingMin || '')
+  searchForm.value.ratingMax = String(query.ratingMax || '')
+  searchForm.value.orderBy = String(query.orderBy || 'relevance')
+
+  if (restoreFromCacheIfAvailable(currentQueryKey.value)) {
+    return
   }
-};
+
+  if (hasSearchCriteria()) {
+    void performSearch()
+  } else {
+    resetPagination()
+    totalUsers.value = 0
+    totalPages.value = 0
+    searchPerformed.value = true
+    initialLoading.value = false
+    updateCache()
+  }
+}
 
 const performSearch = async () => {
-  error.value = false;
-  searchPerformed.value = true;
-  
-  // 检查是否有任何搜索条件
-  const hasAnyCondition = searchForm.value.query || 
-    searchForm.value.includeTags.length > 0 || 
-    searchForm.value.excludeTags.length > 0 || 
-    searchForm.value.ratingMin || 
-    searchForm.value.ratingMax;
-  
+  error.value = false
+  searchPerformed.value = true
+  const hasAnyCondition = hasSearchCriteria()
+
   if (!hasAnyCondition) {
-    userResults.value = [];
-    pageResults.value = [];
-    totalUsers.value = 0;
-    totalPages.value = 0;
-    return;
+    resetPagination()
+    totalUsers.value = 0
+    totalPages.value = 0
+    updateCache()
+    return
   }
-  
-  initialLoading.value = true;
-  userPageIndex.value = 0;
-  pagePageIndex.value = 0;
-  
-  const searchParams: any = {};
-  if (searchForm.value.query) searchParams.query = searchForm.value.query;
-  if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
-  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
-  if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
-  if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
-  if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
-  searchParams.orderBy = searchForm.value.orderBy;
-  
-  if (searchParams.query) {
-    // 有关键词时搜索用户和页面
-    await Promise.all([fetchUsers(searchParams), fetchPages(searchParams)]);
-  } else {
-    // 无关键词时，仍使用 /search/pages 支持多标签与排除标签
-    await fetchPages(searchParams);
-    userResults.value = [];
-    totalUsers.value = 0;
+
+  initialLoading.value = true
+  resetPagination()
+
+  const routerParams = buildSearchParamsFromForm()
+  const apiParams: Record<string, any> = { ...routerParams }
+  apiParams.orderBy = searchForm.value.orderBy || 'relevance'
+  lastSearchParams.value = apiParams
+
+  try {
+    if (apiParams.query) {
+      await Promise.all([
+        fetchUsers(apiParams, { append: false }),
+        fetchPages(apiParams, { append: false })
+      ])
+    } else {
+      await fetchPages(apiParams, { append: false })
+      userResults.value = []
+      totalUsers.value = 0
+      userOffset.value = 0
+      userHasMore.value = false
+    }
+  } finally {
+    initialLoading.value = false
+    updateCache()
   }
-  
-  initialLoading.value = false;
-};
+}
 
 // 监听URL变化（使用 fullPath 更稳健，避免对象复用导致不触发）
 watch(() => route.fullPath, () => {
   initializeFromQuery();
 }, { immediate: true });
-
-// 监听分页变化
-watch(userPageIndex, () => {
-  const searchParams: any = {};
-  if (searchForm.value.query) searchParams.query = searchForm.value.query;
-  if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
-  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
-  if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
-  if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
-  if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
-  searchParams.orderBy = searchForm.value.orderBy;
-  
-  if (searchParams.query && Object.keys(searchParams).length > 0) {
-    void fetchUsers(searchParams);
-  }
-});
-
-watch(pagePageIndex, () => {
-  const searchParams: any = {};
-  if (searchForm.value.query) searchParams.query = searchForm.value.query;
-  if (searchForm.value.includeTags.length > 0) searchParams.tags = searchForm.value.includeTags;
-  if (searchForm.value.onlyIncludeTags) searchParams.onlyIncludeTags = 'true';
-  if (searchForm.value.excludeTags.length > 0) searchParams.excludeTags = searchForm.value.excludeTags;
-  if (searchForm.value.ratingMin) searchParams.ratingMin = searchForm.value.ratingMin;
-  if (searchForm.value.ratingMax) searchParams.ratingMax = searchForm.value.ratingMax;
-  searchParams.orderBy = searchForm.value.orderBy;
-  
-  if ((searchParams.query || searchForm.value.includeTags.length > 0) && Object.keys(searchParams).length > 0) {
-    void fetchPages(searchParams);
-  }
-});
 
 // 页面标题：根据搜索条件动态更新
 const pageTitle = computed(() => {
