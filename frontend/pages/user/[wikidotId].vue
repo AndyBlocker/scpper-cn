@@ -593,6 +593,23 @@ const { isAuthenticated, user: authUser } = useAuth()
 const { fetchFollows, followUser, unfollowUser, isFollowing } = useFollows()
 const canFollow = computed(() => isAuthenticated.value && Number(authUser.value?.linkedWikidotId || 0) !== Number(wikidotId.value))
 const isFollowingThis = computed(() => isFollowing(Number(wikidotId.value)))
+
+if (process.client) {
+  watch(
+    [() => isAuthenticated.value, () => authUser.value?.linkedWikidotId],
+    async ([loggedIn, linkedId], [prevLoggedIn, prevLinkedId]) => {
+      if (loggedIn && linkedId && (prevLoggedIn !== loggedIn || prevLinkedId !== linkedId)) {
+        try {
+          await fetchFollows()
+        } catch (err) {
+          console.warn('[user] preload follows failed', err)
+        }
+      }
+    },
+    { immediate: true }
+  )
+}
+
 async function toggleFollow() {
   const id = Number(wikidotId.value)
   if (!Number.isFinite(id) || id <= 0) return

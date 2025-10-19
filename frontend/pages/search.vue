@@ -171,8 +171,10 @@
               class="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
             >
               <option value="relevance">相关性</option>
-              <option value="rating">评分</option>
-              <option value="recent">最新</option>
+              <option value="rating">评分：高到低</option>
+              <option value="rating_asc">评分：低到高</option>
+              <option value="recent">日期：新到旧</option>
+              <option value="recent_asc">日期：旧到新</option>
             </select>
           </div>
         </div>
@@ -207,35 +209,19 @@
             找到用户 <span class="font-semibold text-[rgb(var(--accent))]">{{ totalUsers }}</span>
             ，页面 <span class="font-semibold text-[rgb(var(--accent))]">{{ totalPages }}</span>
           </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
-              :disabled="csvPending || pageResults.length === 0"
-              @click="exportCsv"
-            >
-              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
-              </svg>
-              <span>{{ csvPending ? '导出中…' : '导出 CSV' }}</span>
-            </button>
-            <div class="inline-flex rounded-full border border-neutral-200 bg-white/80 p-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-900/70">
-              <button
-                type="button"
-                class="rounded-full px-3 py-1 font-semibold transition"
-                :class="layoutMode === 'card' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-300'"
-                :aria-pressed="layoutMode === 'card'"
-                @click="layoutMode = 'card'"
-              >卡片</button>
-              <button
-                type="button"
-                class="rounded-full px-3 py-1 font-semibold transition"
-                :class="layoutMode === 'list' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-300'"
-                :aria-pressed="layoutMode === 'list'"
-                @click="layoutMode = 'list'"
-              >列表</button>
-            </div>
-          </div>
+          <!--
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+            :disabled="csvPending || pageResults.length === 0"
+            @click="exportCsv"
+          >
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
+            </svg>
+            <span>{{ csvPending ? '导出中…' : '导出 CSV' }}</span>
+          </button>
+          -->
         </div>
 
         <div class="space-y-8">
@@ -286,41 +272,8 @@
               暂无页面符合条件。
             </div>
             <div v-else>
-              <div v-if="layoutMode === 'card'" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <PageCard size="md" v-for="p in pageResults" :key="p.wikidotId || p.id" :p="p" />
-              </div>
-              <div v-else class="space-y-3">
-                <article
-                  v-for="p in pageResults"
-                  :key="`list-${p.wikidotId || p.title}`"
-                  class="rounded-2xl border border-neutral-200 bg-white/85 px-4 py-3 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70"
-                >
-                  <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div class="space-y-1 min-w-0">
-                      <NuxtLink :to="`/page/${p.wikidotId}`" class="text-sm font-semibold text-neutral-900 hover:text-[rgb(var(--accent))] dark:text-neutral-100">
-                        {{ p.title || 'Untitled' }}
-                      </NuxtLink>
-                      <div v-if="p.alternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
-                        {{ p.alternateTitle }}
-                      </div>
-                      <div v-if="Array.isArray(p.tags) && p.tags.length" class="flex flex-wrap gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
-                        <span
-                          v-for="tag in p.tags"
-                          :key="`list-tag-${p.wikidotId}-${tag}`"
-                          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-0.5 text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-[rgb(var(--accent))]"
-                        >
-                          <NuxtLink :to="{ path: '/search', query: { tags: [tag] } }" class="text-[11px] font-medium hover:underline">#{{ tag }}</NuxtLink>
-                        </span>
-                      </div>
-                    </div>
-                    <div class="flex shrink-0 flex-wrap items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
-                      <span>Rating <span class="font-semibold text-neutral-800 dark:text-neutral-200">{{ Number(p.rating ?? 0).toFixed(0) }}</span></span>
-                      <span>评论 {{ p.commentCount ?? 0 }}</span>
-                      <span v-if="p.createdDate">发表于 {{ p.createdDate }}</span>
-                    </div>
-                  </div>
-                  <div v-if="p.snippetHtml" class="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400 max-h-24 overflow-hidden" v-html="p.snippetHtml"></div>
-                </article>
               </div>
             </div>
             <div v-if="pageLoadingMore" class="flex items-center justify-center text-xs text-neutral-500 dark:text-neutral-400">
@@ -408,27 +361,6 @@ const pageHasMore = ref(false)
 const userLoadingMore = ref(false)
 const pageLoadingMore = ref(false)
 const lastSearchParams = ref<Record<string, any>>({})
-const layoutModeState = useState<'card' | 'list'>('search-layout-mode', () => {
-  if (process.client) {
-    const saved = localStorage.getItem('scpper:search:layout')
-    if (saved === 'list' || saved === 'card') return saved
-  }
-  return 'card'
-})
-const layoutMode = ref<'card' | 'list'>(layoutModeState.value)
-
-watch(layoutMode, (mode) => {
-  layoutModeState.value = mode
-  if (process.client) {
-    try {
-      localStorage.setItem('scpper:search:layout', mode)
-    } catch (error) {
-      console.warn('[search] failed to persist layout mode', error)
-    }
-  }
-  updateCache()
-})
-
 const searchCache = useState<{
   key: string
   pages: any[]
@@ -439,7 +371,6 @@ const searchCache = useState<{
   userOffset: number
   pageHasMore: boolean
   userHasMore: boolean
-  layout: 'card' | 'list'
   scrollY: number
 }>('search-cache', () => ({
   key: '',
@@ -451,7 +382,6 @@ const searchCache = useState<{
   userOffset: 0,
   pageHasMore: false,
   userHasMore: false,
-  layout: layoutMode.value as 'card' | 'list',
   scrollY: 0
 }))
 const restoringScroll = ref(false)
@@ -459,7 +389,8 @@ const pageSentinelRef = ref<HTMLElement | null>(null)
 const userSentinelRef = ref<HTMLElement | null>(null)
 let pageObserver: IntersectionObserver | null = null
 let userObserver: IntersectionObserver | null = null
-const csvPending = ref(false)
+// CSV export temporarily disabled.
+// const csvPending = ref(false)
 const { hydratePages } = useViewerVotes()
 
 function normalizePage(p: any) {
@@ -642,16 +573,17 @@ async function fetchUsers(params: Record<string, any> | null = null, options: { 
       userResults.value = rows
     }
     const fetched = rows.length
-    if (includeTotal && typeof resp?.total === 'number') {
-      totalUsers.value = Number(resp.total || 0)
-    } else if (!includeTotal && typeof resp?.total === 'number') {
-      totalUsers.value = Number(resp.total || totalUsers.value)
+    const totalCandidate = resp?.total
+    const parsedTotal = totalCandidate === undefined || totalCandidate === null ? null : Number(totalCandidate)
+    const hasValidTotal = parsedTotal !== null && Number.isFinite(parsedTotal)
+    const totalValue = hasValidTotal ? parsedTotal : null
+    if (totalValue !== null) {
+      totalUsers.value = totalValue
     } else if (!append) {
       totalUsers.value = rows.length
     }
-    const total = typeof resp?.total === 'number' ? Number(resp.total || 0) : (append ? userOffset.value + fetched : fetched)
     userOffset.value = offset + fetched
-    userHasMore.value = total ? userOffset.value < total : fetched === limit
+    userHasMore.value = totalValue !== null ? userOffset.value < totalValue : fetched === limit
   } catch (err) {
     console.error('搜索用户失败:', err)
     if (!append) {
@@ -700,16 +632,17 @@ async function fetchPages(params: Record<string, any> | null = null, options: { 
       pageResults.value = rows
     }
     const fetched = rows.length
-    if (includeTotal && typeof resp?.total === 'number') {
-      totalPages.value = Number(resp.total || 0)
-    } else if (!includeTotal && typeof resp?.total === 'number') {
-      totalPages.value = Number(resp.total || totalPages.value)
+    const totalCandidate = resp?.total
+    const parsedTotal = totalCandidate === undefined || totalCandidate === null ? null : Number(totalCandidate)
+    const hasValidTotal = parsedTotal !== null && Number.isFinite(parsedTotal)
+    const totalValue = hasValidTotal ? parsedTotal : null
+    if (totalValue !== null) {
+      totalPages.value = totalValue
     } else if (!append) {
       totalPages.value = rows.length
     }
-    const total = typeof resp?.total === 'number' ? Number(resp.total || 0) : (append ? pageOffset.value + fetched : fetched)
     pageOffset.value = offset + fetched
-    pageHasMore.value = total ? pageOffset.value < total : fetched === limit
+    pageHasMore.value = totalValue !== null ? pageOffset.value < totalValue : fetched === limit
   } catch (err) {
     console.error('搜索页面失败:', err)
     if (!append) {
@@ -749,7 +682,6 @@ function updateCache() {
     userOffset: userOffset.value,
     pageHasMore: pageHasMore.value,
     userHasMore: userHasMore.value,
-    layout: layoutMode.value,
     scrollY: process.client ? window.scrollY : searchCache.value.scrollY
   }
 }
@@ -764,8 +696,6 @@ function restoreFromCacheIfAvailable(key: string) {
   userOffset.value = searchCache.value.userOffset
   pageHasMore.value = searchCache.value.pageHasMore
   userHasMore.value = searchCache.value.userHasMore
-  layoutMode.value = searchCache.value.layout
-  layoutModeState.value = searchCache.value.layout
   lastSearchParams.value = buildSearchParamsFromForm(true)
   searchPerformed.value = true
   initialLoading.value = false
@@ -789,37 +719,37 @@ async function loadMoreUsers() {
   await fetchUsers(null, { append: true })
 }
 
-async function exportCsv() {
-  if (!pageResults.value.length) return
-  csvPending.value = true
-  try {
-    const headers = ['wikidotId', '标题', '别名', 'Rating', '评论数', '标签', '创建日期']
-    const rows = pageResults.value.map((p) => {
-      const id = p.wikidotId ?? ''
-      const title = (p.title || '').replace(/"/g, '""')
-      const alt = (p.alternateTitle || '').replace(/"/g, '""')
-      const rating = p.rating ?? ''
-      const comments = p.commentCount ?? ''
-      const tags = Array.isArray(p.tags) ? p.tags.join(' ') : ''
-      const created = p.createdDate || ''
-      return [id, `"${title}"`, alt ? `"${alt}"` : '', rating, comments, `"${tags.replace(/"/g, '""')}"`, created]
-    })
-    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `search-results-${Date.now()}.csv`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  } catch (err) {
-    console.error('导出 CSV 失败:', err)
-  } finally {
-    csvPending.value = false
-  }
-}
+// async function exportCsv() {
+//   if (!pageResults.value.length) return
+//   csvPending.value = true
+//   try {
+//     const headers = ['wikidotId', '标题', '别名', 'Rating', '评论数', '标签', '创建日期']
+//     const rows = pageResults.value.map((p) => {
+//       const id = p.wikidotId ?? ''
+//       const title = (p.title || '').replace(/"/g, '""')
+//       const alt = (p.alternateTitle || '').replace(/"/g, '""')
+//       const rating = p.rating ?? ''
+//       const comments = p.commentCount ?? ''
+//       const tags = Array.isArray(p.tags) ? p.tags.join(' ') : ''
+//       const created = p.createdDate || ''
+//       return [id, `"${title}"`, alt ? `"${alt}"` : '', rating, comments, `"${tags.replace(/"/g, '""')}"`, created]
+//     })
+//     const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
+//     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+//     const url = URL.createObjectURL(blob)
+//     const link = document.createElement('a')
+//     link.href = url
+//     link.download = `search-results-${Date.now()}.csv`
+//     document.body.appendChild(link)
+//     link.click()
+//     document.body.removeChild(link)
+//     URL.revokeObjectURL(url)
+//   } catch (err) {
+//     console.error('导出 CSV 失败:', err)
+//   } finally {
+//     csvPending.value = false
+//   }
+// }
 
 function setupPageObserver() {
   if (!process.client || typeof IntersectionObserver === 'undefined') return
@@ -858,9 +788,6 @@ watch(userSentinelRef, (newEl, oldEl) => {
 onMounted(() => {
   setupPageObserver()
   setupUserObserver()
-  if (searchCache.value.layout && layoutMode.value !== searchCache.value.layout) {
-    layoutMode.value = searchCache.value.layout
-  }
 })
 
 onBeforeUnmount(() => {

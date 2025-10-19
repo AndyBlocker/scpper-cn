@@ -70,6 +70,16 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         ? (Array.isArray(excludeTags) ? (excludeTags as string[]) : [excludeTags as string])
         : null;
       const enforceExactTags = ['true', '1', 'yes'].includes(String(onlyIncludeTags || '').toLowerCase()) && !!(includeTagsArray && includeTagsArray.length > 0);
+      const normalizedOrder = (() => {
+        const key = String(orderBy || '').toLowerCase();
+        if (key === 'rating_asc') return 'rating_asc';
+        if (key === 'recent_asc') return 'recent_asc';
+        if (key === 'rating_desc') return 'rating';
+        if (key === 'recent_desc') return 'recent';
+        if (key === 'rating') return 'rating';
+        if (key === 'recent') return 'recent';
+        return 'relevance';
+      })();
 
       if (!hasQuery) {
       const baseSql = `
@@ -104,11 +114,11 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
               LIMIT 1
             ) prev ON TRUE
             WHERE pv."validTo" IS NULL
-              AND ($1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $1::text[])
-              AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
+              AND ($1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $1::text[])
+              AND ($2::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $2::text[]))
               AND ($3::int IS NULL OR pv.rating >= $3)
               AND ($4::int IS NULL OR pv.rating <= $4)
-              AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $1::text[])
+              AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $1::text[])
           )
         `;
 
@@ -117,7 +127,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           FROM base b
           ORDER BY 
             CASE WHEN $6 = 'rating' THEN b.rating END DESC NULLS LAST,
-            CASE WHEN $6 = 'recent' THEN COALESCE(b."firstRevisionAt", b."validFrom") END DESC,
+            CASE WHEN $6 = 'rating_asc' THEN b.rating END ASC NULLS LAST,
+            CASE WHEN $6 = 'recent' THEN COALESCE(b."firstRevisionAt", b."validFrom") END DESC NULLS LAST,
+            CASE WHEN $6 = 'recent_asc' THEN COALESCE(b."firstRevisionAt", b."validFrom") END ASC NULLS LAST,
             b.rating DESC NULLS LAST,
             b."firstRevisionAt" DESC NULLS LAST,
             b.id DESC
@@ -130,7 +142,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           ratingMin || null,
           ratingMax || null,
           enforceExactTags,
-          orderBy,
+          normalizedOrder,
           limitInt,
           offsetInt
         ];
@@ -141,12 +153,20 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             ? pool.query(
                 `SELECT COUNT(*) AS total
                  FROM "PageVersion" pv
+                 LEFT JOIN LATERAL (
+                   SELECT tags
+                   FROM "PageVersion" pv_prev
+                   WHERE pv_prev."pageId" = pv."pageId"
+                     AND pv_prev."isDeleted" = false
+                   ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+                   LIMIT 1
+                 ) prev ON TRUE
                  WHERE pv."validTo" IS NULL
-                  AND ($1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $1::text[])
-                  AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
+                  AND ($1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $1::text[])
+                  AND ($2::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $2::text[]))
                   AND ($3::int IS NULL OR pv.rating >= $3)
                   AND ($4::int IS NULL OR pv.rating <= $4)
-                  AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $1::text[])`,
+                  AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $1::text[])`,
                 [includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null, enforceExactTags]
               )
             : Promise.resolve(null as any)
@@ -209,13 +229,21 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                  'url'::text AS source
           FROM "Page" p
           JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
+          LEFT JOIN LATERAL (
+            SELECT tags
+            FROM "PageVersion" pv_prev
+            WHERE pv_prev."pageId" = pv."pageId"
+              AND pv_prev."isDeleted" = false
+            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+            LIMIT 1
+          ) prev ON TRUE
           WHERE $1::text IS NOT NULL
             AND p."currentUrl" &@~ pgroonga_query_escape($1)
-            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
-            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
           LIMIT $10::int
         ),
         title_hits AS (
@@ -224,13 +252,21 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                  pgroonga_score(pv.tableoid, pv.ctid) AS score,
                  'title'::text AS source
           FROM "PageVersion" pv
+          LEFT JOIN LATERAL (
+            SELECT tags
+            FROM "PageVersion" pv_prev
+            WHERE pv_prev."pageId" = pv."pageId"
+              AND pv_prev."isDeleted" = false
+            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+            LIMIT 1
+          ) prev ON TRUE
           WHERE pv."validTo" IS NULL
             AND pv.title &@~ pgroonga_query_escape($1)
-            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
-            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
           ORDER BY score DESC
           LIMIT $10::int
         ),
@@ -240,14 +276,22 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                  pgroonga_score(pv.tableoid, pv.ctid) AS score,
                  'alternate'::text AS source
           FROM "PageVersion" pv
+          LEFT JOIN LATERAL (
+            SELECT tags
+            FROM "PageVersion" pv_prev
+            WHERE pv_prev."pageId" = pv."pageId"
+              AND pv_prev."isDeleted" = false
+            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+            LIMIT 1
+          ) prev ON TRUE
           WHERE pv."validTo" IS NULL
             AND pv."alternateTitle" IS NOT NULL
             AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
-            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
-            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
           ORDER BY score DESC
           LIMIT $10::int
         ),
@@ -257,13 +301,21 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                  pgroonga_score(pv.tableoid, pv.ctid) AS score,
                  'text'::text AS source
           FROM "PageVersion" pv
+          LEFT JOIN LATERAL (
+            SELECT tags
+            FROM "PageVersion" pv_prev
+            WHERE pv_prev."pageId" = pv."pageId"
+              AND pv_prev."isDeleted" = false
+            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+            LIMIT 1
+          ) prev ON TRUE
           WHERE pv."validTo" IS NULL
             AND pv."textContent" &@~ pgroonga_query_escape($1)
-            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
-            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
           ORDER BY score DESC
           LIMIT $10::int
         ),
@@ -287,12 +339,20 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             MAX(CASE WHEN c.source = 'text' THEN 1 ELSE 0 END) AS has_text
           FROM candidates c
           JOIN "PageVersion" pv ON pv.id = c.pv_id
+          LEFT JOIN LATERAL (
+            SELECT tags
+            FROM "PageVersion" pv_prev
+            WHERE pv_prev."pageId" = pv."pageId"
+              AND pv_prev."isDeleted" = false
+            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+            LIMIT 1
+          ) prev ON TRUE
           WHERE pv."validTo" IS NULL
-            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
-            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
           GROUP BY c.pv_id
         ),
         ranked AS (
@@ -365,8 +425,8 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
               AND $1 IS NOT NULL
           ) sn ON TRUE
           ORDER BY 
-            CASE WHEN $9 = 'rating' THEN NULL END,
-            CASE WHEN $9 = 'recent' THEN NULL END,
+            CASE WHEN $9 IN ('rating', 'rating_asc') THEN NULL END,
+            CASE WHEN $9 IN ('recent', 'recent_asc') THEN NULL END,
             r.host_match DESC NULLS LAST,
             r.exact_url DESC NULLS LAST,
             r.exact_title DESC NULLS LAST,
@@ -378,7 +438,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             r.has_text DESC NULLS LAST,
             CASE WHEN ($9 IS NULL OR $9 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
             CASE WHEN $9 = 'rating' THEN r.rating END DESC NULLS LAST,
+            CASE WHEN $9 = 'rating_asc' THEN r.rating END ASC NULLS LAST,
             CASE WHEN $9 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
+            CASE WHEN $9 = 'recent_asc' THEN COALESCE(r."firstRevisionAt", r."validFrom") END ASC NULLS LAST,
             r.rating DESC NULLS LAST,
             r.id DESC
           LIMIT $7::int OFFSET $8::int
@@ -387,8 +449,8 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
           SELECT r.*
           FROM ranked r
           ORDER BY 
-            CASE WHEN $9 = 'rating' THEN NULL END,
-            CASE WHEN $9 = 'recent' THEN NULL END,
+            CASE WHEN $9 IN ('rating', 'rating_asc') THEN NULL END,
+            CASE WHEN $9 IN ('recent', 'recent_asc') THEN NULL END,
             r.host_match DESC NULLS LAST,
             r.exact_url DESC NULLS LAST,
             r.exact_title DESC NULLS LAST,
@@ -400,7 +462,9 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
             r.has_text DESC NULLS LAST,
             CASE WHEN ($9 IS NULL OR $9 = 'relevance') THEN COALESCE(r.score, 0) END DESC NULLS LAST,
             CASE WHEN $9 = 'rating' THEN r.rating END DESC NULLS LAST,
+            CASE WHEN $9 = 'rating_asc' THEN r.rating END ASC NULLS LAST,
             CASE WHEN $9 = 'recent' THEN COALESCE(r."firstRevisionAt", r."validFrom") END DESC NULLS LAST,
+            CASE WHEN $9 = 'recent_asc' THEN COALESCE(r."firstRevisionAt", r."validFrom") END ASC NULLS LAST,
             r.rating DESC NULLS LAST,
             r.id DESC
           LIMIT $7::int OFFSET $8::int
@@ -415,7 +479,7 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
         enforceExactTags,
         limitInt,
         offsetInt,
-        orderBy,
+        normalizedOrder,
         candidateLimit
       ];
 
@@ -427,47 +491,79 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                  SELECT pv.id AS pv_id
                  FROM "Page" p
                  JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
+                 LEFT JOIN LATERAL (
+                   SELECT tags
+                   FROM "PageVersion" pv_prev
+                   WHERE pv_prev."pageId" = pv."pageId"
+                     AND pv_prev."isDeleted" = false
+                   ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+                   LIMIT 1
+                 ) prev ON TRUE
                  WHERE $1::text IS NOT NULL
                    AND p."currentUrl" &@~ pgroonga_query_escape($1)
-                   AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-                   AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                   AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+                   AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
                    AND ($4::int IS NULL OR pv.rating >= $4)
                    AND ($5::int IS NULL OR pv.rating <= $5)
-                   AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+                   AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
                ),
                 title_hits AS (
                   SELECT pv.id AS pv_id
                   FROM "PageVersion" pv
+                  LEFT JOIN LATERAL (
+                    SELECT tags
+                    FROM "PageVersion" pv_prev
+                    WHERE pv_prev."pageId" = pv."pageId"
+                      AND pv_prev."isDeleted" = false
+                    ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+                    LIMIT 1
+                  ) prev ON TRUE
                   WHERE pv."validTo" IS NULL
                     AND pv.title &@~ pgroonga_query_escape($1)
-                    AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                    AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+                    AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
                     AND ($4::int IS NULL OR pv.rating >= $4)
                     AND ($5::int IS NULL OR pv.rating <= $5)
-                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
                 ),
                 alternate_hits AS (
                   SELECT pv.id AS pv_id
                   FROM "PageVersion" pv
+                  LEFT JOIN LATERAL (
+                    SELECT tags
+                    FROM "PageVersion" pv_prev
+                    WHERE pv_prev."pageId" = pv."pageId"
+                      AND pv_prev."isDeleted" = false
+                    ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+                    LIMIT 1
+                  ) prev ON TRUE
                   WHERE pv."validTo" IS NULL
                     AND pv."alternateTitle" IS NOT NULL
                     AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
-                    AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                    AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+                    AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
                     AND ($4::int IS NULL OR pv.rating >= $4)
                     AND ($5::int IS NULL OR pv.rating <= $5)
-                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
                 ),
                 text_hits AS (
                   SELECT pv.id AS pv_id
                   FROM "PageVersion" pv
+                  LEFT JOIN LATERAL (
+                    SELECT tags
+                    FROM "PageVersion" pv_prev
+                    WHERE pv_prev."pageId" = pv."pageId"
+                      AND pv_prev."isDeleted" = false
+                    ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+                    LIMIT 1
+                  ) prev ON TRUE
                   WHERE pv."validTo" IS NULL
                     AND pv."textContent" &@~ pgroonga_query_escape($1)
-                    AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-                    AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                    AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+                    AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
                     AND ($4::int IS NULL OR pv.rating >= $4)
                     AND ($5::int IS NULL OR pv.rating <= $5)
-                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+                    AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
                 ),
                candidates AS (
                  SELECT pv_id FROM url_hits
@@ -482,12 +578,20 @@ export function searchRouter(pool: Pool, _redis: RedisClientType | null) {
                  SELECT pv.id
                  FROM "PageVersion" pv
                  JOIN candidates c ON c.pv_id = pv.id
+                 LEFT JOIN LATERAL (
+                   SELECT tags
+                   FROM "PageVersion" pv_prev
+                   WHERE pv_prev."pageId" = pv."pageId"
+                     AND pv_prev."isDeleted" = false
+                   ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+                   LIMIT 1
+                 ) prev ON TRUE
                  WHERE pv."validTo" IS NULL
-                   AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
-                   AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+                   AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+                   AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
                    AND ($4::int IS NULL OR pv.rating >= $4)
                    AND ($5::int IS NULL OR pv.rating <= $5)
-                   AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+                   AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
                )
                SELECT COUNT(*) AS total FROM filtered`,
               [trimmedQuery, includeTagsArray, excludeTagsArray, ratingMin || null, ratingMax || null, enforceExactTags]
