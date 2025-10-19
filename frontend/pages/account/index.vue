@@ -1,5 +1,29 @@
 <template>
-  <div class="space-y-10 py-10">
+  <div class="space-y-8 py-10">
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        v-for="tab in accountTabs"
+        :key="tab.key"
+        type="button"
+        class="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-semibold transition"
+        :class="activeTab === tab.key
+          ? 'border-[rgba(var(--accent),0.35)] bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))] shadow-sm'
+          : 'border-neutral-200 bg-white/70 text-neutral-600 hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-300'"
+        @click="activeTab = tab.key"
+      >
+        <span>{{ tab.label }}</span>
+        <span
+          v-if="tab.key === 'alerts' && alertsBadgeCount > 0"
+          class="inline-flex min-w-[1.6rem] justify-center rounded-full bg-[rgb(var(--accent))] px-2 py-0.5 text-[11px] font-semibold text-white"
+        >{{ alertsBadgeCount > 99 ? '99+' : alertsBadgeCount }}</span>
+        <span
+          v-else-if="tab.key === 'follows' && followBadgeCount > 0"
+          class="inline-flex min-w-[1.6rem] justify-center rounded-full bg-[rgb(var(--accent))] px-2 py-0.5 text-[11px] font-semibold text-white"
+        >{{ followBadgeCount > 99 ? '99+' : followBadgeCount }}</span>
+      </button>
+    </div>
+
+    <div v-show="activeTab === 'overview'" class="space-y-10">
     <section class="flex flex-col gap-4 rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
       <header class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
@@ -93,7 +117,8 @@
       </div>
     </section>
 
-    <section class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+
+    <!-- <section class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
       <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1">
           <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">我的收藏</h2>
@@ -132,48 +157,11 @@
           </div>
         </div>
       </div>
-    </section>
+    </section> -->
 
-    <!-- Advanced: collapse rarely-used settings -->
-    <section class="rounded-3xl border border-white/60 bg-white/80 p-0 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
-      <button
-        type="button"
-        class="w-full flex items-center justify-between px-6 py-4 text-sm font-semibold text-neutral-800 dark:text-neutral-100"
-        @click="showAdvanced = !showAdvanced"
-        aria-expanded="showAdvanced"
-      >
-        <span>更多设置</span>
-        <svg :class="['h-4 w-4 transition-transform', showAdvanced ? 'rotate-180' : 'rotate-0']" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-      <div v-show="showAdvanced" class="px-6 pb-6 space-y-6">
-        <div class="rounded-2xl border border-neutral-200 bg-white/80 p-6 dark:border-neutral-800 dark:bg-neutral-900/70">
-          <div class="flex items-center justify-between">
-            <div>
-              <h2 class="text-base font-semibold text-neutral-900 dark:text-neutral-100">修改密码</h2>
-              <p class="text-xs text-neutral-600 dark:text-neutral-400">修改后将退出当前登录，需要重新登录。</p>
-            </div>
-          </div>
-          <form class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3" @submit.prevent="handlePasswordChange">
-            <input v-model="passwordCurrent" type="password" autocomplete="current-password" placeholder="当前密码" class="rounded-2xl border border-neutral-200 bg-white/90 px-4 py-3 text-sm text-neutral-900 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-100" required />
-            <input v-model="passwordNew" type="password" autocomplete="new-password" placeholder="新密码（至少 8 位）" minlength="8" class="rounded-2xl border border-neutral-200 bg-white/90 px-4 py-3 text-sm text-neutral-900 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-100" required />
-            <input v-model="passwordConfirm" type="password" autocomplete="new-password" placeholder="确认新密码" minlength="8" class="rounded-2xl border border-neutral-200 bg-white/90 px-4 py-3 text-sm text-neutral-900 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-100" required />
-            <div class="md:col-span-3 flex items-center justify-between pt-1">
-              <p v-if="passwordMessage" :class="passwordMessageClass" class="text-xs">{{ passwordMessage }}</p>
-              <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-neutral-900 disabled:opacity-60 disabled:cursor-not-allowed dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200" :disabled="passwordSaving || !passwordsValid">
-                <svg v-if="passwordSaving" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v4m0 8v4m8-8h-4M8 12H4m12.364-6.364l-2.828 2.828M9.172 14.828l-2.828 2.828m0-11.656l2.828 2.828m8.486 8.486l2.828 2.828" /></svg>
-                <span>{{ passwordSaving ? '修改中…' : '修改密码' }}</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </section>
-    <!-- merged alerts section below -->
+    </div>
 
-    
-    <section class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+    <section v-show="activeTab === 'alerts'" class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
       <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div class="space-y-1">
           <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">提醒</h2>
@@ -570,6 +558,108 @@
         </template>
       </div>
     </section>
+
+    <section v-show="activeTab === 'follows'" class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+      <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1">
+          <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">关注作者</h2>
+          <p class="text-sm text-neutral-600 dark:text-neutral-400">管理已关注的 Wikidot 作者，及时查看他们的最新动态。</p>
+        </div>
+        <div class="flex items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+          <span v-if="hasFollowEntries">已关注 {{ totalFollows }} 位作者</span>
+          <span v-else-if="followsLoaded">暂未关注任何作者</span>
+        </div>
+      </header>
+      <div v-if="!hasLinkedWikidot" class="mt-4 rounded-2xl border border-dashed border-neutral-200 bg-white/70 px-4 py-6 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+        绑定 Wikidot 账号后即可关注作者并在此管理关注列表。
+      </div>
+      <div v-else class="mt-4 space-y-4">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p class="text-xs text-neutral-500 dark:text-neutral-400">刷新即可同步最新的关注列表，取消关注后可随时再次添加。</p>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
+              :disabled="followsLoading"
+              @click="handleRefreshFollows"
+            >{{ followsLoading ? '刷新中…' : '刷新' }}</button>
+          </div>
+        </div>
+        <div v-if="followsInitialLoading" class="rounded-2xl border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+          正在加载关注列表…
+        </div>
+        <ul v-else-if="hasFollowEntries" class="space-y-3">
+          <li
+            v-for="follow in followsDisplayList"
+            :key="follow.id"
+            class="rounded-2xl border border-neutral-200 bg-white/80 p-4 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-[rgba(var(--accent),0.45)]"
+          >
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <component
+                :is="follow.wikidotId ? 'NuxtLink' : 'div'"
+                v-bind="follow.wikidotId ? { to: `/user/${follow.wikidotId}` } : {}"
+                class="flex items-center gap-3 min-w-0"
+              >
+                <UserAvatar
+                  :wikidot-id="follow.wikidotId"
+                  :name="follow.displayName || `作者 #${follow.wikidotId ?? follow.targetUserId}`"
+                  :size="44"
+                  class="ring-1 ring-neutral-200 dark:ring-neutral-800"
+                />
+                <div class="min-w-0 space-y-1">
+                  <div class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                    {{ follow.displayName || `作者 #${follow.wikidotId ?? follow.targetUserId}` }}
+                  </div>
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">
+                    <span v-if="follow.wikidotId">Wikidot ID：{{ follow.wikidotId }}</span>
+                    <span v-else>内部 ID：{{ follow.targetUserId }}</span>
+                  </div>
+                </div>
+              </component>
+              <div class="flex items-center gap-2 shrink-0">
+                <NuxtLink
+                  v-if="follow.wikidotId"
+                  :to="`/user/${follow.wikidotId}`"
+                  class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
+                >查看主页</NuxtLink>
+                <span
+                  v-else
+                  class="inline-flex items-center justify-center rounded-full border border-dashed border-neutral-300 px-3 py-1.5 text-[11px] font-medium text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
+                >暂无法跳转</span>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-full bg-rose-500/90 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="followsLoading || !follow.wikidotId"
+                  @click="handleUnfollowFromAccount(follow.wikidotId)"
+                >取消关注</button>
+              </div>
+            </div>
+          </li>
+        </ul>
+        <div v-else-if="showFollowsEmpty" class="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/70 px-4 py-12 text-center text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
+          关注作者后可在此快速管理，去用户页面点击“关注”试试看～
+        </div>
+      </div>
+    </section>
+
+    <section v-show="activeTab === 'security'" class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+      <header class="space-y-1">
+        <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">安全设置</h2>
+        <p class="text-sm text-neutral-600 dark:text-neutral-400">修改密码后需要重新登录，请妥善保管账户信息。</p>
+      </header>
+      <form class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3" @submit.prevent="handlePasswordChange">
+        <input v-model="passwordCurrent" type="password" autocomplete="current-password" placeholder="当前密码" class="rounded-2xl border border-neutral-200 bg-white/90 px-4 py-3 text-sm text-neutral-900 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-100" required />
+        <input v-model="passwordNew" type="password" autocomplete="new-password" placeholder="新密码（至少 8 位）" minlength="8" class="rounded-2xl border border-neutral-200 bg-white/90 px-4 py-3 text-sm text-neutral-900 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-100" required />
+        <input v-model="passwordConfirm" type="password" autocomplete="new-password" placeholder="确认新密码" minlength="8" class="rounded-2xl border border-neutral-200 bg-white/90 px-4 py-3 text-sm text-neutral-900 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-100" required />
+        <div class="md:col-span-3 flex items-center justify-between pt-1">
+          <p v-if="passwordMessage" :class="passwordMessageClass" class="text-xs">{{ passwordMessage }}</p>
+          <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-neutral-900 disabled:opacity-60 disabled:cursor-not-allowed dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200" :disabled="passwordSaving || !passwordsValid">
+            <svg v-if="passwordSaving" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v4m0 8v4m8-8h-4M8 12H4m12.364-6.364l-2.828 2.828M9.172 14.828l-2.828 2.828m0-11.656l2.828 2.828m8.486 8.486l2.828 2.828" /></svg>
+            <span>{{ passwordSaving ? '修改中…' : '修改密码' }}</span>
+          </button>
+        </div>
+      </form>
+    </section>
   </div>
 </template>
 
@@ -584,6 +674,7 @@ import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAl
 import { useFollowAlerts, type FollowCombinedGroup } from '~/composables/useFollowAlerts'
 import { useCombinedAlerts, type CombinedAlertGroup } from '~/composables/useCombinedAlerts'
 import { useFavorites } from '~/composables/useFavorites'
+import { useFollows } from '~/composables/useFollows'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { orderTags } from '~/composables/useTagOrder'
 
@@ -620,6 +711,16 @@ const { combined: followCombined, combinedLoading: followCombinedLoading, combin
 
 const { favoritePages, removePageFavorite } = useFavorites()
 const { hydratePages: hydrateViewerVotes } = useViewerVotes()
+const { follows, loading: followsLoading, fetchFollows, unfollowUser } = useFollows()
+
+type AccountTab = 'overview' | 'alerts' | 'follows' | 'security'
+const accountTabs: Array<{ key: AccountTab; label: string }> = [
+  { key: 'overview', label: '资料' },
+  { key: 'alerts', label: '提醒' },
+  { key: 'follows', label: '关注' },
+  { key: 'security', label: '安全' }
+]
+const activeTab = ref<AccountTab>('overview')
 
 const favoritePageCards = computed(() => favoritePages.value.map((p) => ({
   wikidotId: p.id,
@@ -635,6 +736,32 @@ const favoritePageCards = computed(() => favoritePages.value.map((p) => ({
 const hasFavorites = computed(() => favoritePageCards.value.length > 0)
 const favoritePagePreview = computed(() => favoritePageCards.value.slice(0, 9))
 const favoritePageOverflow = computed(() => Math.max(0, favoritePageCards.value.length - favoritePagePreview.value.length))
+const alertsBadgeCount = computed(() => Math.max(
+  Number(alertsTotalUnread.value || 0),
+  Number(combinedTotalUnread.value || 0),
+  Number(followCombinedUnread.value || 0)
+))
+const followBadgeCount = computed(() => Math.max(0, Number(followCombinedUnread.value || 0)))
+const followsLoaded = ref(false)
+const followsDisplayList = computed(() => {
+  const list = Array.isArray(follows.value) ? [...follows.value] : []
+  return list.sort((a, b) => {
+    const nameA = (a.displayName || '').trim()
+    const nameB = (b.displayName || '').trim()
+    if (nameA && nameB && nameA !== nameB) {
+      return nameA.localeCompare(nameB, 'zh-Hans-CN', { sensitivity: 'base' })
+    }
+    if (nameA && !nameB) return -1
+    if (!nameA && nameB) return 1
+    const idA = Number(a.wikidotId ?? a.targetUserId ?? 0)
+    const idB = Number(b.wikidotId ?? b.targetUserId ?? 0)
+    return idA - idB
+  })
+})
+const totalFollows = computed(() => followsDisplayList.value.length)
+const hasFollowEntries = computed(() => totalFollows.value > 0)
+const followsInitialLoading = computed(() => followsLoading.value && !followsLoaded.value)
+const showFollowsEmpty = computed(() => followsLoaded.value && !followsLoading.value && !hasFollowEntries.value)
 
 watch(
   () => favoritePageCards.value,
@@ -724,6 +851,31 @@ function handleMetricChange(metric: AlertMetric) {
 
 function handleRemoveFavoritePage(id: number) {
   removePageFavorite(id)
+}
+
+async function ensureFollows(force = false) {
+  if (!hasLinkedWikidot.value) return
+  if (followsLoaded.value && !force) return
+  try {
+    await fetchFollows(true)
+    followsLoaded.value = true
+  } catch (err) {
+    console.warn('[account] fetch follows failed', err)
+  }
+}
+
+async function handleRefreshFollows() {
+  await ensureFollows(true)
+}
+
+async function handleUnfollowFromAccount(wikidotId?: number | null) {
+  if (!wikidotId) return
+  try {
+    await unfollowUser(wikidotId)
+    await ensureFollows(true)
+  } catch (err) {
+    console.warn('[account] unfollow failed', err)
+  }
 }
 
 function handleRefreshAlerts() {
@@ -866,31 +1018,49 @@ onMounted(() => {
         fetchCombinedAlerts(20, 0, true).catch((err) => {
           console.warn('[account] initial combined alerts fetch failed', err)
         })
+        fetchFollowCombined(true, 20, 0).catch((err) => {
+          console.warn('[account] initial follow combined alerts fetch failed', err)
+        })
+        void ensureFollows()
+      } else if (activeTab.value === 'follows') {
+        void ensureFollows()
       }
     }).catch((err) => {
       console.warn('[account] fetchCurrentUser failed', err)
     })
   } else if (status.value === 'unauthenticated') {
     navigateTo('/auth/login', { replace: true })
-  } else if (status.value === 'authenticated' && user.value?.linkedWikidotId) {
-    fetchAlertPreferences(true).catch((err) => {
-      console.warn('[account] alert preferences load failed', err)
-    })
-    fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
-      console.warn('[account] initial alerts fetch failed', err)
-    })
-    fetchCombinedAlerts(20, 0, true).catch((err) => {
-      console.warn('[account] initial combined alerts fetch failed', err)
-    })
-    fetchFollowCombined(true, 20, 0).catch((err) => {
-      console.warn('[account] initial follow combined alerts fetch failed', err)
-    })
+  } else if (status.value === 'authenticated') {
+    if (user.value?.linkedWikidotId) {
+      fetchAlertPreferences(true).catch((err) => {
+        console.warn('[account] alert preferences load failed', err)
+      })
+      fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
+        console.warn('[account] initial alerts fetch failed', err)
+      })
+      fetchCombinedAlerts(20, 0, true).catch((err) => {
+        console.warn('[account] initial combined alerts fetch failed', err)
+      })
+      fetchFollowCombined(true, 20, 0).catch((err) => {
+        console.warn('[account] initial follow combined alerts fetch failed', err)
+      })
+      void ensureFollows()
+    } else if (activeTab.value === 'follows') {
+      void ensureFollows()
+    }
   }
 })
 
 watch(status, (next) => {
   if (next === 'unauthenticated') {
     navigateTo('/auth/login', { replace: true })
+  } else if (next === 'authenticated') {
+    fetchFollowCombined(true, 20, 0).catch((err) => {
+      console.warn('[account] follow combined alerts fetch on status change failed', err)
+    })
+    if (activeTab.value === 'follows') {
+      void ensureFollows()
+    }
   }
 })
 
@@ -908,6 +1078,11 @@ watch(() => user.value?.linkedWikidotId, (next, prev) => {
     fetchFollowCombined(true, 20, 0).catch((err) => {
       console.warn('[account] follow combined alerts fetch on link change failed', err)
     })
+    void ensureFollows(true)
+  }
+  if (!next) {
+    followsLoaded.value = false
+    follows.value = []
   }
 })
 
@@ -917,6 +1092,20 @@ watch(alertsActiveMetric, (metric, previous) => {
   fetchAlerts(metric).catch((err) => {
     console.warn('[account] alerts fetch on active metric change failed', err)
   })
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'alerts' && hasLinkedWikidot.value) {
+    fetchAlerts(alertsActiveMetric.value).catch((err) => {
+      console.warn('[account] alerts fetch on tab change failed', err)
+    })
+    fetchCombinedAlerts(20, 0, true).catch((err) => {
+      console.warn('[account] combined alerts fetch on tab change failed', err)
+    })
+  }
+  if (tab === 'follows') {
+    void ensureFollows()
+  }
 })
 
 const displayNameValue = ref('')
@@ -999,5 +1188,4 @@ async function handleLogout() {
 }
 
 // Advanced panel (less-frequently-used settings)
-const showAdvanced = ref(false)
 </script>
