@@ -128,9 +128,7 @@
         <span v-for="t in tags" :key="t" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 text-sm">
           {{ t }}
           <button @click="removeTag(t)" class="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <LucideIcon name="X" class="w-4 h-4" />
           </button>
         </span>
         <span v-if="tags.length === 0" class="text-sm text-neutral-500 dark:text-neutral-400">暂无标签，请添加。</span>

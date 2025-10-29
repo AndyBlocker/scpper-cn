@@ -5,6 +5,20 @@ const isDevCommand = command === 'dev';
 const buildDir = isDevCommand ? '.nuxt-dev' : '.nuxt';
 const outputDir = isDevCommand ? '.output-dev' : '.output';
 
+const envBoolean = (value: string | undefined, fallback = false) => {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+};
+
+const envNumber = (value: string | undefined, fallback: number) => {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 export default defineNuxtConfig({
   srcDir: '.',
   buildDir,
@@ -35,7 +49,10 @@ export default defineNuxtConfig({
       // 使用环境变量或默认值
       // 开发: BFF_BASE=http://localhost:4396 npm run dev
       // 生产: BFF_BASE=/api npm run build
-      bffBase: process.env.BFF_BASE || '/api'
+      bffBase: process.env.BFF_BASE || '/api',
+      debugFetchTimings: envBoolean(process.env.DEBUG_FETCH_TIMINGS, false),
+      debugFetchMinDurationMs: envNumber(process.env.DEBUG_FETCH_MIN_DURATION_MS, 0),
+      slowFetchThresholdMs: envNumber(process.env.SLOW_FETCH_THRESHOLD_MS, 800)
     }
   },
   nitro: {
@@ -96,6 +113,81 @@ export default defineNuxtConfig({
                 root.classList.add('scheme-' + scheme);
                 if (storedTheme !== initialTheme) localStorage.setItem('theme', initialTheme);
                 if (!storedScheme) localStorage.setItem('color-scheme', scheme);
+                var TOKEN_TO_VAR = {
+                  bg: '--bg',
+                  fg: '--fg',
+                  muted: '--muted',
+                  mutedStrong: '--muted-strong',
+                  panel: '--panel',
+                  panelBorder: '--panel-border',
+                  accent: '--accent',
+                  accentStrong: '--accent-strong',
+                  accentWeak: '--accent-weak',
+                  success: '--success',
+                  successStrong: '--success-strong',
+                  danger: '--danger',
+                  dangerStrong: '--danger-strong',
+                  chartUserFill: '--chart-user-fill',
+                  chartUserLine: '--chart-user-line',
+                  chartAvgFill: '--chart-avg-fill',
+                  chartAvgLine: '--chart-avg-line',
+                  chartGridLight: '--chart-grid-light',
+                  chartGridDark: '--chart-grid-dark'
+                };
+                var hexToRgb = function(hex) {
+                  if (!hex) return null;
+                  var raw = String(hex).trim().replace(/^#/, '');
+                  if (raw.length === 3) {
+                    raw = raw[0] + raw[0] + raw[1] + raw[1] + raw[2] + raw[2];
+                  }
+                  if (raw.length !== 6) return null;
+                  var r = parseInt(raw.slice(0, 2), 16);
+                  var g = parseInt(raw.slice(2, 4), 16);
+                  var b = parseInt(raw.slice(4, 6), 16);
+                  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+                  return r + ' ' + g + ' ' + b;
+                };
+                var buildOverrideCss = function(mode, record) {
+                  if (!record || typeof record !== 'object') return '';
+                  var rows = [];
+                  for (var key in record) {
+                    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+                    var cssVar = TOKEN_TO_VAR[key];
+                    if (!cssVar) continue;
+                    var rgb = hexToRgb(record[key]);
+                    if (!rgb) continue;
+                    rows.push('  ' + cssVar + ': ' + rgb + ';');
+                    if (key === 'accent') {
+                      rows.push('  --primary: ' + rgb + ';');
+                    }
+                    if (key === 'accentStrong') {
+                      rows.push('  --primary-strong: ' + rgb + ';');
+                    }
+                  }
+                  if (!rows.length) return '';
+                  var selector = mode === 'dark' ? 'html.dark' : 'html.light';
+                  return selector + ' {\\n' + rows.join('\\n') + '\\n}';
+                };
+                var overridesRaw = localStorage.getItem('theme-overrides');
+                if (overridesRaw) {
+                  try {
+                    var overrides = JSON.parse(overridesRaw) || {};
+                    var cssLight = buildOverrideCss('light', overrides.light);
+                    var cssDark = buildOverrideCss('dark', overrides.dark);
+                    var cssText = [cssLight, cssDark].filter(Boolean).join('\\n');
+                    if (cssText) {
+                      var styleEl = document.getElementById('theme-overrides-style');
+                      if (!styleEl) {
+                        styleEl = document.createElement('style');
+                        styleEl.id = 'theme-overrides-style';
+                        document.head.appendChild(styleEl);
+                      }
+                      styleEl.textContent = cssText;
+                    }
+                  } catch (err) {
+                    console.warn('[theme] preload overrides failed', err);
+                  }
+                }
               } catch (_) {}
             })();
           `,

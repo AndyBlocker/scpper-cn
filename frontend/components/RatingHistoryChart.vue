@@ -11,9 +11,7 @@
           ]"
           title="显示/隐藏创建的页面"
         >
-          <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
+          <LucideIcon name="FileText" class="w-4 h-4 inline mr-1" />
           页面标记
         </button>
       </div>
@@ -75,6 +73,7 @@ import {
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import 'chartjs-adapter-date-fns'
 import { zhCN } from 'date-fns/locale'
+import { formatDateUtc8 } from '~/utils/timezone'
 
 // Register all necessary Chart.js components
 ChartJS.register(
@@ -415,6 +414,21 @@ const createChart = () => {
   const dangerStrong = toRGB(cs.getPropertyValue('--danger-strong')) || '220,38,38'
   const slate400 = toRGB(cs.getPropertyValue('--slate-400')) || '148,163,184'
   const slate500 = toRGB(cs.getPropertyValue('--slate-500')) || '100,116,139'
+  const fg = toRGB(cs.getPropertyValue('--fg')) || '23,23,23'
+  const muted = toRGB(cs.getPropertyValue('--muted')) || '110,118,129'
+  const mutedStrong = toRGB(cs.getPropertyValue('--muted-strong')) || '55,65,81'
+  const panel = toRGB(cs.getPropertyValue('--panel')) || '255,255,255'
+  const panelBorder = toRGB(cs.getPropertyValue('--panel-border')) || '224,231,240'
+  const gridBase = toRGB(cs.getPropertyValue(isDark ? '--chart-grid-dark' : '--chart-grid-light')) || (isDark ? '255,255,255' : '0,0,0')
+  const gridColor = `rgba(${gridBase},0.08)`
+  const zeroLineColor = `rgba(${muted},0.6)`
+  const tickColor = `rgb(${muted})`
+  const axisTitleColor = `rgb(${mutedStrong})`
+  const legendColor = `rgb(${mutedStrong})`
+  const tooltipBackground = `rgba(${panel},${isDark ? 0.96 : 0.93})`
+  const tooltipTitleColor = `rgb(${fg})`
+  const tooltipBodyColor = `rgb(${muted})`
+  const tooltipBorderColor = `rgba(${panelBorder},0.55)`
   
   // 准备数据 - 使用实际日期作为x轴
   let chartData = props.data.map(item => {
@@ -693,7 +707,7 @@ const createChart = () => {
         display: true,
         position: 'top' as const,
         labels: {
-          color: isDark ? '#d1d5db' : '#374151',
+          color: legendColor,
           font: { size: 11 },
           boxWidth: 10,
           filter: function(item) {
@@ -703,10 +717,10 @@ const createChart = () => {
         }
       },
       tooltip: {
-        backgroundColor: isDark ? '#1f2937' : '#ffffff',
-        titleColor: isDark ? '#f3f4f6' : '#111827',
-        bodyColor: isDark ? '#d1d5db' : '#4b5563',
-        borderColor: isDark ? '#374151' : '#e5e7eb',
+        backgroundColor: tooltipBackground,
+        titleColor: tooltipTitleColor,
+        bodyColor: tooltipBodyColor,
+        borderColor: tooltipBorderColor,
         borderWidth: 1,
         bodyFont: { size: 11 },
         titleFont: { size: 12 },
@@ -728,7 +742,7 @@ const createChart = () => {
             const xVal = (raw.x != null) ? raw.x : (item.parsed && item.parsed.x)
             if (!xVal) return ''
             const date = new Date(xVal)
-            return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+            return formatDateUtc8(date, { year: 'numeric', month: 'short', day: 'numeric' }) || ''
           },
           label: function(context) {
             if (showPages.value) return ''
@@ -782,15 +796,12 @@ const createChart = () => {
         min: paddedMin,
         max: paddedMax,
         grid: {
-          color: (ctx: any) => {
-            const c = isDark ? '#374151' : '#e5e7eb'
-            return c
-          },
+          color: () => gridColor,
         },
         ticks: {
           // Ensure exact daily alignment (UTC) and centered bars at day ticks
           source: 'data' as any,
-          color: isDark ? '#9ca3af' : '#6b7280',
+          color: tickColor,
           maxRotation: 45,
           minRotation: 0,
           autoSkip: true,
@@ -805,20 +816,17 @@ const createChart = () => {
         title: {
           display: true,
           text: '投票数',
-          color: isDark ? '#9ca3af' : '#6b7280',
+          color: axisTitleColor,
         },
         // 使用固定的min/max确保0点对齐
         min: adjustedBarMin,
         max: adjustedBarMax,
         grid: {
-          color: (ctx: any) => {
-            const c = isDark ? '#374151' : '#e5e7eb'
-            return ctx.tick.value === 0 ? (isDark ? '#9ca3af' : '#9ca3af') : c
-          },
+          color: (ctx: any) => (ctx.tick.value === 0 ? zeroLineColor : gridColor),
           lineWidth: (ctx: any) => ctx.tick.value === 0 ? 2 : 1,
         },
         ticks: {
-          color: isDark ? '#9ca3af' : '#6b7280',
+          color: tickColor,
           stepSize: (adjustedBarMax - adjustedBarMin) <= 20 ? 1 : undefined,
           callback: function(value) {
             // 只显示整数刻度
@@ -837,21 +845,18 @@ const createChart = () => {
         title: {
           display: true,
           text: '累计评分',
-          color: isDark ? '#9ca3af' : '#6b7280',
+          color: axisTitleColor,
         },
         // 使用固定的min/max确保0点对齐
         min: adjustedLineMin,
         max: adjustedLineMax,
         grid: {
           drawOnChartArea: false,
-          color: (ctx: any) => {
-            const c = isDark ? '#374151' : '#e5e7eb'
-            return ctx.tick.value === 0 ? (isDark ? '#9ca3af' : '#9ca3af') : c
-          },
+          color: (ctx: any) => (ctx.tick.value === 0 ? zeroLineColor : gridColor),
           lineWidth: (ctx: any) => ctx.tick.value === 0 ? 2 : 1,
         },
         ticks: {
-          color: isDark ? '#9ca3af' : '#6b7280',
+          color: tickColor,
           stepSize: (adjustedLineMax - adjustedLineMin) <= 20 ? 1 : undefined,
           callback: function(value) {
             // 只显示整数刻度

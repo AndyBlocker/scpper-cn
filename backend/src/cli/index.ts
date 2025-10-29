@@ -8,6 +8,7 @@ import { sync } from './sync.js';
 import { query } from './query.js';
 import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 import { runDailySiteOverview } from '../jobs/DailySiteOverviewJob.js';
+import { TrackingRetentionJob } from '../jobs/TrackingRetentionJob.js';
 import { disconnectPrisma, getPrismaClient } from '../utils/db-connection.js';
 import { validateUserStats } from '../jobs/ValidationJob.js';
 import { Logger } from '../utils/Logger.js';
@@ -102,6 +103,24 @@ program
       translation: `${r.translation_count_actual}/${Math.round(r.translation_rating_actual)}`,
       overall: `${r.overall_pages_actual}/${Math.round(r.overall_rating_actual)}`
     })), ['userId','wikidotId','name','scp','story','goi','wanderers','art','translation','overall']);
+  });
+
+program
+  .command('tracking-retention')
+  .description('删除超出保留窗口的 tracking 数据（PageViewEvent / UserPixelEvent）')
+  .option('--days <n>', '保留天数，默认 75', '75')
+  .option('--batch <n>', '单次删除条数上限，默认 10000', '10000')
+  .option('--dry-run', '仅统计待删除数量，不执行删除')
+  .action(async (options) => {
+    const job = new TrackingRetentionJob();
+    const parsedDays = Number.parseInt(String(options.days ?? ''), 10);
+    const parsedBatch = Number.parseInt(String(options.batch ?? ''), 10);
+    await job.run({
+      retentionDays: Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : undefined,
+      batchSize: Number.isFinite(parsedBatch) && parsedBatch > 0 ? parsedBatch : undefined,
+      dryRun: Boolean(options.dryRun)
+    });
+    await disconnectPrisma();
   });
 
 program

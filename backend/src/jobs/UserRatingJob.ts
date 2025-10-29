@@ -23,6 +23,7 @@ export class UserRatingSystem {
       INSERT INTO "UserStats" (
         "userId", 
         "totalUp", "totalDown", "totalRating",
+        "votesCastUp", "votesCastDown",
         "scpRating", "scpPageCount",
         "translationRating", "translationPageCount",
         "goiRating", "goiPageCount",
@@ -34,6 +35,7 @@ export class UserRatingSystem {
       SELECT 
         u.id,
         0, 0, 0,
+        0, 0,
         0, 0,
         0, 0,
         0, 0,
@@ -60,10 +62,13 @@ export class UserRatingSystem {
       // 第一步：计算所有用户的rating
       await this.calculateUserRatings();
       
-      // 第二步：计算排名
+      // 第二步：刷新投票统计
+      await this.updateUserVoteTotals();
+      
+      // 第三步：计算排名
       await this.calculateRankings();
       
-      // 第三步：更新时间戳
+      // 第四步：更新时间戳
       await this.updateTimestamps();
       
       console.log('✅ 用户Rating和Ranking更新完成');
@@ -177,6 +182,63 @@ export class UserRatingSystem {
     `);
 
     console.log('✅ 用户rating计算完成');
+  }
+
+  /**
+   * 基于 LatestVote 视图预先计算用户投票统计
+   * - votesCast*: 用户发出的最新票数汇总
+   * - totalUp/totalDown: 用户收到的最新票数汇总
+   */
+  private async updateUserVoteTotals(): Promise<void> {
+    console.log('🗳️ 计算用户投票汇总...');
+    await this.prisma.$executeRawUnsafe(`
+      WITH votes_cast AS (
+        SELECT 
+          v."userId" AS "userId",
+          COUNT(*) FILTER (WHERE v.direction > 0) AS votes_cast_up,
+          COUNT(*) FILTER (WHERE v.direction < 0) AS votes_cast_down
+        FROM "LatestVote" v
+        WHERE v."userId" IS NOT NULL
+        GROUP BY v."userId"
+      ),
+      votes_received_source AS (
+        SELECT DISTINCT
+          lv.id,
+          a."userId",
+          lv.direction
+        FROM "LatestVote" lv
+        JOIN "Attribution" a ON a."pageVerId" = lv."pageVersionId"
+        WHERE a."userId" IS NOT NULL
+      ),
+      votes_received AS (
+        SELECT 
+          vr."userId",
+          COUNT(*) FILTER (WHERE vr.direction > 0) AS votes_received_up,
+          COUNT(*) FILTER (WHERE vr.direction < 0) AS votes_received_down
+        FROM votes_received_source vr
+        GROUP BY vr."userId"
+      ),
+      combined AS (
+        SELECT 
+          us."userId",
+          COALESCE(vc.votes_cast_up, 0)::int AS votes_cast_up,
+          COALESCE(vc.votes_cast_down, 0)::int AS votes_cast_down,
+          COALESCE(vr.votes_received_up, 0)::int AS votes_received_up,
+          COALESCE(vr.votes_received_down, 0)::int AS votes_received_down
+        FROM "UserStats" us
+        LEFT JOIN votes_cast vc ON vc."userId" = us."userId"
+        LEFT JOIN votes_received vr ON vr."userId" = us."userId"
+      )
+      UPDATE "UserStats" us
+      SET 
+        "votesCastUp" = combined.votes_cast_up,
+        "votesCastDown" = combined.votes_cast_down,
+        "totalUp" = combined.votes_received_up,
+        "totalDown" = combined.votes_received_down
+      FROM combined
+      WHERE us."userId" = combined."userId"
+    `);
+    console.log('✅ 用户投票汇总更新完成');
   }
 
   /**

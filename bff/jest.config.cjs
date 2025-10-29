@@ -8,6 +8,10 @@ module.exports = {
     '^\\./routes/(.*)\\.js$': '<rootDir>/src/web/routes/$1.ts',
     '^\\./pageImagesConfig\\.js$': '<rootDir>/src/web/pageImagesConfig.ts',
     '^\\.\\./pageImagesConfig\\.js$': '<rootDir>/src/web/pageImagesConfig.ts',
-    '^\\.\\./utils/preview\\.js$': '<rootDir>/src/web/utils/preview.ts'
+    '^\\.\\./utils/preview\\.js$': '<rootDir>/src/web/utils/preview.ts',
+    '^\\.\\./utils/cache\\.js$': '<rootDir>/src/web/utils/cache.ts',
+    '^\\.\\./utils/auth\\.js$': '<rootDir>/src/web/utils/auth.ts',
+    '^\\./utils/cache\\.js$': '<rootDir>/src/web/utils/cache.ts',
+    '^\\./utils/auth\\.js$': '<rootDir>/src/web/utils/auth.ts'
   }
 };

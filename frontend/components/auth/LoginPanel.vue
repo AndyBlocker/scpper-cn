@@ -46,9 +46,7 @@
           class="flex w-full items-center justify-center gap-2 rounded-xl bg-[rgb(var(--accent))] px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_45px_rgba(10,132,255,0.35)] transition-all hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(10,132,255,0.45)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(var(--accent),0.6)] disabled:opacity-60 disabled:cursor-not-allowed dark:focus:ring-offset-neutral-950"
           :disabled="!canSubmit || isSubmitting"
         >
-          <svg v-if="isSubmitting" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v4m0 8v4m8-8h-4M8 12H4m12.364-6.364l-2.828 2.828M9.172 14.828l-2.828 2.828m0-11.656l2.828 2.828m8.486 8.486l2.828 2.828" />
-          </svg>
+          <LucideIcon v-if="isSubmitting" name="Loader2" class="h-4 w-4 animate-spin" stroke-width="2" />
           <span>{{ isSubmitting ? '登录中…' : '登录' }}</span>
         </button>
 

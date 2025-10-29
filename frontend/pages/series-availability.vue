@@ -61,6 +61,7 @@
 </template>
 
 <script setup lang="ts">
+import { formatDateIsoUtc8 } from '~/utils/timezone'
 type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>;
 
 type SeriesAvailability = {
@@ -87,9 +88,8 @@ const series = computed(() => (data.value || [])
 
 function formatDate(d: string | Date): string {
   try {
-    const dt = typeof d === 'string' ? new Date(d) : d;
-    if (!dt || Number.isNaN(dt.getTime())) return '';
-    return dt.toISOString().split('T')[0];
+    const formatted = formatDateIsoUtc8(d);
+    return formatted || '';
   } catch {
     return '';
   }

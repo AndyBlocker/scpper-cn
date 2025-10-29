@@ -1,56 +1,46 @@
 <template>
-  <div class="relative min-h-screen overflow-x-hidden bg-[#f6f7fb] dark:bg-[#0b0d12] text-neutral-900 dark:text-neutral-100">
+  <div class="relative min-h-screen overflow-x-hidden app-shell">
     <div
       aria-hidden="true"
-      class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(10,132,255,0.18),_transparent_58%)] dark:bg-[radial-gradient(circle_at_top,_rgba(64,156,255,0.25),_rgba(11,13,18,0.92)_62%)]"
+      class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgb(var(--hero-glow)_/_0.18),_transparent_60%)] dark:bg-[radial-gradient(circle_at_top,_rgb(var(--hero-glow)_/_0.24),_rgba(11,13,18,0.92)_62%)]"
     ></div>
     <div class="relative z-10 flex min-h-screen flex-col">
-      <header ref="appHeaderRef" class="sticky top-0 z-50 border border-white/60 bg-white/70 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/65 dark:shadow-[0_14px_40px_rgba(0,0,0,0.45)]">
+      <header ref="appHeaderRef" class="sticky top-0 z-50 app-header border-b border-[rgb(var(--nav-border)_/_0.45)] bg-[rgb(var(--nav-bg)_/_0.86)] shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
         <div class="max-w-7xl mx-auto flex items-center gap-3 px-4 py-4 sm:gap-6">
           <div class="flex items-center gap-3">
             <!-- Mobile menu button (sidebar) -->
             <button
               type="button"
-              class="inline-flex items-center justify-center sm:hidden h-10 w-10 rounded-full border border-neutral-200/80 bg-white/80 text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-300"
+              class="inline-flex items-center justify-center sm:hidden h-10 w-10 rounded-full border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.88)] text-[rgb(var(--muted-strong))] shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition hover:border-[rgb(var(--accent)_/_0.45)] hover:text-[rgb(var(--accent))]"
               aria-label="打开菜单"
               title="打开菜单"
               @click="openSidebar"
             >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
+              <LucideIcon name="Menu" class="w-5 h-5" />
             </button>
 
             <!-- Mobile brand/logo + title link -->
             <NuxtLink to="/" class="sm:hidden inline-flex items-center gap-2 group" aria-label="返回主页" title="返回主页">
-              <BrandIcon class="w-7 h-7 text-neutral-900 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))] transition-colors" />
-              <span class="font-bold text-base text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
+              <BrandIcon class="w-7 h-7 text-[rgb(var(--fg))] group-hover:text-[rgb(var(--accent))] transition-colors" />
+              <span class="font-bold text-base text-[rgb(var(--fg))] group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
             </NuxtLink>
 
             <!-- Desktop brand + primary nav -->
             <div class="hidden sm:flex items-center gap-4 whitespace-nowrap">
             <NuxtLink to="/" class="flex items-center gap-2 group">
-              <BrandIcon class="w-8 h-8 text-neutral-900 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))] transition-colors" />
-              <span class="hidden sm:inline font-bold text-lg text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
+              <BrandIcon class="w-8 h-8 text-[rgb(var(--fg))] group-hover:text-[rgb(var(--accent))] transition-colors" />
+              <span class="hidden sm:inline font-bold text-lg text-[rgb(var(--fg))] group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
             </NuxtLink>
-            <NuxtLink to="/ranking" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
-              <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 13h4v7H4v-7zm6-6h4v13h-4V7zm6 3h4v10h-4V10z" />
-              </svg>
+            <NuxtLink to="/ranking" class="inline-flex items-center gap-1 text-sm text-[rgb(var(--muted-strong))] hover:text-[rgb(var(--accent))] whitespace-nowrap">
+              <LucideIcon name="ChartBar" class="w-5 h-5 sm:w-4 sm:h-4" />
               <span class="hidden sm:inline">排行</span>
             </NuxtLink>
-            <NuxtLink to="/tools" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
-              <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h4v4H4zM10 6h4v4h-4zM16 6h4v4h-4zM4 12h4v4H4zM10 12h4v4h-4zM16 12h4v4h-4z" />
-              </svg>
+            <NuxtLink to="/tools" class="inline-flex items-center gap-1 text-sm text-[rgb(var(--muted-strong))] hover:text-[rgb(var(--accent))] whitespace-nowrap">
+              <LucideIcon name="Hammer" class="w-5 h-5 sm:w-4 sm:h-4" />
               <span class="hidden sm:inline">工具</span>
             </NuxtLink>
-            <NuxtLink to="/about" class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))] whitespace-nowrap">
-              <svg class="w-5 h-5 sm:w-4 sm:h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="12" cy="12" r="9" stroke-width="2" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8h.01" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12v4" />
-              </svg>
+            <NuxtLink to="/about" class="inline-flex items-center gap-1 text-sm text-[rgb(var(--muted-strong))] hover:text-[rgb(var(--accent))] whitespace-nowrap">
+              <LucideIcon name="Info" class="w-5 h-5 sm:w-4 sm:h-4" />
               <span class="hidden sm:inline">关于</span>
             </NuxtLink>
             </div>
@@ -63,9 +53,7 @@
               aria-label="打开搜索"
               title="打开搜索"
             >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+              <LucideIcon name="Search" class="w-5 h-5" />
             </button>
             <form class="relative hidden flex-1 max-w-md sm:block" @submit.prevent="onSearch">
               <input
@@ -76,23 +64,21 @@
                 @blur="handleBlur"
                 @keydown="handleKeyDown"
                 placeholder="搜索页面 / 用户 / 标签…"
-                class="w-full bg-white/80 dark:bg-neutral-900/70 border border-neutral-200 dark:border-neutral-800 rounded-full px-5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all backdrop-blur placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+                class="w-full rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.92)] px-5 py-2.5 text-sm text-[rgb(var(--fg))] shadow-[0_12px_30px_rgba(15,23,42,0.08)] outline-none focus:border-transparent focus:ring-2 focus:ring-[rgb(var(--accent)_/_0.45)] transition-all backdrop-blur placeholder:text-[rgb(var(--muted)_/_0.68)]"
               />
               <button type="submit" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[rgb(var(--accent-strong))] hover:text-[rgb(var(--accent))] p-1">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
+                <LucideIcon name="Search" class="w-5 h-5" />
               </button>
-              <div v-if="showSuggestions" class="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
-                <div v-if="suggestionsLoading" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">搜索中...</div>
-                <div v-else-if="suggestions.length === 0 && q.length >= 2" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">没有找到相关结果</div>
+              <div v-if="showSuggestions" class="absolute top-full left-0 right-0 mt-1 z-50 max-h-96 overflow-y-auto rounded-lg border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.98)] shadow-[0_26px_64px_rgba(15,23,42,0.18)] backdrop-blur">
+                <div v-if="suggestionsLoading" class="p-3 text-sm text-[rgb(var(--muted))]">搜索中...</div>
+                <div v-else-if="suggestions.length === 0 && q.length >= 2" class="p-3 text-sm text-[rgb(var(--muted))]">没有找到相关结果</div>
                 <div v-else>
                   <div
                     v-for="group in suggestionGroups"
                     :key="group.type"
                     class="py-1 first:pt-0"
                   >
-                    <div class="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+                    <div class="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--muted)_/_0.7)]">
                       {{ group.label }}
                     </div>
                     <a
@@ -101,22 +87,22 @@
                       :href="entry.item.href"
                       @click.prevent="selectSuggestion(entry.item)"
                       @mouseenter="selectedIndex = entry.index"
-                      class="block px-4 py-2 hover:bg-[rgba(var(--accent),0.08)] dark:hover:bg-[rgba(var(--accent),0.20)] cursor-pointer transition-colors"
-                      :class="{ 'bg-[rgba(var(--accent),0.08)] dark:bg-[rgba(var(--accent),0.20)]': selectedIndex === entry.index }"
+                      class="block px-4 py-2 hover:bg-[rgb(var(--accent)_/_0.12)] cursor-pointer transition-colors"
+                      :class="{ 'bg-[rgb(var(--accent)_/_0.12)]': selectedIndex === entry.index }"
                     >
                       <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0 flex-1">
-                          <div class="font-medium text-sm text-neutral-800 dark:text-neutral-200 truncate">
+                          <div class="font-medium text-sm text-[rgb(var(--fg))] truncate">
                             <span>{{ entry.item.title }}</span>
-                            <span v-if="entry.item.subtitle" class="text-neutral-500 dark:text-neutral-400"> - {{ entry.item.subtitle }}</span>
+                            <span v-if="entry.item.subtitle" class="text-[rgb(var(--muted))]"> - {{ entry.item.subtitle }}</span>
                           </div>
                           <div
                             v-if="entry.item.snippet"
-                            class="mt-1 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400"
+                            class="mt-1 text-xs leading-relaxed text-[rgb(var(--muted)_/_0.85)]"
                             v-html="entry.item.snippet"
                           ></div>
                         </div>
-                        <span class="ml-2 shrink-0 rounded-full border border-[rgba(var(--accent),0.25)] bg-[rgba(var(--accent),0.08)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))] dark:border-[rgba(var(--accent),0.35)] dark:bg-[rgba(var(--accent),0.18)]">
+                        <span class="ml-2 shrink-0 rounded-full border border-[rgb(var(--accent)_/_0.28)] bg-[rgb(var(--accent)_/_0.1)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))]">
                           {{ entry.item.badge }}
                         </span>
                       </div>
@@ -125,21 +111,17 @@
                 </div>
               </div>
             </form>
-            <!-- Theme toggle hidden on mobile, moved to sidebar -->
             <button
-              @click="toggleTheme"
-              :class="[iconButtonBaseClass, 'hidden sm:inline-flex']"
               type="button"
-              aria-label="切换主题"
-              title="切换主题"
+              :class="[iconButtonBaseClass, 'hidden sm:inline-flex']"
+              :aria-label="themeToggleLabel"
+              :title="themeToggleLabel"
+              @click="toggleThemeMode"
             >
-              <svg v-if="currentTheme === 'dark'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v2m0 14v2m4.22-12.22l1.42-1.42M6.34 17.66l-1.42 1.42M21 12h-2M5 12H3m12.66 5.66l1.42 1.42M6.34 6.34L4.92 4.92M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-              <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-              </svg>
+              <LucideIcon v-if="themeMode === 'dark'" name="Sun" class="h-5 w-5" stroke-width="1.8" />
+              <LucideIcon v-else name="Moon" class="h-5 w-5" stroke-width="1.8" />
             </button>
+            <!-- Theme toggle hidden on mobile, available via sidebar -->
             <div v-if="isAuthenticated && hasLinkedWikidot" class="relative">
               <button
                 ref="alertsButtonRef"
@@ -148,9 +130,7 @@
                 :class="['relative', iconButtonBaseClass]"
                 aria-label="查看提醒"
               >
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.172V11a6 6 0 10-12 0v3.172a2 2 0 01-.6 1.428L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                </svg>
+                <LucideIcon name="Bell" class="h-5 w-5" stroke-width="1.8" />
                 <span
                   v-if="alertsHasUnread"
                   class="absolute -top-0.5 -right-0.5 inline-flex min-w-[18px] justify-center rounded-full bg-[rgb(var(--accent))] px-1 text-[10px] font-semibold leading-5 text-white shadow"
@@ -160,10 +140,10 @@
                 <div
                   v-if="isAlertsDropdownOpen"
                   ref="alertsDropdownRef"
-                  class="absolute right-0 mt-3 w-80 max-w-[80vw] max-h-[70vh] overflow-y-auto overscroll-contain rounded-2xl border border-neutral-200/80 bg-white/95 p-4 shadow-xl backdrop-blur dark:border-neutral-700/60 dark:bg-neutral-900/95"
+                  class="absolute right-0 mt-3 w-80 max-w-[80vw] max-h-[70vh] overflow-y-auto overscroll-contain rounded-2xl border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.96)] p-4 shadow-xl backdrop-blur"
                 >
                   <div class="flex items-center justify-between gap-3">
-                    <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">信息提醒</h3>
+                    <h3 class="text-sm font-semibold text-[rgb(var(--fg))]">信息提醒</h3>
                     <button
                       v-if="alertsHasUnread"
                       type="button"
@@ -171,13 +151,13 @@
                       @click="handleMarkAllAlerts"
                     >全部已读</button>
                   </div>
-                  <div v-if="alertsLoading" class="py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">加载中…</div>
-                  <div v-else-if="alertItems.length === 0" class="py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">暂无提醒</div>
+                  <div v-if="alertsLoading" class="py-6 text-center text-xs text-[rgb(var(--muted))]">加载中…</div>
+                  <div v-else-if="alertItems.length === 0" class="py-6 text-center text-xs text-[rgb(var(--muted))]">暂无提醒</div>
                   <ul v-else class="mt-3 space-y-3">
                     <li
                       v-for="item in alertItems"
                       :key="item.id"
-                      class="rounded-xl border border-neutral-200/70 bg-neutral-50/80 transition hover:border-[rgba(var(--accent),0.35)] hover:bg-white dark:border-neutral-700/60 dark:bg-neutral-800/70 dark:hover:border-[rgba(var(--accent),0.4)]"
+                      class="rounded-xl border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.88)] transition hover:border-[rgb(var(--accent)_/_0.35)] hover:bg-[rgb(var(--panel)_/_0.95)]"
                     >
                       <button
                         type="button"
@@ -186,26 +166,26 @@
                         @click="handleAlertNavigate(item)"
                       >
                         <div class="flex items-center justify-between gap-2">
-                          <span class="max-w-[70%] truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                          <span class="max-w-[70%] truncate text-sm font-medium text-[rgb(var(--fg))]">
                             {{ item.pageTitle || '未知页面' }}
                           </span>
-                          <span class="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">
+                          <span class="shrink-0 text-[10px] text-[rgb(var(--muted)_/_0.85)]">
                             {{ formatAlertTime(item.detectedAt) }}
                           </span>
                         </div>
-                        <div class="mt-1 text-xs text-neutral-600 dark:text-neutral-300">
+                        <div class="mt-1 text-xs text-[rgb(var(--muted))]">
                           {{ metricLabel(item.metric) }}变动
                           <span
                             v-if="formatAlertDelta(item)"
                             class="ml-1 font-semibold"
                             :class="{
-                              'text-green-600 dark:text-green-400': (item.diffValue || 0) > 0,
-                              'text-red-500 dark:text-red-400': (item.diffValue || 0) < 0
+                              'text-[rgb(var(--success-strong))]': (item.diffValue || 0) > 0,
+                              'text-[rgb(var(--danger-strong))]': (item.diffValue || 0) < 0
                             }"
                           >{{ formatAlertDelta(item) }}</span>
-                          <span v-if="item.newValue != null" class="ml-2 text-[11px] text-neutral-500 dark:text-neutral-400">当前：{{ Math.round(Number(item.newValue)) }}</span>
+                          <span v-if="item.newValue != null" class="ml-2 text-[11px] text-[rgb(var(--muted)_/_0.8)]">当前：{{ Math.round(Number(item.newValue)) }}</span>
                         </div>
-                        <div v-if="item.pageAlternateTitle" class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                        <div v-if="item.pageAlternateTitle" class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.8)] truncate">
                           {{ item.pageAlternateTitle }}
                         </div>
                       </button>
@@ -219,10 +199,10 @@
                 </div>
               </transition>
             </div>
-           <div v-if="isAuthenticated" class="hidden sm:flex items-center gap-2">
+            <div v-if="isAuthenticated" class="hidden sm:flex items-center gap-2">
               <NuxtLink
                 to="/account"
-                class="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 text-sm font-medium text-neutral-700 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-200"
+                class="inline-flex h-10 items-center gap-2 rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.9)] px-4 text-sm font-medium text-[rgb(var(--fg))] shadow-[0_12px_30px_rgba(15,23,42,0.1)] transition hover:border-[rgb(var(--accent)_/_0.35)] hover:text-[rgb(var(--accent))]"
               >
                 <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" />
                 <span class="hidden lg:inline">{{ authUser?.displayName || authUser?.email }}</span>
@@ -231,7 +211,7 @@
             <div v-else class="hidden sm:flex items-center gap-2">
               <NuxtLink
                 to="/auth/login"
-                class="inline-flex h-10 items-center rounded-full border border-neutral-200/80 bg-white/80 px-4 text-sm font-semibold text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-300"
+                class="inline-flex h-10 items-center rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.88)] px-4 text-sm font-semibold text-[rgb(var(--muted-strong))] shadow-[0_12px_30px_rgba(15,23,42,0.1)] transition hover:border-[rgb(var(--accent)_/_0.35)] hover:text-[rgb(var(--accent))]"
               >登录</NuxtLink>
             </div>
           </div>
@@ -243,42 +223,39 @@
         <div v-if="isSidebarOpen" class="fixed inset-0 z-[70]">
           <div class="absolute inset-0 bg-neutral-950/60" @click="closeSidebar" />
           <div class="absolute left-0 top-0 h-full w-80 max-w-[85vw]">
-            <div ref="sidebarRef" class="h-full border-r border-white/60 dark:border-white/10 bg-white/90 dark:bg-neutral-900/95 backdrop-blur-xl shadow-2xl rounded-r-2xl overflow-hidden flex flex-col">
-              <div class="px-4 py-4 flex items-center justify-between border-b border-neutral-200/70 dark:border-neutral-800/60 bg-[radial-gradient(circle_at_top,_rgba(10,132,255,0.10),_transparent_70%)] dark:bg-[radial-gradient(circle_at_top,_rgba(64,156,255,0.18),_transparent_70%)]">
+            <div ref="sidebarRef" class="h-full border-r border-[rgb(var(--sidebar-border)_/_0.55)] bg-[rgb(var(--sidebar-bg)_/_0.95)] backdrop-blur-xl shadow-2xl rounded-r-2xl overflow-hidden flex flex-col">
+              <div class="px-4 py-4 flex items-center justify-between border-b border-[rgb(var(--sidebar-border)_/_0.45)] bg-[radial-gradient(circle_at_top,_rgb(var(--hero-glow)_/_0.12),_transparent_70%)]">
                 <NuxtLink to="/" @click="closeSidebar" class="inline-flex items-center gap-2 group">
-                  <BrandIcon class="w-7 h-7 text-neutral-900 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]" />
-                  <span class="font-bold text-neutral-800 dark:text-neutral-100 group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
+                  <BrandIcon class="w-7 h-7 text-[rgb(var(--fg))] group-hover:text-[rgb(var(--accent))]" />
+                  <span class="font-bold text-[rgb(var(--fg))] group-hover:text-[rgb(var(--accent))]">SCPPER-CN</span>
                 </NuxtLink>
-                <button type="button" class="p-2 rounded-lg text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/60 dark:hover:bg-neutral-800/60" @click="closeSidebar" aria-label="关闭菜单">
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                <button type="button" class="p-2 rounded-lg text-[rgb(var(--muted-strong))] hover:bg-[rgb(var(--panel)_/_0.18)]" @click="closeSidebar" aria-label="关闭菜单">
+                  <LucideIcon name="X" class="w-5 h-5" />
                 </button>
               </div>
 
               <nav class="flex-1 px-3 py-3 overflow-y-auto">
                 <NuxtLink to="/ranking" @click="closeSidebar" class="nav-item">
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 13h4v7H4v-7zm6-6h4v13h-4V7zm6 3h4v10h-4V10z"/></svg>
+                  <LucideIcon name="ChartBar" class="w-5 h-5" />
                   <span>排行</span>
                 </NuxtLink>
                 <NuxtLink to="/tools" @click="closeSidebar" class="nav-item">
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h4v4H4zM10 6h4v4h-4zM16 6h4v4h-4zM4 12h4v4H4zM10 12h4v4h-4zM16 12h4v4h-4z"/></svg>
+                  <LucideIcon name="Hammer" class="w-5 h-5" />
                   <span>工具</span>
                 </NuxtLink>
                 <NuxtLink to="/about" @click="closeSidebar" class="nav-item">
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8h.01"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12v4"/></svg>
+                  <LucideIcon name="Info" class="w-5 h-5" />
                   <span>关于</span>
                 </NuxtLink>
               </nav>
 
-              <!-- Sidebar bottom controls: account + theme -->
-              <div class="px-4 py-3 border-t border-neutral-200/70 dark:border-neutral-800/60">
+              <div class="px-4 py-3 border-t border-[rgb(var(--sidebar-border)_/_0.45)]">
                 <div class="flex items-center justify-between gap-3">
                   <div class="min-w-0">
                     <template v-if="isAuthenticated">
                       <NuxtLink to="/account" @click="closeSidebar" class="inline-flex items-center gap-2">
-                <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" class="ring-1 ring-neutral-200 dark:ring-neutral-700" />
-                        <span class="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[10rem]">{{ authUser?.displayName || authUser?.email }}</span>
+                        <UserAvatar :wikidot-id="avatarIdHeader" :name="authUser?.displayName || authUser?.email || ''" :size="28" class="ring-1 ring-[rgb(var(--panel-border)_/_0.55)]" />
+                        <span class="text-sm font-medium text-[rgb(var(--fg))] truncate max-w-[10rem]">{{ authUser?.displayName || authUser?.email }}</span>
                       </NuxtLink>
                     </template>
                     <template v-else>
@@ -287,44 +264,20 @@
                       </NuxtLink>
                     </template>
                   </div>
-                  <button type="button" @click="toggleTheme" :class="iconButtonBaseClass" aria-label="切换主题" title="切换主题">
-                    <svg v-if="currentTheme === 'dark'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v2m0 14v2m4.22-12.22l1.42-1.42M6.34 17.66l-1.42 1.42M21 12h-2M5 12H3m12.66 5.66l1.42 1.42M6.34 6.34L4.92 4.92M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                    </svg>
-                    <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-                    </svg>
+                  <button
+                    type="button"
+                    :class="iconButtonBaseClass"
+                    :aria-label="themeToggleLabel"
+                    :title="themeToggleLabel"
+                    @click="toggleThemeMode"
+                  >
+                    <LucideIcon v-if="themeMode === 'dark'" name="Sun" class="h-5 w-5" stroke-width="1.8" />
+                    <LucideIcon v-else name="Moon" class="h-5 w-5" stroke-width="1.8" />
                   </button>
-                </div>
-                <div class="mt-3">
-                  <div class="text-[10px] uppercase tracking-wide text-neutral-500 dark:text-neutral-400">配色方案</div>
-                  <div class="mt-2 grid grid-cols-2 gap-2">
-                    <button
-                      v-for="scheme in colorSchemes"
-                      :key="scheme.key"
-                      type="button"
-                      @click="setColorScheme(scheme.key)"
-                      :aria-pressed="currentScheme === scheme.key"
-                      :class="[
-                        'flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition shadow-sm',
-                        currentScheme === scheme.key
-                          ? 'border-[rgba(var(--accent),0.45)] bg-white/90 text-[rgb(var(--accent))] dark:border-[rgba(var(--accent),0.45)] dark:bg-neutral-900/70'
-                          : 'border-neutral-200 bg-white/70 text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300'
-                      ]"
-                      :title="scheme.name"
-                    >
-                      <span
-                        class="inline-flex h-4 w-4 rounded-full border border-white/70 shadow-inner"
-                        :style="{ background: scheme.gradient }"
-                        aria-hidden="true"
-                      ></span>
-                      <span class="truncate">{{ scheme.name }}</span>
-                    </button>
-                  </div>
                 </div>
               </div>
 
-              <div class="px-4 py-3 text-[11px] text-neutral-500 dark:text-neutral-400 border-t border-neutral-200/70 dark:border-neutral-800/60">© {{ new Date().getFullYear() }} SCPPER-CN</div>
+              <div class="px-4 py-3 text-[11px] text-[rgb(var(--muted)_/_0.75)] border-t border-[rgb(var(--sidebar-border)_/_0.45)]">© {{ new Date().getFullYear() }} SCPPER-CN</div>
             </div>
           </div>
         </div>
@@ -333,7 +286,7 @@
       <div v-if="isMobileSearchOpen" class="fixed inset-0 z-[70]">
         <div class="absolute inset-0 bg-neutral-950/60" @click="closeMobileSearch" />
         <div class="absolute inset-0 flex flex-col">
-          <div class="border-b border-white/50 bg-white/80 backdrop-blur dark:border-white/10 dark:bg-neutral-900/80">
+          <div class="border-b border-[rgb(var(--nav-border)_/_0.4)] bg-[rgb(var(--nav-bg)_/_0.9)] backdrop-blur">
             <div class="max-w-7xl mx-auto flex items-center gap-2 px-4 py-3">
               <form class="relative flex-1" @submit.prevent="onSearch">
                 <input
@@ -342,37 +295,33 @@
                   @input="handleInput"
                   @keydown="handleKeyDown"
                   placeholder="搜索页面 / 用户 / 标签…"
-                  class="w-full bg-white/85 dark:bg-neutral-900/70 border border-neutral-200 dark:border-neutral-800 rounded-full px-5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all backdrop-blur placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+                  class="w-full rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.92)] px-5 py-2.5 text-sm text-[rgb(var(--fg))] shadow-[0_12px_30px_rgba(15,23,42,0.12)] outline-none focus:border-transparent focus:ring-2 focus:ring-[rgb(var(--accent)_/_0.45)] transition-all backdrop-blur placeholder:text-[rgb(var(--muted)_/_0.68)]"
                 />
                 <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 text-[rgb(var(--accent-strong))] hover:text-[rgb(var(--accent))] p-1">
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
+                  <LucideIcon name="Search" class="w-5 h-5" />
                 </button>
               </form>
               <button
                 @click="closeMobileSearch"
-                class="p-2 bg-white/80 dark:bg-neutral-800/80 border border-white/60 dark:border-white/10 rounded-lg text-neutral-700 dark:text-neutral-300"
+                class="p-2 rounded-lg border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.9)] text-[rgb(var(--muted-strong))] shadow-[0_10px_26px_rgba(15,23,42,0.12)]"
                 aria-label="关闭搜索"
                 title="关闭搜索"
               >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <LucideIcon name="X" class="w-5 h-5" />
               </button>
             </div>
           </div>
-          <div class="flex-1 overflow-y-auto bg-white/85 backdrop-blur dark:bg-neutral-900/85">
+          <div class="flex-1 overflow-y-auto bg-[rgb(var(--nav-bg)_/_0.92)] backdrop-blur">
             <div class="max-w-7xl mx-auto px-4 py-2">
-              <div v-if="suggestionsLoading" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">搜索中...</div>
-              <div v-else-if="suggestions.length === 0 && q.length >= 2" class="p-3 text-sm text-neutral-500 dark:text-neutral-400">没有找到相关结果</div>
+              <div v-if="suggestionsLoading" class="p-3 text-sm text-[rgb(var(--muted))]">搜索中...</div>
+              <div v-else-if="suggestions.length === 0 && q.length >= 2" class="p-3 text-sm text-[rgb(var(--muted))]">没有找到相关结果</div>
               <div v-else>
                 <div
                   v-for="group in suggestionGroups"
                   :key="group.type"
                   class="py-1 first:pt-0"
                 >
-                  <div class="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+                  <div class="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--muted)_/_0.7)]">
                     {{ group.label }}
                   </div>
                   <a
@@ -381,22 +330,22 @@
                     :href="entry.item.href"
                     @click.prevent="selectSuggestion(entry.item)"
                     @mouseenter="selectedIndex = entry.index"
-                    class="block px-4 py-3 border-b border-neutral-200/70 dark:border-neutral-800/70 hover:bg-[rgba(var(--accent),0.08)] dark:hover:bg-[rgba(var(--accent),0.20)] transition-colors"
-                    :class="{ 'bg-[rgba(var(--accent),0.08)] dark:bg-[rgba(var(--accent),0.20)]': selectedIndex === entry.index }"
+                    class="block px-4 py-3 border-b border-[rgb(var(--panel-border)_/_0.35)] hover:bg-[rgb(var(--accent)_/_0.12)] transition-colors"
+                    :class="{ 'bg-[rgb(var(--accent)_/_0.12)]': selectedIndex === entry.index }"
                   >
                     <div class="flex items-start justify-between gap-3">
                       <div class="min-w-0 flex-1">
-                        <div class="font-medium text-sm text-neutral-800 dark:text-neutral-200 truncate">
+                        <div class="font-medium text-sm text-[rgb(var(--fg))] truncate">
                           <span>{{ entry.item.title }}</span>
-                          <span v-if="entry.item.subtitle" class="text-neutral-500 dark:text-neutral-400"> - {{ entry.item.subtitle }}</span>
+                          <span v-if="entry.item.subtitle" class="text-[rgb(var(--muted))]"> - {{ entry.item.subtitle }}</span>
                         </div>
                         <div
                           v-if="entry.item.snippet"
-                          class="mt-1 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400"
+                          class="mt-1 text-xs leading-relaxed text-[rgb(var(--muted)_/_0.85)]"
                           v-html="entry.item.snippet"
                         ></div>
                       </div>
-                      <span class="ml-2 shrink-0 rounded-full border border-[rgba(var(--accent),0.25)] bg-[rgba(var(--accent),0.08)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))] dark:border-[rgba(var(--accent),0.35)] dark:bg-[rgba(var(--accent),0.18)]">
+                      <span class="ml-2 shrink-0 rounded-full border border-[rgb(var(--accent)_/_0.28)] bg-[rgb(var(--accent)_/_0.1)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))]">
                         {{ entry.item.badge }}
                       </span>
                     </div>
@@ -413,7 +362,7 @@
           <slot />
         </div>
       </main>
-      <footer class="mt-auto border-t border-white/60 bg-white/60 py-6 text-center text-xs text-neutral-500 backdrop-blur dark:border-white/10 dark:bg-neutral-900/60">© {{ new Date().getFullYear() }} SCPPER-CN</footer>
+      <footer class="mt-auto app-footer py-6 text-center text-xs backdrop-blur">© {{ new Date().getFullYear() }} SCPPER-CN</footer>
     </div>
   </div>
 </template>
@@ -425,6 +374,7 @@ import { useNuxtApp, navigateTo, useHead } from 'nuxt/app'
 import { useRoute } from 'vue-router'
 import UserAvatar from '~/components/UserAvatar.vue'
 import { useAuth } from '~/composables/useAuth'
+import { useThemeSettings } from '~/composables/useThemeSettings'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
@@ -435,9 +385,10 @@ useHead({
 })
 const q = ref('');
 const appHeaderRef = ref<HTMLElement | null>(null)
+const isClient = typeof window !== 'undefined'
 
 function updateHeaderOffset() {
-  if (!process.client) return
+  if (!isClient) return
   const h = appHeaderRef.value?.offsetHeight || 0
   document.documentElement.style.setProperty('--app-header-h', `${h}px`)
 }
@@ -511,74 +462,15 @@ const avatarIdHeader = computed(() => {
   return '0'
 })
 
-// 主题状态
-const currentTheme = ref('dark');
-const colorSchemes = [
-  { key: 'aurora', name: 'Aurora 蓝', gradient: 'linear-gradient(135deg, #0A84FF, #40A4FF)' },
-  { key: 'emerald', name: 'Fresh 绿', gradient: 'linear-gradient(135deg, #059669, #34D399)' },
-  { key: 'indigo', name: 'Ocean 靛蓝', gradient: 'linear-gradient(135deg, #4F46E5, #6366F1)' },
-  { key: 'rose', name: 'Sakura 粉', gradient: 'linear-gradient(135deg, #F43F5E, #FB7185)' },
-  { key: 'amber', name: 'Sunset 琥珀', gradient: 'linear-gradient(135deg, #F59E0B, #FBBF24)' },
-  { key: 'violet', name: 'Violet 紫', gradient: 'linear-gradient(135deg, #8B5CF6, #A78BFA)' }
-] as const
-const currentScheme = ref('aurora')
+// 主题设置
+const { initialize: initializeThemeSettings, themeMode, toggleThemeMode } = useThemeSettings();
+
+const themeToggleLabel = computed(() =>
+  themeMode.value === 'dark' ? '切换到浅色模式' : '切换到深色模式'
+);
 
 const iconButtonBaseClass =
-  'inline-flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200/80 bg-white/80 text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:shadow-md hover:text-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] focus:ring-offset-0 dark:border-neutral-700/70 dark:bg-neutral-800/70 dark:text-neutral-300 dark:hover:border-[rgba(var(--accent),0.4)] dark:hover:shadow-md dark:hover:text-[rgb(var(--accent))]';
-
-const applyTheme = (mode: string) => {
-  if (process.client) {
-    const root = document.documentElement;
-    if (mode === 'light') {
-      root.classList.remove('dark');
-      root.classList.add('light');
-    } else {
-      root.classList.remove('light');
-      root.classList.add('dark');
-    }
-    localStorage.setItem('theme', mode);
-    currentTheme.value = mode;
-  }
-};
-
-function applyColorScheme(scheme: string, persist = true) {
-  if (!process.client) return
-  const available = colorSchemes.some((item) => item.key === scheme) ? scheme : 'aurora'
-  const root = document.documentElement
-  Array.from(root.classList).forEach((cls) => {
-    if (cls && cls.startsWith('scheme-')) root.classList.remove(cls)
-  })
-  root.classList.add(`scheme-${available}`)
-  if (persist) {
-    try { localStorage.setItem('color-scheme', available) } catch (error) {
-      console.warn('[layout] persist color scheme failed', error)
-    }
-  }
-  currentScheme.value = available
-}
-
-function initializeColorScheme() {
-  if (!process.client) return
-  let stored = 'aurora'
-  try {
-    const raw = localStorage.getItem('color-scheme')
-    if (raw && colorSchemes.some((item) => item.key === raw)) {
-      stored = raw
-    }
-  } catch (error) {
-    console.warn('[layout] read stored color scheme failed', error)
-  }
-  applyColorScheme(stored, false)
-}
-
-const toggleTheme = () => {
-  const newTheme = currentTheme.value === 'light' ? 'dark' : 'light';
-  applyTheme(newTheme);
-};
-
-const setColorScheme = (scheme: string) => {
-  applyColorScheme(scheme, true)
-}
+  'inline-flex h-10 w-10 items-center justify-center rounded-full border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.9)] text-[rgb(var(--muted-strong))] shadow-[0_10px_28px_rgba(15,23,42,0.12)] transition hover:border-[rgb(var(--accent)_/_0.45)] hover:shadow-[0_14px_32px_rgba(15,23,42,0.16)] hover:text-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent)_/_0.35)] focus:ring-offset-0';
 
 const metricLabelMap: Record<AlertMetric, string> = {
   COMMENT_COUNT: '评论数',
@@ -634,7 +526,7 @@ const handleAlertNavigate = (item: AlertItem) => {
     navigateTo(`/page/${item.pageWikidotId}`);
     return;
   }
-  if (item.pageUrl && process.client) {
+  if (item.pageUrl && isClient) {
     window.open(item.pageUrl, '_blank', 'noopener');
     return;
   }
@@ -656,16 +548,7 @@ const handleAlertsDocumentClick = (event: MouseEvent) => {
 };
 
 onMounted(() => {
-  // 初始化主题
-  const saved = localStorage.getItem('theme') || 'dark';
-  
-  // 确保HTML元素有正确的类
-  const root = document.documentElement;
-  root.classList.remove('light', 'dark');
-  
-  applyTheme(saved);
-  initializeColorScheme();
-
+  initializeThemeSettings();
   document.addEventListener('mousedown', handleAlertsDocumentClick);
   document.addEventListener('keydown', handleGlobalKeydown);
   updateHeaderOffset()
@@ -693,7 +576,7 @@ onMounted(() => {
 
 const openMobileSearch = () => {
   isMobileSearchOpen.value = true;
-  if (process.client) document.body.style.overflow = 'hidden';
+  if (isClient) document.body.style.overflow = 'hidden';
   nextTick(() => {
     mobileInputRef.value?.focus();
   });
@@ -702,7 +585,7 @@ const openMobileSearch = () => {
 const closeMobileSearch = () => {
   isMobileSearchOpen.value = false;
   showSuggestions.value = false;
-  if (process.client && !isSidebarOpen.value) document.body.style.overflow = '';
+  if (isClient && !isSidebarOpen.value) document.body.style.overflow = '';
 };
 
 
@@ -713,15 +596,15 @@ const toggleMobileSearch = () => {
 
 const openSidebar = () => {
   isSidebarOpen.value = true;
-  if (process.client) document.body.style.overflow = 'hidden';
+  if (isClient) document.body.style.overflow = 'hidden';
 };
 const closeSidebar = () => {
   isSidebarOpen.value = false;
-  if (process.client && !isMobileSearchOpen.value) document.body.style.overflow = '';
+  if (isClient && !isMobileSearchOpen.value) document.body.style.overflow = '';
 };
 
 const focusSearchField = () => {
-  if (!process.client) return
+  if (!isClient) return
   const prefersMobile = window.innerWidth < 640
   if (prefersMobile) {
     if (!isMobileSearchOpen.value) {
@@ -905,7 +788,7 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
 };
 
 onBeforeUnmount(() => {
-  if (!process.client) return;
+  if (!isClient) return;
   document.removeEventListener('keydown', handleGlobalKeydown);
   document.removeEventListener('mousedown', handleAlertsDocumentClick);
   window.removeEventListener('resize', updateHeaderOffset)
@@ -929,7 +812,7 @@ watch([
 // GA: route change page_view
 const route = useRoute()
 watch(() => route.fullPath, (path) => {
-  if (!process.client) return
+  if (!isClient) return
   const w = window as unknown as { gtag?: (...args: any[]) => void }
   if (typeof w.gtag === 'function') {
     w.gtag('config', GA_ID, { page_path: path })
@@ -939,6 +822,21 @@ watch(() => route.fullPath, (path) => {
 </script>
 
 <style scoped>
+.app-shell {
+  background-color: rgb(var(--bg));
+  color: rgb(var(--fg));
+}
+.app-header {
+  border: 1px solid rgb(var(--nav-border) / 0.45);
+  background-color: rgb(var(--nav-bg) / 0.86);
+  color: inherit;
+}
+.app-footer {
+  border-top: 1px solid rgb(var(--panel-border) / 0.45);
+  background-color: rgb(var(--panel) / 0.6);
+  color: rgb(var(--muted));
+}
+
 /* Sidebar nav items */
 .nav-item {
   display: flex;
@@ -946,9 +844,11 @@ watch(() => route.fullPath, (path) => {
   gap: .5rem;
   padding: .625rem .75rem;
   border-radius: .5rem;
-  color: rgb(51 65 85);
+  color: rgb(var(--muted));
+  transition: background-color .2s ease, color .2s ease;
 }
-.dark .nav-item { color: rgb(209 213 219); }
-.nav-item:hover { background-color: rgba(2,6,23,0.06); }
-.dark .nav-item:hover { background-color: rgba(255,255,255,0.06); }
+.nav-item:hover {
+  background-color: rgb(var(--accent) / 0.12);
+  color: rgb(var(--accent));
+}
 </style>

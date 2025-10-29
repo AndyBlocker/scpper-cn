@@ -3,6 +3,7 @@ import { useNuxtApp, useState } from 'nuxt/app'
 import { useAuth } from '~/composables/useAuth'
 
 const STATE_KEY = 'viewer-vote-map'
+const isClient = typeof window !== 'undefined'
 
 interface VoteMap {
   [wikidotId: number]: number
@@ -23,7 +24,7 @@ export function useViewerVotes() {
   })
 
   async function ensureVotes(rawIds: Array<number | string | null | undefined>) {
-    if (!process.client) return {}
+    if (!isClient) return {}
     const viewerId = viewerWikidotId.value
     if (!viewerId) return {}
 
@@ -78,7 +79,7 @@ export function useViewerVotes() {
   }
 
   async function hydratePages(pages: Array<{ wikidotId?: number | string | null; viewerVote?: number | null }>) {
-    if (!process.client) return
+    if (!isClient) return
     if (!viewerWikidotId.value) return
     if (!Array.isArray(pages) || pages.length === 0) return
     const ids = pages

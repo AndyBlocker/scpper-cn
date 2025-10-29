@@ -320,7 +320,7 @@ const histogramBins = computed(() => {
   const binTotal = 100
   const min = Math.min(...counts)
   const max = Math.max(...counts)
-  const isProd = process.env.NODE_ENV === 'production'
+  const isProd = import.meta.env.PROD
   const isClient = typeof window !== 'undefined'
   if (isClient) {
     if (isProd) {
@@ -555,7 +555,7 @@ onMounted(() => {
 
 watch(() => histogramBins.value, (bins) => {
   const isClient = typeof window !== 'undefined'
-  const isProd = process.env.NODE_ENV === 'production'
+  const isProd = import.meta.env.PROD
   if (!isClient) return
   if (!bins || bins.length === 0) {
     console.log('[TagAnalytics] Histogram bins empty')

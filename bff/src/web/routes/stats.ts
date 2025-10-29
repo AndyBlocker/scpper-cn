@@ -1,116 +1,162 @@
 import { Router } from 'express';
-import type { Pool } from 'pg';
+import type { Pool, QueryResultRow } from 'pg';
 import type { RedisClientType } from 'redis';
+import { consola } from 'consola';
+import { createCache } from '../utils/cache.js';
 
-export function statsRouter(pool: Pool, _redis: RedisClientType | null) {
+export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	const router = Router();
+	const cache = createCache(redis);
+	const log = consola.withTag('stats');
+	const slowQueryThresholdMs = Number.isFinite(Number(process.env.STATS_QUERY_SLOW_MS))
+		? Number(process.env.STATS_QUERY_SLOW_MS)
+		: 200;
+
+	const timedQuery = async <T extends QueryResultRow = QueryResultRow>(
+		label: string,
+		sql: string,
+		params: any[] | undefined,
+		reqLabel: string
+	) => {
+		const start = process.hrtime.bigint();
+		try {
+			const result = await pool.query<T>(sql, params);
+			const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+			if (durationMs >= slowQueryThresholdMs) {
+				log.info(`[${reqLabel}] slow query ${label} ${durationMs.toFixed(1)}ms`);
+			} else {
+				log.debug(`[${reqLabel}] query ${label} ${durationMs.toFixed(1)}ms`);
+			}
+			return result;
+		} catch (error) {
+			const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+			log.error(`[${reqLabel}] query ${label} failed after ${durationMs.toFixed(1)}ms`, error);
+			throw error;
+		}
+	};
 
 	// GET /stats/site/latest
 	router.get('/site/latest', async (_req, res, next) => {
 		try {
-			const sql = `
-				SELECT 
-					s.date, 
-					s."totalUsers", 
-					s."activeUsers", -- 约定为近60天活跃
-					s."totalPages", 
-					s."totalVotes",
-					s."newUsersToday", 
-					s."newPagesToday", 
-					s."newVotesToday",
-					-- 参考口径：近30/60/90天活跃用户（基于当前日期）
-					(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '30 days') AS "activeUsers30",
-					(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '60 days') AS "activeUsers60",
-					(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '90 days') AS "activeUsers90"
-				FROM "SiteStats" s
-				ORDER BY s.date DESC
-				LIMIT 1
-			`;
-			const { rows } = await pool.query(sql);
-			if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-			res.json(rows[0]);
+			const data = await cache.remember('stats:site:latest', 180, async () => {
+				const reqLabel = `site.latest:${Date.now().toString(36)}`;
+				const sql = `
+					SELECT 
+						s.date, 
+						s."totalUsers", 
+						s."activeUsers", -- 约定为近60天活跃
+						s."totalPages", 
+						s."totalVotes",
+						s."newUsersToday", 
+						s."newPagesToday", 
+						s."newVotesToday",
+						-- 参考口径：近30/60/90天活跃用户（基于当前日期）
+						(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '30 days') AS "activeUsers30",
+						(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '60 days') AS "activeUsers60",
+						(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '90 days') AS "activeUsers90"
+					FROM "SiteStats" s
+					ORDER BY s.date DESC
+					LIMIT 1
+				`;
+				const { rows } = await timedQuery('site.latest base', sql, undefined, reqLabel);
+				return rows[0] ?? null;
+			});
+			if (!data) return res.status(404).json({ error: 'not_found' });
+			res.json(data);
 		} catch (err) {
 			next(err);
 		}
 	});
 
 	// GET /stats/site/overview
-	router.get('/site/overview', async (_req, res, next) => {
+	router.get('/site/overview', async (req, res, next) => {
 		try {
-			// Always compute all-time totals for overview display (full period)
-			const siteSql = `
-				SELECT 
-					date, 
-					"updatedAt",
-					"totalUsers", 
-					"activeUsers", 
-					"totalPages", 
-					"totalVotes"
-				FROM "SiteStats"
-				ORDER BY date DESC
-				LIMIT 1
-			`;
+			const payload = await cache.remember('stats:site:overview', 300, async () => {
+				const reqLabel = `site.overview:${Date.now().toString(36)}`;
+				const requestStart = process.hrtime.bigint();
+				// Always compute all-time totals for overview display (full period)
+				const siteSql = `
+					SELECT 
+						date, 
+						"updatedAt",
+						"totalUsers", 
+						"activeUsers", 
+						"totalPages", 
+						"totalVotes"
+					FROM "SiteStats"
+					ORDER BY date DESC
+					LIMIT 1
+				`;
 
-			const contributorsSql = `
-			  SELECT COUNT(DISTINCT u."userId")::int AS count FROM (
-			    SELECT r."userId" FROM "Revision" r WHERE r."userId" IS NOT NULL
-			    UNION
-			    SELECT a."userId" FROM "Attribution" a WHERE a."userId" IS NOT NULL
-			  ) u
-			`;
-			const authorsSql = `SELECT COUNT(DISTINCT a."userId")::int AS count FROM "Attribution" a JOIN "PageVersion" pv ON pv.id = a."pageVerId" WHERE a."userId" IS NOT NULL AND pv."validTo" IS NULL AND '原创' = ANY(pv.tags)`;
-			const pageOriginalsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND '原创' = ANY(pv.tags)`;
-			const pageTranslationsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND NOT ('原创' = ANY(pv.tags))`;
-			const votesPositiveSql = `
-				SELECT COUNT(*)::bigint AS count
-				FROM "Vote" v
-				JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-				WHERE v.direction > 0 AND pv."validTo" IS NULL AND pv."isDeleted" = false`;
-			const votesNegativeSql = `
-				SELECT COUNT(*)::bigint AS count
-				FROM "Vote" v
-				JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-				WHERE v.direction < 0 AND pv."validTo" IS NULL AND pv."isDeleted" = false`;
-			const revisionsTotalSql = `
-				SELECT COUNT(*)::bigint AS count
-				FROM "Revision" r
-				JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
-				WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
+				const contributorsSql = `
+				  SELECT COUNT(DISTINCT u."userId")::int AS count FROM (
+				    SELECT r."userId" FROM "Revision" r WHERE r."userId" IS NOT NULL
+				    UNION
+				    SELECT a."userId" FROM "Attribution" a WHERE a."userId" IS NOT NULL
+				  ) u
+				`;
+				const authorsSql = `SELECT COUNT(DISTINCT a."userId")::int AS count FROM "Attribution" a JOIN "PageVersion" pv ON pv.id = a."pageVerId" WHERE a."userId" IS NOT NULL AND pv."validTo" IS NULL AND '原创' = ANY(pv.tags)`;
+				const pageOriginalsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND '原创' = ANY(pv.tags)`;
+				const pageTranslationsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND NOT ('原创' = ANY(pv.tags))`;
+				const votesPositiveSql = `
+					SELECT COALESCE(SUM(ps.uv), 0)::bigint AS count
+					FROM "PageStats" ps
+					JOIN "PageVersion" pv ON ps."pageVersionId" = pv.id
+					WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
+				const votesNegativeSql = `
+					SELECT COALESCE(SUM(ps.dv), 0)::bigint AS count
+					FROM "PageStats" ps
+					JOIN "PageVersion" pv ON ps."pageVersionId" = pv.id
+					WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
+				const revisionsTotalSql = `
+					SELECT COUNT(*)::bigint AS count
+					FROM "Revision" r
+					JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+					WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
 
-			const [siteRow, contributorsRow, authorsRow, originalsRow, translationsRow, votesPosRow, votesNegRow, revisionsRow] = await Promise.all([
-				pool.query(siteSql).then(r => r.rows[0] || null),
-				pool.query(contributorsSql).then(r => r.rows[0] || { count: 0 }),
-				pool.query(authorsSql).then(r => r.rows[0] || { count: 0 }),
-				pool.query(pageOriginalsSql).then(r => r.rows[0] || { count: 0 }),
-				pool.query(pageTranslationsSql).then(r => r.rows[0] || { count: 0 }),
-				pool.query(votesPositiveSql).then(r => r.rows[0] || { count: 0n }),
-				pool.query(votesNegativeSql).then(r => r.rows[0] || { count: 0n }),
-				pool.query(revisionsTotalSql).then(r => r.rows[0] || { count: 0n })
-			]);
+				const [siteRow, contributorsRow, authorsRow, originalsRow, translationsRow, votesPosRow, votesNegRow, revisionsRow] = await Promise.all([
+					timedQuery('site-overview site', siteSql, undefined, reqLabel).then(r => r.rows[0] || null),
+					timedQuery('site-overview contributors', contributorsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
+					timedQuery('site-overview authors', authorsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
+					timedQuery('site-overview page-originals', pageOriginalsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
+					timedQuery('site-overview page-translations', pageTranslationsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
+					timedQuery('site-overview votes-positive', votesPositiveSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n }),
+					timedQuery('site-overview votes-negative', votesNegativeSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n }),
+					timedQuery('site-overview revisions-total', revisionsTotalSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n })
+				]);
 
-			if (!siteRow) return res.status(404).json({ error: 'not_found' });
+				if (!siteRow) return null;
 
-			const upvotes = Number(votesPosRow.count || 0);
-			const downvotes = Number(votesNegRow.count || 0);
-			const totalVotes = upvotes + downvotes;
+				const upvotes = Number(votesPosRow.count || 0);
+				const downvotes = Number(votesNegRow.count || 0);
+				const totalVotes = upvotes + downvotes;
 
-			return res.json({
-				date: siteRow.date,
-				updatedAt: siteRow.updatedAt,
-				users: {
-					total: siteRow.totalUsers || 0,
-					active: siteRow.activeUsers || 0,
-					contributors: Number(contributorsRow.count || 0),
-					authors: Number(authorsRow.count || 0)
-				},
-				pages: {
-					total: siteRow.totalPages || 0,
-					originals: Number(originalsRow.count || 0),
-					translations: Number(translationsRow.count || 0)
-				},
-				votes: { total: totalVotes, upvotes, downvotes },
-				revisions: { total: Number(revisionsRow.count || 0) }
+				const totalDurationMs = Number(process.hrtime.bigint() - requestStart) / 1e6;
+				if (totalDurationMs >= slowQueryThresholdMs) {
+					log.info(`[${reqLabel}] completed /stats/site/overview in ${totalDurationMs.toFixed(1)}ms`);
+				}
+
+				return {
+					date: siteRow.date,
+					updatedAt: siteRow.updatedAt,
+					users: {
+						total: siteRow.totalUsers || 0,
+						active: siteRow.activeUsers || 0,
+						contributors: Number(contributorsRow.count || 0),
+						authors: Number(authorsRow.count || 0)
+					},
+					pages: {
+						total: siteRow.totalPages || 0,
+						originals: Number(originalsRow.count || 0),
+						translations: Number(translationsRow.count || 0)
+					},
+					votes: { total: totalVotes, upvotes, downvotes },
+					revisions: { total: Number(revisionsRow.count || 0) }
+				};
 			});
+
+			if (!payload) return res.status(404).json({ error: 'not_found' });
+			return res.json(payload);
 		} catch (err) {
 			next(err);
 		}
@@ -122,26 +168,29 @@ export function statsRouter(pool: Pool, _redis: RedisClientType | null) {
 			const { startDate, endDate, limit = '365', offset = '0' } = req.query as Record<string, string>;
 			const defaultStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 			const effectiveStart = (startDate && startDate.trim()) ? startDate : defaultStart;
-			const sql = `
-				SELECT date,
-				       "usersTotal", "usersActive", "usersContributors", "usersAuthors",
-				       "pagesTotal", "pagesOriginals", "pagesTranslations",
-				       "votesUp", "votesDown", "revisionsTotal"
-				FROM "SiteOverviewDaily"
-				WHERE ($1::date IS NULL OR date >= $1::date)
-				  AND ($2::date IS NULL OR date <= $2::date)
-				ORDER BY date ASC
-				LIMIT $3::int OFFSET $4::int
-			`;
-			const params = [effectiveStart, endDate || null, limit, offset];
-			const { rows } = await pool.query(sql, params);
-			const mapped = rows.map((r: any) => ({
-				date: r.date,
-				users: { total: r.usersTotal, active: r.usersActive, contributors: r.usersContributors, authors: r.usersAuthors },
-				pages: { total: r.pagesTotal, originals: r.pagesOriginals, translations: r.pagesTranslations },
-				votes: { total: (r.votesUp || 0) + (r.votesDown || 0), upvotes: r.votesUp, downvotes: r.votesDown },
-				revisions: { total: r.revisionsTotal }
-			}));
+			const cacheKey = `stats:site:overview:series:${effectiveStart || 'auto'}:${endDate || 'null'}:${limit}:${offset}`;
+			const mapped = await cache.remember(cacheKey, 300, async () => {
+				const sql = `
+					SELECT date,
+					       "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+					       "pagesTotal", "pagesOriginals", "pagesTranslations",
+					       "votesUp", "votesDown", "revisionsTotal"
+					FROM "SiteOverviewDaily"
+					WHERE ($1::date IS NULL OR date >= $1::date)
+					  AND ($2::date IS NULL OR date <= $2::date)
+					ORDER BY date ASC
+					LIMIT $3::int OFFSET $4::int
+				`;
+				const params = [effectiveStart, endDate || null, limit, offset];
+				const { rows } = await pool.query(sql, params);
+				return rows.map((r: any) => ({
+					date: r.date,
+					users: { total: r.usersTotal, active: r.usersActive, contributors: r.usersContributors, authors: r.usersAuthors },
+					pages: { total: r.pagesTotal, originals: r.pagesOriginals, translations: r.pagesTranslations },
+					votes: { total: (r.votesUp || 0) + (r.votesDown || 0), upvotes: r.votesUp, downvotes: r.votesDown },
+					revisions: { total: r.revisionsTotal }
+				}));
+			});
 			res.json(mapped);
 		} catch (err) {
 			next(err);
@@ -153,15 +202,19 @@ export function statsRouter(pool: Pool, _redis: RedisClientType | null) {
 		try {
 			const { date } = req.query as Record<string, string>;
 			if (!date) return res.status(400).json({ error: 'date is required' });
-			const sql = `
-				SELECT date, "totalUsers", "activeUsers", "totalPages", "totalVotes",
-				       "newUsersToday", "newPagesToday", "newVotesToday"
-				FROM "SiteStats"
-				WHERE date = $1::date
-			`;
-			const { rows } = await pool.query(sql, [date]);
-			if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-			res.json(rows[0]);
+			const cacheKey = `stats:site:by-date:${date}`;
+			const row = await cache.remember(cacheKey, 600, async () => {
+				const sql = `
+					SELECT date, "totalUsers", "activeUsers", "totalPages", "totalVotes",
+					       "newUsersToday", "newPagesToday", "newVotesToday"
+					FROM "SiteStats"
+					WHERE date = $1::date
+				`;
+				const { rows } = await pool.query(sql, [date]);
+				return rows[0] ?? null;
+			});
+			if (!row) return res.status(404).json({ error: 'not_found' });
+			res.json(row);
 		} catch (err) {
 			next(err);
 		}
@@ -381,18 +434,43 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 			}
 			if (!targetId) return res.status(404).json({ error: 'not_found' });
 
-			const { rows } = await pool.query(
-				`SELECT ps."uv", ps."dv", ps."wilson95", ps."controversy", ps."likeRatio"
-				   FROM "PageStats" ps
-				  WHERE ps."pageVersionId" = $1`,
-				[targetId]
-			);
-			if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-			res.json(rows[0]);
-		} catch (err) {
-			next(err);
-		}
-	});
+				const { rows: statsRows } = await pool.query(
+					`SELECT ps."uv", ps."dv", ps."wilson95", ps."controversy", ps."likeRatio"
+					   FROM "PageStats" ps
+					  WHERE ps."pageVersionId" = $1`,
+					[targetId]
+				);
+				const statsRow = statsRows[0] ?? {
+					uv: null,
+					dv: null,
+					wilson95: null,
+					controversy: null,
+					likeRatio: null
+				};
+
+				const aggregateRes = await pool.query(
+					`SELECT
+					       COALESCE(SUM(views), 0)::int AS "totalViews",
+					       COALESCE(
+						       SUM(
+							       CASE
+								       WHEN date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date
+									       THEN views
+								       ELSE 0
+							       END
+						       ),
+						       0
+					       )::int AS "todayViews"
+					  FROM "PageDailyStats"
+					  WHERE "pageId" = $1`,
+					[pageId]
+				);
+					const aggregate = aggregateRes.rows[0] ?? { totalViews: 0, todayViews: 0 };
+					res.json({ ...statsRow, ...aggregate, hasStats: Boolean(statsRows[0]) });
+			} catch (err) {
+				next(err);
+			}
+		});
 
 	// GET /stats/pages/:wikidotId/daily
 	router.get('/pages/:wikidotId/daily', async (req, res, next) => {
@@ -404,7 +482,7 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 			const pageId = pageRes.rows[0].id;
 			const sql = `
 				SELECT date, "votes_up" AS "votesUp", "votes_down" AS "votesDown", "total_votes" AS "totalVotes",
-				       "unique_voters" AS "uniqueVoters", revisions
+				       "unique_voters" AS "uniqueVoters", revisions, COALESCE(views, 0)::int AS "views"
 				FROM "PageDailyStats" pds
 				WHERE pds."pageId" = $1
 				  AND ($2::date IS NULL OR pds.date >= $2::date)

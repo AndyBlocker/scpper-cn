@@ -6,6 +6,15 @@ jest.mock('pg', () => {
 		if (sql.includes('COUNT(*)') && sql.includes('FROM "PageVersion"')) {
 			return [{ _count: 42 }];
 		}
+		if (sql.includes('FROM "Page"') && sql.includes('"wikidotId"')) {
+			return [{ id: 999 }];
+		}
+		if (sql.includes('FROM "PageVersion"') && sql.includes('"validTo" IS NULL')) {
+			return [{ id: 555, isDeleted: false }];
+		}
+		if (sql.includes('FROM "PageVersion"') && sql.includes('"isDeleted" = false') && sql.includes('"validFrom"')) {
+			return [{ id: 556 }];
+		}
 		if (
 			(sql.includes('FROM "UserStats"') && sql.includes('overallRank') && sql.includes('ORDER BY us."overallRank"')) ||
 			(sql.includes('FROM "User" u') && sql.includes('JOIN "UserStats" us') && sql.includes('ORDER BY'))
@@ -15,7 +24,7 @@ jest.mock('pg', () => {
 				{ id: 2, displayName: 'Bob', rank: 2, overallRating: '100.00' }
 			];
 		}
-		if (sql.includes('FROM "SiteStats"') && sql.includes('ORDER BY date DESC')) {
+		if (sql.includes('FROM "SiteStats"') && sql.includes('ORDER BY s.date DESC')) {
 			return [{ date: '2025-08-23', totalUsers: 1000, activeUsers: 100, totalPages: 5000, totalVotes: 123456, newUsersToday: 5, newPagesToday: 10, newVotesToday: 200 }];
 		}
 		if (sql.includes('FROM "SeriesStats"')) {
@@ -24,10 +33,13 @@ jest.mock('pg', () => {
 		if (sql.includes('FROM "PageStats"')) {
 			return [{ uv: 200, dv: 50, wilson95: 0.9, controversy: 0.1, likeRatio: 0.8 }];
 		}
+		if (sql.includes('SUM(views)') && sql.includes('"totalViews"')) {
+			return [{ totalViews: 4321, todayViews: 12 }];
+		}
 		if (sql.includes('FROM "PageDailyStats"')) {
 			return [
-				{ date: '2025-08-20', votesUp: 10, votesDown: 2, totalVotes: 12, uniqueVoters: 11, revisions: 1 },
-				{ date: '2025-08-21', votesUp: 15, votesDown: 4, totalVotes: 19, uniqueVoters: 18, revisions: 0 }
+				{ date: '2025-08-20', votesUp: 10, votesDown: 2, totalVotes: 12, uniqueVoters: 11, revisions: 1, views: 98 },
+				{ date: '2025-08-21', votesUp: 15, votesDown: 4, totalVotes: 19, uniqueVoters: 18, revisions: 0, views: 120 }
 			];
 		}
 		if (sql.includes('FROM "Vote"') && sql.includes('"lastVote"')) {
@@ -71,8 +83,9 @@ describe('Aggregate/Users/Stats routes', () => {
 	test('GET /users/by-rank returns ranked users', async () => {
 		const app = await createServer();
 		const res = await request(app).get('/users/by-rank?limit=2').expect(200);
-		expect(res.body[0].rank).toBe(1);
-		expect(res.body[0].displayName).toBe('Alice');
+		expect(Array.isArray(res.body.items)).toBe(true);
+		expect(res.body.items[0].rank).toBe(1);
+		expect(res.body.items[0].displayName).toBe('Alice');
 	});
 
 	test('GET /stats/site/latest returns latest site stats', async () => {
@@ -92,6 +105,8 @@ describe('Aggregate/Users/Stats routes', () => {
 		const app = await createServer();
 		const res = await request(app).get('/stats/pages/123').expect(200);
 		expect(res.body.uv).toBe(200);
+		expect(res.body.totalViews).toBe(4321);
+		expect(res.body.todayViews).toBe(12);
 	});
 
 	test('GET /stats/pages/:wikidotId/daily returns daily page stats', async () => {

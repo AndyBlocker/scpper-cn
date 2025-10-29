@@ -108,7 +108,7 @@
                 <div class="flex items-start justify-between">
                   <h3 class="text-lg font-semibold">绑定 Wikidot 账户</h3>
                   <button class="p-2 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200" @click="closeLinkModal">
-                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    <LucideIcon name="X" class="h-5 w-5" />
                   </button>
                 </div>
                 <div class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">目标账号：{{ targetAccount?.email }}</div>
@@ -332,4 +332,3 @@ onMounted(async () => {
 .fade-enter-active, .fade-leave-active { transition: opacity .15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>
-

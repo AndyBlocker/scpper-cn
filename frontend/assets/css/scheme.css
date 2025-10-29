@@ -8,6 +8,16 @@
     --muted-strong: 55 65 81;   /* slate-700 */
     --panel: 255 255 255;       /* white */
     --panel-border: 224 231 240;/* cool gray */
+    --nav-bg: 255 255 255;      /* header glass background */
+    --nav-border: 224 231 240;  /* header border */
+    --sidebar-bg: 255 255 255;  /* drawer background */
+    --sidebar-border: 224 231 240; /* drawer border */
+    --input-bg: 248 250 252;    /* input surface */
+    --input-border: 209 213 219;/* input border */
+    --tag-bg: 226 232 240;      /* badge background */
+    --tag-border: 203 213 225;  /* badge border */
+    --tag-text: 71 85 105;      /* badge text */
+    --hero-glow: 10 132 255;    /* hero gradient glow */
 
     /* brand / accent (macOS blue) */
     --accent: 10 132 255;       /* #0A84FF */
@@ -47,6 +57,16 @@
     --muted-strong: 118 131 146;/* slate-500 */
     --panel: 24 26 32;          /* near-neutral */
     --panel-border: 46 50 64;   /* cool dark */
+    --nav-bg: 18 20 28;         /* header glass background */
+    --nav-border: 38 42 56;     /* header border */
+    --sidebar-bg: 20 23 31;     /* drawer background */
+    --sidebar-border: 47 52 68; /* drawer border */
+    --input-bg: 30 34 44;       /* input surface */
+    --input-border: 63 72 96;   /* input border */
+    --tag-bg: 41 45 58;         /* badge background */
+    --tag-border: 70 78 100;    /* badge border */
+    --tag-text: 186 199 220;    /* badge text */
+    --hero-glow: 64 156 255;    /* hero gradient glow */
 
     --accent: 64 156 255;       /* #409CFF */
     --accent-strong: 10 132 255;/* #0A84FF */
@@ -125,6 +145,28 @@
     --accent: 167 139 250;      /* violet-400 */
     --accent-strong: 139 92 246;/* violet-500 */
     --accent-weak: 216 180 254; /* violet-200 */
+  }
+
+  html.scheme-sky {
+    --accent: 14 165 233;        /* sky-500 */
+    --accent-strong: 2 132 199;  /* sky-600 */
+    --accent-weak: 125 211 252;  /* sky-300 */
+  }
+  html.dark.scheme-sky {
+    --accent: 56 189 248;        /* sky-400 */
+    --accent-strong: 14 165 233; /* sky-500 */
+    --accent-weak: 186 230 253;  /* sky-200 */
+  }
+
+  html.scheme-crimson {
+    --accent: 220 38 38;         /* red-600 */
+    --accent-strong: 185 28 28;  /* red-700 */
+    --accent-weak: 248 113 113;  /* red-400 */
+  }
+  html.dark.scheme-crimson {
+    --accent: 248 113 113;       /* red-400 */
+    --accent-strong: 220 38 38;  /* red-600 */
+    --accent-weak: 252 165 165;  /* red-300 */
   }
 
   html.scheme-aurora {

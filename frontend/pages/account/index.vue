@@ -70,9 +70,7 @@
                 class="inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent))] px-4 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(10,132,255,0.3)] hover:-translate-y-0.5 transition disabled:opacity-60 disabled:cursor-not-allowed"
                 :disabled="displayNameSaving || displayNameValue.trim().length === 0"
               >
-                <svg v-if="displayNameSaving" class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v4m0 8v4m8-8h-4M8 12H4m12.364-6.364l-2.828 2.828M9.172 14.828l-2.828 2.828m0-11.656l2.828 2.828m8.486 8.486l2.828 2.828" />
-                </svg>
+                <LucideIcon v-if="displayNameSaving" name="Loader2" class="h-3.5 w-3.5 animate-spin" stroke-width="2" />
                 <span>{{ displayNameSaving ? '保存中…' : '保存' }}</span>
               </button>
             </div>
@@ -150,15 +148,27 @@
               @click.prevent.stop="handleRemoveFavoritePage(page.wikidotId)"
               aria-label="取消收藏"
             >
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <LucideIcon name="X" class="h-4 w-4" stroke-width="1.8" />
             </button>
           </div>
         </div>
       </div>
     </section> -->
 
+    </div>
+
+    <section v-show="activeTab === 'collections'" class="space-y-4">
+      <div
+        v-if="hasFavorites"
+        class="rounded-2xl border border-amber-200/70 bg-amber-50/80 px-5 py-4 text-sm text-amber-700 shadow-sm dark:border-amber-800/70 dark:bg-amber-900/25 dark:text-amber-200"
+      >
+        检测到你曾使用本地收藏功能。新版“收藏夹”支持云端同步与公开展示，可在下方快速整理；如需查看旧收藏，可在“资料”页的提示中继续访问。
+      </div>
+      <CollectionManager />
+    </section>
+
+    <div v-show="activeTab === 'appearance'">
+      <AppearanceSettings />
     </div>
 
     <section v-show="activeTab === 'alerts'" class="rounded-3xl border border-white/60 bg-white/80 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
@@ -236,19 +246,19 @@
       <div v-else class="mt-4 space-y-5">
         <!-- Follow alerts view -->
         <template v-if="alertSource === 'follow'">
-          <div class="flex items-center justify-between gap-3">
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">按页面聚合最近未读提醒</div>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="text-xs text-neutral-500 dark:text-neutral-400">最近 20 条关注提醒，按页面聚合展示。</div>
             <div class="flex items-center gap-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
+                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
                 :disabled="followCombinedLoading"
                 @click="() => fetchFollowCombined(true,20,0)"
               >{{ followCombinedLoading ? '刷新中…' : '刷新' }}</button>
               <button
                 v-if="followCombinedUnread > 0"
                 type="button"
-                class="inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent))] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(10,132,255,0.3)] hover:-translate-y-0.5 transition disabled:cursor-not-allowed disabled:opacity-60"
+                class="inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent))] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(10,132,255,0.3)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
                 :disabled="followCombinedLoading"
                 @click="markAllFollowRead"
               >全部已读</button>
@@ -261,42 +271,115 @@
             <li
               v-for="group in followCombined"
               :key="group.pageId"
-              class="rounded-2xl border border-neutral-200 bg-white/80 p-4 shadow-sm transition hover:border-[rgba(var(--accent),0.35)] hover:shadow-[0_15px_35px_rgba(15,23,42,0.12)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-[rgba(var(--accent),0.45)]"
+              :class="[
+                'rounded-2xl border p-5 shadow-sm transition',
+                followGroupUnreadCount(group) > 0
+                  ? 'border-[rgba(var(--accent),0.45)] bg-[rgba(var(--accent),0.1)] hover:border-[rgba(var(--accent),0.6)] dark:border-[rgba(var(--accent),0.55)] dark:bg-[rgba(var(--accent),0.18)] dark:hover:border-[rgba(var(--accent),0.7)]'
+                  : 'border-neutral-200 bg-white/80 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-600'
+              ]"
             >
-              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div class="space-y-1">
-                  <div class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                    {{ group.pageTitle || '未知页面' }}
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div class="space-y-2">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <NuxtLink
+                      v-if="group.pageWikidotId"
+                      :to="`/page/${group.pageWikidotId}`"
+                      class="text-sm font-semibold text-neutral-900 transition hover:text-[rgb(var(--accent))] dark:text-neutral-100 dark:hover:text-[rgb(var(--accent))]"
+                    >
+                      {{ group.pageTitle || '未知页面' }}
+                    </NuxtLink>
+                    <span
+                      v-else
+                      class="text-sm font-semibold text-neutral-900 dark:text-neutral-100"
+                    >
+                      {{ group.pageTitle || group.pageUrl || '未知页面' }}
+                    </span>
+                    <span
+                      v-if="group.pageWikidotId"
+                      class="inline-flex items-center rounded-full border border-neutral-200 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
+                    >
+                      Wikidot #{{ group.pageWikidotId }}
+                    </span>
                   </div>
                   <div v-if="group.pageAlternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
                     {{ group.pageAlternateTitle }}
                   </div>
-                  <div class="mt-2 flex flex-wrap gap-2">
-                    <span
-                      v-for="alert in group.alerts"
-                      :key="alert.id"
-                      class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/70 px-2 py-1 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
-                    >
-                      <span>
-                        {{ alert.type === 'REVISION' ? '修订' : (alert.type === 'ATTRIBUTION_REMOVED' ? '署名移除' : '署名') }}
-                      </span>
-                    </span>
-                  </div>
                 </div>
-                <div class="text-right text-xs text-neutral-500 dark:text-neutral-400 space-y-1">
-                  <div>{{ formatAlertTime(group.updatedAt) }}</div>
-          <div class="inline-flex items-center justify-center rounded-full bg-[rgba(var(--accent),0.12)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(var(--accent))]">
-            未读 {{ group.alerts.filter(a => !a.acknowledgedAt).length }}
-          </div>
+                <div class="flex flex-col items-end gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                  <span>{{ formatAlertTime(group.updatedAt) }}</span>
+                  <span
+                    class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                    :class="followGroupUnreadCount(group) > 0
+                      ? 'bg-[rgba(var(--accent),0.2)] text-[rgb(var(--accent))]'
+                      : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-300'"
+                  >
+                    {{ followGroupUnreadCount(group) > 0 ? `未读 ${followGroupUnreadCount(group)}` : '已全部阅读' }}
+                  </span>
                 </div>
               </div>
-              <div class="mt-3 flex items-center justify-between text-xs">
-                <NuxtLink
-                  v-if="group.pageWikidotId"
-                  :to="`/page/${group.pageWikidotId}`"
-                  class="inline-flex items-center gap-1 font-medium text-[rgb(var(--accent))] hover:underline"
-                >查看页面</NuxtLink>
-                <span v-else class="text-neutral-500 dark:text-neutral-400">—</span>
+              <div class="mt-4 space-y-2">
+                <div
+                  v-for="alert in group.alerts"
+                  :key="alert.id"
+                  class="rounded-xl border px-3 py-2"
+                  :class="alert.acknowledgedAt
+                    ? 'border-transparent bg-neutral-100/70 text-neutral-600 dark:bg-neutral-900/60 dark:text-neutral-300'
+                    : 'border-[rgba(var(--accent),0.35)] bg-white/90 text-neutral-700 shadow-sm dark:border-[rgba(var(--accent),0.55)] dark:bg-neutral-900/80 dark:text-neutral-100'"
+                >
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span
+                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold"
+                      :class="followAlertTypeAccentClass[alert.type]"
+                    >
+                      {{ followAlertTypeLabels[alert.type] ?? '提醒' }}
+                    </span>
+                    <span class="text-xs text-neutral-600 dark:text-neutral-300">
+                      <NuxtLink
+                        v-if="followAuthorLink(alert.targetUserId)"
+                        :to="followAuthorLink(alert.targetUserId) || ''"
+                        class="font-medium text-neutral-800 transition hover:text-[rgb(var(--accent))] dark:text-neutral-100 dark:hover:text-[rgb(var(--accent))]"
+                      >
+                        {{ followAuthorName(alert.targetUserId) }}
+                      </NuxtLink>
+                      <span v-else class="font-medium text-neutral-800 dark:text-neutral-100">{{ followAuthorName(alert.targetUserId) }}</span>
+                      <span class="text-neutral-500 dark:text-neutral-300"> {{ followAlertActionText[alert.type] }}</span>
+                    </span>
+                  </div>
+                  <div class="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    <span>提醒时间：{{ formatAlertTime(alert.detectedAt) }}</span>
+                    <span
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                      :class="alert.acknowledgedAt
+                        ? 'bg-neutral-200/70 text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300'
+                        : 'bg-[rgba(var(--accent),0.2)] text-[rgb(var(--accent))]'"
+                    >
+                      {{ followAlertStatusText(alert) }}
+                    </span>
+                    <span v-if="alert.acknowledgedAt">标记时间：{{ formatAlertTime(alert.acknowledgedAt) }}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+                <div class="flex flex-wrap items-center gap-3">
+                  <NuxtLink
+                    v-if="group.pageWikidotId"
+                    :to="`/page/${group.pageWikidotId}`"
+                    class="inline-flex items-center gap-1 font-medium text-[rgb(var(--accent))] hover:underline"
+                  >
+                    查看页面
+                  </NuxtLink>
+                  <a
+                    v-else-if="group.pageUrl"
+                    :href="group.pageUrl"
+                    target="_blank"
+                    rel="noopener"
+                    class="inline-flex items-center gap-1 font-medium text-[rgb(var(--accent))] hover:underline"
+                  >
+                    打开原链接
+                  </a>
+                  <span v-else>暂无页面链接</span>
+                </div>
+                <span class="text-[11px]">最近更新 · {{ formatAlertTime(group.updatedAt) }}</span>
               </div>
             </li>
           </ul>
@@ -654,7 +737,7 @@
         <div class="md:col-span-3 flex items-center justify-between pt-1">
           <p v-if="passwordMessage" :class="passwordMessageClass" class="text-xs">{{ passwordMessage }}</p>
           <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-neutral-900 disabled:opacity-60 disabled:cursor-not-allowed dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200" :disabled="passwordSaving || !passwordsValid">
-            <svg v-if="passwordSaving" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v4m0 8v4m8-8h-4M8 12H4m12.364-6.364l-2.828 2.828M9.172 14.828l-2.828 2.828m0-11.656l2.828 2.828m8.486 8.486l2.828 2.828" /></svg>
+            <LucideIcon v-if="passwordSaving" name="Loader2" class="h-4 w-4 animate-spin" stroke-width="2" />
             <span>{{ passwordSaving ? '修改中…' : '修改密码' }}</span>
           </button>
         </div>
@@ -666,12 +749,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { navigateTo } from 'nuxt/app'
+import { useRoute } from 'vue-router'
 import UserAvatar from '~/components/UserAvatar.vue'
 import PageCard from '~/components/PageCard.vue'
+import AppearanceSettings from '~/components/account/AppearanceSettings.vue'
+import CollectionManager from '~/components/collections/CollectionManager.vue'
 import { useAuth } from '~/composables/useAuth'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
-import { useFollowAlerts, type FollowCombinedGroup } from '~/composables/useFollowAlerts'
+import { useFollowAlerts, type FollowAlertItem, type FollowAlertType, type FollowCombinedGroup } from '~/composables/useFollowAlerts'
 import { useCombinedAlerts, type CombinedAlertGroup } from '~/composables/useCombinedAlerts'
 import { useFavorites } from '~/composables/useFavorites'
 import { useFollows } from '~/composables/useFollows'
@@ -712,15 +798,37 @@ const { combined: followCombined, combinedLoading: followCombinedLoading, combin
 const { favoritePages, removePageFavorite } = useFavorites()
 const { hydratePages: hydrateViewerVotes } = useViewerVotes()
 const { follows, loading: followsLoading, fetchFollows, unfollowUser } = useFollows()
+const isClient = typeof window !== 'undefined'
 
-type AccountTab = 'overview' | 'alerts' | 'follows' | 'security'
+type AccountTab = 'overview' | 'collections' | 'appearance' | 'alerts' | 'follows' | 'security'
 const accountTabs: Array<{ key: AccountTab; label: string }> = [
   { key: 'overview', label: '资料' },
+  { key: 'collections', label: '收藏夹' },
+  { key: 'appearance', label: '主题' },
   { key: 'alerts', label: '提醒' },
   { key: 'follows', label: '关注' },
   { key: 'security', label: '安全' }
 ]
 const activeTab = ref<AccountTab>('overview')
+const route = useRoute()
+
+const resolveTabFromQuery = (value: unknown): AccountTab | null => {
+  const raw = Array.isArray(value) ? value[0] : value
+  if (typeof raw !== 'string') return null
+  return accountTabs.some((tab) => tab.key === raw) ? raw as AccountTab : null
+}
+
+const initialTab = resolveTabFromQuery(route.query.tab)
+if (initialTab && initialTab !== activeTab.value) {
+  activeTab.value = initialTab
+}
+
+watch(() => route.query.tab, (next) => {
+  const resolved = resolveTabFromQuery(next)
+  if (resolved && resolved !== activeTab.value) {
+    activeTab.value = resolved
+  }
+})
 
 const favoritePageCards = computed(() => favoritePages.value.map((p) => ({
   wikidotId: p.id,
@@ -758,6 +866,13 @@ const followsDisplayList = computed(() => {
     return idA - idB
   })
 })
+const followAuthorMap = computed(() => {
+  const map = new Map<number, { displayName: string | null; wikidotId: number | null }>()
+  for (const entry of followsDisplayList.value) {
+    map.set(entry.targetUserId, { displayName: entry.displayName, wikidotId: entry.wikidotId })
+  }
+  return map
+})
 const totalFollows = computed(() => followsDisplayList.value.length)
 const hasFollowEntries = computed(() => totalFollows.value > 0)
 const followsInitialLoading = computed(() => followsLoading.value && !followsLoaded.value)
@@ -766,7 +881,7 @@ const showFollowsEmpty = computed(() => followsLoaded.value && !followsLoading.v
 watch(
   () => favoritePageCards.value,
   (cards) => {
-    if (!process.client) return
+    if (!isClient) return
     if (!Array.isArray(cards) || cards.length === 0) return
     void hydrateViewerVotes(cards as any[])
   },
@@ -783,6 +898,55 @@ const metricLabelMap: Record<AlertMetric, string> = {
   RATING: '评分',
   REVISION_COUNT: '修订数',
   SCORE: '得分'
+}
+
+const followAlertTypeLabels: Record<FollowAlertType, string> = {
+  REVISION: '修订更新',
+  ATTRIBUTION: '新增署名',
+  ATTRIBUTION_REMOVED: '署名移除'
+}
+
+const followAlertTypeAccentClass: Record<FollowAlertType, string> = {
+  REVISION: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200',
+  ATTRIBUTION: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200',
+  ATTRIBUTION_REMOVED: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200'
+}
+
+const followAlertActionText: Record<FollowAlertType, string> = {
+  REVISION: '发布了新的修订内容',
+  ATTRIBUTION: '被加入到页面署名',
+  ATTRIBUTION_REMOVED: '从页面署名中移除'
+}
+
+function resolveFollowAuthor(targetUserId: number) {
+  const meta = followAuthorMap.value.get(targetUserId)
+  const wikidotId = meta?.wikidotId ?? null
+  const displayName = meta?.displayName?.trim()
+  if (displayName) {
+    return { name: displayName, wikidotId }
+  }
+  if (wikidotId) {
+    return { name: `作者 #${wikidotId}`, wikidotId }
+  }
+  return { name: `作者 #${targetUserId}`, wikidotId: null }
+}
+
+function followAuthorName(targetUserId: number): string {
+  return resolveFollowAuthor(targetUserId).name
+}
+
+function followAuthorLink(targetUserId: number): string | null {
+  const meta = resolveFollowAuthor(targetUserId)
+  return meta.wikidotId != null ? `/user/${meta.wikidotId}` : null
+}
+
+function followGroupUnreadCount(group: FollowCombinedGroup): number {
+  return group.alerts.reduce((count, alert) => count + (alert.acknowledgedAt ? 0 : 1), 0)
+}
+
+function followAlertStatusText(alert: FollowAlertItem): string {
+  if (alert.acknowledgedAt) return '已读'
+  return '未读'
 }
 
 const availableAlertMetrics: Array<{ metric: AlertMetric; label: string; description: string }> = [
@@ -923,7 +1087,7 @@ function handleCombinedMarkAll() {
 function handleCombinedNavigate(group: CombinedAlertGroup) {
   if (group.pageWikidotId) {
     navigateTo(`/page/${group.pageWikidotId}`)
-  } else if (group.pageUrl && process.client) {
+  } else if (group.pageUrl && isClient) {
     window.open(group.pageUrl, '_blank', 'noopener')
   }
 }
@@ -994,7 +1158,7 @@ function handleAlertNavigate(item: AlertItem) {
   })
   if (item.pageWikidotId) {
     navigateTo(`/page/${item.pageWikidotId}`)
-  } else if (item.pageUrl && process.client) {
+  } else if (item.pageUrl && isClient) {
     window.open(item.pageUrl, '_blank', 'noopener')
   }
 }
@@ -1095,6 +1259,19 @@ watch(alertsActiveMetric, (metric, previous) => {
 })
 
 watch(activeTab, (tab) => {
+  if (isClient) {
+    const current = resolveTabFromQuery(route.query.tab) ?? 'overview'
+    if (current !== tab) {
+      const query = { ...route.query } as Record<string, any>
+      if (tab === 'overview') {
+        delete query.tab
+      } else {
+        query.tab = tab
+      }
+      void navigateTo({ path: route.path, query }, { replace: true })
+    }
+  }
+
   if (tab === 'alerts' && hasLinkedWikidot.value) {
     fetchAlerts(alertsActiveMetric.value).catch((err) => {
       console.warn('[account] alerts fetch on tab change failed', err)

@@ -55,6 +55,10 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8584266" :display-name="'DVA24'" bare />
             ：加个赞助者就行了，没必要写太多。 -- 2025.9.17 
           </p>
+          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6513052" :display-name="'14#7_MonochromeMix'" bare />
+            ：来玩《Ghostpia》吧！ -- 2025.10.24
+          </p>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
           </p>
@@ -67,71 +71,49 @@
           <ul class="mt-3 space-y-2">
             <!-- done -->
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-[rgb(var(--accent))]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
               分数走势
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-[rgb(var(--accent))]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
               User&amp;Page Search
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-[rgb(var(--accent))]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
               Ranking Category
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-[rgb(var(--accent))]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
               用户头像获取与缓存
             </li>
 
             <!-- todo -->
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-[rgb(var(--accent))]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
               SCP作品Alternative Title展示
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-neutral-400" />
               页面引用关系解析
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-neutral-400" />
               用户投票关系展示
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="12" cy="12" r="8" stroke-width="2" />
-              </svg>
+              <LucideIcon name="CircleDashed" class="w-4 h-4 text-neutral-400" />
               基于已有数据的删号用户处理
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
+              <LucideIcon name="Check" class="w-4 h-4 text-neutral-400" />
               图片资源获取
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="12" cy="12" r="8" stroke-width="2" />
-              </svg>
+              <LucideIcon name="CircleDashed" class="w-4 h-4 text-neutral-400" />
               全文语义搜索
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <svg class="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="12" cy="12" r="8" stroke-width="2" />
-              </svg>
+              <LucideIcon name="CircleDashed" class="w-4 h-4 text-neutral-400" />
               活跃竞赛页展示
             </li>
           </ul>
@@ -151,5 +133,4 @@ useHead({
   ]
 })
 </script>
-
 

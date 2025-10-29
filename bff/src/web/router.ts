@@ -17,6 +17,8 @@ import { alertsRouter } from './routes/alerts.js';
 import { followsRouter } from './routes/follows.js';
 import { followAlertsRouter } from './routes/followAlerts.js';
 import { referencesRouter } from './routes/references.js';
+import { trackingRouter } from './routes/tracking.js';
+import { collectionsRouter } from './routes/collections.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -33,6 +35,8 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/follows', followsRouter(pool, redis));
   router.use('/alerts/follow', followAlertsRouter(pool, redis));
   router.use('/references', referencesRouter(pool, redis));
+  router.use('/tracking', trackingRouter(pool));
+  router.use('/collections', collectionsRouter(pool, redis));
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service
   router.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200', changeOrigin: false, xfwd: true }));
@@ -57,6 +61,11 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
             // eslint-disable-next-line no-console
             console.warn('Failed to forward auth payload:', error);
           }
+        },
+        proxyRes: (proxyRes) => {
+          proxyRes.headers['cache-control'] = 'no-store, no-cache, must-revalidate, max-age=0';
+          delete proxyRes.headers.etag;
+          delete proxyRes.headers['last-modified'];
         }
       }
     }));

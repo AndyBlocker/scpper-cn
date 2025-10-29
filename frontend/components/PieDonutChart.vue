@@ -25,10 +25,20 @@ function isDark(): boolean {
   return document.documentElement.classList.contains('dark')
 }
 
+function readCssColor(varName: string, fallback: string): string {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return fallback
+  const style = getComputedStyle(document.documentElement)
+  const raw = style.getPropertyValue(varName).trim()
+  if (!raw) return fallback
+  const parts = raw.split(/\s+/).map((segment) => Number(segment))
+  if (parts.length < 3 || parts.some((value) => Number.isNaN(value))) return fallback
+  return `rgb(${parts[0]}, ${parts[1]}, ${parts[2]})`
+}
+
 const canvasStyle = computed(() => ({ height: 'clamp(200px, 34vh, 340px)' }))
 
 function buildConfig() {
-  const textColor = isDark() ? '#e5e5e5' : '#262626'
+  const textColor = readCssColor('--muted', isDark() ? '#e5e5e5' : '#262626')
   return {
     type: 'doughnut',
     data: {

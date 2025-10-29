@@ -54,12 +54,7 @@
           @click="reload"
           class="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))] hover:bg-[rgba(var(--accent),0.18)]"
         >
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <polyline points="1 4 1 10 7 10"/>
-            <polyline points="23 20 23 14 17 14"/>
-            <path d="M20.49 9A9 9 0 0 0 6.21 4.56L1 10"/>
-            <path d="M3.51 15A9 9 0 0 0 17.79 19.44L23 14"/>
-          </svg>
+          <LucideIcon name="RefreshCcw" class="w-4 h-4" stroke-width="2" />
           换一批
         </button>
       </div>

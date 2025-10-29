@@ -19,9 +19,7 @@
           class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
           @click="navigateToSearch"
         >
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35m1.098-4.53a6.63 6.63 0 11-13.26 0 6.63 6.63 0 0113.26 0z" />
-          </svg>
+          <LucideIcon name="Search" class="h-4 w-4" />
           在搜索中查看
         </button>
         <button
@@ -29,9 +27,7 @@
           class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
           @click="reload"
         >
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-2M19 5a9 9 0 00-14 2" />
-          </svg>
+          <LucideIcon name="RefreshCcw" class="h-4 w-4" />
           刷新数据
         </button>
       </div>
@@ -245,6 +241,7 @@ import TagBoard from '~/components/TagBoard.vue'
 import TimeSeriesLineChart from '~/components/TimeSeriesLineChart.vue'
 import { orderTags } from '~/composables/useTagOrder'
 import { useViewerVotes } from '~/composables/useViewerVotes'
+import { formatDateIsoUtc8, formatDateUtc8, diffUtc8CalendarDays, startOfUtc8Day, nowUtc8, toUtc8Date } from '~/utils/timezone'
 
 type BffFetcher = <T = any>(url: string, options?: Record<string, any>) => Promise<T>
 
@@ -396,12 +393,13 @@ async function refreshSeries(tag: string, token: number) {
 }
 
 function computeRange(p: 'day' | 'week' | 'month') {
-  const now = new Date()
-  const end = formatDateRaw(now)
-  const base = new Date(now)
+  const now = nowUtc8()
+  const end = formatDateIsoUtc8(now)
+  const baseDate = toUtc8Date(now) ?? now
+  const base = new Date(baseDate)
   const days = p === 'day' ? 30 : (p === 'week' ? 180 : 365)
   base.setDate(base.getDate() - days)
-  const start = formatDateRaw(base)
+  const start = formatDateIsoUtc8(base)
   return { start, end }
 }
 
@@ -429,9 +427,8 @@ function normalizePages(items: any[]) {
 
 function toISODate(value: any) {
   if (!value) return null
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toISOString().slice(0, 10)
+  const formatted = formatDateIsoUtc8(value)
+  return formatted || null
 }
 
 const totalPagesText = computed(() => {
@@ -456,15 +453,15 @@ const summaryAverages = computed(() => {
   const sum = pages.reduce((acc, p) => acc + Number(p.rating ?? 0), 0)
   const avg = sum / pages.length
   const last = pages.reduce((latest, p) => {
-    const d = p.createdDate ? new Date(p.createdDate) : null
-    if (!d || Number.isNaN(d.getTime())) return latest
+    const d = p.createdDate ? toUtc8Date(p.createdDate) : null
+    if (!d) return latest
     if (!latest) return d
-    return d > latest ? d : latest
+    return d.getTime() > latest.getTime() ? d : latest
   }, null as Date | null)
   return {
     avgRating: avg.toFixed(1),
     sampleSize: pages.length,
-    lastUpdated: last ? formatRelative(last.toISOString()) : '暂无数据'
+    lastUpdated: last ? formatRelative(last) : '暂无数据'
   }
 })
 
@@ -581,25 +578,22 @@ function extractAuthors(raw: any): string[] {
 
 function formatDate(input: string | null | undefined) {
   if (!input) return '未知'
-  const d = new Date(input)
-  if (Number.isNaN(d.getTime())) return '未知'
-  return d.toISOString().slice(0, 10)
+  const iso = formatDateIsoUtc8(input)
+  return iso || '未知'
 }
 
 function formatDateRaw(date: Date) {
-  const iso = date.toISOString()
-  return iso.slice(0, 10)
+  return formatDateIsoUtc8(date)
 }
 
 function formatRelative(value: string | Date | null | undefined) {
   if (!value) return '未知'
   const date = typeof value === 'string' ? new Date(value) : value
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '未知'
-  const diff = Date.now() - date.getTime()
-  const abs = Math.abs(diff)
-  const day = 86400000
-  if (abs < day) return '今天'
-  const days = Math.round(abs / day)
+  const days = diffUtc8CalendarDays(new Date(), date)
+  if (days == null) return '未知'
+  if (days === 0) return '今天'
+  if (days < 0) return `${Math.abs(days)} 天后`
   return `${days} 天前`
 }
 

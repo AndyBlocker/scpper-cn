@@ -1,24 +1,24 @@
 <template>
   <div>
-    <div v-if="userPending || statsPending" class="p-8 text-center">
-      <div class="inline-flex items-center gap-2">
-        <svg class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-        <span class="text-neutral-600 dark:text-neutral-400">加载中...</span>
+    <NuxtPage v-if="isCollectionsRoute" />
+    <div v-else>
+      <div v-if="userPending || statsPending" class="p-8 text-center">
+        <div class="inline-flex items-center gap-2">
+          <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" stroke-width="2" />
+          <span class="text-neutral-600 dark:text-neutral-400">加载中...</span>
+        </div>
       </div>
-    </div>
-    <div v-else-if="userError" class="p-8 text-center text-red-600 dark:text-red-400">
-      加载失败: {{ userError.message }}
-    </div>
-    <div v-else class="space-y-6">
+      <div v-else-if="userError" class="p-8 text-center text-red-600 dark:text-red-400">
+        加载失败: {{ userError.message }}
+      </div>
+      <div v-else class="space-y-6">
       <!-- Header -->
-      <div class="flex items-center justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3 mb-4">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3 mb-4">
         <div class="flex items-center gap-3">
           <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
           <h2 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">用户详情</h2>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 w-full sm:w-auto sm:justify-end">
           <button
             v-if="canFollow"
             type="button"
@@ -31,12 +31,8 @@
             @click="toggleFollow"
           >
             <!-- Use the same star geometry for both states to ensure equal visual size -->
-            <svg v-if="isFollowingThis" class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.62L12 2 9.19 8.62 2 9.24l5.46 4.73L5.82 21z" />
-            </svg>
-            <svg v-else class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.62L12 2 9.19 8.62 2 9.24l5.46 4.73L5.82 21z" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-            </svg>
+            <LucideIcon v-if="isFollowingThis" name="Star" class="w-5 h-5" stroke-width="1.8" fill="currentColor" />
+            <LucideIcon v-else name="Star" class="w-5 h-5" stroke-width="1.8" />
           </button>
         </div>
       </div>
@@ -47,7 +43,7 @@
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- User Basic Info -->
         <div class="lg:col-span-2 border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex items-start justify-between gap-3">
+          <div class="flex flex-wrap items-start justify-between gap-4">
             <div class="flex items-start gap-3 min-w-0 flex-1">
               <UserAvatar :wikidot-id="wikidotId" :name="user?.displayName || 'Unknown User'" :size="56" class="shrink-0 ring-1 ring-neutral-200 dark:ring-neutral-800" />
               <div class="min-w-0 flex-1">
@@ -58,7 +54,11 @@
                 </div>
               </div>
             </div>
-            <div v-if="stats?.rank" class="text-right shrink-0">
+            <div v-if="statsPending" class="text-right shrink-0">
+              <div class="w-16 h-7 rounded bg-neutral-100 animate-pulse dark:bg-neutral-700/60 mb-1"></div>
+              <div class="w-20 h-3 rounded bg-neutral-100 animate-pulse dark:bg-neutral-700/60 ml-auto"></div>
+            </div>
+            <div v-else-if="stats?.rank" class="text-right shrink-0">
               <div class="text-2xl sm:text-3xl font-bold text-[rgb(var(--accent))] whitespace-nowrap overflow-hidden">#{{ stats.rank }}</div>
               <div class="text-xs text-neutral-600 dark:text-neutral-400">综合排名</div>
             </div>
@@ -122,7 +122,13 @@
           </div>
 
           <!-- Overall Stats Grid -->
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+          <div v-if="statsPending" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+            <div v-for="n in 4" :key="`stats-skeleton-${n}`" class="bg-neutral-100 dark:bg-neutral-800 rounded-lg p-3 animate-pulse">
+              <div class="h-3 w-20 bg-neutral-300/70 dark:bg-neutral-700/70 rounded mb-3"></div>
+              <div class="h-8 bg-neutral-300/80 dark:bg-neutral-700/80 rounded"></div>
+            </div>
+          </div>
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
             <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3 text-center">
               <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">总评分</div>
               <div class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">{{ stats?.totalRating ?? '0' }}</div>
@@ -148,9 +154,9 @@
 
         <!-- Category Rankings / Radar -->
         <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex items-center justify-between mb-4">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">分类表现</h3>
-            <div class="inline-flex rounded-md overflow-hidden border border-neutral-200 dark:border-neutral-800">
+            <div class="inline-flex w-full sm:w-auto rounded-md overflow-hidden border border-neutral-200 dark:border-neutral-800 justify-center sm:justify-start">
               <button type="button" class="px-2 py-1 text-xs"
                 :class="categoryView==='list' ? 'bg-[rgb(var(--accent))] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
                 @click="categoryView='list'">列表</button>
@@ -159,7 +165,12 @@
                 @click="categoryView='radar'">雷达</button>
             </div>
           </div>
-          <div v-if="stats && !statsPending">
+          <div v-if="statsPending">
+            <div class="space-y-3">
+              <div v-for="n in 6" :key="`category-skeleton-${n}`" class="h-10 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-800" />
+            </div>
+          </div>
+          <div v-else-if="stats">
             <div v-if="categoryView==='list'" class="space-y-3">
               <CategoryRank label="SCP" :rank="stats.scpRank ?? '-'" :rating="stats.scpRating ?? 0" :count="stats.pageCountScp ?? 0" />
               <CategoryRank label="故事" :rank="stats.storyRank ?? '-'" :rating="stats.storyRating ?? 0" :count="stats.pageCountTale ?? 0" />
@@ -186,10 +197,52 @@
         </div>
       </div>
 
+      <section
+        v-if="publicCollectionsLoading || publicCollections.length > 0"
+        class="relative overflow-hidden rounded-3xl border border-neutral-200/80 bg-white/95 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.1)] dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-[0_32px_70px_rgba(0,0,0,0.6)]"
+      >
+        <div class="pointer-events-none absolute inset-0">
+          <div class="absolute -right-16 -top-10 h-48 w-48 rounded-full bg-[rgba(var(--accent),0.12)] blur-3xl dark:bg-[rgba(var(--accent),0.28)]" />
+          <div class="absolute bottom-0 left-0 h-56 w-56 rounded-full bg-purple-400/10 blur-3xl dark:bg-purple-400/20" />
+        </div>
+        <div class="relative z-10 space-y-6">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="flex items-center gap-2 text-base font-semibold text-neutral-800 dark:text-neutral-100">
+              <LucideIcon name="BookmarkPlus" class="h-5 w-5 text-[rgb(var(--accent))]" />
+              公开收藏夹
+            </h3>
+            <span v-if="!publicCollectionsLoading && publicCollections.length > 0" class="text-xs text-neutral-500 dark:text-neutral-400">
+              共 {{ publicCollections.length }} 个
+            </span>
+          </div>
+          <div v-if="publicCollectionsLoading" class="grid gap-4 md:grid-cols-2">
+            <div v-for="n in 3" :key="`collection-skeleton-${n}`" class="h-40 rounded-3xl bg-neutral-100/80 animate-pulse dark:bg-neutral-800/60" />
+          </div>
+          <div v-else class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            <NuxtLink
+              v-for="collection in publicCollections"
+              :key="collection.id"
+              :to="`/user/${wikidotId}/collections/${collection.slug}`"
+              class="block rounded-3xl focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)]"
+            >
+              <CollectionCard :collection="collection" :show-visibility="false" :clickable="false">
+                <template #footer>
+                  <span class="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    <LucideIcon name="ArrowUpRight" class="h-3 w-3" />
+                    查看详情
+                  </span>
+                </template>
+              </CollectionCard>
+            </NuxtLink>
+          </div>
+        </div>
+      </section>
+
       <!-- Rating History Chart -->
-      <div v-if="ratingHistory && ratingHistory.length > 0" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
         <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">评分历史趋势</h3>
-        <ClientOnly>
+        <div v-if="ratingHistoryPending" class="h-64 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-800/70"></div>
+        <ClientOnly v-else-if="ratingHistory && ratingHistory.length > 0">
           <RatingHistoryChart 
             :data="ratingHistory" 
             :first-activity-date="user?.firstActivityAt || '2022-06-15'"
@@ -203,6 +256,7 @@
             </div>
           </template>
         </ClientOnly>
+        <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无评分历史数据</div>
       </div>
 
       
@@ -257,9 +311,7 @@
         <!-- Works List -->
         <div class="p-6">
           <div v-if="worksPending" class="text-center py-8">
-            <svg class="w-5 h-5 animate-spin text-[rgb(var(--accent))] mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+            <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[rgb(var(--accent))] mx-auto" stroke-width="2" />
           </div>
           <div v-else-if="!works || works.length === 0" class="text-center py-8 text-neutral-500 dark:text-neutral-400">
             暂无{{ currentTabLabel }}作品
@@ -306,7 +358,10 @@
           <!-- Favorite Authors with avatar -->
           <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
             <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最喜欢的作者</div>
-            <div v-if="favAuthors && favAuthors.length > 0" class="space-y-2">
+            <div v-if="likerAuthorsPending" class="space-y-2">
+              <div v-for="n in 3" :key="`fav-author-skeleton-${n}`" class="h-10 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
+            </div>
+            <div v-else-if="favAuthors && favAuthors.length > 0" class="space-y-2">
               <div v-for="a in favAuthors" :key="`fa-${a.userId}`" class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2 min-w-0">
                   <UserAvatar :wikidot-id="a.wikidotId" :name="a.displayName || String(a.wikidotId || a.userId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
@@ -327,16 +382,40 @@
             </div>
           </div>
 
-          <!-- Most Hated Authors (hidden content with centered placeholder) -->
+          <!-- Fans -->
           <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
-            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最讨厌的作者</div>
-            <div class="flex items-center justify-center text-xs text-neutral-500 dark:text-neutral-400 h-10">-- 暂无数据 --</div>
+            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">我的粉丝</div>
+            <div v-if="fanAuthorsPending" class="space-y-2">
+              <div v-for="n in 3" :key="`fan-author-skeleton-${n}`" class="h-10 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
+            </div>
+            <div v-else-if="fanAuthors && fanAuthors.length > 0" class="space-y-2">
+              <div v-for="fan in fanAuthors" :key="`fan-${fan.userId}`" class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 min-w-0">
+                  <UserAvatar :wikidot-id="fan.wikidotId" :name="fan.displayName || String(fan.wikidotId || fan.userId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
+                  <NuxtLink :to="`/user/${fan.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                    {{ fan.displayName || fan.wikidotId || fan.userId }}
+                  </NuxtLink>
+                </div>
+                <div class="text-xs shrink-0 inline-flex items-center gap-1">
+                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ fan.uv }}</span>
+                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ fan.dv }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
+            <div class="flex items-center justify-end gap-2 mt-3">
+              <button @click="prevFanAuthorsPage" :disabled="prefFansOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
+              <button @click="nextFanAuthorsPage" :disabled="!hasMoreFanAuthors" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
+            </div>
           </div>
 
           <!-- Favorite Tags -->
           <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
             <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最喜欢的标签</div>
-            <div v-if="favTags && favTags.length > 0" class="space-y-2">
+            <div v-if="likerTagsPending" class="space-y-2">
+              <div v-for="n in 4" :key="`fav-tag-skeleton-${n}`" class="h-8 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
+            </div>
+            <div v-else-if="favTags && favTags.length > 0" class="space-y-2">
               <div v-for="t in favTags" :key="`ft-${t.tag}`" class="flex items-center justify-between">
                 <NuxtLink :to="`/search?tags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
                   #{{ t.tag }}
@@ -357,7 +436,10 @@
           <!-- Most Hated Tags -->
           <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
             <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最讨厌的标签</div>
-            <div v-if="hateTags && hateTags.length > 0" class="space-y-2">
+            <div v-if="haterTagsPending" class="space-y-2">
+              <div v-for="n in 4" :key="`hate-tag-skeleton-${n}`" class="h-8 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
+            </div>
+            <div v-else-if="hateTags && hateTags.length > 0" class="space-y-2">
               <div v-for="t in hateTags" :key="`ht-${t.tag}`" class="flex items-center justify-between">
                 <NuxtLink :to="`/search?excludeTags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
                   #{{ t.tag }}
@@ -380,9 +462,12 @@
       <!-- Recent Activity -->
       <div class="space-y-6">
         <!-- Recent Votes -->
-        <div v-if="recentVotes && recentVotes.length > 0" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
           <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">最近投票</h3>
-          <div class="space-y-2">
+          <div v-if="userVotesPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div v-for="n in 6" :key="`vote-skeleton-${n}`" class="h-16 rounded bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
+          </div>
+          <div v-else-if="recentVotes && recentVotes.length > 0" class="space-y-2">
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               <div v-for="vote in recentVotes" :key="`${vote.timestamp}-${vote.pageWikidotId}`" 
                    :class="[
@@ -409,22 +494,20 @@
             </div>
             <div class="flex items-center justify-between mt-3">
               <button @click="prevUserVotePage" :disabled="userVoteOffset === 0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-              <div class="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
-                第
-                <select :value="(userVoteOffset / userVotePageSize) + 1" @change="e => goUserVotePage(Number((e.target as HTMLSelectElement).value))" class="px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800">
-                  <option v-for="n in userVoteTotalPages" :key="`uvp-${n}`" :value="n">{{ n }}</option>
-                </select>
-                / {{ userVoteTotalPages }} 页
-              </div>
+              <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ userVotePageIndex + 1 }} / {{ userVoteTotalPages }} 页</div>
               <button @click="nextUserVotePage" :disabled="!userHasMoreVotes" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
             </div>
           </div>
+          <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无数据</div>
         </div>
 
         <!-- Recent Revisions -->
-        <div v-if="recentRevisions && recentRevisions.length > 0" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
           <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">最近编辑</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div v-if="userRevisionsPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div v-for="n in 6" :key="`revision-skeleton-${n}`" class="h-20 rounded bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
+          </div>
+          <div v-else-if="recentRevisions && recentRevisions.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
             <div v-for="revision in recentRevisions" :key="`${revision.timestamp}-${revision.pageWikidotId}`" 
                  class="p-2 rounded border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800">
               <div class="flex items-center justify-between gap-2">
@@ -439,24 +522,22 @@
               <div v-if="revision.comment" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">{{ revision.comment }}</div>
             </div>
           </div>
-          <div class="flex items-center justify-between mt-3">
+          <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无数据</div>
+          <div v-if="!userRevisionsPending && recentRevisions && recentRevisions.length > 0" class="flex items-center justify-between mt-3">
             <button @click="prevUserRevPage" :disabled="userRevOffset === 0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-            <div class="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
-              第
-              <select :value="(userRevOffset / userRevPageSize) + 1" @change="e => goUserRevPage(Number((e.target as HTMLSelectElement).value))" class="px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800">
-                <option v-for="n in userRevTotalPages" :key="`urp-${n}`" :value="n">{{ n }}</option>
-              </select>
-              / {{ userRevTotalPages }} 页
-            </div>
+            <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ userRevPageIndex + 1 }} / {{ userRevTotalPages }} 页</div>
             <button @click="nextUserRevPage" :disabled="!userHasMoreRevisions" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
           </div>
         </div>
       </div>
 
       <!-- Activity Records -->
-      <div v-if="activityRecords && activityRecords.length > 0" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
         <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">成就记录</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div v-if="rawActivityPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div v-for="n in 3" :key="`record-skeleton-${n}`" class="h-20 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
+        </div>
+        <div v-else-if="activityRecords && activityRecords.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <div v-for="record in activityRecords" :key="record.id" class="flex items-center justify-between p-3 bg-neutral-50 dark:bg-neutral-800 rounded-lg">
             <div>
               <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatRecordType(record.recordType) }}</div>
@@ -465,6 +546,8 @@
             <div v-if="record.value" class="text-lg font-bold text-[rgb(var(--accent))]">{{ Number(record.value).toFixed(0) }}</div>
           </div>
         </div>
+        <div v-else class="text-sm text-neutral-500 terse dark:text-neutral-400">暂无成就记录</div>
+      </div>
       </div>
     </div>
   </div>
@@ -474,8 +557,11 @@
 import { computed, ref, watch, watchEffect } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 import { useFollows } from '~/composables/useFollows'
+import { useCollections, type CollectionSummary } from '~/composables/useCollections'
+import CollectionCard from '~/components/collections/CollectionCard.vue'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { orderTags } from '~/composables/useTagOrder'
+import { formatDateUtc8, formatDateIsoUtc8, diffUtc8CalendarDays, startOfUtc8Day, nowUtc8 } from '~/utils/timezone'
 // Note: avoid importing Nuxt auto-imported composables to prevent linter conflicts
 
 // Declarations for Nuxt auto-imported globals to satisfy type checker in this environment
@@ -500,10 +586,12 @@ type HeatmapRange = {
 
 // 简易调试开关（可通过 window.__DEV_DEBUG__ = true 打开）
 // @ts-ignore
-const __DEV_DEBUG__ = typeof window !== 'undefined' && (window as any).__DEV_DEBUG__ === true
+const __DEV_DEBUG__ = isClient && (window as any).__DEV_DEBUG__ === true
 const route = useRoute();
+const isCollectionsRoute = computed(() => route.path.includes('/collections/'));
 const {$bff} = useNuxtApp();
 const { hydratePages: hydrateViewerVotes } = useViewerVotes()
+const isClient = typeof window !== 'undefined'
 
 const toItems = (payload: unknown): any[] => {
   if (Array.isArray(payload)) {
@@ -529,7 +617,7 @@ const sortOrder = ref<'asc'|'desc'>('desc')
 const categoryView = ref<'list'|'radar'>('list')
 // Responsive items per page for works list
 const itemsPerPage = ref(10);
-if (typeof window !== 'undefined') {
+if (isClient) {
   const computeItemsPerPage = () => {
     const width = window.innerWidth;
     if (width >= 1024) return 12; // lg: 3 columns
@@ -591,10 +679,13 @@ useHead({ title: userPageTitle })
 // Follow/unfollow state
 const { isAuthenticated, user: authUser } = useAuth()
 const { fetchFollows, followUser, unfollowUser, isFollowing } = useFollows()
+const { fetchPublicCollections } = useCollections()
+const publicCollections = ref<CollectionSummary[]>([])
+const publicCollectionsLoading = ref(true)
 const canFollow = computed(() => isAuthenticated.value && Number(authUser.value?.linkedWikidotId || 0) !== Number(wikidotId.value))
 const isFollowingThis = computed(() => isFollowing(Number(wikidotId.value)))
 
-if (process.client) {
+if (isClient) {
   watch(
     [() => isAuthenticated.value, () => authUser.value?.linkedWikidotId],
     async ([loggedIn, linkedId], [prevLoggedIn, prevLinkedId]) => {
@@ -626,21 +717,46 @@ async function toggleFollow() {
   }
 }
 
+watch(
+  () => wikidotId.value,
+  async (next) => {
+    const id = Number(next)
+    if (!Number.isFinite(id) || id <= 0) {
+      publicCollections.value = []
+      publicCollectionsLoading.value = false
+      return
+    }
+    publicCollectionsLoading.value = true
+    try {
+      const list = await fetchPublicCollections(id, true)
+      publicCollections.value = Array.isArray(list) ? list : []
+    } catch (error) {
+      console.warn('[user] fetch public collections failed', error)
+      publicCollections.value = []
+    } finally {
+      publicCollectionsLoading.value = false
+    }
+  },
+  { immediate: true }
+)
+
 // Relations: authors and tags (liker/hater)
 // Preferences pagination state
 const prefAuthorsPageSize = ref(5)
 const prefAuthorsOffset = ref(0)
+const prefFansOffset = ref(0)
 const prefTagsPageSize = ref(5)
 const prefFavTagsOffset = ref(0)
 const prefHateTagsOffset = ref(0)
 
-if (typeof window !== 'undefined') {
+if (isClient) {
   const computePrefSize = () => (window.innerWidth >= 768 ? 5 : 5)
   const setSizes = () => {
     const size = computePrefSize()
     if (prefAuthorsPageSize.value !== size) {
       prefAuthorsPageSize.value = size
       prefAuthorsOffset.value = 0
+      prefFansOffset.value = 0
     }
     if (prefTagsPageSize.value !== size) {
       prefTagsPageSize.value = size
@@ -652,37 +768,78 @@ if (typeof window !== 'undefined') {
   window.addEventListener('resize', setSizes)
 }
 
-const { data: likerAuthors } = await useAsyncData(
+const { data: likerAuthors, pending: likerAuthorsPending } = await useAsyncData(
   () => `user-liker-authors-${wikidotId.value}-${prefAuthorsPageSize.value}-${prefAuthorsOffset.value}`,
   () => $bff(`/users/${wikidotId.value}/relations/users`, { params: { direction: 'targets', polarity: 'liker', limit: prefAuthorsPageSize.value, offset: prefAuthorsOffset.value } }),
-  { watch: [() => route.params.wikidotId, () => prefAuthorsPageSize.value, () => prefAuthorsOffset.value] }
+  {
+    watch: [() => route.params.wikidotId, () => prefAuthorsPageSize.value, () => prefAuthorsOffset.value],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
-const { data: haterAuthors } = await useAsyncData(
-  () => `user-hater-authors-${wikidotId.value}-${prefAuthorsPageSize.value}-${prefAuthorsOffset.value}`,
-  () => $bff(`/users/${wikidotId.value}/relations/users`, { params: { direction: 'targets', polarity: 'hater', limit: prefAuthorsPageSize.value, offset: prefAuthorsOffset.value } }),
-  { watch: [() => route.params.wikidotId, () => prefAuthorsPageSize.value, () => prefAuthorsOffset.value] }
+const { data: fanAuthorsData, pending: fanAuthorsPending } = await useAsyncData(
+  () => `user-fan-authors-${wikidotId.value}-${prefAuthorsPageSize.value}-${prefFansOffset.value}`,
+  () => $bff(`/users/${wikidotId.value}/relations/users`, { params: { direction: 'sources', polarity: 'liker', limit: prefAuthorsPageSize.value, offset: prefFansOffset.value } }),
+  {
+    watch: [() => route.params.wikidotId, () => prefAuthorsPageSize.value, () => prefFansOffset.value],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
-const { data: likerTags } = await useAsyncData(
+const { data: likerTags, pending: likerTagsPending } = await useAsyncData(
   () => `user-liker-tags-${wikidotId.value}-${prefTagsPageSize.value}-${prefFavTagsOffset.value}`,
   () => $bff(`/users/${wikidotId.value}/relations/tags`, { params: { polarity: 'liker', limit: prefTagsPageSize.value, offset: prefFavTagsOffset.value } }),
-  { watch: [() => route.params.wikidotId, () => prefTagsPageSize.value, () => prefFavTagsOffset.value] }
+  {
+    watch: [() => route.params.wikidotId, () => prefTagsPageSize.value, () => prefFavTagsOffset.value],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
-const { data: haterTags } = await useAsyncData(
+const { data: haterTags, pending: haterTagsPending } = await useAsyncData(
   () => `user-hater-tags-${wikidotId.value}-${prefTagsPageSize.value}-${prefHateTagsOffset.value}`,
   () => $bff(`/users/${wikidotId.value}/relations/tags`, { params: { polarity: 'hater', limit: prefTagsPageSize.value, offset: prefHateTagsOffset.value } }),
-  { watch: [() => route.params.wikidotId, () => prefTagsPageSize.value, () => prefHateTagsOffset.value] }
+  {
+    watch: [() => route.params.wikidotId, () => prefTagsPageSize.value, () => prefHateTagsOffset.value],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
 
 // Picks for UI (page by API sorting); filter out '原创'
 const favAuthors = computed(() => (Array.isArray(likerAuthors.value) ? likerAuthors.value : []))
-// hater authors content intentionally hidden per requirements
+const fanAuthors = computed(() => (Array.isArray(fanAuthorsData.value) ? fanAuthorsData.value : []))
 const favTags = computed(() => (Array.isArray(likerTags.value) ? likerTags.value.filter((t:any)=> t && t.tag !== '原创').map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
 const hateTags = computed(() => (Array.isArray(haterTags.value) ? haterTags.value.filter((t:any)=> t && t.tag !== '原创').map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
 
 // Has more flags & pager actions
-const hasMoreFavAuthors = computed(() => Array.isArray(likerAuthors.value) && likerAuthors.value.length === prefAuthorsPageSize.value)
-function nextFavAuthorsPage(){ if (hasMoreFavAuthors.value) prefAuthorsOffset.value += prefAuthorsPageSize.value }
+const hasMoreFavAuthors = computed(() => {
+  const size = Number(prefAuthorsPageSize.value || 0)
+  if (!size) return false
+  if (prefAuthorsOffset.value >= size) return false
+  return Array.isArray(likerAuthors.value) && likerAuthors.value.length === size
+})
+const hasMoreFanAuthors = computed(() => {
+  const size = Number(prefAuthorsPageSize.value || 0)
+  if (!size) return false
+  if (prefFansOffset.value >= size) return false
+  return Array.isArray(fanAuthorsData.value) && fanAuthorsData.value.length === size
+})
+function nextFavAuthorsPage(){
+  const size = Number(prefAuthorsPageSize.value || 0)
+  if (!size || !hasMoreFavAuthors.value) return
+  prefAuthorsOffset.value = Math.min(size, prefAuthorsOffset.value + size)
+}
 function prevFavAuthorsPage(){ prefAuthorsOffset.value = Math.max(0, prefAuthorsOffset.value - prefAuthorsPageSize.value) }
+function nextFanAuthorsPage(){
+  const size = Number(prefAuthorsPageSize.value || 0)
+  if (!size || !hasMoreFanAuthors.value) return
+  prefFansOffset.value = Math.min(size, prefFansOffset.value + size)
+}
+function prevFanAuthorsPage(){ prefFansOffset.value = Math.max(0, prefFansOffset.value - prefAuthorsPageSize.value) }
 
 const hasMoreFavTags = computed(() => Array.isArray(likerTags.value) && likerTags.value.length === prefTagsPageSize.value)
 function nextFavTagsPage(){ if (hasMoreFavTags.value) prefFavTagsOffset.value += prefTagsPageSize.value }
@@ -696,7 +853,12 @@ function prevHateTagsPage(){ prefHateTagsOffset.value = Math.max(0, prefHateTags
 const { data: stats, pending: statsPending } = await useAsyncData(
   () => `user-stats-${wikidotId.value}`,
   () => $bff(`/users/${wikidotId.value}/stats`),
-  { watch: [() => route.params.wikidotId] }
+  {
+    watch: [() => route.params.wikidotId],
+    server: false,
+    lazy: true,
+    default: () => null
+  }
 );
 
 // Fetch user works (server-side sorting)
@@ -718,12 +880,17 @@ const { data: works, pending: worksPending, refresh: refreshWorks } = await useA
     };
     return await $bff(`/users/${wikidotId.value}/pages`, { params });
   },
-  { watch: [() => route.params.wikidotId, activeTab, () => sortField.value, () => sortOrder.value, () => currentPage.value, () => itemsPerPage.value] }
+  {
+    watch: [() => route.params.wikidotId, activeTab, () => sortField.value, () => sortOrder.value, () => currentPage.value, () => itemsPerPage.value],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
 
 // Fetch recent votes with pagination (responsive page size)
 const userVotePageSize = ref(10)
-if (typeof window !== 'undefined') {
+if (isClient) {
   const computeVotePageSize = () => {
     const width = window.innerWidth
     if (width >= 1024) return 12 // 3列时每页12个
@@ -740,10 +907,15 @@ if (typeof window !== 'undefined') {
   })
 }
 const userVoteOffset = ref(0)
-const { data: userVotesPage } = await useAsyncData(
+const { data: userVotesPage, pending: userVotesPending } = await useAsyncData(
   () => `user-votes-${wikidotId.value}-${userVoteOffset.value}-${userVotePageSize.value}`,
   () => $bff(`/users/${wikidotId.value}/votes`, { params: { limit: userVotePageSize.value, offset: userVoteOffset.value } }),
-  { watch: [() => route.params.wikidotId, () => userVoteOffset.value, () => userVotePageSize.value] }
+  {
+    watch: [() => route.params.wikidotId, () => userVoteOffset.value, () => userVotePageSize.value],
+    server: false,
+    lazy: true,
+    default: () => ({ items: [], total: 0, limit: userVotePageSize.value, offset: userVoteOffset.value })
+  }
 );
 const recentVotes = computed(() => toItems(userVotesPage.value))
 const userVoteTotal = computed(() => {
@@ -769,12 +941,11 @@ const userVoteTotalPages = computed(() => {
   if (!total) return 1
   return Math.max(1, Math.ceil(total / size))
 })
-function goUserVotePage(n:number){
-  const totalPages = userVoteTotalPages.value
-  if (!Number.isFinite(totalPages) || totalPages <= 0) return
-  const idx = Math.max(1, Math.min(totalPages, Number.isFinite(n) ? n : 1)) - 1
-  userVoteOffset.value = idx * userVotePageSize.value
-}
+const userVotePageIndex = computed(() => {
+  const size = Number(userVotePageSize.value || 0)
+  if (!size) return 0
+  return Math.floor(userVoteOffset.value / size)
+})
 watchEffect(() => {
   const size = Number(userVotePageSize.value || 0)
   if (!size) return
@@ -793,7 +964,7 @@ watchEffect(() => {
 
 // Fetch recent revisions with pagination (2-3 cols responsive page size)
 const userRevPageSize = ref(10)
-if (typeof window !== 'undefined') {
+if (isClient) {
   const computeRevPageSize = () => {
     const width = window.innerWidth
     if (width >= 1024) return 12 // 3列
@@ -810,10 +981,15 @@ if (typeof window !== 'undefined') {
   })
 }
 const userRevOffset = ref(0)
-const { data: userRevisionsPage } = await useAsyncData(
+const { data: userRevisionsPage, pending: userRevisionsPending } = await useAsyncData(
   () => `user-revisions-${wikidotId.value}-${userRevOffset.value}-${userRevPageSize.value}`,
   () => $bff(`/users/${wikidotId.value}/revisions`, { params: { limit: userRevPageSize.value, offset: userRevOffset.value } }),
-  { watch: [() => route.params.wikidotId, () => userRevOffset.value, () => userRevPageSize.value] }
+  {
+    watch: [() => route.params.wikidotId, () => userRevOffset.value, () => userRevPageSize.value],
+    server: false,
+    lazy: true,
+    default: () => ({ items: [], total: 0, limit: userRevPageSize.value, offset: userRevOffset.value })
+  }
 );
 const recentRevisions = computed(() => toItems(userRevisionsPage.value))
 const userRevTotal = computed(() => {
@@ -839,12 +1015,11 @@ const userRevTotalPages = computed(() => {
   if (!total) return 1
   return Math.max(1, Math.ceil(total / size))
 })
-function goUserRevPage(n:number){
-  const totalPages = userRevTotalPages.value
-  if (!Number.isFinite(totalPages) || totalPages <= 0) return
-  const idx = Math.max(1, Math.min(totalPages, Number.isFinite(n) ? n : 1)) - 1
-  userRevOffset.value = idx * userRevPageSize.value
-}
+const userRevPageIndex = computed(() => {
+  const size = Number(userRevPageSize.value || 0)
+  if (!size) return 0
+  return Math.floor(userRevOffset.value / size)
+})
 watchEffect(() => {
   const size = Number(userRevPageSize.value || 0)
   if (!size) return
@@ -862,7 +1037,7 @@ watchEffect(() => {
 })
 
 // Fetch activity records
-const { data: rawActivityRecords } = await useAsyncData(
+const { data: rawActivityRecords, pending: rawActivityPending } = await useAsyncData(
   () => `user-activity-${wikidotId.value}`,
   () => $bff(`/stats/user-activity`, { 
     params: { 
@@ -870,19 +1045,29 @@ const { data: rawActivityRecords } = await useAsyncData(
       limit: 6
     } 
   }),
-  { watch: [() => user.value?.id] }
+  {
+    watch: [() => user.value?.id],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
 const activityRecords = computed(() => toItems(rawActivityRecords.value))
 
 // Fetch rating history
-const { data: ratingHistory } = await useAsyncData(
+const { data: ratingHistory, pending: ratingHistoryPending } = await useAsyncData(
   () => `user-rating-history-${wikidotId.value}`,
   () => $bff(`/users/${wikidotId.value}/rating-history`, { 
     params: { 
       granularity: 'week'  // 按周聚合，获取全部历史数据
     } 
   }),
-  { watch: [() => route.params.wikidotId] }
+  {
+    watch: [() => route.params.wikidotId],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
 
 const { data: userDailyStats, pending: userDailyStatsPending, error: userDailyStatsError } = await useAsyncData(
@@ -900,7 +1085,12 @@ const { data: userDailyStats, pending: userDailyStatsPending, error: userDailySt
       }
     });
   },
-  { watch: [() => user.value?.id, () => activityHeatmapRange.value] }
+  {
+    watch: [() => user.value?.id, () => activityHeatmapRange.value.startIso, () => activityHeatmapRange.value.endIso],
+    server: false,
+    lazy: true,
+    default: () => []
+  }
 );
 
 const activityHeatmapRecords = computed<UserDailyStatRecord[]>(() => {
@@ -912,10 +1102,15 @@ const activityHeatmapRecords = computed<UserDailyStatRecord[]>(() => {
 });
 
 // Precise tab counts from BFF (fallback to local if unavailable)
-const { data: tabCounts } = await useAsyncData(
+const { data: tabCounts, pending: tabCountsPending } = await useAsyncData(
   () => `user-tab-counts-${wikidotId.value}`,
   () => $bff(`/users/${wikidotId.value}/page-counts`, { params: { includeDeleted: 'true' } }),
-  { watch: [() => route.params.wikidotId] }
+  {
+    watch: [() => route.params.wikidotId],
+    server: false,
+    lazy: true,
+    default: () => ({ total: 0, original: 0, translation: 0, shortStories: 0, anomalousLog: 0, other: 0 })
+  }
 );
 
 // Works helpers and tag-based filters (counts computed from all works to avoid tab-switch bugs)
@@ -1005,7 +1200,7 @@ const displayedWorks = computed(() => sortedWorks.value);
 watch(
   () => works.value,
   (newWorks) => {
-    if (!process.client) return
+    if (!isClient) return
     if (!Array.isArray(newWorks) || newWorks.length === 0) return
     void hydrateViewerVotes(newWorks as any[])
   },
@@ -1033,43 +1228,41 @@ watch(workTabs, (tabs) => {
 
 // Helper functions
 function computeHeatmapFetchRange(): HeatmapRange {
-  const end = new Date();
-  end.setUTCHours(0, 0, 0, 0);
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - 364);
+  const end = startOfUtc8Day(nowUtc8());
+  if (!end) {
+    const iso = formatDateIsoUtc8(new Date());
+    return { startIso: iso, endIso: iso };
+  }
+  const start = new Date(end.getTime() - 364 * 86400000);
   return {
-    startIso: formatDateParam(start),
-    endIso: formatDateParam(end)
+    startIso: formatDateIsoUtc8(start),
+    endIso: formatDateIsoUtc8(end)
   };
 }
 
 function formatDateParam(date: Date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-  return date.toISOString().slice(0, 10);
+  return formatDateIsoUtc8(date);
 }
 
 function formatDate(dateStr: string) {
   if (!dateStr) return 'N/A';
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('zh-CN', { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
-  });
+  return formatDateUtc8(dateStr, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  }) || 'N/A';
 }
 
 function formatRelativeTime(dateStr: string) {
   if (!dateStr) return '';
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  
-  if (days === 0) return '今天';
-  if (days === 1) return '昨天';
-  if (days < 30) return `${days} 天前`;
-  if (days < 365) return `${Math.floor(days / 30)} 个月前`;
-  return `${Math.floor(days / 365)} 年前`;
+  const diffDays = diffUtc8CalendarDays(nowUtc8(), dateStr);
+  if (diffDays == null) return '';
+  if (diffDays === 0) return '今天';
+  if (diffDays === 1) return '昨天';
+  if (diffDays < 30) return `${diffDays} 天前`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} 个月前`;
+  return `${Math.floor(diffDays / 365)} 年前`;
 }
 
 function formatActivityType(type: string) {
@@ -1134,7 +1327,7 @@ function normalizeWork(work: any) {
     snippetHtml: work.snippet || null,
     isDeleted: !!work.isDeleted,
     deletedAt: work.deletedAt || (work.validTo || null),
-    createdDate: (work.createdAt ? new Date(work.createdAt).toISOString().slice(0,10) : undefined)
+    createdDate: work.createdAt ? formatDateIsoUtc8(work.createdAt) : undefined
   }
 }
 </script>

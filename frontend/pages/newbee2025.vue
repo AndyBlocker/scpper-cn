@@ -261,6 +261,7 @@ import { orderTags } from '~/composables/useTagOrder'
 import PageCard from '~/components/PageCard.vue'
 
 definePageMeta({ title: '2025“群雄逐鹿”新秀竞赛', key: 'newbee2025' })
+const isClient = typeof window !== 'undefined'
 
 const milestones = [
   {
@@ -733,7 +734,7 @@ const displayedEntries = computed(() => (orderMode.value === 'created' ? entries
 watch(
   () => [entriesByCreated.value, entriesByRandom.value],
   ([created, random]) => {
-    if (!process.client) return
+    if (!isClient) return
     const combined: any[] = []
     if (Array.isArray(created)) combined.push(...created)
     if (Array.isArray(random)) combined.push(...random)
@@ -758,7 +759,7 @@ watch(
 watch(
   () => trackHighlights.value,
   (highlights) => {
-    if (!process.client) return
+    if (!isClient) return
     if (!Array.isArray(highlights) || highlights.length === 0) return
     const cards = highlights.map(h => h.card).filter(Boolean) as any[]
     if (cards.length === 0) return
@@ -770,7 +771,7 @@ watch(
 watch(
   () => themeHighlights.value,
   (highlights) => {
-    if (!process.client) return
+    if (!isClient) return
     if (!Array.isArray(highlights) || highlights.length === 0) return
     const cards = highlights.map(h => h.card).filter(Boolean) as any[]
     if (cards.length === 0) return

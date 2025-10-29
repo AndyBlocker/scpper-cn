@@ -4,10 +4,7 @@
     <!-- Loading -->
     <div v-if="pagePending" class="p-10 text-center">
       <div class="inline-flex items-center gap-2">
-        <svg class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-        </svg>
+        <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" stroke-width="2" aria-hidden="true" />
         <span class="text-neutral-600 dark:text-neutral-400">加载中…</span>
       </div>
     </div>
@@ -20,28 +17,23 @@
     <!-- Content -->
     <div v-else class="space-y-6">
       <!-- Title + Actions -->
-      <header class="flex items-start justify-between gap-3 relative">
+      <header class="relative flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <h1 class="text-[22px] leading-snug font-bold text-neutral-900 dark:text-neutral-100">
           {{ pageDisplayTitle }}
         </h1>
-        <div class="flex items-center gap-2 shrink-0">
+        <div class="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:justify-end sm:shrink-0">
           <button
             v-if="page?.wikidotId"
             @click="copyId"
             :title="copiedId ? '已复制' : '复制'"
             class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700"
           >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
+            <LucideIcon name="Copy" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
             ID {{ page?.wikidotId }}
           </button>
 
           <span v-if="page?.isDeleted" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100/90 dark:bg-red-900/40 text-red-700 dark:text-red-300 border border-red-200/80 dark:border-red-800">
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
-            </svg>
+            <LucideIcon name="Trash2" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
             <span>已删除</span>
             <span v-if="deletedDate" class="text-[11px] opacity-80">· {{ deletedDate }}</span>
           </span>
@@ -49,11 +41,7 @@
           <a v-if="page?.url"
              :href="sourceUrlHttps" target="_blank" rel="noopener"
              class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700">
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-              <polyline points="15 3 21 3 21 9"/>
-              <line x1="10" y1="14" x2="21" y2="3"/>
-            </svg>
+            <LucideIcon name="ExternalLink" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
             源页面
             <span class="ml-1 pl-1 inline-flex items-center border-l border-neutral-200 dark:border-neutral-700">
               <span
@@ -61,22 +49,23 @@
                 :title="copiedSource ? '已复制' : '复制 URL'"
                 :class="['inline-flex items-center gap-0.5 px-1 py-0.5 rounded transition-colors', copiedSource ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'bg-neutral-200/60 dark:bg-neutral-700/60 text-neutral-600 dark:text-neutral-300']"
               >
-                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                </svg>
+                <LucideIcon name="Copy" class="w-3 h-3" stroke-width="2" aria-hidden="true" />
               </span>
             </span>
           </a>
+          <CollectionPicker
+            v-if="page?.id"
+            :page-id="page.id"
+            :page-wikidot-id="page?.wikidotId ?? null"
+            :page-title="pageDisplayTitle"
+          />
         </div>
       </header>
 
       <!-- Meta line -->
       <section class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] leading-5 text-neutral-600 dark:text-neutral-400">
         <div v-if="groupedAttributions && groupedAttributions.length > 0" class="inline-flex items-center gap-2">
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M20 21v-2a4 4 0 0 0-3-3.87"/><path d="M4 21v-2a4 4 0 0 1 3-3.87"/><circle cx="12" cy="7" r="4"/>
-          </svg>
+          <LucideIcon name="Users" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
           <div class="flex flex-wrap gap-2 items-center">
             <template v-for="attr in groupedAttributions" :key="attr.type">
               <template v-for="(person, idx) in attr.users" :key="`p-${attr.type}-${idx}`">
@@ -93,17 +82,21 @@
         </div>
 
         <div class="inline-flex items-center gap-1">
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
+          <LucideIcon name="Clock" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
           <span>{{ createdDate ? formatDate(createdDate) : 'N/A' }}</span>
         </div>
 
         <div class="inline-flex items-center gap-1">
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M3 4h18"/><path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="8" width="18" height="12" rx="2"/>
-          </svg>
-          <span>修订 {{ page?.revisionCount || 0 }}</span>
+          <LucideIcon name="History" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+          <span>
+            修订 {{ page?.revisionCount || 0 }}
+            <template v-if="totalViewsCount > 0">
+              · 浏览 {{ totalViewsDisplay }}
+              <span v-if="todayViewsCount > 0" class="text-green-600 dark:text-green-400">
+                (+{{ todayViewsDisplay }})
+              </span>
+            </template>
+          </span>
         </div>
 
         <div class="inline-flex items-center gap-2 flex-wrap">
@@ -117,7 +110,7 @@
 
       <!-- Metrics (4 cards) -->
       <section id="metrics" class="space-y-3">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div class="flex items-center gap-2">
             <h2 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">核心指标</h2>
             <button
@@ -126,26 +119,21 @@
               @click="copyAnchorLink('metrics')"
               :title="copiedAnchorId === 'metrics' ? '已复制链接' : '复制该段落链接'"
             >
-              <svg v-if="copiedAnchorId === 'metrics'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
-              </svg>
+              <LucideIcon v-if="copiedAnchorId === 'metrics'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+              <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
             </button>
           </div>
           <span v-if="metricsUpdatedAt" class="text-xs text-neutral-500 dark:text-neutral-400">
             更新于 {{ formatDate(metricsUpdatedAt) }}
           </span>
         </div>
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <!-- 评分 -->
           <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
             <div class="flex items-start justify-between">
               <div class="text-[12px] text-neutral-600 dark:text-neutral-400">评分</div>
               <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="ratingTooltip">
-                {{ Number(page?.rating ?? 0).toFixed(0) }}
+                {{ totalScoreDisplay }}
               </div>
             </div>
             <div class="mt-2 grid grid-cols-2 text-[11px]">
@@ -205,7 +193,7 @@
         id="rating-history"
         class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm"
       >
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
           <div class="flex items-center gap-2">
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">评分趋势</h3>
             <button
@@ -214,13 +202,8 @@
               @click="copyAnchorLink('rating-history')"
               :title="copiedAnchorId === 'rating-history' ? '已复制链接' : '复制该段落链接'"
             >
-              <svg v-if="copiedAnchorId === 'rating-history'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
-              </svg>
+              <LucideIcon v-if="copiedAnchorId === 'rating-history'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+              <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
             </button>
           </div>
           <span class="text-xs text-neutral-500 dark:text-neutral-500">按周聚合</span>
@@ -249,7 +232,7 @@
 
       <!-- Revisions -->
       <section id="revisions" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-white dark:bg-neutral-900 shadow-sm min-h-[280px] flex flex-col">
-          <div class="flex items-center justify-between mb-4">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
             <div class="flex items-center gap-2">
               <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近修订</h3>
               <button
@@ -258,13 +241,8 @@
                 @click="copyAnchorLink('revisions')"
                 :title="copiedAnchorId === 'revisions' ? '已复制链接' : '复制该段落链接'"
               >
-                <svg v-if="copiedAnchorId === 'revisions'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
-                </svg>
+                <LucideIcon v-if="copiedAnchorId === 'revisions'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+                <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
               </button>
             </div>
             <div class="text-xs text-neutral-500 dark:text-neutral-400">{{ (revPage + 1) }} / {{ revTotalPages }}</div>
@@ -313,7 +291,7 @@
 
           </div>
           <div v-if="revisionsPaged && revisionsPaged.length > 0" class="mt-3">
-            <div class="flex items-center justify-between">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <button @click="prevRevPage" :disabled="revPage === 0"
                       class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
               <div class="flex items-center gap-1">
@@ -346,7 +324,7 @@
 
       <!-- Recent Votes -->
       <section id="votes" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 bg-white dark:bg-neutral-900 shadow-sm min-h-[280px] flex flex-col">
-          <div class="flex items-center justify-between mb-4">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
             <div class="flex items-center gap-2">
               <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近投票</h3>
               <button
@@ -355,13 +333,8 @@
                 @click="copyAnchorLink('votes')"
                 :title="copiedAnchorId === 'votes' ? '已复制链接' : '复制该段落链接'"
               >
-                <svg v-if="copiedAnchorId === 'votes'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
-                </svg>
+                <LucideIcon v-if="copiedAnchorId === 'votes'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+                <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
               </button>
             </div>
             <div class="text-xs text-neutral-500 dark:text-neutral-400">{{ currentVotePage }} / {{ voteTotalPages }}</div>
@@ -381,7 +354,7 @@
           </div>
 
           <div v-else class="flex-1">
-            <div class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
               <div
                 v-for="v in recentVotes"
                 :key="`${v.timestamp}-${v.userId || v.userWikidotId}`"
@@ -410,7 +383,7 @@
 
           </div>
           <div v-if="recentVotes && recentVotes.length > 0" class="mt-3">
-            <div class="flex items-center justify-between">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <button @click="prevVotePage" :disabled="voteOffset === 0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
               <div class="flex items-center gap-1">
                 <button
@@ -443,7 +416,7 @@
 
       <!-- Related Pages (Recommendations) -->
       <section id="related" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
           <div class="flex items-center gap-2">
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">相关页面</h3>
             <button
@@ -452,13 +425,8 @@
               @click="copyAnchorLink('related')"
               :title="copiedAnchorId === 'related' ? '已复制链接' : '复制该段落链接'"
             >
-              <svg v-if="copiedAnchorId === 'related'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
-              </svg>
+              <LucideIcon v-if="copiedAnchorId === 'related'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+              <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
             </button>
           </div>
           <button
@@ -467,13 +435,11 @@
             @click="refreshRelatedPages()"
             title="刷新推荐"
           >
-            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-2M19 5a9 9 0 00-14 2" />
-            </svg>
+            <LucideIcon name="RefreshCcw" class="h-3.5 w-3.5" stroke-width="1.8" />
             刷新
           </button>
         </div>
-        <div v-if="relatedPending" class="grid grid-cols-3 gap-3">
+        <div v-if="relatedPending" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div v-for="i in 3" :key="`skeleton-${i}`" class="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-neutral-900/60 animate-pulse">
             <div class="h-4 w-3/4 bg-neutral-200 dark:bg-neutral-800 rounded mb-3"></div>
             <div class="flex gap-2 mb-3">
@@ -526,13 +492,8 @@
                 @click="copyAnchorLink('page-images')"
                 :title="copiedAnchorId === 'page-images' ? '已复制链接' : '复制该段落链接'"
               >
-                <svg v-if="copiedAnchorId === 'page-images'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
-                </svg>
+                <LucideIcon v-if="copiedAnchorId === 'page-images'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+                <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
               </button>
             </div>
             <p v-if="hasPageImages" class="text-xs text-neutral-500 dark:text-neutral-400">
@@ -620,13 +581,8 @@
               @click="copyAnchorLink('page-source')"
               :title="copiedAnchorId === 'page-source' ? '已复制链接' : '复制该段落链接'"
             >
-              <svg v-if="copiedAnchorId === 'page-source'" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14a5 5 0 010-7l1-1a5 5 0 017 7l-1 1" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10a5 5 0 010 7l-1 1a5 5 0 01-7-7l1-1" />
-              </svg>
+              <LucideIcon v-if="copiedAnchorId === 'page-source'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+              <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
             </button>
           </div>
           <div class="flex flex-wrap items-center gap-3">
@@ -834,6 +790,8 @@ import { orderTags } from '~/composables/useTagOrder'
 import { onBeforeRouteUpdate } from 'vue-router'
 import { useAuth } from '~/composables/useAuth'
 import { useViewerVotes } from '~/composables/useViewerVotes'
+import { formatDateUtc8, formatDateIsoUtc8, diffUtc8CalendarDays } from '~/utils/timezone'
+import CollectionPicker from '~/components/collections/CollectionPicker.vue'
 
 // Nuxt auto imports for type checker
 declare const useAsyncData: any
@@ -841,7 +799,6 @@ declare const useNuxtApp: any
 declare const useRoute: any
 declare const definePageMeta: any
 declare const useRuntimeConfig: any
-declare const process: any
 
 const route = useRoute();
 const {$bff} = useNuxtApp();
@@ -851,6 +808,8 @@ const { hydratePages: hydrateViewerVotes } = useViewerVotes()
 const PAGE_ANCHOR_KEY = '__page__'
 const copiedAnchorId = ref<string | null>(null)
 let anchorCopyTimer: ReturnType<typeof setTimeout> | null = null
+const isClient = typeof window !== 'undefined'
+const isDev = import.meta.env.DEV
 
 const viewerLinkedId = computed(() => {
   const id = authUser.value?.linkedWikidotId
@@ -882,7 +841,7 @@ const resolveAssetPath = (path?: string | null, fallback?: string | null) => {
 
 definePageMeta({ key: (route:any) => route.fullPath })
 
-if (process.dev) {
+if (isDev) {
   onBeforeRouteUpdate((to:any, from:any) => {
     console.log('页面路由更新:', { to: to.fullPath, from: from.fullPath })
   });
@@ -995,7 +954,7 @@ const primaryImageUrl = computed(() => {
 const canonicalUrl = computed(() => {
   const basePath = (route.fullPath || '').split('#')[0] || ''
   const normalizedPath = basePath.startsWith('/') ? basePath : `/${basePath}`
-  if (process && process.client && typeof window !== 'undefined' && window.location?.origin) {
+  if (isClient && typeof window !== 'undefined' && window.location?.origin) {
     return `${window.location.origin}${normalizedPath}`
   }
   const siteBase = (runtimeConfig?.public as any)?.siteBase
@@ -1084,8 +1043,7 @@ const revTotalPages = computed(() => {
 const deletedDate = computed(() => {
   const raw = page.value?.deletedAt
   if (!raw) return ''
-  const d = new Date(raw)
-  return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10)
+  return formatDateIsoUtc8(raw)
 })
 const revPageNumbers = computed(() => [1,2,3,4].filter(n => n <= revTotalPages.value))
 function goRevPage(n:number){
@@ -1155,7 +1113,7 @@ const { data: relatedPages, pending: relatedPending, error: relatedError, refres
 watch(
   () => relatedPages.value,
   (pages) => {
-    if (!process.client) return
+    if (!isClient) return
     if (!Array.isArray(pages) || pages.length === 0) return
     void hydrateViewerVotes(pages as any[])
   },
@@ -1847,30 +1805,21 @@ const groupedAttributions = computed(() => {
 
 function formatDate(dateStr: string) {
   if (!dateStr) return 'N/A'
-  const date = new Date(dateStr)
-  // Force a stable timezone to avoid SSR/CSR mismatch
-  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+  return formatDateUtc8(dateStr, { year: 'numeric', month: 'short', day: 'numeric' }) || 'N/A'
 }
 function formatDateCompact(dateStr: string) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
-  // Use UTC components for stability across environments
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return formatDateIsoUtc8(dateStr)
 }
 function formatRelativeTime(dateStr: string) {
   if (!dateStr) return ''
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days < 30) return `${days} 天前`
-  if (days < 365) return `${Math.floor(days / 30)} 个月前`
-  return `${Math.floor(days / 365)} 年前`
+  const diffDays = diffUtc8CalendarDays(new Date(), dateStr)
+  if (diffDays == null) return ''
+  if (diffDays === 0) return '今天'
+  if (diffDays === 1) return '昨天'
+  if (diffDays < 30) return `${diffDays} 天前`
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} 个月前`
+  return `${Math.floor(diffDays / 365)} 年前`
 }
 
 function formatRevisionType(type: string) {
@@ -1917,7 +1866,7 @@ function formatRecordType(type: string) {
 }
 
 async function copyAnchorLink(sectionId?: string) {
-  if (!process.client) return
+  if (!isClient) return
   const hash = sectionId ? `#${sectionId}` : ''
   const basePath = route.fullPath.split('#')[0]
   const origin = window?.location?.origin || ''
@@ -1979,6 +1928,43 @@ const totalVotes = computed(() => Math.max(0, upvotes.value + downvotes.value))
 const upvotePct = computed(() => totalVotes.value ? (upvotes.value / totalVotes.value) * 100 : 0)
 const downvotePct = computed(() => totalVotes.value ? (downvotes.value / totalVotes.value) * 100 : 0)
 const likeRatioPct = computed(() => totalVotes.value ? (upvotes.value / totalVotes.value) * 100 : 0)
+const totalScore = computed(() => {
+  const distribution = voteDistribution.value as any
+  if (distribution && distribution.upvotes != null && distribution.downvotes != null) {
+    const up = Number(distribution.upvotes)
+    const down = Number(distribution.downvotes)
+    if (Number.isFinite(up) && Number.isFinite(down)) {
+      return up - down
+    }
+  }
+
+  const statsValue = stats.value as any
+  if (statsValue && statsValue.hasStats) {
+    const up = Number(statsValue.uv ?? 0)
+    const down = Number(statsValue.dv ?? 0)
+    if (Number.isFinite(up) && Number.isFinite(down)) {
+      return up - down
+    }
+  }
+
+  const fallback = Number(page.value?.rating ?? 0)
+  return Number.isFinite(fallback) ? fallback : 0
+})
+const totalScoreDisplay = computed(() => {
+  const value = totalScore.value
+  return Number.isFinite(value) ? value.toFixed(0) : '0'
+})
+
+const totalViewsCount = computed(() => {
+  const raw = Number((stats as any).value?.totalViews ?? 0)
+  return Number.isFinite(raw) ? Math.max(0, raw) : 0
+})
+const todayViewsCount = computed(() => {
+  const raw = Number((stats as any).value?.todayViews ?? 0)
+  return Number.isFinite(raw) ? Math.max(0, raw) : 0
+})
+const totalViewsDisplay = computed(() => totalViewsCount.value.toLocaleString('zh-CN'))
+const todayViewsDisplay = computed(() => todayViewsCount.value.toLocaleString('zh-CN'))
 
 // Wilson 95% lower bound
 const wilsonLB = computed(() => {

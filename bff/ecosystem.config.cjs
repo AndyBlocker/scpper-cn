@@ -9,8 +9,9 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: '4396',
         DATABASE_URL: 'postgresql://REDACTED@localhost:5434/scpper-cn',
-        ENABLE_CACHE: 'false',
-        USER_BACKEND_BASE_URL: 'http://127.0.0.1:4455'
+        ENABLE_CACHE: 'true',
+        USER_BACKEND_BASE_URL: 'http://127.0.0.1:4455',
+        REDIS_URL: 'redis://:REDACTED@127.0.0.1:6379'
       }
     }
   ]
