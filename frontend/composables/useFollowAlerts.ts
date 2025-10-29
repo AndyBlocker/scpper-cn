@@ -1,7 +1,7 @@
 import { useNuxtApp } from 'nuxt/app';
 import { computed } from 'vue';
 
-export type FollowAlertType = 'REVISION' | 'ATTRIBUTION';
+export type FollowAlertType = 'REVISION' | 'ATTRIBUTION' | 'ATTRIBUTION_REMOVED';
 
 export interface FollowAlertItem {
   id: number;
@@ -52,20 +52,59 @@ export function useFollowAlerts() {
         alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
         unreadCount.value = Number.isFinite(res.unreadCount) ? res.unreadCount : 0;
         lastFetchedAt.value = new Date().toISOString();
+        combined.value = buildCombinedGroups(alerts.value);
+        combinedLastFetchedAt.value = new Date().toISOString();
       } else {
         alerts.value = [];
         unreadCount.value = 0;
         lastFetchedAt.value = null;
+        combined.value = [];
+        combinedLastFetchedAt.value = null;
       }
     } catch (e) {
       console.warn('[follow-alerts] fetch failed', e);
       alerts.value = [];
       unreadCount.value = 0;
       lastFetchedAt.value = null;
+      combined.value = [];
+      combinedLastFetchedAt.value = null;
     } finally {
       loading.value = false;
     }
     return alerts.value;
+  }
+
+  function buildCombinedGroups(list: FollowAlertItem[]): FollowCombinedGroup[] {
+    const groups = new Map<number, FollowCombinedGroup>();
+    for (const item of list) {
+      const existing = groups.get(item.pageId);
+      if (!existing) {
+        groups.set(item.pageId, {
+          pageId: item.pageId,
+          pageWikidotId: item.pageWikidotId ?? null,
+          pageUrl: item.pageUrl ?? null,
+          pageTitle: item.pageTitle ?? null,
+          pageAlternateTitle: item.pageAlternateTitle ?? null,
+          updatedAt: item.detectedAt,
+          alerts: [item]
+        });
+        continue;
+      }
+      existing.alerts.push(item);
+      if (new Date(item.detectedAt).getTime() > new Date(existing.updatedAt).getTime()) {
+        existing.updatedAt = item.detectedAt;
+      }
+      if (existing.pageTitle == null && item.pageTitle) existing.pageTitle = item.pageTitle;
+      if (existing.pageAlternateTitle == null && item.pageAlternateTitle) existing.pageAlternateTitle = item.pageAlternateTitle;
+      if (existing.pageWikidotId == null && item.pageWikidotId != null) existing.pageWikidotId = item.pageWikidotId;
+      if (existing.pageUrl == null && item.pageUrl) existing.pageUrl = item.pageUrl;
+    }
+    return Array.from(groups.values()).map(group => ({
+      ...group,
+      alerts: group.alerts
+        .slice()
+        .sort((a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime())
+    })).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
   async function fetchCombined(force = false, limit = 20, offset = 0) {
@@ -76,16 +115,9 @@ export function useFollowAlerts() {
     }
     combinedLoading.value = true;
     try {
-      const res = await $bff<{ ok: boolean; total?: number; groups: FollowCombinedGroup[] }>(
-        '/alerts/follow/combined', { method: 'GET', params: { limit, offset } }
-      );
-      if (res?.ok) {
-        combined.value = Array.isArray(res.groups) ? res.groups : [];
-        combinedLastFetchedAt.value = new Date().toISOString();
-      } else {
-        combined.value = [];
-        combinedLastFetchedAt.value = null;
-      }
+      const list = await fetchAlerts(force, limit, offset);
+      combined.value = buildCombinedGroups(list);
+      combinedLastFetchedAt.value = new Date().toISOString();
     } catch (e) {
       console.warn('[follow-alerts] combined fetch failed', e);
       combined.value = [];
@@ -100,16 +132,14 @@ export function useFollowAlerts() {
     try {
       const res = await $bff<{ ok: boolean; id: number; acknowledgedAt: string | null }>(`/alerts/follow/${id}/read`, { method: 'POST' });
       if (res?.ok) {
+        const acknowledgedAt = res.acknowledgedAt ?? new Date().toISOString();
         const idx = alerts.value.findIndex(a => a.id === id);
-        if (idx >= 0) alerts.value[idx].acknowledgedAt = res.acknowledgedAt ?? new Date().toISOString();
-        // Update combined cache
-        const nextGroups: FollowCombinedGroup[] = [];
-        for (const g of combined.value) {
-          const remaining = g.alerts.filter(a => a.id !== id);
-          if (remaining.length > 0) nextGroups.push({ ...g, alerts: remaining });
-        }
-        combined.value = nextGroups;
-        unreadCount.value = Math.max(0, (unreadCount.value || 0) - 1);
+        if (idx >= 0) alerts.value[idx] = { ...alerts.value[idx], acknowledgedAt };
+        combined.value = combined.value.map(group => ({
+          ...group,
+          alerts: group.alerts.map(alert => alert.id === id ? { ...alert, acknowledgedAt } : alert)
+        }));
+        unreadCount.value = alerts.value.filter(a => !a.acknowledgedAt).length;
       }
     } catch (e) {
       console.warn('[follow-alerts] mark read failed', e);
@@ -120,8 +150,12 @@ export function useFollowAlerts() {
     try {
       const res = await $bff<{ ok: boolean; updated: number }>('/alerts/follow/read-all', { method: 'POST' });
       if (res?.ok) {
-        alerts.value = alerts.value.map(a => ({ ...a, acknowledgedAt: a.acknowledgedAt ?? new Date().toISOString() }));
-        combined.value = [];
+        const nowIso = new Date().toISOString();
+        alerts.value = alerts.value.map(a => ({ ...a, acknowledgedAt: a.acknowledgedAt ?? nowIso }));
+        combined.value = combined.value.map(group => ({
+          ...group,
+          alerts: group.alerts.map(alert => ({ ...alert, acknowledgedAt: alert.acknowledgedAt ?? nowIso }))
+        }));
         unreadCount.value = 0;
       }
     } catch (e) {
@@ -129,7 +163,9 @@ export function useFollowAlerts() {
     }
   }
 
-  const combinedUnread = computed(() => combined.value.reduce((acc, g) => acc + g.alerts.length, 0));
+  const combinedUnread = computed(() => combined.value.reduce((acc, g) => (
+    acc + g.alerts.reduce((count, alert) => count + (alert.acknowledgedAt ? 0 : 1), 0)
+  ), 0));
 
   return {
     alerts,
@@ -145,4 +181,3 @@ export function useFollowAlerts() {
     combinedUnread
   };
 }
-

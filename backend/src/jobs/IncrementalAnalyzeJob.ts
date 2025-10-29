@@ -8,6 +8,7 @@ import { UserSocialAnalysisJob } from './UserSocialAnalysisJob';
 import { computeUserCategoryBenchmarks } from './UserCategoryBenchmarksJob';
 import { PageMetricMonitorJob } from './PageMetricMonitorJob';
 import { UserFollowActivityJob } from './UserFollowActivityJob';
+import { UserCollectionService } from '../services/UserCollectionService.js';
 // @ts-ignore - importing from scripts folder
 // import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
@@ -53,11 +54,13 @@ export class IncrementalAnalyzeJob {
         'site_overview_daily',
         'page_metric_alerts',
         'user_follow_alerts',
+        'user_collection_sanitizer',
         // 新增：作者分类基准
         'category_benchmarks'
       ];
 
       const tasksToRun = options.tasks || availableTasks;
+      const forceFullHistory = options.forceFullHistory ?? options.forceFullAnalysis ?? false;
 
       // 如果是强制全量分析，先清理相关分析数据
       if (options.forceFullAnalysis) {
@@ -67,7 +70,7 @@ export class IncrementalAnalyzeJob {
 
       for (const taskName of tasksToRun) {
         console.log(`📊 Running task: ${taskName}`);
-        await this.runTask(taskName, options.forceFullAnalysis, options);
+        await this.runTask(taskName, options.forceFullAnalysis, { forceFullHistory });
       }
 
       console.log('✅ Incremental analysis completed successfully!');
@@ -114,9 +117,8 @@ export class IncrementalAnalyzeJob {
             console.log('  ✓ SiteStats cleared');
             break;
           case 'daily_aggregates':
-            await this.prisma.pageDailyStats.deleteMany({});
             await this.prisma.userDailyStats.deleteMany({});
-            console.log('  ✓ Daily aggregates cleared');
+            console.log('  ✓ UserDailyStats cleared (PageDailyStats preserved to retain view history)');
             break;
           case 'voting_time_series_cache':
             // 清理Page表中的votingTimeSeriesCache字段
@@ -321,6 +323,11 @@ export class IncrementalAnalyzeJob {
           await job.run(changeSet.map(item => item.id));
           break;
         }
+        case 'user_collection_sanitizer': {
+          const service = new UserCollectionService(this.prisma);
+          await service.pruneInvalidItems();
+          break;
+        }
         default:
           console.warn(`⚠️ Unknown task: ${taskName}`);
       }
@@ -471,7 +478,7 @@ export class IncrementalAnalyzeJob {
         SELECT v."pageVersionId" AS id,
                COUNT(*) FILTER (WHERE v.direction = 1) AS uv,
                COUNT(*) FILTER (WHERE v.direction = -1) AS dv
-        FROM "Vote" v
+        FROM "LatestVote" v
         WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
         GROUP BY v."pageVersionId"
       )
@@ -2468,7 +2475,7 @@ export class IncrementalAnalyzeJob {
 /**
  * 便捷的分析入口函数
  */
-export async function analyzeIncremental(options: { forceFullAnalysis?: boolean; tasks?: string[] } = {}) {
+export async function analyzeIncremental(options: { forceFullAnalysis?: boolean; forceFullHistory?: boolean; tasks?: string[] } = {}) {
   const job = new IncrementalAnalyzeJob();
   await job.analyze(options);
 }

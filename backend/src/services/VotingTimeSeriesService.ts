@@ -40,29 +40,59 @@ export class VotingTimeSeriesService {
       cumulative_downvotes: number;
       cumulative_total: number;
     }>>`
-      WITH daily_votes AS (
-        SELECT 
-          DATE(v."timestamp") as vote_date,
-          COUNT(*) FILTER (WHERE v.direction = 1) as daily_upvotes,
-          COUNT(*) FILTER (WHERE v.direction = -1) as daily_downvotes,
-          COUNT(*) FILTER (WHERE v.direction != 0) as daily_total
+      WITH ordered AS (
+        SELECT
+          DATE(v."timestamp") AS vote_date,
+          v."timestamp",
+          v.direction AS current_direction,
+          CASE
+            WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+            WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+            ELSE 'g:' || v.id::text
+          END AS actor_key,
+          LAG(v.direction) OVER (
+            PARTITION BY CASE
+              WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+              WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+              ELSE 'g:' || v.id::text
+            END
+            ORDER BY v."timestamp", v.id
+          ) AS prev_direction
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
         WHERE pv."pageId" = ${pageId}
           AND pv."validTo" IS NULL
           AND pv."isDeleted" = false
-        GROUP BY DATE(v."timestamp")
-        ORDER BY DATE(v."timestamp")
+      ),
+      deltas AS (
+        SELECT
+          vote_date,
+          (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
+          (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
+          (CASE WHEN current_direction <> 0 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) <> 0 THEN 1 ELSE 0 END) AS total_delta
+        FROM ordered
+      ),
+      daily_votes AS (
+        SELECT
+          vote_date,
+          SUM(up_delta)::int AS daily_upvotes,
+          SUM(down_delta)::int AS daily_downvotes,
+          SUM(total_delta)::int AS daily_total
+        FROM deltas
+        GROUP BY vote_date
       ),
       cumulative_votes AS (
-        SELECT 
+        SELECT
           vote_date,
-          daily_upvotes::int,
-          daily_downvotes::int,
-          daily_total::int,
-          SUM(daily_upvotes::int) OVER (ORDER BY vote_date) as cumulative_upvotes,
-          SUM(daily_downvotes::int) OVER (ORDER BY vote_date) as cumulative_downvotes,
-          SUM(daily_total::int) OVER (ORDER BY vote_date) as cumulative_total
+          daily_upvotes,
+          daily_downvotes,
+          daily_total,
+          SUM(daily_upvotes) OVER (ORDER BY vote_date) AS cumulative_upvotes,
+          SUM(daily_downvotes) OVER (ORDER BY vote_date) AS cumulative_downvotes,
+          SUM(daily_total) OVER (ORDER BY vote_date) AS cumulative_total
         FROM daily_votes
       )
       SELECT * FROM cumulative_votes ORDER BY vote_date
@@ -101,28 +131,58 @@ export class VotingTimeSeriesService {
           AND pv."validTo" IS NULL
           AND pv."isDeleted" = false
       ),
-      daily_votes AS (
-        SELECT 
-          DATE(v."timestamp") as vote_date,
-          COUNT(*) FILTER (WHERE v.direction = 1) as daily_upvotes,
-          COUNT(*) FILTER (WHERE v.direction = -1) as daily_downvotes,
-          COUNT(*) FILTER (WHERE v.direction != 0) as daily_total
+      ordered AS (
+        SELECT
+          DATE(v."timestamp") AS vote_date,
+          v."timestamp",
+          v.direction AS current_direction,
+          CASE
+            WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+            WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+            ELSE 'g:' || v.id::text
+          END AS actor_key,
+          LAG(v.direction) OVER (
+            PARTITION BY CASE
+              WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+              WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+              ELSE 'g:' || v.id::text
+            END
+            ORDER BY v."timestamp", v.id
+          ) AS prev_direction
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
         JOIN user_pages up ON pv."pageId" = up."pageId"
         WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
-        GROUP BY DATE(v."timestamp")
-        ORDER BY DATE(v."timestamp")
+      ),
+      deltas AS (
+        SELECT
+          vote_date,
+          (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
+          (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
+          (CASE WHEN current_direction <> 0 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) <> 0 THEN 1 ELSE 0 END) AS total_delta
+        FROM ordered
+      ),
+      daily_votes AS (
+        SELECT
+          vote_date,
+          SUM(up_delta)::int AS daily_upvotes,
+          SUM(down_delta)::int AS daily_downvotes,
+          SUM(total_delta)::int AS daily_total
+        FROM deltas
+        GROUP BY vote_date
       ),
       cumulative_votes AS (
         SELECT 
           vote_date,
-          daily_upvotes::int,
-          daily_downvotes::int,
-          daily_total::int,
-          SUM(daily_upvotes::int) OVER (ORDER BY vote_date) as cumulative_upvotes,
-          SUM(daily_downvotes::int) OVER (ORDER BY vote_date) as cumulative_downvotes,
-          SUM(daily_total::int) OVER (ORDER BY vote_date) as cumulative_total
+          daily_upvotes,
+          daily_downvotes,
+          daily_total,
+          SUM(daily_upvotes) OVER (ORDER BY vote_date) as cumulative_upvotes,
+          SUM(daily_downvotes) OVER (ORDER BY vote_date) as cumulative_downvotes,
+          SUM(daily_total) OVER (ORDER BY vote_date) as cumulative_total
         FROM daily_votes
       )
       SELECT * FROM cumulative_votes ORDER BY vote_date

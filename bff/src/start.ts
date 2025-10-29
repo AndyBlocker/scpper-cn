@@ -23,7 +23,23 @@ export async function createServer() {
   let redis: any = null;
   const enableCache = String(process.env.ENABLE_CACHE || 'false') === 'true';
   if (enableCache) {
-    redis = createClient({ url: process.env.REDIS_URL || '' });
+    const redisUrl = process.env.REDIS_URL;
+    const redisHost = process.env.REDIS_HOST || '127.0.0.1';
+    const redisPort = Number(process.env.REDIS_PORT || 6379);
+    const redisPassword = process.env.REDIS_PASSWORD || process.env.REDIS_AUTH;
+    const redisDbRaw = process.env.REDIS_DB;
+    const redisDb = redisDbRaw !== undefined ? Number(redisDbRaw) : undefined;
+    const redisOptions = redisUrl
+      ? { url: redisUrl }
+      : {
+          socket: {
+            host: redisHost,
+            port: Number.isFinite(redisPort) ? redisPort : 6379
+          },
+          password: redisPassword ? String(redisPassword) : undefined,
+          database: redisDb !== undefined && Number.isFinite(redisDb) ? redisDb : undefined
+        };
+    redis = createClient(redisOptions as any);
     redis.on('error', (e: unknown) => console.error(e));
     await redis.connect();
   }
@@ -43,5 +59,3 @@ export async function createServer() {
 
   return app;
 }
-
-

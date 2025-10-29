@@ -1,14 +1,7 @@
 import { Router, type Request } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
-
-interface AuthUserPayload {
-  id: string;
-  email: string;
-  displayName: string | null;
-  linkedWikidotId: number | null;
-  lastLoginAt: string | null;
-}
+import { fetchAuthUser, type AuthUserPayload } from '../utils/auth.js';
 
 interface AlertsQueryRow {
   id: number;
@@ -34,7 +27,6 @@ const METRIC_ALIAS: Record<string, string> = {
   score: 'SCORE'
 };
 
-const USER_BACKEND_DEFAULT = 'http://127.0.0.1:4455';
 const AUTO_WATCH_SOURCE = 'AUTO_OWNERSHIP';
 const DEFAULT_VOTE_THRESHOLD = 20;
 const MUTABLE_METRICS = ['COMMENT_COUNT', 'VOTE_COUNT', 'REVISION_COUNT'] as const;
@@ -248,44 +240,6 @@ async function resolveAppUserId(pool: Pool, authUser: AuthUserPayload): Promise<
   );
   const resolved = result.rows[0]?.id;
   return Number.isFinite(resolved) ? resolved : null;
-}
-
-async function fetchAuthUser(req: Request): Promise<AuthUserPayload | null> {
-  const base = process.env.USER_BACKEND_BASE_URL || USER_BACKEND_DEFAULT;
-  if (!base || base === 'disable') {
-    return null;
-  }
-  const target = base.replace(/\/$/, '') + '/auth/me';
-  try {
-    const response = await fetch(target, {
-      method: 'GET',
-      headers: {
-        accept: 'application/json',
-        cookie: req.headers.cookie ?? ''
-      }
-    });
-    if (response.status === 401) {
-      return null;
-    }
-    if (!response.ok) {
-      return null;
-    }
-    const data = await response.json();
-    if (!data?.ok || !data.user) {
-      return null;
-    }
-    return {
-      id: String(data.user.id),
-      email: String(data.user.email || ''),
-      displayName: data.user.displayName ?? null,
-      linkedWikidotId: data.user.linkedWikidotId != null ? Number(data.user.linkedWikidotId) : null,
-      lastLoginAt: data.user.lastLoginAt ?? null
-    };
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.warn('[alerts] failed to resolve auth context', error);
-    return null;
-  }
 }
 
 function normalizeMetric(metricParam?: string): string {

@@ -8,24 +8,6 @@
       @mouseenter="onHoverEnter"
       @mouseleave="onHoverLeave"
     >
-      <button
-        v-if="favoriteAvailable"
-        type="button"
-        class="favorite-toggle"
-        :data-active="favoriteOn ? 'true' : 'false'"
-        :aria-pressed="favoriteOn"
-        :aria-label="favoriteAriaLabel"
-        @click.stop.prevent="handleFavoriteToggle"
-      >
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M12 17.27l-4.146 2.181a.75.75 0 01-1.088-.79l.792-4.62-3.355-3.27a.75.75 0 01.416-1.279l4.636-.674 2.073-4.202a.75.75 0 011.344 0l2.073 4.202 4.636.674a.75.75 0 01.416 1.279l-3.355 3.27.792 4.62a.75.75 0 01-1.088.79L12 17.27z"
-            :fill="favoriteOn ? 'currentColor' : 'none'"
-          />
-        </svg>
-      </button>
       <!-- Header: Title (lg only); md title inline; sm has compact header -->
       <div v-if="variant === 'lg'" class="flex items-start gap-3">
         <div
@@ -104,7 +86,7 @@
         <!-- excerpt (max 3 lines) -> enforce uniform height across cards -->
         <div>
           <div class="h-[48px] overflow-hidden flex items-center">
-            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 italic border-l border-[rgba(var(--accent),0.3)] pl-2 clamp-3">
+            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 italic border-l border-[rgb(var(--accent)_/_0.3)] pl-2 clamp-3">
               "{{ excerpt }}"
             </p>
           </div>
@@ -128,7 +110,7 @@
   
         <!-- sparkline -->
         <div v-if="computedSparkLine && computedSparkPoints && !hasFewVotes"
-             class="mt-1 h-12 border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800 rounded flex items-center justify-center">
+             class="mt-1 h-12 rounded border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.58)] flex items-center justify-center">
           <svg :width="'100%'" height="48" viewBox="0 0 300 48" preserveAspectRatio="none">
             <defs>
               <linearGradient :id="`gradient-${wikidotId || 'pg'}`" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -140,8 +122,8 @@
             <polyline :points="computedSparkLine || ''" fill="none" :stroke="'rgb(var(--accent))'" stroke-width="1.5" stroke-linecap="round" />
           </svg>
         </div>
-        <div v-else class="mt-1 h-12 border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800 rounded flex items-center justify-center">
-          <span class="text-[12px] text-neutral-400 dark:text-neutral-500">暂无趋势</span>
+        <div v-else class="mt-1 h-12 rounded border border-[rgb(var(--panel-border)_/_0.35)] bg-[rgb(var(--panel)_/_0.5)] flex items-center justify-center">
+          <span class="text-[12px] text-[rgb(var(--muted))]">暂无趋势</span>
         </div>
       </div>
   
@@ -234,8 +216,8 @@
   import { computed, resolveComponent, watch, ref } from 'vue'
   import { orderTags } from '~/composables/useTagOrder'
   import { useNuxtApp, useRuntimeConfig } from 'nuxt/app'
-  import { useViewerVotes } from '~/composables/useViewerVotes'
-  import { useFavorites } from '~/composables/useFavorites'
+import { useViewerVotes } from '~/composables/useViewerVotes'
+import { formatDateIsoUtc8 } from '~/utils/timezone'
   
   interface PageLike {
     wikidotId?: number | string
@@ -288,7 +270,7 @@
   
   const props = defineProps<Props>()
   const { ensureVotes, getVote, viewerWikidotId } = useViewerVotes()
-  const { isPageFavorite, togglePageFavorite } = useFavorites()
+  const isClient = () => typeof window !== 'undefined'
   
   const variant = computed<'lg'|'md'|'sm'>(() => {
     const s = props.size || 'md'
@@ -327,8 +309,7 @@
   const deletedDate = computed(() => {
     const raw = (props.p as any)?.deletedAt
     if (!raw) return ''
-    const d = new Date(raw)
-    return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10)
+    return formatDateIsoUtc8(raw)
   })
   
   const displayRating = computed(() => Number(props.rating ?? props.p?.rating ?? 0) || 0)
@@ -457,7 +438,7 @@
   watch(
     [viewerWikidotId, numericPageId, () => props.viewerVote],
     async ([viewer, pageId, directVote]) => {
-      if (!process.client) return
+      if (!isClient()) return
       if (!viewer || !pageId) return
       if (directVote != null) return
       const cached = getVote(pageId)
@@ -467,22 +448,7 @@
     { immediate: true }
   )
   
-  function handleFavoriteToggle() {
-    const id = numericPageId.value
-    if (id == null) return
-    togglePageFavorite({
-      id,
-      title: rawTitle.value || '未命名页面',
-      alternateTitle: rawAlternate.value || null,
-      rating: displayRating.value,
-      tags: sortedTags.value,
-      commentCount: displayComments.value,
-      controversy: controversy.value != null ? Number(controversy.value) : null,
-      snippet: snippetHtml.value
-    })
-  }
-  
-  const controversyText = computed(() => {
+const controversyText = computed(() => {
     const v = Number(controversy.value ?? 0)
     return Number.isFinite(v) ? v.toFixed(3) : '0.000'
   })
@@ -556,7 +522,7 @@
     if (src) {
       style['--pc-hover-bg-image'] = `url('${src}')`
       // Very subtle transparency to avoid affecting main content
-      style['--pc-hover-opacity'] = '0.06'
+      style['--pc-hover-opacity'] = '0.4'
     }
     // 强化“精品/主题精品”边框为金色，使用行内样式确保覆盖
     if (hasPremiumQuality.value) {
@@ -569,12 +535,18 @@
   
   
   /* Base class tweaks: lighter borders, slightly tighter padding on md/sm */
-  const baseClass = 'relative w-full max-w-full min-w-0 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition-all duration-200 overflow-hidden card-hover-bg'
+  const baseClass = [
+    'relative w-full max-w-full min-w-0 rounded-xl transition-all duration-200 overflow-hidden card-hover-bg backdrop-blur-md',
+    'bg-[rgb(var(--panel)_/_0.94)] border border-[rgb(var(--panel-border)_/_0.45)]',
+    'shadow-[0_18px_46px_rgba(15,23,42,0.08)] dark:shadow-[0_24px_60px_rgba(0,0,0,0.42)]'
+  ].join(' ')
+
   const hasPremiumQuality = computed(() => {
     const tags = internalTags.value
     // Highlight when page has 精品 or 主题精品
     return tags.includes('精品') || tags.includes('主题精品')
   })
+  
   const rootClass = computed(() => {
     if (variant.value === 'lg') {
       return [
@@ -603,69 +575,93 @@
       'p-2.5 flex flex-col gap-1'
     ].join(' ')
   })
+
   </script>
   
-  <style scoped>
-  .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .stat-tile{ @apply border border-neutral-200 dark:border-neutral-700 rounded p-2 text-center; }
-  .stat-label{ @apply text-[10px] leading-none text-neutral-500 dark:text-neutral-400; }
-  .stat-value{ @apply text-sm font-semibold text-neutral-800 dark:text-neutral-200 tabular-nums; }
-  .stat-soft{ @apply rounded text-center bg-neutral-50 dark:bg-neutral-800/60 p-1.5; }
-  .stat-num{ @apply text-[13px] leading-tight font-semibold text-neutral-800 dark:text-neutral-200 tabular-nums; }
-  .stat-chip{ @apply inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-50 dark:bg-neutral-800 text-[11px] text-neutral-700 dark:text-neutral-300 tabular-nums; }
-  .favorite-toggle{
-    @apply absolute top-3 right-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white/90 text-neutral-400 transition hover:border-[rgba(var(--accent),0.45)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-500 dark:hover:text-[rgb(var(--accent))];
-    z-index: 5;
-  }
-  .favorite-toggle[data-active='true']{
-    @apply text-[rgb(var(--accent))] border-[rgba(var(--accent),0.5)] bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.18)];
-  }
-  .tag-pill{
-    @apply inline-flex shrink-0 items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-0.5 text-[11px] text-[rgb(var(--accent))] whitespace-nowrap dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-[rgb(var(--accent))];
-    max-width: 100%;
-  }
-  .tag-link{
-    @apply block max-w-full truncate text-[11px] font-medium text-[rgb(var(--accent))] hover:underline dark:text-[rgb(var(--accent))];
-  }
-  .tags-track{
-    @apply relative flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-hidden;
-  }
-  .tag-fav{
-    @apply inline-flex h-4 w-4 items-center justify-center rounded-full text-neutral-400 transition hover:text-[rgb(var(--accent))] dark:text-neutral-500;
-  }
-  .tag-pill[data-active='true'] .tag-fav{
-    @apply text-[rgb(var(--accent))];
-  }
+<style scoped>
+.clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.stat-tile{
+  @apply rounded p-2 text-center;
+  border: 1px solid rgb(var(--panel-border) / 0.42);
+  background-color: rgb(var(--panel) / 0.68);
+}
+.stat-label{
+  @apply text-[10px] leading-none;
+  color: rgb(var(--muted) / 0.75);
+}
+.stat-value{ @apply text-sm font-semibold tabular-nums; color: rgb(var(--fg)); }
+.stat-soft{
+  @apply rounded text-center p-1.5;
+  border: 1px solid rgb(var(--panel-border) / 0.3);
+  background-color: rgb(var(--panel) / 0.58);
+}
+.stat-num{ @apply text-[13px] leading-tight font-semibold tabular-nums; color: rgb(var(--fg)); }
+.stat-chip{
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] tabular-nums;
+  border: 1px solid rgb(var(--tag-border) / 0.45);
+  background-color: rgb(var(--tag-bg) / 0.42);
+  color: rgb(var(--tag-text));
+}
+.tag-pill{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(var(--tag-border) / 0.55);
+  background-color: rgb(var(--tag-bg) / 0.78);
+  color: rgb(var(--tag-text));
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.tag-link{
+  display: block;
+  max-width: 100%;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: inherit;
+  text-decoration: none;
+}
+.tag-link:hover{ color: rgb(var(--accent)); text-decoration: underline; }
+.tags-track{
+  @apply relative flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-hidden;
+}
+.tag-fav{
+  display: inline-flex;
+  height: 1rem;
+  width: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: rgb(var(--muted) / 0.7);
+  transition: color .2s ease;
+}
+.tag-fav:hover{ color: rgb(var(--accent)); }
+.tag-pill[data-active='true'] .tag-fav{ color: rgb(var(--accent)); }
 
-  /* Hover background image only near the header; extremely subtle */
-  .card-hover-bg::before {
-    content: '';
-    position: absolute;
-    left: 0; right: 0; top: 0;
-    height: var(--pc-hover-height, 96px);
-    background-position: top center;
-    background-repeat: no-repeat;
-    background-size: cover;
-    opacity: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    z-index: 0;
-  }
-  .card-hover-bg.has-hover-bg.is-hovering::before {
-    background-image: var(--pc-hover-bg-image);
-    opacity: var(--pc-hover-opacity, 0.4);
-    /* Fade out quickly to keep main content almost unaffected */
-    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0, rgba(0,0,0,0.5) 60px, rgba(0,0,0,0) 100%);
-            mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0, rgba(0,0,0,0.5) 60px, rgba(0,0,0,0) 100%);
-    transition: opacity .18s ease-in-out;
-  }
-  </style>
-  
-  const favoriteAvailable = computed(() => numericPageId.value != null)
-  const favoriteOn = computed(() => {
-    const id = numericPageId.value
-    if (id == null) return false
-    return isPageFavorite(id)
-  })
-  const favoriteAriaLabel = computed(() => (favoriteOn.value ? '取消收藏该页面' : '收藏该页面'))
+/* Hover background image only near the header; extremely subtle */
+.card-hover-bg::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: var(--pc-hover-height, 96px);
+  background-position: top center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  opacity: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+}
+.card-hover-bg.has-hover-bg.is-hovering::before {
+  background-image: var(--pc-hover-bg-image);
+  opacity: var(--pc-hover-opacity, 0.55);
+  /* Fade out quickly to keep main content almost unaffected */
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0, rgba(0,0,0,0.5) 60px, rgba(0,0,0,0) 100%);
+          mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0, rgba(0,0,0,0.5) 60px, rgba(0,0,0,0) 100%);
+  transition: opacity .18s ease-in-out;
+}
+</style>

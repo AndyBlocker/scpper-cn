@@ -479,43 +479,89 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     }
   });
 
+  const shuffleInPlace = <T>(arr: T[]): void => {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  };
+
   // GET /api/pages/random
   router.get('/random', async (req, res, next) => {
     try {
       const { limit = '1' } = req.query as Record<string, string>;
-      
-      // For backward compatibility, if limit is 1, return a single random page
-      if (limit === '1') {
-        const sql = `
-          SELECT 
-            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
-            p."currentUrl" AS url,
-            pv.title,
-            pv."alternateTitle",
-            pv.rating,
-            pv."commentCount",
-            pv."voteCount",
-            pv.category,
-            pv.tags,
-            pv."createdAt",
-            pv."revisionCount",
-            pv."attributionCount",
-            pv.source,
-            pv."isDeleted" AS "isDeleted",
-            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
+      const limitInt = Math.max(1, Number(limit) || 1);
+      const BASE_RANDOM_FILTER = `
+        pv."validTo" IS NULL
+        AND pv.rating IS NOT NULL
+        AND COALESCE(array_length(pv.tags, 1), 0) > 0
+        AND NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[])
+      `;
+
+      const fetchSampledPages = async (
+        selectClause: string,
+        additionalFilter: string,
+        extraJoins: string,
+        limitValue: number
+      ): Promise<any[]> => {
+        const combinedFilter = `${BASE_RANDOM_FILTER}${additionalFilter ? ` AND ${additionalFilter}` : ''}`;
+        const samplePercent = Math.min(50, Math.max(limitValue * 3, 5));
+        const sampledSql = `
+          WITH sampled AS (
+            SELECT pv.id
+            FROM "PageVersion" pv TABLESAMPLE SYSTEM (${samplePercent})
+            WHERE ${combinedFilter}
+          )
+          SELECT ${selectClause}
+          FROM sampled s
+          JOIN "PageVersion" pv ON pv.id = s.id
+          JOIN "Page" p ON pv."pageId" = p.id
+          ${extraJoins}
+          WHERE ${combinedFilter}
+          ORDER BY random()
+          LIMIT $1::int
+        `;
+        const { rows } = await pool.query(sampledSql, [limitValue]);
+        if (rows.length >= limitValue) {
+          return rows;
+        }
+
+        const fallbackSql = `
+          SELECT ${selectClause}
           FROM "PageVersion" pv
           JOIN "Page" p ON pv."pageId" = p.id
-          WHERE pv."validTo" IS NULL
-            AND pv.rating IS NOT NULL
-            AND COALESCE(array_length(pv.tags, 1), 0) > 0
-            AND NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[])
+          ${extraJoins}
+          WHERE ${combinedFilter}
           ORDER BY random()
-          LIMIT 1
+          LIMIT $1::int
         `;
-        const { rows } = await pool.query(sql);
-        if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-        // prefer preview from source when present
-        const row = rows[0] as any;
+        const { rows: fallbackRows } = await pool.query(fallbackSql, [limitValue]);
+        return fallbackRows.length > 0 ? fallbackRows : rows;
+      };
+
+      if (limit === '1') {
+        const selectClause = `
+          COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
+          p."currentUrl" AS url,
+          pv.title,
+          pv."alternateTitle",
+          pv.rating,
+          pv."commentCount",
+          pv."voteCount",
+          pv.category,
+          pv.tags,
+          pv."createdAt",
+          pv."revisionCount",
+          pv."attributionCount",
+          pv.source,
+          pv."isDeleted" AS "isDeleted",
+          CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
+        `;
+        const rows = await fetchSampledPages(selectClause, '', '', 1);
+        if (rows.length === 0) {
+          return res.status(404).json({ error: 'not_found' });
+        }
+        const row: any = rows[0];
         const previews = extractPreviewCandidates(row?.source || null);
         if (previews && previews.length > 0) {
           const picked = pickPreview(previews);
@@ -524,171 +570,134 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
             return res.json({ ...row, excerpt: pp.text });
           }
         }
-        return res.json(rows[0]);
+        return res.json(row);
       }
-      
-      // For limit=6 (homepage), use specific composition
+
       if (limit === '6') {
-        // Query 1: Get 1 high-scoring (>=50) original page
-        const highScoringOriginalSql = `
-          SELECT 
-            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
-            p."currentUrl" AS url,
-            pv.title,
-            pv."alternateTitle",
-            pv.rating,
-            pv."commentCount",
-            pv."voteCount",
-            pv.category,
-            pv.tags,
-            pv."createdAt",
-            pv."revisionCount",
-            pv."attributionCount",
-            pv.source,
-            pv."textContent",
-            pv."isDeleted" AS "isDeleted",
-            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
-          FROM "PageVersion" pv
-          JOIN "Page" p ON pv."pageId" = p.id
-          WHERE pv."validTo" IS NULL
-            AND pv.rating >= 50
-            AND '原创' = ANY(pv.tags)
-            AND COALESCE(array_length(pv.tags, 1), 0) > 0
-            AND NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[])
-          ORDER BY random()
-          LIMIT 1
-        `;
-        
-        // Query 2: Get 3 other original pages
-        const otherOriginalSql = `
-          SELECT 
-            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
-            p."currentUrl" AS url,
-            pv.title,
-            pv."alternateTitle",
-            pv.rating,
-            pv."commentCount",
-            pv."voteCount",
-            pv.category,
-            pv.tags,
-            pv."createdAt",
-            pv."revisionCount",
-            pv."attributionCount",
-            pv.source,
-            pv."textContent",
-            pv."isDeleted" AS "isDeleted",
-            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
-          FROM "PageVersion" pv
-          JOIN "Page" p ON pv."pageId" = p.id
-          WHERE pv."validTo" IS NULL
-            AND pv.rating IS NOT NULL
-            AND '原创' = ANY(pv.tags)
-            AND COALESCE(array_length(pv.tags, 1), 0) > 0
-            AND NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[])
-          ORDER BY random()
-          LIMIT 3
-        `;
-        
-        // Query 3: Get 2 non-original (translation) pages
-        const translationSql = `
-          SELECT 
-            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
-            p."currentUrl" AS url,
-            pv.title,
-            pv."alternateTitle",
-            pv.rating,
-            pv."commentCount",
-            pv."voteCount",
-            pv.category,
-            pv.tags,
-            pv."createdAt",
-            pv."revisionCount",
-            pv."attributionCount",
-            pv.source,
-            pv."textContent",
-            pv."isDeleted" AS "isDeleted",
-            CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt"
-          FROM "PageVersion" pv
-          JOIN "Page" p ON pv."pageId" = p.id
-          WHERE pv."validTo" IS NULL
-            AND pv.rating IS NOT NULL
-            AND NOT ('原创' = ANY(pv.tags))
-            AND COALESCE(array_length(pv.tags, 1), 0) > 0
-            AND NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[])
-          ORDER BY random()
-          LIMIT 2
-        `;
-        
-        // Execute all queries in parallel
-        const [highScoringResult, otherOriginalResult, translationResult] = await Promise.all([
-          pool.query(highScoringOriginalSql),
-          pool.query(otherOriginalSql),
-          pool.query(translationSql)
-        ]);
-        
-        // Fallback uses shared util to ensure consistent behavior with homepage random
-        
-        // Combine results and add excerpts
-        const allPages = [
-          ...highScoringResult.rows,
-          ...otherOriginalResult.rows,
-          ...translationResult.rows
-        ].map(page => {
-          // Prefer explicit preview blocks from source
-          let excerpt = '';
-          const candidates = extractPreviewCandidates((page as any)?.source || null);
-          if (candidates && candidates.length > 0) {
-            const picked = pickPreview(candidates);
-            if (picked) excerpt = toPreviewPick(picked).text;
-          }
-          if (!excerpt) {
-            excerpt = extractExcerptFallback((page as any)?.textContent ?? null, 150);
-          }
-          // Remove heavy fields from response to reduce payload
-          const { textContent, source, ...pageWithoutContent } = page as any;
-          return { ...pageWithoutContent, excerpt };
-        });
-        
-        // Shuffle the combined array to mix the order
-        for (let i = allPages.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [allPages[i], allPages[j]] = [allPages[j], allPages[i]];
-        }
-        
-        return res.json(allPages);
-      }
-      
-      // For other limit values, use simple random selection
-      const sql = `
-        SELECT 
-          pv."wikidotId",
+        const selectClauseExtended = `
+          COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
           p."currentUrl" AS url,
           pv.title,
           pv."alternateTitle",
           pv.rating,
+          pv."commentCount",
           pv."voteCount",
           pv.category,
           pv.tags,
           pv."createdAt",
           pv."revisionCount",
-          pv."attributionCount"
-        FROM "PageVersion" pv
-        JOIN "Page" p ON pv."pageId" = p.id
-        WHERE pv."validTo" IS NULL
-          AND pv.rating IS NOT NULL
-          AND COALESCE(array_length(pv.tags, 1), 0) > 0
-          AND NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[])
-        ORDER BY random()
-        LIMIT $1::int
+          pv."attributionCount",
+          pv.source,
+          pv."textContent",
+          pv."isDeleted" AS "isDeleted",
+          CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
+          p."firstPublishedAt" AS "firstRevisionAt",
+          ps."controversy",
+          ps."wilson95",
+          COALESCE(attrs.authors, '[]'::json) AS authors
+        `;
+
+        const statsJoin = `
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(
+              JSON_AGG(
+                JSON_BUILD_OBJECT(
+                  'displayName', j."displayName",
+                  'userWikidotId', j."userWikidotId"
+                )
+                ORDER BY j.rank
+              ) FILTER (WHERE j."displayName" IS NOT NULL),
+              '[]'::json
+            ) AS authors
+            FROM (
+              SELECT DISTINCT ON (u.id)
+                u."displayName" AS "displayName",
+                u."wikidotId"   AS "userWikidotId",
+                ROW_NUMBER() OVER (ORDER BY u.id ASC, a.type ASC) AS rank
+              FROM "Attribution" a
+              JOIN "User" u ON u.id = a."userId"
+              WHERE a."pageVerId" = pv.id
+              ORDER BY u.id, a.type ASC
+            ) j
+          ) attrs ON TRUE
+        `;
+
+        const [highScoring, originals, translations] = await Promise.all([
+          fetchSampledPages(selectClauseExtended, `pv.rating >= 50 AND '原创' = ANY(pv.tags)`, statsJoin, 1),
+          fetchSampledPages(selectClauseExtended, `'原创' = ANY(pv.tags)`, statsJoin, 3),
+          fetchSampledPages(selectClauseExtended, `NOT ('原创' = ANY(pv.tags))`, statsJoin, 2)
+        ]);
+
+        const normalizePage = (page: any) => {
+          let excerpt = '';
+          const candidates = extractPreviewCandidates(page?.source || null);
+          if (candidates && candidates.length > 0) {
+            const picked = pickPreview(candidates);
+            if (picked) excerpt = toPreviewPick(picked).text;
+          }
+          if (!excerpt) {
+            excerpt = extractExcerptFallback(page?.textContent ?? null, 150);
+          }
+          const { textContent, source, ...rest } = page;
+          return { ...rest, excerpt };
+        };
+
+        let combined = [...highScoring, ...originals, ...translations].map(normalizePage);
+
+        if (combined.length < 6) {
+          const fillerNeeded = 6 - combined.length;
+          if (fillerNeeded > 0) {
+            const filler = await fetchSampledPages(selectClauseExtended, '', statsJoin, fillerNeeded);
+            combined = combined.concat(filler.map(normalizePage));
+          }
+        }
+
+        if (combined.length === 0) {
+          return res.status(404).json({ error: 'not_found' });
+        }
+
+        const seen = new Set<number>();
+        const deduped = combined.filter((item: any) => {
+          const id = Number(item?.wikidotId);
+          if (!Number.isFinite(id)) return true;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+
+        if (deduped.length === 0) {
+          return res.status(404).json({ error: 'not_found' });
+        }
+
+        shuffleInPlace(deduped);
+        return res.json(deduped.slice(0, Math.min(6, deduped.length)));
+      }
+
+      const selectClause = `
+        pv."wikidotId",
+        p."currentUrl" AS url,
+        pv.title,
+        pv."alternateTitle",
+        pv.rating,
+        pv."voteCount",
+        pv.category,
+        pv.tags,
+        pv."createdAt",
+        pv."revisionCount",
+        pv."attributionCount"
       `;
-      const { rows } = await pool.query(sql, [limit]);
-      if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
-      res.json(rows);
+      const rows = await fetchSampledPages(selectClause, '', '', Math.max(limitInt, Math.min(limitInt * 2, 50)));
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'not_found' });
+      }
+      const poolRows = [...rows];
+      shuffleInPlace(poolRows);
+      res.json(poolRows.slice(0, Math.min(limitInt, poolRows.length)));
     } catch (err) {
       next(err);
     }
   });
-
   // GET /api/wikidot-pages/:wikidotId/revisions
   // query: limit, offset, order=ASC|DESC, type (optional exact match), includeSource=true|false, scope=all|latest
   router.get('/:wikidotId/revisions', async (req, res, next) => {
@@ -1526,14 +1535,41 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const context = await resolvePageContextByWikidotId(wikidotId);
       if (!context || !context.effectiveVersionId) return res.json([]);
       const sql = `
-        WITH daily AS (
-          SELECT date_trunc('day', v.timestamp) AS day, SUM(v.direction) AS delta
+        WITH ordered AS (
+          SELECT
+            date_trunc('day', v.timestamp) AS day,
+            v.timestamp,
+            v.direction,
+            CASE
+              WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+              WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+              ELSE 'g:' || v.id::text
+            END AS actor_key,
+            LAG(v.direction) OVER (
+              PARTITION BY CASE
+                WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+                WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+                ELSE 'g:' || v.id::text
+              END
+              ORDER BY v.timestamp, v.id
+            ) AS prev_direction
           FROM "Vote" v
           WHERE v."pageVersionId" = $1
-          GROUP BY 1
+        ),
+        deltas AS (
+          SELECT
+            day,
+            (direction - COALESCE(prev_direction, 0)) AS delta
+          FROM ordered
+        ),
+        daily AS (
+          SELECT day, SUM(delta) AS delta
+          FROM deltas
+          GROUP BY day
         )
-        SELECT day::timestamptz AS date,
-               SUM(delta) OVER (ORDER BY day ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS "cumulativeRating"
+        SELECT
+          day::timestamptz AS date,
+          SUM(delta) OVER (ORDER BY day ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS "cumulativeRating"
         FROM daily
         ORDER BY day ASC
       `;
@@ -1582,7 +1618,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           COUNT(CASE WHEN v.direction = -1 THEN 1 END) as downvotes,
           COUNT(CASE WHEN v.direction = 0 THEN 1 END) as novotes,
           COUNT(*) as total
-        FROM "Vote" v
+        FROM "LatestVote" v
         WHERE v."pageVersionId" = $1
       `;
       const { rows } = await pool.query(sql, [context.effectiveVersionId]);
@@ -1655,35 +1691,51 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const dateLabel = granularity === 'month' ? 'YYYY-MM-DD' : 'YYYY-MM-DD';
       
       const sql = `
-        WITH vote_history AS (
-          -- 获取页面的所有投票，按周或月聚合（无时间限制）
-          SELECT 
-            DATE_TRUNC('${granularity}', v.timestamp) as period,
-            SUM(CASE WHEN v.direction > 0 THEN v.direction ELSE 0 END) as upvotes,
-            SUM(CASE WHEN v.direction < 0 THEN ABS(v.direction) ELSE 0 END) as downvotes,
-            SUM(v.direction) as net_change
+        WITH ordered AS (
+          SELECT
+            DATE_TRUNC('${granularity}', v.timestamp) AS period,
+            v.timestamp,
+            v.direction AS current_direction,
+            CASE
+              WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+              WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+              ELSE 'g:' || v.id::text
+            END AS actor_key,
+            LAG(v.direction) OVER (
+              PARTITION BY CASE
+                WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+                WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+                ELSE 'g:' || v.id::text
+              END
+              ORDER BY v.timestamp, v.id
+            ) AS prev_direction
           FROM "Vote" v
-          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
           WHERE v."pageVersionId" = $1
-          GROUP BY DATE_TRUNC('${granularity}', v.timestamp)
         ),
-        cumulative AS (
-          -- 计算累计评分
-          SELECT 
+        deltas AS (
+          SELECT
             period,
-            upvotes,
-            downvotes,
-            net_change,
-            SUM(net_change) OVER (ORDER BY period) as cumulative_rating
-          FROM vote_history
+            (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
+            (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
+            current_direction - COALESCE(prev_direction, 0) AS net_delta
+          FROM ordered
+        ),
+        aggregated AS (
+          SELECT
+            period,
+            SUM(up_delta) AS upvotes,
+            SUM(down_delta) AS downvotes,
+            SUM(net_delta) AS net_change
+          FROM deltas
+          GROUP BY period
         )
-        SELECT 
-          TO_CHAR(period, '${dateLabel}') as date,
-          COALESCE(upvotes, 0) as upvotes,
-          COALESCE(downvotes, 0) as downvotes,
-          COALESCE(net_change, 0) as net_change,
-          COALESCE(cumulative_rating, 0) as cumulative_rating
-        FROM cumulative
+        SELECT
+          TO_CHAR(period, '${dateLabel}') AS date,
+          COALESCE(upvotes, 0) AS upvotes,
+          COALESCE(downvotes, 0) AS downvotes,
+          COALESCE(net_change, 0) AS net_change,
+          SUM(COALESCE(net_change, 0)) OVER (ORDER BY period) AS cumulative_rating
+        FROM aggregated
         ORDER BY period
       `;
       const { rows } = await pool.query(sql, [context.effectiveVersionId]);

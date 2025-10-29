@@ -4,7 +4,7 @@
       <canvas ref="canvasEl" class="w-full h-full"></canvas>
     </div>
     <div v-if="loaded && payload" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-      基准更新于 {{ new Date(payload.asOf).toLocaleString('zh-CN') }}
+      基准更新于 {{ benchmarkAsOf }}
     </div>
   </div>
 </template>
@@ -13,6 +13,7 @@
 import { onMounted, onUnmounted, ref, watch, computed } from 'vue'
 import { useNuxtApp, useAsyncData } from 'nuxt/app'
 import { Chart as ChartJS, RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend, Title, RadarController } from 'chart.js'
+import { formatDateTimeUtc8 } from '~/utils/timezone'
 
 ChartJS.register(RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend, Title, RadarController)
 
@@ -69,6 +70,18 @@ const payload = computed<CategoryBenchmarksPayload | null>(() => {
   const p = resp.value?.payload as CategoryBenchmarksPayload | undefined
   // 后端返回形如 { payload, updatedAt, expiresAt }
   return p ? p : null
+})
+
+const benchmarkAsOf = computed(() => {
+  if (!payload.value?.asOf) return '未知时间'
+  const formatted = formatDateTimeUtc8(payload.value.asOf, {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+  return formatted || '未知时间'
 })
 
 const labels: string[] = ['SCP', '故事', 'GoI格式', '翻译', '被放逐者的图书馆', '艺术作品']
@@ -270,4 +283,3 @@ onUnmounted(() => {
 
 <style scoped>
 </style>
-

@@ -45,6 +45,11 @@ enum PageMetricThresholdType {
   PERCENT
 }
 
+enum CollectionVisibility {
+  PRIVATE
+  PUBLIC
+}
+
 model Attribution {
   id          Int         @id @default(autoincrement())
   pageVerId   Int
@@ -112,10 +117,12 @@ model Page {
   dirtyPages            DirtyPage[]
   interestingFacts      InterestingFacts[]
   pageDailyStats        PageDailyStats[]
+  pageViewEvents        PageViewEvent[]
   versions              PageVersion[]
   ratingRecords         RatingRecords[]
   tagRecords            TagRecords[]
   timeMilestones        TimeMilestones[]
+  userCollectionItems   UserCollectionItem[]
   metricWatches         PageMetricWatch[]
   metricAlerts          PageMetricAlert[]
 
@@ -415,8 +422,11 @@ model User {
   userDailyStats                   UserDailyStats[]
   stats                            UserStats?
   votes                            Vote[]
+  userPixelEvents                  UserPixelEvent[]
   metricWatches                    PageMetricWatch[]
   metricPreferences                UserMetricPreference[]
+  collections                      UserCollection[]
+  collectionAccountOwner           CollectionAccountOwner?
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
@@ -441,6 +451,8 @@ model UserStats {
   userId               Int       @unique
   totalUp              Int
   totalDown            Int
+  votesCastUp          Int       @default(0)
+  votesCastDown        Int       @default(0)
   totalRating          Int
   favTag               String?
   goiPageCount         Int       @default(0)
@@ -481,6 +493,54 @@ model UserStats {
   @@index([wanderersRank], map: "idx_userstats_wanderers_rank")
   @@index([artRating(sort: Desc)], map: "idx_userstats_art_rating")
   @@index([artRank], map: "idx_userstats_art_rank")
+}
+
+model UserCollection {
+  id             Int                   @id @default(autoincrement())
+  ownerId        Int
+  title          String
+  slug           String
+  visibility     CollectionVisibility  @default(PRIVATE)
+  description    String?               @db.Text
+  notes          String?               @db.Text
+  coverImageUrl      String?
+  coverImageOffsetX  Float             @default(0)
+  coverImageOffsetY  Float             @default(0)
+  coverImageScale    Float             @default(1)
+  isDefault      Boolean               @default(false)
+  publishedAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  owner          User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  items          UserCollectionItem[]
+
+  @@unique([ownerId, slug], map: "uniq_collection_owner_slug")
+  @@index([ownerId, visibility], map: "idx_collection_owner_visibility")
+  @@index([slug], map: "idx_collection_slug")
+}
+
+model UserCollectionItem {
+  id           Int             @id @default(autoincrement())
+  collectionId Int
+  pageId       Int
+  annotation   String?         @db.Text
+  order        Float           @default(0)
+  pinned       Boolean         @default(false)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  collection   UserCollection  @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  page         Page            @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, pageId], map: "uniq_collection_item_page")
+  @@index([collectionId, order], map: "idx_collection_item_order")
+  @@index([pageId], map: "idx_collection_item_page")
+}
+
+model CollectionAccountOwner {
+  accountId String @id
+  userId    Int    @unique
+  createdAt DateTime @default(now())
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model UserTagPreference {
@@ -670,6 +730,7 @@ model PageDailyStats {
   votesDown    Int      @default(0) @map("votes_down")
   totalVotes   Int      @default(0) @map("total_votes")
   uniqueVoters Int      @default(0) @map("unique_voters")
+  views        Int      @default(0)
   revisions    Int      @default(0)
   createdAt    DateTime @default(now())
   page         Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
@@ -677,6 +738,44 @@ model PageDailyStats {
   @@unique([pageId, date])
   @@index([date])
   @@index([pageId])
+}
+
+model PageViewEvent {
+  id          Int      @id @default(autoincrement())
+  pageId      Int
+  wikidotId   Int
+  clientHash  String
+  clientIp    String?
+  userAgent   String?
+  component   String?
+  source      String?
+  refererHost String?
+  createdAt   DateTime @default(now())
+  page        Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, createdAt])
+  @@index([pageId, clientHash, createdAt])
+  @@index([pageId, clientIp, userAgent, createdAt])
+  @@index([wikidotId, createdAt])
+}
+
+model UserPixelEvent {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  wikidotId   Int?
+  username    String
+  clientHash  String
+  clientIp    String?
+  userAgent   String?
+  component   String?
+  source      String?
+  refererHost String?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, clientHash, createdAt])
+  @@index([userId, clientIp, userAgent, createdAt])
 }
 
 model UserDailyStats {

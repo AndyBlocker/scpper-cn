@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { createCache } from '../utils/cache.js';
 
 function sanitizePeriod(p?: string): 'day' | 'week' | 'month' {
   const v = String(p || 'day').toLowerCase();
@@ -31,48 +32,53 @@ const CATEGORY_CASE_SQL = `
     ELSE 'other'
   END`;
 
-export function analyticsRouter(pool: Pool, _redis: RedisClientType | null) {
+export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+  const cache = createCache(redis);
 
   // GET /analytics/pages/category-summary
   router.get('/pages/category-summary', async (req, res, next) => {
     try {
       const { startDate, endDate } = req.query as Record<string, string>;
-      const sql = `
-        WITH pv AS (
-          SELECT 
-            pv."pageId",
-            -- effective tags/category: use current version unless deleted; for deleted, fallback to last non-deleted
-            COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) AS e_tags,
-            COALESCE(CASE WHEN pv."isDeleted" THEN prev.category ELSE pv.category END, pv.category) AS e_category
-          FROM "PageVersion" pv
-          LEFT JOIN LATERAL (
-            SELECT tags, category
-            FROM "PageVersion" pv_prev
-            WHERE pv_prev."pageId" = pv."pageId"
-              AND pv_prev."isDeleted" = false
-            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
-            LIMIT 1
-          ) prev ON TRUE
-          WHERE pv."validTo" IS NULL
-        ), base AS (
-          SELECT 
-            timezone('Asia/Shanghai', p."firstPublishedAt") AS local_ts,
-            ${CATEGORY_CASE_SQL} AS category
-          FROM "Page" p
-          JOIN pv ON pv."pageId" = p.id
-          WHERE p."firstPublishedAt" IS NOT NULL
-            AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
-            AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
-        )
-        SELECT category, COUNT(*)::int AS count
-        FROM base
-        WHERE category != 'other'
-        GROUP BY category
-        ORDER BY category ASC
-      `;
-      const params = [startDate || null, endDate || null];
-      const { rows } = await pool.query(sql, params);
+      const cacheKey = `analytics:pages:category-summary:${startDate || 'null'}:${endDate || 'null'}`;
+      const rows = await cache.remember(cacheKey, 600, async () => {
+        const sql = `
+          WITH pv AS (
+            SELECT 
+              pv."pageId",
+              -- effective tags/category: use current version unless deleted; for deleted, fallback to last non-deleted
+              COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) AS e_tags,
+              COALESCE(CASE WHEN pv."isDeleted" THEN prev.category ELSE pv.category END, pv.category) AS e_category
+            FROM "PageVersion" pv
+            LEFT JOIN LATERAL (
+              SELECT tags, category
+              FROM "PageVersion" pv_prev
+              WHERE pv_prev."pageId" = pv."pageId"
+                AND pv_prev."isDeleted" = false
+              ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+              LIMIT 1
+            ) prev ON TRUE
+            WHERE pv."validTo" IS NULL
+          ), base AS (
+            SELECT 
+              timezone('Asia/Shanghai', p."firstPublishedAt") AS local_ts,
+              ${CATEGORY_CASE_SQL} AS category
+            FROM "Page" p
+            JOIN pv ON pv."pageId" = p.id
+            WHERE p."firstPublishedAt" IS NOT NULL
+              AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
+              AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
+          )
+          SELECT category, COUNT(*)::int AS count
+          FROM base
+          WHERE category != 'other'
+          GROUP BY category
+          ORDER BY category ASC
+        `;
+        const params = [startDate || null, endDate || null];
+        const { rows } = await pool.query(sql, params);
+        return rows;
+      });
       res.json(rows);
     } catch (err) {
       next(err);
@@ -84,41 +90,45 @@ export function analyticsRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const { startDate, endDate, period } = req.query as Record<string, string>;
       const p = sanitizePeriod(period);
-      const sql = `
-        WITH pv AS (
-          SELECT 
-            pv."pageId",
-            COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) AS e_tags,
-            COALESCE(CASE WHEN pv."isDeleted" THEN prev.category ELSE pv.category END, pv.category) AS e_category
-          FROM "PageVersion" pv
-          LEFT JOIN LATERAL (
-            SELECT tags, category
-            FROM "PageVersion" pv_prev
-            WHERE pv_prev."pageId" = pv."pageId"
-              AND pv_prev."isDeleted" = false
-            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
-            LIMIT 1
-          ) prev ON TRUE
-          WHERE pv."validTo" IS NULL
-        ), base AS (
-          SELECT 
+      const cacheKey = `analytics:pages:category-series:${startDate || 'null'}:${endDate || 'null'}:${p}`;
+      const rows = await cache.remember(cacheKey, 600, async () => {
+        const sql = `
+          WITH pv AS (
+            SELECT 
+              pv."pageId",
+              COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) AS e_tags,
+              COALESCE(CASE WHEN pv."isDeleted" THEN prev.category ELSE pv.category END, pv.category) AS e_category
+            FROM "PageVersion" pv
+            LEFT JOIN LATERAL (
+              SELECT tags, category
+              FROM "PageVersion" pv_prev
+              WHERE pv_prev."pageId" = pv."pageId"
+                AND pv_prev."isDeleted" = false
+              ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+              LIMIT 1
+            ) prev ON TRUE
+            WHERE pv."validTo" IS NULL
+          ), base AS (
             -- Use Asia/Shanghai local time for bucketing
-            date_trunc($3::text, timezone('Asia/Shanghai', p."firstPublishedAt"))::date AS bucket,
-            ${CATEGORY_CASE_SQL} AS category
-          FROM "Page" p
-          JOIN pv ON pv."pageId" = p.id
-          WHERE p."firstPublishedAt" IS NOT NULL
-            AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
-            AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
-        )
-        SELECT bucket AS date, category, COUNT(*)::int AS count
-        FROM base
-        WHERE category != 'other'
-        GROUP BY bucket, category
-        ORDER BY bucket ASC, category ASC
-      `;
-      const params = [startDate || null, endDate || null, p];
-      const { rows } = await pool.query(sql, params);
+            SELECT 
+              date_trunc($3::text, timezone('Asia/Shanghai', p."firstPublishedAt"))::date AS bucket,
+              ${CATEGORY_CASE_SQL} AS category
+            FROM "Page" p
+            JOIN pv ON pv."pageId" = p.id
+            WHERE p."firstPublishedAt" IS NOT NULL
+              AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
+              AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
+          )
+          SELECT bucket AS date, category, COUNT(*)::int AS count
+          FROM base
+          WHERE category != 'other'
+          GROUP BY bucket, category
+          ORDER BY bucket ASC, category ASC
+        `;
+        const params = [startDate || null, endDate || null, p];
+        const { rows } = await pool.query(sql, params);
+        return rows;
+      });
       res.json(rows);
     } catch (err) {
       next(err);
@@ -130,18 +140,22 @@ export function analyticsRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const { startDate, endDate, period } = req.query as Record<string, string>;
       const p = sanitizePeriod(period);
-      const sql = `
-        SELECT 
-          date_trunc($3::text, date)::date AS date,
-          ROUND(AVG("usersActive"))::int AS "activeUsers"
-        FROM "SiteOverviewDaily"
-        WHERE ($1::date IS NULL OR date >= $1::date)
-          AND ($2::date IS NULL OR date <= $2::date)
-        GROUP BY 1
-        ORDER BY 1 ASC
-      `;
-      const params = [startDate || null, endDate || null, p];
-      const { rows } = await pool.query(sql, params);
+      const cacheKey = `analytics:users:active-series:${startDate || 'null'}:${endDate || 'null'}:${p}`;
+      const rows = await cache.remember(cacheKey, 600, async () => {
+        const sql = `
+          SELECT 
+            date_trunc($3::text, date)::date AS date,
+            ROUND(AVG("usersActive"))::int AS "activeUsers"
+          FROM "SiteOverviewDaily"
+          WHERE ($1::date IS NULL OR date >= $1::date)
+            AND ($2::date IS NULL OR date <= $2::date)
+          GROUP BY 1
+          ORDER BY 1 ASC
+        `;
+        const params = [startDate || null, endDate || null, p];
+        const { rows } = await pool.query(sql, params);
+        return rows;
+      });
       res.json(rows);
     } catch (err) {
       next(err);
@@ -163,59 +177,68 @@ export function analyticsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ error: 'tags are required' });
       }
 
-      const sql = `
-        WITH pv AS (
-          SELECT 
-            pv."pageId",
-            COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) AS e_tags
-          FROM "PageVersion" pv
-          LEFT JOIN LATERAL (
-            SELECT tags
-            FROM "PageVersion" pv_prev
-            WHERE pv_prev."pageId" = pv."pageId"
-              AND pv_prev."isDeleted" = false
-            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
-            LIMIT 1
-          ) prev ON TRUE
-          WHERE pv."validTo" IS NULL
-        ), base AS (
-          SELECT 
-            -- Use Asia/Shanghai local time for bucketing
-            date_trunc($3::text, timezone('Asia/Shanghai', p."firstPublishedAt"))::date AS bucket
-          FROM "Page" p
-          JOIN pv ON pv."pageId" = p.id
-          WHERE p."firstPublishedAt" IS NOT NULL
-            AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
-            AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
-            AND (
-              ($4::text = 'all' AND pv.e_tags @> $5::text[])
-              OR
-              ($4::text = 'any' AND pv.e_tags && $5::text[])
-            )
-            AND ($6::text[] IS NULL OR NOT (pv.e_tags && $6::text[]))
-        ), per_bucket AS (
-          SELECT bucket AS date, COUNT(*)::int AS new_count
-          FROM base
-          GROUP BY bucket
-        )
-        SELECT 
-          date,
-          new_count AS "newCount",
-          SUM(new_count) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)::int AS "cumulativeCount"
-        FROM per_bucket
-        ORDER BY date ASC
-      `;
+      const tagsKey = Array.from(new Set(tags)).sort().join('|');
+      const excludeKey = Array.from(new Set(excludeTags)).sort().join('|');
+      const matchKey = (String(match || 'all').toLowerCase() === 'any') ? 'any' : 'all';
+      const cacheKey = `analytics:pages:tag-series:${tagsKey}:${excludeKey}:${startDate || 'null'}:${endDate || 'null'}:${p}:${matchKey}`;
 
-      const params = [
-        startDate || null,
-        endDate || null,
-        p,
-        (String(match || 'all').toLowerCase() === 'any') ? 'any' : 'all',
-        tags.length > 0 ? tags : null,
-        excludeTags.length > 0 ? excludeTags : null
-      ];
+      const rows = await cache.remember(cacheKey, 600, async () => {
+        const sql = `
+          WITH pv AS (
+            SELECT 
+              pv."pageId",
+              COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) AS e_tags
+            FROM "PageVersion" pv
+            LEFT JOIN LATERAL (
+              SELECT tags
+              FROM "PageVersion" pv_prev
+              WHERE pv_prev."pageId" = pv."pageId"
+                AND pv_prev."isDeleted" = false
+              ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+              LIMIT 1
+            ) prev ON TRUE
+            WHERE pv."validTo" IS NULL
+          ), base AS (
+            SELECT 
+              -- Use Asia/Shanghai local time for bucketing
+              date_trunc($3::text, timezone('Asia/Shanghai', p."firstPublishedAt"))::date AS bucket
+            FROM "Page" p
+            JOIN pv ON pv."pageId" = p.id
+            WHERE p."firstPublishedAt" IS NOT NULL
+              AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
+             	AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
+              AND (
+                ($4::text = 'all' AND pv.e_tags @> $5::text[])
+                OR
+                ($4::text = 'any' AND pv.e_tags && $5::text[])
+              )
+              AND ($6::text[] IS NULL OR NOT (pv.e_tags && $6::text[]))
+          ), per_bucket AS (
+            SELECT bucket AS date, COUNT(*)::int AS new_count
+            FROM base
+            GROUP BY bucket
+          )
+          SELECT 
+            date,
+            new_count AS "newCount",
+            SUM(new_count) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)::int AS "cumulativeCount"
+          FROM per_bucket
+          ORDER BY date ASC
+        `;
 
-      const { rows } = await pool.query(sql, params);
+        const params = [
+          startDate || null,
+          endDate || null,
+          p,
+          matchKey,
+          tags.length > 0 ? tags : null,
+          excludeTags.length > 0 ? excludeTags : null
+        ];
+
+        const { rows } = await pool.query(sql, params);
+        return rows;
+      });
+
       res.json(rows);
     } catch (err) {
       next(err);

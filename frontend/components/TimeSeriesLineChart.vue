@@ -35,6 +35,19 @@ function isDark(): boolean {
   return document.documentElement.classList.contains('dark')
 }
 
+function readCssColor(varName: string, fallback: string, alpha?: number): string {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return fallback
+  const style = getComputedStyle(document.documentElement)
+  const raw = style.getPropertyValue(varName).trim()
+  if (!raw) return fallback
+  const parts = raw.split(/\s+/).map((segment) => Number(segment))
+  if (parts.length < 3 || parts.some((value) => Number.isNaN(value))) return fallback
+  if (typeof alpha === 'number') {
+    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`
+  }
+  return `rgb(${parts[0]}, ${parts[1]}, ${parts[2]})`
+}
+
 const canvasStyle = computed(() => ({ height: 'clamp(200px, 34vh, 340px)' }))
 
 function buildConfig() {
@@ -52,8 +65,9 @@ function buildConfig() {
     yAxisID: d.yAxisID || 'y'
   }))
 
-  const gridColor = isDark() ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
-  const textColor = isDark() ? '#e5e5e5' : '#262626'
+  const gridVar = isDark() ? '--chart-grid-dark' : '--chart-grid-light'
+  const gridColor = readCssColor(gridVar, isDark() ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', 0.08)
+  const textColor = readCssColor('--muted', isDark() ? '#e5e5e5' : '#262626')
 
   return {
     type: 'line',

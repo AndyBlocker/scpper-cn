@@ -40,7 +40,7 @@ describe('/search/all URL PGroonga matching', () => {
 
     const pageCall = queryMock.mock.calls.find((call) => call[0]?.includes('WITH url_hits AS'));
     expect(pageCall).toBeTruthy();
-    expect(pageCall?.[0]).toContain('"currentUrl" &@~ $1');
+    expect(pageCall?.[0]).toContain('"currentUrl" &@~ pgroonga_query_escape($1)');
 
     await request(app)
       .get('/search/all')
@@ -49,6 +49,6 @@ describe('/search/all URL PGroonga matching', () => {
 
     const secondCall = queryMock.mock.calls.find((call) => call[0]?.includes('WITH url_hits AS') && call !== pageCall);
     expect(secondCall).toBeTruthy();
-    expect(secondCall?.[0]).toContain('"currentUrl" &@~ $1');
+    expect(secondCall?.[0]).toContain('"currentUrl" &@~ pgroonga_query_escape($1)');
   });
 });

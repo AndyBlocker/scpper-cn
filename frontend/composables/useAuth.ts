@@ -39,22 +39,49 @@ export function useAuth() {
   const { user, status, loading } = useAuthState()
 
   async function fetchCurrentUser(force = false) {
-    if (status.value === 'authenticated' && !force) return user.value
-    if (loading.value) return user.value
+    if (status.value === 'authenticated' && !force) {
+      console.debug('[auth] fetchCurrentUser skip (already authenticated)')
+      return user.value
+    }
+    if (loading.value) {
+      console.debug('[auth] fetchCurrentUser skip (already loading)')
+      return user.value
+    }
     loading.value = true
     try {
-      const res = await $bff<ApiResponse<AuthUser>>('/auth/me', { method: 'GET' })
+      const requestOptions: Record<string, any> = {
+        method: 'GET',
+        headers: {
+          'cache-control': 'no-cache',
+          pragma: 'no-cache'
+        }
+      }
+      if (force || status.value !== 'authenticated') {
+        requestOptions.params = { _: Date.now().toString(36) }
+      }
+      console.debug('[auth] fetchCurrentUser request', {
+        force,
+        status: status.value,
+        params: requestOptions.params
+      })
+      const res = await $bff<ApiResponse<AuthUser>>('/auth/me', requestOptions)
       if (res && res.ok && res.user) {
         user.value = normalizeUser(res.user)
         status.value = 'authenticated'
+        console.debug('[auth] fetchCurrentUser success', {
+          id: user.value.id,
+          linkedWikidotId: user.value.linkedWikidotId
+        })
       } else {
         user.value = null
         status.value = 'unauthenticated'
+        console.warn('[auth] fetchCurrentUser unexpected response', res)
       }
     } catch (error: any) {
       if (error?.status === 401) {
         user.value = null
         status.value = 'unauthenticated'
+        console.debug('[auth] fetchCurrentUser 401 (unauthenticated)')
       } else {
         console.warn('[auth] failed to fetch current user:', error)
         user.value = null

@@ -6,17 +6,19 @@
 @tailwind utilities;
 
 @layer base {
-  /* 默认浅色模式 */
   :root {
     color-scheme: light;
   }
   
   html {
-    @apply bg-neutral-50 text-neutral-900;
+    background-color: rgb(var(--bg));
+    color: rgb(var(--fg));
   }
   
   /* 全局字体与等宽数字 */
   body {
+    background-color: transparent;
+    color: inherit;
     font-family: system-ui, -apple-system, "SF Pro Text", "PingFang SC",
                  "Hiragino Sans GB", "Segoe UI", Roboto, "Noto Sans CJK SC",
                  "Microsoft YaHei UI", Arial, sans-serif;
@@ -28,13 +30,11 @@
   /* 深色模式 */
   html.dark {
     color-scheme: dark;
-    @apply bg-neutral-950 text-neutral-100;
   }
   
   /* 浅色模式显式声明 */
   html.light {
     color-scheme: light;
-    @apply bg-neutral-50 text-neutral-900;
   }
 }
 

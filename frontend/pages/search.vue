@@ -9,9 +9,7 @@
         @click="showAdvanced = !showAdvanced"
         class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4"/>
-        </svg>
+        <LucideIcon name="SlidersHorizontal" class="w-4 h-4" />
         {{ showAdvanced ? '简单搜索' : '高级搜索' }}
       </button>
     </div>
@@ -85,9 +83,7 @@
                     >
                       #{{ tag }}
                       <button @click="removeIncludeTag(tag)" type="button" class="hover:text-blue-800 dark:hover:text-blue-300">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                        </svg>
+                        <LucideIcon name="X" class="w-3 h-3" />
                       </button>
                     </span>
                   </div>
@@ -131,9 +127,7 @@
                   >
                     #{{ tag }}
                     <button @click="removeExcludeTag(tag)" type="button" class="hover:text-red-800 dark:hover:text-red-300">
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                      </svg>
+                      <LucideIcon name="X" class="w-3 h-3" />
                     </button>
                   </span>
                 </div>
@@ -216,9 +210,7 @@
             :disabled="csvPending || pageResults.length === 0"
             @click="exportCsv"
           >
-            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
-            </svg>
+            <LucideIcon name="Download" class="h-3.5 w-3.5" stroke-width="1.6" />
             <span>{{ csvPending ? '导出中…' : '导出 CSV' }}</span>
           </button>
           -->
@@ -392,6 +384,7 @@ let userObserver: IntersectionObserver | null = null
 // CSV export temporarily disabled.
 // const csvPending = ref(false)
 const { hydratePages } = useViewerVotes()
+const isClient = typeof window !== 'undefined'
 
 function normalizePage(p: any) {
   const toISODate = (v: any) => {
@@ -682,7 +675,7 @@ function updateCache() {
     userOffset: userOffset.value,
     pageHasMore: pageHasMore.value,
     userHasMore: userHasMore.value,
-    scrollY: process.client ? window.scrollY : searchCache.value.scrollY
+    scrollY: isClient ? window.scrollY : searchCache.value.scrollY
   }
 }
 
@@ -699,7 +692,7 @@ function restoreFromCacheIfAvailable(key: string) {
   lastSearchParams.value = buildSearchParamsFromForm(true)
   searchPerformed.value = true
   initialLoading.value = false
-  if (process.client) {
+  if (isClient) {
     restoringScroll.value = true
     nextTick(() => {
       window.scrollTo({ top: searchCache.value.scrollY || 0 })
@@ -752,7 +745,7 @@ async function loadMoreUsers() {
 // }
 
 function setupPageObserver() {
-  if (!process.client || typeof IntersectionObserver === 'undefined') return
+  if (!isClient || typeof IntersectionObserver === 'undefined') return
   if (pageObserver) pageObserver.disconnect()
   pageObserver = new IntersectionObserver((entries) => {
     if (entries.some(entry => entry.isIntersecting)) {
@@ -763,7 +756,7 @@ function setupPageObserver() {
 }
 
 function setupUserObserver() {
-  if (!process.client || typeof IntersectionObserver === 'undefined') return
+  if (!isClient || typeof IntersectionObserver === 'undefined') return
   if (userObserver) userObserver.disconnect()
   userObserver = new IntersectionObserver((entries) => {
     if (entries.some(entry => entry.isIntersecting)) {
@@ -774,13 +767,13 @@ function setupUserObserver() {
 }
 
 watch(pageSentinelRef, (newEl, oldEl) => {
-  if (!process.client || !pageObserver) return
+  if (!isClient || !pageObserver) return
   if (oldEl) pageObserver.unobserve(oldEl)
   if (newEl) pageObserver.observe(newEl)
 })
 
 watch(userSentinelRef, (newEl, oldEl) => {
-  if (!process.client || !userObserver) return
+  if (!isClient || !userObserver) return
   if (oldEl) userObserver.unobserve(oldEl)
   if (newEl) userObserver.observe(newEl)
 })
@@ -799,7 +792,7 @@ onBeforeUnmount(() => {
     userObserver.disconnect()
     userObserver = null
   }
-  if (process.client) {
+  if (isClient) {
     searchCache.value.scrollY = window.scrollY
   }
 })

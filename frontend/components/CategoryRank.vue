@@ -29,5 +29,3 @@ const props = defineProps<{
 const safeRating = computed(() => Number(props.rating ?? 0).toFixed(0))
 const safeCount = computed(() => Number(props.count ?? 0))
 </script>
-
-

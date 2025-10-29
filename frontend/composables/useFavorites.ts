@@ -20,6 +20,7 @@ interface FavoriteState {
 
 const STORAGE_KEY = 'scpper:favorites:v1'
 const MAX_ENTRIES = 120
+const isClient = typeof window !== 'undefined'
 
 function nowIso() {
   return new Date().toISOString()
@@ -53,7 +54,7 @@ export function useFavorites() {
   }))
 
   function ensureLoaded() {
-    if (state.value.loaded || !process.client) return
+    if (state.value.loaded || !isClient) return
     try {
       const payload = localStorage.getItem(STORAGE_KEY)
       if (payload) {
@@ -87,7 +88,7 @@ export function useFavorites() {
   }
 
   function persist() {
-    if (!process.client) return
+    if (!isClient) return
     try {
       const payload = JSON.stringify({
         pages: state.value.pages.slice(0, MAX_ENTRIES)
