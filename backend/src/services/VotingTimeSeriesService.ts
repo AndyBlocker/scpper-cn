@@ -98,13 +98,36 @@ export class VotingTimeSeriesService {
       SELECT * FROM cumulative_votes ORDER BY vote_date
     `;
 
+    const dates = result.map(row => row.vote_date.toISOString().split('T')[0]);
+    const dailyUpvotes = result.map(row => Number(row.daily_upvotes));
+    const dailyDownvotes = result.map(row => Number(row.daily_downvotes));
+    const dailyTotals = result.map(row => Number(row.daily_total));
+
+    const upvotes: number[] = [];
+    const downvotes: number[] = [];
+    const totalVotes: number[] = [];
+
+    let runningUp = 0;
+    let runningDown = 0;
+    let runningTotal = 0;
+
+    for (let i = 0; i < result.length; i += 1) {
+      runningUp = Math.max(0, runningUp + dailyUpvotes[i]);
+      runningDown = Math.max(0, runningDown + dailyDownvotes[i]);
+      runningTotal = Math.max(0, runningTotal + dailyTotals[i]);
+
+      upvotes.push(runningUp);
+      downvotes.push(runningDown);
+      totalVotes.push(runningTotal);
+    }
+
     return {
-      dates: result.map(row => row.vote_date.toISOString().split('T')[0]),
-      dailyUpvotes: result.map(row => Number(row.daily_upvotes)),
-      dailyDownvotes: result.map(row => Number(row.daily_downvotes)),
-      upvotes: result.map(row => Number(row.cumulative_upvotes)),
-      downvotes: result.map(row => Number(row.cumulative_downvotes)),
-      totalVotes: result.map(row => Number(row.cumulative_total))
+      dates,
+      dailyUpvotes,
+      dailyDownvotes,
+      upvotes,
+      downvotes,
+      totalVotes
     };
   }
 
@@ -123,16 +146,94 @@ export class VotingTimeSeriesService {
       cumulative_downvotes: number;
       cumulative_total: number;
     }>>`
-      WITH user_pages AS (
-        SELECT DISTINCT pv."pageId"
-        FROM "Attribution" a
-        JOIN "PageVersion" pv ON a."pageVerId" = pv.id
-        WHERE a."userId" = ${userId}
-          AND pv."validTo" IS NULL
-          AND pv."isDeleted" = false
-      ),
-      ordered AS (
+      WITH latest_versions AS (
         SELECT
+          pv."pageId" AS page_id,
+          pv.id AS version_id,
+          pv."isDeleted" AS is_deleted,
+          DATE(COALESCE(pv."validFrom", pv."updatedAt")) AS effective_date
+        FROM "PageVersion" pv
+        WHERE pv."validTo" IS NULL
+      ),
+      active_versions AS (
+        SELECT lv.page_id, lv.version_id
+        FROM latest_versions lv
+        WHERE lv.is_deleted = false
+          AND EXISTS (
+            SELECT 1
+            FROM "Attribution" a
+            WHERE a."pageVerId" = lv.version_id
+              AND a."userId" = ${userId}
+          )
+      ),
+      deleted_versions AS (
+        SELECT
+          lv.page_id,
+          lv.version_id AS deletion_version_id,
+          lv.effective_date AS deletion_date
+        FROM latest_versions lv
+        WHERE lv.is_deleted = true
+          AND EXISTS (
+            SELECT 1
+            FROM "Attribution" a
+            WHERE a."pageVerId" = lv.version_id
+              AND a."userId" = ${userId}
+          )
+      ),
+      deleted_sources AS (
+        SELECT
+          dv.page_id,
+          src.version_id,
+          dv.deletion_version_id,
+          dv.deletion_date,
+          src.drop_date,
+          COALESCE(src.rating, 0) AS rating,
+          COALESCE(src.total_votes, 0) AS total_votes
+        FROM deleted_versions dv
+        JOIN LATERAL (
+          SELECT
+            pv.id AS version_id,
+            pv.rating,
+            pv."voteCount" AS total_votes,
+            (
+              SELECT MAX(v."timestamp")
+              FROM "Vote" v
+              WHERE v."pageVersionId" = pv.id
+            ) AS last_vote_timestamp,
+            NULL::date AS drop_date_placeholder
+          FROM "PageVersion" pv
+          WHERE pv."pageId" = dv.page_id
+            AND (pv."isDeleted" = false OR pv.id = dv.deletion_version_id)
+          ORDER BY
+            CASE WHEN pv."isDeleted" = false THEN 0 ELSE 1 END,
+            pv."validTo" DESC NULLS LAST,
+            pv."updatedAt" DESC
+          LIMIT 1
+        ) src_raw ON true
+        CROSS JOIN LATERAL (
+          SELECT
+            DATE(
+              GREATEST(
+                COALESCE(src_raw.last_vote_timestamp, dv.deletion_date::timestamp),
+                dv.deletion_date::timestamp
+              ) + INTERVAL '1 day'
+            ) AS drop_date,
+            src_raw.version_id,
+            src_raw.rating,
+            src_raw.total_votes
+        ) src
+      ),
+      tracked_versions AS (
+        SELECT page_id, version_id
+        FROM active_versions
+        UNION ALL
+        SELECT page_id, version_id
+        FROM deleted_sources
+      ),
+      raw_votes AS (
+        SELECT
+          v.id AS vote_id,
+          tv.page_id,
           DATE(v."timestamp") AS vote_date,
           v."timestamp",
           v.direction AS current_direction,
@@ -140,21 +241,25 @@ export class VotingTimeSeriesService {
             WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
             WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
             ELSE 'g:' || v.id::text
-          END AS actor_key,
-          LAG(v.direction) OVER (
-            PARTITION BY CASE
-              WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
-              WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
-              ELSE 'g:' || v.id::text
-            END
-            ORDER BY v."timestamp", v.id
-          ) AS prev_direction
+          END AS actor_key
         FROM "Vote" v
-        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN user_pages up ON pv."pageId" = up."pageId"
-        WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+        JOIN tracked_versions tv ON v."pageVersionId" = tv.version_id
       ),
-      deltas AS (
+      ordered AS (
+        SELECT
+          vote_id,
+          page_id,
+          vote_date,
+          "timestamp",
+          current_direction,
+          actor_key,
+          LAG(current_direction) OVER (
+            PARTITION BY page_id, actor_key
+            ORDER BY "timestamp", vote_id
+          ) AS prev_direction
+        FROM raw_votes
+      ),
+      vote_deltas AS (
         SELECT
           vote_date,
           (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END)
@@ -164,6 +269,44 @@ export class VotingTimeSeriesService {
           (CASE WHEN current_direction <> 0 THEN 1 ELSE 0 END)
             - (CASE WHEN COALESCE(prev_direction, 0) <> 0 THEN 1 ELSE 0 END) AS total_delta
         FROM ordered
+      ),
+      deletion_events AS (
+        SELECT
+          COALESCE(ds.drop_date, ds.deletion_date) AS deletion_date,
+          ds.total_votes,
+          ds.rating
+        FROM deleted_sources ds
+        WHERE ds.deletion_date IS NOT NULL
+          AND (COALESCE(ds.total_votes, 0) <> 0 OR COALESCE(ds.rating, 0) <> 0)
+      ),
+      deletion_adjustments AS (
+        -- Transform rating + voteCount totals into explicit up/down vote counts so we can subtract them
+        SELECT
+          deletion_date,
+          total_votes,
+          LEAST(
+            GREATEST(
+              ROUND(((total_votes + rating)::numeric) / 2)::int,
+              0
+            ),
+            total_votes
+          ) AS up_votes
+        FROM deletion_events
+      ),
+      deletion_deltas AS (
+        SELECT
+          deletion_date AS vote_date,
+          -up_votes AS up_delta,
+          -(total_votes - up_votes) AS down_delta,
+          -total_votes AS total_delta
+        FROM deletion_adjustments
+      ),
+      deltas AS (
+        SELECT vote_date, up_delta, down_delta, total_delta
+        FROM vote_deltas
+        UNION ALL
+        SELECT vote_date, up_delta, down_delta, total_delta
+        FROM deletion_deltas
       ),
       daily_votes AS (
         SELECT
@@ -188,13 +331,36 @@ export class VotingTimeSeriesService {
       SELECT * FROM cumulative_votes ORDER BY vote_date
     `;
 
+    const dates = result.map(row => row.vote_date.toISOString().split('T')[0]);
+    const dailyUpvotes = result.map(row => Number(row.daily_upvotes));
+    const dailyDownvotes = result.map(row => Number(row.daily_downvotes));
+    const dailyTotals = result.map(row => Number(row.daily_total));
+
+    const upvotes: number[] = [];
+    const downvotes: number[] = [];
+    const totalVotes: number[] = [];
+
+    let runningUp = 0;
+    let runningDown = 0;
+    let runningTotal = 0;
+
+    for (let i = 0; i < result.length; i += 1) {
+      runningUp = Math.max(0, runningUp + dailyUpvotes[i]);
+      runningDown = Math.max(0, runningDown + dailyDownvotes[i]);
+      runningTotal = Math.max(0, runningTotal + dailyTotals[i]);
+
+      upvotes.push(runningUp);
+      downvotes.push(runningDown);
+      totalVotes.push(runningTotal);
+    }
+
     return {
-      dates: result.map(row => row.vote_date.toISOString().split('T')[0]),
-      dailyUpvotes: result.map(row => Number(row.daily_upvotes)),
-      dailyDownvotes: result.map(row => Number(row.daily_downvotes)),
-      upvotes: result.map(row => Number(row.cumulative_upvotes)),
-      downvotes: result.map(row => Number(row.cumulative_downvotes)),
-      totalVotes: result.map(row => Number(row.cumulative_total))
+      dates,
+      dailyUpvotes,
+      dailyDownvotes,
+      upvotes,
+      downvotes,
+      totalVotes
     };
   }
 

@@ -168,7 +168,7 @@
         </div>
   
         <!-- right column: date at top, stats centered between date and bottom -->
-        <div class="flex flex-col w-[164px] h-full self-stretch">
+        <div class="flex flex-col w-[136px] sm:w-[152px] md:w-[164px] shrink-0 h-full self-stretch">
           <div v-if="displayDate" class="text-[11px] text-neutral-500 dark:text-neutral-400 text-right mb-1">
             <span v-if="!isDeleted">{{ displayDate }}</span>
             <span v-else class="invisible">0000-00-00</span>

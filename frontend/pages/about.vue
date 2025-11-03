@@ -34,6 +34,12 @@
             <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">CC-BY-SA 3.0</a>
             授权协议。
           </p>
+          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
+            2025.10.31更新：基于
+            <a href="https://scpper.com/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">SCPPER</a>
+            的数据，额外增添了约1万条自2017年起SCPPER记录的已删除页面。感谢Fifty Nine在过程中的帮助与支持，他创建了SCPPER，自2016年起不断维护至今，在本网站的建立初期提供了宝贵的建议与数据支持。
+          </p>
+
         </div>
 
         <!-- 作者的话 -->

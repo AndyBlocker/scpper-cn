@@ -19,201 +19,272 @@ export class DailySiteOverviewJob {
     return d.toISOString().slice(0, 10);
   }
 
+  private async upsertRange(startDate: string, endDate: string, dryRun = false): Promise<void> {
+    const sql = `
+WITH params AS (
+  SELECT $1::date AS start, $2::date AS finish
+),
+days AS (
+  SELECT gs::date AS day
+  FROM generate_series((SELECT start FROM params), (SELECT finish FROM params), '1 day') gs
+),
+
+/******** 当前有效 PageVersion（做页面归类用） ********/
+current_pv AS (
+  SELECT pv."pageId", pv.tags
+  FROM "PageVersion" pv
+  WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+),
+
+/******** usersTotal：按 firstActivityAt 的累积 ********/
+new_users AS (
+  SELECT date_trunc('day', u."firstActivityAt")::date AS day, COUNT(*)::bigint AS cnt
+  FROM "User" u
+  WHERE u."firstActivityAt" IS NOT NULL
+  GROUP BY 1
+),
+users_total AS (
+  SELECT d.day,
+         COALESCE(SUM(nu.cnt) OVER (ORDER BY d.day
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0)::bigint AS users_total
+  FROM days d
+  LEFT JOIN new_users nu ON nu.day = d.day
+),
+
+/******** usersContributors：首次贡献日 -> 累积 ********/
+rev_first AS (
+  SELECT r."userId" AS uid, MIN(r."timestamp") AS first_ts
+  FROM "Revision" r
+  WHERE r."userId" IS NOT NULL
+  GROUP BY r."userId"
+),
+attr_first AS (
+  SELECT a."userId" AS uid, MIN(a."date") AS first_ts
+  FROM "Attribution" a
+  WHERE a."userId" IS NOT NULL AND a."date" IS NOT NULL
+  GROUP BY a."userId"
+),
+first_contrib AS (
+  SELECT uid, MIN(first_ts) AS first_ts
+  FROM (
+    SELECT * FROM rev_first
+    UNION ALL
+    SELECT * FROM attr_first
+  ) s
+  GROUP BY uid
+),
+contributors_new AS (
+  SELECT date_trunc('day', first_ts)::date AS day, COUNT(*)::bigint AS cnt
+  FROM first_contrib
+  GROUP BY 1
+),
+contributors_total AS (
+  SELECT d.day,
+         COALESCE(SUM(cn.cnt) OVER (ORDER BY d.day
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0)::bigint AS total_contributors
+  FROM days d
+  LEFT JOIN contributors_new cn ON cn.day = d.day
+),
+
+/******** usersAuthors：在“当前为原创”的页面上的首次作者事件 -> 累积 ********/
+page_created AS (
+  SELECT pv."pageId" AS pid, MIN(r."timestamp") AS created_at
+  FROM "Revision" r
+  JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
+  WHERE r.type = 'PAGE_CREATED'
+  GROUP BY pv."pageId"
+),
+attr_with_page AS (
+  SELECT a."userId" AS uid, a."date" AS at_date, pv."pageId" AS pid
+  FROM "Attribution" a
+  JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+  WHERE a."userId" IS NOT NULL
+),
+author_events AS (
+  SELECT awp.uid,
+         COALESCE(awp.at_date, pc.created_at) AS event_at
+  FROM attr_with_page awp
+  JOIN current_pv cp ON cp."pageId" = awp.pid
+  LEFT JOIN page_created pc ON pc.pid = awp.pid
+  WHERE '原创' = ANY(cp.tags)
+),
+authors_first AS (
+  SELECT uid, MIN(event_at) AS first_ts
+  FROM author_events
+  WHERE event_at IS NOT NULL
+  GROUP BY uid
+),
+authors_new AS (
+  SELECT date_trunc('day', first_ts)::date AS day, COUNT(*)::bigint AS cnt
+  FROM authors_first
+  GROUP BY 1
+),
+authors_total AS (
+  SELECT d.day,
+         COALESCE(SUM(an.cnt) OVER (ORDER BY d.day
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0)::bigint AS total_authors
+  FROM days d
+  LEFT JOIN authors_new an ON an.day = d.day
+),
+
+/******** 页面累计（用当前 tags 归类） ********/
+first_rev AS (
+  SELECT pv."pageId", MIN(r."timestamp") AS first_ts
+  FROM "Revision" r
+  JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
+  WHERE r.type = 'PAGE_CREATED'
+  GROUP BY pv."pageId"
+),
+pages_new AS (
+  SELECT date_trunc('day', fr.first_ts)::date AS day,
+         COUNT(*)::bigint AS total,
+         COUNT(*) FILTER (WHERE '原创' = ANY(cp.tags))::bigint AS originals,
+         COUNT(*) FILTER (WHERE NOT ('原创' = ANY(cp.tags)))::bigint AS translations
+  FROM first_rev fr
+  JOIN current_pv cp ON cp."pageId" = fr."pageId"
+  GROUP BY 1
+),
+pages_total AS (
+  SELECT d.day,
+         COALESCE(SUM(pn.total)       OVER (ORDER BY d.day
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0)::bigint AS total_pages,
+         COALESCE(SUM(pn.originals)   OVER (ORDER BY d.day
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0)::bigint AS originals,
+         COALESCE(SUM(pn.translations)OVER (ORDER BY d.day
+           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0)::bigint AS translations
+  FROM days d
+  LEFT JOIN pages_new pn ON pn.day = d.day
+),
+
+/******** votes/revisions：直接用 PageDailyStats 的当日聚合 ********/
+votes_daily AS (
+  SELECT pds.date AS day,
+         SUM(pds.votes_up)::bigint   AS votes_up,
+         SUM(pds.votes_down)::bigint AS votes_down,
+         SUM(pds.revisions)::bigint  AS revisions
+  FROM "PageDailyStats" pds
+  WHERE pds.date BETWEEN (SELECT start FROM params) AND (SELECT finish FROM params)
+  GROUP BY pds.date
+),
+
+/******** usersActive：60 天窗口去重（区间合并 + 前缀和） ********/
+ud AS (
+  SELECT DISTINCT uds."userId", uds.date::date AS day
+  FROM "UserDailyStats" uds
+  WHERE uds.date BETWEEN ((SELECT start FROM params) - INTERVAL '59 days') AND (SELECT finish FROM params)
+),
+ud_sorted AS (
+  SELECT u."userId", u.day,
+         LAG(u.day) OVER (PARTITION BY u."userId" ORDER BY u.day) AS prev_day
+  FROM ud u
+),
+ud_grp AS (
+  SELECT "userId", day,
+         CASE WHEN prev_day IS NULL OR day > prev_day + INTERVAL '59 days' THEN 1 ELSE 0 END AS is_new
+  FROM ud_sorted
+),
+ud_grp_id AS (
+  SELECT "userId", day,
+         SUM(is_new) OVER (PARTITION BY "userId" ORDER BY day) AS grp
+  FROM ud_grp
+),
+intervals AS (
+  SELECT "userId",
+         MIN(day) AS s,
+         (MAX(day) + INTERVAL '59 days')::date AS e
+  FROM ud_grp_id
+  GROUP BY "userId", grp
+),
+intervals_clip AS (
+  SELECT GREATEST(s, (SELECT start FROM params)) AS s,
+         LEAST(e,    (SELECT finish FROM params)) AS e
+  FROM intervals
+  WHERE e >= (SELECT start FROM params) AND s <= (SELECT finish FROM params)
+),
+events_raw AS (
+  SELECT s AS day, 1 AS delta FROM intervals_clip
+  UNION ALL
+  SELECT (e + INTERVAL '1 day')::date AS day, -1 AS delta
+  FROM intervals_clip
+  WHERE e < (SELECT finish FROM params)
+),
+events AS (
+  SELECT day, SUM(delta) AS delta
+  FROM events_raw
+  GROUP BY 1
+),
+users_active AS (
+  SELECT d.day,
+         SUM(COALESCE(ev.delta,0)) OVER (ORDER BY d.day
+             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)::bigint AS users_active
+  FROM days d
+  LEFT JOIN events ev ON ev.day = d.day
+),
+
+/******** 汇总 ********/
+final AS (
+  SELECT d.day AS date,
+         ut.users_total             AS "usersTotal",
+         ua.users_active            AS "usersActive",
+         ct.total_contributors      AS "usersContributors",
+         at.total_authors           AS "usersAuthors",
+         pt.total_pages             AS "pagesTotal",
+         pt.originals               AS "pagesOriginals",
+         pt.translations            AS "pagesTranslations",
+         COALESCE(vd.votes_up,0)    AS "votesUp",
+         COALESCE(vd.votes_down,0)  AS "votesDown",
+         COALESCE(vd.revisions,0)   AS "revisionsTotal"
+  FROM days d
+  LEFT JOIN users_total     ut ON ut.day = d.day
+  LEFT JOIN users_active    ua ON ua.day = d.day
+  LEFT JOIN contributors_total ct ON ct.day = d.day
+  LEFT JOIN authors_total   at ON at.day = d.day
+  LEFT JOIN pages_total     pt ON pt.day = d.day
+  LEFT JOIN votes_daily     vd ON vd.day = d.day
+)
+${dryRun ? `
+SELECT * FROM final ORDER BY date;`
+: `
+INSERT INTO "SiteOverviewDaily" (
+  date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+  "pagesTotal", "pagesOriginals", "pagesTranslations",
+  "votesUp", "votesDown", "revisionsTotal"
+)
+SELECT
+  date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+  "pagesTotal", "pagesOriginals", "pagesTranslations",
+  "votesUp", "votesDown", "revisionsTotal"
+FROM final
+ON CONFLICT (date) DO UPDATE SET
+  "usersTotal"        = EXCLUDED."usersTotal",
+  "usersActive"       = EXCLUDED."usersActive",
+  "usersContributors" = EXCLUDED."usersContributors",
+  "usersAuthors"      = EXCLUDED."usersAuthors",
+  "pagesTotal"        = EXCLUDED."pagesTotal",
+  "pagesOriginals"    = EXCLUDED."pagesOriginals",
+  "pagesTranslations" = EXCLUDED."pagesTranslations",
+  "votesUp"           = EXCLUDED."votesUp",
+  "votesDown"         = EXCLUDED."votesDown",
+  "revisionsTotal"    = EXCLUDED."revisionsTotal";`
+}
+  `;
+
+    if (dryRun) {
+      const rows = await this.prisma.$queryRawUnsafe<any[]>(sql, startDate, endDate);
+      Logger.info(`[DryRun] SiteOverviewDaily ${startDate}..${endDate} rows=${rows.length}`);
+      if (rows.length) {
+        Logger.info(rows.slice(0, Math.min(5, rows.length)));
+      }
+    } else {
+      await this.prisma.$executeRawUnsafe(sql, startDate, endDate);
+    }
+  }
+
   async run(options: DailyOverviewOptions = {}): Promise<void> {
     const end = options.endDate ? new Date(options.endDate) : new Date();
     const start = options.startDate ? new Date(options.startDate) : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    // normalize to date-only boundaries (UTC)
-    const dayMs = 24 * 60 * 60 * 1000;
-    const startDay = new Date(this.toDateOnly(start));
-    const endDay = new Date(this.toDateOnly(end));
-
-    for (let t = startDay.getTime(); t <= endDay.getTime(); t += dayMs) {
-      const dateStr = this.toDateOnly(new Date(t));
-      try {
-        await this.computeAndUpsert(dateStr, Boolean(options.dryRun));
-      } catch (e) {
-        Logger.error(`DailySiteOverviewJob: failed for ${dateStr}`, e);
-        // continue other days to avoid blocking the whole range
-      }
-    }
-  }
-
-  private async computeAndUpsert(dateStr: string, dryRun: boolean): Promise<void> {
-    // date range [date, date + 1)
-    const dateStart = `${dateStr}T00:00:00.000Z`;
-    const dateEnd = `${dateStr}T23:59:59.999Z`;
-
-    // Users totals based on real event times
-    const usersTotalRow = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(
-      `SELECT COUNT(*)::bigint AS count
-       FROM "User" u
-       WHERE u."firstActivityAt" IS NOT NULL AND u."firstActivityAt" <= $1::timestamptz`,
-      dateEnd
-    );
-    // Active users (rolling 60-day distinct based on UserDailyStats)
-    const usersActiveRow = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(
-      `SELECT COUNT(DISTINCT uds."userId")::bigint AS count
-       FROM "UserDailyStats" uds
-       WHERE uds.date BETWEEN ($1::date - INTERVAL '59 days') AND $1::date`,
-      dateStr
-    );
-
-    // contributors snapshot: unique users whose earliest contribution event (revision or attribution) is <= day end
-    const contributorsSnapshot = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(
-      `WITH rev_first AS (
-         SELECT r."userId" as uid, MIN(r.timestamp) AS first_ts
-         FROM "Revision" r
-         WHERE r."userId" IS NOT NULL
-         GROUP BY r."userId"
-       ), attr_first AS (
-         SELECT a."userId" as uid, MIN(a.date) AS first_ts
-         FROM "Attribution" a
-         WHERE a."userId" IS NOT NULL AND a.date IS NOT NULL
-         GROUP BY a."userId"
-       ), unioned AS (
-         SELECT uid, first_ts FROM rev_first
-         UNION ALL
-         SELECT uid, first_ts FROM attr_first
-       ), first_any AS (
-         SELECT uid, MIN(first_ts) AS first_any_ts FROM unioned GROUP BY uid
-       )
-       SELECT COUNT(*)::bigint AS count FROM first_any WHERE first_any_ts <= $1::timestamptz`,
-      dateEnd
-    );
-
-    // authors snapshot: users whose earliest authoring event on an '原创' page is <= day end
-    const authorsSnapshot = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(
-      `WITH current_orig AS (
-         SELECT pv.id AS pv_id, pv."pageId" AS pid
-         FROM "PageVersion" pv
-         WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND '原创' = ANY(pv.tags)
-       ), page_created AS (
-         SELECT pv."pageId" AS pid, MIN(r.timestamp) AS created_at
-         FROM "Revision" r JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
-         WHERE r.type = 'PAGE_CREATED'
-         GROUP BY pv."pageId"
-       ), author_events AS (
-         SELECT a."userId" AS uid, COALESCE(a.date, pc.created_at) AS event_at
-         FROM "Attribution" a
-         JOIN current_orig co ON co.pv_id = a."pageVerId"
-         LEFT JOIN page_created pc ON pc.pid = co.pid
-         WHERE a."userId" IS NOT NULL
-       )
-       SELECT COUNT(DISTINCT ae.uid)::bigint AS count FROM author_events ae WHERE ae.event_at IS NOT NULL AND ae.event_at <= $1::timestamptz`,
-      dateEnd
-    );
-
-    // pages snapshot by creation time (first PAGE_CREATED revision), classify by current tags
-    const pagesTotalsRow = await this.prisma.$queryRawUnsafe<{ total: bigint; originals: bigint; translations: bigint }[]>(
-      `WITH first_rev AS (
-         SELECT pv."pageId", MIN(r.timestamp) AS first_ts
-         FROM "Revision" r
-         JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
-         WHERE r.type = 'PAGE_CREATED'
-         GROUP BY pv."pageId"
-       ), created AS (
-         SELECT fr."pageId" FROM first_rev fr WHERE fr.first_ts <= $1::timestamptz
-       ), current AS (
-         SELECT pvcur."pageId", pvcur.tags
-         FROM "PageVersion" pvcur
-         WHERE pvcur."validTo" IS NULL AND pvcur."isDeleted" = false
-       )
-       SELECT 
-         (SELECT COUNT(*) FROM created)::bigint AS total,
-         (SELECT COUNT(*) FROM created c JOIN current cur ON cur."pageId" = c."pageId" WHERE '原创' = ANY(cur.tags))::bigint AS originals,
-         (SELECT COUNT(*) FROM created c JOIN current cur ON cur."pageId" = c."pageId" WHERE NOT ('原创' = ANY(cur.tags)))::bigint AS translations
-      `,
-      dateEnd
-    );
-
-    // PageDailyStats aggregates for votes/revisions
-    const aggDaily = await this.prisma.$queryRawUnsafe<{ votesUp: bigint; votesDown: bigint; revisions: bigint }[]>(
-      `SELECT COALESCE(SUM("votes_up"),0)::bigint AS "votesUp",
-              COALESCE(SUM("votes_down"),0)::bigint AS "votesDown",
-              COALESCE(SUM(revisions),0)::bigint AS revisions
-       FROM "PageDailyStats"
-       WHERE date = $1::date`,
-      dateStr
-    );
-
-    const usersTotal = Number(usersTotalRow[0]?.count || 0);
-    const usersActive = Number(usersActiveRow[0]?.count || 0);
-    const pagesTotal = Number(pagesTotalsRow[0]?.total || 0);
-
-    const row = {
-      date: new Date(dateStr),
-      usersTotal,
-      usersActive,
-      usersContributors: Number(contributorsSnapshot[0]?.count || 0),
-      usersAuthors: Number(authorsSnapshot[0]?.count || 0),
-      pagesTotal,
-      pagesOriginals: Number(pagesTotalsRow[0]?.originals || 0),
-      pagesTranslations: Number(pagesTotalsRow[0]?.translations || 0),
-      votesUp: Number(aggDaily[0]?.votesUp || 0),
-      votesDown: Number(aggDaily[0]?.votesDown || 0),
-      revisionsTotal: Number(aggDaily[0]?.revisions || 0)
-    };
-
-    if (dryRun) {
-      Logger.info(`[DryRun] SiteOverviewDaily ${dateStr}`, row);
-      return;
-    }
-
-    const anyPrisma = this.prisma as any;
-    if (anyPrisma.siteOverviewDaily && typeof anyPrisma.siteOverviewDaily.upsert === 'function') {
-      await anyPrisma.siteOverviewDaily.upsert({
-        where: { date: row.date },
-        update: {
-          usersTotal: row.usersTotal,
-          usersActive: row.usersActive,
-          usersContributors: row.usersContributors,
-          usersAuthors: row.usersAuthors,
-          pagesTotal: row.pagesTotal,
-          pagesOriginals: row.pagesOriginals,
-          pagesTranslations: row.pagesTranslations,
-          votesUp: row.votesUp,
-          votesDown: row.votesDown,
-          revisionsTotal: row.revisionsTotal,
-        },
-        create: row
-      });
-    } else {
-      // Fallback: use raw SQL UPSERT in case Prisma client hasn't been regenerated yet
-      await this.prisma.$executeRawUnsafe(
-        `INSERT INTO "SiteOverviewDaily" (
-            date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
-            "pagesTotal", "pagesOriginals", "pagesTranslations",
-            "votesUp", "votesDown", "revisionsTotal"
-         ) VALUES (
-            $1::date, $2::int, $3::int, $4::int, $5::int,
-            $6::int, $7::int, $8::int,
-            $9::int, $10::int, $11::int
-         )
-         ON CONFLICT (date) DO UPDATE SET
-            "usersTotal" = EXCLUDED."usersTotal",
-            "usersActive" = EXCLUDED."usersActive",
-            "usersContributors" = EXCLUDED."usersContributors",
-            "usersAuthors" = EXCLUDED."usersAuthors",
-            "pagesTotal" = EXCLUDED."pagesTotal",
-            "pagesOriginals" = EXCLUDED."pagesOriginals",
-            "pagesTranslations" = EXCLUDED."pagesTranslations",
-            "votesUp" = EXCLUDED."votesUp",
-            "votesDown" = EXCLUDED."votesDown",
-            "revisionsTotal" = EXCLUDED."revisionsTotal"`,
-        dateStr,
-        row.usersTotal,
-        row.usersActive,
-        row.usersContributors,
-        row.usersAuthors,
-        row.pagesTotal,
-        row.pagesOriginals,
-        row.pagesTranslations,
-        row.votesUp,
-        row.votesDown,
-        row.revisionsTotal
-      );
-    }
+    await this.upsertRange(this.toDateOnly(start), this.toDateOnly(end), Boolean(options.dryRun));
   }
 }
 
@@ -221,6 +292,4 @@ export async function runDailySiteOverview(options: DailyOverviewOptions = {}) {
   const job = new DailySiteOverviewJob();
   await job.run(options);
 }
-
-
 

@@ -13,6 +13,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
     try {
       const { limit = '20', offset = '0', category = 'overall', sortBy = 'rank', sortDir } = req.query as Record<string, string>;
       const categoryMap: Record<string, { rank: string; rating: string }> = {
+        // 注意：overall.rating 此处不再作为“总分”，真实返回列会在 SQL 中覆盖为 totalRating
+        // 保持为 overallRating 仅用于其它派生表达式的占位，避免破坏既有分支
         overall: { rank: 'overallRank', rating: 'overallRating' },
         scp: { rank: 'scpRank', rating: 'scpRating' },
         story: { rank: 'storyRank', rating: 'storyRating' },
@@ -46,19 +48,20 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
       };
       const orderExpr = orderMapping[sort] || 'rank';
 
+      const isOverall = fields.rank === 'overallRank';
       const listSql = `
         SELECT 
           u.id, 
           u."displayName", 
           u."wikidotId", 
           us."${fields.rank}" AS rank, 
-          us."${fields.rating}" AS rating,
+          ${isOverall ? 'us."totalRating"' : `us."${fields.rating}"`} AS rating,
           us."pageCount" AS "pageCount",
           us."totalRating" AS "totalRating",
-          CASE 
-            WHEN COALESCE(us."pageCount", 0) > 0 THEN (COALESCE(us."totalRating", 0))::float / NULLIF(us."pageCount", 0)::float
-            ELSE 0::float
-          END AS "meanRating",
+          ${isOverall
+            ? 'COALESCE(us."overallRating", 0)::float'
+            : `CASE WHEN COALESCE(us."${countField}", 0) > 0 THEN (COALESCE(us."${fields.rating}", 0))::float / NULLIF(us."${countField}", 0)::float ELSE 0::float END`
+          } AS "meanRating",
           us."totalUp" AS "totalUp",
           us."totalDown" AS "totalDown",
           us."favTag" AS "favTag",
@@ -70,7 +73,10 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           us."artPageCount" AS "artPageCount",
           us."ratingUpdatedAt" AS "ratingUpdatedAt",
           us."${countField}" AS "catCount",
-          CASE WHEN COALESCE(us."${countField}", 0) > 0 THEN (COALESCE(us."${fields.rating}", 0))::float / NULLIF(us."${countField}", 0)::float ELSE 0::float END AS "catMean"
+          ${isOverall
+            ? 'COALESCE(us."overallRating", 0)::float'
+            : `CASE WHEN COALESCE(us."${countField}", 0) > 0 THEN (COALESCE(us."${fields.rating}", 0))::float / NULLIF(us."${countField}", 0)::float ELSE 0::float END`
+          } AS "catMean"
         FROM "User" u
         JOIN "UserStats" us ON us."userId" = u.id
         WHERE us."${fields.rank}" IS NOT NULL
@@ -218,6 +224,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           if (la) {
             payload = {
               ...payload,
+              lastActivityAt: la.timestamp,
               lastActivityType: la.type,
               lastActivityPageWikidotId: la.pageWikidotId,
               lastActivityPageTitle: la.pageTitle,
@@ -229,6 +236,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           if (fa) {
             payload = {
               ...payload,
+              firstActivityAt: fa.timestamp,
+              firstActivityType: fa.type,
               firstActivityPageWikidotId: fa.pageWikidotId,
               firstActivityPageTitle: fa.pageTitle,
               firstActivityDirection: fa.direction,
@@ -292,11 +301,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           SELECT 
             us."overallRank" AS rank,
             COALESCE(us."totalRating", 0) AS "totalRating",
-            CASE 
-              WHEN COALESCE(us."pageCount", 0) > 0 
-              THEN (COALESCE(us."totalRating", 0))::float / NULLIF(us."pageCount", 0)::float
-              ELSE 0::float 
-            END AS "meanRating",
+            COALESCE(us."overallRating", 0)::float AS "meanRating",
             COALESCE(us."pageCount", 0) AS "pageCount",
             COALESCE(us."scpPageCount", 0) AS "pageCountScp",
             COALESCE(us."storyPageCount", 0) AS "pageCountTale",
@@ -450,9 +455,9 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             pv."revisionCount",
             ps."wilson95",
             ps."controversy",
-            COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) AS "isDeleted",
+            COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) AS "isDeleted",
             CASE 
-              WHEN COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) THEN COALESCE(latest."deletedAt", pv."validTo") 
+              WHEN COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) THEN COALESCE(latest."deletedAt", pv."validTo") 
               ELSE NULL 
             END AS "deletedAt",
             -- Server-side group classification used by frontend tabs (effective version)
@@ -469,10 +474,25 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           JOIN "Page" p ON p.id = pv."pageId"
           LEFT JOIN LATERAL (
-            SELECT pv2.id, pv2.title, pv2."alternateTitle", pv2.category, pv2.rating, pv2.tags, pv2."voteCount", pv2."commentCount", pv2."textContent", pv2.source
+            SELECT 
+              pv2.id,
+              pv2.title,
+              pv2."alternateTitle",
+              pv2.category,
+              pv2.rating,
+              pv2.tags,
+              pv2."voteCount",
+              pv2."commentCount",
+              pv2."textContent",
+              pv2.source,
+              pv2."isDeleted" AS "isDeleted"
             FROM "PageVersion" pv2
-            WHERE pv2."pageId" = pv."pageId" AND pv2."isDeleted" = false
-            ORDER BY (pv2."validTo" IS NULL) DESC, pv2."validFrom" DESC NULLS LAST, pv2.id DESC
+            WHERE pv2."pageId" = pv."pageId"
+            ORDER BY 
+              (pv2."validTo" IS NULL) DESC,
+              (NOT pv2."isDeleted") DESC,
+              pv2."validFrom" DESC NULLS LAST,
+              pv2.id DESC
             LIMIT 1
           ) effective_pv ON TRUE
           -- Current (live) snapshot for robust display fallback fields (no effect on inclusion)
@@ -496,7 +516,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             AND a."pageVerId" = effective_pv.id
             AND (
               $2::boolean = true
-              OR COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) = false
+              OR COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) = false
             )
             ${tabCond}
           ORDER BY pv."pageId", pv."createdAt" DESC
@@ -548,16 +568,26 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               effective_pv.tags AS tags,
               effective_pv.category AS category,
               effective_pv."validTo" AS "validTo",
-              COALESCE(p."isDeleted", COALESCE(latest."isDeleted", false)) AS is_deleted
+              COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) AS is_deleted
             FROM "Attribution" a
             JOIN "User" u ON a."userId" = u.id
             JOIN "PageVersion" pv ON pv.id = a."pageVerId"
             JOIN "Page" p ON p.id = pv."pageId"
             LEFT JOIN LATERAL (
-              SELECT pv2.id AS id, pv2.tags, pv2.category, pv2."validTo", pv2."validFrom"
+              SELECT 
+                pv2.id AS id,
+                pv2.tags,
+                pv2.category,
+                pv2."validTo",
+                pv2."validFrom",
+                pv2."isDeleted" AS "isDeleted"
               FROM "PageVersion" pv2
-              WHERE pv2."pageId" = p.id AND pv2."isDeleted" = false
-              ORDER BY (pv2."validTo" IS NULL) DESC, pv2."validFrom" DESC NULLS LAST, pv2.id DESC
+              WHERE pv2."pageId" = p.id
+              ORDER BY 
+                (pv2."validTo" IS NULL) DESC,
+                (NOT pv2."isDeleted") DESC,
+                pv2."validFrom" DESC NULLS LAST,
+                pv2.id DESC
               LIMIT 1
             ) effective_pv ON TRUE
             LEFT JOIN LATERAL (
@@ -746,176 +776,165 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
       }
       const rawGranularity = String((req.query?.granularity ?? '')).toLowerCase();
       const bucket = rawGranularity === 'month' ? 'month' : 'week';
-      const dateLabel = bucket === 'month' ? 'YYYY-MM-DD' : 'YYYY-MM-DD';
+      const dateLabel = 'YYYY-MM-DD';
 
       const cacheKey = `users:${wikidotIdInt}:rating-history:${bucket}`;
       const rows = await cache.remember(cacheKey, 300, async () => {
         const sql = `
-        WITH user_all_pages AS (
-          -- 所有与该用户有关联的页面（任意归属类型），用于累计评分
-          SELECT DISTINCT pv."wikidotId"
-          FROM "Attribution" a
-          JOIN "PageVersion" pv ON pv.id = a."pageVerId"
-          JOIN "User" u ON a."userId" = u.id
-          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
-        ),
-        user_related_pages AS (
-          -- 包含该用户的所有归属类型，用于页面标记（按优先级推断标记日期）
-          SELECT DISTINCT ON (pv."wikidotId")
-                 pv."wikidotId",
-                 pv.title,
-                 pv."alternateTitle",
-                 -- 是否为作者或提交者，用于优先采用页面创建时间
-                 EXISTS (
-                   SELECT 1 FROM "Attribution" aa
-                   WHERE aa."pageVerId" = pv.id AND aa."userId" = u.id AND aa.type IN ('AUTHOR','SUBMITTER')
-                 ) AS has_author_submitter,
-                 -- 该用户在归属表中的最早日期（若有）
-                 (
-                   SELECT MIN(a2.date)
-                   FROM "Attribution" a2
-                   WHERE a2."pageVerId" = pv.id AND a2."userId" = u.id AND a2.date IS NOT NULL
-                 ) AS attr_date,
-                 -- 该用户在该页面的首次修订时间（若有）
-                 (
-                   SELECT MIN(r.timestamp)
-                   FROM "Revision" r
-                   WHERE r."pageVersionId" = pv.id AND r."userId" = u.id
-                 ) AS first_user_rev_date,
-                 -- 页面创建时间（独立于用户）
-                 (
-                   SELECT MIN(r2.timestamp)
-                   FROM "Revision" r2
-                   WHERE r2."pageVersionId" = pv.id AND r2.type = 'PAGE_CREATED'
-                 ) AS page_created_date
-          FROM "Attribution" a
-          JOIN "PageVersion" pv ON pv.id = a."pageVerId"
-          JOIN "User" u ON a."userId" = u.id
-          WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
-          ORDER BY pv."wikidotId", pv."createdAt" DESC
-        ),
-        ordered_votes AS (
-          SELECT
-            DATE_TRUNC('${bucket}', v.timestamp) AS period,
-            v.timestamp,
-            v.direction AS current_direction,
-            CASE
-              WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
-              WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
-              ELSE 'g:' || v.id::text
-            END AS actor_key,
-            LAG(v.direction) OVER (
-              PARTITION BY CASE
-                WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
-                WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
-                ELSE 'g:' || v.id::text
-              END
-              ORDER BY v.timestamp, v.id
-            ) AS prev_direction
-          FROM "Vote" v
-          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          WHERE pv."wikidotId" IN (SELECT "wikidotId" FROM user_all_pages)
-            AND pv."validTo" IS NULL AND pv."isDeleted" = false
-        ),
-        vote_history AS (
-          SELECT
-            period,
-            SUM((CASE WHEN current_direction = 1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END)) AS upvotes,
-            SUM((CASE WHEN current_direction = -1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END)) AS downvotes,
-            SUM(current_direction - COALESCE(prev_direction, 0)) AS net_change
-          FROM ordered_votes
-          GROUP BY period
-        ),
-        pages_created AS (
-          -- 获取用户相关页面的标记聚合（所有归属类型）。
-          -- 标记日期优先级：
-          -- 1) 若用户为 AUTHOR 或 SUBMITTER，则使用页面创建时间
-          -- 2) 否则使用归属表记录的最早日期（若有）
-          -- 3) 否则使用用户在该页面的首次修订时间（若有）
-          -- 4) 最后兜底为页面创建时间
-          SELECT 
-            DATE_TRUNC(
-              '${bucket}',
-              COALESCE(
-                CASE WHEN has_author_submitter THEN page_created_date ELSE NULL END,
-                attr_date,
-                first_user_rev_date,
-                page_created_date
-              )
-            ) as period,
-            JSON_AGG(
-              JSON_BUILD_OBJECT(
-                'wikidotId', "wikidotId",
-                'title', title,
-                'date', COALESCE(
-                  CASE WHEN has_author_submitter THEN page_created_date ELSE NULL END,
-                  attr_date,
-                  first_user_rev_date,
-                  page_created_date
-                )
-              ) ORDER BY COALESCE(
-                CASE WHEN has_author_submitter THEN page_created_date ELSE NULL END,
-                attr_date,
-                first_user_rev_date,
-                page_created_date
-              )
-            ) as pages
-          FROM user_related_pages
-          WHERE COALESCE(
-                  CASE WHEN has_author_submitter THEN page_created_date ELSE NULL END,
-                  attr_date,
-                  first_user_rev_date,
-                  page_created_date
-                ) IS NOT NULL
-          GROUP BY DATE_TRUNC(
-            '${bucket}',
-            COALESCE(
-              CASE WHEN has_author_submitter THEN page_created_date ELSE NULL END,
-              attr_date,
-              first_user_rev_date,
-              page_created_date
-            )
-          )
-        ),
-        periods AS (
-          -- 合并所有可能出现的时间段，确保没有投票但创建了页面的时间段也会出现
-          SELECT period FROM vote_history
-          UNION
-          SELECT period FROM pages_created
-        ),
-        combined AS (
-          SELECT p.period,
-                 COALESCE(vh.upvotes, 0) AS upvotes,
-                 COALESCE(vh.downvotes, 0) AS downvotes,
-                 COALESCE(vh.net_change, 0) AS net_change,
-                 pc.pages
-          FROM periods p
-          LEFT JOIN vote_history vh ON vh.period = p.period
-          LEFT JOIN pages_created pc ON pc.period = p.period
-        ),
-        cumulative AS (
-          SELECT period,
-                 upvotes,
-                 downvotes,
-                 net_change,
-                 SUM(net_change) OVER (ORDER BY period) AS cumulative_rating,
-                 pages
-          FROM combined
-        )
-        SELECT 
-          TO_CHAR(period, '${dateLabel}') as date,
-          COALESCE(upvotes, 0) as upvotes,
-          COALESCE(downvotes, 0) as downvotes,
-          COALESCE(net_change, 0) as net_change,
-          COALESCE(cumulative_rating, 0) as cumulative_rating,
-          pages
-        FROM cumulative
-        ORDER BY period
+WITH base_user AS (
+  SELECT id, "attributionVotingTimeSeriesCache" AS cache
+  FROM "User"
+  WHERE "wikidotId" = $1
+),
+series_source AS (
+  SELECT * FROM base_user WHERE cache IS NOT NULL
+),
+series AS (
+  SELECT
+    DATE_TRUNC($2::text, (dates.value)::date)::date AS period,
+    SUM(COALESCE((daily_up.value)::int, 0)) AS upvotes,
+    SUM(COALESCE((daily_down.value)::int, 0)) AS downvotes
+  FROM series_source u
+  CROSS JOIN LATERAL jsonb_array_elements_text(u.cache->'dates') WITH ORDINALITY AS dates(value, idx)
+  LEFT JOIN LATERAL jsonb_array_elements_text(u.cache->'dailyUpvotes') WITH ORDINALITY AS daily_up(value, idx_up) ON idx_up = dates.idx
+  LEFT JOIN LATERAL jsonb_array_elements_text(u.cache->'dailyDownvotes') WITH ORDINALITY AS daily_down(value, idx_down) ON idx_down = dates.idx
+  GROUP BY period
+),
+	latest_versions AS (
+	  SELECT
+	    pv."pageId",
+	    pv.id AS version_id,
+	    pv."wikidotId",
+	    pv.title,
+	    pv."alternateTitle",
+	    pv."createdAt"
+	  FROM "PageVersion" pv
+	  WHERE pv."validTo" IS NULL
+	),
+	user_related_pages AS (
+	  SELECT DISTINCT ON (lv."wikidotId")
+	         lv."wikidotId",
+	         lv.title,
+	         lv."alternateTitle",
+	         lv."pageId",
+	         EXISTS (
+	           SELECT 1
+	           FROM "Attribution" aa
+	           WHERE aa."pageVerId" = lv.version_id
+	             AND aa."userId" = u.id
+	             AND aa.type IN ('AUTHOR','SUBMITTER')
+	         ) AS has_author_submitter,
+	         (
+	           SELECT MIN(a2.date)
+	           FROM "Attribution" a2
+	           JOIN "PageVersion" pv2 ON pv2.id = a2."pageVerId"
+	           WHERE pv2."pageId" = lv."pageId"
+	             AND a2."userId" = u.id
+	             AND a2.date IS NOT NULL
+	         ) AS attr_date,
+	         (
+	           SELECT MIN(r.timestamp)
+	           FROM "Revision" r
+	           JOIN "PageVersion" pvR ON pvR.id = r."pageVersionId"
+	           WHERE pvR."pageId" = lv."pageId"
+	             AND r."userId" = u.id
+	         ) AS first_user_rev_date,
+	         (
+	           SELECT MIN(r2.timestamp)
+	           FROM "Revision" r2
+	           JOIN "PageVersion" pvC ON pvC.id = r2."pageVersionId"
+	           WHERE pvC."pageId" = lv."pageId"
+	             AND r2.type = 'PAGE_CREATED'
+	         ) AS page_created_date
+	  FROM latest_versions lv
+	  JOIN "Attribution" a ON a."pageVerId" = lv.version_id
+	  JOIN base_user u ON a."userId" = u.id
+	  ORDER BY lv."wikidotId", lv."createdAt" DESC NULLS LAST
+	),
+pages_marked AS (
+  SELECT
+    DATE_TRUNC($2::text, event.event_date)::date AS period,
+    JSON_BUILD_OBJECT(
+      'wikidotId', urp."wikidotId",
+      'title', COALESCE(urp.title, urp."alternateTitle", ''),
+      'date', TO_CHAR(event.event_date, 'YYYY-MM-DD')
+    ) AS page
+  FROM user_related_pages urp
+  CROSS JOIN LATERAL (
+    SELECT COALESCE(
+      CASE WHEN urp.has_author_submitter THEN urp.page_created_date ELSE NULL END,
+      urp.attr_date,
+      urp.first_user_rev_date,
+      urp.page_created_date
+    ) AS event_date
+  ) event
+  WHERE event.event_date IS NOT NULL
+),
+pages_grouped AS (
+  SELECT
+    period,
+    JSON_AGG(page ORDER BY page->>'date', page->>'wikidotId') AS pages
+  FROM pages_marked
+  GROUP BY period
+),
+periods AS (
+  SELECT period FROM series
+  UNION
+  SELECT period FROM pages_grouped
+),
+combined AS (
+  SELECT
+    p.period,
+    COALESCE(s.upvotes, 0) AS upvotes,
+    COALESCE(s.downvotes, 0) AS downvotes,
+    COALESCE(pg.pages, '[]'::json) AS pages
+  FROM periods p
+  LEFT JOIN series s ON s.period = p.period
+  LEFT JOIN pages_grouped pg ON pg.period = p.period
+),
+ordered AS (
+  SELECT
+    period,
+    upvotes,
+    downvotes,
+    upvotes - downvotes AS net_change,
+    SUM(upvotes - downvotes) OVER (ORDER BY period) AS cumulative_rating,
+    pages
+  FROM combined
+)
+SELECT
+  period::date AS period,
+  TO_CHAR(period, $3::text) AS date_str,
+  upvotes,
+  downvotes,
+  net_change,
+  cumulative_rating,
+  pages
+FROM ordered
+ORDER BY period;
         `;
-        const { rows } = await pool.query(sql, [wikidotIdInt]);
-        return rows;
+
+        const { rows } = await pool.query(sql, [wikidotIdInt, bucket, dateLabel]);
+        if (!rows?.length) return [];
+
+        let runningTotal = 0;
+        return rows.map(row => {
+          const upvotes = Number(row.upvotes ?? 0);
+          const downvotes = Number(row.downvotes ?? 0);
+          const netChange = Number(row.net_change ?? 0);
+          runningTotal = Math.max(0, runningTotal + netChange);
+
+          return {
+            date: row.date_str,
+            upvotes,
+            downvotes,
+            net_change: netChange,
+            cumulative_rating: runningTotal,
+            pages: Array.isArray(row.pages) ? row.pages : []
+          };
+        });
       });
-      
+
       res.json(rows);
     } catch (err) {
       next(err);

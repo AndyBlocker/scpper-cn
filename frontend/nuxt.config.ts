@@ -76,6 +76,7 @@ export default defineNuxtConfig({
   },
   app: {
     head: {
+      htmlAttrs: { lang: 'zh-CN' },
       title: 'SCPPER-CN',
       titleTemplate: (titleChunk?: string) => {
         const base = 'SCPPER-CN';
@@ -84,7 +85,7 @@ export default defineNuxtConfig({
         return titleChunk.includes(base) ? titleChunk : `${titleChunk} - ${base}`;
       },
       meta: [
-        { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'theme-color', content: '#0A0A0B', media: '(prefers-color-scheme: dark)' },
         { name: 'theme-color', content: '#F6F6F7', media: '(prefers-color-scheme: light)' }
       ],

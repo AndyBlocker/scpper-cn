@@ -297,12 +297,16 @@ export class IncrementalAnalyzeJob {
               WITH candidates AS (
                 SELECT MIN(date) AS d FROM "UserDailyStats"
                 UNION ALL
-                SELECT MIN(date(v."timestamp")) AS d FROM "Vote" v
-              )
+          SELECT MIN(date(v."timestamp")) AS d FROM "Vote" v
+        )
               SELECT MIN(d) AS min_date FROM candidates
             `;
-            const minDate = rows?.[0]?.min_date ? new Date(rows[0].min_date) : new Date('2022-01-01');
-            await runDailySiteOverview({ startDate: minDate.toISOString().slice(0,10), endDate: undefined });
+            const minDate = rows?.[0]?.min_date ? new Date(rows[0].min_date) : null;
+            if (!minDate) {
+              console.log('ℹ️ Task site_overview_daily: no historical data to process (skipping full rebuild).');
+            } else {
+              await runDailySiteOverview({ startDate: minDate.toISOString().slice(0, 10), endDate: undefined });
+            }
           } else {
             // Incremental: recompute recent 30 days window for stability
             const end = new Date();
@@ -539,145 +543,186 @@ export class IncrementalAnalyzeJob {
     const existingRecordsCount = await this.prisma.pageDailyStats.count();
     const shouldInitializeHistory = existingRecordsCount === 0 || options?.forceFullHistory;
 
-    let dateRange: Array<{ date: Date }>;
-    
+    const startOfDay = (input: Date) => {
+      const value = new Date(input);
+      value.setHours(0, 0, 0, 0);
+      return value;
+    };
+
+    const addDays = (input: Date, days: number) => {
+      const value = new Date(input);
+      value.setDate(value.getDate() + days);
+      return value;
+    };
+
+    let windowStart: Date | null = null;
+    let windowEnd: Date | null = null;
+
     if (shouldInitializeHistory) {
       console.log('🔄 Initializing complete historical daily aggregates...');
-      // 优化: 使用索引友好的历史日期查询
-      dateRange = await this.prisma.$queryRaw<Array<{ date: Date }>>`
-        WITH vote_dates AS (
-          SELECT date(v."timestamp") as date
-          FROM "Vote" v
-          WHERE v."timestamp" >= '2022-01-01'
-          GROUP BY date(v."timestamp")
+
+      const range = await this.prisma.$queryRaw<Array<{ min_ts: Date | null; max_ts: Date | null }>>`
+        WITH ranges AS (
+          SELECT MIN(v."timestamp") AS min_ts, MAX(v."timestamp") AS max_ts FROM "Vote" v
+          UNION ALL
+          SELECT MIN(r."timestamp") AS min_ts, MAX(r."timestamp") AS max_ts FROM "Revision" r
+          UNION ALL
+          SELECT MIN(a."date") AS min_ts, MAX(a."date") AS max_ts FROM "Attribution" a WHERE a."date" IS NOT NULL
         )
-        SELECT date FROM vote_dates
-        ORDER BY date ASC
-      `;
-      console.log(`📊 Found ${dateRange.length} historical days to process`);
-    } else {
-      // 获取需要重新聚合的日期范围（最近变更的日期）
-      dateRange = await this.prisma.$queryRaw<Array<{ date: Date }>>`
-        SELECT DISTINCT date(v."timestamp") as date
-        FROM "Vote" v
-        WHERE v."timestamp" >= CURRENT_DATE - INTERVAL '30 days'  -- 扩展到30天
-        ORDER BY date DESC
-      `;
-    }
-    let cnt = 0;
-    for (const { date } of dateRange) {
-      // 优化: 更高效的PageDailyStats更新
-      await this.prisma.$executeRaw`
-        WITH daily_votes AS (
-          SELECT 
-            pv."pageId",
-            COUNT(*) FILTER (WHERE v.direction = 1) as votes_up,
-            COUNT(*) FILTER (WHERE v.direction = -1) as votes_down,
-            COUNT(*) FILTER (WHERE v.direction != 0) as total_votes,
-            COUNT(DISTINCT v."userId") FILTER (WHERE v."userId" IS NOT NULL) as unique_voters
-          FROM "Vote" v
-          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          WHERE date(v."timestamp") = ${date}::date
-            AND pv."validTo" IS NULL 
-            AND pv."isDeleted" = false
-          GROUP BY pv."pageId"
-        ),
-        daily_revisions AS (
-          SELECT 
-            pv."pageId",
-            COUNT(r.id) as revisions
-          FROM "Revision" r
-          JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
-          WHERE date(r."timestamp") = ${date}::date
-            AND pv."validTo" IS NULL
-            AND pv."isDeleted" = false
-          GROUP BY pv."pageId"
-        )
-        INSERT INTO "PageDailyStats" ("pageId", date, votes_up, votes_down, total_votes, unique_voters, revisions)
-        SELECT 
-          COALESCE(dv."pageId", dr."pageId") as "pageId",
-          ${date}::date as date,
-          COALESCE(dv.votes_up, 0) as votes_up,
-          COALESCE(dv.votes_down, 0) as votes_down,
-          COALESCE(dv.total_votes, 0) as total_votes,
-          COALESCE(dv.unique_voters, 0) as unique_voters,
-          COALESCE(dr.revisions, 0) as revisions
-        FROM daily_votes dv
-        FULL OUTER JOIN daily_revisions dr ON dv."pageId" = dr."pageId"
-        ON CONFLICT ("pageId", date) DO UPDATE SET
-          votes_up = EXCLUDED.votes_up,
-          votes_down = EXCLUDED.votes_down,
-          total_votes = EXCLUDED.total_votes,
-          unique_voters = EXCLUDED.unique_voters,
-          revisions = EXCLUDED.revisions
+        SELECT MIN(min_ts) AS min_ts, MAX(max_ts) AS max_ts FROM ranges
       `;
 
-      // 优化: 更高效的UserDailyStats更新
-      await this.prisma.$executeRaw`
-        WITH daily_user_votes AS (
+      const minTs = range[0]?.min_ts || null;
+      const maxTs = range[0]?.max_ts || null;
+
+      if (!minTs || !maxTs) {
+        console.log('ℹ️ No historical activity detected. Skipping daily aggregates initialization.');
+        return;
+      }
+
+      windowStart = startOfDay(new Date(minTs));
+      windowEnd = addDays(startOfDay(new Date(maxTs)), 1);
+
+      console.log(`📊 Rebuilding aggregates window ${windowStart.toISOString().slice(0, 10)} → ${windowEnd.toISOString().slice(0, 10)}`);
+    } else {
+      const minChange = changeSet.reduce<Date | null>((acc, item) => {
+        const change = item.lastChange ? new Date(item.lastChange) : null;
+        if (!change) return acc;
+        return !acc || change < acc ? change : acc;
+      }, null);
+
+      const rollingWindowStart = startOfDay(addDays(new Date(), -30));
+      const effectiveMin = minChange ? startOfDay(minChange) : null;
+
+      windowStart = effectiveMin && effectiveMin < rollingWindowStart ? effectiveMin : rollingWindowStart;
+      windowEnd = addDays(startOfDay(new Date()), 1);
+
+      console.log(`📈 Incremental aggregates window ${windowStart.toISOString().slice(0, 10)} → ${windowEnd.toISOString().slice(0, 10)}`);
+    }
+
+    if (!windowStart || !windowEnd || windowStart >= windowEnd) {
+      console.log('ℹ️ Daily aggregates window is empty. Skipping update.');
+      return;
+    }
+
+    const startIso = windowStart.toISOString();
+    const endIso = windowEnd.toISOString();
+
+    await this.prisma.$executeRaw`
+      WITH live_pv AS (
+        SELECT id AS "pageVersionId", "pageId"
+        FROM "PageVersion"
+        WHERE "validTo" IS NULL AND "isDeleted" = false
+      ),
+      agg AS (
+        SELECT 
+          t."pageId",
+          t.dt::date AS date,
+          SUM(t.votes_up)::int       AS votes_up,
+          SUM(t.votes_down)::int     AS votes_down,
+          SUM(t.total_votes)::int    AS total_votes,
+          SUM(t.unique_voters)::int  AS unique_voters,
+          SUM(t.revisions)::int      AS revisions
+        FROM (
+          SELECT 
+            pv."pageId",
+            date_trunc('day', v."timestamp") AS dt,
+            COUNT(*) FILTER (WHERE v.direction = 1)      AS votes_up,
+            COUNT(*) FILTER (WHERE v.direction = -1)     AS votes_down,
+            COUNT(*) FILTER (WHERE v.direction != 0)     AS total_votes,
+            COUNT(DISTINCT v."userId") FILTER (WHERE v."userId" IS NOT NULL) AS unique_voters,
+            0::bigint                                   AS revisions
+          FROM "Vote" v
+          JOIN live_pv pv ON pv."pageVersionId" = v."pageVersionId"
+          WHERE v."timestamp" >= ${startIso}::timestamp AND v."timestamp" < ${endIso}::timestamp
+          GROUP BY pv."pageId", date_trunc('day', v."timestamp")
+
+          UNION ALL
+
+          SELECT 
+            pv."pageId",
+            date_trunc('day', r."timestamp") AS dt,
+            0::bigint, 0::bigint, 0::bigint, 0::bigint,
+            COUNT(*) AS revisions
+          FROM "Revision" r
+          JOIN live_pv pv ON pv."pageVersionId" = r."pageVersionId"
+          WHERE r."timestamp" >= ${startIso}::timestamp AND r."timestamp" < ${endIso}::timestamp
+          GROUP BY pv."pageId", date_trunc('day', r."timestamp")
+        ) t
+        GROUP BY t."pageId", t.dt
+      )
+      INSERT INTO "PageDailyStats" ("pageId", date, votes_up, votes_down, total_votes, unique_voters, revisions)
+      SELECT "pageId", date, votes_up, votes_down, total_votes, unique_voters, revisions
+      FROM agg
+      ON CONFLICT ("pageId", date) DO UPDATE SET
+        votes_up      = EXCLUDED.votes_up,
+        votes_down    = EXCLUDED.votes_down,
+        total_votes   = EXCLUDED.total_votes,
+        unique_voters = EXCLUDED.unique_voters,
+        revisions     = EXCLUDED.revisions
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH agg AS (
+        SELECT 
+          x."userId",
+          x.dt::date AS date,
+          SUM(x.votes_cast)::int     AS votes_cast,
+          SUM(x.pages_created)::int  AS pages_created,
+          MAX(x.last_activity)       AS last_activity
+        FROM (
           SELECT 
             v."userId",
-            COUNT(*) as votes_cast,
-            MAX(v."timestamp") as last_vote
+            date_trunc('day', v."timestamp") AS dt,
+            COUNT(*) AS votes_cast,
+            0::bigint AS pages_created,
+            MAX(v."timestamp") AS last_activity
           FROM "Vote" v
-          WHERE date(v."timestamp") = ${date}::date
-            AND v."userId" IS NOT NULL
-          GROUP BY v."userId"
-        ),
-        daily_user_revisions AS (
+          WHERE v."userId" IS NOT NULL
+            AND v."timestamp" >= ${startIso}::timestamp AND v."timestamp" < ${endIso}::timestamp
+          GROUP BY v."userId", date_trunc('day', v."timestamp")
+
+          UNION ALL
+
           SELECT 
             r."userId",
-            MAX(r."timestamp") as last_revision
+            date_trunc('day', r."timestamp") AS dt,
+            0::bigint AS votes_cast,
+            0::bigint AS pages_created,
+            MAX(r."timestamp") AS last_activity
           FROM "Revision" r
-          WHERE date(r."timestamp") = ${date}::date
-            AND r."userId" IS NOT NULL
-          GROUP BY r."userId"
-        ),
-        daily_user_attributions AS (
+          WHERE r."userId" IS NOT NULL
+            AND r."timestamp" >= ${startIso}::timestamp AND r."timestamp" < ${endIso}::timestamp
+          GROUP BY r."userId", date_trunc('day', r."timestamp")
+
+          UNION ALL
+
           SELECT 
             a."userId",
-            COUNT(DISTINCT pv."pageId") FILTER (WHERE a.type = 'AUTHOR') as pages_created,
-            MAX(a."date") as last_attribution
+            date_trunc('day', a."date") AS dt,
+            0::bigint AS votes_cast,
+            COUNT(DISTINCT pv."pageId") FILTER (WHERE a.type = 'AUTHOR') AS pages_created,
+            MAX(a."date") AS last_activity
           FROM "Attribution" a
-          JOIN "PageVersion" pv ON a."pageVerId" = pv.id
-          WHERE date(a."date") = ${date}::date
-            AND a."userId" IS NOT NULL
-          GROUP BY a."userId"
-        ),
-        all_user_activity AS (
-          SELECT 
-            COALESCE(duv."userId", dur."userId", dua."userId") as "userId",
-            COALESCE(duv.votes_cast, 0) as votes_cast,
-            COALESCE(dua.pages_created, 0) as pages_created,
-            GREATEST(
-              COALESCE(duv.last_vote, '1900-01-01'::timestamp),
-              COALESCE(dur.last_revision, '1900-01-01'::timestamp),
-              COALESCE(dua.last_attribution, '1900-01-01'::timestamp)
-            ) as last_activity
-          FROM daily_user_votes duv
-          FULL OUTER JOIN daily_user_revisions dur ON duv."userId" = dur."userId"
-          FULL OUTER JOIN daily_user_attributions dua ON COALESCE(duv."userId", dur."userId") = dua."userId"
-        )
-        INSERT INTO "UserDailyStats" ("userId", date, votes_cast, pages_created, last_activity)
-        SELECT 
-          "userId",
-          ${date}::date as date,
-          votes_cast,
-          pages_created,
-          last_activity
-        FROM all_user_activity
-        ON CONFLICT ("userId", date) DO UPDATE SET
-          votes_cast = EXCLUDED.votes_cast,
-          pages_created = EXCLUDED.pages_created,
-          last_activity = EXCLUDED.last_activity
-      `;
-      cnt++;
-      if(cnt % 10 === 0) {
-        console.log(`  📈 Progress: ${cnt}/${dateRange.length} (${Math.round(cnt/dateRange.length*100)}%) - processed ${date}`);
-      }
-    }
+          JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+          WHERE a."userId" IS NOT NULL
+            AND a."date" IS NOT NULL
+            AND a."date" >= ${startIso}::timestamp AND a."date" < ${endIso}::timestamp
+          GROUP BY a."userId", date_trunc('day', a."date")
+        ) x
+        GROUP BY x."userId", x.dt
+      )
+      INSERT INTO "UserDailyStats" ("userId", date, votes_cast, pages_created, last_activity)
+      SELECT "userId", date, votes_cast, pages_created, last_activity
+      FROM agg
+      ON CONFLICT ("userId", date) DO UPDATE SET
+        votes_cast    = EXCLUDED.votes_cast,
+        pages_created = EXCLUDED.pages_created,
+        last_activity = EXCLUDED.last_activity
+    `;
 
-    console.log(`✅ Daily aggregates updated for ${dateRange.length} days`);
+    const windowDays = Math.ceil((windowEnd.getTime() - windowStart.getTime()) / (24 * 60 * 60 * 1000));
+    console.log(`✅ Daily aggregates refreshed over ${windowDays} day(s)`);
   }
 
   /**

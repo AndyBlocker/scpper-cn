@@ -48,7 +48,10 @@ function readCssColor(varName: string, fallback: string, alpha?: number): string
   return `rgb(${parts[0]}, ${parts[1]}, ${parts[2]})`
 }
 
-const canvasStyle = computed(() => ({ height: 'clamp(200px, 34vh, 340px)' }))
+const canvasStyle = computed(() => {
+  const unit = (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('height','1svh')) ? 'svh' : 'vh'
+  return { height: `clamp(200px, 34${unit}, 340px)` }
+})
 
 function buildConfig() {
   const { labels, datasets, yTitle, title } = props

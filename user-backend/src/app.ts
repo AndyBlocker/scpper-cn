@@ -4,6 +4,8 @@ import cors from 'cors';
 import pinoHttp from 'pino-http';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
+import { gachaRouter, gachaAdminRouter } from './routes/gacha.js';
+import { eventsRouter } from './routes/events.js';
 
 export function createApp() {
   const app = express();
@@ -15,6 +17,9 @@ export function createApp() {
 
   app.use('/auth', authRouter());
   app.use('/admin', adminRouter());
+  app.use('/gacha/admin', gachaAdminRouter());
+  app.use('/gacha', gachaRouter());
+  app.use('/events', eventsRouter());
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });

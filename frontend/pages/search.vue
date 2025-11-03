@@ -18,6 +18,15 @@
     <div v-show="showAdvanced" class="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 shadow-sm">
       <form @submit.prevent="performAdvancedSearch" class="space-y-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- 搜索对象（用户/页面/全部） -->
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">搜索对象</label>
+            <div class="segmented">
+              <button type="button" :aria-pressed="searchForm.scope==='both'" @click="searchForm.scope='both'">全部</button>
+              <button type="button" :aria-pressed="searchForm.scope==='users'" @click="searchForm.scope='users'">仅用户</button>
+              <button type="button" :aria-pressed="searchForm.scope==='pages'" @click="searchForm.scope='pages'">仅页面</button>
+            </div>
+          </div>
           <!-- 关键词搜索 -->
           <div class="md:col-span-2">
             <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">关键词</label>
@@ -55,9 +64,9 @@
                       type="button"
                       class="w-full text-left px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors border-b border-neutral-100 dark:border-neutral-800 last:border-b-0"
                     >
-                      <div class="flex items-center justify-between">
-                        <span class="text-sm text-neutral-800 dark:text-neutral-200">{{ tag.tag }}</span>
-                        <span class="text-xs text-neutral-500 dark:text-neutral-400">{{ tag.pageCount }} 页面</span>
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-sm text-neutral-800 dark:text-neutral-200 truncate min-w-0 flex-1">{{ tag.tag }}</span>
+                        <span class="text-xs text-neutral-500 dark:text-neutral-400 shrink-0 ml-2">{{ tag.pageCount }} 页面</span>
                       </div>
                     </button>
                   </div>
@@ -112,9 +121,9 @@
                       type="button"
                       class="w-full text-left px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors border-b border-neutral-100 dark:border-neutral-800 last:border-b-0"
                     >
-                      <div class="flex items-center justify-between">
-                        <span class="text-sm text-neutral-800 dark:text-neutral-200">{{ tag.tag }}</span>
-                        <span class="text-xs text-neutral-500 dark:text-neutral-400">{{ tag.pageCount }} 页面</span>
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-sm text-neutral-800 dark:text-neutral-200 truncate min-w-0 flex-1">{{ tag.tag }}</span>
+                        <span class="text-xs text-neutral-500 dark:text-neutral-400 shrink-0 ml-2">{{ tag.pageCount }} 页面</span>
                       </div>
                     </button>
                   </div>
@@ -138,13 +147,13 @@
           <!-- 分数范围 -->
           <div>
             <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">评分范围</label>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0">
               <input 
                 v-model="searchForm.ratingMin"
                 type="number"
                 placeholder="最低分"
                 step="1"
-                class="flex-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
               />
               <span class="text-neutral-500 dark:text-neutral-400">至</span>
               <input 
@@ -152,9 +161,22 @@
                 type="number"
                 placeholder="最高分"
                 step="1"
-                class="flex-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
               />
             </div>
+          </div>
+
+          <!-- 页面状态 -->
+          <div>
+            <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">页面状态</label>
+            <select
+              v-model="searchForm.deletedFilter"
+              class="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+            >
+              <option value="any">全部页面</option>
+              <option value="exclude">不看已删除页面</option>
+              <option value="only">仅看已删除页面</option>
+            </select>
           </div>
 
           <!-- 排序方式 -->
@@ -217,7 +239,7 @@
         </div>
 
         <div class="space-y-8">
-          <section v-if="totalUsers > 0 || usersLoading" class="space-y-3">
+          <section v-if="(searchForm.scope==='both' || searchForm.scope==='users') && (totalUsers > 0 || usersLoading)" class="space-y-3">
             <div class="flex items-center justify-between">
               <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">用户</div>
               <div class="text-[11px] text-neutral-400 dark:text-neutral-500">共 {{ totalUsers }}</div>
@@ -252,7 +274,7 @@
             </div>
           </section>
 
-          <section class="space-y-4">
+          <section v-if="(searchForm.scope==='both' || searchForm.scope==='pages')" class="space-y-4">
             <div class="flex items-center justify-between">
               <div class="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">页面</div>
               <div class="text-[11px] text-neutral-400 dark:text-neutral-500">共 {{ totalPages }}</div>
@@ -317,7 +339,9 @@ const searchForm = ref({
   onlyIncludeTags: false,
   ratingMin: '',
   ratingMax: '',
-  orderBy: 'relevance'
+  deletedFilter: 'exclude',
+  orderBy: 'relevance',
+  scope: 'both' as 'both' | 'users' | 'pages'
 });
 
 // Tag联想功能
@@ -516,6 +540,7 @@ const clearForm = () => {
     onlyIncludeTags: false,
     ratingMin: '',
     ratingMax: '',
+    deletedFilter: 'exclude',
     orderBy: 'relevance'
   };
   tagSearchQuery.value = '';
@@ -528,6 +553,7 @@ function hasSearchCriteria(): boolean {
     || searchForm.value.excludeTags.length > 0
     || Boolean(searchForm.value.ratingMin)
     || Boolean(searchForm.value.ratingMax)
+    || searchForm.value.deletedFilter !== 'exclude'
 }
 
 function buildSearchParamsFromForm(includeDefaultsForOrder = false): Record<string, any> {
@@ -539,6 +565,12 @@ function buildSearchParamsFromForm(includeDefaultsForOrder = false): Record<stri
   if (searchForm.value.excludeTags.length > 0) params.excludeTags = [...searchForm.value.excludeTags]
   if (searchForm.value.ratingMin) params.ratingMin = searchForm.value.ratingMin
   if (searchForm.value.ratingMax) params.ratingMax = searchForm.value.ratingMax
+  if (searchForm.value.deletedFilter) {
+    params.deletedFilter = searchForm.value.deletedFilter
+  }
+  if (searchForm.value.scope && searchForm.value.scope !== 'both') {
+    params.scope = searchForm.value.scope
+  }
   if (includeDefaultsForOrder || (searchForm.value.orderBy && searchForm.value.orderBy !== 'relevance')) {
     params.orderBy = searchForm.value.orderBy || 'relevance'
   }
@@ -805,7 +837,8 @@ const performAdvancedSearch = () => {
     searchForm.value.includeTags.length > 0 || 
     searchForm.value.excludeTags.length > 0 || 
     searchForm.value.ratingMin || 
-    searchForm.value.ratingMax;
+    searchForm.value.ratingMax ||
+    searchForm.value.deletedFilter !== 'exclude';
   
   if (!hasAnyCondition) {
     return;
@@ -830,7 +863,11 @@ const performAdvancedSearch = () => {
 // 根据URL参数初始化搜索
 const initializeFromQuery = () => {
   const query = route.query
-  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax || (query.orderBy && query.orderBy !== 'relevance') || query.advanced || String(query.onlyIncludeTags || '').toLowerCase() === 'true'
+  const rawDeletedFilter = String(query.deletedFilter || '')
+  const normalizedDeletedFilter = ['only', 'any', 'exclude'].includes(rawDeletedFilter) ? rawDeletedFilter : 'exclude'
+  const rawScope = String(query.scope || 'both').toLowerCase()
+  const normalizedScope = (['users','pages','both'].includes(rawScope) ? rawScope : 'both') as 'users'|'pages'|'both'
+  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax || (query.orderBy && query.orderBy !== 'relevance') || query.advanced || String(query.onlyIncludeTags || '').toLowerCase() === 'true' || normalizedDeletedFilter !== 'exclude' || normalizedScope !== 'both'
 
   showAdvanced.value = Boolean(hasAdvancedParams || !query.q)
 
@@ -840,7 +877,9 @@ const initializeFromQuery = () => {
   searchForm.value.onlyIncludeTags = ['true', '1', 'yes'].includes(String(query.onlyIncludeTags || '').toLowerCase())
   searchForm.value.ratingMin = String(query.ratingMin || '')
   searchForm.value.ratingMax = String(query.ratingMax || '')
+  searchForm.value.deletedFilter = normalizedDeletedFilter
   searchForm.value.orderBy = String(query.orderBy || 'relevance')
+  searchForm.value.scope = normalizedScope
 
   if (restoreFromCacheIfAvailable(currentQueryKey.value)) {
     return
@@ -880,17 +919,43 @@ const performSearch = async () => {
   lastSearchParams.value = apiParams
 
   try {
-    if (apiParams.query) {
-      await Promise.all([
-        fetchUsers(apiParams, { append: false }),
-        fetchPages(apiParams, { append: false })
-      ])
-    } else {
+    const scope = searchForm.value.scope
+    const hasQuery = Boolean(apiParams.query)
+    if (scope === 'users') {
+      if (hasQuery) {
+        await fetchUsers(apiParams, { append: false })
+      } else {
+        userResults.value = []
+        totalUsers.value = 0
+        userOffset.value = 0
+        userHasMore.value = false
+      }
+      // 清空页面结果
+      pageResults.value = []
+      totalPages.value = 0
+      pageOffset.value = 0
+      pageHasMore.value = false
+    } else if (scope === 'pages') {
       await fetchPages(apiParams, { append: false })
+      // 清空用户结果
       userResults.value = []
       totalUsers.value = 0
       userOffset.value = 0
       userHasMore.value = false
+    } else {
+      // both
+      if (hasQuery) {
+        await Promise.all([
+          fetchUsers(apiParams, { append: false }),
+          fetchPages(apiParams, { append: false })
+        ])
+      } else {
+        await fetchPages(apiParams, { append: false })
+        userResults.value = []
+        totalUsers.value = 0
+        userOffset.value = 0
+        userHasMore.value = false
+      }
     }
   } finally {
     initialLoading.value = false

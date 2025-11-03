@@ -104,9 +104,17 @@ export class UserRatingSystem {
         GROUP BY a."userId", pv."pageId"
       ),
       current_versions AS (
-        -- 当前版本（用于读取rating、tags、category）
-        SELECT pv."pageId", pv.rating, pv.tags, pv.category
+        -- 当前版本（用于读取rating、tags、category、currentUrl、页面删除标记）
+        -- 注意：不在此处过滤 Page.isDeleted，以免影响 totalRating（综合排名仍基于总分）
+        SELECT 
+          pv."pageId", 
+          pv.rating, 
+          pv.tags, 
+          pv.category,
+          p."currentUrl" AS current_url,
+          p."isDeleted" AS page_is_deleted
         FROM "PageVersion" pv
+        JOIN "Page" p ON p.id = pv."pageId"
         WHERE pv."validTo" IS NULL
           AND pv."isDeleted" = false
           AND pv.rating IS NOT NULL
@@ -115,9 +123,42 @@ export class UserRatingSystem {
         -- 将用户-页面角色与当前版本合并，根据角色与标签分类聚合
         SELECT 
           upr."userId" as "userId",
-          -- 总分：有归属即计入
+          -- 总分（用于 totalRating）：有归属即计入（不应用均值过滤条件）
           SUM(CASE WHEN upr.has_author = 1 THEN cv.rating::float ELSE 0 END) as overall_rating,
           COUNT(CASE WHEN upr.has_author = 1 THEN 1 END) as total_pages,
+
+          -- 按均值口径的过滤条件（仅作用于均值，不影响总分与作品数）：
+          --  1) 排除含有“段落”标签
+          --  2) 排除无标签页面，除非 currentUrl 以 'log-of-anomalous-items-cn:' 或 'short-stories:' 开头
+          --  3) 排除已删除页面（Page.isDeleted = true）
+          SUM(CASE 
+                WHEN upr.has_author = 1 AND (
+                  (
+                    array_length(cv.tags, 1) IS NOT NULL 
+                    AND array_length(cv.tags, 1) > 0 
+                    AND NOT (cv.tags @> ARRAY['段落'])
+                  ) 
+                  OR (
+                    (cv.tags IS NULL OR array_length(cv.tags, 1) = 0)
+                    AND (cv.current_url LIKE 'log-of-anomalous-items-cn:%' OR cv.current_url LIKE 'short-stories:%')
+                  )
+                )
+                AND cv.page_is_deleted = false
+              THEN cv.rating::float ELSE 0 END) as avg_sum,
+          COUNT(CASE 
+                  WHEN upr.has_author = 1 AND (
+                    (
+                      array_length(cv.tags, 1) IS NOT NULL 
+                      AND array_length(cv.tags, 1) > 0 
+                      AND NOT (cv.tags @> ARRAY['段落'])
+                    ) 
+                    OR (
+                      (cv.tags IS NULL OR array_length(cv.tags, 1) = 0)
+                      AND (cv.current_url LIKE 'log-of-anomalous-items-cn:%' OR cv.current_url LIKE 'short-stories:%')
+                    )
+                  )
+                  AND cv.page_is_deleted = false
+                THEN 1 END) as avg_pages,
 
           -- SCP分类 (且标签包含 原创 + scp)
           SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN cv.rating::float ELSE 0 END) as scp_rating,
@@ -162,7 +203,13 @@ export class UserRatingSystem {
       )
       UPDATE "UserStats" us
       SET 
-        "overallRating" = COALESCE(uc.overall_rating, 0),
+        -- overallRating 用于承载“按过滤口径计算的平均分”
+        "overallRating" = CASE 
+                             WHEN COALESCE(uc.avg_pages, 0) > 0 
+                             THEN (COALESCE(uc.avg_sum, 0))::float / NULLIF(uc.avg_pages, 0)::float
+                             ELSE 0::float 
+                           END,
+        -- totalRating 继续承载“总评分（和）”
         "totalRating" = COALESCE(uc.overall_rating, 0)::int,
         "pageCount" = COALESCE(uc.total_pages, 0),
         "scpRating" = COALESCE(uc.scp_rating, 0),
@@ -247,8 +294,8 @@ export class UserRatingSystem {
   private async calculateRankings(): Promise<void> {
     console.log('🏆 计算用户排名...');
     
-    // Overall排名
-    await this.calculateCategoryRanking('overallRating', 'overallRank');
+    // Overall排名：使用总评分（totalRating）进行排名，避免平均分口径影响整体排行
+    await this.calculateCategoryRanking('totalRating', 'overallRank');
     
     // 各分类排名
     await this.calculateCategoryRanking('scpRating', 'scpRank');
@@ -304,7 +351,8 @@ export class UserRatingSystem {
    */
   async getRankings(category: 'overall' | 'scp' | 'translation' | 'goi' | 'story' | 'wanderers' | 'art' = 'overall', limit: number = 50) {
     const fieldMapping = {
-      overall: { rating: 'overallRating', rank: 'overallRank', count: 'pageCount' },
+      // overall 排名使用 totalRating
+      overall: { rating: 'totalRating', rank: 'overallRank', count: 'pageCount' },
       scp: { rating: 'scpRating', rank: 'scpRank', count: 'scpPageCount' },
       translation: { rating: 'translationRating', rank: 'translationRank', count: 'translationPageCount' },
       goi: { rating: 'goiRating', rank: 'goiRank', count: 'goiPageCount' },

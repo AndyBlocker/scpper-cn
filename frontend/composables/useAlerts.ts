@@ -61,6 +61,15 @@ export function useAlerts() {
   const { $bff } = useNuxtApp();
   const { user, status } = useAuth();
   const { alerts, unreadCount, loading, lastFetchedAt, activeMetric } = useAlertsState();
+  // Persist last used metric for better UX across sessions
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = window.localStorage.getItem('alerts:lastMetric');
+      if (saved && (['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'] as AlertMetric[]).includes(saved as AlertMetric)) {
+        activeMetric.value = saved as AlertMetric;
+      }
+    } catch {}
+  }
 
   function resetState() {
     alerts.value = createAlertsRecord(() => []);
@@ -80,6 +89,9 @@ export function useAlerts() {
     const targetMetric = metric ?? activeMetric.value;
     if (metric && activeMetric.value !== metric) {
       activeMetric.value = metric;
+      if (typeof window !== 'undefined') {
+        try { window.localStorage.setItem('alerts:lastMetric', metric); } catch {}
+      }
     }
     if (loading.value[targetMetric]) {
       return alerts.value[targetMetric];
@@ -119,23 +131,35 @@ export function useAlerts() {
     return alerts.value[targetMetric];
   }
 
-  async function markAlertRead(id: number) {
+  async function markAlertRead(id: number, metricOpt?: AlertMetric) {
     if (!Number.isFinite(id)) return;
-    try {
-      const res = await $bff<{ ok: boolean; acknowledgedAt: string | null }>('/alerts/' + id + '/read', {
-        method: 'POST'
-      });
-      if (!res?.ok) return;
-      const metric = activeMetric.value;
-      const list = alerts.value[metric] ?? [];
-      const target = list.find(item => item.id === id);
-      if (target) {
-        target.acknowledgedAt = res.acknowledgedAt ?? new Date().toISOString();
-      }
+    // optimistic update
+    const metric = metricOpt ?? activeMetric.value;
+    const list = alerts.value[metric] ?? [];
+    const target = list.find(item => item.id === id);
+    const prevAck = target?.acknowledgedAt ?? null;
+    if (target) {
+      target.acknowledgedAt = target.acknowledgedAt ?? new Date().toISOString();
       const remaining = (alerts.value[metric] ?? []).filter(item => !item.acknowledgedAt).length;
       unreadCount.value[metric] = remaining;
+    }
+    try {
+      const res = await $bff<{ ok: boolean; acknowledgedAt: string | null }>(`/alerts/${id}/read`, { method: 'POST' });
+      if (!res?.ok && target) {
+        // rollback on failure
+        target.acknowledgedAt = prevAck;
+        const remaining = (alerts.value[metric] ?? []).filter(item => !item.acknowledgedAt).length;
+        unreadCount.value[metric] = remaining;
+      } else if (res?.ok && target) {
+        target.acknowledgedAt = res.acknowledgedAt ?? target.acknowledgedAt;
+      }
     } catch (error) {
       console.warn('[alerts] mark read failed', error);
+      if (target) {
+        target.acknowledgedAt = prevAck;
+        const remaining = (alerts.value[metric] ?? []).filter(item => !item.acknowledgedAt).length;
+        unreadCount.value[metric] = remaining;
+      }
     }
   }
 
@@ -158,6 +182,36 @@ export function useAlerts() {
     }
   }
 
+  // Fetch all metrics (in parallel) for a unified, fresh view
+  async function fetchAll(force = false) {
+    const metrics: AlertMetric[] = ['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'];
+    await Promise.all(metrics.map(m => fetchAlerts(m, force)));
+    return true;
+  }
+
+  // Mark all as read for a specific metric or across all
+  async function markAllRead(target: AlertMetric | 'ALL') {
+    if (target === 'ALL') {
+      const metrics: AlertMetric[] = ['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'];
+      await Promise.all(metrics.map(async (m) => markAllAlertsRead(m)));
+      return;
+    }
+    await markAllAlertsRead(target);
+  }
+
+  // Unified stream for ALL tab (newest first)
+  const alertsAll = computed(() => {
+    const buckets = alerts.value;
+    const flat: Array<AlertItem & { sourceMetric: AlertMetric } > = [];
+    (['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'] as AlertMetric[])
+      .forEach((key) => {
+        for (const item of (buckets[key] ?? [])) {
+          flat.push({ ...item, sourceMetric: key });
+        }
+      });
+    return flat.sort((a, b) => String(b.detectedAt).localeCompare(String(a.detectedAt)));
+  });
+
   const hasUnread = computed(() => unreadCount.value[activeMetric.value] > 0);
   const totalUnread = computed(() => Object.values(unreadCount.value).reduce((acc, count) => acc + (Number.isFinite(count) ? count : 0), 0));
   const currentAlerts = computed(() => alerts.value[activeMetric.value] ?? []);
@@ -167,11 +221,38 @@ export function useAlerts() {
   function setActiveMetric(metric: AlertMetric) {
     if (activeMetric.value !== metric) {
       activeMetric.value = metric;
+      if (typeof window !== 'undefined') {
+        try { window.localStorage.setItem('alerts:lastMetric', metric); } catch {}
+      }
     }
+  }
+
+  // Revalidate on visibility/online for SWR-like freshness
+  function startRevalidateOnFocus(intervalMs = 30_000) {
+    if (typeof document === 'undefined') return;
+    let last = 0;
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        if (now - last >= intervalMs) {
+          last = now;
+          void fetchAll(false);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }
+  function startRevalidateOnReconnect() {
+    if (typeof window === 'undefined') return;
+    const onOnline = () => { void fetchAll(false); };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
   }
 
   return {
     alerts: currentAlerts,
+    alertsAll,
     alertsByMetric: alerts,
     unreadCount: currentUnreadCount,
     unreadByMetric: unreadCount,
@@ -182,9 +263,13 @@ export function useAlerts() {
     totalUnread,
     activeMetric,
     fetchAlerts,
+    fetchAll,
     markAlertRead,
     markAllAlertsRead,
+    markAllRead,
     resetState,
-    setActiveMetric
+    setActiveMetric,
+    startRevalidateOnFocus,
+    startRevalidateOnReconnect
   };
 }

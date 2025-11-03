@@ -78,6 +78,20 @@ const sections = [
         description: '查看各系列使用进度，并合并显示空闲编号区间。',
         badge: 'Series',
         icon: 'ListChecks'
+      },
+      {
+        to: '/tools/calendar',
+        title: '活动月历',
+        description: '按月查看站内活动时间轴，点击条带查看 Markdown 详情。',
+        badge: 'Events',
+        icon: 'CalendarDays'
+      },
+      {
+        to: '/gachas',
+        title: '抽卡 / 图鉴',
+        description: '绑定 Wikidot 后参与抽卡，收集页面卡片并查看图鉴与进度。',
+        badge: 'Gacha',
+        icon: 'Gamepad2'
       }
     ]
   },

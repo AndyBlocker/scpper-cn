@@ -13,6 +13,24 @@
       </div>
 
       <div v-else class="space-y-5">
+        <div class="rounded-xl border border-neutral-200/80 bg-white/80 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/70">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 class="text-base font-semibold text-neutral-900 dark:text-neutral-100">抽卡管理</h2>
+              <p class="text-sm text-neutral-500 dark:text-neutral-400">配置卡池、维护卡片并批量调整抽卡权重。</p>
+            </div>
+            <NuxtLink to="/admin/gacha" class="inline-flex items-center justify-center rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))]">前往抽卡管理</NuxtLink>
+          </div>
+        </div>
+        <div class="rounded-xl border border-neutral-200/80 bg-white/80 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/70">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 class="text-base font-semibold text-neutral-900 dark:text-neutral-100">活动月历管理</h2>
+              <p class="text-sm text-neutral-500 dark:text-neutral-400">新增、删除与管理活动，支持 Markdown 详情。</p>
+            </div>
+            <NuxtLink to="/admin/events" class="inline-flex items-center justify-center rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))]">前往活动管理</NuxtLink>
+          </div>
+        </div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div class="rounded-xl border border-neutral-200/80 bg-white/80 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/70">
             <div class="text-sm text-neutral-500 dark:text-neutral-400">注册用户</div>
@@ -49,7 +67,8 @@
             </div>
           </div>
 
-          <div class="overflow-hidden rounded-xl border border-neutral-200/70 dark:border-neutral-800/70">
+          <div class="rounded-xl border border-neutral-200/70 dark:border-neutral-800/70">
+            <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-neutral-200 dark:divide-neutral-800">
               <thead class="bg-neutral-50/60 dark:bg-neutral-800/60">
                 <tr>
@@ -89,6 +108,7 @@
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
 
           <div class="flex items-center justify-between text-sm text-neutral-600 dark:text-neutral-300">

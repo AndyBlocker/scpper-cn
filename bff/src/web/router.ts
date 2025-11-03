@@ -43,25 +43,45 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const userBackendBase = process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455';
   if (userBackendBase !== 'disable') {
     const normalizedTarget = userBackendBase.replace(/\/$/, '');
+    const forwardJsonBody = (proxyReq: any, req: Request) => {
+      if (!req.body || req.method === 'GET' || req.method === 'HEAD') {
+        return;
+      }
+      try {
+        const bodyData = JSON.stringify(req.body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.end(bodyData);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn('Failed to forward proxy payload:', error);
+      }
+    };
+    const rewrite = (prefix: string) => (path: string) => {
+      const clean = path.startsWith('/') ? path : `/${path}`;
+      return `${prefix}${clean}`.replace(/\/{2,}/g, '/');
+    };
     router.use('/auth', createProxyMiddleware<Request, Response>({
-      target: `${normalizedTarget}/auth`,
+      target: normalizedTarget,
       changeOrigin: true,
       xfwd: true,
+      pathRewrite: rewrite('/auth'),
       on: {
-        proxyReq: (proxyReq, req) => {
-          if (!req.body || req.method === 'GET' || req.method === 'HEAD') {
-            return;
-          }
-          try {
-            const bodyData = JSON.stringify(req.body);
-            proxyReq.setHeader('Content-Type', 'application/json');
-            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-            proxyReq.end(bodyData);
-          } catch (error) {
-            // eslint-disable-next-line no-console
-            console.warn('Failed to forward auth payload:', error);
-          }
-        },
+        proxyReq: forwardJsonBody,
+        proxyRes: (proxyRes) => {
+          proxyRes.headers['cache-control'] = 'no-store, no-cache, must-revalidate, max-age=0';
+          delete proxyRes.headers.etag;
+          delete proxyRes.headers['last-modified'];
+        }
+      }
+    }));
+    router.use('/gacha', createProxyMiddleware<Request, Response>({
+      target: normalizedTarget,
+      changeOrigin: true,
+      xfwd: true,
+      pathRewrite: rewrite('/gacha'),
+      on: {
+        proxyReq: forwardJsonBody,
         proxyRes: (proxyRes) => {
           proxyRes.headers['cache-control'] = 'no-store, no-cache, must-revalidate, max-age=0';
           delete proxyRes.headers.etag;
@@ -70,24 +90,22 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
       }
     }));
     router.use('/admin', createProxyMiddleware<Request, Response>({
-      target: `${normalizedTarget}/admin`,
+      target: normalizedTarget,
       changeOrigin: true,
       xfwd: true,
+      pathRewrite: rewrite('/admin'),
       on: {
-        proxyReq: (proxyReq, req) => {
-          if (!req.body || req.method === 'GET' || req.method === 'HEAD') {
-            return;
-          }
-          try {
-            const bodyData = JSON.stringify(req.body);
-            proxyReq.setHeader('Content-Type', 'application/json');
-            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-            proxyReq.end(bodyData);
-          } catch (error) {
-            // eslint-disable-next-line no-console
-            console.warn('Failed to forward admin payload:', error);
-          }
-        }
+        proxyReq: forwardJsonBody
+      }
+    }));
+    // Public events proxy to user-backend
+    router.use('/events', createProxyMiddleware<Request, Response>({
+      target: normalizedTarget,
+      changeOrigin: true,
+      xfwd: true,
+      pathRewrite: rewrite('/events'),
+      on: {
+        proxyReq: forwardJsonBody
       }
     }));
   }

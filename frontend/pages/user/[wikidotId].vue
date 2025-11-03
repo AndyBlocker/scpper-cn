@@ -1169,6 +1169,37 @@ const currentTabLabel = computed(() => {
   return tab ? tab.label : '作品';
 });
 
+const activeTabTotalCount = computed(() => {
+  const counts = tabCounts.value as Record<string, unknown> | null;
+  const fallback = Array.isArray(filteredWorks.value) ? filteredWorks.value.length : 0;
+  if (!counts) return fallback;
+
+  const pick = (key: string): number | null => {
+    const raw = counts?.[key];
+    if (typeof raw === 'number') return raw;
+    if (typeof raw === 'string' && raw.trim() !== '') {
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  switch (activeTab.value) {
+    case 'AUTHOR':
+      return pick('original') ?? fallback;
+    case 'TRANSLATOR':
+      return pick('translation') ?? fallback;
+    case 'SHORT_STORIES':
+      return pick('shortStories') ?? fallback;
+    case 'ANOMALOUS_LOG':
+      return pick('anomalousLog') ?? fallback;
+    case 'OTHER':
+      return pick('other') ?? fallback;
+    default:
+      return pick('total') ?? fallback;
+  }
+});
+
 const filteredWorks = computed(() => {
   const all = allWorks.value
   if (activeTab.value === 'AUTHOR') {
@@ -1208,16 +1239,25 @@ watch(
 )
 
 const totalPages = computed(() => {
-  const total = (tabCounts.value && typeof tabCounts.value.total === 'number') ? Number(tabCounts.value.total) : 0;
-  if (Number.isFinite(total) && total > 0) return Math.max(1, Math.ceil(total / itemsPerPage.value));
-  // Fallback: estimate from current page size if counts unavailable
-  const count = sortedWorks.value.length || 0;
-  return Math.max(1, Math.ceil(count / itemsPerPage.value));
+  const size = Math.max(1, Number(itemsPerPage.value || 1));
+  const total = Number(activeTabTotalCount.value || 0);
+  if (!Number.isFinite(total) || total <= 0) return 1;
+  return Math.max(1, Math.ceil(total / size));
 });
 
 // Reset page when tab changes
 watch(activeTab, () => {
   currentPage.value = 1;
+});
+
+watch(totalPages, (nextTotal) => {
+  if (!Number.isFinite(nextTotal) || nextTotal <= 0) {
+    currentPage.value = 1;
+    return;
+  }
+  if (currentPage.value > nextTotal) {
+    currentPage.value = nextTotal;
+  }
 });
 
 // Ensure active tab is visible; if hidden by zero-count, reset to 'all'

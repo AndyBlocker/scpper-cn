@@ -98,6 +98,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 				const authorsSql = `SELECT COUNT(DISTINCT a."userId")::int AS count FROM "Attribution" a JOIN "PageVersion" pv ON pv.id = a."pageVerId" WHERE a."userId" IS NOT NULL AND pv."validTo" IS NULL AND '原创' = ANY(pv.tags)`;
 				const pageOriginalsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND '原创' = ANY(pv.tags)`;
 				const pageTranslationsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND NOT ('原创' = ANY(pv.tags))`;
+				const pageDeletedSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = true`;
 				const votesPositiveSql = `
 					SELECT COALESCE(SUM(ps.uv), 0)::bigint AS count
 					FROM "PageStats" ps
@@ -114,12 +115,13 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 					JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
 					WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
 
-				const [siteRow, contributorsRow, authorsRow, originalsRow, translationsRow, votesPosRow, votesNegRow, revisionsRow] = await Promise.all([
+				const [siteRow, contributorsRow, authorsRow, originalsRow, translationsRow, deletedRow, votesPosRow, votesNegRow, revisionsRow] = await Promise.all([
 					timedQuery('site-overview site', siteSql, undefined, reqLabel).then(r => r.rows[0] || null),
 					timedQuery('site-overview contributors', contributorsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
 					timedQuery('site-overview authors', authorsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
 					timedQuery('site-overview page-originals', pageOriginalsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
 					timedQuery('site-overview page-translations', pageTranslationsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
+					timedQuery('site-overview page-deleted', pageDeletedSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
 					timedQuery('site-overview votes-positive', votesPositiveSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n }),
 					timedQuery('site-overview votes-negative', votesNegativeSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n }),
 					timedQuery('site-overview revisions-total', revisionsTotalSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n })
@@ -148,7 +150,8 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 					pages: {
 						total: siteRow.totalPages || 0,
 						originals: Number(originalsRow.count || 0),
-						translations: Number(translationsRow.count || 0)
+						translations: Number(translationsRow.count || 0),
+						deleted: Number(deletedRow.count || 0)
 					},
 					votes: { total: totalVotes, upvotes, downvotes },
 					revisions: { total: Number(revisionsRow.count || 0) }

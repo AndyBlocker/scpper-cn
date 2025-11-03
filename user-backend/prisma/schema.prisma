@@ -18,6 +18,19 @@ enum VerificationPurpose {
   PASSWORD_RESET
 }
 
+enum GachaRarity {
+  WHITE
+  GREEN
+  BLUE
+  PURPLE
+  GOLD
+}
+
+enum GachaMatchMode {
+  ALL
+  ANY
+}
+
 model UserAccount {
   id               String              @id @default(cuid())
   email            String              @unique
@@ -30,6 +43,14 @@ model UserAccount {
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
   verificationCodes VerificationToken[]
+  gachaWallet      GachaWallet?
+  gachaPools       GachaPool[]         @relation("GachaPoolCreatedBy")
+  gachaBoosts      GachaGlobalBoost[]  @relation("GachaBoostCreatedBy")
+  gachaDraws       GachaDraw[]
+  gachaInventories GachaInventory[]
+  gachaDismantles  GachaDismantleLog[]
+  gachaLedgerEntries GachaLedgerEntry[]
+  createdEvents    CalendarEvent[]
 }
 
 model VerificationToken {
@@ -47,4 +68,179 @@ model VerificationToken {
 
   @@index([email, purpose, expiresAt])
   @@index([userId, purpose])
+}
+
+model GachaWallet {
+  id               String       @id @default(cuid())
+  userId           String       @unique
+  balance          Int          @default(0)
+  totalEarned      Int          @default(0)
+  totalSpent       Int          @default(0)
+  lastDailyClaimAt DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  user             UserAccount  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntries    GachaLedgerEntry[]
+
+  @@index([userId])
+}
+
+model GachaPool {
+  id             String                @id @default(cuid())
+  name           String
+  description    String?
+  tokenCost      Int                   @default(10)
+  tenDrawCost    Int                   @default(100)
+  rewardPerDuplicate Int               @default(5)
+  startsAt       DateTime?
+  endsAt         DateTime?
+  isActive       Boolean               @default(true)
+  createdById    String
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  createdBy      UserAccount           @relation("GachaPoolCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  cards          GachaCardDefinition[]
+  draws          GachaDraw[]
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([createdById])
+}
+
+model GachaCardDefinition {
+  id             String        @id @default(cuid())
+  poolId         String
+  title          String
+  rarity         GachaRarity
+  tags           String[]      @default([])
+  weight         Int           @default(1)
+  rewardTokens   Int           @default(0)
+  wikidotId      Int?
+  pageId         Int?
+  imageUrl       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  pool           GachaPool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  inventory      GachaInventory[]
+  drawItems      GachaDrawItem[]
+  dismantleLogs  GachaDismantleLog[]
+
+  @@index([poolId])
+  @@index([rarity])
+}
+
+model GachaGlobalBoost {
+  id              String         @id @default(cuid())
+  includeTags     String[]       @default([])
+  excludeTags     String[]       @default([])
+  matchMode       GachaMatchMode @default(ANY)
+  weightMultiplier Float         @default(1.0)
+  startsAt        DateTime       @default(now())
+  endsAt          DateTime?
+  isActive        Boolean        @default(true)
+  createdById     String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  createdBy       UserAccount    @relation("GachaBoostCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([createdById])
+}
+
+model GachaDraw {
+  id           String        @id @default(cuid())
+  userId       String
+  poolId       String
+  drawCount    Int
+  tokensSpent  Int
+  tokensReward Int           @default(0)
+  createdAt    DateTime      @default(now())
+  user         UserAccount   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pool         GachaPool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  items        GachaDrawItem[]
+
+  @@index([userId, createdAt])
+  @@index([poolId, createdAt])
+}
+
+model GachaDrawItem {
+  id         String              @id @default(cuid())
+  drawId     String
+  cardId     String
+  rarity     GachaRarity
+  rewardTokens Int               @default(0)
+  createdAt  DateTime            @default(now())
+  draw       GachaDraw           @relation(fields: [drawId], references: [id], onDelete: Cascade)
+  card       GachaCardDefinition @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([drawId])
+  @@index([cardId])
+}
+
+model GachaInventory {
+  id        String              @id @default(cuid())
+  userId    String
+  cardId    String
+  count     Int                 @default(0)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  user      UserAccount         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card      GachaCardDefinition @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId])
+  @@index([cardId])
+}
+
+model GachaDismantleLog {
+  id           String       @id @default(cuid())
+  userId       String
+  cardId       String
+  count        Int
+  tokensEarned Int
+  createdAt    DateTime     @default(now())
+  user         UserAccount  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card         GachaCardDefinition @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model GachaLedgerEntry {
+  id        String      @id @default(cuid())
+  walletId  String
+  userId    String
+  delta     Int
+  reason    String
+  metadata  Json?
+  createdAt DateTime    @default(now())
+  wallet    GachaWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user      UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([walletId])
+}
+
+model GachaRarityReward {
+  rarity           GachaRarity @id
+  drawReward       Int         @default(0)
+  dismantleReward  Int         @default(0)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+}
+
+/// Calendar events for tools calendar (admin-managed)
+model CalendarEvent {
+  id           String        @id @default(cuid())
+  title        String
+  summary      String?
+  color        String?       // Hex color string like #22c55e
+  startsAt     DateTime
+  endsAt       DateTime
+  detailsMd    String?
+  isPublished  Boolean       @default(true)
+  createdById  String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  createdBy    UserAccount?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([isPublished, startsAt, endsAt])
+  @@index([startsAt, endsAt])
 }

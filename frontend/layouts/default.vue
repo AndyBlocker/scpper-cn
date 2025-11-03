@@ -1,11 +1,13 @@
 <template>
   <div class="relative min-h-screen overflow-x-hidden app-shell">
+    <!-- Accessible skip link for keyboard users -->
+    <a href="#main-content" class="skip-link">跳到主内容</a>
     <div
       aria-hidden="true"
       class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgb(var(--hero-glow)_/_0.18),_transparent_60%)] dark:bg-[radial-gradient(circle_at_top,_rgb(var(--hero-glow)_/_0.24),_rgba(11,13,18,0.92)_62%)]"
     ></div>
     <div class="relative z-10 flex min-h-screen flex-col">
-      <header ref="appHeaderRef" class="sticky top-0 z-50 app-header border-b border-[rgb(var(--nav-border)_/_0.45)] bg-[rgb(var(--nav-bg)_/_0.86)] shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
+      <header ref="appHeaderRef" class="sticky top-0 z-50 app-header border-b border-[rgb(var(--nav-border)_/_0.45)] bg-[rgb(var(--nav-bg)_/_0.86)] shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-2xl safe-pt safe-px">
         <div class="max-w-7xl mx-auto flex items-center gap-3 px-4 py-4 sm:gap-6">
           <div class="flex items-center gap-3">
             <!-- Mobile menu button (sidebar) -->
@@ -64,6 +66,7 @@
                 @blur="handleBlur"
                 @keydown="handleKeyDown"
                 placeholder="搜索页面 / 用户 / 标签…"
+                aria-label="站内搜索"
                 class="w-full rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.92)] px-5 py-2.5 text-sm text-[rgb(var(--fg))] shadow-[0_12px_30px_rgba(15,23,42,0.08)] outline-none focus:border-transparent focus:ring-2 focus:ring-[rgb(var(--accent)_/_0.45)] transition-all backdrop-blur placeholder:text-[rgb(var(--muted)_/_0.68)]"
               />
               <button type="submit" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[rgb(var(--accent-strong))] hover:text-[rgb(var(--accent))] p-1">
@@ -129,39 +132,50 @@
                 @click="toggleAlertsDropdown"
                 :class="['relative', iconButtonBaseClass]"
                 aria-label="查看提醒"
+                aria-haspopup="menu"
+                :aria-expanded="isAlertsDropdownOpen ? 'true' : 'false'"
+                aria-controls="alerts-menu"
               >
                 <LucideIcon name="Bell" class="h-5 w-5" stroke-width="1.8" />
                 <span
-                  v-if="alertsHasUnread"
+                  v-if="totalUnreadCount > 0"
                   class="absolute -top-0.5 -right-0.5 inline-flex min-w-[18px] justify-center rounded-full bg-[rgb(var(--accent))] px-1 text-[10px] font-semibold leading-5 text-white shadow"
-                >{{ alertsUnreadCount > 99 ? '99+' : alertsUnreadCount }}</span>
+                >{{ totalUnreadCount > 99 ? '99+' : totalUnreadCount }}</span>
               </button>
               <transition name="fade">
                 <div
                   v-if="isAlertsDropdownOpen"
                   ref="alertsDropdownRef"
-                  class="absolute right-0 mt-3 w-80 max-w-[80vw] max-h-[70vh] overflow-y-auto overscroll-contain rounded-2xl border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.96)] p-4 shadow-xl backdrop-blur"
+                  class="absolute right-0 mt-3 w-80 max-w-[80vw] max-h-[70dvh] overflow-y-auto overscroll-contain rounded-2xl border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.96)] p-4 shadow-xl backdrop-blur"
+                  role="menu"
+                  id="alerts-menu"
+                  aria-live="polite"
+                  @keydown.stop.prevent="handleAlertsKeydown"
                 >
                   <div class="flex items-center justify-between gap-3">
                     <h3 class="text-sm font-semibold text-[rgb(var(--fg))]">信息提醒</h3>
                     <button
-                      v-if="alertsHasUnread"
+                      v-if="currentScopeUnread > 0"
                       type="button"
                       class="text-xs font-medium text-[rgb(var(--accent))] hover:underline"
                       @click="handleMarkAllAlerts"
                     >全部已读</button>
                   </div>
-                  <div v-if="alertsLoading" class="py-6 text-center text-xs text-[rgb(var(--muted))]">加载中…</div>
-                  <div v-else-if="alertItems.length === 0" class="py-6 text-center text-xs text-[rgb(var(--muted))]">暂无提醒</div>
+                  <!-- Dropdown unified view: show aggregated feed only; per-metric details go to account page -->
+                  <div v-if="alertsLoading && isMetricTab" class="py-6 text-center text-xs text-[rgb(var(--muted))]">加载中…</div>
+                  <div v-else-if="(isAllTab ? alertsAllItems.length : alertItems.length) === 0" class="py-6 text-center text-xs text-[rgb(var(--muted))]">暂无提醒</div>
                   <ul v-else class="mt-3 space-y-3">
                     <li
-                      v-for="item in alertItems"
-                      :key="item.id"
+                      v-for="(item, idx) in (isAllTab ? alertsAllItems : alertItems)"
+                      :key="(item as any).id + '-' + (isAllTab ? (item as any).sourceMetric : 'cur')"
                       class="rounded-xl border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.88)] transition hover:border-[rgb(var(--accent)_/_0.35)] hover:bg-[rgb(var(--panel)_/_0.95)]"
                     >
                       <button
                         type="button"
                         class="w-full px-3 py-3 text-left"
+                        role="menuitem"
+                        tabindex="-1"
+                        :data-index="idx"
                         :class="{ 'opacity-70': !!item.acknowledgedAt }"
                         @click="handleAlertNavigate(item)"
                       >
@@ -174,6 +188,9 @@
                           </span>
                         </div>
                         <div class="mt-1 text-xs text-[rgb(var(--muted))]">
+                          <template v-if="isAllTab">
+                            <span class="mr-1 rounded px-1 py-0.5 text-[10px] border border-[rgb(var(--panel-border)_/_0.45)]">{{ metricLabel(item.metric) }}</span>
+                          </template>
                           {{ metricLabel(item.metric) }}变动
                           <span
                             v-if="formatAlertDelta(item)"
@@ -220,9 +237,9 @@
 
       <!-- Mobile Sidebar -->
       <transition name="fade">
-        <div v-if="isSidebarOpen" class="fixed inset-0 z-[70]">
+        <div v-if="isSidebarOpen" class="fixed inset-0 z-[70] safe-px safe-pt safe-pb">
           <div class="absolute inset-0 bg-neutral-950/60" @click="closeSidebar" />
-          <div class="absolute left-0 top-0 h-full w-80 max-w-[85vw]">
+          <div class="absolute left-0 top-0 h-full w-80 max-w-[85vw] safe-pl">
             <div ref="sidebarRef" class="h-full border-r border-[rgb(var(--sidebar-border)_/_0.55)] bg-[rgb(var(--sidebar-bg)_/_0.95)] backdrop-blur-xl shadow-2xl rounded-r-2xl overflow-hidden flex flex-col">
               <div class="px-4 py-4 flex items-center justify-between border-b border-[rgb(var(--sidebar-border)_/_0.45)] bg-[radial-gradient(circle_at_top,_rgb(var(--hero-glow)_/_0.12),_transparent_70%)]">
                 <NuxtLink to="/" @click="closeSidebar" class="inline-flex items-center gap-2 group">
@@ -283,7 +300,7 @@
         </div>
       </transition>
 
-      <div v-if="isMobileSearchOpen" class="fixed inset-0 z-[70]">
+      <div v-if="isMobileSearchOpen" class="fixed inset-0 z-[70] safe-px safe-pt safe-pb">
         <div class="absolute inset-0 bg-neutral-950/60" @click="closeMobileSearch" />
         <div class="absolute inset-0 flex flex-col">
           <div class="border-b border-[rgb(var(--nav-border)_/_0.4)] bg-[rgb(var(--nav-bg)_/_0.9)] backdrop-blur">
@@ -295,6 +312,7 @@
                   @input="handleInput"
                   @keydown="handleKeyDown"
                   placeholder="搜索页面 / 用户 / 标签…"
+                  aria-label="站内搜索"
                   class="w-full rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.92)] px-5 py-2.5 text-sm text-[rgb(var(--fg))] shadow-[0_12px_30px_rgba(15,23,42,0.12)] outline-none focus:border-transparent focus:ring-2 focus:ring-[rgb(var(--accent)_/_0.45)] transition-all backdrop-blur placeholder:text-[rgb(var(--muted)_/_0.68)]"
                 />
                 <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 text-[rgb(var(--accent-strong))] hover:text-[rgb(var(--accent))] p-1">
@@ -357,12 +375,12 @@
         </div>
       </div>
 
-      <main class="w-full px-4 pt-10 pb-16 sm:px-6 md:px-8">
+      <main id="main-content" class="w-full px-4 pt-10 pb-16 sm:px-6 md:px-8">
         <div class="max-w-7xl mx-auto">
           <slot />
         </div>
       </main>
-      <footer class="mt-auto app-footer py-6 text-center text-xs backdrop-blur">© {{ new Date().getFullYear() }} SCPPER-CN</footer>
+      <footer class="mt-auto app-footer py-6 text-center text-xs backdrop-blur">© {{ new Date().getFullYear() }} AndyBlocker</footer>
     </div>
   </div>
 </template>
@@ -441,17 +459,30 @@ const {$bff} = useNuxtApp() as unknown as { $bff: BffFetcher };
 const { user: authUser, isAuthenticated, fetchCurrentUser, status: authStatus } = useAuth()
 const {
   alerts: alertItems,
+  alertsByMetric,
+  alertsAll: alertsAllItems,
   unreadCount: alertsUnreadCount,
+  unreadByMetric: unreadByMetricVal,
+  totalUnread: totalUnreadCount,
   loading: alertsLoading,
   hasUnread: alertsHasUnread,
   fetchAlerts,
+  fetchAll,
   markAlertRead,
+  markAllRead,
   markAllAlertsRead,
   resetState: resetAlertsState,
-  setActiveMetric: setAlertsMetric
+  setActiveMetric: setAlertsMetric,
+  startRevalidateOnFocus,
+  startRevalidateOnReconnect
 } = useAlerts()
 
 const isAlertsDropdownOpen = ref(false)
+const alertsActiveTab = ref<'ALL' | AlertMetric>('ALL')
+const isAllTab = computed(() => alertsActiveTab.value === 'ALL')
+const isMetricTab = computed(() => alertsActiveTab.value !== 'ALL')
+const currentScopeUnread = computed(() => isAllTab.value ? totalUnreadCount.value : (unreadByMetricVal.value?.[alertsActiveTab.value as AlertMetric] || 0))
+const selectedAlertIndex = ref(-1)
 const alertsButtonRef = ref<HTMLButtonElement | null>(null)
 const alertsDropdownRef = ref<HTMLDivElement | null>(null)
 const hasLinkedWikidot = computed(() => Boolean(authUser.value?.linkedWikidotId))
@@ -514,13 +545,17 @@ const toggleAlertsDropdown = () => {
   const next = !isAlertsDropdownOpen.value;
   isAlertsDropdownOpen.value = next;
   if (next) {
-    setAlertsMetric('COMMENT_COUNT');
-    void fetchAlerts('COMMENT_COUNT', true);
+    // Decide initial tab
+    alertsActiveTab.value = 'ALL';
+    // Preload all metrics and revalidate
+    void fetchAll(false);
+    // reset keyboard index
+    selectedAlertIndex.value = -1;
   }
 };
 
 const handleAlertNavigate = (item: AlertItem) => {
-  void markAlertRead(item.id);
+  void markAlertRead(item.id, (item as any).sourceMetric ?? item.metric);
   isAlertsDropdownOpen.value = false;
   if (item.pageWikidotId) {
     navigateTo(`/page/${item.pageWikidotId}`);
@@ -534,8 +569,55 @@ const handleAlertNavigate = (item: AlertItem) => {
 };
 
 const handleMarkAllAlerts = () => {
-  void markAllAlertsRead('COMMENT_COUNT');
+  if (isAllTab.value) {
+    void markAllRead('ALL');
+  } else {
+    void markAllRead(alertsActiveTab.value as AlertMetric);
+  }
 };
+
+function switchAlertsTab(tab: 'ALL' | AlertMetric) {
+  alertsActiveTab.value = tab;
+  if (tab !== 'ALL') {
+    setAlertsMetric(tab as AlertMetric);
+    void fetchAlerts(tab as AlertMetric, false);
+  }
+  selectedAlertIndex.value = -1;
+}
+
+function handleAlertsKeydown(e: KeyboardEvent) {
+  const list = (isAllTab.value ? alertsAllItems.value : alertItems.value) as any[]
+  if (!list || list.length === 0) return
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    selectedAlertIndex.value = Math.min(selectedAlertIndex.value + 1, list.length - 1)
+    focusAlertByIndex(selectedAlertIndex.value)
+    return
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    selectedAlertIndex.value = Math.max(selectedAlertIndex.value - 1, 0)
+    focusAlertByIndex(selectedAlertIndex.value)
+    return
+  }
+  if (e.key === 'Enter' && selectedAlertIndex.value >= 0) {
+    e.preventDefault()
+    const item = list[selectedAlertIndex.value]
+    if (item) handleAlertNavigate(item)
+    return
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    isAlertsDropdownOpen.value = false
+    alertsButtonRef.value?.focus()
+  }
+}
+
+function focusAlertByIndex(i: number) {
+  if (i < 0) return
+  const el = alertsDropdownRef.value?.querySelector(`[role="menuitem"][data-index="${i}"]`) as HTMLElement | null
+  el?.focus()
+}
 
 const handleAlertsDocumentClick = (event: MouseEvent) => {
   if (!isAlertsDropdownOpen.value) return;
@@ -553,12 +635,14 @@ onMounted(() => {
   document.addEventListener('keydown', handleGlobalKeydown);
   updateHeaderOffset()
   window.addEventListener('resize', updateHeaderOffset, { passive: true })
+  // SWR-like revalidation hooks for alerts
+  const stopFocus = startRevalidateOnFocus();
+  const stopOnline = startRevalidateOnReconnect();
 
   if (authStatus.value === 'unknown') {
     fetchCurrentUser().then(() => {
       if (authUser.value?.linkedWikidotId) {
-        setAlertsMetric('COMMENT_COUNT')
-        return fetchAlerts('COMMENT_COUNT', true).catch((err) => {
+        return fetchAll(true).catch((err) => {
           console.warn('[layout] alerts fetch after auth load failed', err)
         })
       }
@@ -567,8 +651,7 @@ onMounted(() => {
       console.warn('[layout] fetchCurrentUser failed', err)
     })
   } else if (authStatus.value === 'authenticated' && authUser.value?.linkedWikidotId) {
-    setAlertsMetric('COMMENT_COUNT')
-    fetchAlerts('COMMENT_COUNT').catch((err) => {
+    fetchAll(false).catch((err) => {
       console.warn('[layout] initial alerts fetch failed', err)
     })
   }
@@ -792,6 +875,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleGlobalKeydown);
   document.removeEventListener('mousedown', handleAlertsDocumentClick);
   window.removeEventListener('resize', updateHeaderOffset)
+  if (typeof stopFocus === 'function') stopFocus();
+  if (typeof stopOnline === 'function') stopOnline();
 });
 
 watch([
@@ -799,8 +884,7 @@ watch([
   () => authUser.value?.linkedWikidotId
 ], ([nextStatus, nextLinked]) => {
   if (nextStatus === 'authenticated' && nextLinked) {
-    setAlertsMetric('COMMENT_COUNT')
-    fetchAlerts('COMMENT_COUNT', true).catch((err) => {
+    fetchAll(true).catch((err) => {
       console.warn('[layout] alerts fetch on auth change failed', err)
     })
   } else {

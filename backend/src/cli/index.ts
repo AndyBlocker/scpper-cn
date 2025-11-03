@@ -17,6 +17,7 @@ import { PageReferenceService } from '../services/PageReferenceService.js';
 import { showImagesProgress } from './images-progress.js';
 import { countComponentIncludeUsage } from './include-usage.js';
 import { checkRecentAlerts } from './alerts.js';
+import { syncGachaPool } from './gacha-sync.js';
 
 const program = new Command();
 
@@ -36,6 +37,43 @@ program
     // Backward-compat: map --test to testMode boolean expected by sync()
     const mapped = { ...options, testMode: Boolean((options as any).test) } as any;
     await sync(mapped); 
+  });
+
+program
+  .command('gacha-sync')
+  .description('Sync or rebuild gacha card pools using latest page data')
+  .option('--pool-id <id>', 'Override pool id')
+  .option('--pool-name <name>', 'Display name for the pool')
+  .option('--description <text>', 'Pool description')
+  .option('--token-cost <number>', 'Token cost for a single draw')
+  .option('--ten-draw-cost <number>', 'Token cost for ten draws (defaults to token-cost ×10)')
+  .option('--duplicate-reward <number>', 'Tokens awarded for duplicate cards')
+  .option('--inactive', 'Create or update pool as inactive instead of active')
+  .option('--dry-run', 'Preview planned changes without writing to the database')
+  .option('--limit <number>', 'Only sync the first N pages (0 = all)')
+  .action(async (options) => {
+    const parseIntOption = (value: unknown): number | undefined => {
+      if (value == null) return undefined;
+      const parsed = Number.parseInt(String(value), 10);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+
+    const tokenCost = parseIntOption(options.tokenCost);
+    const tenDrawCost = parseIntOption(options.tenDrawCost);
+    const duplicateReward = parseIntOption(options.duplicateReward);
+    const limit = parseIntOption(options.limit) ?? 0;
+
+    await syncGachaPool({
+      poolId: options.poolId ? String(options.poolId) : undefined,
+      poolName: options.poolName ? String(options.poolName) : undefined,
+      description: options.description ? String(options.description) : undefined,
+      tokenCost,
+      tenDrawCost,
+      duplicateReward,
+      isActive: options.inactive ? false : undefined,
+      dryRun: Boolean(options.dryRun),
+      limit
+    });
   });
 
 program

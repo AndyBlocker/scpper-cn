@@ -15,30 +15,6 @@
           页面标记
         </button>
       </div>
-      <div class="flex gap-2">
-        <template v-if="showViewToggle">
-          <button 
-            @click="viewMode = 'full'" 
-            :class="['px-3 py-1 text-xs rounded', viewMode === 'full' ? 'bg-[rgb(var(--accent-strong))] text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
-          >
-            全部历史
-          </button>
-          <button 
-            @click="viewMode = 'compact'" 
-            :class="['px-3 py-1 text-xs rounded', viewMode === 'compact' ? 'bg-[rgb(var(--accent-strong))] text-white' : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-700 dark:text-neutral-300']"
-          >
-            紧凑视图
-          </button>
-        </template>
-        <template v-else>
-          <button 
-            disabled
-            :class="['px-3 py-1 text-xs rounded bg-[rgb(var(--accent-strong))] text-white opacity-80 cursor-default']"
-          >
-            全部历史
-          </button>
-        </template>
-      </div>
     </div>
     <div class="relative" :style="canvasStyle">
       <div v-if="chartError" class="absolute inset-0 flex items-center justify-center text-xs text-red-600 dark:text-red-400 z-10 bg-transparent">
@@ -91,9 +67,6 @@ ChartJS.register(
   Filler
 )
 
-// Earliest start date for compact view
-const COMPACT_EARLIEST = new Date('2022-05-01')
-
 interface Props {
   data: Array<{
     date: string
@@ -109,7 +82,7 @@ interface Props {
   }>
   firstActivityDate?: string
   title?: string
-  compact?: boolean
+  compact?: boolean      // 已废弃，仅保留兼容
   allowPageMarkers?: boolean
   targetTotal?: number
   dense?: boolean        // 紧凑模式（更矮）
@@ -129,7 +102,6 @@ const props = withDefaults(defineProps<Props>(), {
 
 const chartCanvas = ref<HTMLCanvasElement | null>(null)
 let chartInstance: ChartJS | null = null
-const viewMode = ref<'full' | 'compact'>(props.compact ? 'compact' : 'full')
 const showPages = ref(false)
 // no-op
 const chartError = ref<string | null>(null)
@@ -139,49 +111,10 @@ const canvasStyle = computed(() => {
   if (typeof props.heightPx === 'number' && !Number.isNaN(props.heightPx)) {
     return { height: `${props.heightPx}px` }
   }
+  const unit = (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('height','1svh')) ? 'svh' : 'vh'
   // Mobile-friendly: slightly shorter default heights to avoid near-square look
-  return { height: props.dense ? 'clamp(220px, 34vh, 360px)' : 'clamp(240px, 36vh, 380px)' }
+  return { height: props.dense ? `clamp(220px, 34${unit}, 360px)` : `clamp(240px, 36${unit}, 380px)` }
 })
-
-// 计算数据起始日期（包含 firstActivityDate 和数据本身的最早日期）
-const earliestDataDate = computed(() => {
-  const dates: number[] = []
-  if (props.firstActivityDate) {
-    const t = new Date(props.firstActivityDate).getTime()
-    if (!Number.isNaN(t)) dates.push(t)
-  }
-  if (props.data && props.data.length > 0) {
-    for (const item of props.data) {
-      const tt = new Date(item.date).getTime()
-      if (!Number.isNaN(tt)) dates.push(tt)
-    }
-  }
-  if (dates.length === 0) return undefined as unknown as Date | undefined
-  return new Date(Math.min(...dates))
-})
-
-// 是否展示视图切换（仅当起始日期早于 2022-05-01 时展示，并默认紧凑视图）
-const showViewToggle = computed(() => {
-  const d = earliestDataDate.value
-  if (!d) return false
-  return d < COMPACT_EARLIEST
-})
-
-// 根据起始日期默认视图模式（不影响用户手动切换，且当隐藏切换时强制为 full）
-watch(showViewToggle, (val) => {
-  viewMode.value = val ? 'compact' : 'full'
-}, { immediate: true })
-
-// 硬编码需要隐藏柱状图的日期范围
-const HIDDEN_DATE_RANGES = [
-  { start: new Date('2022-05-01'), end: new Date('2022-05-31') },
-  { start: new Date('2022-06-15'), end: new Date('2022-06-15') }
-]
-
-// 检查日期是否应该隐藏柱状图
-const shouldHideBar = (date: Date): boolean => {
-  return HIDDEN_DATE_RANGES.some(range => date >= range.start && date <= range.end)
-}
 
 // 根据可视范围自动选择时间刻度单位
 const pickTimeUnit = (min?: Date, max?: Date) => {
@@ -435,7 +368,6 @@ const createChart = () => {
     const rawDate = new Date(item.date)
     // Normalize to UTC midnight to avoid DST/timezone drift and ensure exact alignment per day
     const date = new Date(Date.UTC(rawDate.getUTCFullYear(), rawDate.getUTCMonth(), rawDate.getUTCDate()))
-    const hideBar = shouldHideBar(date)
     return {
       x: date,
       upvotes: Number(item.upvotes),
@@ -443,7 +375,6 @@ const createChart = () => {
       cumulative: Number(item.cumulative_rating),
       originalUpvotes: item.upvotes,
       originalDownvotes: item.downvotes,
-      hideBar: hideBar,
       pages: item.pages || []
     } as any
   })
@@ -465,63 +396,32 @@ const createChart = () => {
   // 首个真实投票出现的时间索引（用于全部历史模式下的连接线与标记投影）
   const firstVoteIndex = chartData.findIndex(d => Number((d as any).originalUpvotes) > 0 || Number((d as any).originalDownvotes) > 0)
   
-  // 根据视图模式调整数据范围
-  let minDate: Date | undefined
-  let maxDate: Date | undefined
+  // 计算连接线与首个投票点信息
   let connectionLine: any[] = []
   let connectionStartDate: Date | undefined
   let firstDataDateGlobal: Date | undefined
   let firstCumulativeRaw = 0
   let connectionSlope: number | undefined
-  
-  if (viewMode.value === 'compact' && chartData.length > 0) {
-    // 紧凑模式：使用硬编码最早日期和首次活动日期的较晚者
-    let earliest = COMPACT_EARLIEST
-    if (props.firstActivityDate) {
-      const fa = new Date(props.firstActivityDate)
-      earliest = new Date(Math.max(earliest.getTime(), fa.getTime()))
-    }
-    let visibleData = chartData.filter(d => !d.hideBar && d.x >= earliest)
-    if (visibleData.length === 0) {
-      visibleData = chartData.filter(d => d.x >= earliest)
-    }
-    const baseList = visibleData.length > 0 ? visibleData : chartData
-    const firstDataDate = new Date(baseList[0].x)
-    firstDataDateGlobal = firstDataDate
-    firstCumulativeRaw = Number((baseList[0] as any).cumulative) || 0
-    const lastDataDate = new Date(baseList[baseList.length - 1].x)
-    
-    // 紧凑模式：不做额外延伸，按数据边界渲染
-    minDate = new Date(firstDataDate)
-    maxDate = new Date(lastDataDate)
-    
-    // 紧凑视图不显示灰色虚线
-    connectionStartDate = undefined
-  } else {
-    // 全部历史模式：使用首个出现投票的数据点作为连接终点（若不存在投票，则退回到第一条数据）
-    if (firstVoteIndex >= 0) {
-      firstDataDateGlobal = new Date(chartData[firstVoteIndex].x)
-      firstCumulativeRaw = Number((chartData[firstVoteIndex] as any).cumulative) || 0
-    } else if (chartData.length > 0) {
-      firstDataDateGlobal = new Date(chartData[0].x)
-      firstCumulativeRaw = Number((chartData[0] as any).cumulative) || 0
-    }
-    if (props.firstActivityDate && firstDataDateGlobal) {
-      const firstActivity = new Date(props.firstActivityDate)
-      if (firstActivity < firstDataDateGlobal) {
-        connectionStartDate = firstActivity
-      }
+
+  if (firstVoteIndex >= 0) {
+    firstDataDateGlobal = new Date(chartData[firstVoteIndex].x)
+    firstCumulativeRaw = Number((chartData[firstVoteIndex] as any).cumulative) || 0
+  } else if (chartData.length > 0) {
+    firstDataDateGlobal = new Date(chartData[0].x)
+    firstCumulativeRaw = Number((chartData[0] as any).cumulative) || 0
+  }
+  if (props.firstActivityDate && firstDataDateGlobal) {
+    const firstActivity = new Date(props.firstActivityDate)
+    if (firstActivity < firstDataDateGlobal) {
+      connectionStartDate = firstActivity
     }
   }
-  
-  // 紧凑模式下，仅使用范围内的数据进行绘制与轴范围计算
-  const isInRange = (d: any) => !minDate || !maxDate ? true : (d.x >= minDate && d.x <= maxDate)
-  const displayData = viewMode.value === 'compact' ? chartData.filter(isInRange) : chartData
+
+  const displayData = chartData
   // 用可见范围（或数据本身范围）选择时间单位，短到天，长到年
-  let visibleMin: Date | undefined = minDate ?? (displayData.length > 0 ? new Date(Math.min(...displayData.map(d => (d.x as Date).getTime()))) : undefined)
-  let visibleMax: Date | undefined = maxDate ?? (displayData.length > 0 ? new Date(Math.max(...displayData.map(d => (d.x as Date).getTime()))) : undefined)
-  // 在“全部历史”模式下，若存在首个活动时间（连接线的起点），将 X 轴最小值扩展到该时间
-  if (viewMode.value === 'full' && connectionStartDate) {
+  let visibleMin: Date | undefined = displayData.length > 0 ? new Date(Math.min(...displayData.map(d => (d.x as Date).getTime()))) : undefined
+  let visibleMax: Date | undefined = displayData.length > 0 ? new Date(Math.max(...displayData.map(d => (d.x as Date).getTime()))) : undefined
+  if (connectionStartDate) {
     if (!visibleMin || connectionStartDate.getTime() < visibleMin.getTime()) {
       visibleMin = new Date(connectionStartDate)
     }
@@ -548,9 +448,7 @@ const createChart = () => {
   const paddedMax = visibleMax ? (visibleMax.getTime() + padMs) : undefined
 
   // 分别计算bar和line的范围
-  const barValues = displayData
-    .filter(d => !d.hideBar)
-    .flatMap(d => [d.upvotes, d.downvotes])
+  const barValues = displayData.flatMap(d => [d.upvotes, d.downvotes])
   const lineValues = displayData.map(d => d.cumulative + offset)
   
   // 使用“带上限的零对齐”算法来计算两轴范围
@@ -560,7 +458,7 @@ const createChart = () => {
   const datasets: any[] = [
     {
       label: '支持票',
-      data: displayData.map(d => ({ x: d.x, y: d.hideBar ? null : d.upvotes })),
+      data: displayData.map(d => ({ x: d.x, y: d.upvotes })),
       backgroundColor: isDark ? `rgba(${success},0.85)` : `rgba(${successStrong},0.85)`,
       borderColor: isDark ? `rgb(${success})` : `rgb(${successStrong})`,
       borderWidth: 1,
@@ -574,7 +472,7 @@ const createChart = () => {
     },
     {
       label: '反对票',
-      data: displayData.map(d => ({ x: d.x, y: d.hideBar ? null : d.downvotes })),
+      data: displayData.map(d => ({ x: d.x, y: d.downvotes })),
       backgroundColor: isDark ? `rgba(${danger},0.8)` : `rgba(${dangerStrong},0.8)`,
       borderColor: isDark ? `rgb(${danger})` : `rgb(${dangerStrong})`,
       borderWidth: 1,
@@ -786,8 +684,8 @@ const createChart = () => {
           tooltipFormat: 'yyyy年MM月dd日'
         },
         offset: false,
-        bounds: viewMode.value === 'compact' ? 'data' : 'ticks',
-        // 紧凑模式用数据边界，全部历史用刻度边界以减少拥挤
+        bounds: 'ticks',
+        // 统一使用刻度边界以保持留白
         adapters: {
           date: {
             locale: zhCN
@@ -884,10 +782,8 @@ const createChart = () => {
     if (props.debug) {
       const toIso = (d?: Date) => d ? new Date(d).toISOString() : 'n/a'
       debugInfo.value = [
-        `mode=${viewMode.value} showToggle=${showViewToggle.value}`,
         `raw=${rawCount} filtered=${filteredCount} display=${displayData.length}`,
         `firstVoteIndex=${firstVoteIndex} firstActivity=${props.firstActivityDate || 'n/a'}`,
-        `minDate=${toIso(minDate)} maxDate=${toIso(maxDate)}`,
         `visibleMin=${toIso(visibleMin)} visibleMax=${toIso(visibleMax)} unit=${timeUnit}`,
         `singlePointExpanded=${singlePointExpanded}`,
         `bar[min,max]=[${adjustedBarMin.toFixed(2)},${adjustedBarMax.toFixed(2)}]`,
@@ -895,13 +791,12 @@ const createChart = () => {
         `offset=${offset} lastCum=${lastCumulative}`,
       ].join('\n')
       console.groupCollapsed('[RatingHistoryChart] debug')
-      console.log('mode', viewMode.value, 'showToggle', showViewToggle.value)
       console.log('counts', { rawCount, filteredCount, display: displayData.length })
       console.log('firstVoteIndex', firstVoteIndex, 'firstActivityDate', props.firstActivityDate)
-      console.log('range', { minDate: minDate && toIso(minDate), maxDate: maxDate && toIso(maxDate), visibleMin: visibleMin && toIso(visibleMin), visibleMax: visibleMax && toIso(visibleMax), timeUnit, singlePointExpanded })
+      console.log('range', { visibleMin: visibleMin && toIso(visibleMin), visibleMax: visibleMax && toIso(visibleMax), timeUnit, singlePointExpanded })
       console.log('scales', { adjustedBarMin, adjustedBarMax, adjustedLineMin, adjustedLineMax })
       console.log('offset/lastCum', { offset, lastCumulative })
-      console.log('sample displayData (first 5)', displayData.slice(0, 5).map((d:any) => ({ x: toIso(d.x), up: d.upvotes, down: d.downvotes, cum: d.cumulative, hideBar: d.hideBar })))
+      console.log('sample displayData (first 5)', displayData.slice(0, 5).map((d:any) => ({ x: toIso(d.x), up: d.upvotes, down: d.downvotes, cum: d.cumulative })))
       console.groupEnd()
     }
   } catch (e: any) {
@@ -916,8 +811,8 @@ const createChart = () => {
   }
 }
 
-// 监听数据、视图模式和页面显示开关、以及起始日期/目标总分变化
-watch([() => props.data, viewMode, showPages, () => props.firstActivityDate, () => props.targetTotal], () => {
+// 监听数据、页面标记开关、以及起始日期/目标总分变化
+watch([() => props.data, () => showPages.value, () => props.firstActivityDate, () => props.targetTotal], () => {
   createChart()
 }, { deep: true })
 

@@ -7,11 +7,11 @@ module.exports = {
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
-        PORT: '4396',
-        DATABASE_URL: 'postgresql://REDACTED@localhost:5434/scpper-cn',
-        ENABLE_CACHE: 'true',
-        USER_BACKEND_BASE_URL: 'http://127.0.0.1:4455',
-        REDIS_URL: 'redis://:REDACTED@127.0.0.1:6379'
+        PORT: process.env.PORT || '4396',
+        DATABASE_URL: process.env.DATABASE_URL,
+        ENABLE_CACHE: process.env.ENABLE_CACHE || 'true',
+        USER_BACKEND_BASE_URL: process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455',
+        REDIS_URL: process.env.REDIS_URL
       }
     }
   ]

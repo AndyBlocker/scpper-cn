@@ -106,7 +106,6 @@ export class VotingTimeSeriesCacheJob {
       WHERE u."attributionVotingTimeSeriesCache" IS NULL  -- 没有缓存
         AND a.type = 'AUTHOR'
         AND pv."validTo" IS NULL
-        AND NOT pv."isDeleted"
         AND EXISTS (
           SELECT 1 FROM "Vote" v
           WHERE v."pageVersionId" = pv.id
@@ -161,7 +160,7 @@ export class VotingTimeSeriesCacheJob {
       FROM "Attribution" a
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE a."userId" IS NOT NULL
-        AND pv."validTo" IS NULL AND pv."isDeleted" = false
+        AND pv."validTo" IS NULL
         AND EXISTS (
           SELECT 1 FROM "Vote" v
           WHERE v."pageVersionId" = pv.id

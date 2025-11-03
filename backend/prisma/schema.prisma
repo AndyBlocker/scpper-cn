@@ -177,6 +177,7 @@ model PageVersion {
   commentCount     Int?
   textContent      String?
   source           String?
+  searchText       String?         @map("search_text")
   tags             String[]
   validFrom        DateTime
   validTo          DateTime?

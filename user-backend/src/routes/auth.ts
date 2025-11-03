@@ -95,6 +95,10 @@ export function authRouter() {
     });
   }
 
+  router.get('/healthz', (_req, res) => {
+    res.json({ ok: true });
+  });
+
   router.post('/register/start', async (req, res) => {
     try {
       const payload = startSchema.parse(req.body ?? {});

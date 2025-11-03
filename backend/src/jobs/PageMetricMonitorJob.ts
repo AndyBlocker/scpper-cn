@@ -710,6 +710,8 @@ export class PageMetricMonitorJob {
       FROM "Revision" r
       JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
       WHERE pv."pageId" = ANY(${pageIdArray})
+        AND pv."validTo" IS NULL
+        AND pv."isDeleted" = false
       GROUP BY pv."pageId", r."userId"
     `);
 
@@ -719,6 +721,8 @@ export class PageMetricMonitorJob {
       FROM "Attribution" a
       JOIN "PageVersion" pv ON pv.id = a."pageVerId"
       WHERE pv."pageId" = ANY(${pageIdArray})
+        AND pv."validTo" IS NULL
+        AND pv."isDeleted" = false
         AND a."userId" IS NOT NULL
     `);
 

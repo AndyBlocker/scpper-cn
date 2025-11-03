@@ -248,9 +248,13 @@ ORDER BY us."totalRating" DESC NULLS LAST
 LIMIT $2 OFFSET $3;
 ```
 
-- REST: GET `/users/by-rank?limit=&offset=`
+- REST: GET `/users/by-rank?limit=&offset=`（overall 类目）
 ```sql
-SELECT u.id, u."displayName", us."overallRank" AS rank, us."overallRating"
+SELECT u.id,
+       u."displayName",
+       us."overallRank" AS rank,
+       us."totalRating"  AS rating,      -- 综合排行显示“总分”
+       us."overallRating" AS "meanRating" -- 过滤口径下的均值
 FROM "User" u
 JOIN "UserStats" us ON us."userId" = u.id
 WHERE us."overallRank" IS NOT NULL
@@ -408,4 +412,3 @@ LIMIT $3 OFFSET $4;
 - `items`: 匹配记录数组
 - `total`: 记录总数
 - `limit` / `offset`: 回显的分页参数
-

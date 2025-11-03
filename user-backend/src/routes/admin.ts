@@ -119,6 +119,97 @@ export function adminRouter() {
     }
   });
 
+  // ===== Calendar Events Management =====
+  const eventCreateSchema = z.object({
+    title: z.string().trim().min(1),
+    summary: z.string().trim().optional().nullable(),
+    color: z.string().trim().optional().nullable(),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
+    detailsMd: z.string().optional().nullable(),
+    isPublished: z.boolean().optional()
+  });
+
+  const eventUpdateSchema = z.object({
+    title: z.string().trim().min(1).optional(),
+    summary: z.string().trim().optional().nullable(),
+    color: z.string().trim().optional().nullable(),
+    startsAt: z.string().datetime().optional(),
+    endsAt: z.string().datetime().optional(),
+    detailsMd: z.string().optional().nullable(),
+    isPublished: z.boolean().optional()
+  });
+
+  // List all events (admin-only)
+  router.get('/events', requireAdmin, async (_req, res, next) => {
+    try {
+      const items = await prisma.calendarEvent.findMany({
+        orderBy: [{ startsAt: 'desc' }, { updatedAt: 'desc' }]
+      });
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Create event (admin-only)
+  router.post('/events', requireAdmin, async (req, res, next) => {
+    try {
+      const payload = eventCreateSchema.parse(req.body ?? {});
+      const startsAt = new Date(payload.startsAt);
+      const endsAt = new Date(payload.endsAt);
+      if (!(startsAt instanceof Date && !isNaN(startsAt.valueOf())) || !(endsAt instanceof Date && !isNaN(endsAt.valueOf()))) {
+        return res.status(400).json({ error: '开始或结束时间无效' });
+      }
+      if (endsAt < startsAt) {
+        return res.status(400).json({ error: '结束时间需大于开始时间' });
+      }
+      const event = await prisma.calendarEvent.create({
+        data: {
+          title: payload.title,
+          summary: payload.summary ?? null,
+          color: payload.color ?? null,
+          startsAt,
+          endsAt,
+          detailsMd: payload.detailsMd ?? null,
+          isPublished: payload.isPublished ?? true,
+          createdById: req.authUser?.id
+        }
+      });
+      res.json({ ok: true, event });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Update event (admin-only)
+  router.patch('/events/:id', requireAdmin, async (req, res, next) => {
+    try {
+      const { id } = req.params as Record<string, string>;
+      const payload = eventUpdateSchema.parse(req.body ?? {});
+      const data: any = { ...payload };
+      if (typeof data.startsAt === 'string') data.startsAt = new Date(data.startsAt);
+      if (typeof data.endsAt === 'string') data.endsAt = new Date(data.endsAt);
+      if (data.endsAt && data.startsAt && data.endsAt < data.startsAt) {
+        return res.status(400).json({ error: '结束时间需大于开始时间' });
+      }
+      const event = await prisma.calendarEvent.update({ where: { id }, data });
+      res.json({ ok: true, event });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Delete event (admin-only)
+  router.delete('/events/:id', requireAdmin, async (req, res, next) => {
+    try {
+      const { id } = req.params as Record<string, string>;
+      await prisma.calendarEvent.delete({ where: { id } });
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   return router;
 }
-

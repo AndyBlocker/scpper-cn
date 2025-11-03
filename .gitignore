@@ -88,6 +88,7 @@ backend/cache/
 bff/docs/
 
 .cursor/
+.claude/
 deploy.sh
 nginx.conf
 
