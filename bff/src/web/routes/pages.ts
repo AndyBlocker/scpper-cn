@@ -3,9 +3,11 @@ import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { extractPreviewCandidates, pickPreview, toPreviewPick, extractExcerptFallback } from '../utils/preview.js';
 import { buildPageImagePath } from '../pageImagesConfig.js';
+import { createCache } from '../utils/cache.js';
 
-export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
+export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+  const cache = createCache(redis);
 
   router.get('/vote-status', async (req, res, next) => {
     try {
@@ -29,37 +31,45 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.json({ votes: {} });
       }
 
-      const userResult = await pool.query<{ id: number }>(
-        'SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1',
-        [viewerWikidotId]
-      );
+      // 缓存 key 包含 viewer 和 page ids（用户投票状态，60秒 TTL）
+      const sortedIds = [...ids].sort((a, b) => a - b);
+      const cacheKey = `vote-status:${viewerWikidotId}:${sortedIds.join(',')}`;
 
-      if (userResult.rowCount === 0) {
-        return res.json({ votes: {} });
-      }
+      const result = await cache.remember(cacheKey, 60, async () => {
+        const userResult = await pool.query<{ id: number }>(
+          'SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1',
+          [viewerWikidotId]
+        );
 
-      const userId = userResult.rows[0].id;
-
-      const { rows } = await pool.query<{ pageWikidotId: number; direction: number }>(
-        `SELECT DISTINCT ON (pv."pageId")
-            pv."wikidotId" AS "pageWikidotId",
-            v.direction
-         FROM "Vote" v
-         JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
-         WHERE v."userId" = $1
-           AND pv."wikidotId" = ANY($2::int[])
-         ORDER BY pv."pageId", v.timestamp DESC`,
-        [userId, ids]
-      );
-
-      const votes: Record<number, number> = {};
-      for (const row of rows) {
-        if (row.pageWikidotId != null && Number.isFinite(row.pageWikidotId)) {
-          votes[row.pageWikidotId] = Number(row.direction || 0);
+        if (userResult.rowCount === 0) {
+          return { votes: {} };
         }
-      }
 
-      return res.json({ votes });
+        const userId = userResult.rows[0].id;
+
+        const { rows } = await pool.query<{ pageWikidotId: number; direction: number }>(
+          `SELECT DISTINCT ON (pv."pageId")
+              pv."wikidotId" AS "pageWikidotId",
+              v.direction
+           FROM "Vote" v
+           JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
+           WHERE v."userId" = $1
+             AND pv."wikidotId" = ANY($2::int[])
+           ORDER BY pv."pageId", v.timestamp DESC`,
+          [userId, ids]
+        );
+
+        const votes: Record<number, number> = {};
+        for (const row of rows) {
+          if (row.pageWikidotId != null && Number.isFinite(row.pageWikidotId)) {
+            votes[row.pageWikidotId] = Number(row.direction || 0);
+          }
+        }
+
+        return { votes };
+      });
+
+      return res.json(result);
     } catch (error) {
       next(error);
     }
@@ -232,16 +242,9 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     effectiveIsDeleted: boolean;
   }
 
-  async function resolvePageContextByWikidotId(input: string | number): Promise<PageContext | null> {
-    const wikidotId = Number(input);
-    if (!Number.isFinite(wikidotId)) return null;
-
-    const { rows: pageRows } = await pool.query(
-      'SELECT id FROM "Page" WHERE "wikidotId" = $1 LIMIT 1',
-      [wikidotId]
-    );
-    if (pageRows.length === 0) return null;
-    const pageId = pageRows[0].id;
+  async function resolvePageContextByPageId(pageId: number): Promise<PageContext | null> {
+    const numericPageId = Number(pageId);
+    if (!Number.isFinite(numericPageId) || numericPageId <= 0) return null;
 
     const { rows: currentRows } = await pool.query(
       `SELECT id, "isDeleted"
@@ -249,7 +252,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
          WHERE "pageId" = $1 AND "validTo" IS NULL
          ORDER BY id DESC
          LIMIT 1`,
-      [pageId]
+      [numericPageId]
     );
     const current = currentRows[0] ?? null;
 
@@ -261,7 +264,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
            WHERE "pageId" = $1
            ORDER BY "validFrom" DESC NULLS LAST, id DESC
            LIMIT 1`,
-        [pageId]
+        [numericPageId]
       );
       effective = anyRows[0] ?? null;
     } else if (effective.isDeleted) {
@@ -271,7 +274,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
            WHERE "pageId" = $1 AND "isDeleted" = false
            ORDER BY "validFrom" DESC NULLS LAST, id DESC
            LIMIT 1`,
-        [pageId]
+        [numericPageId]
       );
       if (liveRows.length > 0) {
         effective = liveRows[0];
@@ -279,12 +282,26 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     }
 
     return {
-      pageId,
+      pageId: numericPageId,
       currentVersionId: current?.id ?? null,
       currentIsDeleted: Boolean(current?.isDeleted ?? false),
       effectiveVersionId: effective?.id ?? null,
       effectiveIsDeleted: Boolean(effective?.isDeleted ?? false)
     };
+  }
+
+  async function resolvePageContextByWikidotId(input: string | number): Promise<PageContext | null> {
+    const wikidotId = Number(input);
+    if (!Number.isFinite(wikidotId)) return null;
+
+    const { rows: pageRows } = await pool.query(
+      'SELECT id FROM "Page" WHERE "wikidotId" = $1 LIMIT 1',
+      [wikidotId]
+    );
+    if (pageRows.length === 0) return null;
+    const pageId = pageRows[0].id;
+
+    return resolvePageContextByPageId(pageId);
   }
 
   router.get('/:wikidotId/references', async (req, res, next) => {
@@ -441,14 +458,135 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const { wikidotId } = req.query as Record<string, string>;
       if (!wikidotId) return res.status(400).json({ error: 'wikidotId is required' });
-      const row = await selectLatestPageVersion('p."wikidotId" = $1', [wikidotId]);
-      if (!row) return res.status(404).json({ error: 'not_found' });
-      const merged = await mergeDeletedWithLatestLiveVersion(row);
-      if (!merged.wikidotId && row.pageWikidotId) {
-        merged.wikidotId = row.pageWikidotId;
+
+      const cacheKey = `pages:by-id:${wikidotId}`;
+      const result = await cache.remember(cacheKey, 120, async () => {
+        const row = await selectLatestPageVersion('p."wikidotId" = $1', [wikidotId]);
+        if (!row) return null;
+        const merged = await mergeDeletedWithLatestLiveVersion(row);
+        if (!merged.wikidotId && row.pageWikidotId) {
+          merged.wikidotId = row.pageWikidotId;
+        }
+        delete merged.pageWikidotId;
+        return merged;
+      });
+
+      if (!result) return res.status(404).json({ error: 'not_found' });
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /api/wikidot-pages/latest-source
+  // query: wikidotId or url
+  router.get('/latest-source', async (req, res, next) => {
+    try {
+      const { wikidotId, url } = req.query as Record<string, string>;
+      if (!wikidotId && !url) {
+        return res.status(400).json({ error: 'wikidotId_or_url_required' });
       }
-      delete merged.pageWikidotId;
-      res.json(merged);
+
+      let pageRow: { id: number; wikidotId: number | null; currentUrl: string | null } | null = null;
+
+      if (wikidotId) {
+        const wikidotIdNum = Number(wikidotId);
+        if (!Number.isInteger(wikidotIdNum) || wikidotIdNum <= 0) {
+          return res.status(400).json({ error: 'invalid_wikidotId' });
+        }
+        const { rows } = await pool.query<{ id: number; wikidotId: number | null; currentUrl: string | null }>(
+          'SELECT id, "wikidotId", "currentUrl" FROM "Page" WHERE "wikidotId" = $1 LIMIT 1',
+          [wikidotIdNum]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
+        pageRow = rows[0];
+      } else if (url) {
+        const { rows } = await pool.query<{ id: number; wikidotId: number | null; currentUrl: string | null }>(
+          'SELECT id, "wikidotId", "currentUrl" FROM "Page" WHERE "currentUrl" = $1 LIMIT 1',
+          [url]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
+        pageRow = rows[0];
+      }
+
+      if (!pageRow) return res.status(404).json({ error: 'not_found' });
+
+      const context = await resolvePageContextByPageId(pageRow.id);
+      if (!context) return res.status(404).json({ error: 'not_found' });
+
+      const targetVersionId = context.effectiveVersionId ?? context.currentVersionId;
+      if (!targetVersionId) return res.status(404).json({ error: 'not_found' });
+
+      const latestSource = await pool.query<{
+        sourceVersionId: number;
+        revisionId: number | null;
+        revisionNumber: number | null;
+        source: string | null;
+        timestamp: string | null;
+        isLatest: boolean;
+      }>(
+        `SELECT
+            sv.id AS "sourceVersionId",
+            sv."revisionId",
+            sv."revisionNumber",
+            sv.source,
+            sv.timestamp,
+            sv."isLatest"
+         FROM "SourceVersion" sv
+         WHERE sv."pageVersionId" = $1
+           AND sv.source IS NOT NULL
+         ORDER BY sv."isLatest" DESC, sv.timestamp DESC
+         LIMIT 1`,
+        [targetVersionId]
+      );
+
+      const basePayload = {
+        wikidotId: pageRow.wikidotId,
+        url: pageRow.currentUrl ?? (url || null),
+        pageId: context.pageId,
+        pageVersionId: targetVersionId
+      };
+
+      if (latestSource.rows.length > 0) {
+        const row = latestSource.rows[0];
+        return res.json({
+          ...basePayload,
+          sourceVersionId: row.sourceVersionId,
+          revisionId: row.revisionId,
+          revisionNumber: row.revisionNumber,
+          source: row.source,
+          timestamp: row.timestamp,
+          origin: 'sourceVersion'
+        });
+      }
+
+      // SourceVersion 没有源码时，fallback 到 PageVersion.source
+      const pageVersionSource = await pool.query<{ source: string | null }>(
+        'SELECT source FROM "PageVersion" WHERE id = $1 LIMIT 1',
+        [targetVersionId]
+      );
+      const fallbackSource = pageVersionSource.rows[0]?.source ?? null;
+      if (fallbackSource) {
+        return res.json({
+          ...basePayload,
+          sourceVersionId: null,
+          revisionId: null,
+          revisionNumber: null,
+          source: fallbackSource,
+          timestamp: null,
+          origin: 'pageVersion'
+        });
+      }
+
+      return res.json({
+        ...basePayload,
+        sourceVersionId: null,
+        revisionId: null,
+        revisionNumber: null,
+        source: null,
+        timestamp: null,
+        origin: 'none'
+      });
     } catch (err) {
       next(err);
     }
@@ -574,6 +712,7 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       }
 
       if (limit === '6') {
+        // 只获取源码和文本的前 3000 字符用于摘要提取，避免响应体过大
         const selectClauseExtended = `
           COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
           p."currentUrl" AS url,
@@ -587,8 +726,8 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
           pv."createdAt",
           pv."revisionCount",
           pv."attributionCount",
-          pv.source,
-          pv."textContent",
+          SUBSTRING(pv.source FOR 3000) AS source,
+          SUBSTRING(pv."textContent" FOR 2000) AS "textContent",
           pv."isDeleted" AS "isDeleted",
           CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
           p."firstPublishedAt" AS "firstRevisionAt",
@@ -1139,18 +1278,24 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       if (pv.rows.length === 0) return res.status(404).json({ error: 'not_found' });
       if (pv.rows[0].source) return res.json({ source: pv.rows[0].source, origin: 'pageVersion' });
 
-      // 2) 否则回退到最新一条带源码的修订
+      // 2) 否则回退到最新一条带源码的 SourceVersion
       const lastWithSource = await pool.query(
-        `SELECT r.id AS "revisionId", r."revisionNumber", r.source
-         FROM "Revision" r
-         WHERE r."pageVersionId" = $1::int AND r.source IS NOT NULL
-         ORDER BY r.timestamp DESC
+        `SELECT sv.id AS "sourceVersionId", sv."revisionId", sv."revisionNumber", sv.source
+         FROM "SourceVersion" sv
+         WHERE sv."pageVersionId" = $1::int AND sv.source IS NOT NULL
+         ORDER BY sv."isLatest" DESC, sv.timestamp DESC
          LIMIT 1`,
         [targetVersionId]
       );
       if (lastWithSource.rows.length > 0) {
-        const r = lastWithSource.rows[0];
-        return res.json({ source: r.source, origin: 'revision', revisionId: r.revisionId, revisionNumber: r.revisionNumber });
+        const sv = lastWithSource.rows[0];
+        return res.json({
+          source: sv.source,
+          origin: 'sourceVersion',
+          sourceVersionId: sv.sourceVersionId,
+          revisionId: sv.revisionId,
+          revisionNumber: sv.revisionNumber
+        });
       }
 
       // 3) 仍无则返回空
@@ -1206,7 +1351,18 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         .filter(s => s.length > 0);
       const excludedTags = Array.from(new Set([...(excludeCommon ? defaultCommonTags : []), ...extraExcluded]));
 
-      // 不使用 Redis 缓存（按需再启用）
+      // 使用 Redis 缓存（explore > 0 时跳过缓存，因为结果有随机性）
+      const shouldCache = explore === 0;
+      const cacheKey = shouldCache
+        ? `recommendations:${wikidotId}:${limitInt}:${strat}:${tagWeight}:${authorWeight}:${minTagOverlap}:${minAuthorOverlap}:${sameCategoryOnly}:${excludeUserPages}:${diversity}:${weighting}:${excludeCommon}:${mmrLambda}:${excludedTags.sort().join('|')}`
+        : null;
+
+      if (cacheKey) {
+        const cached = await cache.getJSON(cacheKey);
+        if (cached) {
+          return res.json(cached);
+        }
+      }
 
       // 取候选集合（打齐标签与作者重合信息）
       const context = await resolvePageContextByWikidotId(wikidotId);
@@ -1506,6 +1662,12 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
         const { source, textSnippet, ...clean } = rest;
         return snippetHtml ? { ...clean, snippet: snippetHtml } : clean;
       });
+
+      // 写入缓存（TTL 10分钟）
+      if (cacheKey) {
+        await cache.setJSON(cacheKey, payload, 600);
+      }
+
       res.json(payload);
     } catch (err) {
       next(err);
@@ -1612,17 +1774,23 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const { wikidotId } = req.params;
       const context = await resolvePageContextByWikidotId(wikidotId);
       if (!context || !context.effectiveVersionId) return res.json({ upvotes: 0, downvotes: 0, novotes: 0, total: 0 });
-      const sql = `
-        SELECT 
-          COUNT(CASE WHEN v.direction = 1 THEN 1 END) as upvotes,
-          COUNT(CASE WHEN v.direction = -1 THEN 1 END) as downvotes,
-          COUNT(CASE WHEN v.direction = 0 THEN 1 END) as novotes,
-          COUNT(*) as total
-        FROM "LatestVote" v
-        WHERE v."pageVersionId" = $1
-      `;
-      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
-      res.json(rows[0] || { upvotes: 0, downvotes: 0, novotes: 0, total: 0 });
+
+      const cacheKey = `pages:${wikidotId}:vote-distribution`;
+      const result = await cache.remember(cacheKey, 180, async () => {
+        const sql = `
+          SELECT
+            COUNT(CASE WHEN v.direction = 1 THEN 1 END) as upvotes,
+            COUNT(CASE WHEN v.direction = -1 THEN 1 END) as downvotes,
+            COUNT(CASE WHEN v.direction = 0 THEN 1 END) as novotes,
+            COUNT(*) as total
+          FROM "LatestVote" v
+          WHERE v."pageVersionId" = $1
+        `;
+        const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+        return rows[0] || { upvotes: 0, downvotes: 0, novotes: 0, total: 0 };
+      });
+
+      res.json(result);
     } catch (err) {
       next(err);
     }
@@ -1686,62 +1854,65 @@ export function pagesRouter(pool: Pool, _redis: RedisClientType | null) {
       const { granularity = 'week' } = req.query as Record<string, string>;
       const context = await resolvePageContextByWikidotId(wikidotIdInt);
       if (!context || !context.effectiveVersionId) return res.json([]);
-      
-      // 获取页面的投票历史，按周或月聚合（无时间限制，获取全部历史数据）
-      const dateLabel = granularity === 'month' ? 'YYYY-MM-DD' : 'YYYY-MM-DD';
-      
-      const sql = `
-        WITH ordered AS (
-          SELECT
-            DATE_TRUNC('${granularity}', v.timestamp) AS period,
-            v.timestamp,
-            v.direction AS current_direction,
-            CASE
-              WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
-              WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
-              ELSE 'g:' || v.id::text
-            END AS actor_key,
-            LAG(v.direction) OVER (
-              PARTITION BY CASE
+
+      const cacheKey = `pages:${wikidotId}:rating-history:${granularity}`;
+      const result = await cache.remember(cacheKey, 300, async () => {
+        // 获取页面的投票历史，按周或月聚合（无时间限制，获取全部历史数据）
+        const dateLabel = granularity === 'month' ? 'YYYY-MM-DD' : 'YYYY-MM-DD';
+
+        const sql = `
+          WITH ordered AS (
+            SELECT
+              DATE_TRUNC('${granularity}', v.timestamp) AS period,
+              v.timestamp,
+              v.direction AS current_direction,
+              CASE
                 WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
                 WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
                 ELSE 'g:' || v.id::text
-              END
-              ORDER BY v.timestamp, v.id
-            ) AS prev_direction
-          FROM "Vote" v
-          WHERE v."pageVersionId" = $1
-        ),
-        deltas AS (
+              END AS actor_key,
+              LAG(v.direction) OVER (
+                PARTITION BY CASE
+                  WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+                  WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+                  ELSE 'g:' || v.id::text
+                END
+                ORDER BY v.timestamp, v.id
+              ) AS prev_direction
+            FROM "Vote" v
+            WHERE v."pageVersionId" = $1
+          ),
+          deltas AS (
+            SELECT
+              period,
+              (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
+              (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
+              current_direction - COALESCE(prev_direction, 0) AS net_delta
+            FROM ordered
+          ),
+          aggregated AS (
+            SELECT
+              period,
+              SUM(up_delta) AS upvotes,
+              SUM(down_delta) AS downvotes,
+              SUM(net_delta) AS net_change
+            FROM deltas
+            GROUP BY period
+          )
           SELECT
-            period,
-            (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
-            (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
-            current_direction - COALESCE(prev_direction, 0) AS net_delta
-          FROM ordered
-        ),
-        aggregated AS (
-          SELECT
-            period,
-            SUM(up_delta) AS upvotes,
-            SUM(down_delta) AS downvotes,
-            SUM(net_delta) AS net_change
-          FROM deltas
-          GROUP BY period
-        )
-        SELECT
-          TO_CHAR(period, '${dateLabel}') AS date,
-          COALESCE(upvotes, 0) AS upvotes,
-          COALESCE(downvotes, 0) AS downvotes,
-          COALESCE(net_change, 0) AS net_change,
-          SUM(COALESCE(net_change, 0)) OVER (ORDER BY period) AS cumulative_rating
-        FROM aggregated
-        ORDER BY period
-      `;
-      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
-      
-      // 直接返回数据，前端会处理隐藏逻辑
-      res.json(rows);
+            TO_CHAR(period, '${dateLabel}') AS date,
+            COALESCE(upvotes, 0) AS upvotes,
+            COALESCE(downvotes, 0) AS downvotes,
+            COALESCE(net_change, 0) AS net_change,
+            SUM(COALESCE(net_change, 0)) OVER (ORDER BY period) AS cumulative_rating
+          FROM aggregated
+          ORDER BY period
+        `;
+        const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+        return rows;
+      });
+
+      res.json(result);
     } catch (err) {
       next(err);
     }

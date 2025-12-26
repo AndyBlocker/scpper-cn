@@ -142,3 +142,201 @@
     @apply bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 shadow;
   }
 }
+
+/* CodeMirror overrides for FTML editor */
+.CodeMirror {
+  height: 100% !important;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.CodeMirror-gutters {
+  width: 50px !important;
+  min-width: 50px !important;
+  max-width: 50px !important;
+  background: rgb(250 250 250) !important;
+  border-right: 1px solid rgb(229 229 229) !important;
+}
+
+.CodeMirror-gutter.CodeMirror-linenumbers {
+  width: 42px !important;
+  min-width: 42px !important;
+  max-width: 42px !important;
+}
+
+.CodeMirror-linenumber {
+  width: 42px !important;
+  padding: 0 8px !important;
+  text-align: right !important;
+  color: rgb(163 163 163) !important;
+}
+
+.CodeMirror-sizer {
+  margin-left: 50px !important;
+}
+
+.CodeMirror-gutter-wrapper {
+  left: -50px !important;
+}
+
+.CodeMirror-scroll {
+  overflow: auto !important;
+}
+
+.CodeMirror-cursor {
+  border-left: 2px solid rgb(14 165 233) !important;
+}
+
+.CodeMirror-selected {
+  background: rgba(56, 189, 248, 0.15) !important;
+}
+
+.CodeMirror-focused .CodeMirror-selected {
+  background: rgba(56, 189, 248, 0.25) !important;
+}
+
+html.dark .CodeMirror {
+  background: rgb(23 23 23) !important;
+  color: rgb(245 245 245) !important;
+}
+
+html.dark .CodeMirror-gutters {
+  background: rgba(38, 38, 38, 0.5) !important;
+  border-color: rgb(64 64 64) !important;
+}
+
+html.dark .CodeMirror-linenumber {
+  color: rgb(115 115 115) !important;
+}
+
+/* Active line highlighting */
+.CodeMirror-activeline-background {
+  background: rgba(0, 0, 0, 0.03) !important;
+}
+
+html.dark .CodeMirror-activeline-background {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+
+/* Bracket matching */
+.CodeMirror-matchingbracket {
+  background: rgba(56, 189, 248, 0.3) !important;
+  color: inherit !important;
+  font-weight: bold !important;
+  border-bottom: 2px solid rgb(14 165 233) !important;
+}
+
+.CodeMirror-nonmatchingbracket {
+  background: rgba(239, 68, 68, 0.3) !important;
+  color: rgb(239 68 68) !important;
+}
+
+/* FTML syntax highlighting */
+.cm-ftml-block {
+  color: rgb(147 51 234) !important; /* purple-600 */
+  font-weight: 500;
+}
+
+.cm-ftml-link {
+  color: rgb(14 165 233) !important; /* sky-500 */
+  text-decoration: underline;
+}
+
+.cm-ftml-code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 3px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  color: rgb(220 38 38) !important; /* red-600 */
+}
+
+.cm-ftml-strike {
+  text-decoration: line-through;
+  color: rgb(115 115 115) !important;
+}
+
+.cm-ftml-underline {
+  text-decoration: underline;
+}
+
+.cm-ftml-mono {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.cm-ftml-comment {
+  color: rgb(115 115 115) !important;
+  font-style: italic;
+}
+
+/* Dark mode FTML syntax */
+html.dark .cm-ftml-block {
+  color: rgb(192 132 252) !important; /* purple-400 */
+}
+
+html.dark .cm-ftml-link {
+  color: rgb(56 189 248) !important; /* sky-400 */
+}
+
+html.dark .cm-ftml-code {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgb(248 113 113) !important; /* red-400 */
+}
+
+html.dark .cm-ftml-strike {
+  color: rgb(163 163 163) !important;
+}
+
+html.dark .cm-ftml-mono {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+html.dark .cm-ftml-comment {
+  color: rgb(163 163 163) !important;
+}
+
+/* GFM inherited styles */
+.cm-header {
+  color: rgb(37 99 235) !important; /* blue-600 */
+  font-weight: bold;
+}
+
+.cm-strong {
+  font-weight: bold;
+}
+
+.cm-em {
+  font-style: italic;
+}
+
+.cm-link {
+  color: rgb(14 165 233) !important;
+}
+
+.cm-url {
+  color: rgb(107 114 128) !important;
+}
+
+.cm-comment {
+  color: rgb(107 114 128) !important;
+  font-style: italic;
+}
+
+html.dark .cm-header {
+  color: rgb(96 165 250) !important; /* blue-400 */
+}
+
+html.dark .cm-link {
+  color: rgb(56 189 248) !important;
+}
+
+html.dark .cm-url {
+  color: rgb(156 163 175) !important;
+}
+
+html.dark .cm-comment {
+  color: rgb(156 163 175) !important;
+}

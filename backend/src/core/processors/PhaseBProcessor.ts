@@ -21,6 +21,7 @@ interface PageToProcess {
   actualRevisionCount: number;
   actualVoteCount: number;
   stagingIsDeleted: boolean | null;
+  pageIsDeleted: boolean | null;
 }
 
 export class PhaseBProcessor {
@@ -64,22 +65,48 @@ export class PhaseBProcessor {
       round++;
       const roundProgressPercent = totalPhaseBPages > 0 ? (totalProcessed / totalPhaseBPages * 100).toFixed(1) : '0';
       Logger.info(`\n🔄 Phase B Round ${round}: Processing ${dirtyPages.length} pages [Current: ${totalProcessed}/${totalPhaseBPages} = ${roundProgressPercent}%]`);
-      
+
+      // Batch query: collect all wikidotIds and pageIds
+      const wikidotIds = dirtyPages.map(dp => dp.wikidotId).filter((id): id is number => id != null);
+      const pageIds = dirtyPages.map(dp => dp.pageId).filter((id): id is number => id != null);
+
+      // Batch query staging data (single query instead of N queries)
+      const stagingDataList = await this.store.prisma.pageMetaStaging.findMany({
+        where: { wikidotId: { in: wikidotIds } }
+      });
+      const stagingByWikidotId = new Map(stagingDataList.map(s => [s.wikidotId, s]));
+
+      // Batch query page data (single query instead of N queries)
+      const pageDataList = await this.store.prisma.page.findMany({
+        where: {
+          OR: [
+            { id: { in: pageIds } },
+            { wikidotId: { in: wikidotIds } }
+          ]
+        },
+        select: { id: true, wikidotId: true, isDeleted: true }
+      });
+      const pageByPageId = new Map(pageDataList.map(p => [p.id, p]));
+      const pageByWikidotId = new Map(pageDataList.map(p => [p.wikidotId, p]));
+
       const urlsToProcess: PageToProcess[] = [];
       for (const dirtyPage of dirtyPages) {
-        // Use wikidotId for staging data lookup
-        const stagingData = await this.store.prisma.pageMetaStaging.findUnique({
-          where: { wikidotId: dirtyPage.wikidotId || 0 }
-        });
-        
+        // Use pre-fetched staging data (O(1) lookup instead of query)
+        const stagingData = stagingByWikidotId.get(dirtyPage.wikidotId || 0);
+
         if (!stagingData) {
           Logger.warn(`No staging data found for wikidotId: ${dirtyPage.wikidotId}`);
           continue;
         }
-        
+
+        // Use pre-fetched page data (O(1) lookup instead of query)
+        const pageRow = dirtyPage.pageId
+          ? pageByPageId.get(dirtyPage.pageId)
+          : pageByWikidotId.get(dirtyPage.wikidotId || 0);
+
         const actualRevCount = stagingData.revisionCount ?? 0;
         const actualVoteCount = stagingData.voteCount ?? 0;
-        
+
         const conservativeCost = PointEstimator.estimatePageCost(
           { revisionCount: actualRevCount, voteCount: actualVoteCount },
           {
@@ -93,7 +120,7 @@ export class PhaseBProcessor {
             includeTextContent: true
           }
         );
-        
+
         urlsToProcess.push({
           url: stagingData.url,
           wikidotId: dirtyPage.wikidotId!,
@@ -103,6 +130,7 @@ export class PhaseBProcessor {
           actualRevisionCount: actualRevCount,
           actualVoteCount: actualVoteCount,
           stagingIsDeleted: stagingData?.isDeleted ?? null,
+          pageIsDeleted: pageRow?.isDeleted ?? null,
         });
       }
       
@@ -203,9 +231,10 @@ export class PhaseBProcessor {
             const pageData = alias ? res[alias] : undefined;
             const flaggedByStaging = page.stagingIsDeleted === true;
             const flaggedByReason = page.reasons.includes('page_deleted');
+            const flaggedByLocalDelete = page.pageIsDeleted === true;
 
             if (!pageData) {
-              if (flaggedByStaging || flaggedByReason) {
+              if (flaggedByStaging || flaggedByReason || flaggedByLocalDelete) {
                 await this.store.markDeletedByWikidotId(page.wikidotId);
                 deletedCount++;
               } else {
@@ -255,9 +284,10 @@ export class PhaseBProcessor {
             const pageData = alias ? res[alias] : undefined;
             const flaggedByStaging = page.stagingIsDeleted === true;
             const flaggedByReason = page.reasons.includes('page_deleted');
+            const flaggedByLocalDelete = page.pageIsDeleted === true;
 
             if (!pageData) {
-              if (flaggedByStaging || flaggedByReason) {
+              if (flaggedByStaging || flaggedByReason || flaggedByLocalDelete) {
                 await this.store.markDeletedByWikidotId(page.wikidotId);
                 deletedCount++;
               } else {
@@ -292,13 +322,21 @@ export class PhaseBProcessor {
               }
               savedCount++;
             }
-          } catch (individualError) {
+          } catch (individualError: any) {
             Logger.error(`❌ Failed to process individual page ${page.url}:`, individualError);
+            // 不清除脏标记，保留以便下次同步重试
+            // 添加失败原因用于调试
             try {
-              await this.store.clearDirtyFlag(page.wikidotId, 'B');
-              Logger.warn(`⚠️  Force cleared dirty flag for failed page: ${page.url}`);
-            } catch (clearError) {
-              Logger.error(`❌ Failed to force clear dirty flag for ${page.url}:`, clearError);
+              const errorReason = `phase_b_error:${new Date().toISOString().slice(0, 19)}`;
+              await this.store.prisma.dirtyPage.updateMany({
+                where: { wikidotId: page.wikidotId },
+                data: {
+                  reasons: { push: errorReason }
+                }
+              });
+              Logger.warn(`⚠️  Kept dirty flag for failed page (will retry): ${page.url}`);
+            } catch (updateError) {
+              Logger.error(`❌ Failed to update reasons for ${page.url}:`, updateError);
             }
           }
         }

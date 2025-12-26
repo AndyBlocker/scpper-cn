@@ -198,7 +198,7 @@ export class PageVersionStore {
 
       Logger.info(`✅ Created new version for page ${pageId}`);
       return newVersion;
-    });
+    }, { timeout: 30000 });
   }
 
   /**

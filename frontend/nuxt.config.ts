@@ -41,6 +41,15 @@ export default defineNuxtConfig({
   modules: [
     '@nuxtjs/tailwindcss'
   ],
+  css: [
+    // Base CodeMirror styles for FTML editors (avoids missing layout in ftml-projects)
+    'codemirror/lib/codemirror.css'
+  ],
+  components: {
+    dirs: [
+      { path: '~/components', pathPrefix: false }
+    ]
+  },
   tailwindcss: {
     cssPath: 'assets/css/tailwind.css'
   },
@@ -87,7 +96,14 @@ export default defineNuxtConfig({
       meta: [
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'theme-color', content: '#0A0A0B', media: '(prefers-color-scheme: dark)' },
-        { name: 'theme-color', content: '#F6F6F7', media: '(prefers-color-scheme: light)' }
+        { name: 'theme-color', content: '#F6F6F7', media: '(prefers-color-scheme: light)' },
+        { name: 'description', content: 'SCPPER-CN - SCP中文站数据分析平台，提供页面评分、用户统计、标签分析等功能' },
+        { property: 'og:type', content: 'website' },
+        { property: 'og:locale', content: 'zh_CN' },
+        { property: 'og:site_name', content: 'SCPPER-CN' },
+        { property: 'og:title', content: 'SCPPER-CN - SCP中文站数据分析平台' },
+        { property: 'og:description', content: 'SCP中文站数据分析平台，提供页面评分、用户统计、标签分析等功能' },
+        { name: 'twitter:card', content: 'summary_large_image' }
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/icons/favicon-light.svg', media: '(prefers-color-scheme: light)' },

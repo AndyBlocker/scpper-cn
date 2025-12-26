@@ -652,6 +652,10 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
   });
 
   // GET /api/users/:wikidotId/votes
+  // Returns latest vote per page (dedup by page)
+  // Query params:
+  //   - limit, offset
+  //   - includeDeleted: 'true' to include pages that are currently deleted
   router.get('/:wikidotId/votes', async (req, res, next) => {
     try {
       const { wikidotId } = req.params as Record<string, string>;
@@ -659,40 +663,95 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
       if (isNaN(wikidotIdInt)) {
         return res.status(400).json({ error: 'Invalid wikidotId' });
       }
-      const { limit = '50', offset = '0' } = req.query as Record<string, string>;
+      const { limit = '50', offset = '0', includeDeleted = 'false' } = req.query as Record<string, string>;
       const limitInt = Math.max(1, Math.min(parseInt(String(limit), 10) || 50, 200));
       const offsetInt = Math.max(0, parseInt(String(offset), 10) || 0);
-      const cacheKey = `users:${wikidotIdInt}:votes:${limitInt}:${offsetInt}`;
+      const includeDeletedBool = String(includeDeleted || 'false').toLowerCase() === 'true';
+      const cacheKey = `users:${wikidotIdInt}:votes:v2:${limitInt}:${offsetInt}:${includeDeletedBool ? 1 : 0}`;
       const payload = await cache.remember(cacheKey, 180, async () => {
+        // Select latest vote per (user, page)
         const sql = `
+          WITH target_user AS (
+            SELECT id FROM "User" WHERE "wikidotId" = $1
+          ),
+          user_votes AS (
+            SELECT v.id, v."pageVersionId", v.timestamp, v.direction, v."userId"
+            FROM "Vote" v
+            JOIN target_user tu ON v."userId" = tu.id
+          ),
+          votes_by_page AS (
+            SELECT uv.id, uv."userId", pv."pageId", uv.timestamp, uv.direction,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY pv."pageId", uv."userId"
+                     ORDER BY uv.timestamp DESC, uv.id DESC
+                   ) AS rn
+            FROM user_votes uv
+            JOIN "PageVersion" pv ON pv.id = uv."pageVersionId"
+          ),
+          latest_per_page AS (
+            SELECT vbp."pageId", vbp.timestamp, vbp.direction
+            FROM votes_by_page vbp
+            WHERE vbp.rn = 1
+          )
           SELECT 
-            v.timestamp,
-            v.direction,
-            pv."wikidotId" as "pageWikidotId",
-            pv.title as "pageTitle",
-            pv."alternateTitle" as "pageAlternateTitle",
+            lpp.timestamp,
+            lpp.direction,
+            live_pv."wikidotId" as "pageWikidotId",
+            live_pv.title as "pageTitle",
+            live_pv."alternateTitle" as "pageAlternateTitle",
             p."currentUrl" as "pageUrl"
-          FROM "Vote" v
-          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          JOIN "Page" p ON pv."pageId" = p.id
-          JOIN "User" u ON v."userId" = u.id
-          WHERE u."wikidotId" = $1
-            AND pv."validTo" IS NULL AND pv."isDeleted" = false
-          ORDER BY v.timestamp DESC
-          LIMIT $2::int OFFSET $3::int
+          FROM latest_per_page lpp
+          JOIN "Page" p ON p.id = lpp."pageId"
+          -- Pick a robust display version for the page (prefer current and non-deleted)
+          LEFT JOIN LATERAL (
+            SELECT pv2.*
+            FROM "PageVersion" pv2
+            WHERE pv2."pageId" = lpp."pageId"
+            ORDER BY 
+              (pv2."validTo" IS NULL) DESC,
+              (NOT pv2."isDeleted") DESC,
+              pv2."validFrom" DESC NULLS LAST,
+              pv2.id DESC
+            LIMIT 1
+          ) live_pv ON TRUE
+          WHERE ($2::boolean = true OR COALESCE(live_pv."isDeleted", false) = false)
+          ORDER BY lpp.timestamp DESC
+          LIMIT $3::int OFFSET $4::int
         `;
+
         const countSql = `
+          WITH target_user AS (
+            SELECT id FROM "User" WHERE "wikidotId" = $1
+          ),
+          user_pages AS (
+            SELECT DISTINCT pv."pageId"
+            FROM "Vote" v
+            JOIN target_user tu ON v."userId" = tu.id
+            JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
+          ),
+          visible AS (
+            SELECT up."pageId",
+                   (
+                     SELECT pv2."isDeleted"
+                     FROM "PageVersion" pv2
+                     WHERE pv2."pageId" = up."pageId"
+                     ORDER BY 
+                       (pv2."validTo" IS NULL) DESC,
+                       (NOT pv2."isDeleted") DESC,
+                       pv2."validFrom" DESC NULLS LAST,
+                       pv2.id DESC
+                     LIMIT 1
+                   ) AS is_deleted
+            FROM user_pages up
+          )
           SELECT COUNT(*)::int AS total
-          FROM "Vote" v
-          JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          JOIN "User" u ON v."userId" = u.id
-          WHERE u."wikidotId" = $1
-            AND pv."validTo" IS NULL
-            AND pv."isDeleted" = false
+          FROM visible v
+          WHERE ($2::boolean = true OR COALESCE(v.is_deleted, false) = false)
         `;
+
         const [listRes, countRes] = await Promise.all([
-          pool.query(sql, [wikidotIdInt, limitInt, offsetInt]),
-          pool.query(countSql, [wikidotIdInt])
+          pool.query(sql, [wikidotIdInt, includeDeletedBool, limitInt, offsetInt]),
+          pool.query(countSql, [wikidotIdInt, includeDeletedBool])
         ]);
         const total = Number(countRes.rows?.[0]?.total || 0);
         return {

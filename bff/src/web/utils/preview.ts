@@ -10,6 +10,13 @@ export type PreviewPick = {
 };
 
 const BLOCK_RE = /SCPPER_CN_PREVIEW_BEGIN(?:\([^)]*\))?([\s\S]*?)SCPPER_CN_PREVIEW_END/gi;
+// Matches an [[include ...]] block (multiline, case-insensitive)
+const INCLUDE_BLOCK_RE = /\[\[\s*include\b([\s\S]*?)\]\]/gi;
+// Detect target path that resolves to scpper-tracking-module in various forms:
+//   - component:scpper-tracking-module
+//   - :scp-wiki-cn:components:scpper-tracking-module
+//   - components:scpper-tracking-module
+const TARGET_RE = /(?:\bcomponent\s*:\s*|:\s*[a-z0-9_-]+\s*:\s*components?\s*:\s*|\bcomponents?\s*:\s*)scpper-tracking-module\b/i;
 
 function unwrap(content: string): string {
   let s = content.trim();
@@ -26,6 +33,11 @@ function unwrap(content: string): string {
 }
 
 export function extractPreviewCandidates(source?: string | null): string[] {
+  // 1) Prefer include parameter scpper-preview
+  const includeItems = extractPreviewFromInclude(source);
+  if (includeItems.length > 0) return includeItems;
+
+  // 2) Fallback to legacy SCPPER_CN_PREVIEW markers
   if (typeof source !== 'string' || source.length === 0) return [];
   const items: string[] = [];
   let m: RegExpExecArray | null;
@@ -33,14 +45,52 @@ export function extractPreviewCandidates(source?: string | null): string[] {
   while ((m = BLOCK_RE.exec(source)) !== null) {
     const raw = (m[1] || '').toString();
     const unwrapped = unwrap(raw);
-    const cleaned = unwrapped
-      .replace(/\r/g, '')
-      .replace(/\t/g, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
+    const cleaned = cleanPreviewText(unwrapped);
     if (cleaned) items.push(cleaned);
     // avoid infinite loop on zero-length matches
     if (m.index === BLOCK_RE.lastIndex) BLOCK_RE.lastIndex++;
+  }
+  return items;
+}
+
+function cleanPreviewText(s: string): string {
+  return s
+    .replace(/\r/g, '')
+    .replace(/\t/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function extractPreviewFromInclude(source?: string | null): string[] {
+  if (typeof source !== 'string' || source.length === 0) return [];
+  const items: string[] = [];
+
+  let m: RegExpExecArray | null;
+  INCLUDE_BLOCK_RE.lastIndex = 0;
+  while ((m = INCLUDE_BLOCK_RE.exec(source)) !== null) {
+    const body = (m[1] || '').toString();
+    // Split head (target) and params by first '|'
+    const sep = body.indexOf('|');
+    const head = (sep >= 0 ? body.slice(0, sep) : body).replace(/\r/g, '').trim();
+    if (!TARGET_RE.test(head)) {
+      // Not our tracking component
+      continue;
+    }
+    const params = sep >= 0 ? body.slice(sep + 1) : '';
+    if (!params) continue;
+    // Split by '|' — spec disallows '|' in scpper-preview value, so safe
+    const parts = params.split('|');
+    for (const rawPart of parts) {
+      const part = rawPart.replace(/\r/g, '').trim();
+      if (!part) continue;
+      const m2 = part.match(/^scpper-preview\s*=\s*([\s\S]*)$/i);
+      if (m2) {
+        const val = cleanPreviewText(m2[1] || '');
+        if (val) items.push(val);
+      }
+    }
+    // avoid infinite loop on zero-length matches
+    if (m.index === INCLUDE_BLOCK_RE.lastIndex) INCLUDE_BLOCK_RE.lastIndex++;
   }
   return items;
 }

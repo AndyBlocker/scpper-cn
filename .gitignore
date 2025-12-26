@@ -93,5 +93,19 @@ deploy.sh
 nginx.conf
 
 AGENTS.md
+CLAUDE.md
 
 test.mjs
+test.html
+index.html
+
+# BFF 缓存数据
+bff/data/
+
+# 年度总结生成的数据文件
+frontend/public/annual-summary/
+
+# 代码审查文档（可选）
+# frontend/CODE_REVIEW.md
+
+node_modules

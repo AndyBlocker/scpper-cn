@@ -384,9 +384,15 @@ export class IncrementalAnalyzeJob {
 
     // 增量查询：找出自水位线后变更的 pageVersion（包含等于游标时间的记录，避免并列时间戳被跳过）
     // 修复：确保正确处理 PageVersion 的更新
+    //
+    // 时区处理说明：
+    // - 数据库使用 timestamp without time zone，存储的是本地时间
+    // - Prisma 读取时错误地将其解释为 UTC 时间，但数值部分是正确的
+    // - 使用 ISO 字符串去掉 Z 后缀，让 PostgreSQL 将其解释为不带时区的本地时间
+    const cursorTsStr = cursorTs.toISOString().replace('Z', '');
     const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
       WITH cursor_check AS (
-        SELECT ${cursorTs}::timestamp as cursor_ts
+        SELECT ${cursorTsStr}::timestamp as cursor_ts
       ),
       -- 检查投票变化
       vote_changes AS (
@@ -1101,7 +1107,15 @@ export class IncrementalAnalyzeJob {
       await this.prisma.$executeRaw`REFRESH MATERIALIZED VIEW CONCURRENTLY mv_top_pages_30d`;
       console.log('✅ mv_top_pages_30d refreshed');
     } catch (error) {
-      console.error('❌ Failed to refresh materialized views:', error);
+      console.error('❌ Failed to refresh mv_top_pages_30d:', error);
+    }
+
+    try {
+      // 刷新站点概览物化视图
+      await this.prisma.$executeRaw`REFRESH MATERIALIZED VIEW mv_site_overview`;
+      console.log('✅ mv_site_overview refreshed');
+    } catch (error) {
+      console.error('❌ Failed to refresh mv_site_overview:', error);
       // 非关键性操作，继续执行其他任务
     }
   }
@@ -1150,9 +1164,9 @@ export class IncrementalAnalyzeJob {
           AND NOT ('待刪除' = ANY(pv.tags))
       `;
       
-      // 统计每个系列的使用情况
+      // 统计每个系列的使用情况（按编号去重）
       const seriesUsage = new Map<number, {
-        usedSlots: number;
+        numbers: Set<number>; // 已使用编号集合，去重避免同一编号多页面导致溢出
         milestonePageId?: number;
         milestoneRating?: number;
       }>();
@@ -1163,7 +1177,8 @@ export class IncrementalAnalyzeJob {
           const num = parseInt(match[1]);
           let seriesNumber: number;
           
-          if (num >= 1 && num <= 999) {
+          // 系列1有效编号为 002-999（共998个）；排除001
+          if (num >= 2 && num <= 999) {
             seriesNumber = 1;
           } else if (num >= 1000 && num <= 9999) {
             seriesNumber = Math.floor(num / 1000) + 1;
@@ -1171,8 +1186,8 @@ export class IncrementalAnalyzeJob {
             continue; // 超出范围
           }
           
-          const stats = seriesUsage.get(seriesNumber) || { usedSlots: 0 };
-          stats.usedSlots++;
+          const stats = seriesUsage.get(seriesNumber) || { numbers: new Set<number>() };
+          stats.numbers.add(num);
           
           // 记录里程碑页面（评分最高的页面）
           if (!stats.milestonePageId || (page.rating && page.rating > (stats.milestoneRating || 0))) {
@@ -1186,17 +1201,18 @@ export class IncrementalAnalyzeJob {
       
       // 更新数据库
       for (let seriesNumber = 1; seriesNumber <= 10; seriesNumber++) {
-        const stats = seriesUsage.get(seriesNumber) || { usedSlots: 0 };
+        const stats = seriesUsage.get(seriesNumber) || { numbers: new Set<number>() };
         // 系列1使用编号 002-999，共 998 个槽位；其余系列 000-999，共 1000 个
         const totalSlots = seriesNumber === 1 ? 998 : 1000;
-        const usagePercentage = (stats.usedSlots / totalSlots) * 100;
+        const usedSlots = stats.numbers.size;
+        const usagePercentage = (usedSlots / totalSlots) * 100;
         const isOpen = seriesNumber <= 6; // 根据实际情况调整
         
         await this.prisma.seriesStats.upsert({
           where: { seriesNumber },
           update: {
             isOpen,
-            usedSlots: stats.usedSlots,
+            usedSlots,
             usagePercentage,
             milestonePageId: stats.milestonePageId,
             lastUpdated: new Date()
@@ -1205,7 +1221,7 @@ export class IncrementalAnalyzeJob {
             seriesNumber,
             isOpen,
             totalSlots,
-            usedSlots: stats.usedSlots,
+            usedSlots,
             usagePercentage,
             milestonePageId: stats.milestonePageId,
             lastUpdated: new Date()

@@ -69,68 +69,39 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	});
 
 	// GET /stats/site/overview
+	// 使用物化视图 mv_site_overview 优化性能（9个查询 → 2个查询）
 	router.get('/site/overview', async (req, res, next) => {
 		try {
 			const payload = await cache.remember('stats:site:overview', 300, async () => {
 				const reqLabel = `site.overview:${Date.now().toString(36)}`;
 				const requestStart = process.hrtime.bigint();
-				// Always compute all-time totals for overview display (full period)
+
+				// 从 SiteStats 获取基础数据
 				const siteSql = `
-					SELECT 
-						date, 
+					SELECT
+						date,
 						"updatedAt",
-						"totalUsers", 
-						"activeUsers", 
-						"totalPages", 
+						"totalUsers",
+						"activeUsers",
+						"totalPages",
 						"totalVotes"
 					FROM "SiteStats"
 					ORDER BY date DESC
 					LIMIT 1
 				`;
 
-				const contributorsSql = `
-				  SELECT COUNT(DISTINCT u."userId")::int AS count FROM (
-				    SELECT r."userId" FROM "Revision" r WHERE r."userId" IS NOT NULL
-				    UNION
-				    SELECT a."userId" FROM "Attribution" a WHERE a."userId" IS NOT NULL
-				  ) u
-				`;
-				const authorsSql = `SELECT COUNT(DISTINCT a."userId")::int AS count FROM "Attribution" a JOIN "PageVersion" pv ON pv.id = a."pageVerId" WHERE a."userId" IS NOT NULL AND pv."validTo" IS NULL AND '原创' = ANY(pv.tags)`;
-				const pageOriginalsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND '原创' = ANY(pv.tags)`;
-				const pageTranslationsSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = false AND NOT ('原创' = ANY(pv.tags))`;
-				const pageDeletedSql = `SELECT COUNT(*)::int AS count FROM "PageVersion" pv WHERE pv."validTo" IS NULL AND pv."isDeleted" = true`;
-				const votesPositiveSql = `
-					SELECT COALESCE(SUM(ps.uv), 0)::bigint AS count
-					FROM "PageStats" ps
-					JOIN "PageVersion" pv ON ps."pageVersionId" = pv.id
-					WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
-				const votesNegativeSql = `
-					SELECT COALESCE(SUM(ps.dv), 0)::bigint AS count
-					FROM "PageStats" ps
-					JOIN "PageVersion" pv ON ps."pageVersionId" = pv.id
-					WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
-				const revisionsTotalSql = `
-					SELECT COUNT(*)::bigint AS count
-					FROM "Revision" r
-					JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
-					WHERE pv."validTo" IS NULL AND pv."isDeleted" = false`;
+				// 从物化视图获取聚合数据（替代原来的 8 个查询）
+				const mvSql = `SELECT * FROM mv_site_overview LIMIT 1`;
 
-				const [siteRow, contributorsRow, authorsRow, originalsRow, translationsRow, deletedRow, votesPosRow, votesNegRow, revisionsRow] = await Promise.all([
+				const [siteRow, mvRow] = await Promise.all([
 					timedQuery('site-overview site', siteSql, undefined, reqLabel).then(r => r.rows[0] || null),
-					timedQuery('site-overview contributors', contributorsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
-					timedQuery('site-overview authors', authorsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
-					timedQuery('site-overview page-originals', pageOriginalsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
-					timedQuery('site-overview page-translations', pageTranslationsSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
-					timedQuery('site-overview page-deleted', pageDeletedSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0 }),
-					timedQuery('site-overview votes-positive', votesPositiveSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n }),
-					timedQuery('site-overview votes-negative', votesNegativeSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n }),
-					timedQuery('site-overview revisions-total', revisionsTotalSql, undefined, reqLabel).then(r => r.rows[0] || { count: 0n })
+					timedQuery('site-overview mv', mvSql, undefined, reqLabel).then(r => r.rows[0] || null)
 				]);
 
 				if (!siteRow) return null;
 
-				const upvotes = Number(votesPosRow.count || 0);
-				const downvotes = Number(votesNegRow.count || 0);
+				const upvotes = Number(mvRow?.upvotes || 0);
+				const downvotes = Number(mvRow?.downvotes || 0);
 				const totalVotes = upvotes + downvotes;
 
 				const totalDurationMs = Number(process.hrtime.bigint() - requestStart) / 1e6;
@@ -144,17 +115,17 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 					users: {
 						total: siteRow.totalUsers || 0,
 						active: siteRow.activeUsers || 0,
-						contributors: Number(contributorsRow.count || 0),
-						authors: Number(authorsRow.count || 0)
+						contributors: Number(mvRow?.contributors || 0),
+						authors: Number(mvRow?.authors || 0)
 					},
 					pages: {
 						total: siteRow.totalPages || 0,
-						originals: Number(originalsRow.count || 0),
-						translations: Number(translationsRow.count || 0),
-						deleted: Number(deletedRow.count || 0)
+						originals: Number(mvRow?.originals || 0),
+						translations: Number(mvRow?.translations || 0),
+						deleted: Number(mvRow?.deleted || 0)
 					},
 					votes: { total: totalVotes, upvotes, downvotes },
-					revisions: { total: Number(revisionsRow.count || 0) }
+					revisions: { total: Number(mvRow?.revisions_total || 0) }
 				};
 			});
 
@@ -307,24 +278,27 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 					};
 				});
 
-			// 3) Build payload with free numbers per series
-			const payload = baseSeries.map((row) => {
-				const { start, end } = seriesRange(row.seriesNumber);
-				const freeNumbers: number[] = [];
-				for (let n = start; n <= end; n++) {
-					if (!used.has(n)) freeNumbers.push(n);
-				}
-				return {
-					seriesNumber: row.seriesNumber,
-					isOpen: row.isOpen,
-					totalSlots: row.totalSlots,
-					usedSlots: row.usedSlots,
-					usagePercentage: row.usagePercentage,
-					remainingSlots: Math.max(0, (row.totalSlots ?? 0) - (row.usedSlots ?? 0)),
-					lastUpdated: row.lastUpdated,
-					freeNumbers
-				};
-			});
+            // 3) Build payload with free numbers per series
+            const payload = baseSeries.map((row) => {
+                const { start, end } = seriesRange(row.seriesNumber);
+                const freeNumbers: number[] = [];
+                for (let n = start; n <= end; n++) {
+                    if (!used.has(n)) freeNumbers.push(n);
+                }
+                const totalInRange = end - start + 1;
+                const usedSlotsComputed = totalInRange - freeNumbers.length;
+                const usagePercentageComputed = totalInRange > 0 ? (usedSlotsComputed / totalInRange) * 100 : 0;
+                return {
+                    seriesNumber: row.seriesNumber,
+                    isOpen: row.isOpen,
+                    totalSlots: totalInRange, // 保持与区间一致，避免显示与统计不符
+                    usedSlots: usedSlotsComputed,
+                    usagePercentage: usagePercentageComputed,
+                    remainingSlots: freeNumbers.length,
+                    lastUpdated: row.lastUpdated,
+                    freeNumbers
+                };
+            });
 
 			res.json(payload);
 		} catch (err) {
@@ -367,8 +341,9 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 }
 
 // Additional stats endpoints
-export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
+export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 	const router = Router();
+	const cache = createCache(redis);
 
   // GET /stats/category-benchmarks
   // Read precomputed payload from LeaderboardCache written by backend Analyze
@@ -407,35 +382,37 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 	router.get('/pages/:wikidotId', async (req, res, next) => {
 		try {
 			const { wikidotId } = req.params as Record<string, string>;
-			const pageRes = await pool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
-			if (pageRes.rows.length === 0) return res.status(404).json({ error: 'not_found' });
-			const pageId = pageRes.rows[0].id;
+			const cacheKey = `stats:pages:${wikidotId}`;
+			const result = await cache.remember(cacheKey, 180, async () => {
+				const pageRes = await pool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
+				if (pageRes.rows.length === 0) return null;
+				const pageId = pageRes.rows[0].id;
 
-			const currentRes = await pool.query(
-				`SELECT id, "isDeleted"
-				   FROM "PageVersion"
-				  WHERE "pageId" = $1 AND "validTo" IS NULL
-				  ORDER BY id DESC
-				  LIMIT 1`,
-				[pageId]
-			);
-			const current = currentRes.rows[0] ?? null;
-			let targetId = current?.id ?? null;
-			const currentDeleted = current?.isDeleted === true;
-			if (!targetId || currentDeleted) {
-				const fallbackRes = await pool.query(
-					`SELECT id
+				const currentRes = await pool.query(
+					`SELECT id, "isDeleted"
 					   FROM "PageVersion"
-					  WHERE "pageId" = $1 AND "isDeleted" = false
-					  ORDER BY "validFrom" DESC NULLS LAST, id DESC
+					  WHERE "pageId" = $1 AND "validTo" IS NULL
+					  ORDER BY id DESC
 					  LIMIT 1`,
 					[pageId]
 				);
-				if (fallbackRes.rows.length > 0) {
-					targetId = fallbackRes.rows[0].id;
+				const current = currentRes.rows[0] ?? null;
+				let targetId = current?.id ?? null;
+				const currentDeleted = current?.isDeleted === true;
+				if (!targetId || currentDeleted) {
+					const fallbackRes = await pool.query(
+						`SELECT id
+						   FROM "PageVersion"
+						  WHERE "pageId" = $1 AND "isDeleted" = false
+						  ORDER BY "validFrom" DESC NULLS LAST, id DESC
+						  LIMIT 1`,
+						[pageId]
+					);
+					if (fallbackRes.rows.length > 0) {
+						targetId = fallbackRes.rows[0].id;
+					}
 				}
-			}
-			if (!targetId) return res.status(404).json({ error: 'not_found' });
+				if (!targetId) return null;
 
 				const { rows: statsRows } = await pool.query(
 					`SELECT ps."uv", ps."dv", ps."wilson95", ps."controversy", ps."likeRatio"
@@ -468,12 +445,16 @@ export function extendStatsRouter(pool: Pool, _redis: RedisClientType | null) {
 					  WHERE "pageId" = $1`,
 					[pageId]
 				);
-					const aggregate = aggregateRes.rows[0] ?? { totalViews: 0, todayViews: 0 };
-					res.json({ ...statsRow, ...aggregate, hasStats: Boolean(statsRows[0]) });
-			} catch (err) {
-				next(err);
-			}
-		});
+				const aggregate = aggregateRes.rows[0] ?? { totalViews: 0, todayViews: 0 };
+				return { ...statsRow, ...aggregate, hasStats: Boolean(statsRows[0]) };
+			});
+
+			if (!result) return res.status(404).json({ error: 'not_found' });
+			res.json(result);
+		} catch (err) {
+			next(err);
+		}
+	});
 
 	// GET /stats/pages/:wikidotId/daily
 	router.get('/pages/:wikidotId/daily', async (req, res, next) => {
