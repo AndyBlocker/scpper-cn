@@ -1,17 +1,9 @@
-declare module '*PhaseAProcessor.js' {
-  export class PhaseAProcessor {
-    runTestBatch(): Promise<{
-      totalScanned: number;
-      elapsedTime: number;
-      speed: string;
-      queueStats: any;
-    }>;
-    runComplete(): Promise<{
-      totalScanned: number;
-      elapsedTime: number;
-      speed: string;
-      queueStats: any;
-    }>;
+// PhaseAProcessor is now TypeScript, no shim needed
+
+declare module '*CoreQueries.js' {
+  export class CoreQueries {
+    buildPhaseAVariables(options: { first: number; after: string | null }): Record<string, unknown>;
+    buildQuery(type: string, vars: Record<string, unknown>): { query: string; variables: Record<string, unknown> };
   }
 }
 

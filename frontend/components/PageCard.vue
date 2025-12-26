@@ -10,9 +10,7 @@
     >
       <!-- Header: Title (lg only); md title inline; sm has compact header -->
       <div v-if="variant === 'lg'" class="flex items-start gap-3">
-        <div
-          :class="['flex min-w-0 flex-1 items-start gap-2', displayDate ? 'sm:pr-24' : '']"
-        >
+        <div :class="['flex min-w-0 flex-1 items-start gap-2', displayDate ? 'sm:pr-24' : '']">
           <div
             class="font-semibold text-neutral-900 dark:text-neutral-100 leading-snug"
             :class="['text-base truncate whitespace-nowrap flex-1 min-w-0']"
@@ -20,11 +18,20 @@
           >
             {{ displayTitle || 'Untitled' }}
           </div>
-          <span
-            v-if="viewerVoteBadge"
-            :class="['shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
-            :title="viewerVoteBadge.title"
-          >{{ viewerVoteBadge.label }}</span>
+          <div class="flex items-center gap-1 shrink-0">
+            <span
+              v-if="viewerVoteBadge"
+              :class="['inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
+              :title="viewerVoteBadge.title"
+            >{{ viewerVoteBadge.label }}</span>
+            <span
+              v-if="trackingModule"
+              class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[rgba(var(--accent),0.45)] text-[rgb(var(--accent))] bg-[rgba(var(--accent),0.12)]"
+              title="包含 scpper-tracking-module"
+            >
+              追踪
+            </span>
+          </div>
         </div>
         
       </div>
@@ -35,11 +42,20 @@
           <span class="truncate flex-1 min-w-0 text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
             {{ displayTitle || 'Untitled' }}
           </span>
-          <span
-            v-if="viewerVoteBadge"
-            :class="['shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
-            :title="viewerVoteBadge.title"
-          >{{ viewerVoteBadge.label }}</span>
+          <div class="flex items-center gap-1 shrink-0">
+            <span
+              v-if="viewerVoteBadge"
+              :class="['inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
+              :title="viewerVoteBadge.title"
+            >{{ viewerVoteBadge.label }}</span>
+            <span
+              v-if="trackingModule"
+              class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[rgba(var(--accent),0.45)] text-[rgb(var(--accent))] bg-[rgba(var(--accent),0.12)]"
+              title="包含 scpper-tracking-module"
+            >
+              追踪
+            </span>
+          </div>
         </div>
         <div v-if="displayDate && !isDeleted" class="ml-auto text-[11px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">{{ displayDate }}</div>
       </div>
@@ -135,11 +151,20 @@
             <span class="font-semibold text-neutral-900 dark:text-neutral-100 text-[15px] leading-snug truncate flex-1 min-w-0">
               {{ displayTitle || 'Untitled' }}
             </span>
-            <span
-              v-if="viewerVoteBadge"
-              :class="['shrink-0 inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
-              :title="viewerVoteBadge.title"
-            >{{ viewerVoteBadge.label }}</span>
+            <div class="flex items-center gap-1 shrink-0">
+              <span
+                v-if="viewerVoteBadge"
+                :class="['inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap', viewerVoteBadge.class]"
+                :title="viewerVoteBadge.title"
+              >{{ viewerVoteBadge.label }}</span>
+              <span
+                v-if="trackingModule"
+                class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[rgba(var(--accent),0.45)] text-[rgb(var(--accent))] bg-[rgba(var(--accent),0.12)]"
+                title="包含 scpper-tracking-module"
+              >
+                追踪
+              </span>
+            </div>
             
           </div>
           
@@ -218,6 +243,7 @@
   import { useNuxtApp, useRuntimeConfig } from 'nuxt/app'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { formatDateIsoUtc8 } from '~/utils/timezone'
+import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
   
   interface PageLike {
     wikidotId?: number | string
@@ -238,6 +264,7 @@ import { formatDateIsoUtc8 } from '~/utils/timezone'
     isDeleted?: boolean
     alternateTitle?: string | null
     viewerVote?: number | null
+    trackingModule?: boolean | null
   }
   
   type PageCardSize = 'lg' | 'md' | 'sm' | 'L' | 'M' | 'S'
@@ -299,6 +326,7 @@ import { formatDateIsoUtc8 } from '~/utils/timezone'
     if (alt) return base ? `${base} - ${alt}` : alt
     return base
   })
+  const trackingModule = computed(() => Boolean((props as any).trackingModule ?? (props.p as any)?.trackingModule ?? false))
   const internalTags = computed<string[]>(() => (props.tags ?? props.p?.tags ?? []).filter(Boolean))
   const sortedTags = computed<string[]>(() => orderTags(internalTags.value))
   const createdDate = computed(() => (props as any).dateISO ?? (props as any).dateIso ?? props.p?.createdDate ?? '')
@@ -460,20 +488,13 @@ const controversyText = computed(() => {
   const nuxtApp = useNuxtApp()
   const $bff = (nuxtApp as any).$bff as (<T = any>(url: string, opts?: any) => Promise<T>)
   const runtimeConfig = useRuntimeConfig()
-  const rawBffBase = (runtimeConfig?.public as any)?.bffBase ?? '/api'
-  const normalizedBffBase = (() => {
-    const base = typeof rawBffBase === 'string' ? rawBffBase.trim() : '/api'
-    if (!base || base === '/') return ''
-    return base.replace(/\/+$/u, '')
-  })()
+  const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase)
 
-  function toAbsoluteAsset(path: string | null | undefined): string {
-    const candidate = String(path || '')
-    if (!candidate) return ''
-    if (/^https?:/i.test(candidate)) return candidate
-    if (candidate.startsWith('//')) return `https:${candidate}`
-    const suffix = candidate.startsWith('/') ? candidate : `/${candidate}`
-    return `${normalizedBffBase}${suffix}`
+  function resolveAsset(path?: string | null, fallback?: string | null, preferLow = false): string {
+    const full = resolveWithFallback(path ?? '', fallback ?? '', bffBase)
+    if (!preferLow) return full
+    const low = resolveWithFallback(path ?? '', fallback ?? '', bffBase, { variant: 'low' })
+    return low || full
   }
 
   async function loadHoverImageOnce() {
@@ -486,7 +507,7 @@ const controversyText = computed(() => {
       // Prefer reasonably sized assets
       const filtered = list
         .map((r) => ({
-          url: toAbsoluteAsset(r?.imageUrl || r?.displayUrl || r?.originUrl || r?.normalizedUrl || ''),
+          url: resolveAsset(r?.imageUrl || r?.displayUrl || r?.originUrl || r?.normalizedUrl, undefined, true),
           w: Number(r?.width || r?.asset?.width || 0),
           h: Number(r?.height || r?.asset?.height || 0)
         }))

@@ -65,6 +65,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useAsyncData, useNuxtApp, useRuntimeConfig } from 'nuxt/app'
+import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
 
 const props = withDefaults(defineProps<{ dataKey?: string; initialLimit?: number }>(), {
   dataKey: 'tools-gallery',
@@ -73,21 +74,12 @@ const props = withDefaults(defineProps<{ dataKey?: string; initialLimit?: number
 
 const { $bff } = useNuxtApp()
 const runtimeConfig = useRuntimeConfig()
-const rawBffBase = (runtimeConfig?.public as any)?.bffBase ?? '/api'
-const bffBase = (() => {
-  const base = typeof rawBffBase === 'string' ? rawBffBase.trim() : '/api'
-  if (!base) return ''
-  if (base === '/') return ''
-  return base.replace(/\/+$/u, '')
-})()
+const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase)
 
 const resolveAssetPath = (path?: string | null, fallback?: string | null) => {
-  const candidate = (path ?? '') || (fallback ?? '')
-  if (!candidate) return ''
-  if (/^https?:/i.test(candidate)) return candidate
-  if (candidate.startsWith('//')) return `https:${candidate}`
-  const suffix = candidate.startsWith('/') ? candidate : `/${candidate}`
-  return `${bffBase}${suffix}`
+  const low = resolveWithFallback(path ?? '', fallback ?? '', bffBase, { variant: 'low' })
+  if (low) return low
+  return resolveWithFallback(path ?? '', fallback ?? '', bffBase)
 }
 
 const limit = ref(props.initialLimit)

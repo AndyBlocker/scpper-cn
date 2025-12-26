@@ -4,6 +4,7 @@ import { URL } from 'node:url';
 import path from 'node:path';
 import fs from 'fs-extra';
 import { imageSize } from 'image-size';
+import type { SharpOptions } from 'sharp';
 import { Pool, PoolClient } from 'pg';
 import { fetch } from 'undici';
 import mime from 'mime-types';
@@ -12,6 +13,17 @@ import { cfg } from '../config.js';
 import { log } from '../logger.js';
 
 const IMAGE_OK_STATUSES = new Set([200, 201, 202, 203, 206]);
+const LOW_VARIANT_NAME = 'low';
+const LOW_VARIANT_EXTENSION = 'webp';
+const UNSUPPORTED_VARIANT_TYPES = new Set([
+  'image/gif',
+  'image/svg+xml'
+]);
+
+type SharpFactory = (input?: Buffer | ArrayBufferView | string, options?: SharpOptions) => import('sharp').Sharp;
+
+let sharpFactory: SharpFactory | null = null;
+let sharpLoadFailed = false;
 
 type ClaimedJobRow = {
   id: number;
@@ -69,6 +81,71 @@ function pickExtension(contentType: string | null, fallbackUrl: string): string 
   const parsed = path.parse(new URLSafePath(fallbackUrl).pathname);
   if (parsed.ext) return parsed.ext.replace(/^\./, '');
   return 'bin';
+}
+
+async function loadSharp(): Promise<SharpFactory | null> {
+  if (sharpFactory) return sharpFactory;
+  if (sharpLoadFailed) return null;
+  try {
+    const mod = await import('sharp');
+    const candidate = (mod as any).default ?? mod;
+    sharpFactory = candidate as SharpFactory;
+    return sharpFactory;
+  } catch (err) {
+    sharpLoadFailed = true;
+    log.warn({ err }, 'sharp not available; skipping page image variants');
+    return null;
+  }
+}
+
+function buildVariantPath(baseRelativePath: string, variantName: string, extension: string): string {
+  const parsed = path.parse(baseRelativePath);
+  const fileName = `${parsed.name}-${variantName}.${extension}`;
+  return path.join(parsed.dir, fileName);
+}
+
+function shouldSkipVariant(contentType: string, dimensions: { width: number | null; height: number | null }): boolean {
+  const normalized = (contentType || '').toLowerCase();
+  if (UNSUPPORTED_VARIANT_TYPES.has(normalized)) return true;
+  if (dimensions.width != null && dimensions.width <= cfg.imageCache.variantMaxWidth) return true;
+  return false;
+}
+
+async function maybeGenerateVariant(
+  relativePath: string | null,
+  download: DownloadResult,
+  dimensions: { width: number | null; height: number | null }
+): Promise<string | null> {
+  if (!cfg.imageCache.variantEnabled) return null;
+  if (!relativePath) return null;
+  if (shouldSkipVariant(download.contentType, dimensions)) return null;
+
+  const variantRelativePath = buildVariantPath(relativePath, LOW_VARIANT_NAME, LOW_VARIANT_EXTENSION);
+  const absolutePath = path.join(cfg.imageCache.assetRoot, variantRelativePath);
+  if (await fs.pathExists(absolutePath)) return variantRelativePath;
+
+  const sharp = await loadSharp();
+  if (!sharp) return null;
+
+  await fs.ensureDir(path.dirname(absolutePath));
+  const tempPath = `${absolutePath}.tmp-${randomUUID()}`;
+  try {
+    await sharp(download.buffer, { failOn: 'none' })
+      .resize({
+        width: cfg.imageCache.variantMaxWidth,
+        withoutEnlargement: true,
+        fit: 'inside'
+      })
+      .toFormat(LOW_VARIANT_EXTENSION, { quality: cfg.imageCache.variantQuality })
+      .toFile(tempPath);
+
+    await fs.move(tempPath, absolutePath, { overwrite: true });
+    return variantRelativePath;
+  } catch (err) {
+    await fs.remove(tempPath).catch(() => {});
+    log.warn({ err, variant: LOW_VARIANT_NAME, imagePath: relativePath }, 'failed to generate page image variant');
+    return null;
+  }
 }
 
 class URLSafePath {
@@ -253,7 +330,8 @@ async function storeSuccess(
   hash: string,
   relativePath: string,
   download: DownloadResult,
-  dimensions: { width: number | null; height: number | null }
+  dimensions: { width: number | null; height: number | null },
+  variantRelativePath: string | null
 ) {
   const host = resolveHost(download.finalUrl) ?? 'unknown';
   const metadata = {
@@ -262,7 +340,8 @@ async function storeSuccess(
     contentType: download.contentType,
     bytes: download.buffer.length,
     width: dimensions.width,
-    height: dimensions.height
+    height: dimensions.height,
+    variantLowPath: variantRelativePath ?? undefined
   };
 
   await withClient(pool, async client => {
@@ -480,8 +559,9 @@ export class ImageCacheWorker {
           const dimensions = extractDimensions(download.buffer);
           const assetExists = await this.assetExists(hash);
           const relativePath = await storeAssetBuffer(hash, extension, download.buffer, assetExists?.storagePath ?? null);
+          const variantRelativePath = await maybeGenerateVariant(relativePath, download, dimensions);
 
-          await storeSuccess(this.pool, job, hash, relativePath, download, dimensions);
+          await storeSuccess(this.pool, job, hash, relativePath, download, dimensions, variantRelativePath);
           await wait(cfg.imageCache.fetchDelayMs);
         } catch (err) {
           const errorObject = err instanceof Error ? err : new Error('Unknown error');

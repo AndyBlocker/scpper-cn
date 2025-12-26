@@ -51,6 +51,7 @@ model UserAccount {
   gachaDismantles  GachaDismantleLog[]
   gachaLedgerEntries GachaLedgerEntry[]
   createdEvents    CalendarEvent[]
+  ftmlProjects     FtmlProject[]
 }
 
 model VerificationToken {
@@ -243,4 +244,22 @@ model CalendarEvent {
 
   @@index([isPublished, startsAt, endsAt])
   @@index([startsAt, endsAt])
+}
+
+/// FTML Project - User's FTML editing projects (like Overleaf documents)
+model FtmlProject {
+  id           String       @id @default(cuid())
+  userId       String
+  title        String       @default("未命名项目")
+  source       String       @default("")  // FTML source text
+  pageTitle    String?      // Page title for rendering
+  pageTags     String[]     @default([])  // Tags for rendering
+  settings     Json?        // Additional settings (mode, layout, includeMode, etc.)
+  isArchived   Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  user         UserAccount  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isArchived, updatedAt])
+  @@index([userId, createdAt])
 }

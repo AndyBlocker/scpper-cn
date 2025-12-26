@@ -92,6 +92,13 @@ const sections = [
         description: '绑定 Wikidot 后参与抽卡，收集页面卡片并查看图鉴与进度。',
         badge: 'Gacha',
         icon: 'Gamepad2'
+      },
+      {
+        to: '/ftml-projects',
+        title: 'FTML 编辑器',
+        description: '在线编辑和预览 FTML/Wikidot 语法。',
+        badge: 'Editor',
+        icon: 'FileCode2'
       }
     ]
   },
@@ -100,6 +107,13 @@ const sections = [
     title: '竞赛',
     caption: '了解比赛时间线、规则与参赛作品展示，持续关注创作赛事。',
     items: [
+      {
+        to: '/scpcn4k',
+        title: 'SCP-CN-4000 “难题”竞赛',
+        description: '阅读导语与规则，查看“cn4000”标签下的随机四篇与全量作品列表。',
+        badge: 'SCP-CN-4000',
+        icon: 'Key'
+      },
       {
         to: '/newbee2025',
         title: '2025“群雄逐鹿”新秀竞赛',

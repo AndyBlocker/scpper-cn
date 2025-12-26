@@ -232,38 +232,98 @@ export class UserRatingSystem {
   }
 
   /**
-   * 基于 LatestVote 视图预先计算用户投票统计
-   * - votesCast*: 用户发出的最新票数汇总
-   * - totalUp/totalDown: 用户收到的最新票数汇总
+   * 预先计算用户投票统计
+   * - votesCast*: 用户发出的票（按“页面”去重，取该用户对该页面的最后一票）
+   * - totalUp/totalDown: 用户收到的票（仍按 LatestVote + 归属聚合，保持稳定口径）
    */
   private async updateUserVoteTotals(): Promise<void> {
     console.log('🗳️ 计算用户投票汇总...');
     await this.prisma.$executeRawUnsafe(`
-      WITH votes_cast AS (
+      WITH votes_cast_raw AS (
+        -- 原始用户投票明细（包含页面维度）
         SELECT 
-          v."userId" AS "userId",
-          COUNT(*) FILTER (WHERE v.direction > 0) AS votes_cast_up,
-          COUNT(*) FILTER (WHERE v.direction < 0) AS votes_cast_down
-        FROM "LatestVote" v
+          v.id,
+          v."userId",
+          pv."pageId",
+          v.timestamp,
+          v.direction
+        FROM "Vote" v
+        JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
         WHERE v."userId" IS NOT NULL
-        GROUP BY v."userId"
       ),
-      votes_received_source AS (
-        SELECT DISTINCT
-          lv.id,
-          a."userId",
-          lv.direction
-        FROM "LatestVote" lv
-        JOIN "Attribution" a ON a."pageVerId" = lv."pageVersionId"
+      votes_cast_ranked AS (
+        -- 按 (userId, pageId) 分组取“最后一次投票”（时间倒序，ID倒序兜底）
+        SELECT 
+          r.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY r."userId", r."pageId"
+            ORDER BY r.timestamp DESC, r.id DESC
+          ) AS rn
+        FROM votes_cast_raw r
+      ),
+      votes_cast AS (
+        -- 聚合为每个用户的投出 up/down 数
+        SELECT 
+          r."userId" AS "userId",
+          COUNT(*) FILTER (WHERE r.direction > 0) AS votes_cast_up,
+          COUNT(*) FILTER (WHERE r.direction < 0) AS votes_cast_down
+        FROM votes_cast_ranked r
+        WHERE r.rn = 1
+        GROUP BY r."userId"
+      ),
+      -- 收到的票：按 (actor, page) 去重（最后一票），并在投票时间点映射到当时的归属作者
+      votes_received_raw AS (
+        SELECT 
+          v.id,
+          v.timestamp,
+          v.direction,
+          pv."pageId" AS page_id,
+          CASE
+            WHEN v."userId" IS NOT NULL THEN 'u:' || v."userId"::text
+            WHEN v."anonKey" IS NOT NULL THEN 'a:' || v."anonKey"
+            ELSE 'g:' || v.id::text
+          END AS actor_key
+        FROM "Vote" v
+        JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
+        WHERE v.direction <> 0
+      ),
+      votes_received_ranked AS (
+        SELECT 
+          r.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY r.page_id, r.actor_key
+            ORDER BY r.timestamp DESC, r.id DESC
+          ) AS rn
+        FROM votes_received_raw r
+      ),
+      latest_received AS (
+        SELECT page_id, direction
+        FROM votes_received_ranked
+        WHERE rn = 1
+      ),
+      votes_received_attrib AS (
+        SELECT 
+          a."userId" AS "userId",
+          lr.direction AS direction
+        FROM latest_received lr
+        -- 使用当前/最近版本进行作者映射（无需按投票时间点精确回溯）
+        LEFT JOIN LATERAL (
+          SELECT pv3.id
+          FROM "PageVersion" pv3
+          WHERE pv3."pageId" = lr.page_id
+          ORDER BY (pv3."validTo" IS NULL) DESC, (NOT pv3."isDeleted") DESC, pv3."validFrom" DESC NULLS LAST, pv3.id DESC
+          LIMIT 1
+        ) pv_pick ON TRUE
+        JOIN "Attribution" a ON a."pageVerId" = pv_pick.id
         WHERE a."userId" IS NOT NULL
       ),
       votes_received AS (
         SELECT 
-          vr."userId",
-          COUNT(*) FILTER (WHERE vr.direction > 0) AS votes_received_up,
-          COUNT(*) FILTER (WHERE vr.direction < 0) AS votes_received_down
-        FROM votes_received_source vr
-        GROUP BY vr."userId"
+          vra."userId",
+          COUNT(*) FILTER (WHERE vra.direction > 0) AS votes_received_up,
+          COUNT(*) FILTER (WHERE vra.direction < 0) AS votes_received_down
+        FROM votes_received_attrib vra
+        GROUP BY vra."userId"
       ),
       combined AS (
         SELECT 
@@ -308,13 +368,31 @@ export class UserRatingSystem {
     console.log('✅ 用户排名计算完成');
   }
 
+  // 允许的列名白名单（防止 SQL 注入）
+  private static readonly ALLOWED_RATING_FIELDS = new Set([
+    'overallRating', 'totalRating', 'scpRating', 'translationRating', 'goiRating',
+    'storyRating', 'wanderersRating', 'artRating'
+  ]);
+  private static readonly ALLOWED_RANK_FIELDS = new Set([
+    'overallRank', 'scpRank', 'translationRank', 'goiRank',
+    'storyRank', 'wanderersRank', 'artRank'
+  ]);
+
   /**
    * 计算特定分类的排名
    */
   private async calculateCategoryRanking(ratingField: string, rankField: string): Promise<void> {
+    // 验证列名在白名单中
+    if (!UserRatingSystem.ALLOWED_RATING_FIELDS.has(ratingField)) {
+      throw new Error(`Invalid rating field: ${ratingField}`);
+    }
+    if (!UserRatingSystem.ALLOWED_RANK_FIELDS.has(rankField)) {
+      throw new Error(`Invalid rank field: ${rankField}`);
+    }
+
     await this.prisma.$executeRawUnsafe(`
       WITH ranked_users AS (
-        SELECT 
+        SELECT
           "userId",
           "${ratingField}",
           ROW_NUMBER() OVER (ORDER BY "${ratingField}" DESC, "userId" ASC) as rank
@@ -329,8 +407,8 @@ export class UserRatingSystem {
 
     // 清除rating为0的用户的排名
     await this.prisma.$executeRawUnsafe(`
-      UPDATE "UserStats" 
-      SET "${rankField}" = NULL 
+      UPDATE "UserStats"
+      SET "${rankField}" = NULL
       WHERE "${ratingField}" <= 0
     `);
   }

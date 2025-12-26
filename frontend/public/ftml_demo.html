@@ -1,0 +1,2393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>FTML Demo · Advanced</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- CodeMirror 5 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/neo.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/mode/overlay.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/gfm/gfm.min.js"></script>
+
+  <style>
+    :root {
+      --bg-app: #0b1120;
+      --bg-elevated: #020617;
+      --bg-elevated-soft: #0f172a;
+      --bg-toolbar: rgba(15, 23, 42, 0.98);
+      --bg-pane-header: rgba(15, 23, 42, 0.98);
+      --bg-editor: #020617;
+      --bg-preview: #020617;
+      --bg-diagnostics: #0f172a;
+      --border-subtle: rgba(148, 163, 184, 0.18);
+      --border-strong: rgba(148, 163, 184, 0.35);
+      --text-main: #f1f5f9;
+      --text-soft: #94a3b8;
+      --text-softer: #64748b;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.15);
+      --accent-strong: #0ea5e9;
+      --danger: #f87171;
+      --danger-soft: rgba(248, 113, 113, 0.15);
+      --ok: #4ade80;
+      --ok-soft: rgba(74, 222, 128, 0.15);
+      --warn: #fbbf24;
+      --warn-soft: rgba(251, 191, 36, 0.15);
+      --shadow-soft: 0 20px 50px rgba(0, 0, 0, 0.4);
+      --shadow-glow: 0 0 40px rgba(56, 189, 248, 0.15);
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
+      --toolbar-height: 48px;
+      --header-height: 56px;
+      --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+      --transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body[data-theme="light"] {
+      --bg-app: #f8fafc;
+      --bg-elevated: #ffffff;
+      --bg-elevated-soft: #f1f5f9;
+      --bg-toolbar: rgba(255, 255, 255, 0.98);
+      --bg-pane-header: #f8fafc;
+      --bg-editor: #ffffff;
+      --bg-preview: #ffffff;
+      --bg-diagnostics: #f8fafc;
+      --border-subtle: rgba(148, 163, 184, 0.25);
+      --border-strong: rgba(148, 163, 184, 0.4);
+      --text-main: #0f172a;
+      --text-soft: #475569;
+      --text-softer: #64748b;
+      --accent: #0284c7;
+      --accent-soft: rgba(2, 132, 199, 0.1);
+      --accent-strong: #0369a1;
+      --danger: #dc2626;
+      --danger-soft: rgba(220, 38, 38, 0.1);
+      --ok: #16a34a;
+      --ok-soft: rgba(22, 163, 74, 0.1);
+      --warn: #d97706;
+      --warn-soft: rgba(217, 119, 6, 0.1);
+      --shadow-soft: 0 20px 50px rgba(15, 23, 42, 0.08);
+      --shadow-glow: none;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "Segoe UI", sans-serif;
+      color: var(--text-main);
+      background: linear-gradient(135deg, #0f172a 0%, #020617 50%, #0f172a 100%);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body[data-theme="light"] {
+      background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Smooth transitions for theme changes */
+    body, body * {
+      transition: background-color var(--transition-smooth),
+                  border-color var(--transition-fast),
+                  color var(--transition-fast);
+    }
+
+    /* Focus styles */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-softer);
+    }
+
+    /* Header */
+
+    .app-header {
+      height: var(--header-height);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1.25rem;
+      background: var(--bg-toolbar);
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      gap: 1rem;
+    }
+
+    .app-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      min-width: 200px;
+    }
+
+    .app-logo-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 50%, #0284c7 100%);
+      box-shadow:
+        0 0 0 2px rgba(56, 189, 248, 0.2),
+        0 4px 12px rgba(56, 189, 248, 0.4);
+      flex-shrink: 0;
+      animation: pulse-glow 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2), 0 4px 12px rgba(56, 189, 248, 0.4); }
+      50% { box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.15), 0 4px 20px rgba(56, 189, 248, 0.5); }
+    }
+
+    .app-brand-text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
+    .app-brand-title {
+      font-size: 1rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--text-main) 0%, var(--accent) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .app-brand-sub {
+      font-size: 0.7rem;
+      color: var(--text-softer);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    .app-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .app-header-hint {
+      color: var(--text-softer);
+      white-space: nowrap;
+      font-size: 0.75rem;
+      padding: 0.25rem 0.75rem;
+      background: var(--bg-elevated-soft);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .app-header-hint kbd {
+      font-family: inherit;
+      font-size: 0.7rem;
+      padding: 0.1rem 0.35rem;
+      background: var(--bg-elevated);
+      border-radius: 4px;
+      border: 1px solid var(--border-strong);
+      margin: 0 0.1rem;
+    }
+
+    /* Buttons */
+
+    button { font-family: inherit; }
+
+    .btn {
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-elevated-soft);
+      color: var(--text-main);
+      font-size: 0.8rem;
+      font-weight: 500;
+      padding: 0.4rem 0.9rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      white-space: nowrap;
+      user-select: none;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.05) 100%);
+      opacity: 0;
+      transition: opacity var(--transition-fast);
+    }
+
+    .btn:hover::before {
+      opacity: 1;
+    }
+
+    .btn:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+      box-shadow: none;
+    }
+
+    .btn.primary {
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+      color: white;
+      font-weight: 600;
+      box-shadow: 0 4px 16px rgba(56, 189, 248, 0.3);
+    }
+
+    .btn.primary:hover {
+      box-shadow: 0 6px 24px rgba(56, 189, 248, 0.45);
+      transform: translateY(-2px);
+    }
+
+    body[data-theme="light"] .btn.primary {
+      box-shadow: 0 4px 16px rgba(2, 132, 199, 0.25);
+    }
+
+    .btn.danger {
+      border-color: var(--danger);
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .btn.icon {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border-radius: var(--radius-sm);
+      font-size: 1.1rem;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* Loading state for buttons */
+    .btn.loading {
+      pointer-events: none;
+      color: transparent;
+    }
+    .btn.loading::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .chip {
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      font-size: 0.75rem;
+      font-weight: 500;
+      white-space: nowrap;
+      background: var(--bg-elevated-soft);
+      color: var(--text-soft);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all var(--transition-fast);
+    }
+
+    .chip .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    #ftml-status[data-status="idle"] {
+      border-color: var(--border-strong);
+      color: var(--text-softer);
+    }
+    #ftml-status[data-status="busy"] {
+      border-color: var(--warn);
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+    #ftml-status[data-status="busy"] .status-dot {
+      animation: pulse 1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+    #ftml-status[data-status="ok"] {
+      border-color: var(--ok);
+      background: var(--ok-soft);
+      color: var(--ok);
+    }
+    #ftml-status[data-status="error"] {
+      border-color: var(--danger);
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    /* Toggle */
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+      color: var(--text-soft);
+      padding: 0.25rem 0.5rem;
+      border-radius: var(--radius-sm);
+      transition: all var(--transition-fast);
+    }
+    .toggle:hover {
+      background: var(--accent-soft);
+      color: var(--text-main);
+    }
+    .toggle input {
+      width: 36px;
+      height: 20px;
+      border-radius: 999px;
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--border-strong);
+      position: relative;
+      outline: none;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .toggle input::before {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: white;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      transition: transform var(--transition-fast);
+    }
+    .toggle input:checked {
+      background: var(--accent);
+    }
+    .toggle input:checked::before {
+      transform: translateX(16px);
+    }
+    .toggle input:focus-visible {
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+
+    /* Toolbar */
+
+    #toolbar {
+      min-height: var(--toolbar-height);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 1.25rem;
+      background: var(--bg-elevated-soft);
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-soft);
+      font-size: 0.8rem;
+      gap: 1rem;
+      position: relative;
+      z-index: 50;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+    }
+
+    .toolbar-group.toolbar-grow {
+      flex: 1 1 480px;
+      min-width: 320px;
+    }
+
+    .toolbar-group.toolbar-right {
+      justify-content: flex-end;
+      flex: 1 1 380px;
+      gap: 0.75rem;
+    }
+
+    .toolbar-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      white-space: nowrap;
+      font-size: 0.75rem;
+      color: var(--text-softer);
+    }
+
+    .toolbar-field.toolbar-wide { flex: 1 1 200px; }
+    .toolbar-field.toolbar-mid { flex: 0 1 200px; }
+
+    .toolbar-field select,
+    .toolbar-field input {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.8rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-elevated);
+      color: var(--text-main);
+      outline: none;
+      min-width: 7rem;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      font-family: inherit;
+    }
+    .toolbar-field input {
+      cursor: text;
+      min-width: 12rem;
+      width: 100%;
+    }
+
+    .toolbar-field select:hover,
+    .toolbar-field input:hover {
+      border-color: var(--border-strong);
+    }
+
+    .toolbar-field select:focus,
+    .toolbar-field input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    .toolbar-meta {
+      font-size: 0.7rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-softer);
+      white-space: nowrap;
+      padding: 0.3rem 0.6rem;
+      background: var(--bg-elevated);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .toolbar-separator {
+      width: 1px;
+      height: 24px;
+      background: var(--border-subtle);
+      margin: 0 0.25rem;
+    }
+
+    /* Main split */
+
+    main {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      padding: 0.75rem;
+      gap: 0;
+    }
+
+    #split-root {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      background: var(--bg-elevated);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft), var(--shadow-glow);
+      border: 1px solid var(--border-subtle);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .pane {
+      flex: 0 0 50%;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-elevated);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .editor-pane {
+      border-right: 1px solid var(--border-subtle);
+    }
+    .preview-pane {
+      /* no extra border needed */
+    }
+
+    #splitter {
+      flex: 0 0 6px;
+      cursor: col-resize;
+      position: relative;
+      align-self: stretch;
+      z-index: 10;
+      background: transparent;
+    }
+
+    #splitter::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 4px;
+      height: 48px;
+      border-radius: 999px;
+      background: var(--border-strong);
+      transition: all var(--transition-fast);
+    }
+
+    #splitter:hover::before {
+      background: var(--accent);
+      height: 64px;
+      box-shadow: 0 0 12px var(--accent-soft);
+    }
+
+    body.is-resizing #splitter::before {
+      background: var(--accent-strong);
+      height: 80px;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.5);
+    }
+
+    body.is-resizing {
+      cursor: col-resize !important;
+      user-select: none !important;
+    }
+
+    body[data-ui-layout="editor-only"] .preview-pane,
+    body[data-ui-layout="editor-only"] #splitter { display: none; }
+    body[data-ui-layout="editor-only"] .editor-pane { flex: 1 1 auto; border-right: none; }
+    body[data-ui-layout="preview-only"] .editor-pane,
+    body[data-ui-layout="preview-only"] #splitter { display: none; }
+    body[data-ui-layout="preview-only"] .preview-pane { flex: 1 1 auto; }
+
+    .pane-header {
+      padding: 0.6rem 1rem;
+      background: var(--bg-pane-header);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: var(--text-soft);
+      min-height: 44px;
+    }
+    .pane-title {
+      font-weight: 600;
+      font-size: 0.85rem;
+      letter-spacing: -0.01em;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .pane-title-icon {
+      font-size: 1rem;
+      opacity: 0.7;
+    }
+    .pane-badge {
+      font-size: 0.65rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Editor */
+
+    .editor-wrap {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+
+    .CodeMirror {
+      height: 100%;
+      font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo,
+        Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      background: var(--bg-editor);
+      color: var(--text-main);
+    }
+    .CodeMirror-gutters {
+      background: var(--bg-editor);
+      border-right: 1px solid var(--border-subtle);
+      padding-right: 8px;
+    }
+    .CodeMirror-linenumber {
+      color: var(--text-softer);
+      padding: 0 8px;
+      min-width: 32px;
+    }
+    .CodeMirror-cursor {
+      border-left: 2px solid var(--accent);
+    }
+    .CodeMirror-selected {
+      background: var(--accent-soft) !important;
+    }
+    .CodeMirror-focused .CodeMirror-selected {
+      background: rgba(56, 189, 248, 0.25) !important;
+    }
+    .cm-ftml-error {
+      background: var(--danger-soft);
+      border-bottom: 2px wavy var(--danger);
+    }
+    .cm-ftml-error-line {
+      background: rgba(248, 113, 113, 0.08);
+    }
+
+    /* Preview */
+
+    #ftml-preview {
+      flex: 1;
+      padding: 0;
+      overflow: hidden;
+      background: var(--bg-preview);
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+    }
+
+    #ftml-preview iframe {
+      border: none;
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #ffffff;
+      transition: all var(--transition-smooth);
+    }
+
+    body[data-preview-device="tablet"] #ftml-preview {
+      padding: 1rem;
+      background: var(--bg-elevated-soft);
+    }
+    body[data-preview-device="tablet"] #ftml-preview iframe {
+      width: 768px;
+      max-width: 100%;
+      border-radius: var(--radius-md);
+      box-shadow: 0 0 0 1px var(--border-subtle), var(--shadow-soft);
+    }
+
+    body[data-preview-device="mobile"] #ftml-preview {
+      padding: 1rem;
+      background: var(--bg-elevated-soft);
+    }
+    body[data-preview-device="mobile"] #ftml-preview iframe {
+      width: 390px;
+      max-width: 100%;
+      border-radius: var(--radius-md);
+      box-shadow: 0 0 0 1px var(--border-subtle), var(--shadow-soft);
+    }
+
+    /* Loading placeholder */
+    #ftml-preview[data-empty="true"]::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-preview);
+      pointer-events: none;
+    }
+    #ftml-preview[data-empty="true"]::after {
+      content: "准备渲染预览...";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--text-softer);
+      font-size: 0.85rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    /* Loading spinner overlay */
+    .preview-loading {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--accent-soft);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      opacity: 0;
+      transition: opacity var(--transition-fast);
+      z-index: 10;
+    }
+    .preview-loading.active {
+      opacity: 1;
+    }
+
+    /* Diagnostics */
+
+    #ftml-diagnostics-panel {
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-diagnostics);
+      display: flex;
+      flex-direction: column;
+      flex: 0 0 auto;
+      min-height: 0;
+    }
+
+    #ftml-diagnostics-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 1rem;
+      font-size: 0.8rem;
+      color: var(--text-soft);
+      gap: 0.75rem;
+      background: var(--bg-pane-header);
+    }
+
+    .diag-header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .diag-count {
+      font-size: 0.7rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: var(--danger-soft);
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    .diag-count.ok {
+      background: var(--ok-soft);
+      color: var(--ok);
+    }
+
+    #ftml-diagnostics-toggle {
+      padding: 0.25rem 0.65rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-elevated);
+      color: var(--text-soft);
+      transition: all var(--transition-fast);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    #ftml-diagnostics-toggle:hover {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--text-main);
+    }
+
+    #ftml-diagnostics {
+      margin: 0;
+      padding: 0.75rem 1rem;
+      font-size: 0.8rem;
+      font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo,
+        Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      max-height: 200px;
+      overflow: auto;
+      color: var(--text-soft);
+    }
+
+    #ftml-diagnostics:empty::before {
+      content: "✓ 没有解析错误";
+      color: var(--ok);
+      font-family: inherit;
+    }
+
+    #ftml-diagnostics-panel.collapsed #ftml-diagnostics { display: none; }
+
+    .diag-item {
+      padding: 0.65rem 0.85rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-elevated);
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .diag-item:last-child {
+      margin-bottom: 0;
+    }
+    .diag-item:hover {
+      border-color: var(--accent);
+      transform: translateX(2px);
+      box-shadow: -2px 0 0 var(--accent);
+    }
+    .diag-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .diag-title {
+      color: var(--danger);
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+    .diag-loc {
+      color: var(--text-softer);
+      font-size: 0.7rem;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      padding: 0.15rem 0.4rem;
+      background: var(--bg-elevated-soft);
+      border-radius: 4px;
+    }
+    .diag-body {
+      margin-top: 0.4rem;
+      white-space: pre-wrap;
+      color: var(--text-soft);
+      font-size: 0.75rem;
+      line-height: 1.4;
+    }
+    .diag-note {
+      margin-top: 0.4rem;
+      color: var(--text-softer);
+      white-space: pre-wrap;
+      font-size: 0.7rem;
+      font-style: italic;
+    }
+
+    /* Toast notifications */
+    #toast-container {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      pointer-events: none;
+    }
+
+    .toast {
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius-sm);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-soft);
+      color: var(--text-main);
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      pointer-events: auto;
+      animation: toast-in 0.3s ease;
+      max-width: 360px;
+    }
+
+    .toast.toast-out {
+      animation: toast-out 0.2s ease forwards;
+    }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(1rem) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes toast-out {
+      from { opacity: 1; transform: translateY(0) scale(1); }
+      to { opacity: 0; transform: translateY(-0.5rem) scale(0.95); }
+    }
+
+    .toast-icon {
+      font-size: 1.1rem;
+      flex-shrink: 0;
+    }
+
+    .toast.success { border-color: var(--ok); }
+    .toast.success .toast-icon { color: var(--ok); }
+    .toast.error { border-color: var(--danger); }
+    .toast.error .toast-icon { color: var(--danger); }
+    .toast.warning { border-color: var(--warn); }
+    .toast.warning .toast-icon { color: var(--warn); }
+    .toast.info { border-color: var(--accent); }
+    .toast.info .toast-icon { color: var(--accent); }
+
+    /* Keyboard shortcut hint */
+    .kbd-hint {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 1.5rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      font-size: 0.75rem;
+      color: var(--text-softer);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      opacity: 0.8;
+      transition: opacity var(--transition-fast);
+    }
+    .kbd-hint:hover {
+      opacity: 1;
+    }
+    .kbd-hint kbd {
+      padding: 0.15rem 0.4rem;
+      background: var(--bg-elevated-soft);
+      border: 1px solid var(--border-strong);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.7rem;
+    }
+
+    /* Small screens */
+
+    @media (max-width: 980px) {
+      main { padding: 0.5rem; }
+      #split-root { flex-direction: column; }
+      .editor-pane, .preview-pane { flex: 1 1 auto; }
+      .editor-pane { border-right: none; border-bottom: 1px solid var(--border-subtle); }
+      #splitter {
+        flex: 0 0 8px;
+        cursor: row-resize;
+      }
+      #splitter::before {
+        width: 48px;
+        height: 4px;
+      }
+      body.is-resizing { cursor: row-resize !important; }
+      .app-header-hint { display: none; }
+      .kbd-hint { display: none; }
+      #toolbar { padding: 0.5rem 0.75rem; }
+      .toolbar-field { font-size: 0.7rem; }
+      .toolbar-field select, .toolbar-field input {
+        font-size: 0.75rem;
+        padding: 0.35rem 0.5rem;
+        min-width: 5rem;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .app-brand-sub { display: none; }
+      .toolbar-group.toolbar-grow { min-width: 100%; }
+      .toolbar-field.toolbar-wide { flex: 1 1 100%; }
+    }
+  </style>
+
+  <!-- Wikidot init scripts (page context emulation, optional for parent page UI) -->
+  <script src="https://d3g0gp89917ko0.cloudfront.net/v--7690939296dc/common--javascript/init.combined.js"></script>
+  <script>
+    (function () {
+      window.URL_DOMAIN = "wikidot.com";
+      window.URL_HOST   = "scp-wiki-cn.wikidot.com";
+      window.USE_SSL    = true;
+      window.URL_STATIC = "https://d3g0gp89917ko0.cloudfront.net/v--7690939296dc";
+
+      window.WIKIREQUEST      = window.WIKIREQUEST || {};
+      WIKIREQUEST.info        = WIKIREQUEST.info || {};
+      WIKIREQUEST.info.domain = "scp-wiki-cn.wikidot.com";
+      WIKIREQUEST.info.siteId = 530812;
+      WIKIREQUEST.info.siteUnixName = "scp-wiki-cn";
+      WIKIREQUEST.info.categoryId      = 3342264;
+      WIKIREQUEST.info.themeId         = 1;
+      WIKIREQUEST.info.requestPageName = "sandbox:demo-ftml";
+      WIKIREQUEST.info.pageUnixName    = "sandbox:demo-ftml";
+      WIKIREQUEST.info.pageId          = 0;
+      WIKIREQUEST.info.lang = "cn";
+
+      if (window.OZONE) {
+        OZONE.lang = "cn";
+        if (OZONE.request) {
+          OZONE.request.timestamp = Math.floor(Date.now() / 1000);
+          OZONE.request.date      = new Date();
+        }
+      }
+
+      window.isUAMobile = !!/Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+      try {
+        if (window.require && require.config) {
+          require.config({
+            baseUrl: window.URL_STATIC + "/common--javascript",
+            paths: { "jquery.ui": "jquery-ui.min", "jquery.form": "jquery.form" }
+          });
+        }
+      } catch (e) {
+        console.warn("[FTML PREVIEW] require.config 失败：", e);
+      }
+    })();
+  </script>
+  <script src="https://d3g0gp89917ko0.cloudfront.net/v--7690939296dc/common--javascript/WIKIDOT.combined.js"></script>
+</head>
+
+<body data-ui-layout="both" data-preview-device="desktop" data-theme="dark">
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <header class="app-header">
+    <div class="app-brand">
+      <span class="app-logo-dot"></span>
+      <span class="app-brand-text">
+        <span class="app-brand-title">FTML Demo</span>
+        <span class="app-brand-sub">Advanced Preview Engine</span>
+      </span>
+    </div>
+
+    <div class="app-header-actions">
+      <span class="app-header-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> 渲染</span>
+
+      <span id="ftml-status" class="chip" data-status="idle">
+        <span class="status-dot"></span>
+        <span class="status-text">初始化中…</span>
+      </span>
+
+      <label class="toggle" title="自动渲染（停顿后自动刷新）">
+        <input type="checkbox" id="auto-render-toggle" />
+        自动渲染
+      </label>
+
+      <button class="btn" id="btn-reset-preview" type="button" title="重置预览 iframe（清除脚本全局状态）">
+        <span>🔄</span> 重置
+      </button>
+      <button class="btn icon" id="theme-toggle" type="button" title="切换浅色/深色主题">🌙</button>
+      <button class="btn primary" id="btn-render" type="button">
+        <span>▶</span> 渲染预览
+      </button>
+    </div>
+  </header>
+
+  <section id="toolbar">
+    <div class="toolbar-group toolbar-grow">
+      <label class="toolbar-field toolbar-wide">
+        页面标题
+        <input type="text" id="page-title-input" placeholder="例如：SCP-CN-001 示例页面" />
+      </label>
+
+      <label class="toolbar-field toolbar-wide">
+        标签
+        <input type="text" id="page-tags-input" placeholder="使用空格分隔，例如：scp-cn 安全" />
+      </label>
+
+      <label class="toolbar-field">
+        模式
+        <select id="wikitext-mode">
+          <option value="page">page</option>
+          <option value="draft">draft</option>
+          <option value="forum-post">forum-post</option>
+          <option value="direct-message">direct-message</option>
+          <option value="list">list</option>
+        </select>
+      </label>
+
+      <label class="toolbar-field">
+        布局
+        <select id="wikitext-layout">
+          <option value="wikidot">wikidot</option>
+          <option value="wikijump">wikijump</option>
+        </select>
+      </label>
+
+      <label class="toolbar-field toolbar-mid" title="include 展开策略：Hybrid 会在首次出现新 include 时走网络，之后用缓存替换">
+        include
+        <select id="include-mode">
+          <option value="hybrid">Hybrid（缓存优先）</option>
+          <option value="bff">Always BFF（最准确）</option>
+          <option value="cache-only">Cache only（不走网络）</option>
+          <option value="disabled">Disabled（不展开）</option>
+        </select>
+      </label>
+
+      <button class="btn" id="btn-clear-include-cache" type="button" title="清空 include 缓存（仅本次会话）">🧹 清空 include 缓存</button>
+    </div>
+
+    <div class="toolbar-group toolbar-right">
+      <label class="toolbar-field">
+        视图
+        <select id="ui-layout-mode">
+          <option value="both">编辑 + 预览</option>
+          <option value="editor-only">仅编辑</option>
+          <option value="preview-only">仅预览</option>
+        </select>
+      </label>
+
+      <label class="toolbar-field">
+        预览宽度
+        <select id="preview-size">
+          <option value="desktop">桌面</option>
+          <option value="tablet">平板</option>
+          <option value="mobile">手机</option>
+        </select>
+      </label>
+
+      <span id="include-stats" class="toolbar-meta"></span>
+    </div>
+  </section>
+
+  <main>
+    <div id="split-root">
+      <section class="pane editor-pane">
+        <div class="pane-header">
+          <div class="pane-title">
+            <span class="pane-title-icon">📝</span>
+            源文本
+            <span class="pane-badge">FTML</span>
+          </div>
+          <span id="editor-stats" class="toolbar-meta"></span>
+        </div>
+        <div class="editor-wrap">
+          <textarea id="ftml-source" spellcheck="false"></textarea>
+        </div>
+      </section>
+
+      <div id="splitter" role="separator" aria-label="调整编辑器与预览宽度" aria-orientation="vertical"></div>
+
+      <section class="pane preview-pane">
+        <div class="pane-header">
+          <div class="pane-title">
+            <span class="pane-title-icon">👁</span>
+            预览
+          </div>
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <span id="render-summary" class="toolbar-meta"></span>
+          </div>
+        </div>
+
+        <div id="ftml-preview" data-empty="true">
+          <div class="preview-loading" id="preview-loading"></div>
+          <iframe id="ftml-preview-frame" title="FTML / SCP-CN 预览"></iframe>
+        </div>
+
+        <div id="ftml-diagnostics-panel">
+          <div id="ftml-diagnostics-header">
+            <div class="diag-header-left">
+              <span>诊断</span>
+              <span id="diag-count" class="diag-count ok">0</span>
+            </div>
+            <button id="ftml-diagnostics-toggle" type="button" aria-expanded="true">
+              <span class="toggle-icon">▼</span>
+              <span class="toggle-text">收起</span>
+            </button>
+          </div>
+          <div id="ftml-diagnostics"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Keyboard hint -->
+  <div class="kbd-hint">
+    <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 渲染 ·
+    <kbd>Ctrl</kbd>+<kbd>S</kbd> 保存
+  </div>
+
+  <script type="module">
+    // ---------------------------
+    // FTML Demo Advanced - Main
+    // ---------------------------
+
+    const DEFAULT_PAGE_META = {
+      site: "scp-wiki-cn",
+      page: "sandbox:demo-ftml",
+      title: "Demo FTML",
+      alt_title: undefined,
+      category: "sandbox",
+      language: "zh-cn",
+      score: 0,
+      tags: [],
+    };
+
+    const DEFAULT_MODE = "page";
+    const DEFAULT_LAYOUT = "wikidot";
+    const MODE_OPTIONS = ["page", "draft", "forum-post", "direct-message", "list"];
+    const LAYOUT_OPTIONS = ["wikidot", "wikijump"];
+    const UI_LAYOUT_OPTIONS = ["both", "editor-only", "preview-only"];
+    const PREVIEW_DEVICE_OPTIONS = ["desktop", "tablet", "mobile"];
+    const INCLUDE_MODE_OPTIONS = ["hybrid", "bff", "cache-only", "disabled"];
+
+    const PREFS_KEY = "ftml-demo-adv:prefs:v1";
+    const SOURCE_KEY = "ftml-demo-adv:source:v1";
+    const PAGE_META_KEY = "ftml-demo-adv:page-meta:v1";
+
+    const INCLUDE_BFF_API = "https://scpper.mer.run/api";
+    const INCLUDE_BASE_URL = "http://scp-wiki-cn.wikidot.com";
+
+    const dom = {
+      sourceEl: null,
+      previewContainer: null,
+      previewFrame: null,
+      previewLoading: null,
+      diagEl: null,
+      diagPanelEl: null,
+      diagToggleEl: null,
+      diagCountEl: null,
+      statusEl: null,
+      statusTextEl: null,
+      btnRender: null,
+      btnResetPreview: null,
+      statsEl: null,
+      includeStatsEl: null,
+      modeEl: null,
+      layoutEl: null,
+      uiLayoutEl: null,
+      previewSizeEl: null,
+      renderSummaryEl: null,
+      themeToggleEl: null,
+      pageTitleEl: null,
+      pageTagsEl: null,
+      splitRoot: null,
+      editorPane: null,
+      previewPane: null,
+      splitter: null,
+      autoRenderEl: null,
+      includeModeEl: null,
+      btnClearIncludeCache: null,
+      toastContainer: null,
+    };
+
+    // Toast notification system
+    function showToast(message, type = "info", duration = 3000) {
+      if (!dom.toastContainer) return;
+
+      const icons = {
+        success: "✓",
+        error: "✕",
+        warning: "⚠",
+        info: "ℹ"
+      };
+
+      const toast = document.createElement("div");
+      toast.className = `toast ${type}`;
+      toast.innerHTML = `
+        <span class="toast-icon">${icons[type] || icons.info}</span>
+        <span class="toast-message">${escapeHtml(message)}</span>
+      `;
+
+      dom.toastContainer.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.add("toast-out");
+        setTimeout(() => toast.remove(), 200);
+      }, duration);
+    }
+
+    let editor = null;
+    let currentErrorMarks = [];
+    let previewReady = false;
+
+    // Worker state
+    let worker = null;
+    let workerReady = false;
+    let workerVersion = null;
+    let renderSeq = 0;
+    let inflight = false;
+    let pendingRequest = null;
+    let lastResult = null;
+
+    // UI state
+    let autoTimer = null;
+    const AUTO_DEBOUNCE_MS = 350;
+
+    // Include stats (reported by worker)
+    let includeStats = { hits: 0, misses: 0, lastMode: "", lastNote: "" };
+
+    const LOG_PREFIX = "[FTML DEMO ADV]";
+
+    function log(...args) { console.log(LOG_PREFIX, ...args); }
+    function warn(...args) { console.warn(LOG_PREFIX, ...args); }
+    function errorLog(...args) { console.error(LOG_PREFIX, ...args); }
+
+    function setStatus(text, status) {
+      if (!dom.statusEl) return;
+      const suffix = workerVersion ? ` · v${workerVersion}` : "";
+      const textEl = dom.statusEl.querySelector(".status-text");
+      if (textEl) {
+        textEl.textContent = text + suffix;
+      } else {
+        dom.statusEl.textContent = text + suffix;
+      }
+      if (status) dom.statusEl.dataset.status = status;
+    }
+
+    function setPreviewLoading(loading) {
+      if (!dom.previewLoading) return;
+      dom.previewLoading.classList.toggle("active", loading);
+    }
+
+    function updateDiagCount(count) {
+      if (!dom.diagCountEl) return;
+      dom.diagCountEl.textContent = String(count);
+      dom.diagCountEl.classList.toggle("ok", count === 0);
+    }
+
+    function updateRenderSummary(text) {
+      if (!dom.renderSummaryEl) return;
+      dom.renderSummaryEl.textContent = text || "";
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function parseTagsInput(text) {
+      if (!text) return [];
+      return String(text)
+        .split(/[\s,]+/)
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+    }
+
+    function loadPreferences() {
+      const fallback = {
+        mode: DEFAULT_MODE,
+        layout: DEFAULT_LAYOUT,
+        uiLayout: "both",
+        previewDevice: "desktop",
+        theme: "dark",
+        includeMode: "hybrid",
+        autoRender: false,
+      };
+      if (typeof localStorage === "undefined") return fallback;
+      try {
+        const raw = localStorage.getItem(PREFS_KEY);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        return {
+          mode: MODE_OPTIONS.includes(parsed?.mode) ? parsed.mode : DEFAULT_MODE,
+          layout: LAYOUT_OPTIONS.includes(parsed?.layout) ? parsed.layout : DEFAULT_LAYOUT,
+          uiLayout: UI_LAYOUT_OPTIONS.includes(parsed?.uiLayout) ? parsed.uiLayout : "both",
+          previewDevice: PREVIEW_DEVICE_OPTIONS.includes(parsed?.previewDevice) ? parsed.previewDevice : "desktop",
+          theme: parsed?.theme === "light" ? "light" : "dark",
+          includeMode: INCLUDE_MODE_OPTIONS.includes(parsed?.includeMode) ? parsed.includeMode : "hybrid",
+          autoRender: !!parsed?.autoRender,
+        };
+      } catch (e) {
+        warn("读取偏好失败，使用默认值：", e);
+        return fallback;
+      }
+    }
+
+    function persistPreferences(next) {
+      if (typeof localStorage === "undefined") return;
+      try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); }
+      catch (e) { warn("保存偏好失败：", e); }
+    }
+
+    function loadInitialSource() {
+      if (typeof localStorage === "undefined") return null;
+      try {
+        const saved = localStorage.getItem(SOURCE_KEY);
+        if (typeof saved === "string" && saved.length > 0) return saved;
+      } catch (e) { warn("读取保存草稿失败：", e); }
+      return null;
+    }
+
+    function persistSource(text) {
+      if (typeof localStorage === "undefined") return;
+      try { localStorage.setItem(SOURCE_KEY, text ?? ""); }
+      catch (e) { warn("保存草稿失败：", e); }
+    }
+
+    function loadPageMeta() {
+      const fallback = { title: DEFAULT_PAGE_META.title, tags: [...(DEFAULT_PAGE_META.tags || [])] };
+      if (typeof localStorage === "undefined") return fallback;
+      try {
+        const raw = localStorage.getItem(PAGE_META_KEY);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        return {
+          title: parsed?.title || fallback.title,
+          tags: Array.isArray(parsed?.tags) ? parsed.tags : parseTagsInput(parsed?.tags),
+        };
+      } catch (e) {
+        warn("读取页面元数据失败，使用默认值：", e);
+        return fallback;
+      }
+    }
+
+    function persistPageMeta(meta) {
+      if (typeof localStorage === "undefined") return;
+      try { localStorage.setItem(PAGE_META_KEY, JSON.stringify(meta)); }
+      catch (e) { warn("保存页面元数据失败：", e); }
+    }
+
+    function getCurrentPageMeta() {
+      const titleInput = dom.pageTitleEl?.value || "";
+      const tagsInput = dom.pageTagsEl?.value || "";
+      return {
+        ...DEFAULT_PAGE_META,
+        title: titleInput.trim() || DEFAULT_PAGE_META.title,
+        tags: parseTagsInput(tagsInput),
+      };
+    }
+
+    function getSelectedMode() {
+      const mode = dom.modeEl?.value || DEFAULT_MODE;
+      return MODE_OPTIONS.includes(mode) ? mode : DEFAULT_MODE;
+    }
+    function getSelectedLayout() {
+      const layout = dom.layoutEl?.value || DEFAULT_LAYOUT;
+      return LAYOUT_OPTIONS.includes(layout) ? layout : DEFAULT_LAYOUT;
+    }
+    function getSelectedUiLayout() {
+      const v = dom.uiLayoutEl?.value || "both";
+      return UI_LAYOUT_OPTIONS.includes(v) ? v : "both";
+    }
+    function getSelectedPreviewDevice() {
+      const v = dom.previewSizeEl?.value || "desktop";
+      return PREVIEW_DEVICE_OPTIONS.includes(v) ? v : "desktop";
+    }
+    function getSelectedIncludeMode() {
+      const v = dom.includeModeEl?.value || "hybrid";
+      return INCLUDE_MODE_OPTIONS.includes(v) ? v : "hybrid";
+    }
+
+    function snapshotPreferences() {
+      return {
+        mode: getSelectedMode(),
+        layout: getSelectedLayout(),
+        uiLayout: getSelectedUiLayout(),
+        previewDevice: getSelectedPreviewDevice(),
+        theme: document.body.dataset.theme || "dark",
+        includeMode: getSelectedIncludeMode(),
+        autoRender: !!dom.autoRenderEl?.checked,
+      };
+    }
+
+    function applyUiLayout(layout) {
+      const value = UI_LAYOUT_OPTIONS.includes(layout) ? layout : "both";
+      document.body.dataset.uiLayout = value;
+      if (dom.uiLayoutEl) dom.uiLayoutEl.value = value;
+    }
+
+    function applyPreviewDevice(device) {
+      const value = PREVIEW_DEVICE_OPTIONS.includes(device) ? device : "desktop";
+      document.body.dataset.previewDevice = value;
+      if (dom.previewSizeEl) dom.previewSizeEl.value = value;
+    }
+
+    function applyTheme(theme) {
+      const t = theme === "light" ? "light" : "dark";
+      document.body.dataset.theme = t;
+      if (dom.themeToggleEl) {
+        dom.themeToggleEl.textContent = t === "dark" ? "🌙" : "☀️";
+        dom.themeToggleEl.title = t === "dark" ? "切换到浅色主题" : "切换到深色主题";
+      }
+    }
+
+    function getCurrentSource() {
+      if (editor) return editor.getValue();
+      if (dom.sourceEl) return dom.sourceEl.value ?? "";
+      return "";
+    }
+
+    function updateIncludeStatsUi() {
+      if (!dom.includeStatsEl) return;
+      const hits = includeStats?.hits ?? 0;
+      const misses = includeStats?.misses ?? 0;
+      const mode = includeStats?.lastMode || getSelectedIncludeMode();
+      const note = includeStats?.lastNote ? ` · ${includeStats.lastNote}` : "";
+      dom.includeStatsEl.textContent = `include: ${mode} · 缓存命中 ${hits} / 未命中 ${misses}${note}`;
+    }
+
+    function updateEditorStats() {
+      if (!dom.statsEl) return;
+      const text = getCurrentSource();
+      const lines = text ? text.split("\n").length : 0;
+      const chars = text.length;
+      const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+      const meta = getCurrentPageMeta();
+      const uiLayout = document.body.dataset.uiLayout || "both";
+      const previewDevice = document.body.dataset.previewDevice || "desktop";
+      const v = workerVersion ? ` · FTML v${workerVersion}` : "";
+      dom.statsEl.textContent = `${lines} 行 · ${words} 词 · ${chars} 字符 · 标签 ${meta.tags.length} · 视图 ${uiLayout}/${previewDevice}${v}`;
+    }
+
+    function clearEditorErrors() {
+      if (!editor || !currentErrorMarks.length) return;
+      for (const mark of currentErrorMarks) {
+        if (!mark) continue;
+        if (typeof mark.clear === "function") {
+          mark.clear();
+        } else if (typeof mark.line === "number" && mark.className) {
+          editor.removeLineClass(mark.line, "wrap", mark.className);
+        }
+      }
+      currentErrorMarks = [];
+    }
+
+    function highlightErrors(mappedErrors) {
+      if (!editor) return;
+      clearEditorErrors();
+      if (!Array.isArray(mappedErrors) || mappedErrors.length === 0) return;
+
+      const lineCount = editor.lineCount();
+
+      for (const e of mappedErrors) {
+        const line = (e?.loc?.line ?? 0) - 1; // 1-based to 0-based
+        const col = (e?.loc?.col ?? 1) - 1;
+        if (!Number.isFinite(line) || line < 0 || line >= lineCount) continue;
+
+        const safeLine = Math.min(Math.max(line, 0), Math.max(0, lineCount - 1));
+        const lineText = editor.getLine(safeLine) || "";
+        const safeCh = Math.min(Math.max(col, 0), lineText.length);
+
+        const from = { line: safeLine, ch: safeCh };
+        const to = { line: safeLine, ch: Math.min(safeCh + 1, lineText.length + 1) };
+
+        try {
+          const mark = editor.markText(from, to, { className: "cm-ftml-error" });
+          currentErrorMarks.push(mark);
+          editor.addLineClass(safeLine, "wrap", "cm-ftml-error-line");
+          currentErrorMarks.push({ line: safeLine, className: "cm-ftml-error-line" });
+        } catch (err) {
+          warn("标记错误失败：", err);
+        }
+      }
+    }
+
+    function renderDiagnostics(mappedErrors, noteText) {
+      if (!dom.diagEl) return;
+      dom.diagEl.innerHTML = "";
+
+      const errorCount = Array.isArray(mappedErrors) ? mappedErrors.length : 0;
+      updateDiagCount(errorCount);
+
+      if (noteText) {
+        const note = document.createElement("div");
+        note.className = "diag-note";
+        note.textContent = noteText;
+        dom.diagEl.appendChild(note);
+      }
+
+      if (errorCount === 0) {
+        return; // CSS :empty pseudo handles the "no errors" message
+      }
+
+      for (let i = 0; i < mappedErrors.length; i++) {
+        const err = mappedErrors[i] || {};
+        const item = document.createElement("div");
+        item.className = "diag-item";
+        item.dataset.line = String(err?.loc?.line ?? 1);
+        item.dataset.col = String(err?.loc?.col ?? 1);
+
+        const head = document.createElement("div");
+        head.className = "diag-head";
+
+        const title = document.createElement("div");
+        title.className = "diag-title";
+        const kind = err.kind || "UNKNOWN";
+        title.textContent = `#${i + 1} [${kind}] ${err.rule ? `(${err.rule})` : ""}`.trim();
+
+        const loc = document.createElement("div");
+        loc.className = "diag-loc";
+        const l = err?.loc?.line ?? 1;
+        const c = err?.loc?.col ?? 1;
+        loc.textContent = `行 ${l} · 列 ${c}`;
+
+        head.appendChild(title);
+        head.appendChild(loc);
+
+        const body = document.createElement("div");
+        body.className = "diag-body";
+        body.textContent = err.message || "";
+
+        item.appendChild(head);
+        item.appendChild(body);
+
+        if (err.viaInclude) {
+          const note2 = document.createElement("div");
+          note2.className = "diag-note";
+          note2.textContent = "提示：该错误来自 include 展开内容，已定位到对应 include 语句附近。";
+          item.appendChild(note2);
+        }
+
+        item.addEventListener("click", () => {
+          if (!editor) return;
+          const line = Math.max(0, (Number(item.dataset.line || "1") || 1) - 1);
+          const col  = Math.max(0, (Number(item.dataset.col || "1") || 1) - 1);
+          editor.focus();
+          editor.setCursor({ line, ch: col });
+          editor.scrollIntoView({ line, ch: col }, 80);
+        });
+
+        dom.diagEl.appendChild(item);
+      }
+    }
+
+    function setDiagnosticsCollapsed(collapsed) {
+      if (!dom.diagPanelEl) return;
+      const isCollapsed = !!collapsed;
+      dom.diagPanelEl.classList.toggle("collapsed", isCollapsed);
+      if (dom.diagToggleEl) {
+        const iconEl = dom.diagToggleEl.querySelector(".toggle-icon");
+        const textEl = dom.diagToggleEl.querySelector(".toggle-text");
+        if (iconEl) iconEl.textContent = isCollapsed ? "▶" : "▼";
+        if (textEl) textEl.textContent = isCollapsed ? "展开" : "收起";
+        dom.diagToggleEl.setAttribute("aria-expanded", String(!isCollapsed));
+      }
+    }
+
+    // -------- Preview iframe (single-init + postMessage updates) --------
+
+    function buildPreviewSkeletonHtml() {
+      // Only loaded once into the iframe; subsequent updates use postMessage to replace #page-content.
+      const CLOUDFRONT_REV = "v--edac79f846ba";
+      return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>FTML 预览</title>
+  <meta http-equiv="content-language" content="zh,zh-cn" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="shortcut icon" href="https://scp-wiki-cn.wikidot.com/local--favicon/favicon.gif" />
+  <link rel="icon" type="image/gif" href="https://scp-wiki-cn.wikidot.com/local--favicon/favicon.gif" />
+
+  <link rel="stylesheet" href="https://d3g0gp89917ko0.cloudfront.net/${CLOUDFRONT_REV}/common--theme/base/css/style.css" />
+  <link rel="stylesheet" href="https://d3g0gp89917ko0.cloudfront.net/${CLOUDFRONT_REV}/common--modules/css/pagerate/PageRateWidgetModule.css" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/scp-cn-tech/sigma9@cn/fonts/font-bauhaus.css" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/earlyaccess/nanumgothic.css" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/earlyaccess/nanumgothiccoding.css" />
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/scp-cn-tech/sigma9@cn/modules/colstyle.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/scp-cn-tech/sigma9@cn/cn/sigma9_ch.min.css" />
+  <link rel="stylesheet" href="https://scp-wiki.wdfiles.com/local--code/info%3Astyle/1" />
+
+  <style>
+    body { margin: 0; padding: 0; background: #ffffff; }
+    #container-wrap { max-width: none; }
+    #content { max-width: none; width: 100%; margin: 0; }
+    #side-bar { display: none !important; }
+    #main-content { margin-left: 0 !important; padding: 1em 1.5em; min-height: 100vh; }
+    #page-title { margin-top: 0.5em; }
+    .ftml-error {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      color: #b91c1c;
+      background: #fee2e2;
+      padding: 0.55rem 0.7rem;
+      border-radius: 5px;
+      border: 1px solid #fecaca;
+      white-space: pre-wrap;
+    }
+    .ftml-preview-note {
+      display: inline-block;
+      margin-left: .5em;
+      padding: 0 .4em;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #4b5563;
+      background: #e5e7eb;
+      vertical-align: baseline;
+    }
+    .ftml-preview-disabled { opacity: 0.7; pointer-events: none; }
+    .wj-collapsible summary { list-style: none; cursor: pointer; user-select: none; }
+    .wj-collapsible .wj-collapsible-hide-text { display: none; }
+    .wj-collapsible[open] .wj-collapsible-show-text { display: none; }
+    .wj-collapsible[open] .wj-collapsible-hide-text { display: inline; }
+  </style>
+</head>
+<body>
+  <div id="container-wrap">
+    <div id="header">
+      <h1 id="header-title"><a href="#">SCP 基金会</a></h1>
+      <h2 id="header-subtitle">Secure, Contain, Protect</h2>
+    </div>
+    <div id="content-wrap">
+      <div id="content">
+        <div id="main-content">
+          <div id="page-title">FTML 预览</div>
+          <div id="page-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      function forEachNode(list, cb) {
+        if (!list) return;
+        Array.prototype.forEach.call(list, cb);
+      }
+
+      function runScripts(container) {
+        if (!container) return;
+        var scripts = container.querySelectorAll("script");
+        forEachNode(scripts, function(oldScript) {
+          var s = document.createElement("script");
+          // copy attributes
+          forEachNode(oldScript.attributes, function(attr) {
+            s.setAttribute(attr.name, attr.value);
+          });
+          s.text = oldScript.textContent || "";
+          oldScript.parentNode.replaceChild(s, oldScript);
+        });
+      }
+
+      function setupPreviewInteractions() {
+        var pageContent = document.getElementById("page-content");
+        if (!pageContent) return;
+
+        // open links in new tab
+        var links = pageContent.querySelectorAll("a[href]");
+        forEachNode(links, function(a) {
+          var href = a.getAttribute("href") || "";
+          if (href.charAt(0) === "#") return;
+          if (href.toLowerCase().startsWith("javascript:")) return;
+          if (a.getAttribute("target")) return;
+          a.setAttribute("target", "_blank");
+          a.setAttribute("rel", "noreferrer noopener");
+        });
+
+        // disable rating widgets in preview
+        var rateBoxes = document.querySelectorAll(".page-rate-widget-box, #page-rating");
+        forEachNode(rateBoxes, function(box) {
+          if (box.classList.contains("ftml-preview-annotated")) return;
+          box.classList.add("ftml-preview-disabled", "ftml-preview-annotated");
+          var note = document.createElement("span");
+          note.className = "ftml-preview-note";
+          note.textContent = "预览中不可投票";
+          box.appendChild(note);
+        });
+
+        // minimal tabview binding
+        var tabviews = document.querySelectorAll(".wj-tabview");
+        forEachNode(tabviews, function(tv) {
+          if (tv.__ftmlPreviewBound) return;
+          tv.__ftmlPreviewBound = true;
+
+          var tabs = tv.querySelectorAll(".wj-tabview-tab");
+          var panels = tv.querySelectorAll(".wj-tabview-panel");
+
+          function activate(idx) {
+            forEachNode(tabs, function(t, i) {
+              if (i === idx) {
+                t.classList.add("is-active");
+                t.setAttribute("aria-selected", "true");
+              } else {
+                t.classList.remove("is-active");
+                t.setAttribute("aria-selected", "false");
+              }
+            });
+            forEachNode(panels, function(p, i) { p.hidden = i !== idx; });
+          }
+
+          forEachNode(tabs, function(tab, idx) {
+            tab.addEventListener("click", function(ev) {
+              ev.preventDefault();
+              activate(idx);
+            });
+          });
+
+          if (tabs.length && panels.length) activate(0);
+        });
+
+        // simple toggle buttons: data-ftml-toggle-target="id"
+        var toggles = document.querySelectorAll("[data-ftml-toggle-target]");
+        forEachNode(toggles, function(btn) {
+          if (btn.__ftmlPreviewBound) return;
+          btn.__ftmlPreviewBound = true;
+          btn.addEventListener("click", function(ev) {
+            ev.preventDefault();
+            var id = btn.getAttribute("data-ftml-toggle-target");
+            if (!id) return;
+            var target = document.getElementById(id);
+            if (!target) return;
+            var hidden = target.hasAttribute("hidden");
+            if (hidden) target.removeAttribute("hidden");
+            else target.setAttribute("hidden", "");
+          });
+        });
+
+        // fix protocol-relative iframes
+        forEachNode(pageContent.querySelectorAll('iframe[src^="//"]'), function(iframe) {
+          var raw = iframe.getAttribute("src");
+          iframe.setAttribute("src", window.location.protocol + raw);
+        });
+      }
+
+      function applyUpdate(msg) {
+        var title = (msg && msg.title) ? String(msg.title) : "FTML 预览";
+        var html = (msg && msg.html) ? String(msg.html) : "";
+        var pageTitleEl = document.getElementById("page-title");
+        var pageContentEl = document.getElementById("page-content");
+        if (pageTitleEl) pageTitleEl.textContent = title;
+        if (pageContentEl) {
+          pageContentEl.innerHTML = html;
+          runScripts(pageContentEl);
+        }
+        setupPreviewInteractions();
+      }
+
+      window.addEventListener("message", function(ev) {
+        var msg = ev && ev.data;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "ftml-update") {
+          applyUpdate(msg);
+        } else if (msg.type === "ftml-reset") {
+          // no-op for now; main page will reload iframe
+        }
+      });
+
+      // expose for debugging
+      window.__ftmlApplyUpdate = applyUpdate;
+
+      // initial content
+      setupPreviewInteractions();
+    })();
+  <\/script>
+</body>
+</html>`;
+    }
+
+    function ensurePreviewIframe() {
+      if (!dom.previewFrame || !dom.previewContainer) return;
+      if (previewReady) return;
+      dom.previewContainer.setAttribute("data-empty", "false");
+      dom.previewFrame.srcdoc = buildPreviewSkeletonHtml();
+      previewReady = true;
+    }
+
+    function resetPreviewIframe() {
+      previewReady = false;
+      if (!dom.previewFrame || !dom.previewContainer) return;
+      dom.previewContainer.setAttribute("data-empty", "false");
+      dom.previewFrame.srcdoc = buildPreviewSkeletonHtml();
+      previewReady = true;
+    }
+
+    function updatePreview(title, html) {
+      ensurePreviewIframe();
+      if (!dom.previewFrame?.contentWindow) {
+        // fallback: rewrite srcdoc with minimal error
+        dom.previewFrame.srcdoc = buildPreviewSkeletonHtml();
+      }
+      try {
+        dom.previewFrame.contentWindow.postMessage({ type: "ftml-update", title, html }, "*");
+      } catch (e) {
+        warn("postMessage 到预览 iframe 失败，尝试重置 iframe：", e);
+        resetPreviewIframe();
+        try {
+          dom.previewFrame.contentWindow.postMessage({ type: "ftml-update", title, html }, "*");
+        } catch (e2) {
+          errorLog("二次 postMessage 失败：", e2);
+        }
+      }
+    }
+
+    // -------- Splitter --------
+
+    function initSplitter() {
+      if (!dom.splitRoot || !dom.splitter || !dom.editorPane || !dom.previewPane) return;
+      let dragging = false;
+      let vertical = true;
+
+      function updateOrientation() { vertical = window.innerWidth > 980; }
+      updateOrientation();
+      window.addEventListener("resize", updateOrientation);
+
+      function onMouseDown(ev) {
+        if (ev.button !== 0) return;
+        dragging = true;
+        document.body.classList.add("is-resizing");
+        ev.preventDefault();
+      }
+
+      function onMouseMove(ev) {
+        if (!dragging) return;
+        const rect = dom.splitRoot.getBoundingClientRect();
+        if (vertical) {
+          const offsetX = ev.clientX - rect.left;
+          const percent = (offsetX / rect.width) * 100;
+          const clamped = Math.min(82, Math.max(18, percent));
+          dom.editorPane.style.flexBasis = clamped + "%";
+          dom.previewPane.style.flexBasis = (100 - clamped) + "%";
+        } else {
+          const offsetY = ev.clientY - rect.top;
+          const percent = (offsetY / rect.height) * 100;
+          const clamped = Math.min(82, Math.max(18, percent));
+          dom.editorPane.style.flexBasis = clamped + "%";
+          dom.previewPane.style.flexBasis = (100 - clamped) + "%";
+        }
+      }
+
+      function onMouseUp() {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove("is-resizing");
+        persistPreferences(snapshotPreferences());
+      }
+
+      dom.splitter.addEventListener("mousedown", onMouseDown);
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+
+      dom.splitter.addEventListener("dblclick", () => {
+        dom.editorPane.style.flexBasis = "50%";
+        dom.previewPane.style.flexBasis = "50%";
+        persistPreferences(snapshotPreferences());
+      });
+    }
+
+    // -------- Worker --------
+
+    function ensureWorker() {
+      if (worker) return worker;
+      try {
+        worker = new Worker("./ftml-worker.js", { type: "module" });
+      } catch (e) {
+        errorLog("创建 Web Worker 失败。请确认：1) 用 HTTP(S) 服务器访问（不要 file://）；2) 浏览器支持 module worker；3) ftml-worker.js 在同目录。", e);
+        worker = null;
+        return null;
+      }
+
+      worker.addEventListener("message", (ev) => {
+        const msg = ev.data || {};
+        if (msg.type === "worker-ready") {
+          workerReady = true;
+          workerVersion = msg.version || null;
+          setStatus("Worker 就绪", "ok");
+          updateEditorStats();
+          return;
+        }
+        if (msg.type === "include-cache-cleared") {
+          includeStats.lastNote = "已清空缓存";
+          includeStats.hits = 0;
+          includeStats.misses = 0;
+          updateIncludeStatsUi();
+          return;
+        }
+        if (msg.type === "render-result") {
+          inflight = false;
+          setPreviewLoading(false);
+          if (dom.btnRender) dom.btnRender.classList.remove("loading");
+
+          const seq = msg.seq || 0;
+          if (seq !== renderSeq) {
+            // stale result
+            if (pendingRequest) {
+              const next = pendingRequest;
+              pendingRequest = null;
+              requestRender(next.trigger, next.reason);
+            }
+            return;
+          }
+
+          lastResult = msg;
+          includeStats = msg.includeStats || includeStats;
+          updateIncludeStatsUi();
+
+          const meta = getCurrentPageMeta();
+          const pageTitle = meta.title || "FTML 预览";
+
+          if (!msg.ok) {
+            setStatus("渲染失败", "error");
+            const errText = msg.error || "Unknown error";
+            updatePreview(pageTitle, `<pre class="ftml-error">${escapeHtml(errText)}</pre>`);
+            renderDiagnostics([], errText);
+            updateRenderSummary("渲染失败");
+            showToast("渲染失败: " + errText.slice(0, 50), "error");
+          } else {
+            setStatus("就绪", "ok");
+            updatePreview(pageTitle, msg.html || "");
+            const timings = msg.timings || {};
+            const parts = [];
+            if (timings.include != null) parts.push(`include ${Number(timings.include).toFixed(0)}ms`);
+            if (timings.preprocess != null) parts.push(`预处理 ${Number(timings.preprocess).toFixed(0)}ms`);
+            if (timings.tokenize != null) parts.push(`分词 ${Number(timings.tokenize).toFixed(0)}ms`);
+            if (timings.parse != null) parts.push(`解析 ${Number(timings.parse).toFixed(0)}ms`);
+            if (timings.render != null) parts.push(`渲染 ${Number(timings.render).toFixed(0)}ms`);
+            if (timings.total != null) parts.push(`总计 ${Number(timings.total).toFixed(0)}ms`);
+            updateRenderSummary(parts.join(" · "));
+
+            const mappedErrors = Array.isArray(msg.errors) ? msg.errors : [];
+            highlightErrors(mappedErrors);
+            renderDiagnostics(mappedErrors, msg.noteText || "");
+          }
+
+          if (pendingRequest) {
+            const next = pendingRequest;
+            pendingRequest = null;
+            requestRender(next.trigger, next.reason);
+          }
+        }
+      });
+
+      worker.addEventListener("error", (ev) => {
+        errorLog("Worker 抛出错误：", ev);
+        setStatus("Worker 错误", "error");
+      });
+
+      // kick init
+      worker.postMessage({ type: "init" });
+      setStatus("启动 Worker…", "busy");
+      return worker;
+    }
+
+    function requestRender(trigger = "manual", reason = "") {
+      const w = ensureWorker();
+      if (!w) return;
+
+      if (!workerReady) {
+        setStatus("Worker 初始化中…", "busy");
+      }
+
+      const source = getCurrentSource();
+      const mode = getSelectedMode();
+      const layout = getSelectedLayout();
+      const includeMode = getSelectedIncludeMode();
+      const pageMeta = getCurrentPageMeta();
+
+      // Coalesce renders: if a render is inflight, keep only the latest request.
+      if (inflight) {
+        pendingRequest = { trigger, reason };
+        return;
+      }
+
+      inflight = true;
+      renderSeq += 1;
+
+      clearEditorErrors();
+      updateRenderSummary(reason || "渲染中…");
+      setStatus("渲染中", "busy");
+      setPreviewLoading(true);
+      if (dom.btnRender) dom.btnRender.classList.add("loading");
+
+      w.postMessage({
+        type: "render",
+        seq: renderSeq,
+        trigger,
+        source,
+        mode,
+        layout,
+        includeMode,
+        includeApi: INCLUDE_BFF_API,
+        includeBaseUrl: INCLUDE_BASE_URL,
+        pageMeta,
+      });
+    }
+
+    function scheduleAutoRender() {
+      if (!dom.autoRenderEl?.checked) return;
+      if (autoTimer) clearTimeout(autoTimer);
+      autoTimer = setTimeout(() => {
+        requestRender("auto", "自动渲染…");
+      }, AUTO_DEBOUNCE_MS);
+    }
+
+    // -------- App init --------
+
+    window.addEventListener("DOMContentLoaded", () => {
+      // DOM references
+      dom.sourceEl = document.getElementById("ftml-source");
+      dom.previewContainer = document.getElementById("ftml-preview");
+      dom.previewFrame = document.getElementById("ftml-preview-frame");
+      dom.previewLoading = document.getElementById("preview-loading");
+      dom.diagEl = document.getElementById("ftml-diagnostics");
+      dom.diagPanelEl = document.getElementById("ftml-diagnostics-panel");
+      dom.diagToggleEl = document.getElementById("ftml-diagnostics-toggle");
+      dom.diagCountEl = document.getElementById("diag-count");
+      dom.statusEl = document.getElementById("ftml-status");
+      dom.btnRender = document.getElementById("btn-render");
+      dom.btnResetPreview = document.getElementById("btn-reset-preview");
+      dom.statsEl = document.getElementById("editor-stats");
+      dom.includeStatsEl = document.getElementById("include-stats");
+      dom.modeEl = document.getElementById("wikitext-mode");
+      dom.layoutEl = document.getElementById("wikitext-layout");
+      dom.uiLayoutEl = document.getElementById("ui-layout-mode");
+      dom.previewSizeEl = document.getElementById("preview-size");
+      dom.renderSummaryEl = document.getElementById("render-summary");
+      dom.pageTitleEl = document.getElementById("page-title-input");
+      dom.pageTagsEl = document.getElementById("page-tags-input");
+      dom.themeToggleEl = document.getElementById("theme-toggle");
+      dom.splitRoot = document.getElementById("split-root");
+      dom.editorPane = document.querySelector(".editor-pane");
+      dom.previewPane = document.querySelector(".preview-pane");
+      dom.splitter = document.getElementById("splitter");
+      dom.autoRenderEl = document.getElementById("auto-render-toggle");
+      dom.includeModeEl = document.getElementById("include-mode");
+      dom.btnClearIncludeCache = document.getElementById("btn-clear-include-cache");
+      dom.toastContainer = document.getElementById("toast-container");
+
+      const prefs = loadPreferences();
+
+      if (dom.modeEl) dom.modeEl.value = MODE_OPTIONS.includes(prefs.mode) ? prefs.mode : DEFAULT_MODE;
+      if (dom.layoutEl) dom.layoutEl.value = LAYOUT_OPTIONS.includes(prefs.layout) ? prefs.layout : DEFAULT_LAYOUT;
+      applyUiLayout(prefs.uiLayout);
+      applyPreviewDevice(prefs.previewDevice);
+      applyTheme(prefs.theme);
+      if (dom.includeModeEl) dom.includeModeEl.value = INCLUDE_MODE_OPTIONS.includes(prefs.includeMode) ? prefs.includeMode : "hybrid";
+      if (dom.autoRenderEl) dom.autoRenderEl.checked = !!prefs.autoRender;
+
+      const savedMeta = loadPageMeta();
+      if (dom.pageTitleEl) {
+        dom.pageTitleEl.value = savedMeta.title || "";
+        dom.pageTitleEl.addEventListener("input", () => {
+          persistPageMeta(getCurrentPageMeta());
+          updateEditorStats();
+          scheduleAutoRender();
+        });
+      }
+      if (dom.pageTagsEl) {
+        dom.pageTagsEl.value = (savedMeta.tags || []).join(" ");
+        dom.pageTagsEl.addEventListener("input", () => {
+          persistPageMeta(getCurrentPageMeta());
+          updateEditorStats();
+          scheduleAutoRender();
+        });
+      }
+
+      if (dom.themeToggleEl) {
+        dom.themeToggleEl.addEventListener("click", () => {
+          const next = document.body.dataset.theme === "dark" ? "light" : "dark";
+          applyTheme(next);
+          persistPreferences(snapshotPreferences());
+        });
+      }
+
+      if (dom.diagToggleEl && dom.diagPanelEl) {
+        dom.diagToggleEl.addEventListener("click", () => {
+          const next = !dom.diagPanelEl.classList.contains("collapsed");
+          setDiagnosticsCollapsed(next);
+        });
+        setDiagnosticsCollapsed(false);
+      }
+
+      if (dom.btnResetPreview) {
+        dom.btnResetPreview.addEventListener("click", () => {
+          resetPreviewIframe();
+          // redraw last result if exists
+          if (lastResult?.ok) {
+            const meta = getCurrentPageMeta();
+            updatePreview(meta.title || "FTML 预览", lastResult.html || "");
+          }
+        });
+      }
+
+      if (dom.btnClearIncludeCache) {
+        dom.btnClearIncludeCache.addEventListener("click", () => {
+          const w = ensureWorker();
+          if (!w) return;
+          w.postMessage({ type: "clear-include-cache" });
+        });
+      }
+
+      // init editor
+      if (dom.sourceEl) {
+        const saved = loadInitialSource();
+        if (saved != null) {
+          dom.sourceEl.value = saved;
+        } else {
+          dom.sourceEl.value = [
+            "++ 示例",
+            "",
+            "[[module CSS]]",
+            "/* 在这里写自定义 CSS，会影响下方 [[html]] 中的内容 */",
+            ".demo-box {",
+            "  border: 1px solid #888;",
+            "  padding: 0.5em;",
+            "  background: #f5f5f5;",
+            "}",
+            "[[/module]]",
+            "",
+            "[[html]]",
+            '<div class="demo-box">',
+            "  <strong>这里是 [[html]] 模块渲染结果。</strong><br />",
+            "  你可以在左侧编辑 FTML / Wikidot 文本，然后点上方“渲染预览”。",
+            "</div>",
+            "[[/html]]",
+            "",
+            "----",
+            "",
+            "普通 Wikidot 语法也应当正常工作：",
+            "",
+            "* 这是一个列表项",
+            "* **加粗文本** / //斜体文本// / __下划线__",
+            "",
+            "> 这是一个引用块。",
+            "",
+            "另外也可以试试 SCP Wiki 风格的东西，例如：",
+            "",
+            "||~ 项目编号 || SCP-CN-000 ||",
+            "||~ 项目等级 || Safe ||",
+            "",
+            "当然，和 Wikidot 本身完全一致还需要更多工作，这里只是 FTML 视角的一个预览。",
+            "",
+          ].join("\n");
+        }
+
+        editor = CodeMirror.fromTextArea(dom.sourceEl, {
+          lineNumbers: true,
+          lineWrapping: true,
+          mode: "gfm",
+          theme: "neo",
+          indentUnit: 2,
+          tabSize: 2,
+        });
+
+        editor.on("change", () => {
+          updateEditorStats();
+          persistSource(editor.getValue());
+          scheduleAutoRender();
+        });
+
+        editor.on("keydown", (cm, ev) => {
+          if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+            ev.preventDefault();
+            requestRender("manual", "手动渲染…");
+          }
+          // Ctrl/Cmd + S to save (prevent browser save dialog)
+          if (ev.key === "s" && (ev.ctrlKey || ev.metaKey)) {
+            ev.preventDefault();
+            persistSource(editor.getValue());
+            showToast("草稿已保存", "success", 2000);
+          }
+        });
+      }
+
+      // Global keyboard shortcuts
+      document.addEventListener("keydown", (ev) => {
+        // Ctrl/Cmd + Enter to render (when not in editor)
+        if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+          if (document.activeElement !== editor?.getInputField()) {
+            ev.preventDefault();
+            requestRender("manual", "手动渲染…");
+          }
+        }
+        // Ctrl/Cmd + \ to toggle theme
+        if (ev.key === "\\" && (ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault();
+          const next = document.body.dataset.theme === "dark" ? "light" : "dark";
+          applyTheme(next);
+          persistPreferences(snapshotPreferences());
+          showToast(`已切换到${next === "dark" ? "深色" : "浅色"}主题`, "info", 2000);
+        }
+      });
+
+      if (dom.btnRender) {
+        dom.btnRender.addEventListener("click", () => requestRender("manual", "手动渲染…"));
+      }
+
+      if (dom.autoRenderEl) {
+        dom.autoRenderEl.addEventListener("change", () => {
+          persistPreferences(snapshotPreferences());
+          if (dom.autoRenderEl.checked) scheduleAutoRender();
+        });
+      }
+
+      if (dom.modeEl) {
+        dom.modeEl.addEventListener("change", () => {
+          persistPreferences(snapshotPreferences());
+          updateEditorStats();
+          requestRender("settings", "设置变更，渲染中…");
+        });
+      }
+      if (dom.layoutEl) {
+        dom.layoutEl.addEventListener("change", () => {
+          persistPreferences(snapshotPreferences());
+          updateEditorStats();
+          requestRender("settings", "设置变更，渲染中…");
+        });
+      }
+      if (dom.includeModeEl) {
+        dom.includeModeEl.addEventListener("change", () => {
+          persistPreferences(snapshotPreferences());
+          updateIncludeStatsUi();
+          requestRender("settings", "include 策略变更，渲染中…");
+        });
+      }
+
+      if (dom.uiLayoutEl) {
+        dom.uiLayoutEl.addEventListener("change", () => {
+          applyUiLayout(getSelectedUiLayout());
+          persistPreferences(snapshotPreferences());
+          updateEditorStats();
+        });
+      }
+
+      if (dom.previewSizeEl) {
+        dom.previewSizeEl.addEventListener("change", () => {
+          applyPreviewDevice(getSelectedPreviewDevice());
+          persistPreferences(snapshotPreferences());
+          updateEditorStats();
+        });
+      }
+
+      updateEditorStats();
+      updateIncludeStatsUi();
+      initSplitter();
+
+      // init preview & worker and first render
+      ensurePreviewIframe();
+      ensureWorker();
+      requestRender("init", "首次渲染…");
+    });
+  </script>
+</body>
+</html>

@@ -10,6 +10,14 @@ const normalizedRoot = PAGE_IMAGE_ROOT.endsWith(path.sep)
   : `${PAGE_IMAGE_ROOT}${path.sep}`;
 
 const IMAGE_STREAM_CACHE_HEADER = 'public, max-age=86400, immutable';
+const LOW_VARIANT_NAME = 'low';
+const VARIANT_EXTENSION = 'webp';
+
+const buildVariantPath = (storagePath: string, variantName: string): string => {
+  const parsed = path.parse(storagePath);
+  const fileName = `${parsed.name}-${variantName}.${VARIANT_EXTENSION}`;
+  return path.join(parsed.dir, fileName);
+};
 
 export function pageImagesRouter(pool: Pool) {
   const router = Router();
@@ -106,27 +114,57 @@ export function pageImagesRouter(pool: Pool) {
       }
 
       const asset = rows[0];
+      const requestedVariant = String(req.query.variant ?? '').trim().toLowerCase();
       if (!asset.storagePath) {
         return res.status(404).json({ error: 'not_found' });
       }
 
-      const absolutePath = path.resolve(PAGE_IMAGE_ROOT, asset.storagePath);
-      const withinRoot = absolutePath === PAGE_IMAGE_ROOT || absolutePath.startsWith(normalizedRoot);
-      if (!withinRoot) {
-        return res.status(400).json({ error: 'invalid_storage_path' });
+      const isWithinRoot = (candidate: string) => candidate === PAGE_IMAGE_ROOT || candidate.startsWith(normalizedRoot);
+      let relativePath: string = asset.storagePath;
+      let absolutePath: string | null = null;
+      let stats;
+
+      if (requestedVariant === LOW_VARIANT_NAME) {
+        const variantRelativePath = buildVariantPath(asset.storagePath, LOW_VARIANT_NAME);
+        const variantAbsolutePath = path.resolve(PAGE_IMAGE_ROOT, variantRelativePath);
+        if (isWithinRoot(variantAbsolutePath)) {
+          try {
+            stats = await fs.stat(variantAbsolutePath);
+            relativePath = variantRelativePath;
+            absolutePath = variantAbsolutePath;
+          } catch {
+            // fall back to the original asset below
+          }
+        }
       }
 
-      let stats;
-      try {
-        stats = await fs.stat(absolutePath);
-      } catch {
+      if (!absolutePath) {
+        const candidateAbsolute = path.resolve(PAGE_IMAGE_ROOT, asset.storagePath);
+        if (!isWithinRoot(candidateAbsolute)) {
+          return res.status(400).json({ error: 'invalid_storage_path' });
+        }
+        try {
+          stats = await fs.stat(candidateAbsolute);
+          absolutePath = candidateAbsolute;
+        } catch {
+          return res.status(404).json({ error: 'not_found' });
+        }
+      }
+
+      if (!absolutePath) {
+        return res.status(500).json({ error: 'invalid_storage_path' });
+      }
+
+      const responseMime = relativePath === asset.storagePath
+        ? (asset.mimeType || 'application/octet-stream')
+        : `image/${VARIANT_EXTENSION}`;
+
+      if (!stats) {
         return res.status(404).json({ error: 'not_found' });
       }
 
-      res.setHeader('Content-Type', asset.mimeType || 'application/octet-stream');
-      if (asset.bytes) {
-        res.setHeader('Content-Length', String(asset.bytes));
-      } else if (stats?.size) {
+      res.setHeader('Content-Type', responseMime);
+      if (stats?.size) {
         res.setHeader('Content-Length', String(stats.size));
       }
       res.setHeader('Cache-Control', IMAGE_STREAM_CACHE_HEADER);

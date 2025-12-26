@@ -63,7 +63,9 @@
           </p>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6513052" :display-name="'14#7_MonochromeMix'" bare />
-            ：来玩《Ghostpia》吧！ -- 2025.10.24
+            ：来玩
+            <a href="https://ghostpia.xyz/zh_cn" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">《Ghostpia》</a>
+            吧！ -- 2025.10.24
           </p>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！

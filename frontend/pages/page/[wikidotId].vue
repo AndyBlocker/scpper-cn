@@ -54,8 +54,8 @@
             </span>
           </a>
           <CollectionPicker
-            v-if="page?.id"
-            :page-id="page.id"
+            v-if="page?.pageId"
+            :page-id="page.pageId"
             :page-wikidot-id="page?.wikidotId ?? null"
             :page-title="pageDisplayTitle"
           />
@@ -557,6 +557,7 @@
             >
               <img
                 :src="img.imageSrc"
+                :srcset="img.imageSrcFull && img.imageSrc ? `${img.imageSrc} 1x, ${img.imageSrcFull} 2x` : undefined"
                 :alt="img.label || pageDisplayTitle"
                 loading="lazy"
                 class="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
@@ -792,6 +793,7 @@ import { useAuth } from '~/composables/useAuth'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { formatDateUtc8, formatDateIsoUtc8, diffUtc8CalendarDays } from '~/utils/timezone'
 import CollectionPicker from '~/components/collections/CollectionPicker.vue'
+import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
 
 // Nuxt auto imports for type checker
 declare const useAsyncData: any
@@ -819,24 +821,13 @@ const viewerLinkedId = computed(() => {
 })
 
 
-const rawBffBase = (runtimeConfig?.public as any)?.bffBase ?? '/api';
-const normalizedBffBase = (() => {
-  const base = typeof rawBffBase === 'string' ? rawBffBase.trim() : '/api';
-  if (!base) return '';
-  if (base === '/') return '';
-  return base.replace(/\/+$/u, '');
-})();
+const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase);
 
-const resolveAssetPath = (path?: string | null, fallback?: string | null) => {
-  const primary = path ?? '';
-  const fallbackUrl = fallback ?? '';
-  const candidate = primary || fallbackUrl;
-  if (!candidate) return '';
-  if (/^https?:/i.test(candidate)) return candidate;
-  if (candidate.startsWith('//')) return `https:${candidate}`;
-  const prefix = normalizedBffBase;
-  const suffix = candidate.startsWith('/') ? candidate : `/${candidate}`;
-  return `${prefix}${suffix}`;
+const resolveAssetPath = (path?: string | null, fallback?: string | null, preferLow = false) => {
+  const full = resolveWithFallback(path ?? '', fallback ?? '', bffBase);
+  if (!preferLow) return full;
+  const low = resolveWithFallback(path ?? '', fallback ?? '', bffBase, { variant: 'low' });
+  return low || full;
 };
 
 definePageMeta({ key: (route:any) => route.fullPath })
@@ -909,7 +900,9 @@ const pageImages = computed(() => {
         label = label.replace(/^https?:\/\//i, '')
       }
     }
-    const imageSrc = resolveAssetPath(img.imageUrl, labelSource)
+    const fullSrc = resolveAssetPath(img.imageUrl, labelSource)
+    const lowSrc = resolveAssetPath(img.imageUrl, labelSource, true)
+    const imageSrc = lowSrc || fullSrc
     if (!imageSrc) return null
 
     return {
@@ -920,7 +913,8 @@ const pageImages = computed(() => {
       orientation,
       aspectStyle,
       label,
-      imageSrc
+      imageSrc,
+      imageSrcFull: fullSrc
     }
   }).filter(Boolean)
 })
@@ -1012,10 +1006,10 @@ watch(pageImageColumns, () => {
   pageImagePage.value = 1
 })
 
-const { data: stats } = await useAsyncData(
+const { data: stats, pending: statsPending } = await useAsyncData(
   () => `stats-${wikidotId.value}`,
   () => $bff(`/stats/pages/${wikidotId.value}`),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 
 // rating history moved below after firstRev to decide dynamic granularity
@@ -1025,15 +1019,15 @@ const revPage = ref(0)
 const { data: revisionsPaged, pending: revisionsPending, error: revisionsError, refresh: refreshRevisions } = await useAsyncData(
   () => `revs-${wikidotId.value}-${revPage.value}-${pageSize.value}`,
   () => $bff(`/pages/${wikidotId.value}/revisions`, { params: { limit: pageSize.value, offset: revPage.value * pageSize.value, order: 'DESC', scope: 'latest' } }),
-  { watch: [() => route.params.wikidotId, () => revPage.value, () => pageSize.value] }
+  { watch: [() => route.params.wikidotId, () => revPage.value, () => pageSize.value], server: false, lazy: true }
 )
 const hasMoreRevisions = computed(() => Array.isArray(revisionsPaged.value) && revisionsPaged.value.length === pageSize.value)
 function nextRevPage(){ if (hasMoreRevisions.value) revPage.value += 1 }
 function prevRevPage(){ if (revPage.value > 0) revPage.value -= 1 }
-const { data: revisionsCount } = await useAsyncData(
+const { data: revisionsCount, pending: revisionsCountPending } = await useAsyncData(
   () => `revs-count-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/revisions/count`, { params: { scope: 'latest' } }),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 const revTotalPages = computed(() => {
   const total = Number((revisionsCount as any).value?.total ?? page.value?.revisionCount ?? 0)
@@ -1059,10 +1053,10 @@ function jumpToRevPage(){
   revJumpPage.value = target
 }
 
-const { data: firstRev } = await useAsyncData(
+const { data: firstRev, pending: firstRevPending } = await useAsyncData(
   () => `firstrev-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/revisions`, { params: { limit: 1, offset: 0, order: 'ASC', type: 'PAGE_CREATED' } }),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 
 // Dynamic granularity for rating history: day <= ~90d, week <= ~3y, else month
@@ -1084,21 +1078,21 @@ const ratingGranularity = computed(() => {
 const { data: ratingHistory, pending: ratingHistoryPending, error: ratingHistoryError, refresh: refreshRatingHistory } = await useAsyncData(
   () => `page-rating-history-${wikidotId.value}-${ratingGranularity.value}`,
   () => $bff(`/pages/${wikidotId.value}/rating-history`, { params: { granularity: ratingGranularity.value } }),
-  { watch: [() => route.params.wikidotId, () => ratingGranularity.value] }
+  { watch: [() => route.params.wikidotId, () => ratingGranularity.value], server: false, lazy: true }
 )
 
-const { data: attributions } = await useAsyncData(
+const { data: attributions, pending: attributionsPending } = await useAsyncData(
   () => `attributions-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/attributions`),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 
 // removed revision list for source selection
 
-const { data: voteDistribution } = await useAsyncData(
+const { data: voteDistribution, pending: voteDistributionPending } = await useAsyncData(
   () => `vote-dist-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/vote-distribution`),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 
 // removed related-records fetch
@@ -1143,14 +1137,14 @@ const voteOffset = ref(0)
 const { data: recentVotes, pending: recentVotesPending, error: recentVotesError, refresh: refreshRecentVotes } = await useAsyncData(
   () => `page-votes-${wikidotId.value}-${voteOffset.value}-${votePageSize.value}`,
   () => $bff(`/pages/${wikidotId.value}/votes/fuzzy`, { params: { limit: votePageSize.value, offset: voteOffset.value } }),
-  { watch: [() => route.params.wikidotId, () => voteOffset.value, () => votePageSize.value] }
+  { watch: [() => route.params.wikidotId, () => voteOffset.value, () => votePageSize.value], server: false, lazy: true }
 )
 const hasMoreVotes = computed(() => Array.isArray(recentVotes.value) && recentVotes.value.length === votePageSize.value)
 const currentVotePage = computed(() => (voteOffset.value / votePageSize.value) + 1)
-const { data: voteFuzzyCount } = await useAsyncData(
+const { data: voteFuzzyCount, pending: voteFuzzyCountPending } = await useAsyncData(
   () => `page-votes-count-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/votes/fuzzy/count`),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 const voteTotalPages = computed(() => {
   const total = Number((voteFuzzyCount as any).value?.total ?? 0)
@@ -1175,10 +1169,10 @@ function jumpToVotePage(){
 
 const selectedVersion = ref<number | null>(null)
 // removed revision selection; only page version is used
-const { data: latestSourceResp } = await useAsyncData(
+const { data: latestSourceResp, pending: latestSourcePending } = await useAsyncData(
   () => `page-latest-source-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/source`),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 const latestSource = computed(() => {
   const s = latestSourceResp.value as any
@@ -1205,10 +1199,10 @@ const sourceText = computed(() => {
 
 const sourceCharacterCount = computed(() => sourceText.value.length)
 
-const { data: textContentResp } = await useAsyncData(
+const { data: textContentResp, pending: textContentPending } = await useAsyncData(
   () => `page-text-content-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/text-content`),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 
 const pageTextContent = computed(() => {
@@ -1247,13 +1241,18 @@ useHead(() => {
   const description = seoDescription.value
   const image = primaryImageUrl.value
   const url = canonicalUrl.value
-  const meta = [
+  const meta: Array<{ name?: string; property?: string; content: string; key: string }> = [
     { name: 'description', content: description, key: 'description' },
+    { property: 'og:type', content: 'article', key: 'og:type' },
     { property: 'og:title', content: pageDisplayTitle.value, key: 'og:title' },
-    { property: 'og:description', content: description, key: 'og:description' }
+    { property: 'og:description', content: description, key: 'og:description' },
+    { name: 'twitter:card', content: image ? 'summary_large_image' : 'summary', key: 'twitter:card' },
+    { name: 'twitter:title', content: pageDisplayTitle.value, key: 'twitter:title' },
+    { name: 'twitter:description', content: description, key: 'twitter:description' }
   ]
   if (image) {
     meta.push({ property: 'og:image', content: image, key: 'og:image' })
+    meta.push({ name: 'twitter:image', content: image, key: 'twitter:image' })
   }
   if (url) {
     meta.push({ property: 'og:url', content: url, key: 'og:url' })
@@ -1266,10 +1265,10 @@ useHead(() => {
   }
 })
 
-const { data: pageVersions } = await useAsyncData(
+const { data: pageVersions, pending: pageVersionsPending } = await useAsyncData(
   () => `page-versions-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/versions`, { params: { includeSource: false, limit: 100 } }),
-  { watch: [() => route.params.wikidotId] }
+  { watch: [() => route.params.wikidotId], server: false, lazy: true }
 )
 watch(pageVersions, (list:any[]) => {
   if (Array.isArray(list) && list.length > 0) {

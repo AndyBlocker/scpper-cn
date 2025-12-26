@@ -63,34 +63,53 @@ export class PhaseCProcessor {
       
       round++;
       Logger.info(`Phase C Round ${round}: Found ${dirtyPages.length} pages needing processing`);
-      
+
+      // Batch query: collect all wikidotIds and pageIds that need Phase C
+      const phaseCPages = dirtyPages.filter(dp => dp.needPhaseC && dp.wikidotId);
+      const wikidotIds = phaseCPages.map(dp => dp.wikidotId).filter((id): id is number => id != null);
+      const pageIds = phaseCPages.map(dp => dp.pageId).filter((id): id is number => id != null);
+
+      // Batch query page data (single query instead of N queries)
+      const pageDataList = await this.store.prisma.page.findMany({
+        where: {
+          OR: [
+            { id: { in: pageIds } },
+            { wikidotId: { in: wikidotIds } }
+          ]
+        }
+      });
+      const pageByPageId = new Map(pageDataList.map(p => [p.id, p]));
+      const pageByWikidotId = new Map(pageDataList.map(p => [p.wikidotId, p]));
+
+      // Batch query staging data (single query instead of N queries)
+      const stagingDataList = await this.store.prisma.pageMetaStaging.findMany({
+        where: { wikidotId: { in: wikidotIds } }
+      });
+      const stagingByWikidotId = new Map(stagingDataList.map(s => [s.wikidotId, s]));
+
       const pagesToProcess: PageToProcess[] = [];
       for (const dirtyPage of dirtyPages) {
         if (dirtyPage.needPhaseC && dirtyPage.wikidotId) {
-          // For new pages, we might not have a page relation loaded, so look it up
+          // Use pre-fetched page data (O(1) lookup instead of query)
           let pageData = dirtyPage.page;
           if (!pageData && dirtyPage.pageId) {
-            pageData = await this.store.prisma.page.findUnique({
-              where: { id: dirtyPage.pageId }
-            });
-          } else if (!pageData && dirtyPage.wikidotId) {
-            pageData = await this.store.prisma.page.findUnique({
-              where: { wikidotId: dirtyPage.wikidotId }
-            });
+            pageData = pageByPageId.get(dirtyPage.pageId) ?? null;
           }
-          
+          if (!pageData && dirtyPage.wikidotId) {
+            pageData = pageByWikidotId.get(dirtyPage.wikidotId) ?? null;
+          }
+
           if (!pageData) {
             Logger.warn(`No page found for dirtyPage with wikidotId: ${dirtyPage.wikidotId}`);
             continue;
           }
-          
-          const stagingData = await this.store.prisma.pageMetaStaging.findUnique({
-            where: { wikidotId: dirtyPage.wikidotId }
-          });
-          
+
+          // Use pre-fetched staging data (O(1) lookup instead of query)
+          const stagingData = stagingByWikidotId.get(dirtyPage.wikidotId);
+
           const estimatedCost = stagingData?.estimatedCost ?? 100;
           const isComplex = estimatedCost > SIMPLE_PAGE_THRESHOLD;
-          
+
           pagesToProcess.push({
             url: pageData.currentUrl || pageData.url || stagingData?.url || '',
             pageId: pageData.id,
@@ -247,12 +266,20 @@ export class PhaseCProcessor {
         name: error.name
       });
       success = false;
-      
+
+      // 不清除脏标记，保留以便下次同步重试
+      // 添加失败原因用于调试
       try {
-        await this.store.clearDirtyFlag(wikidotId, 'C');
-        Logger.warn(`⚠️  Force cleared Phase C dirty flag for failed page: ${url}`);
-      } catch (clearError: any) {
-        Logger.error(`❌ Failed to force clear dirty flag for ${url}:`, clearError.message);
+        const errorReason = `phase_c_error:${new Date().toISOString().slice(0, 19)}`;
+        await this.store.prisma.dirtyPage.updateMany({
+          where: { wikidotId },
+          data: {
+            reasons: { push: errorReason }
+          }
+        });
+        Logger.warn(`⚠️  Kept Phase C dirty flag for failed page (will retry): ${url}`);
+      } catch (updateError: any) {
+        Logger.error(`❌ Failed to update reasons for ${url}:`, updateError.message);
       }
     }
     

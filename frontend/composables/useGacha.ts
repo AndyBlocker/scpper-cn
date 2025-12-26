@@ -1,4 +1,5 @@
-import { useNuxtApp, useState } from 'nuxt/app'
+import { useNuxtApp, useRuntimeConfig, useState } from 'nuxt/app'
+import { normalizeBffBase, resolveAssetUrl } from '~/utils/assetUrl'
 
 export type Rarity = 'WHITE' | 'GREEN' | 'BLUE' | 'PURPLE' | 'GOLD'
 
@@ -204,7 +205,21 @@ function normalizeError(error: any, fallback: string) {
 
 export function useGacha() {
   const { $bff } = useNuxtApp()
+  const runtimeConfig = useRuntimeConfig()
+  const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase)
   const state = useState<GachaState>('gacha/state', createState)
+
+  const normalizeImageUrl = (url?: string | null): string | null => {
+    const low = resolveAssetUrl(url ?? '', bffBase, { variant: 'low' })
+    if (low) return low
+    const full = resolveAssetUrl(url ?? '', bffBase)
+    return full || null
+  }
+
+  const withImageVariant = <T extends { imageUrl?: string | null }>(item: T): T => ({
+    ...item,
+    imageUrl: normalizeImageUrl(item.imageUrl)
+  })
 
   async function activate() {
     try {
@@ -330,11 +345,13 @@ export function useGacha() {
         }
       })
       if (res?.ok) {
-        if (res.data?.wallet) {
-          state.value.wallet = res.data.wallet
+        const mappedItems = res.data?.items?.map(withImageVariant) ?? []
+        const data = res.data ? { ...res.data, items: mappedItems } : res.data
+        if (data?.wallet) {
+          state.value.wallet = data.wallet
           state.value.walletFetchedAt = new Date().toISOString()
         }
-        return { ok: true as const, data: res.data }
+        return { ok: true as const, data }
       }
       const message = res?.error || '抽卡失败'
       return { ok: false as const, error: message }
@@ -356,7 +373,8 @@ export function useGacha() {
         }
       })
       if (res?.ok) {
-        return { ok: true as const, data: res.items ?? [], total: res.total ?? 0 }
+        const items = (res.items ?? []).map(withImageVariant)
+        return { ok: true as const, data: items, total: res.total ?? 0 }
       }
       const message = res?.error || '加载图鉴失败'
       return { ok: false as const, error: message }
@@ -416,7 +434,11 @@ export function useGacha() {
         }
       })
       if (res?.ok) {
-        return { ok: true as const, data: res.items ?? [] }
+        const items = (res.items ?? []).map((entry) => ({
+          ...entry,
+          items: Array.isArray(entry.items) ? entry.items.map(withImageVariant) : []
+        }))
+        return { ok: true as const, data: items }
       }
       const message = res?.error || '加载历史失败'
       return { ok: false as const, error: message }

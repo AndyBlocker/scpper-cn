@@ -6,13 +6,14 @@ import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { gachaRouter, gachaAdminRouter } from './routes/gacha.js';
 import { eventsRouter } from './routes/events.js';
+import { ftmlProjectsRouter } from './routes/ftml-projects.js';
 
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
   app.use(cors({ origin: true, credentials: true }));
-  app.use(express.json({ limit: '512kb' }));
+  app.use(express.json({ limit: '1mb' }));
   app.use(pinoHttp());
 
   app.use('/auth', authRouter());
@@ -20,6 +21,7 @@ export function createApp() {
   app.use('/gacha/admin', gachaAdminRouter());
   app.use('/gacha', gachaRouter());
   app.use('/events', eventsRouter());
+  app.use('/ftml-projects', ftmlProjectsRouter());
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });

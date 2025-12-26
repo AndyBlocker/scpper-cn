@@ -310,23 +310,25 @@ async function fetchCollectionItems(pool: Pool, collectionId: number) {
 
 async function resolvePageId(pool: Pool, payload: any): Promise<number | null> {
   if (payload == null) return null;
+  // Prefer explicit pageId, but fall back to wikidotId if not found (for backward compatibility)
+  let resolved: number | null = null;
   if (payload.pageId != null && Number.isFinite(Number(payload.pageId))) {
     const numeric = Number(payload.pageId);
     const { rows } = await pool.query<{ id: number }>(
       'SELECT id FROM "Page" WHERE id = $1 AND ("isDeleted" IS NULL OR "isDeleted" = false) LIMIT 1',
       [numeric]
     );
-    return rows[0]?.id ?? null;
+    resolved = rows[0]?.id ?? null;
   }
-  if (payload.pageWikidotId != null && Number.isFinite(Number(payload.pageWikidotId))) {
+  if (!resolved && payload.pageWikidotId != null && Number.isFinite(Number(payload.pageWikidotId))) {
     const wikidotId = Number(payload.pageWikidotId);
     const { rows } = await pool.query<{ id: number }>(
       'SELECT id FROM "Page" WHERE "wikidotId" = $1 AND ("isDeleted" IS NULL OR "isDeleted" = false) LIMIT 1',
       [wikidotId]
     );
-    return rows[0]?.id ?? null;
+    resolved = rows[0]?.id ?? null;
   }
-  return null;
+  return resolved;
 }
 
 export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {

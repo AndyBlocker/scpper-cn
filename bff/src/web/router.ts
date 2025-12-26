@@ -19,6 +19,7 @@ import { followAlertsRouter } from './routes/followAlerts.js';
 import { referencesRouter } from './routes/references.js';
 import { trackingRouter } from './routes/tracking.js';
 import { collectionsRouter } from './routes/collections.js';
+import { htmlSnippetsRouter } from './routes/html-snippets.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -37,6 +38,7 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/references', referencesRouter(pool, redis));
   router.use('/tracking', trackingRouter(pool));
   router.use('/collections', collectionsRouter(pool, redis));
+  router.use('/', htmlSnippetsRouter);
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service
   router.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200', changeOrigin: false, xfwd: true }));
@@ -106,6 +108,21 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
       pathRewrite: rewrite('/events'),
       on: {
         proxyReq: forwardJsonBody
+      }
+    }));
+    // FTML projects proxy to user-backend
+    router.use('/ftml-projects', createProxyMiddleware<Request, Response>({
+      target: normalizedTarget,
+      changeOrigin: true,
+      xfwd: true,
+      pathRewrite: rewrite('/ftml-projects'),
+      on: {
+        proxyReq: forwardJsonBody,
+        proxyRes: (proxyRes) => {
+          proxyRes.headers['cache-control'] = 'no-store, no-cache, must-revalidate, max-age=0';
+          delete proxyRes.headers.etag;
+          delete proxyRes.headers['last-modified'];
+        }
       }
     }));
   }

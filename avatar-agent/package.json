@@ -15,7 +15,9 @@
     "preimage:stat": "npm run build",
     "preimage:stat:pretty": "npm run build",
     "image:stat": "node --env-file=.env dist/scripts/image-stat.js",
-    "image:stat:pretty": "node --env-file=.env dist/scripts/image-stat.js --pretty"
+    "image:stat:pretty": "node --env-file=.env dist/scripts/image-stat.js --pretty",
+    "preimage:variants": "npm run build",
+    "image:variants": "node --env-file=.env dist/scripts/image-variants.js"
   },
   "dependencies": {
     "fastify": "^4.28.1",
@@ -23,6 +25,7 @@
     "image-size": "^1.2.1",
     "mime-types": "^2.1.35",
     "pg": "^8.16.3",
+    "sharp": "^0.33.4",
     "pino": "^9.3.2",
     "undici": "^6.19.6"
   },

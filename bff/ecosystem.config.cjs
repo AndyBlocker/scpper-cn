@@ -11,7 +11,9 @@ module.exports = {
         DATABASE_URL: process.env.DATABASE_URL,
         ENABLE_CACHE: process.env.ENABLE_CACHE || 'true',
         USER_BACKEND_BASE_URL: process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455',
-        REDIS_URL: process.env.REDIS_URL
+        REDIS_URL: process.env.REDIS_URL,
+        ENABLE_TRACKING_DEBUG: process.env.ENABLE_TRACKING_DEBUG || 'true',
+        TRACKING_DEBUG_SAMPLE_RATE: process.env.TRACKING_DEBUG_SAMPLE_RATE || '1'
       }
     }
   ]

@@ -674,7 +674,24 @@ function revisionTypeClass(type: string) {
   }
   return 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300'
 }
-useHead({ title: userPageTitle })
+useHead(() => {
+  const title = userPageTitle.value
+  const description = user.value?.displayName
+    ? `${user.value.displayName} 的用户资料 - 查看作品、投票记录和统计数据`
+    : '用户详情 - SCPPER-CN'
+  return {
+    title,
+    meta: [
+      { name: 'description', content: description, key: 'description' },
+      { property: 'og:type', content: 'profile', key: 'og:type' },
+      { property: 'og:title', content: title, key: 'og:title' },
+      { property: 'og:description', content: description, key: 'og:description' },
+      { name: 'twitter:card', content: 'summary', key: 'twitter:card' },
+      { name: 'twitter:title', content: title, key: 'twitter:title' },
+      { name: 'twitter:description', content: description, key: 'twitter:description' }
+    ]
+  }
+})
 
 // Follow/unfollow state
 const { isAuthenticated, user: authUser } = useAuth()

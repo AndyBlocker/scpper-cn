@@ -143,7 +143,7 @@ export class SourceVersionService {
       });
 
       Logger.info(`✅ Created new SourceVersion ${newSourceVersion.id} (revision: ${newSourceVersion.revisionNumber || 'initial'})`);
-    });
+    }, { timeout: 30000 });
   }
 
   /**
