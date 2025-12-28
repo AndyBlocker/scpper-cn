@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 const SORT_FIELDS = ['alpha', 'count', 'activity'] as const;
 type SortKey = typeof SORT_FIELDS[number];
@@ -13,6 +14,9 @@ const DEFAULT_ORDER: Record<SortKey, 'asc' | 'desc'> = {
 
 export function tagsRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
+
+  // 读写分离：tags 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
 
   router.get('/', async (req, res, next) => {
     try {
@@ -116,7 +120,7 @@ export function tagsRouter(pool: Pool, _redis: RedisClientType | null) {
         ${offsetClause}
       `;
 
-      const { rows } = await pool.query(sql, params);
+      const { rows } = await readPool.query(sql, params);
 
       const tags = rows.map((row: any) => ({
         tag: row.tag,

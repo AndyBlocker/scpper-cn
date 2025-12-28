@@ -4,10 +4,14 @@ import type { RedisClientType } from 'redis';
 import { extractPreviewCandidates, pickPreview, toPreviewPick, extractExcerptFallback } from '../utils/preview.js';
 import { buildPageImagePath } from '../pageImagesConfig.js';
 import { createCache } from '../utils/cache.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
   const cache = createCache(redis);
+
+  // 读写分离：pages 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
 
   router.get('/vote-status', async (req, res, next) => {
     try {
@@ -36,7 +40,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const cacheKey = `vote-status:${viewerWikidotId}:${sortedIds.join(',')}`;
 
       const result = await cache.remember(cacheKey, 60, async () => {
-        const userResult = await pool.query<{ id: number }>(
+        const userResult = await readPool.query<{ id: number }>(
           'SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1',
           [viewerWikidotId]
         );
@@ -47,7 +51,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
 
         const userId = userResult.rows[0].id;
 
-        const { rows } = await pool.query<{ pageWikidotId: number; direction: number }>(
+        const { rows } = await readPool.query<{ pageWikidotId: number; direction: number }>(
           `SELECT DISTINCT ON (pv."pageId")
               pv."wikidotId" AS "pageWikidotId",
               v.direction
@@ -110,7 +114,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     if (ids.length === 0) {
       return new Map();
     }
-    const { rows } = await pool.query(imageSelectionSql, [ids]);
+    const { rows } = await readPool.query(imageSelectionSql, [ids]);
     const grouped = new Map<number, any[]>();
     for (const row of rows) {
       const entry = {
@@ -175,7 +179,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       LIMIT 1
     `;
 
-    const { rows: prevRows } = await pool.query(fallbackSql, [row.pageId]);
+    const { rows: prevRows } = await readPool.query(fallbackSql, [row.pageId]);
     if (prevRows.length === 0) return row;
 
     const prev = prevRows[0];
@@ -225,7 +229,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       ORDER BY pv."validTo" IS NULL DESC, pv."validFrom" DESC NULLS LAST, pv.id DESC
       LIMIT 1
     `;
-    const { rows } = await pool.query(sql, params);
+    const { rows } = await readPool.query(sql, params);
     if (rows.length === 0) return null;
     const row = rows[0];
     if (!row.wikidotId && row.pageWikidotId) {
@@ -246,7 +250,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     const numericPageId = Number(pageId);
     if (!Number.isFinite(numericPageId) || numericPageId <= 0) return null;
 
-    const { rows: currentRows } = await pool.query(
+    const { rows: currentRows } = await readPool.query(
       `SELECT id, "isDeleted"
          FROM "PageVersion"
          WHERE "pageId" = $1 AND "validTo" IS NULL
@@ -258,7 +262,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
 
     let effective = current;
     if (!effective) {
-      const { rows: anyRows } = await pool.query(
+      const { rows: anyRows } = await readPool.query(
         `SELECT id, "isDeleted"
            FROM "PageVersion"
            WHERE "pageId" = $1
@@ -268,7 +272,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       );
       effective = anyRows[0] ?? null;
     } else if (effective.isDeleted) {
-      const { rows: liveRows } = await pool.query(
+      const { rows: liveRows } = await readPool.query(
         `SELECT id, "isDeleted"
            FROM "PageVersion"
            WHERE "pageId" = $1 AND "isDeleted" = false
@@ -294,7 +298,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     const wikidotId = Number(input);
     if (!Number.isFinite(wikidotId)) return null;
 
-    const { rows: pageRows } = await pool.query(
+    const { rows: pageRows } = await readPool.query(
       'SELECT id FROM "Page" WHERE "wikidotId" = $1 LIMIT 1',
       [wikidotId]
     );
@@ -329,7 +333,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ORDER BY "occurrence" DESC, "targetPath" ASC, "targetFragment" ASC NULLS FIRST, id ASC
       `;
 
-      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+      const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
 
       const references = rows.map((row) => ({
         id: row.id,
@@ -428,7 +432,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         offset
       ];
 
-      const { rows } = await pool.query(sql, params);
+      const { rows } = await readPool.query(sql, params);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -494,14 +498,14 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         if (!Number.isInteger(wikidotIdNum) || wikidotIdNum <= 0) {
           return res.status(400).json({ error: 'invalid_wikidotId' });
         }
-        const { rows } = await pool.query<{ id: number; wikidotId: number | null; currentUrl: string | null }>(
+        const { rows } = await readPool.query<{ id: number; wikidotId: number | null; currentUrl: string | null }>(
           'SELECT id, "wikidotId", "currentUrl" FROM "Page" WHERE "wikidotId" = $1 LIMIT 1',
           [wikidotIdNum]
         );
         if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
         pageRow = rows[0];
       } else if (url) {
-        const { rows } = await pool.query<{ id: number; wikidotId: number | null; currentUrl: string | null }>(
+        const { rows } = await readPool.query<{ id: number; wikidotId: number | null; currentUrl: string | null }>(
           'SELECT id, "wikidotId", "currentUrl" FROM "Page" WHERE "currentUrl" = $1 LIMIT 1',
           [url]
         );
@@ -517,7 +521,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const targetVersionId = context.effectiveVersionId ?? context.currentVersionId;
       if (!targetVersionId) return res.status(404).json({ error: 'not_found' });
 
-      const latestSource = await pool.query<{
+      const latestSource = await readPool.query<{
         sourceVersionId: number;
         revisionId: number | null;
         revisionNumber: number | null;
@@ -561,7 +565,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       }
 
       // SourceVersion 没有源码时，fallback 到 PageVersion.source
-      const pageVersionSource = await pool.query<{ source: string | null }>(
+      const pageVersionSource = await readPool.query<{ source: string | null }>(
         'SELECT source FROM "PageVersion" WHERE id = $1 LIMIT 1',
         [targetVersionId]
       );
@@ -610,7 +614,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ORDER BY pv."createdAt" DESC
         LIMIT $2::int
       `;
-      const { rows } = await pool.query(sql, [url, limit]);
+      const { rows } = await readPool.query(sql, [url, limit]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -659,7 +663,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           ORDER BY random()
           LIMIT $1::int
         `;
-        const { rows } = await pool.query(sampledSql, [limitValue]);
+        const { rows } = await readPool.query(sampledSql, [limitValue]);
         if (rows.length >= limitValue) {
           return rows;
         }
@@ -673,7 +677,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           ORDER BY random()
           LIMIT $1::int
         `;
-        const { rows: fallbackRows } = await pool.query(fallbackSql, [limitValue]);
+        const { rows: fallbackRows } = await readPool.query(fallbackSql, [limitValue]);
         return fallbackRows.length > 0 ? fallbackRows : rows;
       };
 
@@ -882,7 +886,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           ORDER BY r.timestamp ${dir}
           LIMIT $2::int OFFSET $3::int
         `;
-        const { rows } = await pool.query(sql, [context.effectiveVersionId, limit, offset, type || null]);
+        const { rows } = await readPool.query(sql, [context.effectiveVersionId, limit, offset, type || null]);
         return res.json(rows);
       }
 
@@ -916,7 +920,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ORDER BY r.timestamp ${dir}
         LIMIT $2::int OFFSET $3::int
       `;
-      const { rows } = await pool.query(sql, [context.pageId, limit, offset, type || null]);
+      const { rows } = await readPool.query(sql, [context.pageId, limit, offset, type || null]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -935,7 +939,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
 
       if (scopeLatest) {
         if (!context.effectiveVersionId) return res.json({ total: 0 });
-        const { rows } = await pool.query(
+        const { rows } = await readPool.query(
           `SELECT COUNT(*)::int AS total
              FROM "Revision" r
             WHERE r."pageVersionId" = $1
@@ -945,7 +949,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         return res.json(rows[0] || { total: 0 });
       }
 
-      const { rows } = await pool.query(
+      const { rows } = await readPool.query(
         `SELECT COUNT(*)::int AS total
            FROM "Revision" r
            JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
@@ -976,7 +980,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         WHERE a."pageVerId" = $1
         ORDER BY u.id, a.type ASC
       `;
-      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+      const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1024,7 +1028,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ORDER BY pv.id DESC
         LIMIT $2::int OFFSET $3::int
       `;
-      const { rows } = await pool.query(sql, [wikidotId, limit, offset]);
+      const { rows } = await readPool.query(sql, [wikidotId, limit, offset]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1037,7 +1041,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     try {
       const { wikidotId, versionId } = req.params as Record<string, string>;
       // Ensure the version belongs to this wikidotId
-      const check = await pool.query(
+      const check = await readPool.query(
         `SELECT 1 FROM "PageVersion" pv WHERE pv.id = $1::int AND pv."wikidotId" = $2::int LIMIT 1`,
         [versionId, wikidotId]
       );
@@ -1054,7 +1058,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         WHERE a."pageVerId" = $1
         ORDER BY u.id, a.type ASC
       `;
-      const { rows } = await pool.query(sql, [versionId]);
+      const { rows } = await readPool.query(sql, [versionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1071,7 +1075,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         WHERE pv."wikidotId" = $1::int AND pv.id = $2::int
         LIMIT 1
       `;
-      const { rows } = await pool.query(sql, [wikidotId, versionId]);
+      const { rows } = await readPool.query(sql, [wikidotId, versionId]);
       if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
       res.json(rows[0]);
     } catch (err) {
@@ -1099,7 +1103,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ORDER BY d.latest_ts DESC
         LIMIT $2::int OFFSET $3::int
       `;
-      const { rows } = await pool.query(sql, [context.effectiveVersionId, limit, offset]);
+      const { rows } = await readPool.query(sql, [context.effectiveVersionId, limit, offset]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1112,7 +1116,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const { wikidotId } = req.params as Record<string, string>;
       const context = await resolvePageContextByWikidotId(wikidotId);
       if (!context || !context.effectiveVersionId) return res.json({ total: 0 });
-      const { rows } = await pool.query(
+      const { rows } = await readPool.query(
         `SELECT COUNT(*)::int AS total
            FROM (
              SELECT v."userId", v.direction, v.timestamp::date AS day
@@ -1133,7 +1137,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     try {
       const { wikidotId, revisionId } = req.params as Record<string, string>;
       // 找到该修订及其所属的 PageVersion 和时间
-      const base = await pool.query(
+      const base = await readPool.query(
         `SELECT r.id AS "revisionId", r."wikidotId", r.timestamp, r."pageVersionId"
          FROM "Revision" r
          JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
@@ -1145,7 +1149,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const row = base.rows[0];
 
       // 1) 取该修订的 SourceVersion（最新一条）
-      const primary = await pool.query(
+      const primary = await readPool.query(
         `SELECT s."revisionNumber", s.source
          FROM "SourceVersion" s
          WHERE s."revisionId" = $1::int AND s.source IS NOT NULL
@@ -1164,7 +1168,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       }
 
       // 2) 同一 PageVersion 内，回退到时间早于该修订、最近一条带源码的 SourceVersion
-      const fallbackPrev = await pool.query(
+      const fallbackPrev = await readPool.query(
         `SELECT s."revisionNumber", s.source
          FROM "SourceVersion" s
          WHERE s."pageVersionId" = $1::int
@@ -1185,7 +1189,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       }
 
       // 3) 回退到 PageVersion 的源码
-      const pvRow = await pool.query(
+      const pvRow = await readPool.query(
         `SELECT pv.source FROM "PageVersion" pv WHERE pv.id = $1::int LIMIT 1`,
         [row.pageVersionId]
       );
@@ -1221,7 +1225,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const targetVersionId = context.effectiveVersionId ?? context.currentVersionId;
       if (!targetVersionId) return res.status(404).json({ error: 'not_found' });
 
-      const primary = await pool.query<{ textContent: string | null }>(
+      const primary = await readPool.query<{ textContent: string | null }>(
         `SELECT pv."textContent"
            FROM "PageVersion" pv
           WHERE pv.id = $1
@@ -1238,7 +1242,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         return res.json({ textContent: primaryText, origin: 'pageVersion' });
       }
 
-      const fallback = await pool.query<{ textContent: string | null }>(
+      const fallback = await readPool.query<{ textContent: string | null }>(
         `SELECT s."textContent"
            FROM "SourceVersion" s
           WHERE s."pageVersionId" = $1
@@ -1268,7 +1272,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const targetVersionId = context.effectiveVersionId ?? context.currentVersionId;
       if (!targetVersionId) return res.status(404).json({ error: 'not_found' });
 
-      const pv = await pool.query(
+      const pv = await readPool.query(
         `SELECT pv.source
            FROM "PageVersion" pv
           WHERE pv.id = $1
@@ -1279,7 +1283,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       if (pv.rows[0].source) return res.json({ source: pv.rows[0].source, origin: 'pageVersion' });
 
       // 2) 否则回退到最新一条带源码的 SourceVersion
-      const lastWithSource = await pool.query(
+      const lastWithSource = await readPool.query(
         `SELECT sv.id AS "sourceVersionId", sv."revisionId", sv."revisionNumber", sv.source
          FROM "SourceVersion" sv
          WHERE sv."pageVersionId" = $1::int AND sv.source IS NOT NULL
@@ -1499,7 +1503,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       `;
 
       const excludedTagsParam = (Array.isArray(excludedTags) && excludedTags.length > 0) ? excludedTags : null;
-      const { rows } = await pool.query(sql, [context.effectiveVersionId, candidateLimit, sameCategoryOnly, excludeUserPages, excludedTagsParam]);
+      const { rows } = await readPool.query(sql, [context.effectiveVersionId, candidateLimit, sameCategoryOnly, excludeUserPages, excludedTagsParam]);
 
       // Node 层打分 + 过滤 + 多样性重排
       type Rec = any & { tag_overlap: number; tag_overlap_weighted?: number; author_overlap: number; matched_tags: string[]; matched_authors: Array<{userId:number;displayName:string|null;wikidotId:number|null}> };
@@ -1663,9 +1667,9 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         return snippetHtml ? { ...clean, snippet: snippetHtml } : clean;
       });
 
-      // 写入缓存（TTL 10分钟）
+      // 写入缓存（TTL 7天 - 推荐内容变化较慢，长缓存减少数据库压力）
       if (cacheKey) {
-        await cache.setJSON(cacheKey, payload, 600);
+        await cache.setJSON(cacheKey, payload, 7 * 24 * 60 * 60);
       }
 
       res.json(payload);
@@ -1735,7 +1739,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         FROM daily
         ORDER BY day ASC
       `;
-      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+      const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1761,7 +1765,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         WHERE a."pageVerId" = $1
         ORDER BY a.type, a."order"
       `;
-      const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+      const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1786,7 +1790,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "LatestVote" v
           WHERE v."pageVersionId" = $1
         `;
-        const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+        const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
         return rows[0] || { upvotes: 0, downvotes: 0, novotes: 0, total: 0 };
       });
 
@@ -1836,7 +1840,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ORDER BY "achievedAt" DESC NULLS LAST
         LIMIT $2::int
       `;
-      const { rows } = await pool.query(sql, [pageId, limit]);
+      const { rows } = await readPool.query(sql, [pageId, limit]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1908,7 +1912,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           FROM aggregated
           ORDER BY period
         `;
-        const { rows } = await pool.query(sql, [context.effectiveVersionId]);
+        const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
         return rows;
       });
 

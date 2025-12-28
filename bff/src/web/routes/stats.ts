@@ -3,10 +3,14 @@ import type { Pool, QueryResultRow } from 'pg';
 import type { RedisClientType } from 'redis';
 import { consola } from 'consola';
 import { createCache } from '../utils/cache.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	const router = Router();
 	const cache = createCache(redis);
+
+	// 读写分离：stats 全部是读操作，使用从库
+	const readPool = getReadPoolSync();
 	const log = consola.withTag('stats');
 	const slowQueryThresholdMs = Number.isFinite(Number(process.env.STATS_QUERY_SLOW_MS))
 		? Number(process.env.STATS_QUERY_SLOW_MS)
@@ -20,7 +24,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	) => {
 		const start = process.hrtime.bigint();
 		try {
-			const result = await pool.query<T>(sql, params);
+			const result = await readPool.query<T>(sql, params);
 			const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
 			if (durationMs >= slowQueryThresholdMs) {
 				log.info(`[${reqLabel}] slow query ${label} ${durationMs.toFixed(1)}ms`);
@@ -38,7 +42,8 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	// GET /stats/site/latest
 	router.get('/site/latest', async (_req, res, next) => {
 		try {
-			const data = await cache.remember('stats:site:latest', 180, async () => {
+			// 缓存 1 小时 - 站点统计变化较慢，减少 sync 期间的数据库压力
+		const data = await cache.remember('stats:site:latest', 3600, async () => {
 				const reqLabel = `site.latest:${Date.now().toString(36)}`;
 				const sql = `
 					SELECT 
@@ -72,7 +77,8 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	// 使用物化视图 mv_site_overview 优化性能（9个查询 → 2个查询）
 	router.get('/site/overview', async (req, res, next) => {
 		try {
-			const payload = await cache.remember('stats:site:overview', 300, async () => {
+			// 缓存 1 小时 - 站点概览变化较慢，减少 sync 期间的数据库压力
+		const payload = await cache.remember('stats:site:overview', 3600, async () => {
 				const reqLabel = `site.overview:${Date.now().toString(36)}`;
 				const requestStart = process.hrtime.bigint();
 
@@ -156,7 +162,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 					LIMIT $3::int OFFSET $4::int
 				`;
 				const params = [effectiveStart, endDate || null, limit, offset];
-				const { rows } = await pool.query(sql, params);
+				const { rows } = await readPool.query(sql, params);
 				return rows.map((r: any) => ({
 					date: r.date,
 					users: { total: r.usersTotal, active: r.usersActive, contributors: r.usersContributors, authors: r.usersAuthors },
@@ -184,7 +190,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 					FROM "SiteStats"
 					WHERE date = $1::date
 				`;
-				const { rows } = await pool.query(sql, [date]);
+				const { rows } = await readPool.query(sql, [date]);
 				return rows[0] ?? null;
 			});
 			if (!row) return res.status(404).json({ error: 'not_found' });
@@ -203,7 +209,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 				FROM "SeriesStats"
 				ORDER BY "seriesNumber" ASC
 			`;
-			const { rows } = await pool.query(sql);
+			const { rows } = await readPool.query(sql);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -221,7 +227,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 				FROM "SeriesStats"
 				ORDER BY "seriesNumber" ASC
 			`;
-			const seriesRows = (await pool.query(seriesSql)).rows as Array<{
+			const seriesRows = (await readPool.query(seriesSql)).rows as Array<{
 				seriesNumber: number;
 				isOpen: boolean;
 				totalSlots: number;
@@ -243,7 +249,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 				  AND NOT ('待删除' = ANY(pv.tags))
 				  AND NOT ('待刪除' = ANY(pv.tags))
 			`;
-			const usedRows = (await pool.query(usedSql)).rows as Array<{ url: string }>;
+			const usedRows = (await readPool.query(usedSql)).rows as Array<{ url: string }>;
 			const used = new Set<number>();
 			for (const r of usedRows) {
 				const m = r.url.match(/\/scp-cn-(\d{3,4})(?:$|\/)/);
@@ -330,7 +336,7 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 				LIMIT $3::int OFFSET $4::int
 			`;
 			const params = [effectiveStart, endDate || null, limit, offset];
-			const { rows } = await pool.query(sql, params);
+			const { rows } = await readPool.query(sql, params);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -345,6 +351,9 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 	const router = Router();
 	const cache = createCache(redis);
 
+	// 读写分离：extendStats 全部是读操作，使用从库
+	const readPool = getReadPoolSync();
+
   // GET /stats/category-benchmarks
   // Read precomputed payload from LeaderboardCache written by backend Analyze
   router.get('/category-benchmarks', async (_req, res, next) => {
@@ -358,17 +367,17 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
       // Try v3 first, then v2, then v1
       let resRow: any | null = null;
       {
-        const { rows } = await pool.query(sql, ['category_benchmarks_author_rating_v3', 'daily']);
+        const { rows } = await readPool.query(sql, ['category_benchmarks_author_rating_v3', 'daily']);
         if (rows.length > 0) resRow = rows[0];
       }
       // Fallback to v2 if v3 absent
       if (!resRow) {
-        const { rows } = await pool.query(sql, ['category_benchmarks_author_rating_v2', 'daily']);
+        const { rows } = await readPool.query(sql, ['category_benchmarks_author_rating_v2', 'daily']);
         if (rows.length > 0) resRow = rows[0];
       }
       // Fallback to v1 if v2 absent
       if (!resRow) {
-        const { rows } = await pool.query(sql, ['category_benchmarks_author_rating', 'daily']);
+        const { rows } = await readPool.query(sql, ['category_benchmarks_author_rating', 'daily']);
         if (rows.length > 0) resRow = rows[0];
       }
       if (!resRow) return res.status(404).json({ error: 'not_found' });
@@ -384,11 +393,11 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 			const { wikidotId } = req.params as Record<string, string>;
 			const cacheKey = `stats:pages:${wikidotId}`;
 			const result = await cache.remember(cacheKey, 180, async () => {
-				const pageRes = await pool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
+				const pageRes = await readPool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
 				if (pageRes.rows.length === 0) return null;
 				const pageId = pageRes.rows[0].id;
 
-				const currentRes = await pool.query(
+				const currentRes = await readPool.query(
 					`SELECT id, "isDeleted"
 					   FROM "PageVersion"
 					  WHERE "pageId" = $1 AND "validTo" IS NULL
@@ -400,7 +409,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				let targetId = current?.id ?? null;
 				const currentDeleted = current?.isDeleted === true;
 				if (!targetId || currentDeleted) {
-					const fallbackRes = await pool.query(
+					const fallbackRes = await readPool.query(
 						`SELECT id
 						   FROM "PageVersion"
 						  WHERE "pageId" = $1 AND "isDeleted" = false
@@ -414,7 +423,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				}
 				if (!targetId) return null;
 
-				const { rows: statsRows } = await pool.query(
+				const { rows: statsRows } = await readPool.query(
 					`SELECT ps."uv", ps."dv", ps."wilson95", ps."controversy", ps."likeRatio"
 					   FROM "PageStats" ps
 					  WHERE ps."pageVersionId" = $1`,
@@ -428,7 +437,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 					likeRatio: null
 				};
 
-				const aggregateRes = await pool.query(
+				const aggregateRes = await readPool.query(
 					`SELECT
 					       COALESCE(SUM(views), 0)::int AS "totalViews",
 					       COALESCE(
@@ -461,7 +470,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 		try {
 			const { wikidotId } = req.params as Record<string, string>;
 			const { startDate, endDate, limit = '100', offset = '0' } = req.query as Record<string, string>;
-			const pageRes = await pool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
+			const pageRes = await readPool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
 			if (pageRes.rows.length === 0) return res.status(404).json({ error: 'not_found' });
 			const pageId = pageRes.rows[0].id;
 			const sql = `
@@ -474,7 +483,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				ORDER BY pds.date DESC
 				LIMIT $4::int OFFSET $5::int
 			`;
-			const { rows } = await pool.query(sql, [pageId, startDate || null, endDate || null, limit, offset]);
+			const { rows } = await readPool.query(sql, [pageId, startDate || null, endDate || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -525,8 +534,8 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 			`;
 
 			const [votesRes, revisionsRes] = await Promise.all([
-				pool.query(votesSql, [id, startDate || null, endDate || null]),
-				pool.query(revisionsSql, [id, startDate || null, endDate || null])
+				readPool.query(votesSql, [id, startDate || null, endDate || null]),
+				readPool.query(revisionsSql, [id, startDate || null, endDate || null])
 			]);
 
 			const merged = new Map<string, {
@@ -598,7 +607,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				ORDER BY score DESC
 				LIMIT $3::int OFFSET $4::int
 			`;
-			const { rows } = await pool.query(sql, [statType || null, period || null, limit, offset]);
+			const { rows } = await readPool.query(sql, [statType || null, period || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -616,7 +625,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				WHERE key = $1::text AND period = $2::text
 				LIMIT 1
 			`;
-			const { rows } = await pool.query(sql, [key, period]);
+			const { rows } = await readPool.query(sql, [key, period]);
 			if (rows.length === 0) return res.status(404).json({ error: 'not_found' });
 			res.json(rows[0]);
 		} catch (err) {
@@ -640,7 +649,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				ORDER BY rank ASC, "calculatedAt" DESC
 				LIMIT $7::int OFFSET $8::int
 			`;
-			const { rows } = await pool.query(sql, [category || null, type || null, pageId || null, userId || null, date || null, tag || null, limit, offset]);
+			const { rows } = await readPool.query(sql, [category || null, type || null, pageId || null, userId || null, date || null, tag || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -661,7 +670,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				ORDER BY "calculatedAt" DESC
 				LIMIT $5::int OFFSET $6::int
 			`;
-			const { rows } = await pool.query(sql, [period || null, periodValue || null, milestoneType || null, pageId || null, limit, offset]);
+			const { rows } = await readPool.query(sql, [period || null, periodValue || null, milestoneType || null, pageId || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -682,7 +691,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				ORDER BY "calculatedAt" DESC
 				LIMIT $5::int OFFSET $6::int
 			`;
-			const { rows } = await pool.query(sql, [tag || null, recordType || null, pageId || null, userId || null, limit, offset]);
+			const { rows } = await readPool.query(sql, [tag || null, recordType || null, pageId || null, userId || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -701,7 +710,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				ORDER BY "calculatedAt" DESC
 				LIMIT $3::int OFFSET $4::int
 			`;
-			const { rows } = await pool.query(sql, [recordType || null, pageId || null, limit, offset]);
+			const { rows } = await readPool.query(sql, [recordType || null, pageId || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -721,7 +730,7 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				ORDER BY COALESCE("achievedAt", "calculatedAt") DESC
 				LIMIT $4::int OFFSET $5::int
 			`;
-			const { rows } = await pool.query(sql, [recordType || null, timeframe || null, pageId || null, limit, offset]);
+			const { rows } = await readPool.query(sql, [recordType || null, timeframe || null, pageId || null, limit, offset]);
 			res.json(rows);
 		} catch (err) {
 			next(err);
@@ -750,8 +759,8 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 				  AND ($2::int IS NULL OR "userId" = $2::int)
 			`;
 			const [listRes, countRes] = await Promise.all([
-				pool.query(listSql, [...baseParams, limitInt, offsetInt]),
-				pool.query(countSql, baseParams)
+				readPool.query(listSql, [...baseParams, limitInt, offsetInt]),
+				readPool.query(countSql, baseParams)
 			]);
 			const total = Number(countRes.rows?.[0]?.total || 0);
 			res.json({

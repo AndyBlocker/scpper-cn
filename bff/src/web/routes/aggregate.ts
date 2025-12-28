@@ -1,9 +1,13 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 export function aggregateRouter(pool: Pool, _redis: RedisClientType | null) {
 	const router = Router();
+
+	// 读写分离：aggregate 全部是读操作，使用从库
+	const readPool = getReadPoolSync();
 
 	// GET /aggregate/pages
 	router.get('/pages', async (req, res, next) => {
@@ -45,7 +49,7 @@ export function aggregateRouter(pool: Pool, _redis: RedisClientType | null) {
 				createdAtLte || null
 			];
 
-			const { rows } = await pool.query(sql, params);
+			const { rows } = await readPool.query(sql, params);
 			const count = rows[0]?._count ?? 0;
 			res.json({ _count: Number(count) });
 		} catch (err) {

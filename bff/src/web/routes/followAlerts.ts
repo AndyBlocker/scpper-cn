@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 const USER_BACKEND_DEFAULT = 'http://127.0.0.1:4455';
 
@@ -36,19 +37,22 @@ async function fetchAuthUser(req: Request): Promise<AuthUserPayload | null> {
   }
 }
 
-async function resolveFollowerId(pool: Pool, wikidotId: number): Promise<number | null> {
-  const row = await pool.query<{ id: number }>('SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1', [wikidotId]);
+async function resolveFollowerId(readPool: Pool, wikidotId: number): Promise<number | null> {
+  const row = await readPool.query<{ id: number }>('SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1', [wikidotId]);
   return row.rows.length > 0 ? row.rows[0].id : null;
 }
 
 export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
 
+  // 读写分离：GET 使用从库，POST 使用主库
+  const readPool = getReadPoolSync();
+
   router.get('/', async (req, res, next) => {
     try {
       const auth = await fetchAuthUser(req);
       if (!auth || auth.linkedWikidotId == null) return res.status(401).json({ ok: false, error: 'unauthenticated' });
-      const followerId = await resolveFollowerId(pool, auth.linkedWikidotId);
+      const followerId = await resolveFollowerId(readPool, auth.linkedWikidotId);
       if (followerId == null) return res.json({ ok: true, alerts: [], unreadCount: 0 });
 
       const { type } = req.query as Record<string, string>;
@@ -77,8 +81,8 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
           ${whereType ? `AND type = '${whereType}'` : ''}
       `;
       const [alertsRes, unreadRes] = await Promise.all([
-        pool.query(alertsQuery, [followerId, limit, offset]),
-        pool.query<{ count: number }>(unreadQuery, [followerId])
+        readPool.query(alertsQuery, [followerId, limit, offset]),
+        readPool.query<{ count: number }>(unreadQuery, [followerId])
       ]);
       res.json({ ok: true, alerts: alertsRes.rows, unreadCount: unreadRes.rows[0]?.count ?? 0 });
     } catch (e) {
@@ -90,13 +94,13 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
     try {
       const auth = await fetchAuthUser(req);
       if (!auth || auth.linkedWikidotId == null) return res.status(401).json({ ok: false, error: 'unauthenticated' });
-      const followerId = await resolveFollowerId(pool, auth.linkedWikidotId);
+      const followerId = await resolveFollowerId(readPool, auth.linkedWikidotId);
       if (followerId == null) return res.json({ ok: true, total: 0, groups: [] });
 
       const limit = Math.max(1, Math.min(parseInt(String(req.query.limit ?? '20'), 10) || 20, 50));
       const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);
 
-      const countRes = await pool.query<{ count: number }>(
+      const countRes = await readPool.query<{ count: number }>(
         `
           SELECT COUNT(*)::int AS count
           FROM (
@@ -110,7 +114,7 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       const total = countRes.rows[0]?.count ?? 0;
       if (total === 0) return res.json({ ok: true, total, groups: [] });
 
-      const groupsRes = await pool.query<{ pageId: number; updatedAt: string }>(
+      const groupsRes = await readPool.query<{ pageId: number; updatedAt: string }>(
         `
           SELECT a."pageId" AS "pageId", MAX(a."detectedAt") AS "updatedAt"
           FROM "UserActivityAlert" a
@@ -123,7 +127,7 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       );
 
       const pageIds = groupsRes.rows.map(r => r.pageId);
-      const details = await pool.query(
+      const details = await readPool.query(
         `
           SELECT a.id, a.type, a."detectedAt", a."acknowledgedAt", a."pageId",
                  p."wikidotId" AS "pageWikidotId", p."currentUrl" AS "pageUrl",

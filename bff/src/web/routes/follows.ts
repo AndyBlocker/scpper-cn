@@ -2,9 +2,13 @@ import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { fetchAuthUser, ensureUserByWikidotId } from '../utils/auth.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 export function followsRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
+
+  // 读写分离：GET 使用从库，POST/DELETE 使用主库
+  const readPool = getReadPoolSync();
 
   router.get('/', async (req, res, next) => {
     try {
@@ -13,7 +17,7 @@ export function followsRouter(pool: Pool, _redis: RedisClientType | null) {
       const followerId = await ensureUserByWikidotId(pool, auth.linkedWikidotId);
       if (followerId == null) return res.status(500).json({ ok: false, error: 'user_resolve_failed' });
 
-      const rows = await pool.query<{ id: number; targetUserId: number; wikidotId: number | null; displayName: string | null }>(
+      const rows = await readPool.query<{ id: number; targetUserId: number; wikidotId: number | null; displayName: string | null }>(
         `
           SELECT f.id, f."targetUserId", u."wikidotId", u."displayName"
           FROM "UserFollow" f
