@@ -1,9 +1,13 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 export function referencesRouter(pool: Pool, _redis: RedisClientType | null) {
   const router = Router();
+
+  // 读写分离：references 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
 
   router.get('/graph', async (req, res, next) => {
     try {
@@ -11,13 +15,13 @@ export function referencesRouter(pool: Pool, _redis: RedisClientType | null) {
       let row: any | undefined;
 
       if (label) {
-        const result = await pool.query(
+        const result = await readPool.query(
           'SELECT label, description, "generatedAt", stats FROM "PageReferenceGraphSnapshot" WHERE label = $1 LIMIT 1',
           [label]
         );
         row = result.rows[0];
       } else {
-        const result = await pool.query(
+        const result = await readPool.query(
           'SELECT label, description, "generatedAt", stats FROM "PageReferenceGraphSnapshot" ORDER BY "generatedAt" DESC LIMIT 1'
         );
         row = result.rows[0];

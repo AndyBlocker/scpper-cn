@@ -2,6 +2,8 @@ import { Router, type Request } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { fetchAuthUser, type AuthUserPayload } from '../utils/auth.js';
+import { createCache } from '../utils/cache.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 interface AlertsQueryRow {
   id: number;
@@ -125,7 +127,7 @@ function extractMuted(config: any): boolean | null {
   return null;
 }
 
-async function resolvePreferences(pool: Pool, userId: number): Promise<{ voteCountThreshold: number; revisionFilter: RevisionFilter; mutedMetrics: Record<MutableMetric, boolean> }> {
+async function resolvePreferences(readPool: Pool, userId: number): Promise<{ voteCountThreshold: number; revisionFilter: RevisionFilter; mutedMetrics: Record<MutableMetric, boolean> }> {
   let voteThreshold = DEFAULT_VOTE_THRESHOLD;
   let revisionFilter: RevisionFilter = 'ANY';
   let hasVotePref = false;
@@ -142,7 +144,7 @@ async function resolvePreferences(pool: Pool, userId: number): Promise<{ voteCou
     WHERE "userId" = $1
       AND "metric" IN ('COMMENT_COUNT', 'VOTE_COUNT', 'REVISION_COUNT')
   `;
-  const prefResult = await pool.query<{ metric: string; config: any }>(prefSql, [userId]);
+  const prefResult = await readPool.query<{ metric: string; config: any }>(prefSql, [userId]);
   for (const row of prefResult.rows) {
     if (row.metric === 'VOTE_COUNT') {
       voteThreshold = extractVoteThreshold(row.config, voteThreshold);
@@ -170,7 +172,7 @@ async function resolvePreferences(pool: Pool, userId: number): Promise<{ voteCou
       ORDER BY "updatedAt" DESC
       LIMIT 1
     `;
-    const voteWatch = await pool.query<{ thresholdValue: number | null; config: any }>(voteWatchSql, [userId, AUTO_WATCH_SOURCE]);
+    const voteWatch = await readPool.query<{ thresholdValue: number | null; config: any }>(voteWatchSql, [userId, AUTO_WATCH_SOURCE]);
     const row = voteWatch.rows[0];
     if (row) {
       const thresholdFromColumn = sanitizeVoteThreshold(row.thresholdValue);
@@ -192,14 +194,14 @@ async function resolvePreferences(pool: Pool, userId: number): Promise<{ voteCou
       ORDER BY "updatedAt" DESC
       LIMIT 1
     `;
-    const revisionWatch = await pool.query<{ config: any }>(revisionWatchSql, [userId, AUTO_WATCH_SOURCE]);
+    const revisionWatch = await readPool.query<{ config: any }>(revisionWatchSql, [userId, AUTO_WATCH_SOURCE]);
     const row = revisionWatch.rows[0];
     if (row) {
       revisionFilter = extractRevisionFilter(row.config, revisionFilter);
     }
   }
 
-  const mutedResult = await pool.query<{ metric: string; isMuted: boolean }>(
+  const mutedResult = await readPool.query<{ metric: string; isMuted: boolean }>(
     `
       SELECT "metric", BOOL_OR("mutedAt" IS NOT NULL) AS "isMuted"
       FROM "PageMetricWatch"
@@ -226,7 +228,7 @@ async function resolvePreferences(pool: Pool, userId: number): Promise<{ voteCou
   };
 }
 
-async function resolveAppUserId(pool: Pool, authUser: AuthUserPayload): Promise<number | null> {
+async function resolveAppUserId(readPool: Pool, authUser: AuthUserPayload): Promise<number | null> {
   const parsed = Number.parseInt(authUser.id, 10);
   if (Number.isFinite(parsed)) {
     return parsed;
@@ -234,7 +236,7 @@ async function resolveAppUserId(pool: Pool, authUser: AuthUserPayload): Promise<
   if (authUser.linkedWikidotId == null) {
     return null;
   }
-  const result = await pool.query<{ id: number }>(
+  const result = await readPool.query<{ id: number }>(
     'SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1',
     [authUser.linkedWikidotId]
   );
@@ -248,8 +250,12 @@ function normalizeMetric(metricParam?: string): string {
   return METRIC_ALIAS[key] || METRIC_ALIAS.comment;
 }
 
-export function alertsRouter(pool: Pool, _redis: RedisClientType | null) {
+export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+  const cache = createCache(redis);
+
+  // 读写分离：读操作使用从库，写操作使用主库
+  const readPool = getReadPoolSync();
 
   router.get('/', async (req, res, next) => {
     try {
@@ -264,65 +270,71 @@ export function alertsRouter(pool: Pool, _redis: RedisClientType | null) {
       const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 50)) : 20;
       const offset = Number.isFinite(offsetParam) ? Math.max(0, offsetParam) : 0;
 
-      const alertsQuery = `
-        SELECT 
-          pa.id,
-          pa."metric",
-          pa."prevValue",
-          pa."newValue",
-          pa."diffValue",
-          pa."detectedAt",
-          pa."acknowledgedAt",
-          pa."pageId",
-          p."wikidotId" AS "pageWikidotId",
-          p."currentUrl" AS "pageUrl",
-          pv.title AS "pageTitle",
-          pv."alternateTitle" AS "pageAlternateTitle",
-          pw."source"
-        FROM "PageMetricAlert" pa
-        JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
-        JOIN "User" u ON u.id = pw."userId"
-        JOIN "Page" p ON p.id = pa."pageId"
-        LEFT JOIN "PageVersion" pv ON pv."pageId" = pa."pageId" AND pv."validTo" IS NULL
-        WHERE u."wikidotId" = $1
-          AND pa."metric" = $2::"PageMetricType"
-        ORDER BY pa."detectedAt" DESC
-        LIMIT $3 OFFSET $4
-      `;
+      // 缓存 30 秒 - 减少 sync 期间的数据库压力，同时保持数据较新
+      const cacheKey = `alerts:${authUser.linkedWikidotId}:${metric}:${limit}:${offset}`;
+      const result = await cache.remember(cacheKey, 30, async () => {
+        const alertsQuery = `
+          SELECT
+            pa.id,
+            pa."metric",
+            pa."prevValue",
+            pa."newValue",
+            pa."diffValue",
+            pa."detectedAt",
+            pa."acknowledgedAt",
+            pa."pageId",
+            p."wikidotId" AS "pageWikidotId",
+            p."currentUrl" AS "pageUrl",
+            pv.title AS "pageTitle",
+            pv."alternateTitle" AS "pageAlternateTitle",
+            pw."source"
+          FROM "PageMetricAlert" pa
+          JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
+          JOIN "User" u ON u.id = pw."userId"
+          JOIN "Page" p ON p.id = pa."pageId"
+          LEFT JOIN "PageVersion" pv ON pv."pageId" = pa."pageId" AND pv."validTo" IS NULL
+          WHERE u."wikidotId" = $1
+            AND pa."metric" = $2::"PageMetricType"
+          ORDER BY pa."detectedAt" DESC
+          LIMIT $3 OFFSET $4
+        `;
 
-      const unreadQuery = `
-        SELECT COUNT(*)::int AS count
-        FROM "PageMetricAlert" pa
-        JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
-        JOIN "User" u ON u.id = pw."userId"
-        WHERE u."wikidotId" = $1
-          AND pa."metric" = $2::"PageMetricType"
-          AND pa."acknowledgedAt" IS NULL
-      `;
+        const unreadQuery = `
+          SELECT COUNT(*)::int AS count
+          FROM "PageMetricAlert" pa
+          JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
+          JOIN "User" u ON u.id = pw."userId"
+          WHERE u."wikidotId" = $1
+            AND pa."metric" = $2::"PageMetricType"
+            AND pa."acknowledgedAt" IS NULL
+        `;
 
-      const [alertsResult, unreadResult] = await Promise.all([
-        pool.query<AlertsQueryRow>(alertsQuery, [authUser.linkedWikidotId, metric, limit, offset]),
-        pool.query<{ count: number }>(unreadQuery, [authUser.linkedWikidotId, metric])
-      ]);
+        const [alertsResult, unreadResult] = await Promise.all([
+          readPool.query<AlertsQueryRow>(alertsQuery, [authUser.linkedWikidotId, metric, limit, offset]),
+          readPool.query<{ count: number }>(unreadQuery, [authUser.linkedWikidotId, metric])
+        ]);
 
-      const unreadCount = unreadResult.rows[0]?.count ?? 0;
-      const alerts = alertsResult.rows.map(row => ({
-        id: row.id,
-        metric: row.metric,
-        prevValue: row.prevValue,
-        newValue: row.newValue,
-        diffValue: row.diffValue,
-        detectedAt: row.detectedAt,
-        acknowledgedAt: row.acknowledgedAt,
-        pageId: row.pageId,
-        pageWikidotId: row.pageWikidotId,
-        pageUrl: row.pageUrl,
-        pageTitle: row.pageTitle,
-        pageAlternateTitle: row.pageAlternateTitle,
-        source: row.source
-      }));
+        const unreadCount = unreadResult.rows[0]?.count ?? 0;
+        const alerts = alertsResult.rows.map(row => ({
+          id: row.id,
+          metric: row.metric,
+          prevValue: row.prevValue,
+          newValue: row.newValue,
+          diffValue: row.diffValue,
+          detectedAt: row.detectedAt,
+          acknowledgedAt: row.acknowledgedAt,
+          pageId: row.pageId,
+          pageWikidotId: row.pageWikidotId,
+          pageUrl: row.pageUrl,
+          pageTitle: row.pageTitle,
+          pageAlternateTitle: row.pageAlternateTitle,
+          source: row.source
+        }));
 
-      res.json({ ok: true, metric, unreadCount, alerts });
+        return { ok: true, metric, unreadCount, alerts };
+      });
+
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -653,7 +665,7 @@ export function alertsRouter(pool: Pool, _redis: RedisClientType | null) {
       const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 50)) : 20;
       const offset = Number.isFinite(offsetParam) ? Math.max(0, offsetParam) : 0;
 
-      const countResult = await pool.query<{ count: number }>(
+      const countResult = await readPool.query<{ count: number }>(
         `
           SELECT COUNT(*)::int AS count
           FROM (
@@ -669,7 +681,7 @@ export function alertsRouter(pool: Pool, _redis: RedisClientType | null) {
       );
       const totalGroups = countResult.rows[0]?.count ?? 0;
 
-      const groupRows = await pool.query<{ pageId: number; updatedAt: string }>(
+      const groupRows = await readPool.query<{ pageId: number; updatedAt: string }>(
         `
           SELECT pa."pageId" AS "pageId", MAX(pa."detectedAt") AS "updatedAt"
           FROM "PageMetricAlert" pa
@@ -689,7 +701,7 @@ export function alertsRouter(pool: Pool, _redis: RedisClientType | null) {
       }
 
       const pageIds = groupRows.rows.map(r => r.pageId);
-      const details = await pool.query<AlertsQueryRow>(
+      const details = await readPool.query<AlertsQueryRow>(
         `
           SELECT 
             pa.id,

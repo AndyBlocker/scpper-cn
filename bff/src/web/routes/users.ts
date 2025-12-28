@@ -3,10 +3,14 @@ import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { extractPreviewCandidates, pickPreview, toPreviewPick, extractExcerptFallback } from '../utils/preview.js';
 import { createCache } from '../utils/cache.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 export function usersRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
   const cache = createCache(redis);
+
+  // 读写分离：users 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
 
   // GET /users/by-rank?category=overall|scp|story|goi|translation|wanderers|art
   router.get('/by-rank', async (req, res, next) => {
@@ -89,8 +93,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
         WHERE us."${fields.rank}" IS NOT NULL
       `;
       const [{ rows: list }, { rows: countRows }] = await Promise.all([
-        pool.query(listSql, [limit, offset]),
-        pool.query(countSql)
+        readPool.query(listSql, [limit, offset]),
+        readPool.query(countSql)
       ]);
       const total = (countRows[0]?.total as number) || 0;
       res.json({ total, items: list });
@@ -122,7 +126,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "User"
           WHERE "wikidotId" = $1
         `;
-        const { rows } = await pool.query(sql, [wikidotIdInt]);
+        const { rows } = await readPool.query(sql, [wikidotIdInt]);
         if (rows.length === 0) return null;
 
         const lastActivitySql = `
@@ -216,8 +220,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
         let payload: any = rows[0];
         try {
           const [laRes, faRes] = await Promise.all([
-            pool.query(lastActivitySql, [wikidotIdInt]),
-            pool.query(firstActivitySql, [wikidotIdInt])
+            readPool.query(lastActivitySql, [wikidotIdInt]),
+            readPool.query(firstActivitySql, [wikidotIdInt])
           ]);
           const la = laRes.rows[0];
           const fa = faRes.rows[0];
@@ -278,7 +282,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "User"
           WHERE id = $1
         `;
-        const { rows } = await pool.query(sql, [id]);
+        const { rows } = await readPool.query(sql, [id]);
         return rows[0] ?? null;
       });
       if (!payload) return res.status(404).json({ error: 'not_found' });
@@ -331,7 +335,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           JOIN "User" u ON us."userId" = u.id
           WHERE u."wikidotId" = $1
         `;
-        const { rows } = await pool.query(sql, [wikidotIdInt]);
+        const { rows } = await readPool.query(sql, [wikidotIdInt]);
         return rows[0] ?? null;
       });
       if (!payload) return res.status(404).json({ error: 'not_found' });
@@ -525,7 +529,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
         LIMIT $${params.length + 1}::int OFFSET $${params.length + 2}::int
         `;
         params.push(limitInt, offsetInt);
-        const { rows } = await pool.query(sql, params);
+        const { rows } = await readPool.query(sql, params);
         return rows.map((r: any) => {
           const previews = extractPreviewCandidates(r?.source || null);
           let snippetHtml: string | null = null;
@@ -634,7 +638,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             OR COALESCE(is_deleted, false) = false
           )
         `;
-        const { rows } = await pool.query(sql, [wikidotIdInt, includeDeletedBool]);
+        const { rows } = await readPool.query(sql, [wikidotIdInt, includeDeletedBool]);
         return rows[0] || { total: 0, original: 0, translation: 0, shortStories: 0, anomalousLog: 0, other: 0 };
       });
 
@@ -750,8 +754,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
         `;
 
         const [listRes, countRes] = await Promise.all([
-          pool.query(sql, [wikidotIdInt, includeDeletedBool, limitInt, offsetInt]),
-          pool.query(countSql, [wikidotIdInt, includeDeletedBool])
+          readPool.query(sql, [wikidotIdInt, includeDeletedBool, limitInt, offsetInt]),
+          readPool.query(countSql, [wikidotIdInt, includeDeletedBool])
         ]);
         const total = Number(countRes.rows?.[0]?.total || 0);
         return {
@@ -808,8 +812,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             AND pv."isDeleted" = false
         `;
         const [listRes, countRes] = await Promise.all([
-          pool.query(sql, [wikidotIdInt, limitInt, offsetInt]),
-          pool.query(countSql, [wikidotIdInt])
+          readPool.query(sql, [wikidotIdInt, limitInt, offsetInt]),
+          readPool.query(countSql, [wikidotIdInt])
         ]);
         const total = Number(countRes.rows?.[0]?.total || 0);
         return {
@@ -973,7 +977,7 @@ FROM ordered
 ORDER BY period;
         `;
 
-        const { rows } = await pool.query(sql, [wikidotIdInt, bucket, dateLabel]);
+        const { rows } = await readPool.query(sql, [wikidotIdInt, bucket, dateLabel]);
         if (!rows?.length) return [];
 
         let runningTotal = 0;
@@ -1066,7 +1070,7 @@ ORDER BY period;
             LIMIT $2::int OFFSET $3::int
           `;
         }
-        const { rows } = await pool.query(sql, [wikidotIdInt, limitInt, offsetInt]);
+        const { rows } = await readPool.query(sql, [wikidotIdInt, limitInt, offsetInt]);
         return rows;
       });
 
@@ -1114,7 +1118,7 @@ ORDER BY period;
           ORDER BY ${orderClause}
           LIMIT $2::int OFFSET $3::int
         `;
-        const { rows } = await pool.query(sql, [wikidotIdInt, limitInt, offsetInt]);
+        const { rows } = await readPool.query(sql, [wikidotIdInt, limitInt, offsetInt]);
         return rows;
       });
 

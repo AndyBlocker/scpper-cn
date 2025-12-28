@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>逃离无尽家具城 v2.0</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Pixel Font -->
+    <style>
+        @import url('https://gs.jurieo.com/gemini/fonts-googleapis/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            background-color: #0f172a;
+            color: white;
+            font-family: 'Press Start 2P', cursive;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* CRT 扫描线效果 */
+        #game-wrapper {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #1e293b;
+        }
+
+        canvas {
+            box-shadow: 0 0 30px rgba(0,0,0,0.8);
+            image-rendering: pixelated;
+            background-color: #e5e5e5;
+        }
+        
+        /* UI 覆盖层 */
+        .ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
+
+        .interactable {
+            pointer-events: auto;
+        }
+
+        .hud-panel {
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid #475569;
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        /* 模态框 */
+        .modal {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+            backdrop-filter: blur(4px);
+        }
+
+        .card {
+            background: #1e293b;
+            border: 4px solid #3b82f6;
+            padding: 20px;
+            margin: 10px;
+            cursor: pointer;
+            width: 280px;
+            text-align: center;
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            border-color: #facc15;
+            background: #334155;
+        }
+        .card-icon {
+            font-size: 40px;
+            margin-bottom: 10px;
+            color: #60a5fa;
+        }
+
+        /* 小地图 */
+        #minimap {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 150px;
+            height: 150px;
+            background: rgba(0,0,0,0.5);
+            border: 2px solid #475569;
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            grid-template-rows: repeat(5, 1fr);
+            gap: 2px;
+            padding: 4px;
+        }
+        .minimap-cell {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+        }
+        .minimap-cell.active { background: #60a5fa; }
+        .minimap-cell.visited { background: #94a3b8; }
+        .minimap-cell.current { background: #facc15; border: 2px solid white; }
+        .minimap-cell.boss { background: #ef4444; }
+        .minimap-cell.treasure { background: #f59e0b; }
+
+        .hidden { display: none !important; }
+        
+        .weapon-select-btn {
+            background: #334155;
+            padding: 15px;
+            margin: 10px;
+            border: 2px solid #64748b;
+            cursor: pointer;
+        }
+        .weapon-select-btn:hover { background: #475569; border-color: #fff; }
+        .weapon-select-btn.selected { border-color: #facc15; background: #1e293b; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD -->
+    <div id="hud" class="ui-layer flex flex-col justify-between p-6">
+        <!-- Top Left: Stats -->
+        <div class="flex gap-4">
+            <div class="hud-panel flex items-center gap-3">
+                <i data-lucide="heart" class="text-red-500 fill-red-500"></i>
+                <div class="flex flex-col">
+                    <span class="text-xs text-gray-400">生命值</span>
+                    <span id="hp-val" class="text-lg">100/100</span>
+                </div>
+            </div>
+            <div class="hud-panel flex items-center gap-3">
+                <i data-lucide="coins" class="text-yellow-400"></i>
+                <div class="flex flex-col">
+                    <span class="text-xs text-gray-400">优惠券</span>
+                    <span id="coin-val" class="text-lg">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Minimap -->
+        <div id="minimap"></div>
+
+        <!-- Bottom: Weapon & Controls -->
+        <div class="flex justify-between items-end w-full">
+            <div class="hud-panel flex items-center gap-3">
+                <div id="weapon-icon-container" class="p-2 bg-slate-700 rounded border border-slate-500">
+                    <i id="weapon-icon" data-lucide="crosshair" class="text-white"></i>
+                </div>
+                <div>
+                    <div id="weapon-name" class="text-sm text-blue-300">标签枪 (LV.1)</div>
+                    <div class="text-[10px] text-gray-400">无限弹药</div>
+                </div>
+            </div>
+            
+            <div class="text-[10px] text-gray-500 text-right opacity-60">
+                WASD 移动<br>鼠标瞄准/攻击<br>空格 翻滚/互动
+            </div>
+        </div>
+    </div>
+
+    <!-- Start/Class Selection Screen -->
+    <div id="start-screen" class="modal interactable">
+        <h1 class="text-4xl text-yellow-400 mb-2">逃离家具城</h1>
+        <p class="text-gray-400 mb-8 text-xs">ESCAPE THE INFINITE FURNITURE STORE</p>
+        
+        <div class="flex gap-4 mb-8">
+            <div class="weapon-select-btn selected" onclick="selectClass('ranged')">
+                <i data-lucide="scan-barcode" class="mb-2 mx-auto"></i>
+                <div class="text-yellow-400 text-sm">顾客 (远程)</div>
+                <div class="text-[10px] text-gray-400 mt-2">武器: 标签枪<br>高射速，低伤害</div>
+            </div>
+            <div class="weapon-select-btn" onclick="selectClass('melee')">
+                <i data-lucide="hammer" class="mb-2 mx-auto"></i>
+                <div class="text-red-400 text-sm">搬运工 (近战)</div>
+                <div class="text-[10px] text-gray-400 mt-2">武器: 巨大扳手<br>范围挥砍，可消弹</div>
+            </div>
+        </div>
+        
+        <button onclick="startGame()" class="px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded border-b-4 border-blue-800 active:border-b-0 active:translate-y-1">
+            开始逃离
+        </button>
+    </div>
+
+    <!-- Upgrade Screen -->
+    <div id="upgrade-screen" class="modal interactable hidden">
+        <h2 class="text-2xl text-yellow-400 mb-6">楼层清理完成!</h2>
+        <div class="text-sm text-gray-300 mb-8">选择一件丢失的货物...</div>
+        <div id="upgrade-cards" class="flex flex-wrap justify-center gap-4">
+            <!-- Cards injected via JS -->
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="modal interactable hidden">
+        <h1 class="text-4xl text-red-500 mb-4">被做成了肉丸</h1>
+        <p class="text-gray-300 mb-8">你永远留在了展示区。</p>
+        <p class="text-yellow-400 mb-8 text-sm">最终得分: <span id="final-score">0</span></p>
+        <button onclick="location.reload()" class="px-6 py-3 bg-gray-700 hover:bg-gray-600 border border-gray-500 rounded">
+            重新进店
+        </button>
+    </div>
+</div>
+
+<script>
+    // 初始化图标
+    lucide.createIcons();
+
+    /* =========================================
+       CONSTANTS & CONFIG
+       ========================================= */
+    const TILE_SIZE = 40; // 虚拟网格大小
+    const ROOM_WIDTH = 20; // 瓦片数量
+    const ROOM_HEIGHT = 15;
+    const CANVAS_WIDTH = ROOM_WIDTH * TILE_SIZE; // 800
+    const CANVAS_HEIGHT = ROOM_HEIGHT * TILE_SIZE; // 600
+
+    const COLORS = {
+        bg: '#e5e5e5', // 地板
+        wall: '#475569',
+        wallTop: '#64748b',
+        player: '#3b82f6',
+        enemy: '#ef4444',
+        shadow: 'rgba(0,0,0,0.3)',
+        obstacle: '#92400e' // 木箱
+    };
+
+    /* =========================================
+       ENGINE & UTILS
+       ========================================= */
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Resize
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+
+    // Input State
+    const input = {
+        keys: {},
+        mouse: { x: 0, y: 0, down: false },
+        aimAngle: 0
+    };
+
+    window.addEventListener('keydown', e => input.keys[e.key.toLowerCase()] = true);
+    window.addEventListener('keyup', e => input.keys[e.key.toLowerCase()] = false);
+    canvas.addEventListener('mousemove', e => {
+        const rect = canvas.getBoundingClientRect();
+        input.mouse.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+        input.mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    });
+    canvas.addEventListener('mousedown', () => input.mouse.down = true);
+    canvas.addEventListener('mouseup', () => input.mouse.down = false);
+
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+    function checkCollide(c1, c2) {
+        const dx = c1.x - c2.x;
+        const dy = c1.y - c2.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        return dist < (c1.r + c2.r);
+    }
+    function checkRectCollide(c, r) {
+        const testX = c.x < r.x ? r.x : (c.x > r.x + r.w ? r.x + r.w : c.x);
+        const testY = c.y < r.y ? r.y : (c.y > r.y + r.h ? r.y + r.h : c.y);
+        const distX = c.x - testX;
+        const distY = c.y - testY;
+        return (distX*distX + distY*distY) <= (c.r*c.r);
+    }
+
+    /* =========================================
+       GAME CLASSES
+       ========================================= */
+
+    class Particle {
+        constructor(x, y, color, speed, size, life) {
+            this.x = x; this.y = y;
+            const a = Math.random() * Math.PI * 2;
+            this.vx = Math.cos(a) * speed;
+            this.vy = Math.sin(a) * speed;
+            this.color = color;
+            this.size = size;
+            this.life = life;
+            this.maxLife = life;
+        }
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.life--;
+            this.vx *= 0.9;
+            this.vy *= 0.9;
+        }
+        draw(ctx) {
+            ctx.globalAlpha = this.life / this.maxLife;
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    class FloatingText {
+        constructor(x, y, text, color) {
+            this.x = x; this.y = y;
+            this.text = text;
+            this.color = color;
+            this.life = 40;
+            this.yOffset = 0;
+        }
+        update() {
+            this.life--;
+            this.yOffset -= 0.5;
+        }
+        draw(ctx) {
+            ctx.globalAlpha = Math.min(1, this.life / 20);
+            ctx.fillStyle = this.color;
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 2;
+            ctx.font = "10px 'Press Start 2P'";
+            ctx.strokeText(this.text, this.x, this.y + this.yOffset);
+            ctx.fillText(this.text, this.x, this.y + this.yOffset);
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    class Room {
+        constructor(gx, gy, type) {
+            this.gx = gx;
+            this.gy = gy;
+            this.type = type; // 'start', 'normal', 'boss', 'treasure'
+            this.doors = { n: false, s: false, e: false, w: false };
+            this.cleared = (type === 'start' || type === 'treasure');
+            this.visited = false;
+            
+            this.enemies = [];
+            this.obstacles = [];
+            this.projectiles = [];
+            this.items = []; // Drops on floor
+        }
+
+        initContent(difficulty) {
+            if (this.type === 'start') return;
+            
+            // Generate Obstacles (Grid aligned)
+            const obsCount = Math.floor(rand(3, 8));
+            for(let i=0; i<obsCount; i++) {
+                const ox = Math.floor(rand(2, ROOM_WIDTH-2)) * TILE_SIZE;
+                const oy = Math.floor(rand(2, ROOM_HEIGHT-2)) * TILE_SIZE;
+                this.obstacles.push({x: ox, y: oy, w: TILE_SIZE, h: TILE_SIZE, hp: 20});
+            }
+
+            // Generate Enemies
+            if (this.type === 'normal') {
+                const count = Math.floor(rand(2, 4) + difficulty * 0.5);
+                for(let i=0; i<count; i++) {
+                    const ex = rand(100, CANVAS_WIDTH-100);
+                    const ey = rand(100, CANVAS_HEIGHT-100);
+                    const enemyType = Math.random() > 0.6 ? 'turret' : 'chaser';
+                    this.enemies.push(new Enemy(ex, ey, enemyType, difficulty));
+                }
+            } else if (this.type === 'boss') {
+                this.enemies.push(new Enemy(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, 'boss', difficulty));
+            }
+        }
+    }
+
+    class Player {
+        constructor(classType) {
+            this.x = CANVAS_WIDTH / 2;
+            this.y = CANVAS_HEIGHT / 2;
+            this.r = 12;
+            this.speed = 4;
+            this.classType = classType; // 'ranged' | 'melee'
+            
+            // Stats
+            this.maxHp = 100;
+            this.hp = 100;
+            this.coins = 0;
+            this.dashCooldown = 0;
+            this.attackCooldown = 0;
+            this.iframes = 0;
+
+            // Class specific
+            if (classType === 'ranged') {
+                this.damage = 15;
+                this.fireRate = 12; // Frames
+                this.range = 600;
+                this.color = '#3b82f6';
+            } else {
+                this.damage = 40;
+                this.fireRate = 25;
+                this.range = 70; // Melee range
+                this.maxHp = 150;
+                this.hp = 150;
+                this.color = '#ef4444';
+            }
+        }
+
+        update() {
+            // Movement
+            let dx = 0, dy = 0;
+            if (input.keys.w) dy -= 1;
+            if (input.keys.s) dy += 1;
+            if (input.keys.a) dx -= 1;
+            if (input.keys.d) dx += 1;
+
+            if (dx !== 0 || dy !== 0) {
+                const len = Math.sqrt(dx*dx + dy*dy);
+                this.x += (dx/len) * this.speed;
+                this.y += (dy/len) * this.speed;
+            }
+
+            // Wall Collisions
+            if (this.x < TILE_SIZE) this.x = TILE_SIZE;
+            if (this.x > CANVAS_WIDTH - TILE_SIZE) this.x = CANVAS_WIDTH - TILE_SIZE;
+            if (this.y < TILE_SIZE) this.y = TILE_SIZE;
+            if (this.y > CANVAS_HEIGHT - TILE_SIZE) this.y = CANVAS_HEIGHT - TILE_SIZE;
+
+            // Attack
+            if (this.attackCooldown > 0) this.attackCooldown--;
+            if (input.mouse.down && this.attackCooldown <= 0) {
+                this.attack();
+            }
+
+            if (this.iframes > 0) this.iframes--;
+        }
+
+        attack() {
+            const angle = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
+            
+            if (this.classType === 'ranged') {
+                // Shoot Projectile
+                game.currentRoom.projectiles.push(new Projectile(
+                    this.x, this.y, angle, 8, this.damage, true, 60
+                ));
+                GameAudio.play('shoot');
+            } else {
+                // Melee Swing
+                game.currentRoom.projectiles.push(new MeleeSwing(
+                    this.x, this.y, angle, this.range, this.damage
+                ));
+                GameAudio.play('swing');
+            }
+            this.attackCooldown = this.fireRate;
+        }
+
+        takeDamage(amt) {
+            if (this.iframes > 0) return;
+            this.hp -= amt;
+            this.iframes = 30;
+            game.shake = 10;
+            game.particles.push(new FloatingText(this.x, this.y - 20, `-${amt}`, '#ff0000'));
+            
+            if (this.hp <= 0) game.gameOver();
+            updateHud();
+        }
+    }
+
+    class Enemy {
+        constructor(x, y, type, difficulty) {
+            this.x = x; this.y = y;
+            this.type = type;
+            this.maxHp = 30 * difficulty;
+            
+            if (type === 'boss') {
+                this.r = 30;
+                this.color = '#7f1d1d';
+                this.maxHp = 400 * difficulty;
+                this.speed = 1.5;
+            } else if (type === 'turret') {
+                this.r = 15;
+                this.color = '#f59e0b'; // Yellow Lamp
+                this.speed = 0;
+            } else {
+                this.r = 15;
+                this.color = '#b91c1c'; // Red Chair
+                this.speed = 2 + difficulty * 0.2;
+            }
+            
+            this.hp = this.maxHp;
+            this.cooldown = 100;
+        }
+
+        update(player) {
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const angle = Math.atan2(dy, dx);
+
+            // AI Behavior
+            if (this.type === 'chaser') {
+                if (dist > this.r + player.r) {
+                    this.x += Math.cos(angle) * this.speed;
+                    this.y += Math.sin(angle) * this.speed;
+                }
+                // Contact Damage
+                if (checkCollide(this, player)) player.takeDamage(10);
+
+            } else if (this.type === 'turret') {
+                this.cooldown--;
+                if (this.cooldown <= 0 && dist < 400) {
+                    game.currentRoom.projectiles.push(new Projectile(this.x, this.y, angle, 4, 10, false));
+                    this.cooldown = 120;
+                }
+            } else if (this.type === 'boss') {
+                // Boss logic: Move slowly, shoot spread
+                if (dist > 100) {
+                    this.x += Math.cos(angle) * this.speed;
+                    this.y += Math.sin(angle) * this.speed;
+                }
+                
+                this.cooldown--;
+                if (this.cooldown <= 0) {
+                    // Spread shot
+                    for(let i=-2; i<=2; i++) {
+                        game.currentRoom.projectiles.push(new Projectile(this.x, this.y, angle + i*0.2, 5, 15, false));
+                    }
+                    this.cooldown = 90;
+                }
+                if (checkCollide(this, player)) player.takeDamage(20);
+            }
+        }
+
+        takeDamage(amt) {
+            this.hp -= amt;
+            game.particles.push(new FloatingText(this.x, this.y - 20, amt, '#fff'));
+            if (this.hp <= 0) {
+                this.dead = true;
+                game.player.coins += (this.type === 'boss' ? 50 : 5);
+                updateHud();
+                // Spawn particles
+                for(let i=0; i<8; i++) {
+                    game.particles.push(new Particle(this.x, this.y, this.color, rand(2,5), 4, 30));
+                }
+            }
+        }
+    }
+
+    class Projectile {
+        constructor(x, y, angle, speed, damage, isPlayer, life=120) {
+            this.x = x; this.y = y;
+            this.vx = Math.cos(angle) * speed;
+            this.vy = Math.sin(angle) * speed;
+            this.r = 4;
+            this.damage = damage;
+            this.isPlayer = isPlayer;
+            this.life = life;
+            this.color = isPlayer ? '#facc15' : '#ff00ff';
+        }
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.life--;
+        }
+        draw(ctx) {
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
+            ctx.fill();
+        }
+    }
+
+    class MeleeSwing {
+        constructor(x, y, angle, range, damage) {
+            this.x = x; this.y = y;
+            this.angle = angle;
+            this.range = range;
+            this.damage = damage;
+            this.life = 10; // Frames visible
+            this.isPlayer = true;
+            this.isMelee = true;
+            this.hitList = []; // Track who we hit so we don't hit twice
+        }
+        update() {
+            // Follow player position approx
+            this.x = game.player.x;
+            this.y = game.player.y;
+            this.life--;
+        }
+        draw(ctx) {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.beginPath();
+            ctx.arc(0, 0, this.range, -Math.PI/3, Math.PI/3);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    /* =========================================
+       MAP GENERATOR
+       ========================================= */
+    class Dungeon {
+        constructor(size) {
+            this.rooms = {};
+            this.gridSize = 5; // 5x5 Grid
+            this.roomCount = size;
+            this.generate();
+        }
+
+        generate() {
+            // Random Walker Algorithm
+            let x = 2, y = 2; // Start center
+            let created = 0;
+            const stack = [{x, y}];
+            
+            this.rooms[`${x},${y}`] = new Room(x, y, 'start');
+            created++;
+
+            while (created < this.roomCount) {
+                const current = stack[Math.floor(Math.random() * stack.length)];
+                
+                const dirs = [[0,1], [0,-1], [1,0], [-1,0]];
+                const dir = dirs[Math.floor(Math.random() * dirs.length)];
+                const nx = current.x + dir[0];
+                const ny = current.y + dir[1];
+
+                if (nx >= 0 && nx < this.gridSize && ny >= 0 && ny < this.gridSize) {
+                    const key = `${nx},${ny}`;
+                    if (!this.rooms[key]) {
+                        this.rooms[key] = new Room(nx, ny, 'normal');
+                        created++;
+                        stack.push({x: nx, y: ny});
+                    }
+                }
+            }
+
+            // Find farthest room for Boss
+            let maxDist = 0;
+            let bossKey = null;
+            for (let key in this.rooms) {
+                const r = this.rooms[key];
+                const dist = Math.abs(r.gx - 2) + Math.abs(r.gy - 2);
+                if (dist > maxDist) {
+                    maxDist = dist;
+                    bossKey = key;
+                }
+            }
+            if (bossKey) this.rooms[bossKey].type = 'boss';
+
+            // Link Doors
+            for (let key in this.rooms) {
+                const r = this.rooms[key];
+                if (this.rooms[`${r.gx},${r.gy-1}`]) r.doors.n = true;
+                if (this.rooms[`${r.gx},${r.gy+1}`]) r.doors.s = true;
+                if (this.rooms[`${r.gx+1},${r.gy}`]) r.doors.e = true;
+                if (this.rooms[`${r.gx-1},${r.gy}`]) r.doors.w = true;
+                
+                r.initContent(1); // Difficulty 1 for now
+            }
+        }
+    }
+
+    /* =========================================
+       GAME CONTROLLER
+       ========================================= */
+    const GameAudio = {
+        play: (type) => { /* Placeholder for Audio API */ }
+    };
+
+    const game = {
+        running: false,
+        player: null,
+        dungeon: null,
+        currentRoom: null,
+        particles: [],
+        shake: 0,
+        
+        start: (classType) => {
+            game.player = new Player(classType);
+            game.generateFloor();
+            game.running = true;
+            updateHud();
+            loop();
+        },
+
+        generateFloor: () => {
+            game.dungeon = new Dungeon(8 + game.player.coins / 50); // Larger dungeon if rich
+            game.currentRoom = game.dungeon.rooms['2,2'];
+            game.currentRoom.visited = true;
+            renderMinimap();
+        },
+
+        changeRoom: (dx, dy) => {
+            const nextKey = `${game.currentRoom.gx + dx},${game.currentRoom.gy + dy}`;
+            const nextRoom = game.dungeon.rooms[nextKey];
+            if (nextRoom) {
+                game.currentRoom = nextRoom;
+                game.currentRoom.visited = true;
+                game.player.x = dx === 1 ? TILE_SIZE*2 : (dx === -1 ? CANVAS_WIDTH - TILE_SIZE*2 : CANVAS_WIDTH/2);
+                game.player.y = dy === 1 ? TILE_SIZE*2 : (dy === -1 ? CANVAS_HEIGHT - TILE_SIZE*2 : CANVAS_HEIGHT/2);
+                game.particles = []; // Clear particles
+                renderMinimap();
+                
+                // Entrance animation
+                document.getElementById('level-display').innerText = 
+                   nextRoom.type === 'boss' ? '展示区 (BOSS)' : '仓储区';
+            }
+        },
+
+        checkClear: () => {
+            if (!game.currentRoom.cleared && game.currentRoom.enemies.length === 0) {
+                game.currentRoom.cleared = true;
+                game.particles.push(new FloatingText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, "ROOM CLEAR", "#facc15"));
+                // If boss room, win level
+                if (game.currentRoom.type === 'boss') {
+                    setTimeout(() => showUpgradeScreen(), 1000);
+                }
+            }
+        },
+
+        gameOver: () => {
+            game.running = false;
+            document.getElementById('final-score').innerText = game.player.coins;
+            document.getElementById('game-over-screen').classList.remove('hidden');
+        }
+    };
+
+    /* =========================================
+       UI & RENDERING
+       ========================================= */
+    let selectedClass = 'ranged';
+    function selectClass(c) {
+        selectedClass = c;
+        document.querySelectorAll('.weapon-select-btn').forEach(b => b.classList.remove('selected'));
+        event.currentTarget.classList.add('selected');
+    }
+
+    function startGame() {
+        document.getElementById('start-screen').classList.add('hidden');
+        game.start(selectedClass);
+        // Update Weapon UI
+        const name = selectedClass === 'ranged' ? '标签枪' : '巨大扳手';
+        const icon = selectedClass === 'ranged' ? 'crosshair' : 'hammer';
+        document.getElementById('weapon-name').innerText = name;
+        // Re-render icon
+        const iconContainer = document.getElementById('weapon-icon-container');
+        iconContainer.innerHTML = `<i data-lucide="${icon}" class="text-white"></i>`;
+        lucide.createIcons();
+    }
+
+    function updateHud() {
+        document.getElementById('hp-val').innerText = `${Math.floor(game.player.hp)}/${game.player.maxHp}`;
+        document.getElementById('coin-val').innerText = game.player.coins;
+    }
+
+    function renderMinimap() {
+        const mm = document.getElementById('minimap');
+        mm.innerHTML = '';
+        const rooms = game.dungeon.rooms;
+        for(let y=0; y<5; y++) {
+            for(let x=0; x<5; x++) {
+                const d = document.createElement('div');
+                d.className = 'minimap-cell';
+                const key = `${x},${y}`;
+                if (rooms[key]) {
+                    if (rooms[key].visited) d.classList.add('visited');
+                    if (game.currentRoom.gx === x && game.currentRoom.gy === y) d.classList.add('current');
+                    if (rooms[key].type === 'boss' && rooms[key].visited) d.classList.add('boss');
+                }
+                mm.appendChild(d);
+            }
+        }
+    }
+
+    function showUpgradeScreen() {
+        const screen = document.getElementById('upgrade-screen');
+        const container = document.getElementById('upgrade-cards');
+        screen.classList.remove('hidden');
+        container.innerHTML = '';
+
+        const upgrades = [
+            { icon: 'zap', name: '电机升级', desc: '攻速 +20%', effect: () => game.player.fireRate *= 0.8 },
+            { icon: 'heart', name: '额外填充', desc: '最大生命 +50', effect: () => { game.player.maxHp += 50; game.player.hp += 50; } },
+            { icon: 'swords', name: '锋利边缘', desc: '伤害 +10', effect: () => game.player.damage += 10 },
+            { icon: 'wind', name: '润滑油', desc: '移速 +1', effect: () => game.player.speed += 1 }
+        ];
+
+        // Pick 3 random
+        const picks = upgrades.sort(() => 0.5 - Math.random()).slice(0, 3);
+        
+        picks.forEach(u => {
+            const el = document.createElement('div');
+            el.className = 'card';
+            el.innerHTML = `<i data-lucide="${u.icon}" class="card-icon"></i><h3 class="text-white font-bold">${u.name}</h3><p class="text-xs text-gray-400 mt-2">${u.desc}</p>`;
+            el.onclick = () => {
+                u.effect();
+                screen.classList.add('hidden');
+                // Next Level? Or just continue? For demo, restart floor with harder difficulty logic implies full game, 
+                // but let's just heal and continue to a new generated floor.
+                game.generateFloor(); 
+                updateHud();
+            };
+            container.appendChild(el);
+        });
+        lucide.createIcons();
+    }
+
+    // --- DRAWING ---
+
+    function drawRoom(ctx) {
+        // Draw Walls
+        ctx.fillStyle = COLORS.wall;
+        // Top Wall (Thick)
+        ctx.fillRect(0, 0, CANVAS_WIDTH, TILE_SIZE);
+        ctx.fillStyle = COLORS.wallTop;
+        ctx.fillRect(0, 0, CANVAS_WIDTH, TILE_SIZE/2);
+        
+        // Side/Bottom Walls
+        ctx.fillStyle = COLORS.wall;
+        ctx.fillRect(0, 0, TILE_SIZE, CANVAS_HEIGHT); // Left
+        ctx.fillRect(CANVAS_WIDTH-TILE_SIZE, 0, TILE_SIZE, CANVAS_HEIGHT); // Right
+        ctx.fillRect(0, CANVAS_HEIGHT-TILE_SIZE, CANVAS_WIDTH, TILE_SIZE); // Bottom
+
+        // Draw Doors
+        ctx.fillStyle = '#1e293b'; // Door hole
+        const r = game.currentRoom;
+        
+        // Draw Doors Visuals
+        const drawDoor = (x, y, w, h, isOpen) => {
+             ctx.fillStyle = isOpen ? '#000' : '#475569';
+             ctx.fillRect(x, y, w, h);
+             if (!isOpen) {
+                 ctx.fillStyle = '#ef4444'; // Lock light
+                 ctx.fillRect(x + w/2 - 2, y + h/2 - 2, 4, 4);
+             }
+        };
+
+        const midX = CANVAS_WIDTH/2 - 30;
+        const midY = CANVAS_HEIGHT/2 - 30;
+
+        if (r.doors.n) drawDoor(midX, 0, 60, TILE_SIZE, r.cleared);
+        if (r.doors.s) drawDoor(midX, CANVAS_HEIGHT-TILE_SIZE, 60, TILE_SIZE, r.cleared);
+        if (r.doors.w) drawDoor(0, midY, TILE_SIZE, 60, r.cleared);
+        if (r.doors.e) drawDoor(CANVAS_WIDTH-TILE_SIZE, midY, TILE_SIZE, 60, r.cleared);
+    }
+
+    function drawEntity(ctx, e) {
+        // Shadow
+        ctx.fillStyle = COLORS.shadow;
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y + e.r, e.r, e.r*0.5, 0, 0, Math.PI*2);
+        ctx.fill();
+
+        // Body
+        ctx.fillStyle = e.color;
+        if (e.iframes > 0 && Math.floor(Date.now()/50)%2) ctx.fillStyle = '#fff';
+        
+        if (e instanceof Player) {
+            // Draw Player (Simple IKEA Guy)
+            ctx.fillRect(e.x - 10, e.y - 15, 20, 30); // Body
+            ctx.fillStyle = '#facc15'; // Shirt
+            ctx.fillRect(e.x - 10, e.y - 15, 20, 15);
+            // Weapon
+            ctx.save();
+            ctx.translate(e.x, e.y);
+            const angle = Math.atan2(input.mouse.y - e.y, input.mouse.x - e.x);
+            ctx.rotate(angle);
+            ctx.fillStyle = '#333';
+            if (game.player.classType === 'ranged') {
+                ctx.fillRect(10, -2, 12, 4); // Gun
+            } else {
+                ctx.fillRect(5, -10, 4, 20); // Handle
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillRect(5, -12, 10, 4); // Wrench head
+            }
+            ctx.restore();
+        } else if (e.type === 'turret') {
+            // Draw Lamp
+            ctx.beginPath();
+            ctx.moveTo(e.x, e.y-20);
+            ctx.lineTo(e.x-10, e.y+10);
+            ctx.lineTo(e.x+10, e.y+10);
+            ctx.fill();
+        } else {
+            // Basic Boxy Enemy
+            ctx.fillRect(e.x - e.r, e.y - e.r, e.r*2, e.r*2);
+            // Angry Eyes
+            ctx.fillStyle = '#000';
+            ctx.fillRect(e.x - 5, e.y - 5, 2, 5);
+            ctx.fillRect(e.x + 3, e.y - 5, 2, 5);
+        }
+
+        // HP Bar for Boss
+        if (e.type === 'boss') {
+            ctx.fillStyle = 'red';
+            ctx.fillRect(e.x - 30, e.y - 40, 60, 5);
+            ctx.fillStyle = 'lime';
+            ctx.fillRect(e.x - 30, e.y - 40, 60 * (e.hp/e.maxHp), 5);
+        }
+    }
+
+    function loop() {
+        if (!game.running) return;
+        requestAnimationFrame(loop);
+
+        // Shake logic
+        let shakeX = 0, shakeY = 0;
+        if (game.shake > 0) {
+            shakeX = (Math.random() - 0.5) * game.shake;
+            shakeY = (Math.random() - 0.5) * game.shake;
+            game.shake *= 0.9;
+            if (game.shake < 0.5) game.shake = 0;
+        }
+
+        ctx.save();
+        ctx.translate(shakeX, shakeY);
+
+        // 1. Clear & Background
+        ctx.fillStyle = COLORS.bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 2. Logic Update
+        const room = game.currentRoom;
+        
+        game.player.update();
+        room.enemies.forEach(e => e.update(game.player));
+        
+        // Projectiles
+        room.projectiles.forEach((p, i) => {
+            p.update();
+            if (p.life <= 0) { room.projectiles.splice(i, 1); return; }
+            
+            // Collisions
+            if (p.isPlayer) {
+                // Hitting Enemies
+                if (p.isMelee) {
+                    // Melee hits everything in range/angle
+                    room.enemies.forEach(e => {
+                        const dx = e.x - p.x; const dy = e.y - p.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        // Check angle diff (simple check)
+                        if (dist < p.range + e.r && !p.hitList.includes(e)) {
+                            e.takeDamage(p.damage);
+                            p.hitList.push(e);
+                            // Pushback
+                            const angle = Math.atan2(dy, dx);
+                            e.x += Math.cos(angle) * 30;
+                            e.y += Math.sin(angle) * 30;
+                        }
+                    });
+                    // Melee breaks projectiles
+                    room.projectiles.forEach(op => {
+                         if (!op.isPlayer && !op.dead) {
+                             const dx = op.x - p.x; const dy = op.y - p.y;
+                             if (Math.sqrt(dx*dx+dy*dy) < p.range) op.life = 0;
+                         }
+                    });
+
+                } else {
+                    // Ranged hits single target
+                    let hit = false;
+                    // Obstacles
+                    room.obstacles.forEach((o, oi) => {
+                        if(checkRectCollide(p, o)) {
+                             o.hp -= p.damage;
+                             hit = true;
+                             if(o.hp <= 0) {
+                                 room.obstacles.splice(oi, 1);
+                                 // Particle
+                                 for(let k=0;k<5;k++) game.particles.push(new Particle(o.x+o.w/2, o.y+o.h/2, '#b45309', 3, 4, 20));
+                             }
+                        }
+                    });
+                    
+                    if (!hit) {
+                        room.enemies.forEach(e => {
+                            if (checkCollide(p, e)) {
+                                e.takeDamage(p.damage);
+                                hit = true;
+                            }
+                        });
+                    }
+                    if (hit) p.life = 0;
+                }
+            } else {
+                // Enemy projectile hitting player
+                if (checkCollide(p, game.player)) {
+                    game.player.takeDamage(p.damage);
+                    p.life = 0;
+                }
+            }
+        });
+
+        // Room Transition Check
+        if (room.cleared) {
+            if (room.doors.n && game.player.y < TILE_SIZE + 10) game.changeRoom(0, -1);
+            else if (room.doors.s && game.player.y > CANVAS_HEIGHT - TILE_SIZE - 10) game.changeRoom(0, 1);
+            else if (room.doors.w && game.player.x < TILE_SIZE + 10) game.changeRoom(-1, 0);
+            else if (room.doors.e && game.player.x > CANVAS_WIDTH - TILE_SIZE - 10) game.changeRoom(1, 0);
+        }
+
+        room.enemies = room.enemies.filter(e => !e.dead);
+        game.particles.forEach((p, i) => { p.update(); if (p.life<=0) game.particles.splice(i,1); });
+        
+        game.checkClear();
+
+        // 3. Draw Scene
+        drawRoom(ctx);
+
+        // Draw Obstacles
+        ctx.fillStyle = COLORS.obstacle;
+        room.obstacles.forEach(o => {
+            ctx.fillRect(o.x, o.y, o.w, o.h);
+            // X detail
+            ctx.strokeStyle = '#78350f';
+            ctx.beginPath();
+            ctx.moveTo(o.x, o.y); ctx.lineTo(o.x+o.w, o.y+o.h);
+            ctx.moveTo(o.x+o.w, o.y); ctx.lineTo(o.x, o.y+o.h);
+            ctx.stroke();
+        });
+
+        // Draw Entities
+        room.enemies.forEach(e => drawEntity(ctx, e));
+        drawEntity(ctx, game.player);
+        room.projectiles.forEach(p => p.draw(ctx));
+        game.particles.forEach(p => p.draw(ctx));
+
+        // 4. Lighting Layer (Flashlight effect)
+        /*
+        const gradient = ctx.createRadialGradient(
+            game.player.x, game.player.y, 100,
+            game.player.x, game.player.y, 600
+        );
+        gradient.addColorStop(0, 'rgba(0,0,0,0)');
+        gradient.addColorStop(1, 'rgba(0,0,0,0.5)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0,0,canvas.width, canvas.height);
+        */
+        
+        ctx.restore();
+    }
+
+    // Initial render call to show UI before start
+    lucide.createIcons();
+    
+</script>
+</body>
+</html>

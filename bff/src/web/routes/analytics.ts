@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { createCache } from '../utils/cache.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 function sanitizePeriod(p?: string): 'day' | 'week' | 'month' {
   const v = String(p || 'day').toLowerCase();
@@ -35,6 +36,9 @@ const CATEGORY_CASE_SQL = `
 export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
   const cache = createCache(redis);
+
+  // 读写分离：analytics 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
 
   // GET /analytics/pages/category-summary
   router.get('/pages/category-summary', async (req, res, next) => {
@@ -76,7 +80,7 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
           ORDER BY category ASC
         `;
         const params = [startDate || null, endDate || null];
-        const { rows } = await pool.query(sql, params);
+        const { rows } = await readPool.query(sql, params);
         return rows;
       });
       res.json(rows);
@@ -126,7 +130,7 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
           ORDER BY bucket ASC, category ASC
         `;
         const params = [startDate || null, endDate || null, p];
-        const { rows } = await pool.query(sql, params);
+        const { rows } = await readPool.query(sql, params);
         return rows;
       });
       res.json(rows);
@@ -153,7 +157,7 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
           ORDER BY 1 ASC
         `;
         const params = [startDate || null, endDate || null, p];
-        const { rows } = await pool.query(sql, params);
+        const { rows } = await readPool.query(sql, params);
         return rows;
       });
       res.json(rows);
@@ -235,7 +239,7 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
           excludeTags.length > 0 ? excludeTags : null
         ];
 
-        const { rows } = await pool.query(sql, params);
+        const { rows } = await readPool.query(sql, params);
         return rows;
       });
 
@@ -343,8 +347,8 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
       const params = [category, startDate || null, endDate || null, normalizedOrder, limitInt, offsetInt];
       const countParams = [category, startDate || null, endDate || null];
       const [{ rows }, countRes] = await Promise.all([
-        pool.query(baseSql, params),
-        pool.query(countSql, countParams)
+        readPool.query(baseSql, params),
+        readPool.query(countSql, countParams)
       ]);
       const total = Number(countRes.rows?.[0]?.total || 0);
       res.json({ results: rows, total });
@@ -401,9 +405,9 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
       `;
 
       const [lovers, haters, total] = await Promise.all([
-        pool.query(loversSql, [tag, parsedMinVotes, parsedLimit, parsedOffsetLovers]),
-        pool.query(hatersSql, [tag, parsedMinVotes, parsedLimit, parsedOffsetHaters]),
-        pool.query(countSql, [tag, parsedMinVotes])
+        readPool.query(loversSql, [tag, parsedMinVotes, parsedLimit, parsedOffsetLovers]),
+        readPool.query(hatersSql, [tag, parsedMinVotes, parsedLimit, parsedOffsetHaters]),
+        readPool.query(countSql, [tag, parsedMinVotes])
       ]);
 
       res.json({
@@ -478,9 +482,9 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
 
       const results = await Promise.all(tags.map(async (t) => {
         const [lovers, haters, total] = await Promise.all([
-          pool.query(loversSql, [t, parsedMinVotes, parsedLimit, parsedOffsetLovers]),
-          pool.query(hatersSql, [t, parsedMinVotes, parsedLimit, parsedOffsetHaters]),
-          pool.query(countSql, [t, parsedMinVotes])
+          readPool.query(loversSql, [t, parsedMinVotes, parsedLimit, parsedOffsetLovers]),
+          readPool.query(hatersSql, [t, parsedMinVotes, parsedLimit, parsedOffsetHaters]),
+          readPool.query(countSql, [t, parsedMinVotes])
         ]);
         return {
           tag: t,

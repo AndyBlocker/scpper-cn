@@ -6,6 +6,7 @@ import { Pool } from 'pg';
 import { createClient } from 'redis';
 import { buildRouter } from './web/router.js';
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import { initPools, getPoolStatus } from './web/utils/dbPool.js';
 
 export async function createServer() {
   const app = express();
@@ -19,7 +20,9 @@ export async function createServer() {
   // Important: include '/avatar' in target so that Express mount path truncation is compensated.
   app.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200/avatar', changeOrigin: false, xfwd: true }));
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL || process.env.PG_DATABASE_URL });
+  // 初始化双连接池（主库 + 从库）
+  const pools = initPools();
+  const pool = pools.primary; // 保持向后兼容，传递主库给路由
   let redis: any = null;
   const enableCache = String(process.env.ENABLE_CACHE || 'false') === 'true';
   if (enableCache) {

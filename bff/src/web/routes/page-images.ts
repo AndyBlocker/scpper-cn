@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { PAGE_IMAGE_ROOT, buildPageImagePath } from '../pageImagesConfig.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 const normalizedRoot = PAGE_IMAGE_ROOT.endsWith(path.sep)
   ? PAGE_IMAGE_ROOT
@@ -21,6 +22,9 @@ const buildVariantPath = (storagePath: string, variantName: string): string => {
 
 export function pageImagesRouter(pool: Pool) {
   const router = Router();
+
+  // 读写分离：page-images 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
 
   router.get('/random', async (req, res, next) => {
     try {
@@ -56,7 +60,7 @@ export function pageImagesRouter(pool: Pool) {
         LIMIT $1::int
       `;
 
-      const { rows } = await pool.query(sql, [limit]);
+      const { rows } = await readPool.query(sql, [limit]);
       const payload = rows.map((row) => ({
         pageVersionImageId: row.pageVersionImageId,
         pageVersionId: row.pageVersionId,
@@ -108,7 +112,7 @@ export function pageImagesRouter(pool: Pool) {
         LIMIT 1
       `;
 
-      const { rows } = await pool.query(sql, [assetId]);
+      const { rows } = await readPool.query(sql, [assetId]);
       if (rows.length === 0) {
         return res.status(404).json({ error: 'not_found' });
       }

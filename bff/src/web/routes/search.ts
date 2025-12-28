@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 const CACHE_VERSION = 'v2';
 
@@ -31,6 +32,9 @@ type PageSearchResult = {
 
 export function searchRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+
+  // 读写分离：search 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
 
   const defaultCacheTtl = (() => {
     const parsed = Number(process.env.SEARCH_CACHE_TTL ?? 30);
@@ -227,9 +231,9 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       ];
 
       const [{ rows }, totalRes] = await Promise.all([
-        pool.query(finalSql, params),
+        readPool.query(finalSql, params),
         wantTotal
-          ? pool.query(
+          ? readPool.query(
               `SELECT COUNT(*) AS total
                  FROM "PageVersion" pv
                  LEFT JOIN LATERAL (
@@ -272,7 +276,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
                 AND pv."pageId" = ANY($1::int[])
                 ${deletedFilterClause}
             `;
-          const { rows: snippetRows } = await pool.query(snippetSql, [pageIds]);
+          const { rows: snippetRows } = await readPool.query(snippetSql, [pageIds]);
           snippetMap = new Map(
             snippetRows.map((row) => [
               Number(row.pageId),
@@ -555,8 +559,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       : null;
 
     const [{ rows }, totalRes] = await Promise.all([
-      pool.query(baseSql, params),
-      totalSql && totalParams ? pool.query(totalSql, totalParams) : Promise.resolve(null as any)
+      readPool.query(baseSql, params),
+      totalSql && totalParams ? readPool.query(totalSql, totalParams) : Promise.resolve(null as any)
     ]);
 
     let highlightMap: Map<number, string | null> = new Map();
@@ -580,7 +584,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             ) kw ON TRUE
             WHERE pv.id = ANY($2::int[])
           `;
-        const { rows: snippetRows } = await pool.query(snippetSql, [trimmedQuery, highlightIds]);
+        const { rows: snippetRows } = await readPool.query(snippetSql, [trimmedQuery, highlightIds]);
         highlightMap = new Map(
           snippetRows.map((row) => [Number(row.id), typeof row.snippet === 'string' ? row.snippet : null])
         );
@@ -753,8 +757,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         LIMIT $2::int OFFSET $3::int
       `;
       const [rowsRes, totalRes] = await Promise.all([
-        pool.query(sql, [query, limit, offset]),
-        wantTotal ? pool.query(`SELECT COUNT(*) AS total FROM "User" WHERE "displayName" &@~ pgroonga_query_escape($1)`, [query]) : Promise.resolve(null as any)
+        readPool.query(sql, [query, limit, offset]),
+        wantTotal ? readPool.query(`SELECT COUNT(*) AS total FROM "User" WHERE "displayName" &@~ pgroonga_query_escape($1)`, [query]) : Promise.resolve(null as any)
       ]);
       const results = rowsRes.rows;
       const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
@@ -876,8 +880,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       `;
 
       const [userRes, userCountRes] = await Promise.all([
-        pool.query(userSql, userParams),
-        pool.query(userCountSql, [trimmedQuery])
+        readPool.query(userSql, userParams),
+        readPool.query(userCountSql, [trimmedQuery])
       ]);
 
       const pages = (pageData.results || []).map((r: any, index: number) => ({
@@ -1015,7 +1019,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         LIMIT $2::int
       `;
       
-      const { rows } = await pool.query(sql, [searchQuery, limit]);
+      const { rows } = await readPool.query(sql, [searchQuery, limit]);
       
       const results = rows.map((row: any) => ({
         tag: row.tag,

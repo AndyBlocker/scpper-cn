@@ -2,10 +2,14 @@ import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { createCache } from '../utils/cache.js';
+import { getReadPoolSync } from '../utils/dbPool.js';
 
 export function quotesRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
   const cache = createCache(redis);
+
+  // 读写分离：quotes 全部是读操作，使用从库
+  const readPool = getReadPoolSync();
   const SENTENCE_REGEX = /[^。！？.!?]+[。！？.!?]+/g;
 
   const normalizeBlock = (input: string): string => input.replace(/\s+/g, ' ').trim();
@@ -116,7 +120,7 @@ export function quotesRouter(pool: Pool, redis: RedisClientType | null) {
           LIMIT $3::int
         `;
 
-        const { rows } = await pool.query(pageSql, [maxLen, minRatingInt, candidateLimit]);
+        const { rows } = await readPool.query(pageSql, [maxLen, minRatingInt, candidateLimit]);
         if (rows.length === 0) return null;
 
         const results: Array<{ quote: string; source: ReturnType<typeof buildSource> }> = [];
@@ -169,7 +173,7 @@ export function quotesRouter(pool: Pool, redis: RedisClientType | null) {
             AND pv."textContent" IS NOT NULL
           LIMIT 1
         `;
-        const { rows } = await pool.query(sql, [wikidotId]);
+        const { rows } = await readPool.query(sql, [wikidotId]);
         if (rows.length === 0) return null;
         const page = rows[0];
         const quotes = collectQuotes(page.textContent || '', minLen, maxLen, countInt);
