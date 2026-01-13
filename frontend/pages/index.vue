@@ -1,36 +1,5 @@
 <template>
   <div class="space-y-8">
-    <section class="relative mx-auto max-w-4xl overflow-hidden rounded-3xl border border-white/70 bg-gradient-to-br from-white via-white/95 to-[rgba(248,250,252,0.9)] shadow-[0_26px_70px_rgba(15,23,42,0.12)] ring-1 ring-white/40 backdrop-blur dark:border-white/10 dark:bg-neutral-950/80 dark:from-neutral-950 dark:via-neutral-950/90 dark:to-neutral-950">
-      <div class="pointer-events-none absolute -left-20 -top-24 h-64 w-64 rounded-full bg-[radial-gradient(circle,_rgba(var(--accent),0.18),_transparent_55%)] blur-3xl" />
-      <div class="pointer-events-none absolute -bottom-28 -right-20 h-72 w-72 rounded-full bg-[radial-gradient(circle,_rgba(76,106,255,0.16),_transparent_60%)] blur-3xl" />
-      <a
-        :href="scpcn4kBannerLink"
-        class="group relative flex min-h-[240px] sm:min-h-[300px] lg:min-h-[340px] items-stretch overflow-hidden rounded-3xl bg-center"
-        :style="{
-          backgroundImage: `linear-gradient(145deg, rgba(5,8,16,0.78), rgba(7,12,24,0.6), rgba(8,12,22,0.42)), url(${scpcn4kBannerImage})`,
-          backgroundSize: '108% auto',
-          backgroundRepeat: 'no-repeat'
-        }"
-      >
-        <div class="absolute inset-0 ring-1 ring-white/40 dark:ring-neutral-800/70" />
-        <div class="relative flex flex-1 flex-col justify-end items-end gap-4 px-6 py-10 text-right sm:px-8 md:px-10 lg:px-12">
-          <div class="inline-flex items-center gap-2 self-end rounded-full border border-white/60 bg-white/20 px-4 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-white/90 backdrop-blur">
-            <span>竞赛专题页面</span>
-          </div>
-          <div class="space-y-3">
-            <h1 class="text-3xl font-semibold text-white drop-shadow-[0_8px_26px_rgba(0,0,0,0.45)] sm:text-4xl">SCP-CN-4000 “难题”竞赛</h1>
-            <p class="max-w-xl text-sm text-white/90 drop-shadow-[0_6px_20px_rgba(0,0,0,0.45)]">
-              我们的世界已然如此，基金会的世界又将如何？
-            </p>
-          </div>
-          <div class="inline-flex items-center gap-2 self-end rounded-full bg-white/90 px-4 py-2 text-sm font-semibold text-neutral-900 shadow-[0_18px_40px_rgba(0,0,0,0.26)] transition group-hover:-translate-y-0.5 group-hover:shadow-[0_24px_60px_rgba(0,0,0,0.32)]">
-            <LucideIcon name="Sparkles" class="h-4 w-4 text-[rgb(var(--accent))]" />
-            <span>立即前往</span>
-          </div>
-        </div>
-      </a>
-    </section>
-
     <!-- Overview metrics -->
     <section class="space-y-6">
       <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -123,14 +92,9 @@
 </template>
 
 <script setup lang="ts">
-import { useNuxtApp, useAsyncData, useRuntimeConfig } from 'nuxt/app';
+import { useNuxtApp, useAsyncData } from 'nuxt/app';
 import { ref, computed, onMounted } from 'vue';
-import { normalizeBffBase, resolveAssetUrl } from '~/utils/assetUrl';
-const scpcn4kBannerLink = 'https://scpper.mer.run/scpcn4k';
-const runtimeConfig = useRuntimeConfig();
-const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase);
-const scpcn4kBannerImage = resolveAssetUrl('/page-images/36978', bffBase)
-  || resolveAssetUrl('/page-images/36978', bffBase, { variant: 'low' });
+
 type SiteOverviewRich = {
   date?: string;
   updatedAt?: string;

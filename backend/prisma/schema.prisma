@@ -164,6 +164,9 @@ model PageStats {
   controversy   Float
   likeRatio     Float
   pageVersion   PageVersion @relation(fields: [pageVersionId], references: [id])
+
+  @@index([wilson95])
+  @@index([controversy])
 }
 
 model PageVersion {
@@ -200,6 +203,8 @@ model PageVersion {
   @@index([rating])
   @@index([validTo])
   @@index([wikidotId])
+  @@index([commentCount])
+  @@index([voteCount])
 }
 
 model PageReference {
@@ -829,4 +834,34 @@ model SiteOverviewDaily {
   updatedAt          DateTime @updatedAt
 
   @@index([date])
+}
+
+/// 标签定义表 - 存储官方标签的中英文对照
+model TagDefinition {
+  id            Int       @id @default(autoincrement())
+  tagChinese    String    @unique // 中文标签名 (如 "故事")
+  tagEnglish    String?   // 英文标签名 (如 "tale")，可为空表示仅中文
+  description   String?   // 标签描述
+  sourcePageUrl String    // 来源页面URL (如 "tag-guide")
+  category      String?   // 标签类别 (如 "主要标签", "属性标签")
+  isOfficial    Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tagEnglish])
+  @@index([sourcePageUrl])
+  @@index([category])
+}
+
+/// 标签指导页面同步状态跟踪
+model TagGuideSync {
+  id              Int       @id @default(autoincrement())
+  pageUrl         String    @unique   // 页面URL
+  pageVersionId   Int?                // 最后同步的PageVersion ID
+  tagsExtracted   Int       @default(0)  // 提取的标签数量
+  lastSyncedAt    DateTime?            // 最后同步时间
+  syncStatus      String    @default("pending") // pending, synced, failed
+  errorMessage    String?              // 失败原因
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }

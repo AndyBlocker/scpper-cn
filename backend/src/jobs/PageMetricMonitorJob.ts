@@ -4,6 +4,8 @@ import { Logger } from '../utils/Logger.js';
 
 const AUTO_WATCH_SOURCE = 'AUTO_OWNERSHIP';
 const DEFAULT_VOTE_THRESHOLD = 20;
+// Keep well under PostgreSQL bind parameter limits for raw queries.
+const PAGE_ID_CHUNK_SIZE = 10000;
 
 type RevisionAlertFilter = 'ANY' | 'NON_OWNER' | 'NON_OWNER_NO_ATTR';
 
@@ -143,6 +145,17 @@ export class PageMetricMonitorJob {
       unique.add(row.pageId);
     }
     return Array.from(unique);
+  }
+
+  private chunkPageIds(pageIds: number[]): number[][] {
+    if (pageIds.length <= PAGE_ID_CHUNK_SIZE) {
+      return [pageIds];
+    }
+    const chunks: number[][] = [];
+    for (let i = 0; i < pageIds.length; i += PAGE_ID_CHUNK_SIZE) {
+      chunks.push(pageIds.slice(i, i + PAGE_ID_CHUNK_SIZE));
+    }
+    return chunks;
   }
 
   async syncAutoWatches(): Promise<void> {
@@ -351,203 +364,56 @@ export class PageMetricMonitorJob {
       return;
     }
 
-    const pageIdArray = Prisma.sql`ARRAY[${Prisma.join(pageIds.map(id => Prisma.sql`${id}`))}]::int[]`;
+    for (const pageIdChunk of this.chunkPageIds(pageIds)) {
+      const pageIdArray = Prisma.sql`ARRAY[${Prisma.join(pageIdChunk.map(id => Prisma.sql`${id}`))}]::int[]`;
 
-    const watchRows = await this.prisma.$queryRaw<Array<{
-      watchId: number;
-      pageId: number;
-      lastObserved: number | null;
-      thresholdType: PageMetricThresholdType;
-      thresholdValue: number | null;
-      currentValue: number | null;
-    }>>(Prisma.sql`
-      SELECT 
-        w.id AS "watchId",
-        w."pageId" AS "pageId",
-        w."lastObserved" AS "lastObserved",
-        w."thresholdType" AS "thresholdType",
-        w."thresholdValue" AS "thresholdValue",
-        pv."commentCount" AS "currentValue"
-      FROM "PageMetricWatch" w
-      JOIN "PageVersion" pv ON pv."pageId" = w."pageId" AND pv."validTo" IS NULL
-      WHERE w.metric = 'COMMENT_COUNT'::"PageMetricType"
-        AND w."source" = ${AUTO_WATCH_SOURCE}
-        AND (w."mutedAt" IS NULL)
-        AND w."pageId" = ANY(${pageIdArray})
-    `);
+      const watchRows = await this.prisma.$queryRaw<Array<{
+        watchId: number;
+        pageId: number;
+        lastObserved: number | null;
+        thresholdType: PageMetricThresholdType;
+        thresholdValue: number | null;
+        currentValue: number | null;
+      }>>(Prisma.sql`
+        SELECT 
+          w.id AS "watchId",
+          w."pageId" AS "pageId",
+          w."lastObserved" AS "lastObserved",
+          w."thresholdType" AS "thresholdType",
+          w."thresholdValue" AS "thresholdValue",
+          pv."commentCount" AS "currentValue"
+        FROM "PageMetricWatch" w
+        JOIN "PageVersion" pv ON pv."pageId" = w."pageId" AND pv."validTo" IS NULL
+        WHERE w.metric = 'COMMENT_COUNT'::"PageMetricType"
+          AND w."source" = ${AUTO_WATCH_SOURCE}
+          AND (w."mutedAt" IS NULL)
+          AND w."pageId" = ANY(${pageIdArray})
+      `);
 
-    if (watchRows.length === 0) {
-      Logger.debug('[metric-monitor] No comment count watches to evaluate for supplied pageIds.');
-      return;
-    }
-
-    const alerts: Array<{ watchId: number; pageId: number; prevValue: number | null; newValue: number | null; diffValue: number | null }> = [];
-    const updates: Array<{ id: number; value: number | null }> = [];
-
-    for (const row of watchRows) {
-      const current = row.currentValue === null ? null : Number(row.currentValue);
-      if (current === null) {
+      if (watchRows.length === 0) {
+        Logger.debug('[metric-monitor] No comment count watches to evaluate for supplied pageIds.');
         continue;
       }
 
-      if (row.lastObserved === null) {
-        updates.push({ id: row.watchId, value: current });
-        continue;
-      }
+      const alerts: Array<{ watchId: number; pageId: number; prevValue: number | null; newValue: number | null; diffValue: number | null }> = [];
+      const updates: Array<{ id: number; value: number | null }> = [];
 
-      const prev = Number(row.lastObserved);
-      if (prev === current) {
-        continue;
-      }
-
-      const diff = current - prev;
-      if (this.shouldTrigger(row.thresholdType, row.thresholdValue, prev, current)) {
-        alerts.push({
-          watchId: row.watchId,
-          pageId: row.pageId,
-          prevValue: prev,
-          newValue: current,
-          diffValue: diff
-        });
-      }
-
-      updates.push({ id: row.watchId, value: current });
-    }
-
-    if (alerts.length > 0) {
-      const now = new Date();
-      const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
-      const existing = watchIds.length === 0
-        ? []
-        : await this.prisma.pageMetricAlert.findMany({
-            where: {
-              acknowledgedAt: null,
-              watchId: { in: watchIds }
-            },
-            select: { id: true, watchId: true, prevValue: true, detectedAt: true },
-            orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
-          });
-
-      const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
-      for (const row of existing) {
-        if (!earliestByWatch.has(row.watchId)) {
-          earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+      for (const row of watchRows) {
+        const current = row.currentValue === null ? null : Number(row.currentValue);
+        if (current === null) {
+          continue;
         }
-      }
 
-      const toCreate: typeof alerts = [];
-      const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
-
-      for (const alert of alerts) {
-        const existingUnread = earliestByWatch.get(alert.watchId);
-        if (existingUnread) {
-          const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
-          const newVal = alert.newValue == null ? null : Number(alert.newValue);
-          const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
-          toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
-        } else {
-          toCreate.push(alert);
+        if (row.lastObserved === null) {
+          updates.push({ id: row.watchId, value: current });
+          continue;
         }
-      }
 
-      if (toCreate.length > 0) {
-        await this.prisma.pageMetricAlert.createMany({
-          data: toCreate.map(alert => ({
-            watchId: alert.watchId,
-            pageId: alert.pageId,
-            metric: PageMetricType.COMMENT_COUNT,
-            prevValue: alert.prevValue,
-            newValue: alert.newValue,
-            diffValue: alert.diffValue,
-            detectedAt: now,
-            createdAt: now
-          }))
-        });
-      }
-
-      for (const upd of toUpdate) {
-        await this.prisma.pageMetricAlert.update({
-          where: { id: upd.id },
-          data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
-        });
-      }
-
-      Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} comment count alerts.`);
-    }
-
-    for (const update of updates) {
-      await this.prisma.pageMetricWatch.update({
-        where: { id: update.id },
-        data: { lastObserved: update.value }
-      });
-    }
-  }
-
-  async processVoteCountChanges(pageIds: number[]): Promise<void> {
-    if (pageIds.length === 0) {
-      return;
-    }
-
-    const pageIdArray = Prisma.sql`ARRAY[${Prisma.join(pageIds.map(id => Prisma.sql`${id}`))}]::int[]`;
-
-    const watchRows = await this.prisma.$queryRaw<Array<{
-      watchId: number;
-      pageId: number;
-      lastObserved: number | null;
-      thresholdType: PageMetricThresholdType;
-      thresholdValue: number | null;
-      currentValue: number | null;
-      config: Prisma.JsonValue | null;
-    }>>(Prisma.sql`
-      SELECT 
-        w.id AS "watchId",
-        w."pageId" AS "pageId",
-        w."lastObserved" AS "lastObserved",
-        w."thresholdType" AS "thresholdType",
-        w."thresholdValue" AS "thresholdValue",
-        pv."voteCount" AS "currentValue",
-        w."config" AS "config"
-      FROM "PageMetricWatch" w
-      JOIN "PageVersion" pv ON pv."pageId" = w."pageId" AND pv."validTo" IS NULL
-      WHERE w.metric = 'VOTE_COUNT'::"PageMetricType"
-        AND w."source" = ${AUTO_WATCH_SOURCE}
-        AND (w."mutedAt" IS NULL)
-        AND w."pageId" = ANY(${pageIdArray})
-    `);
-
-    if (watchRows.length === 0) {
-      Logger.debug('[metric-monitor] No vote count watches to evaluate for supplied pageIds.');
-      return;
-    }
-
-    const alerts: Array<{ watchId: number; pageId: number; prevValue: number; newValue: number; diffValue: number }> = [];
-    const updates: Array<{ id: number; data: Prisma.PageMetricWatchUpdateInput }> = [];
-
-    for (const row of watchRows) {
-      const current = row.currentValue === null ? null : Number(row.currentValue);
-      if (current === null) {
-        continue;
-      }
-
-      const configRecord = cloneVoteConfig(row.config);
-      const configuredThreshold = parseVoteThreshold(row.config) ?? undefined;
-      let threshold = row.thresholdValue ?? configuredThreshold ?? DEFAULT_VOTE_THRESHOLD;
-      if (!Number.isFinite(threshold) || threshold <= 0) {
-        threshold = DEFAULT_VOTE_THRESHOLD;
-      }
-      threshold = Number(threshold);
-
-      if (row.lastObserved === null) {
-        const nextConfig = serialiseVoteConfig(configRecord, threshold, current, 0, { lastAppliedThreshold: threshold });
-        updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
-        continue;
-      }
-
-      const prev = Number(row.lastObserved);
-      if (row.thresholdType !== PageMetricThresholdType.ABSOLUTE) {
+        const prev = Number(row.lastObserved);
         if (prev === current) {
           continue;
         }
+
         const diff = current - prev;
         if (this.shouldTrigger(row.thresholdType, row.thresholdValue, prev, current)) {
           alerts.push({
@@ -558,116 +424,267 @@ export class PageMetricMonitorJob {
             diffValue: diff
           });
         }
-        updates.push({ id: row.watchId, data: { lastObserved: current } });
-        continue;
+
+        updates.push({ id: row.watchId, value: current });
       }
 
-      const pendingDiff = readNumericField(configRecord, 'pendingDiff') ?? 0;
-      let baselineValue = readNumericField(configRecord, 'baselineValue');
-      const lastAppliedThreshold = readNumericField(configRecord, 'lastAppliedThreshold');
+      if (alerts.length > 0) {
+        const now = new Date();
+        const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
+        const existing = watchIds.length === 0
+          ? []
+          : await this.prisma.pageMetricAlert.findMany({
+              where: {
+                acknowledgedAt: null,
+                watchId: { in: watchIds }
+              },
+              select: { id: true, watchId: true, prevValue: true, detectedAt: true },
+              orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+            });
 
-      const thresholdChanged = !Number.isFinite(lastAppliedThreshold) || Math.abs((lastAppliedThreshold ?? 0) - threshold) > 1e-6;
+        const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
+        for (const row of existing) {
+          if (!earliestByWatch.has(row.watchId)) {
+            earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+          }
+        }
 
-      if (thresholdChanged) {
-        const nextConfig = serialiseVoteConfig(configRecord, threshold, current, 0, { lastAppliedThreshold: threshold });
-        updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
-        continue;
+        const toCreate: typeof alerts = [];
+        const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+
+        for (const alert of alerts) {
+          const existingUnread = earliestByWatch.get(alert.watchId);
+          if (existingUnread) {
+            const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
+            const newVal = alert.newValue == null ? null : Number(alert.newValue);
+            const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
+            toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
+          } else {
+            toCreate.push(alert);
+          }
+        }
+
+        if (toCreate.length > 0) {
+          await this.prisma.pageMetricAlert.createMany({
+            data: toCreate.map(alert => ({
+              watchId: alert.watchId,
+              pageId: alert.pageId,
+              metric: PageMetricType.COMMENT_COUNT,
+              prevValue: alert.prevValue,
+              newValue: alert.newValue,
+              diffValue: alert.diffValue,
+              detectedAt: now,
+              createdAt: now
+            }))
+          });
+        }
+
+        for (const upd of toUpdate) {
+          await this.prisma.pageMetricAlert.update({
+            where: { id: upd.id },
+            data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
+          });
+        }
+
+        Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} comment count alerts.`);
       }
 
-      if (baselineValue == null || !Number.isFinite(baselineValue)) {
-        baselineValue = prev;
-      }
-
-      const diff = current - prev;
-      const totalDiff = pendingDiff + diff;
-
-      if (Math.abs(totalDiff) >= threshold) {
-        const previousValue = baselineValue ?? prev;
-        const diffValue = current - previousValue;
-        alerts.push({
-          watchId: row.watchId,
-          pageId: row.pageId,
-          prevValue: previousValue,
-          newValue: current,
-          diffValue
+      for (const update of updates) {
+        await this.prisma.pageMetricWatch.update({
+          where: { id: update.id },
+          data: { lastObserved: update.value }
         });
-
-        const nextConfig = serialiseVoteConfig(configRecord, threshold, current, 0, { lastAppliedThreshold: threshold });
-        updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
-        continue;
       }
+    }
+  }
 
-      const nextBaseline = baselineValue ?? prev;
-      const nextConfig = serialiseVoteConfig(configRecord, threshold, nextBaseline, totalDiff, { lastAppliedThreshold: threshold });
-      updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
+  async processVoteCountChanges(pageIds: number[]): Promise<void> {
+    if (pageIds.length === 0) {
+      return;
     }
 
-    if (alerts.length > 0) {
-      const now = new Date();
-      const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
-      const existing = watchIds.length === 0
-        ? []
-        : await this.prisma.pageMetricAlert.findMany({
-            where: {
-              acknowledgedAt: null,
-              watchId: { in: watchIds }
-            },
-            select: { id: true, watchId: true, prevValue: true, detectedAt: true },
-            orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+    for (const pageIdChunk of this.chunkPageIds(pageIds)) {
+      const pageIdArray = Prisma.sql`ARRAY[${Prisma.join(pageIdChunk.map(id => Prisma.sql`${id}`))}]::int[]`;
+
+      const watchRows = await this.prisma.$queryRaw<Array<{
+        watchId: number;
+        pageId: number;
+        lastObserved: number | null;
+        thresholdType: PageMetricThresholdType;
+        thresholdValue: number | null;
+        currentValue: number | null;
+        config: Prisma.JsonValue | null;
+      }>>(Prisma.sql`
+        SELECT 
+          w.id AS "watchId",
+          w."pageId" AS "pageId",
+          w."lastObserved" AS "lastObserved",
+          w."thresholdType" AS "thresholdType",
+          w."thresholdValue" AS "thresholdValue",
+          pv."voteCount" AS "currentValue",
+          w."config" AS "config"
+        FROM "PageMetricWatch" w
+        JOIN "PageVersion" pv ON pv."pageId" = w."pageId" AND pv."validTo" IS NULL
+        WHERE w.metric = 'VOTE_COUNT'::"PageMetricType"
+          AND w."source" = ${AUTO_WATCH_SOURCE}
+          AND (w."mutedAt" IS NULL)
+          AND w."pageId" = ANY(${pageIdArray})
+      `);
+
+      if (watchRows.length === 0) {
+        Logger.debug('[metric-monitor] No vote count watches to evaluate for supplied pageIds.');
+        continue;
+      }
+
+      const alerts: Array<{ watchId: number; pageId: number; prevValue: number; newValue: number; diffValue: number }> = [];
+      const updates: Array<{ id: number; data: Prisma.PageMetricWatchUpdateInput }> = [];
+
+      for (const row of watchRows) {
+        const current = row.currentValue === null ? null : Number(row.currentValue);
+        if (current === null) {
+          continue;
+        }
+
+        const configRecord = cloneVoteConfig(row.config);
+        const configuredThreshold = parseVoteThreshold(row.config) ?? undefined;
+        let threshold = row.thresholdValue ?? configuredThreshold ?? DEFAULT_VOTE_THRESHOLD;
+        if (!Number.isFinite(threshold) || threshold <= 0) {
+          threshold = DEFAULT_VOTE_THRESHOLD;
+        }
+        threshold = Number(threshold);
+
+        if (row.lastObserved === null) {
+          const nextConfig = serialiseVoteConfig(configRecord, threshold, current, 0, { lastAppliedThreshold: threshold });
+          updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
+          continue;
+        }
+
+        const prev = Number(row.lastObserved);
+        if (row.thresholdType !== PageMetricThresholdType.ABSOLUTE) {
+          if (prev === current) {
+            continue;
+          }
+          const diff = current - prev;
+          if (this.shouldTrigger(row.thresholdType, row.thresholdValue, prev, current)) {
+            alerts.push({
+              watchId: row.watchId,
+              pageId: row.pageId,
+              prevValue: prev,
+              newValue: current,
+              diffValue: diff
+            });
+          }
+          updates.push({ id: row.watchId, data: { lastObserved: current } });
+          continue;
+        }
+
+        const pendingDiff = readNumericField(configRecord, 'pendingDiff') ?? 0;
+        let baselineValue = readNumericField(configRecord, 'baselineValue');
+        const lastAppliedThreshold = readNumericField(configRecord, 'lastAppliedThreshold');
+
+        const thresholdChanged = !Number.isFinite(lastAppliedThreshold) || Math.abs((lastAppliedThreshold ?? 0) - threshold) > 1e-6;
+
+        if (thresholdChanged) {
+          const nextConfig = serialiseVoteConfig(configRecord, threshold, current, 0, { lastAppliedThreshold: threshold });
+          updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
+          continue;
+        }
+
+        if (baselineValue == null || !Number.isFinite(baselineValue)) {
+          baselineValue = prev;
+        }
+
+        const diff = current - prev;
+        const totalDiff = pendingDiff + diff;
+
+        if (Math.abs(totalDiff) >= threshold) {
+          const previousValue = baselineValue ?? prev;
+          const diffValue = current - previousValue;
+          alerts.push({
+            watchId: row.watchId,
+            pageId: row.pageId,
+            prevValue: previousValue,
+            newValue: current,
+            diffValue
           });
 
-      const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
-      for (const row of existing) {
-        if (!earliestByWatch.has(row.watchId)) {
-          earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+          const nextConfig = serialiseVoteConfig(configRecord, threshold, current, 0, { lastAppliedThreshold: threshold });
+          updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
+          continue;
         }
+
+        const nextBaseline = baselineValue ?? prev;
+        const nextConfig = serialiseVoteConfig(configRecord, threshold, nextBaseline, totalDiff, { lastAppliedThreshold: threshold });
+        updates.push({ id: row.watchId, data: { lastObserved: current, config: nextConfig } });
       }
 
-      const toCreate: typeof alerts = [];
-      const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+      if (alerts.length > 0) {
+        const now = new Date();
+        const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
+        const existing = watchIds.length === 0
+          ? []
+          : await this.prisma.pageMetricAlert.findMany({
+              where: {
+                acknowledgedAt: null,
+                watchId: { in: watchIds }
+              },
+              select: { id: true, watchId: true, prevValue: true, detectedAt: true },
+              orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+            });
 
-      for (const alert of alerts) {
-        const existingUnread = earliestByWatch.get(alert.watchId);
-        if (existingUnread) {
-          const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
-          const newVal = alert.newValue == null ? null : Number(alert.newValue);
-          const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
-          toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
-        } else {
-          toCreate.push(alert);
+        const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
+        for (const row of existing) {
+          if (!earliestByWatch.has(row.watchId)) {
+            earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+          }
         }
+
+        const toCreate: typeof alerts = [];
+        const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+
+        for (const alert of alerts) {
+          const existingUnread = earliestByWatch.get(alert.watchId);
+          if (existingUnread) {
+            const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
+            const newVal = alert.newValue == null ? null : Number(alert.newValue);
+            const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
+            toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
+          } else {
+            toCreate.push(alert);
+          }
+        }
+
+        if (toCreate.length > 0) {
+          await this.prisma.pageMetricAlert.createMany({
+            data: toCreate.map(alert => ({
+              watchId: alert.watchId,
+              pageId: alert.pageId,
+              metric: PageMetricType.VOTE_COUNT,
+              prevValue: alert.prevValue,
+              newValue: alert.newValue,
+              diffValue: alert.diffValue,
+              detectedAt: now,
+              createdAt: now
+            }))
+          });
+        }
+
+        for (const upd of toUpdate) {
+          await this.prisma.pageMetricAlert.update({
+            where: { id: upd.id },
+            data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
+          });
+        }
+
+        Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} vote count alerts.`);
       }
 
-      if (toCreate.length > 0) {
-        await this.prisma.pageMetricAlert.createMany({
-          data: toCreate.map(alert => ({
-            watchId: alert.watchId,
-            pageId: alert.pageId,
-            metric: PageMetricType.VOTE_COUNT,
-            prevValue: alert.prevValue,
-            newValue: alert.newValue,
-            diffValue: alert.diffValue,
-            detectedAt: now,
-            createdAt: now
-          }))
+      for (const update of updates) {
+        await this.prisma.pageMetricWatch.update({
+          where: { id: update.id },
+          data: update.data
         });
       }
-
-      for (const upd of toUpdate) {
-        await this.prisma.pageMetricAlert.update({
-          where: { id: upd.id },
-          data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
-        });
-      }
-
-      Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} vote count alerts.`);
-    }
-
-    for (const update of updates) {
-      await this.prisma.pageMetricWatch.update({
-        where: { id: update.id },
-        data: update.data
-      });
     }
   }
 
@@ -676,192 +693,194 @@ export class PageMetricMonitorJob {
       return;
     }
 
-    const watches = await this.prisma.pageMetricWatch.findMany({
-      where: {
-        metric: PageMetricType.REVISION_COUNT,
-        source: AUTO_WATCH_SOURCE,
-        mutedAt: null,
-        pageId: { in: pageIds }
-      },
-      select: {
-        id: true,
-        pageId: true,
-        userId: true,
-        lastObserved: true,
-        config: true
-      }
-    });
-
-    if (watches.length === 0) {
-      Logger.debug('[metric-monitor] No revision watches to evaluate for supplied pageIds.');
-      return;
-    }
-
-    const pageIdArray = Prisma.sql`ARRAY[${Prisma.join(pageIds.map(id => Prisma.sql`${id}`))}]::int[]`;
-
-    const revisionRows = await this.prisma.$queryRaw<Array<{
-      pageId: number;
-      userId: number | null;
-      count: number;
-    }>>(Prisma.sql`
-      SELECT pv."pageId" AS "pageId",
-             r."userId" AS "userId",
-             COUNT(*)::int AS "count"
-      FROM "Revision" r
-      JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
-      WHERE pv."pageId" = ANY(${pageIdArray})
-        AND pv."validTo" IS NULL
-        AND pv."isDeleted" = false
-      GROUP BY pv."pageId", r."userId"
-    `);
-
-    const attributionRows = await this.prisma.$queryRaw<Array<{ pageId: number; userId: number }>>(Prisma.sql`
-      SELECT DISTINCT pv."pageId" AS "pageId",
-             a."userId" AS "userId"
-      FROM "Attribution" a
-      JOIN "PageVersion" pv ON pv.id = a."pageVerId"
-      WHERE pv."pageId" = ANY(${pageIdArray})
-        AND pv."validTo" IS NULL
-        AND pv."isDeleted" = false
-        AND a."userId" IS NOT NULL
-    `);
-
-    const totalCounts = new Map<number, number>();
-    const perPageUserCounts = new Map<number, Map<number | null, number>>();
-    for (const row of revisionRows) {
-      totalCounts.set(row.pageId, (totalCounts.get(row.pageId) ?? 0) + Number(row.count));
-      let userMap = perPageUserCounts.get(row.pageId);
-      if (!userMap) {
-        userMap = new Map<number | null, number>();
-        perPageUserCounts.set(row.pageId, userMap);
-      }
-      userMap.set(row.userId, Number(row.count));
-    }
-
-    const attributionMap = new Map<number, Set<number>>();
-    for (const row of attributionRows) {
-      let set = attributionMap.get(row.pageId);
-      if (!set) {
-        set = new Set<number>();
-        attributionMap.set(row.pageId, set);
-      }
-      set.add(Number(row.userId));
-    }
-
-    const alerts: Array<{ watchId: number; pageId: number; prevValue: number | null; newValue: number | null; diffValue: number | null }> = [];
-    const updates: Array<{ id: number; value: number }> = [];
-
-    for (const watch of watches) {
-      const filter = parseRevisionFilter(watch.config);
-      const total = totalCounts.get(watch.pageId) ?? 0;
-      const userMap = perPageUserCounts.get(watch.pageId) ?? new Map<number | null, number>();
-      const ownerCount = userMap.get(watch.userId) ?? 0;
-
-      let relevant = total;
-      if (filter === 'NON_OWNER') {
-        relevant = Math.max(0, total - ownerCount);
-      } else if (filter === 'NON_OWNER_NO_ATTR') {
-        let attributionCount = 0;
-        const credited = attributionMap.get(watch.pageId);
-        if (credited && credited.size > 0) {
-          for (const creditedUserId of credited) {
-            if (creditedUserId === watch.userId) {
-              continue;
-            }
-            attributionCount += userMap.get(creditedUserId) ?? 0;
-          }
+    for (const pageIdChunk of this.chunkPageIds(pageIds)) {
+      const watches = await this.prisma.pageMetricWatch.findMany({
+        where: {
+          metric: PageMetricType.REVISION_COUNT,
+          source: AUTO_WATCH_SOURCE,
+          mutedAt: null,
+          pageId: { in: pageIdChunk }
+        },
+        select: {
+          id: true,
+          pageId: true,
+          userId: true,
+          lastObserved: true,
+          config: true
         }
-        relevant = Math.max(0, total - ownerCount - attributionCount);
-      }
+      });
 
-      if (watch.lastObserved === null) {
-        updates.push({ id: watch.id, value: relevant });
+      if (watches.length === 0) {
+        Logger.debug('[metric-monitor] No revision watches to evaluate for supplied pageIds.');
         continue;
       }
 
-      const prev = Number(watch.lastObserved);
-      const diff = relevant - prev;
-      if (diff > 0) {
-        alerts.push({
-          watchId: watch.id,
-          pageId: watch.pageId,
-          prevValue: prev,
-          newValue: relevant,
-          diffValue: diff
-        });
+      const pageIdArray = Prisma.sql`ARRAY[${Prisma.join(pageIdChunk.map(id => Prisma.sql`${id}`))}]::int[]`;
+
+      const revisionRows = await this.prisma.$queryRaw<Array<{
+        pageId: number;
+        userId: number | null;
+        count: number;
+      }>>(Prisma.sql`
+        SELECT pv."pageId" AS "pageId",
+               r."userId" AS "userId",
+               COUNT(*)::int AS "count"
+        FROM "Revision" r
+        JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
+        WHERE pv."pageId" = ANY(${pageIdArray})
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
+        GROUP BY pv."pageId", r."userId"
+      `);
+
+      const attributionRows = await this.prisma.$queryRaw<Array<{ pageId: number; userId: number }>>(Prisma.sql`
+        SELECT DISTINCT pv."pageId" AS "pageId",
+               a."userId" AS "userId"
+        FROM "Attribution" a
+        JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+        WHERE pv."pageId" = ANY(${pageIdArray})
+          AND pv."validTo" IS NULL
+          AND pv."isDeleted" = false
+          AND a."userId" IS NOT NULL
+      `);
+
+      const totalCounts = new Map<number, number>();
+      const perPageUserCounts = new Map<number, Map<number | null, number>>();
+      for (const row of revisionRows) {
+        totalCounts.set(row.pageId, (totalCounts.get(row.pageId) ?? 0) + Number(row.count));
+        let userMap = perPageUserCounts.get(row.pageId);
+        if (!userMap) {
+          userMap = new Map<number | null, number>();
+          perPageUserCounts.set(row.pageId, userMap);
+        }
+        userMap.set(row.userId, Number(row.count));
       }
 
-      if (diff !== 0) {
-        updates.push({ id: watch.id, value: relevant });
+      const attributionMap = new Map<number, Set<number>>();
+      for (const row of attributionRows) {
+        let set = attributionMap.get(row.pageId);
+        if (!set) {
+          set = new Set<number>();
+          attributionMap.set(row.pageId, set);
+        }
+        set.add(Number(row.userId));
       }
-    }
 
-    if (alerts.length > 0) {
-      const now = new Date();
-      const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
-      const existing = watchIds.length === 0
-        ? []
-        : await this.prisma.pageMetricAlert.findMany({
-            where: {
-              acknowledgedAt: null,
-              watchId: { in: watchIds }
-            },
-            select: { id: true, watchId: true, prevValue: true, detectedAt: true },
-            orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+      const alerts: Array<{ watchId: number; pageId: number; prevValue: number | null; newValue: number | null; diffValue: number | null }> = [];
+      const updates: Array<{ id: number; value: number }> = [];
+
+      for (const watch of watches) {
+        const filter = parseRevisionFilter(watch.config);
+        const total = totalCounts.get(watch.pageId) ?? 0;
+        const userMap = perPageUserCounts.get(watch.pageId) ?? new Map<number | null, number>();
+        const ownerCount = userMap.get(watch.userId) ?? 0;
+
+        let relevant = total;
+        if (filter === 'NON_OWNER') {
+          relevant = Math.max(0, total - ownerCount);
+        } else if (filter === 'NON_OWNER_NO_ATTR') {
+          let attributionCount = 0;
+          const credited = attributionMap.get(watch.pageId);
+          if (credited && credited.size > 0) {
+            for (const creditedUserId of credited) {
+              if (creditedUserId === watch.userId) {
+                continue;
+              }
+              attributionCount += userMap.get(creditedUserId) ?? 0;
+            }
+          }
+          relevant = Math.max(0, total - ownerCount - attributionCount);
+        }
+
+        if (watch.lastObserved === null) {
+          updates.push({ id: watch.id, value: relevant });
+          continue;
+        }
+
+        const prev = Number(watch.lastObserved);
+        const diff = relevant - prev;
+        if (diff > 0) {
+          alerts.push({
+            watchId: watch.id,
+            pageId: watch.pageId,
+            prevValue: prev,
+            newValue: relevant,
+            diffValue: diff
           });
+        }
 
-      const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
-      for (const row of existing) {
-        if (!earliestByWatch.has(row.watchId)) {
-          earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+        if (diff !== 0) {
+          updates.push({ id: watch.id, value: relevant });
         }
       }
 
-      const toCreate: typeof alerts = [];
-      const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+      if (alerts.length > 0) {
+        const now = new Date();
+        const watchIds = Array.from(new Set(alerts.map(a => a.watchId)));
+        const existing = watchIds.length === 0
+          ? []
+          : await this.prisma.pageMetricAlert.findMany({
+              where: {
+                acknowledgedAt: null,
+                watchId: { in: watchIds }
+              },
+              select: { id: true, watchId: true, prevValue: true, detectedAt: true },
+              orderBy: [{ watchId: 'asc' }, { detectedAt: 'asc' }]
+            });
 
-      for (const alert of alerts) {
-        const existingUnread = earliestByWatch.get(alert.watchId);
-        if (existingUnread) {
-          const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
-          const newVal = alert.newValue == null ? null : Number(alert.newValue);
-          const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
-          toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
-        } else {
-          toCreate.push(alert);
+        const earliestByWatch = new Map<number, { id: number; prevValue: number | null }>();
+        for (const row of existing) {
+          if (!earliestByWatch.has(row.watchId)) {
+            earliestByWatch.set(row.watchId, { id: row.id, prevValue: row.prevValue });
+          }
         }
+
+        const toCreate: typeof alerts = [];
+        const toUpdate: Array<{ id: number; newValue: number | null; diffValue: number | null }> = [];
+
+        for (const alert of alerts) {
+          const existingUnread = earliestByWatch.get(alert.watchId);
+          if (existingUnread) {
+            const prevVal = existingUnread.prevValue == null ? null : Number(existingUnread.prevValue);
+            const newVal = alert.newValue == null ? null : Number(alert.newValue);
+            const diffVal = prevVal == null || newVal == null ? null : (newVal - prevVal);
+            toUpdate.push({ id: existingUnread.id, newValue: newVal, diffValue: diffVal });
+          } else {
+            toCreate.push(alert);
+          }
+        }
+
+        if (toCreate.length > 0) {
+          await this.prisma.pageMetricAlert.createMany({
+            data: toCreate.map(alert => ({
+              watchId: alert.watchId,
+              pageId: alert.pageId,
+              metric: PageMetricType.REVISION_COUNT,
+              prevValue: alert.prevValue,
+              newValue: alert.newValue,
+              diffValue: alert.diffValue,
+              detectedAt: now,
+              createdAt: now
+            }))
+          });
+        }
+
+        for (const upd of toUpdate) {
+          await this.prisma.pageMetricAlert.update({
+            where: { id: upd.id },
+            data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
+          });
+        }
+
+        Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} revision alerts.`);
       }
 
-      if (toCreate.length > 0) {
-        await this.prisma.pageMetricAlert.createMany({
-          data: toCreate.map(alert => ({
-            watchId: alert.watchId,
-            pageId: alert.pageId,
-            metric: PageMetricType.REVISION_COUNT,
-            prevValue: alert.prevValue,
-            newValue: alert.newValue,
-            diffValue: alert.diffValue,
-            detectedAt: now,
-            createdAt: now
-          }))
+      for (const update of updates) {
+        await this.prisma.pageMetricWatch.update({
+          where: { id: update.id },
+          data: { lastObserved: update.value }
         });
       }
-
-      for (const upd of toUpdate) {
-        await this.prisma.pageMetricAlert.update({
-          where: { id: upd.id },
-          data: { newValue: upd.newValue, diffValue: upd.diffValue, detectedAt: now }
-        });
-      }
-
-      Logger.info(`[metric-monitor] Created ${toCreate.length} and updated ${toUpdate.length} revision alerts.`);
-    }
-
-    for (const update of updates) {
-      await this.prisma.pageMetricWatch.update({
-        where: { id: update.id },
-        data: { lastObserved: update.value }
-      });
     }
   }
 

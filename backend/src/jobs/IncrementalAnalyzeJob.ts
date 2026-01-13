@@ -9,6 +9,7 @@ import { computeUserCategoryBenchmarks } from './UserCategoryBenchmarksJob';
 import { PageMetricMonitorJob } from './PageMetricMonitorJob';
 import { UserFollowActivityJob } from './UserFollowActivityJob';
 import { UserCollectionService } from '../services/UserCollectionService.js';
+import { WikidotBindingVerifyJob } from './WikidotBindingVerifyJob.js';
 // @ts-ignore - importing from scripts folder
 // import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
@@ -56,7 +57,9 @@ export class IncrementalAnalyzeJob {
         'user_follow_alerts',
         'user_collection_sanitizer',
         // 新增：作者分类基准
-        'category_benchmarks'
+        'category_benchmarks',
+        // Wikidot 账号绑定验证
+        'wikidot_binding_verify'
       ];
 
       const tasksToRun = options.tasks || availableTasks;
@@ -222,7 +225,8 @@ export class IncrementalAnalyzeJob {
           'materialized_views',
           'series_stats',
           'trending_stats',
-          'page_metric_alerts'
+          'page_metric_alerts',
+          'wikidot_binding_verify'
         ]);
         if (taskName === 'site_stats') {
           await this.refreshSiteStatsTimestamp();
@@ -330,6 +334,11 @@ export class IncrementalAnalyzeJob {
         case 'user_collection_sanitizer': {
           const service = new UserCollectionService(this.prisma);
           await service.pruneInvalidItems();
+          break;
+        }
+        case 'wikidot_binding_verify': {
+          const job = new WikidotBindingVerifyJob(this.prisma);
+          await job.run();
           break;
         }
         default:

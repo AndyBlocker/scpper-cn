@@ -69,6 +69,14 @@ function resolveHost(url: string): string | null {
   }
 }
 
+function isAllowedImageHost(url: string): boolean {
+  const allowed = cfg.imageCache.allowedHosts;
+  if (!allowed || allowed.length === 0) return true;
+  const host = resolveHost(url);
+  if (!host) return false;
+  return allowed.includes(host);
+}
+
 function sha256(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
 }
@@ -273,6 +281,9 @@ async function downloadImage(url: string): Promise<DownloadResult> {
     }
 
     if (!IMAGE_OK_STATUSES.has(resp.status)) {
+      if (resp.status >= 400 && resp.status < 500 && resp.status !== 408 && resp.status !== 429) {
+        throw fatalError(`HTTP ${resp.status}`, resp.status);
+      }
       const err = new Error(`Unexpected status ${resp.status}`) as TaggedError;
       err.status = resp.status;
       throw err;
@@ -282,7 +293,7 @@ async function downloadImage(url: string): Promise<DownloadResult> {
     if (lengthHeader) {
       const length = Number(lengthHeader);
       if (!Number.isNaN(length) && length > cfg.imageCache.maxBytes) {
-        throw new Error(`Image exceeds max bytes (${length} > ${cfg.imageCache.maxBytes})`);
+        throw fatalError(`Image exceeds max bytes (${length} > ${cfg.imageCache.maxBytes})`, 413);
       }
     }
 
@@ -297,7 +308,7 @@ async function downloadImage(url: string): Promise<DownloadResult> {
     const arrayBuffer = await resp.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     if (buffer.length > cfg.imageCache.maxBytes) {
-      throw new Error(`Image exceeds max bytes (${buffer.length} > ${cfg.imageCache.maxBytes})`);
+      throw fatalError(`Image exceeds max bytes (${buffer.length} > ${cfg.imageCache.maxBytes})`, 413);
     }
 
     return {
@@ -553,6 +564,10 @@ export class ImageCacheWorker {
 
         log.info({ workerId, imageId: job.pageVersionImageId, url: job.displayUrl }, 'processing page image');
         try {
+          if (!isAllowedImageHost(job.displayUrl)) {
+            const host = resolveHost(job.displayUrl) ?? 'unknown';
+            throw fatalError(`Host not allowed: ${host}`);
+          }
           const download = await downloadImage(job.displayUrl);
           const hash = sha256(download.buffer);
           const extension = pickExtension(download.contentType, download.finalUrl);
