@@ -89,7 +89,7 @@
           <div class="flex items-center justify-between">
             <div>
               <div class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">Wikidot 绑定</div>
-              <p class="text-[11px] text-neutral-500 dark:text-neutral-500">暂不支持自助绑定，如需修改请联系管理员。</p>
+              <p class="text-[11px] text-neutral-500 dark:text-neutral-500">绑定 Wikidot 账号后可使用页面提醒、关注作者等功能。</p>
             </div>
             <div v-if="user?.linkedWikidotId" class="rounded-full border border-[rgba(var(--accent),0.25)] bg-[rgba(var(--accent),0.1)] px-3 py-1 text-xs font-semibold text-[rgb(var(--accent))]">
               已绑定
@@ -98,19 +98,17 @@
               未绑定
             </div>
           </div>
-          <div class="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
-            <template v-if="user?.linkedWikidotId">
-              <div>Wikidot ID：{{ user.linkedWikidotId }}</div>
-              <div class="mt-2">
-                <NuxtLink :to="`/user/${user.linkedWikidotId}`" class="text-[rgb(var(--accent))] hover:text-[rgb(var(--accent-strong))]">
-                  查看在 SCPPER-CN 的作者页
-                </NuxtLink>
-              </div>
-            </template>
-            <template v-else>
-              <div>当前账号尚未绑定 Wikidot 用户。</div>
-            </template>
+          <!-- Already linked: show info -->
+          <div v-if="user?.linkedWikidotId" class="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
+            <div>Wikidot ID：{{ user.linkedWikidotId }}</div>
+            <div class="mt-2">
+              <NuxtLink :to="`/user/${user.linkedWikidotId}`" class="text-[rgb(var(--accent))] hover:text-[rgb(var(--accent-strong))]">
+                查看在 SCPPER-CN 的作者页
+              </NuxtLink>
+            </div>
           </div>
+          <!-- Not linked: show binding panel -->
+          <WikidotBindingPanel v-else />
         </div>
       </div>
     </section>

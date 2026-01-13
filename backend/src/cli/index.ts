@@ -18,6 +18,7 @@ import { showImagesProgress } from './images-progress.js';
 import { countComponentIncludeUsage } from './include-usage.js';
 import { checkRecentAlerts } from './alerts.js';
 import { syncGachaPool } from './gacha-sync.js';
+import { TagDefinitionService } from '../services/TagDefinitionService.js';
 
 const program = new Command();
 
@@ -855,6 +856,168 @@ program
       json: Boolean(options.json),
       userDbUrl: options.userDbUrl
     });
+  });
+
+program
+  .command('tags')
+  .description('标签定义同步和验证工具')
+  .option('--sync', '从标签指导页面同步标签定义')
+  .option('--force', '强制同步（忽略版本检查）')
+  .option('--check', '检查无效标签（不在官方定义中的标签）')
+  .option('--untranslated', '显示未翻译的标签（只有中文没有英文）')
+  .option('--stats', '显示标签定义统计信息')
+  .option('--status', '显示同步状态')
+  .option('--limit <n>', '检查无效标签时的数量限制', '100')
+  .option('--json', '以 JSON 格式输出结果')
+  .action(async (options) => {
+    const prisma = getPrismaClient();
+    const service = new TagDefinitionService(prisma);
+    const jsonOutput = Boolean(options.json);
+
+    try {
+      if (options.sync) {
+        Logger.info('📦 开始同步标签定义...');
+        const result = await service.syncTagDefinitions(Boolean(options.force));
+
+        if (jsonOutput) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          Logger.info(`✅ 同步完成:`);
+          Logger.info(`   - 处理页面: ${result.pagesProcessed}`);
+          Logger.info(`   - 新增标签: ${result.tagsAdded}`);
+          Logger.info(`   - 更新标签: ${result.tagsUpdated}`);
+          if (result.errors.length > 0) {
+            Logger.warn(`   - 错误: ${result.errors.length}`);
+            result.errors.forEach(err => Logger.warn(`     ${err}`));
+          }
+        }
+
+        // 同步后自动计算并缓存所有标签数据
+        Logger.info('📦 计算并缓存所有标签...');
+        const allTagsCount = await service.computeAndCacheAllTags();
+        Logger.info(`✅ 已缓存 ${allTagsCount} 个标签`);
+
+        Logger.info('📦 计算并缓存无效标签...');
+        const invalidCount = await service.computeAndCacheInvalidTags();
+        Logger.info(`✅ 已缓存 ${invalidCount} 个无效标签`);
+
+        Logger.info('📦 计算并缓存未翻译标签...');
+        const untranslatedCount = await service.computeAndCacheUntranslatedTags();
+        Logger.info(`✅ 已缓存 ${untranslatedCount} 个未翻译标签`);
+      }
+
+      if (options.check) {
+        const limit = Number.parseInt(String(options.limit ?? '100'), 10) || 100;
+        Logger.info(`🔍 获取无效标签（从缓存，限制 ${limit} 条）...`);
+        const invalidTags = await service.getInvalidTags(limit);
+
+        if (jsonOutput) {
+          console.log(JSON.stringify({ invalidTags }, null, 2));
+        } else if (invalidTags.length === 0) {
+          Logger.info('✅ 未发现无效标签');
+        } else {
+          Logger.warn(`⚠️ 发现 ${invalidTags.length} 个疑似无效标签:`);
+          console.log('');
+          console.log('标签'.padEnd(20) + '页面数'.padStart(8) + '  示例页面');
+          console.log('-'.repeat(80));
+          for (const tag of invalidTags) {
+            const samples = tag.samplePages.slice(0, 2).map(url => {
+              const parts = url.split('/');
+              return parts[parts.length - 1];
+            }).join(', ');
+            console.log(
+              tag.tag.padEnd(20) +
+              String(tag.pageCount).padStart(8) +
+              '  ' + samples
+            );
+          }
+        }
+      }
+
+      if (options.untranslated) {
+        Logger.info('🔍 获取未翻译标签...');
+        const untranslated = await service.getUntranslatedTags();
+
+        if (jsonOutput) {
+          console.log(JSON.stringify({ untranslatedTags: untranslated }, null, 2));
+        } else if (untranslated.length === 0) {
+          Logger.info('✅ 所有标签都已翻译');
+        } else {
+          Logger.info(`📝 发现 ${untranslated.length} 个未翻译标签:`);
+          console.log('');
+          console.log('标签'.padEnd(20) + '来源'.padEnd(30) + '类别');
+          console.log('-'.repeat(70));
+          for (const tag of untranslated) {
+            const source = tag.sourcePageUrl.split('/').pop() || tag.sourcePageUrl;
+            console.log(
+              tag.tagChinese.padEnd(20) +
+              source.padEnd(30) +
+              (tag.category || '')
+            );
+          }
+        }
+      }
+
+      if (options.stats) {
+        Logger.info('📊 获取标签定义统计...');
+        const stats = await service.getStats();
+
+        if (jsonOutput) {
+          console.log(JSON.stringify(stats, null, 2));
+        } else {
+          Logger.info(`📊 标签定义统计:`);
+          Logger.info(`   - 总计: ${stats.total}`);
+          Logger.info(`   - 有翻译: ${stats.withTranslation}`);
+          Logger.info(`   - 无翻译: ${stats.withoutTranslation}`);
+          Logger.info(`   - 按类别:`);
+          for (const cat of stats.byCategory) {
+            Logger.info(`     ${cat.category}: ${cat.count}`);
+          }
+        }
+      }
+
+      if (options.status) {
+        Logger.info('📋 获取同步状态...');
+        const status = await service.getSyncStatus();
+
+        if (jsonOutput) {
+          console.log(JSON.stringify({ syncStatus: status }, null, 2));
+        } else if (status.length === 0) {
+          Logger.info('📋 尚未执行过同步');
+        } else {
+          Logger.info('📋 同步状态:');
+          console.log('');
+          console.log('页面'.padEnd(30) + '状态'.padEnd(10) + '标签数'.padStart(8) + '  最后同步时间');
+          console.log('-'.repeat(80));
+          for (const s of status) {
+            const pageUrl = s.pageUrl.split('/').pop() || s.pageUrl;
+            const syncTime = s.lastSyncedAt ? s.lastSyncedAt.toISOString().slice(0, 19) : '-';
+            console.log(
+              pageUrl.padEnd(30) +
+              s.syncStatus.padEnd(10) +
+              String(s.tagsExtracted).padStart(8) +
+              '  ' + syncTime
+            );
+          }
+        }
+      }
+
+      // 如果没有指定任何选项，显示帮助
+      if (!options.sync && !options.check && !options.untranslated && !options.stats && !options.status) {
+        console.log('请指定操作选项，例如:');
+        console.log('  --sync         同步标签定义');
+        console.log('  --check        检查无效标签');
+        console.log('  --untranslated 显示未翻译标签');
+        console.log('  --stats        显示统计信息');
+        console.log('  --status       显示同步状态');
+        console.log('');
+        console.log('示例:');
+        console.log('  npm run tags -- --sync --force    强制同步标签定义');
+        console.log('  npm run tags -- --check           检查无效标签');
+      }
+    } finally {
+      await disconnectPrisma();
+    }
   });
 
 // Global error handlers for robust CLI processes

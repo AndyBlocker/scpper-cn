@@ -180,18 +180,177 @@
           </div>
 
           <!-- 排序方式 -->
-          <div>
+          <div class="md:col-span-2">
             <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">排序方式</label>
-            <select 
+            <select
               v-model="searchForm.orderBy"
               class="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
             >
               <option value="relevance">相关性</option>
-              <option value="rating">评分：高到低</option>
-              <option value="rating_asc">评分：低到高</option>
-              <option value="recent">日期：新到旧</option>
-              <option value="recent_asc">日期：旧到新</option>
+              <optgroup label="评分">
+                <option value="rating">评分：高到低</option>
+                <option value="rating_asc">评分：低到高</option>
+              </optgroup>
+              <optgroup label="日期">
+                <option value="recent">日期：新到旧</option>
+                <option value="recent_asc">日期：旧到新</option>
+              </optgroup>
+              <optgroup label="Wilson分数">
+                <option value="wilson95">Wilson分数：高到低</option>
+                <option value="wilson95_asc">Wilson分数：低到高</option>
+              </optgroup>
+              <optgroup label="争议度">
+                <option value="controversy">争议度：高到低</option>
+                <option value="controversy_asc">争议度：低到高</option>
+              </optgroup>
+              <optgroup label="评论数">
+                <option value="comment_count">评论数：多到少</option>
+                <option value="comment_count_asc">评论数：少到多</option>
+              </optgroup>
+              <optgroup label="投票数">
+                <option value="vote_count">投票数：多到少</option>
+                <option value="vote_count_asc">投票数：少到多</option>
+              </optgroup>
             </select>
+          </div>
+        </div>
+
+        <!-- 更多筛选条件（可折叠） -->
+        <div class="md:col-span-2">
+          <button
+            type="button"
+            @click="showExtraFilters = !showExtraFilters"
+            class="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200 transition-colors"
+          >
+            <LucideIcon :name="showExtraFilters ? 'ChevronDown' : 'ChevronRight'" class="w-4 h-4" />
+            <span>更多筛选条件</span>
+            <span v-if="extraFiltersCount > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-[rgb(var(--accent))] text-white">
+              {{ extraFiltersCount }}
+            </span>
+          </button>
+
+          <div v-show="showExtraFilters" class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4 pl-6 border-l-2 border-neutral-200 dark:border-neutral-700">
+            <!-- Wilson分数范围 -->
+            <div>
+              <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                Wilson分数
+                <span class="text-xs text-neutral-500 dark:text-neutral-400 font-normal ml-1" title="基于投票数和支持率计算的置信区间下界，范围0~1">(0~1)</span>
+              </label>
+              <div class="flex items-center gap-2 min-w-0">
+                <input
+                  v-model="searchForm.wilson95Min"
+                  type="number"
+                  placeholder="最低"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+                <span class="text-neutral-500 dark:text-neutral-400">至</span>
+                <input
+                  v-model="searchForm.wilson95Max"
+                  type="number"
+                  placeholder="最高"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+              </div>
+            </div>
+
+            <!-- 争议度范围 -->
+            <div>
+              <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                争议度
+                <span class="text-xs text-neutral-500 dark:text-neutral-400 font-normal ml-1" title="反对票占比越高，争议度越高">(越高越有争议)</span>
+              </label>
+              <div class="flex items-center gap-2 min-w-0">
+                <input
+                  v-model="searchForm.controversyMin"
+                  type="number"
+                  placeholder="最低"
+                  step="0.01"
+                  min="0"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+                <span class="text-neutral-500 dark:text-neutral-400">至</span>
+                <input
+                  v-model="searchForm.controversyMax"
+                  type="number"
+                  placeholder="最高"
+                  step="0.01"
+                  min="0"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+              </div>
+            </div>
+
+            <!-- 评论数范围 -->
+            <div>
+              <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">评论数</label>
+              <div class="flex items-center gap-2 min-w-0">
+                <input
+                  v-model="searchForm.commentCountMin"
+                  type="number"
+                  placeholder="最少"
+                  step="1"
+                  min="0"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+                <span class="text-neutral-500 dark:text-neutral-400">至</span>
+                <input
+                  v-model="searchForm.commentCountMax"
+                  type="number"
+                  placeholder="最多"
+                  step="1"
+                  min="0"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+              </div>
+            </div>
+
+            <!-- 投票数范围 -->
+            <div>
+              <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">投票数</label>
+              <div class="flex items-center gap-2 min-w-0">
+                <input
+                  v-model="searchForm.voteCountMin"
+                  type="number"
+                  placeholder="最少"
+                  step="1"
+                  min="0"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+                <span class="text-neutral-500 dark:text-neutral-400">至</span>
+                <input
+                  v-model="searchForm.voteCountMax"
+                  type="number"
+                  placeholder="最多"
+                  step="1"
+                  min="0"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+              </div>
+            </div>
+
+            <!-- 日期范围 -->
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">创建日期</label>
+              <div class="flex items-center gap-2 min-w-0">
+                <input
+                  v-model="searchForm.dateMin"
+                  type="date"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+                <span class="text-neutral-500 dark:text-neutral-400">至</span>
+                <input
+                  v-model="searchForm.dateMax"
+                  type="date"
+                  class="flex-1 min-w-0 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -207,7 +366,7 @@
           <button
             type="submit"
             class="px-6 py-2 bg-[rgb(var(--accent))] text-white font-medium rounded-lg hover:bg-[rgb(var(--accent-strong))] transition-colors disabled:opacity-50"
-            :disabled="!searchForm.query && searchForm.includeTags.length === 0 && searchForm.excludeTags.length === 0 && !searchForm.ratingMin && !searchForm.ratingMax"
+            :disabled="!hasSearchCriteria()"
           >
             搜索
           </button>
@@ -327,6 +486,7 @@ const bff = $bff as unknown as BffFetcher
 
 // UI状态
 const showAdvanced = ref(false);
+const showExtraFilters = ref(false);
 const searchPerformed = ref(false);
 const initialLoading = ref(false);
 const error = ref(false);
@@ -341,7 +501,29 @@ const searchForm = ref({
   ratingMax: '',
   deletedFilter: 'exclude',
   orderBy: 'relevance',
-  scope: 'both' as 'both' | 'users' | 'pages'
+  scope: 'both' as 'both' | 'users' | 'pages',
+  // 新增过滤条件
+  wilson95Min: '',
+  wilson95Max: '',
+  controversyMin: '',
+  controversyMax: '',
+  commentCountMin: '',
+  commentCountMax: '',
+  voteCountMin: '',
+  voteCountMax: '',
+  dateMin: '',
+  dateMax: ''
+});
+
+// 计算已填写的高级过滤器数量
+const extraFiltersCount = computed(() => {
+  let count = 0;
+  if (searchForm.value.wilson95Min || searchForm.value.wilson95Max) count++;
+  if (searchForm.value.controversyMin || searchForm.value.controversyMax) count++;
+  if (searchForm.value.commentCountMin || searchForm.value.commentCountMax) count++;
+  if (searchForm.value.voteCountMin || searchForm.value.voteCountMax) count++;
+  if (searchForm.value.dateMin || searchForm.value.dateMax) count++;
+  return count;
 });
 
 // Tag联想功能
@@ -541,10 +723,22 @@ const clearForm = () => {
     ratingMin: '',
     ratingMax: '',
     deletedFilter: 'exclude',
-    orderBy: 'relevance'
+    orderBy: 'relevance',
+    scope: 'both',
+    wilson95Min: '',
+    wilson95Max: '',
+    controversyMin: '',
+    controversyMax: '',
+    commentCountMin: '',
+    commentCountMax: '',
+    voteCountMin: '',
+    voteCountMax: '',
+    dateMin: '',
+    dateMax: ''
   };
   tagSearchQuery.value = '';
   excludeTagSearchQuery.value = '';
+  showExtraFilters.value = false;
 };
 
 function hasSearchCriteria(): boolean {
@@ -553,6 +747,16 @@ function hasSearchCriteria(): boolean {
     || searchForm.value.excludeTags.length > 0
     || Boolean(searchForm.value.ratingMin)
     || Boolean(searchForm.value.ratingMax)
+    || Boolean(searchForm.value.wilson95Min)
+    || Boolean(searchForm.value.wilson95Max)
+    || Boolean(searchForm.value.controversyMin)
+    || Boolean(searchForm.value.controversyMax)
+    || Boolean(searchForm.value.commentCountMin)
+    || Boolean(searchForm.value.commentCountMax)
+    || Boolean(searchForm.value.voteCountMin)
+    || Boolean(searchForm.value.voteCountMax)
+    || Boolean(searchForm.value.dateMin)
+    || Boolean(searchForm.value.dateMax)
     || searchForm.value.deletedFilter !== 'exclude'
 }
 
@@ -565,6 +769,17 @@ function buildSearchParamsFromForm(includeDefaultsForOrder = false): Record<stri
   if (searchForm.value.excludeTags.length > 0) params.excludeTags = [...searchForm.value.excludeTags]
   if (searchForm.value.ratingMin) params.ratingMin = searchForm.value.ratingMin
   if (searchForm.value.ratingMax) params.ratingMax = searchForm.value.ratingMax
+  // 新增过滤参数
+  if (searchForm.value.wilson95Min) params.wilson95Min = searchForm.value.wilson95Min
+  if (searchForm.value.wilson95Max) params.wilson95Max = searchForm.value.wilson95Max
+  if (searchForm.value.controversyMin) params.controversyMin = searchForm.value.controversyMin
+  if (searchForm.value.controversyMax) params.controversyMax = searchForm.value.controversyMax
+  if (searchForm.value.commentCountMin) params.commentCountMin = searchForm.value.commentCountMin
+  if (searchForm.value.commentCountMax) params.commentCountMax = searchForm.value.commentCountMax
+  if (searchForm.value.voteCountMin) params.voteCountMin = searchForm.value.voteCountMin
+  if (searchForm.value.voteCountMax) params.voteCountMax = searchForm.value.voteCountMax
+  if (searchForm.value.dateMin) params.dateMin = searchForm.value.dateMin
+  if (searchForm.value.dateMax) params.dateMax = searchForm.value.dateMax
   if (searchForm.value.deletedFilter) {
     params.deletedFilter = searchForm.value.deletedFilter
   }
@@ -867,9 +1082,23 @@ const initializeFromQuery = () => {
   const normalizedDeletedFilter = ['only', 'any', 'exclude'].includes(rawDeletedFilter) ? rawDeletedFilter : 'exclude'
   const rawScope = String(query.scope || 'both').toLowerCase()
   const normalizedScope = (['users','pages','both'].includes(rawScope) ? rawScope : 'both') as 'users'|'pages'|'both'
-  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax || (query.orderBy && query.orderBy !== 'relevance') || query.advanced || String(query.onlyIncludeTags || '').toLowerCase() === 'true' || normalizedDeletedFilter !== 'exclude' || normalizedScope !== 'both'
+  const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax ||
+    query.wilson95Min || query.wilson95Max || query.controversyMin || query.controversyMax ||
+    query.commentCountMin || query.commentCountMax || query.voteCountMin || query.voteCountMax ||
+    query.dateMin || query.dateMax ||
+    (query.orderBy && query.orderBy !== 'relevance') || query.advanced ||
+    String(query.onlyIncludeTags || '').toLowerCase() === 'true' ||
+    normalizedDeletedFilter !== 'exclude' || normalizedScope !== 'both'
 
   showAdvanced.value = Boolean(hasAdvancedParams || !query.q)
+
+  // 如果URL中有高级过滤器参数，自动展开高级过滤器区域
+  const hasExtraFilters = query.wilson95Min || query.wilson95Max ||
+    query.controversyMin || query.controversyMax ||
+    query.commentCountMin || query.commentCountMax ||
+    query.voteCountMin || query.voteCountMax ||
+    query.dateMin || query.dateMax
+  showExtraFilters.value = Boolean(hasExtraFilters)
 
   searchForm.value.query = String((query as any).query ?? query.q ?? '')
   searchForm.value.includeTags = query.tags ? (Array.isArray(query.tags) ? query.tags as string[] : [String(query.tags)]) : []
@@ -877,6 +1106,17 @@ const initializeFromQuery = () => {
   searchForm.value.onlyIncludeTags = ['true', '1', 'yes'].includes(String(query.onlyIncludeTags || '').toLowerCase())
   searchForm.value.ratingMin = String(query.ratingMin || '')
   searchForm.value.ratingMax = String(query.ratingMax || '')
+  // 新增参数解析
+  searchForm.value.wilson95Min = String(query.wilson95Min || '')
+  searchForm.value.wilson95Max = String(query.wilson95Max || '')
+  searchForm.value.controversyMin = String(query.controversyMin || '')
+  searchForm.value.controversyMax = String(query.controversyMax || '')
+  searchForm.value.commentCountMin = String(query.commentCountMin || '')
+  searchForm.value.commentCountMax = String(query.commentCountMax || '')
+  searchForm.value.voteCountMin = String(query.voteCountMin || '')
+  searchForm.value.voteCountMax = String(query.voteCountMax || '')
+  searchForm.value.dateMin = String(query.dateMin || '')
+  searchForm.value.dateMax = String(query.dateMax || '')
   searchForm.value.deletedFilter = normalizedDeletedFilter
   searchForm.value.orderBy = String(query.orderBy || 'relevance')
   searchForm.value.scope = normalizedScope

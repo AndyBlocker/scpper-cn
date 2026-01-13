@@ -31,6 +31,13 @@ enum GachaMatchMode {
   ANY
 }
 
+enum WikidotBindingStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  CANCELLED
+}
+
 model UserAccount {
   id               String              @id @default(cuid())
   email            String              @unique
@@ -52,6 +59,7 @@ model UserAccount {
   gachaLedgerEntries GachaLedgerEntry[]
   createdEvents    CalendarEvent[]
   ftmlProjects     FtmlProject[]
+  wikidotBindingTasks WikidotBindingTask[]
 }
 
 model VerificationToken {
@@ -262,4 +270,26 @@ model FtmlProject {
 
   @@index([userId, isArchived, updatedAt])
   @@index([userId, createdAt])
+}
+
+/// Wikidot account binding verification task
+model WikidotBindingTask {
+  id               String               @id @default(cuid())
+  userId           String
+  wikidotUserId    Int
+  wikidotUsername  String?
+  verificationCode String               @unique
+  status           WikidotBindingStatus @default(PENDING)
+  expiresAt        DateTime
+  verifiedAt       DateTime?
+  lastCheckedAt    DateTime?
+  checkCount       Int                  @default(0)
+  failureReason    String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  user             UserAccount          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+  @@index([wikidotUserId])
 }

@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { getReadPoolSync } from '../utils/dbPool.js';
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v4';
 
 type DeletedFilterMode = 'any' | 'only' | 'exclude';
 
@@ -23,6 +23,17 @@ type PageSearchArgs = {
   wantDate: boolean;
   candidateLimit: number;
   snippetTop: number;
+  // 新增过滤条件
+  wilson95Min: number | null;
+  wilson95Max: number | null;
+  controversyMin: number | null;
+  controversyMax: number | null;
+  commentCountMin: number | null;
+  commentCountMax: number | null;
+  voteCountMin: number | null;
+  voteCountMax: number | null;
+  dateMin: string | null;
+  dateMax: string | null;
 };
 
 type PageSearchResult = {
@@ -98,6 +109,26 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     return Math.trunc(parsed);
   };
 
+  const parseNullableFloat = (value: string | undefined): number | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  };
+
+  const parseNullableDate = (value: string | undefined): string | null => {
+    if (value === undefined || value === null || value === '') return null;
+    // 支持 YYYY-MM-DD 格式
+    const dateMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!dateMatch) return null;
+    const [, year, month, day] = dateMatch;
+    const y = parseInt(year, 10);
+    const m = parseInt(month, 10);
+    const d = parseInt(day, 10);
+    if (y < 1970 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return `${year}-${month}-${day}`;
+  };
+
   const normalizeDeletedFilter = (raw: string | undefined): DeletedFilterMode => {
     const normalized = String(raw || 'any').toLowerCase();
     if (normalized === 'only') return 'only';
@@ -153,20 +184,45 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       wantSnippet,
       wantDate,
       candidateLimit,
-      snippetTop
+      snippetTop,
+      wilson95Min,
+      wilson95Max,
+      controversyMin,
+      controversyMax,
+      commentCountMin,
+      commentCountMax,
+      voteCountMin,
+      voteCountMax,
+      dateMin,
+      dateMax
     } = args;
 
     const includeTagsParam = includeTags && includeTags.length > 0 ? includeTags : null;
     const excludeTagsParam = excludeTags && excludeTags.length > 0 ? excludeTags : null;
     const ratingMinParam = typeof ratingMin === 'number' ? ratingMin : null;
     const ratingMaxParam = typeof ratingMax === 'number' ? ratingMax : null;
+    const wilson95MinParam = typeof wilson95Min === 'number' ? wilson95Min : null;
+    const wilson95MaxParam = typeof wilson95Max === 'number' ? wilson95Max : null;
+    const controversyMinParam = typeof controversyMin === 'number' ? controversyMin : null;
+    const controversyMaxParam = typeof controversyMax === 'number' ? controversyMax : null;
+    const commentCountMinParam = typeof commentCountMin === 'number' ? commentCountMin : null;
+    const commentCountMaxParam = typeof commentCountMax === 'number' ? commentCountMax : null;
+    const voteCountMinParam = typeof voteCountMin === 'number' ? voteCountMin : null;
+    const voteCountMaxParam = typeof voteCountMax === 'number' ? voteCountMax : null;
+    const dateMinParam = dateMin || null;
+    const dateMaxParam = dateMax || null;
     const deletedFilterClause = buildDeletedFilterClause(deletedFilter);
     const hasQuery = trimmedQuery.length > 0;
 
     if (!hasQuery) {
+      // 无查询模式：纯过滤
+      // 优化：分两步处理，避免对非删除页面执行不必要的LATERAL子查询
+      // 1. 先筛选非删除页面（直接使用索引）
+      // 2. 再处理已删除页面（需要LATERAL子查询获取前一个版本数据）
       const baseSql = `
-          WITH base AS (
-            SELECT 
+          WITH active_pages AS (
+            -- 非删除页面：直接使用当前版本数据，利用索引
+            SELECT
               pv.id,
               COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
               pv."pageId",
@@ -174,13 +230,54 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
               pv."alternateTitle",
               p."currentUrl" AS url,
               p."firstPublishedAt" AS "firstRevisionAt",
-              CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END AS rating,
-              CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END AS "voteCount",
+              pv.rating,
+              pv."voteCount",
               pv."revisionCount",
-              CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END AS "commentCount",
-              CASE WHEN pv."isDeleted" THEN COALESCE(prev.tags, ARRAY[]::text[]) ELSE COALESCE(pv.tags, ARRAY[]::text[]) END AS tags,
-              pv."isDeleted" AS "isDeleted",
-              CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
+              pv."commentCount",
+              COALESCE(pv.tags, ARRAY[]::text[]) AS tags,
+              false AS "isDeleted",
+              NULL::timestamp AS "deletedAt",
+              pv."validFrom",
+              ps."wilson95",
+              ps."controversy"
+            FROM "PageVersion" pv
+            JOIN "Page" p ON pv."pageId" = p.id
+            LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+            WHERE pv."validTo" IS NULL
+              AND pv."isDeleted" = false
+              AND ($1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $1::text[])
+              AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
+              AND ($3::int IS NULL OR pv.rating >= $3)
+              AND ($4::int IS NULL OR pv.rating <= $4)
+              AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $1::text[])
+              AND ($9::float IS NULL OR ps."wilson95" >= $9)
+              AND ($10::float IS NULL OR ps."wilson95" <= $10)
+              AND ($11::float IS NULL OR ps."controversy" >= $11)
+              AND ($12::float IS NULL OR ps."controversy" <= $12)
+              AND ($13::int IS NULL OR pv."commentCount" >= $13)
+              AND ($14::int IS NULL OR pv."commentCount" <= $14)
+              AND ($15::int IS NULL OR pv."voteCount" >= $15)
+              AND ($16::int IS NULL OR pv."voteCount" <= $16)
+              AND ($17::date IS NULL OR p."firstPublishedAt" >= $17::date)
+              AND ($18::date IS NULL OR p."firstPublishedAt" <= $18::date)
+          ),
+          deleted_pages AS (
+            -- 已删除页面：需要LATERAL子查询获取前一个有效版本
+            SELECT
+              pv.id,
+              COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
+              pv."pageId",
+              pv.title,
+              pv."alternateTitle",
+              p."currentUrl" AS url,
+              p."firstPublishedAt" AS "firstRevisionAt",
+              prev.rating,
+              prev."voteCount",
+              pv."revisionCount",
+              prev."commentCount",
+              COALESCE(prev.tags, ARRAY[]::text[]) AS tags,
+              true AS "isDeleted",
+              pv."validFrom" AS "deletedAt",
               pv."validFrom",
               ps."wilson95",
               ps."controversy"
@@ -196,23 +293,46 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
               LIMIT 1
             ) prev ON TRUE
             WHERE pv."validTo" IS NULL
-              AND ($1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $1::text[])
-              AND ($2::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $2::text[]))
-              AND ($3::int IS NULL OR pv.rating >= $3)
-              AND ($4::int IS NULL OR pv.rating <= $4)
-              AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $1::text[])
-              ${deletedFilterClause}
+              AND pv."isDeleted" = true
+              AND ($1::text[] IS NULL OR COALESCE(prev.tags, ARRAY[]::text[]) @> $1::text[])
+              AND ($2::text[] IS NULL OR NOT (COALESCE(prev.tags, ARRAY[]::text[]) && $2::text[]))
+              AND ($3::int IS NULL OR prev.rating >= $3)
+              AND ($4::int IS NULL OR prev.rating <= $4)
+              AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(prev.tags, ARRAY[]::text[]) <@ $1::text[])
+              AND ($9::float IS NULL OR ps."wilson95" >= $9)
+              AND ($10::float IS NULL OR ps."wilson95" <= $10)
+              AND ($11::float IS NULL OR ps."controversy" >= $11)
+              AND ($12::float IS NULL OR ps."controversy" <= $12)
+              AND ($13::int IS NULL OR prev."commentCount" >= $13)
+              AND ($14::int IS NULL OR prev."commentCount" <= $14)
+              AND ($15::int IS NULL OR prev."voteCount" >= $15)
+              AND ($16::int IS NULL OR prev."voteCount" <= $16)
+              AND ($17::date IS NULL OR p."firstPublishedAt" >= $17::date)
+              AND ($18::date IS NULL OR p."firstPublishedAt" <= $18::date)
+          ),
+          base AS (
+            ${deletedFilter === 'only' ? 'SELECT * FROM deleted_pages' :
+              deletedFilter === 'exclude' ? 'SELECT * FROM active_pages' :
+              'SELECT * FROM active_pages UNION ALL SELECT * FROM deleted_pages'}
           )
         `;
 
       const finalSql = `${baseSql}
           SELECT b.*
           FROM base b
-          ORDER BY 
+          ORDER BY
             CASE WHEN $6 = 'rating' THEN b.rating END DESC NULLS LAST,
             CASE WHEN $6 = 'rating_asc' THEN b.rating END ASC NULLS LAST,
             CASE WHEN $6 = 'recent' THEN COALESCE(b."firstRevisionAt", b."validFrom") END DESC NULLS LAST,
             CASE WHEN $6 = 'recent_asc' THEN COALESCE(b."firstRevisionAt", b."validFrom") END ASC NULLS LAST,
+            CASE WHEN $6 = 'wilson95' THEN b."wilson95" END DESC NULLS LAST,
+            CASE WHEN $6 = 'wilson95_asc' THEN b."wilson95" END ASC NULLS LAST,
+            CASE WHEN $6 = 'controversy' THEN b."controversy" END DESC NULLS LAST,
+            CASE WHEN $6 = 'controversy_asc' THEN b."controversy" END ASC NULLS LAST,
+            CASE WHEN $6 = 'comment_count' THEN b."commentCount" END DESC NULLS LAST,
+            CASE WHEN $6 = 'comment_count_asc' THEN b."commentCount" END ASC NULLS LAST,
+            CASE WHEN $6 = 'vote_count' THEN b."voteCount" END DESC NULLS LAST,
+            CASE WHEN $6 = 'vote_count_asc' THEN b."voteCount" END ASC NULLS LAST,
             b.rating DESC NULLS LAST,
             b."firstRevisionAt" DESC NULLS LAST,
             b.id DESC
@@ -220,43 +340,114 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         `;
 
       const params = [
-        includeTagsParam,
-        excludeTagsParam,
-        ratingMinParam,
-        ratingMaxParam,
-        enforceExactTags,
-        normalizedOrder,
-        limit,
-        offset
+        includeTagsParam,       // $1
+        excludeTagsParam,       // $2
+        ratingMinParam,         // $3
+        ratingMaxParam,         // $4
+        enforceExactTags,       // $5
+        normalizedOrder,        // $6
+        limit,                  // $7
+        offset,                 // $8
+        wilson95MinParam,       // $9
+        wilson95MaxParam,       // $10
+        controversyMinParam,    // $11
+        controversyMaxParam,    // $12
+        commentCountMinParam,   // $13
+        commentCountMaxParam,   // $14
+        voteCountMinParam,      // $15
+        voteCountMaxParam,      // $16
+        dateMinParam,           // $17
+        dateMaxParam            // $18
+      ];
+
+      // 优化的 total 计数查询
+      const buildTotalSql = () => {
+        const activeCountSql = `
+          SELECT COUNT(*) AS cnt
+          FROM "PageVersion" pv
+          JOIN "Page" p ON pv."pageId" = p.id
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          WHERE pv."validTo" IS NULL
+            AND pv."isDeleted" = false
+            AND ($1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $1::text[])
+            AND ($2::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $2::text[]))
+            AND ($3::int IS NULL OR pv.rating >= $3)
+            AND ($4::int IS NULL OR pv.rating <= $4)
+            AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $1::text[])
+            AND ($6::float IS NULL OR ps."wilson95" >= $6)
+            AND ($7::float IS NULL OR ps."wilson95" <= $7)
+            AND ($8::float IS NULL OR ps."controversy" >= $8)
+            AND ($9::float IS NULL OR ps."controversy" <= $9)
+            AND ($10::int IS NULL OR pv."commentCount" >= $10)
+            AND ($11::int IS NULL OR pv."commentCount" <= $11)
+            AND ($12::int IS NULL OR pv."voteCount" >= $12)
+            AND ($13::int IS NULL OR pv."voteCount" <= $13)
+            AND ($14::date IS NULL OR p."firstPublishedAt" >= $14::date)
+            AND ($15::date IS NULL OR p."firstPublishedAt" <= $15::date)
+        `;
+        const deletedCountSql = `
+          SELECT COUNT(*) AS cnt
+          FROM "PageVersion" pv
+          JOIN "Page" p ON pv."pageId" = p.id
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          LEFT JOIN LATERAL (
+            SELECT rating, "voteCount", "commentCount", tags
+            FROM "PageVersion" pv_prev
+            WHERE pv_prev."pageId" = pv."pageId"
+              AND pv_prev."isDeleted" = false
+            ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+            LIMIT 1
+          ) prev ON TRUE
+          WHERE pv."validTo" IS NULL
+            AND pv."isDeleted" = true
+            AND ($1::text[] IS NULL OR COALESCE(prev.tags, ARRAY[]::text[]) @> $1::text[])
+            AND ($2::text[] IS NULL OR NOT (COALESCE(prev.tags, ARRAY[]::text[]) && $2::text[]))
+            AND ($3::int IS NULL OR prev.rating >= $3)
+            AND ($4::int IS NULL OR prev.rating <= $4)
+            AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(prev.tags, ARRAY[]::text[]) <@ $1::text[])
+            AND ($6::float IS NULL OR ps."wilson95" >= $6)
+            AND ($7::float IS NULL OR ps."wilson95" <= $7)
+            AND ($8::float IS NULL OR ps."controversy" >= $8)
+            AND ($9::float IS NULL OR ps."controversy" <= $9)
+            AND ($10::int IS NULL OR prev."commentCount" >= $10)
+            AND ($11::int IS NULL OR prev."commentCount" <= $11)
+            AND ($12::int IS NULL OR prev."voteCount" >= $12)
+            AND ($13::int IS NULL OR prev."voteCount" <= $13)
+            AND ($14::date IS NULL OR p."firstPublishedAt" >= $14::date)
+            AND ($15::date IS NULL OR p."firstPublishedAt" <= $15::date)
+        `;
+        if (deletedFilter === 'exclude') return activeCountSql;
+        if (deletedFilter === 'only') return deletedCountSql;
+        // any: 合并两个计数
+        return `SELECT (active.cnt + deleted.cnt) AS total FROM (${activeCountSql}) active, (${deletedCountSql}) deleted`;
+      };
+
+      const totalParams = [
+        includeTagsParam,       // $1
+        excludeTagsParam,       // $2
+        ratingMinParam,         // $3
+        ratingMaxParam,         // $4
+        enforceExactTags,       // $5
+        wilson95MinParam,       // $6
+        wilson95MaxParam,       // $7
+        controversyMinParam,    // $8
+        controversyMaxParam,    // $9
+        commentCountMinParam,   // $10
+        commentCountMaxParam,   // $11
+        voteCountMinParam,      // $12
+        voteCountMaxParam,      // $13
+        dateMinParam,           // $14
+        dateMaxParam            // $15
       ];
 
       const [{ rows }, totalRes] = await Promise.all([
         readPool.query(finalSql, params),
         wantTotal
-          ? readPool.query(
-              `SELECT COUNT(*) AS total
-                 FROM "PageVersion" pv
-                 LEFT JOIN LATERAL (
-                   SELECT tags
-                   FROM "PageVersion" pv_prev
-                   WHERE pv_prev."pageId" = pv."pageId"
-                     AND pv_prev."isDeleted" = false
-                   ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
-                   LIMIT 1
-                 ) prev ON TRUE
-                 WHERE pv."validTo" IS NULL
-                  AND ($1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $1::text[])
-                 AND ($2::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $2::text[]))
-                 AND ($3::int IS NULL OR pv.rating >= $3)
-                 AND ($4::int IS NULL OR pv.rating <= $4)
-                 AND (($5)::boolean IS NOT TRUE OR $1::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $1::text[])
-                 ${deletedFilterClause}`,
-              [includeTagsParam, excludeTagsParam, ratingMinParam, ratingMaxParam, enforceExactTags]
-            )
+          ? readPool.query(buildTotalSql(), totalParams)
           : Promise.resolve(null as any)
       ]);
 
-      const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
+      const total = totalRes ? Number(totalRes.rows?.[0]?.total ?? totalRes.rows?.[0]?.cnt ?? 0) : undefined;
 
       let snippetMap: Map<number, string | null> = new Map();
       if (wantSnippet && rows.length > 0) {
@@ -300,6 +491,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       return total !== undefined ? { results, total } : { results };
     }
 
+    // 有查询模式：全文搜索 + 过滤
     const baseSql = `
         WITH url_hits AS (
           SELECT pv.id AS pv_id,
@@ -394,6 +586,16 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             AND ($4::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) >= $4)
             AND ($5::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) <= $5)
             AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
+            AND ($11::float IS NULL OR ps."wilson95" >= $11)
+            AND ($12::float IS NULL OR ps."wilson95" <= $12)
+            AND ($13::float IS NULL OR ps."controversy" >= $13)
+            AND ($14::float IS NULL OR ps."controversy" <= $14)
+            AND ($15::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) >= $15)
+            AND ($16::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) <= $16)
+            AND ($17::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) >= $17)
+            AND ($18::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $18)
+            AND ($19::date IS NULL OR p."firstPublishedAt" >= $19::date)
+            AND ($20::date IS NULL OR p."firstPublishedAt" <= $20::date)
             ${deletedFilterClause}
         ),
         aggregated AS (
@@ -445,7 +647,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           CASE WHEN a."alternateTitle" IS NOT NULL AND a."alternateTitle" &@~ pgroonga_query_escape($1) THEN 1 ELSE 0 END AS alt_hit
         FROM aggregated a
         ORDER BY
-          CASE WHEN $9 IN ('rating', 'rating_asc') THEN NULL END,
+          CASE WHEN $9 IN ('rating', 'rating_asc', 'wilson95', 'wilson95_asc', 'controversy', 'controversy_asc', 'comment_count', 'comment_count_asc', 'vote_count', 'vote_count_asc') THEN NULL END,
           CASE WHEN $9 IN ('recent', 'recent_asc') THEN NULL END,
           host_match DESC NULLS LAST,
           exact_url DESC NULLS LAST,
@@ -461,6 +663,14 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           CASE WHEN $9 = 'rating_asc' THEN rating END ASC NULLS LAST,
           CASE WHEN $9 = 'recent' THEN COALESCE("firstRevisionAt", "validFrom") END DESC NULLS LAST,
           CASE WHEN $9 = 'recent_asc' THEN COALESCE("firstRevisionAt", "validFrom") END ASC NULLS LAST,
+          CASE WHEN $9 = 'wilson95' THEN "wilson95" END DESC NULLS LAST,
+          CASE WHEN $9 = 'wilson95_asc' THEN "wilson95" END ASC NULLS LAST,
+          CASE WHEN $9 = 'controversy' THEN "controversy" END DESC NULLS LAST,
+          CASE WHEN $9 = 'controversy_asc' THEN "controversy" END ASC NULLS LAST,
+          CASE WHEN $9 = 'comment_count' THEN "commentCount" END DESC NULLS LAST,
+          CASE WHEN $9 = 'comment_count_asc' THEN "commentCount" END ASC NULLS LAST,
+          CASE WHEN $9 = 'vote_count' THEN "voteCount" END DESC NULLS LAST,
+          CASE WHEN $9 = 'vote_count_asc' THEN "voteCount" END ASC NULLS LAST,
           rating DESC NULLS LAST,
           id DESC
         LIMIT $7::int OFFSET $8::int
@@ -513,6 +723,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "PageVersion" pv
           JOIN candidates c ON c.pv_id = pv.id
           JOIN "Page" p ON pv."pageId" = p.id
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           LEFT JOIN LATERAL (
             SELECT rating, "voteCount", "commentCount", tags
             FROM "PageVersion" pv_prev
@@ -527,6 +738,16 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             AND ($4::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) >= $4)
             AND ($5::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) <= $5)
             AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
+            AND ($8::float IS NULL OR ps."wilson95" >= $8)
+            AND ($9::float IS NULL OR ps."wilson95" <= $9)
+            AND ($10::float IS NULL OR ps."controversy" >= $10)
+            AND ($11::float IS NULL OR ps."controversy" <= $11)
+            AND ($12::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) >= $12)
+            AND ($13::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) <= $13)
+            AND ($14::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) >= $14)
+            AND ($15::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $15)
+            AND ($16::date IS NULL OR p."firstPublishedAt" >= $16::date)
+            AND ($17::date IS NULL OR p."firstPublishedAt" <= $17::date)
             ${deletedFilterClause}
         )
         SELECT COUNT(*) AS total FROM filtered
@@ -534,27 +755,47 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         : null;
 
     const params = [
-      trimmedQuery,
-      includeTagsParam,
-      excludeTagsParam,
-      ratingMinParam,
-      ratingMaxParam,
-      enforceExactTags,
-      limit,
-      offset,
-      normalizedOrder,
-      candidateLimit
+      trimmedQuery,           // $1
+      includeTagsParam,       // $2
+      excludeTagsParam,       // $3
+      ratingMinParam,         // $4
+      ratingMaxParam,         // $5
+      enforceExactTags,       // $6
+      limit,                  // $7
+      offset,                 // $8
+      normalizedOrder,        // $9
+      candidateLimit,         // $10
+      wilson95MinParam,       // $11
+      wilson95MaxParam,       // $12
+      controversyMinParam,    // $13
+      controversyMaxParam,    // $14
+      commentCountMinParam,   // $15
+      commentCountMaxParam,   // $16
+      voteCountMinParam,      // $17
+      voteCountMaxParam,      // $18
+      dateMinParam,           // $19
+      dateMaxParam            // $20
     ];
 
     const totalParams = totalSql
       ? [
-          trimmedQuery,
-          includeTagsParam,
-          excludeTagsParam,
-          ratingMinParam,
-          ratingMaxParam,
-          enforceExactTags,
-          candidateLimit
+          trimmedQuery,           // $1
+          includeTagsParam,       // $2
+          excludeTagsParam,       // $3
+          ratingMinParam,         // $4
+          ratingMaxParam,         // $5
+          enforceExactTags,       // $6
+          candidateLimit,         // $7
+          wilson95MinParam,       // $8
+          wilson95MaxParam,       // $9
+          controversyMinParam,    // $10
+          controversyMaxParam,    // $11
+          commentCountMinParam,   // $12
+          commentCountMaxParam,   // $13
+          voteCountMinParam,      // $14
+          voteCountMaxParam,      // $15
+          dateMinParam,           // $16
+          dateMaxParam            // $17
         ]
       : null;
 
@@ -644,11 +885,25 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         orderBy = 'relevance',
         includeTotal = 'true',
         includeSnippet = 'true',
-        includeDate = 'true'
+        includeDate = 'true',
+        // 新增过滤参数
+        wilson95Min,
+        wilson95Max,
+        controversyMin,
+        controversyMax,
+        commentCountMin,
+        commentCountMax,
+        voteCountMin,
+        voteCountMax,
+        dateMin,
+        dateMax
       } = req.query as Record<string, string>;
 
       const normalizedDeletedFilter = normalizeDeletedFilter(deletedFilter);
-      const hasFilters = tags || excludeTags || ratingMin || ratingMax || normalizedDeletedFilter !== 'any';
+      const hasFilters = tags || excludeTags || ratingMin || ratingMax ||
+        wilson95Min || wilson95Max || controversyMin || controversyMax ||
+        commentCountMin || commentCountMax || voteCountMin || voteCountMax ||
+        dateMin || dateMax || normalizedDeletedFilter !== 'any';
       if (!query && !hasFilters) {
         return res.status(400).json({ error: 'query or filters are required' });
       }
@@ -677,10 +932,33 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         if (key === 'recent_desc') return 'recent';
         if (key === 'rating') return 'rating';
         if (key === 'recent') return 'recent';
+        // 新增排序选项
+        if (key === 'wilson95') return 'wilson95';
+        if (key === 'wilson95_asc') return 'wilson95_asc';
+        if (key === 'wilson95_desc') return 'wilson95';
+        if (key === 'controversy') return 'controversy';
+        if (key === 'controversy_asc') return 'controversy_asc';
+        if (key === 'controversy_desc') return 'controversy';
+        if (key === 'comment_count') return 'comment_count';
+        if (key === 'comment_count_asc') return 'comment_count_asc';
+        if (key === 'comment_count_desc') return 'comment_count';
+        if (key === 'vote_count') return 'vote_count';
+        if (key === 'vote_count_asc') return 'vote_count_asc';
+        if (key === 'vote_count_desc') return 'vote_count';
         return 'relevance';
       })();
       const ratingMinNumber = parseNullableInt(ratingMin);
       const ratingMaxNumber = parseNullableInt(ratingMax);
+      const wilson95MinNumber = parseNullableFloat(wilson95Min);
+      const wilson95MaxNumber = parseNullableFloat(wilson95Max);
+      const controversyMinNumber = parseNullableFloat(controversyMin);
+      const controversyMaxNumber = parseNullableFloat(controversyMax);
+      const commentCountMinNumber = parseNullableInt(commentCountMin);
+      const commentCountMaxNumber = parseNullableInt(commentCountMax);
+      const voteCountMinNumber = parseNullableInt(voteCountMin);
+      const voteCountMaxNumber = parseNullableInt(voteCountMax);
+      const dateMinParsed = parseNullableDate(dateMin);
+      const dateMaxParsed = parseNullableDate(dateMax);
       const candidateLimit = Math.max(limitInt * 4, 120);
       const snippetTop = wantSnippet ? Math.min(defaultSnippetTopK, Math.max(1, limitInt)) : 0;
 
@@ -695,6 +973,16 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         excludeTags: excludeTagsArray,
         ratingMin: ratingMinNumber ?? undefined,
         ratingMax: ratingMaxNumber ?? undefined,
+        wilson95Min: wilson95MinNumber ?? undefined,
+        wilson95Max: wilson95MaxNumber ?? undefined,
+        controversyMin: controversyMinNumber ?? undefined,
+        controversyMax: controversyMaxNumber ?? undefined,
+        commentCountMin: commentCountMinNumber ?? undefined,
+        commentCountMax: commentCountMaxNumber ?? undefined,
+        voteCountMin: voteCountMinNumber ?? undefined,
+        voteCountMax: voteCountMaxNumber ?? undefined,
+        dateMin: dateMinParsed ?? undefined,
+        dateMax: dateMaxParsed ?? undefined,
         deleted: normalizedDeletedFilter,
         exactTags: enforceExactTags
       };
@@ -723,7 +1011,17 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         wantSnippet,
         wantDate,
         candidateLimit,
-        snippetTop
+        snippetTop,
+        wilson95Min: wilson95MinNumber,
+        wilson95Max: wilson95MaxNumber,
+        controversyMin: controversyMinNumber,
+        controversyMax: controversyMaxNumber,
+        commentCountMin: commentCountMinNumber,
+        commentCountMax: commentCountMaxNumber,
+        voteCountMin: voteCountMinNumber,
+        voteCountMax: voteCountMaxNumber,
+        dateMin: dateMinParsed,
+        dateMax: dateMaxParsed
       });
 
       const payload = pageData.total !== undefined
@@ -736,7 +1034,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       next(err);
     }
   });
-// GET /search/users
+
+  // GET /search/users
   router.get('/users', async (req, res, next) => {
     try {
       const { query, limit = '20', offset = '0', includeTotal = 'true' } = req.query as Record<string, string>;
@@ -786,7 +1085,18 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         onlyIncludeTags,
         includeSnippet = 'true',
         includeDate = 'true',
-        orderBy = 'relevance'
+        orderBy = 'relevance',
+        // 新增过滤参数
+        wilson95Min,
+        wilson95Max,
+        controversyMin,
+        controversyMax,
+        commentCountMin,
+        commentCountMax,
+        voteCountMin,
+        voteCountMax,
+        dateMin,
+        dateMax
       } = req.query as Record<string, string>;
 
       if (!query) return res.status(400).json({ error: 'query is required' });
@@ -808,6 +1118,16 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         : null;
       const ratingMinNumber = parseNullableInt(ratingMin);
       const ratingMaxNumber = parseNullableInt(ratingMax);
+      const wilson95MinNumber = parseNullableFloat(wilson95Min);
+      const wilson95MaxNumber = parseNullableFloat(wilson95Max);
+      const controversyMinNumber = parseNullableFloat(controversyMin);
+      const controversyMaxNumber = parseNullableFloat(controversyMax);
+      const commentCountMinNumber = parseNullableInt(commentCountMin);
+      const commentCountMaxNumber = parseNullableInt(commentCountMax);
+      const voteCountMinNumber = parseNullableInt(voteCountMin);
+      const voteCountMaxNumber = parseNullableInt(voteCountMax);
+      const dateMinParsed = parseNullableDate(dateMin);
+      const dateMaxParsed = parseNullableDate(dateMax);
       const normalizedDeletedFilter = normalizeDeletedFilter(deletedFilter);
       const enforceExactTags = ['true', '1', 'yes'].includes(String(onlyIncludeTags || '').toLowerCase()) && !!(includeTagsArray && includeTagsArray.length > 0);
 
@@ -822,6 +1142,16 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         excludeTags: excludeTagsArray,
         ratingMin: ratingMinNumber ?? undefined,
         ratingMax: ratingMaxNumber ?? undefined,
+        wilson95Min: wilson95MinNumber ?? undefined,
+        wilson95Max: wilson95MaxNumber ?? undefined,
+        controversyMin: controversyMinNumber ?? undefined,
+        controversyMax: controversyMaxNumber ?? undefined,
+        commentCountMin: commentCountMinNumber ?? undefined,
+        commentCountMax: commentCountMaxNumber ?? undefined,
+        voteCountMin: voteCountMinNumber ?? undefined,
+        voteCountMax: voteCountMaxNumber ?? undefined,
+        dateMin: dateMinParsed ?? undefined,
+        dateMax: dateMaxParsed ?? undefined,
         deleted: normalizedDeletedFilter,
         includeSnippet: wantSnippet,
         includeDate: wantDate,
@@ -853,7 +1183,17 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         wantSnippet,
         wantDate,
         candidateLimit,
-        snippetTop
+        snippetTop,
+        wilson95Min: wilson95MinNumber,
+        wilson95Max: wilson95MaxNumber,
+        controversyMin: controversyMinNumber,
+        controversyMax: controversyMaxNumber,
+        commentCountMin: commentCountMinNumber,
+        commentCountMax: commentCountMaxNumber,
+        voteCountMin: voteCountMinNumber,
+        voteCountMax: voteCountMaxNumber,
+        dateMin: dateMinParsed,
+        dateMax: dateMaxParsed
       });
 
       const userSql = `

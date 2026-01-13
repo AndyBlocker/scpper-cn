@@ -7,6 +7,7 @@ import { adminRouter } from './routes/admin.js';
 import { gachaRouter, gachaAdminRouter } from './routes/gacha.js';
 import { eventsRouter } from './routes/events.js';
 import { ftmlProjectsRouter } from './routes/ftml-projects.js';
+import { wikidotBindingRouter, wikidotBindingInternalRouter } from './routes/wikidotBinding.js';
 
 export function createApp() {
   const app = express();
@@ -22,6 +23,8 @@ export function createApp() {
   app.use('/gacha', gachaRouter());
   app.use('/events', eventsRouter());
   app.use('/ftml-projects', ftmlProjectsRouter());
+  app.use('/wikidot-binding', wikidotBindingRouter());
+  app.use('/internal/wikidot-binding', wikidotBindingInternalRouter());
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });

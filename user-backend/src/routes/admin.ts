@@ -119,6 +119,30 @@ export function adminRouter() {
     }
   });
 
+  // Delete account by account id (admin-only)
+  router.delete('/accounts/:id', requireAdmin, async (req, res, next) => {
+    try {
+      const { id } = req.params as Record<string, string>;
+      const account = await prisma.userAccount.findUnique({
+        where: { id },
+        select: { id: true, email: true }
+      });
+      if (!account) {
+        return res.status(404).json({ error: '账号不存在' });
+      }
+      // Prevent admin from deleting themselves
+      if (req.authUser?.id === id) {
+        return res.status(400).json({ error: '无法删除当前登录的账号' });
+      }
+      // Delete the account (Prisma cascade will handle related records)
+      await prisma.userAccount.delete({ where: { id } });
+      res.json({ ok: true, deletedEmail: account.email });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '删除失败';
+      res.status(400).json({ error: message });
+    }
+  });
+
   // ===== Calendar Events Management =====
   const eventCreateSchema = z.object({
     title: z.string().trim().min(1),
