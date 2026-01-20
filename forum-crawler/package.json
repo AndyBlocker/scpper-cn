@@ -1,0 +1,22 @@
+{
+  "name": "forum-crawler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "auth": "node src/auth.js",
+    "scrape": "node src/scrape-thread.js",
+    "http-auth": "node src/http-login.js",
+    "http-scrape": "node src/http-scrape-thread.js",
+    "client-scrape": "node src/scrape-thread-client.js",
+    "crawl-all": "node src/scrape-all-forums.js",
+    "bench-pages": "node src/bench-pages-concurrency.js"
+  },
+  "dependencies": {
+    "@ukwhatn/wikidot": "^4.3.1",
+    "cheerio": "^1.0.0-rc.12",
+    "playwright": "^1.42.1",
+    "tough-cookie": "^6.0.0",
+    "undici": "^7.18.2"
+  }
+}

@@ -1,5 +1,5 @@
 // src/jobs/UserRatingJob.ts
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 /**
  * 用户Rating和Ranking系统
@@ -390,26 +390,29 @@ export class UserRatingSystem {
       throw new Error(`Invalid rank field: ${rankField}`);
     }
 
-    await this.prisma.$executeRawUnsafe(`
+    const ratingColumn = Prisma.raw(`"${ratingField}"`);
+    const rankColumn = Prisma.raw(`"${rankField}"`);
+
+    await this.prisma.$executeRaw(Prisma.sql`
       WITH ranked_users AS (
         SELECT
           "userId",
-          "${ratingField}",
-          ROW_NUMBER() OVER (ORDER BY "${ratingField}" DESC, "userId" ASC) as rank
+          ${ratingColumn},
+          ROW_NUMBER() OVER (ORDER BY ${ratingColumn} DESC, "userId" ASC) as rank
         FROM "UserStats"
-        WHERE "${ratingField}" > 0
+        WHERE ${ratingColumn} > 0
       )
       UPDATE "UserStats" us
-      SET "${rankField}" = ru.rank
+      SET ${rankColumn} = ru.rank
       FROM ranked_users ru
       WHERE us."userId" = ru."userId"
     `);
 
     // 清除rating为0的用户的排名
-    await this.prisma.$executeRawUnsafe(`
+    await this.prisma.$executeRaw(Prisma.sql`
       UPDATE "UserStats"
-      SET "${rankField}" = NULL
-      WHERE "${ratingField}" <= 0
+      SET ${rankColumn} = NULL
+      WHERE ${ratingColumn} <= 0
     `);
   }
 
