@@ -25,6 +25,62 @@ function boolEnv(name, fallback) {
   return v !== '0' && v.toLowerCase() !== 'false';
 }
 
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h${minutes}m${seconds}s`;
+  if (minutes > 0) return `${minutes}m${seconds}s`;
+  return `${seconds}s`;
+}
+
+function truncate(text, maxLen) {
+  if (!text) return '';
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
+function buildBar(current, total, width = 24) {
+  if (total <= 0) return '[------------------------]';
+  const ratio = Math.min(1, Math.max(0, current / total));
+  const filled = Math.round(ratio * width);
+  const empty = Math.max(0, width - filled);
+  return `[${'#'.repeat(filled)}${'-'.repeat(empty)}]`;
+}
+
+function createProgressReporter({ total, label, logEvery }) {
+  const start = Date.now();
+  let lastLen = 0;
+  let lastPrinted = 0;
+
+  const render = ({ processed, ok, fail, lastTitle }) => {
+    const now = Date.now();
+    if (processed !== total && processed % logEvery !== 0) return;
+    if (now - lastPrinted < 100 && processed !== total) return;
+    lastPrinted = now;
+
+    const elapsedMs = Math.max(0, now - start);
+    const rate = processed > 0 && elapsedMs > 0 ? processed / (elapsedMs / 1000) : 0;
+    const remaining = Math.max(0, total - processed);
+    const etaMs = rate > 0 ? Math.ceil((remaining / rate) * 1000) : 0;
+    const percent = total > 0 ? ((processed / total) * 100).toFixed(1) : '0.0';
+    const bar = buildBar(processed, total, 24);
+    const title = truncate(lastTitle, 48);
+
+    const line = `${label} ${bar} ${percent}% | ${processed}/${total} | ETA ${formatDuration(etaMs)} | ${rate.toFixed(2)} p/s | ok ${ok} fail ${fail} | last: ${title}`;
+    const padded = line.padEnd(Math.max(lastLen, line.length), ' ');
+    lastLen = padded.length;
+    process.stdout.write(`\r${padded}`);
+  };
+
+  const stop = () => {
+    process.stdout.write('\n');
+  };
+
+  return { render, stop };
+}
+
 async function createClient() {
   const username = optEnv('WIKIDOT_USERNAME');
   const password = optEnv('WIKIDOT_PASSWORD');
@@ -90,8 +146,11 @@ async function main() {
   const concurrency = Math.max(1, intEnv('CONCURRENCY', 5));
   const maxPages = Math.max(0, intEnv('MAX_PAGES', 0));
   const perPageParallel = boolEnv('PER_PAGE_PARALLEL', true);
+  const logEvery = Math.max(1, intEnv('LOG_EVERY', 1));
+  const label = optEnv('PROGRESS_LABEL') || 'Bench';
 
   const client = await createClient();
+  let progress = null;
   const stats = {
     total: 0,
     ok: 0,
@@ -121,6 +180,7 @@ async function main() {
 
     const targetPages = maxPages > 0 ? pages.slice(0, maxPages) : pages;
     stats.total = targetPages.length;
+    progress = createProgressReporter({ total: stats.total, label, logEvery });
 
     await runWithConcurrency(targetPages, concurrency, async (page) => {
       const pageStart = performance.now();
@@ -139,7 +199,15 @@ async function main() {
         if (result.ok) stats.perMethod[key].ok += 1;
         else stats.perMethod[key].err += 1;
       }
+
+      if (progress) {
+        const processed = stats.ok + stats.fail;
+        const lastTitle = page.title || page.fullname || page.name || '(unknown)';
+        progress.render({ processed, ok: stats.ok, fail: stats.fail, lastTitle });
+      }
     });
+
+    if (progress) progress.stop();
 
     const totalMs = performance.now() - start;
     const avgMs = stats.durationsMs.length
@@ -160,6 +228,7 @@ async function main() {
       errorsSample: stats.errors.slice(0, 10),
     }, null, 2));
   } finally {
+    if (progress) progress.stop();
     try {
       const closeRes = await client.close();
       if (!closeRes.isOk()) {
