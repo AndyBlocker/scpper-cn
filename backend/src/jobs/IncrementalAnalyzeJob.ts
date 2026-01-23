@@ -678,7 +678,17 @@ export class IncrementalAnalyzeJob {
     `;
 
     await this.prisma.$executeRaw`
-      WITH agg AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      agg AS (
         SELECT 
           x."userId",
           x.dt::date AS date,
@@ -716,9 +726,9 @@ export class IncrementalAnalyzeJob {
             a."userId",
             date_trunc('day', a."date") AS dt,
             0::bigint AS votes_cast,
-            COUNT(DISTINCT pv."pageId") FILTER (WHERE a.type = 'AUTHOR') AS pages_created,
+            COUNT(DISTINCT pv."pageId") AS pages_created,
             MAX(a."date") AS last_activity
-          FROM "Attribution" a
+          FROM effective_attributions a
           JOIN "PageVersion" pv ON pv.id = a."pageVerId"
           WHERE a."userId" IS NOT NULL
             AND a."date" IS NOT NULL
@@ -753,6 +763,17 @@ export class IncrementalAnalyzeJob {
     const pageVersionIds = changeSet.map(c => c.id);
     
     const affectedUsers = await this.prisma.$queryRaw<Array<{ userId: number }>>`
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+          WHERE a."pageVerId" = ANY(${pageVersionIds}::int[])
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      )
       SELECT DISTINCT "userId" 
       FROM (
         -- 投票的用户
@@ -773,7 +794,7 @@ export class IncrementalAnalyzeJob {
         
         -- 页面归属的用户
         SELECT a."userId"
-        FROM "Attribution" a
+        FROM effective_attributions a
         WHERE a."pageVerId" = ANY(${pageVersionIds}::int[])
           AND a."userId" IS NOT NULL
       ) affected_users
@@ -789,7 +810,17 @@ export class IncrementalAnalyzeJob {
     
     // 针对特定用户进行更新
     await this.prisma.$executeRaw`
-      WITH vote_activity AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      vote_activity AS (
         SELECT 
           "userId",
           MIN(timestamp) as first_vote,
@@ -812,7 +843,7 @@ export class IncrementalAnalyzeJob {
           "userId",
           MIN(date) as first_attribution,
           MAX(date) as last_attribution
-        FROM "Attribution"
+        FROM effective_attributions
         WHERE "userId" = ANY(${userIds}::int[])
           AND date IS NOT NULL
         GROUP BY "userId"
@@ -944,13 +975,23 @@ export class IncrementalAnalyzeJob {
     
     // 更新用户投票交互（基于新的投票活动）
     await this.prisma.$executeRaw`
-      WITH affected_pairs AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      affected_pairs AS (
         SELECT DISTINCT 
           v."userId" AS from_user_id,
           a."userId" AS to_user_id
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN "Attribution" a ON a."pageVerId" = pv.id
+        JOIN effective_attributions a ON a."pageVerId" = pv.id
         WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
           AND v."userId" IS NOT NULL
           AND a."userId" IS NOT NULL
@@ -965,7 +1006,7 @@ export class IncrementalAnalyzeJob {
           v.timestamp
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN "Attribution" a ON a."pageVerId" = pv.id
+        JOIN effective_attributions a ON a."pageVerId" = pv.id
         WHERE v."userId" IS NOT NULL
           AND a."userId" IS NOT NULL
           AND v."userId" != a."userId"
@@ -1838,6 +1879,16 @@ export class IncrementalAnalyzeJob {
           userId: number | null;
           displayName: string | null;
         }>>`
+          WITH effective_attributions AS (
+            SELECT a.*
+            FROM (
+              SELECT 
+                a.*,
+                BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+              FROM "Attribution" a
+            ) a
+            WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+          )
           SELECT DISTINCT
             p.id as "pageId",
             pv.title,
@@ -1846,7 +1897,7 @@ export class IncrementalAnalyzeJob {
             u."displayName"
           FROM "Page" p
           JOIN "PageVersion" pv ON p.id = pv."pageId" AND pv."validTo" IS NULL
-          LEFT JOIN "Attribution" a ON pv.id = a."pageVerId" AND a.type = 'AUTHOR'
+          LEFT JOIN effective_attributions a ON pv.id = a."pageVerId" AND a."userId" IS NOT NULL
           LEFT JOIN "User" u ON a."userId" = u.id
           WHERE pv.tags @> ARRAY[${tag}] AND NOT pv."isDeleted"
           ORDER BY pv.rating DESC
@@ -2378,16 +2429,25 @@ export class IncrementalAnalyzeJob {
       pageCount: number;
       totalRating: number;
     }>>`
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      )
       SELECT 
         u.id as "userId",
         u."displayName",
         COUNT(DISTINCT pv."pageId") as "pageCount",
         SUM(pv.rating) as "totalRating"
       FROM "User" u
-      JOIN "Attribution" a ON u.id = a."userId"
+      JOIN effective_attributions a ON u.id = a."userId"
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE pv."validTo" IS NULL AND NOT pv."isDeleted"
-        AND a.type = 'AUTHOR'
       GROUP BY u.id, u."displayName"
       ORDER BY "pageCount" DESC
       LIMIT 1
@@ -2422,6 +2482,16 @@ export class IncrementalAnalyzeJob {
       totalRating: number;
       averageRating: number;
     }>>`
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      )
       SELECT 
         u.id as "userId",
         u."displayName",
@@ -2429,10 +2499,9 @@ export class IncrementalAnalyzeJob {
         SUM(pv.rating) as "totalRating",
         AVG(pv.rating) as "averageRating"
       FROM "User" u
-      JOIN "Attribution" a ON u.id = a."userId"
+      JOIN effective_attributions a ON u.id = a."userId"
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE pv."validTo" IS NULL AND NOT pv."isDeleted"
-        AND a.type = 'AUTHOR'
         AND pv.rating IS NOT NULL
       GROUP BY u.id, u."displayName"
       HAVING COUNT(DISTINCT pv."pageId") >= 3  -- 至少3个页面才有意义

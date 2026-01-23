@@ -36,6 +36,18 @@ current_pv AS (
   WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
 ),
 
+/******** 有效归属（剔除混入的 SUBMITTER） ********/
+effective_attributions AS (
+  SELECT a.*
+  FROM (
+    SELECT 
+      a.*,
+      BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+    FROM "Attribution" a
+  ) a
+  WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+),
+
 /******** usersTotal：按 firstActivityAt 的累积 ********/
 new_users AS (
   SELECT date_trunc('day', u."firstActivityAt")::date AS day, COUNT(*)::bigint AS cnt
@@ -60,7 +72,7 @@ rev_first AS (
 ),
 attr_first AS (
   SELECT a."userId" AS uid, MIN(a."date") AS first_ts
-  FROM "Attribution" a
+  FROM effective_attributions a
   WHERE a."userId" IS NOT NULL AND a."date" IS NOT NULL
   GROUP BY a."userId"
 ),
@@ -96,7 +108,7 @@ page_created AS (
 ),
 attr_with_page AS (
   SELECT a."userId" AS uid, a."date" AS at_date, pv."pageId" AS pid
-  FROM "Attribution" a
+  FROM effective_attributions a
   JOIN "PageVersion" pv ON pv.id = a."pageVerId"
   WHERE a."userId" IS NOT NULL
 ),
@@ -292,4 +304,3 @@ export async function runDailySiteOverview(options: DailyOverviewOptions = {}) {
   const job = new DailySiteOverviewJob();
   await job.run(options);
 }
-

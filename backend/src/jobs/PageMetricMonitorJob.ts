@@ -165,9 +165,18 @@ export class PageMetricMonitorJob {
       commentCount: number | null;
       voteCount: number | null;
     }>>(Prisma.sql`
-      WITH attr_pages AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ), attr_pages AS (
         SELECT DISTINCT a."userId" AS user_id, pv."pageId" AS page_id
-        FROM "Attribution" a
+        FROM effective_attributions a
         JOIN "PageVersion" pv ON pv.id = a."pageVerId"
         WHERE a."userId" IS NOT NULL
       ), page_creators AS (
@@ -734,9 +743,19 @@ export class PageMetricMonitorJob {
       `);
 
       const attributionRows = await this.prisma.$queryRaw<Array<{ pageId: number; userId: number }>>(Prisma.sql`
+        WITH effective_attributions AS (
+          SELECT a.*
+          FROM (
+            SELECT 
+              a.*,
+              BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+            FROM "Attribution" a
+          ) a
+          WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+        )
         SELECT DISTINCT pv."pageId" AS "pageId",
                a."userId" AS "userId"
-        FROM "Attribution" a
+        FROM effective_attributions a
         JOIN "PageVersion" pv ON pv.id = a."pageVerId"
         WHERE pv."pageId" = ANY(${pageIdArray})
           AND pv."validTo" IS NULL

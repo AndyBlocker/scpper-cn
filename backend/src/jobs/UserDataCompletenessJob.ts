@@ -103,7 +103,17 @@ export class UserDataCompletenessJob {
     
     // 使用 CTE 计算每个用户的最早活动时间
     const result = await this.prisma.$executeRaw`
-      WITH user_first_activity AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      user_first_activity AS (
         SELECT 
           "userId",
           MIN(activity_time) as first_activity,
@@ -138,7 +148,7 @@ export class UserDataCompletenessJob {
             a."date" as activity_time,
             'attribution' as activity_type,
             CONCAT('Attributed as ', a."type") as activity_details
-          FROM "Attribution" a
+          FROM effective_attributions a
           WHERE a."userId" IS NOT NULL AND a."date" IS NOT NULL
         ) all_activities
         GROUP BY "userId", activity_type, activity_details
@@ -175,7 +185,17 @@ export class UserDataCompletenessJob {
     
     // 使用 CTE 计算每个用户的最近活动时间
     const result = await this.prisma.$executeRaw`
-      WITH user_last_activity AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      user_last_activity AS (
         SELECT 
           "userId",
           MAX(activity_time) as last_activity
@@ -196,7 +216,7 @@ export class UserDataCompletenessJob {
           
           -- 页面创建活动（通过 Attribution）
           SELECT a."userId", a."date" as activity_time
-          FROM "Attribution" a
+          FROM effective_attributions a
           WHERE a."userId" IS NOT NULL AND a."date" IS NOT NULL
         ) all_activities
         GROUP BY "userId"

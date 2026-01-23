@@ -40,8 +40,19 @@ export class UserFollowActivityJob {
     const attributionRows = allPvIds.length === 0
       ? []
       : await this.prisma.$queryRaw<Array<{ attributionId: number; pvId: number; userId: number }>>`
+          WITH effective_attributions AS (
+            SELECT a.*
+            FROM (
+              SELECT 
+                a.*,
+                BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+              FROM "Attribution" a
+              WHERE a."pageVerId" = ANY(${allPvIds}::int[])
+            ) a
+            WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+          )
           SELECT a.id AS "attributionId", a."pageVerId" AS "pvId", a."userId" AS "userId"
-          FROM "Attribution" a
+          FROM effective_attributions a
           WHERE a."pageVerId" = ANY(${allPvIds}::int[])
         `;
 

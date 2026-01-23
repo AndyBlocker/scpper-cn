@@ -1,0 +1,1234 @@
+# @ukwhatn/wikidot
+
+> A TypeScript library for interacting with Wikidot sites (SCP Foundation, etc.)
+
+- Version: 4.0.x
+- Node.js: 18+
+- Dependencies: cheerio, ky, neverthrow, p-limit, zod
+- License: MIT
+- Repository: https://github.com/ukwhatn/wikidot-ts
+
+## Installation
+
+```bash
+npm install @ukwhatn/wikidot
+# or
+bun add @ukwhatn/wikidot
+```
+
+## Important: Result Type (neverthrow)
+
+This library uses the Result type from neverthrow for error handling. All async methods return `WikidotResultAsync<T>`.
+
+```typescript
+import { Client } from '@ukwhatn/wikidot';
+
+// Correct usage pattern
+const clientResult = await Client.create({ username: 'user', password: 'pass' });
+if (!clientResult.isOk()) {
+  console.error('Login failed:', clientResult.error);
+  throw clientResult.error;
+}
+const client = clientResult.value;
+
+// Method chaining with andThen
+const result = await Client.create({ username, password })
+  .andThen(client => client.site.get('scp-jp'))
+  .andThen(site => site.page.get('scp-173'));
+
+if (result.isOk()) {
+  console.log(result.value.title);
+}
+```
+
+---
+
+## Quick Start
+
+```typescript
+import { Client } from '@ukwhatn/wikidot';
+
+// Unauthenticated client (read-only operations)
+const client = Client.createAnonymous();
+const siteResult = await client.site.get('scp-jp');
+if (!siteResult.isOk()) throw siteResult.error;
+const site = siteResult.value;
+
+// Authenticated client (full operations)
+const authResult = await Client.create({ username: 'user', password: 'pass' });
+if (!authResult.isOk()) throw authResult.error;
+const authClient = authResult.value;
+```
+
+---
+
+## Client
+
+Main entry point. Provides authentication and accessor access.
+
+### Import
+
+```typescript
+import { Client } from '@ukwhatn/wikidot';
+```
+
+### Client.create()
+
+Creates an authenticated client.
+
+```typescript
+const clientResult = await Client.create({
+  username: 'your-username',
+  password: 'your-password',
+});
+```
+
+#### Options
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `username` | `string` | No | Wikidot username |
+| `password` | `string` | No | Wikidot password |
+| `domain` | `string` | No | Base domain (default: `wikidot.com`) |
+| `amcConfig` | `Partial<AMCConfig>` | No | Custom AMC configuration |
+
+### Client.createAnonymous()
+
+Creates an unauthenticated client for read-only operations.
+
+```typescript
+const client = Client.createAnonymous();
+// or with custom domain
+const client = Client.createAnonymous({ domain: 'wikidot.com' });
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `user` | `UserAccessor` | User operations accessor |
+| `site` | `SiteAccessor` | Site operations accessor |
+| `privateMessage` | `PrivateMessageAccessor` | Private message accessor |
+| `username` | `string \| null` | Logged-in username |
+| `me` | `User \| null` | Logged-in user object |
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `isLoggedIn()` | `boolean` | Check login status |
+| `requireLogin()` | `WikidotResult<void>` | Returns error if not logged in |
+| `close()` | `WikidotResultAsync<void>` | Logout and cleanup |
+
+### Usage
+
+```typescript
+// Check login status
+if (client.isLoggedIn()) {
+  console.log(`Logged in as: ${client.username}`);
+  console.log(`User ID: ${client.me?.id}`);
+}
+
+// Require login (for internal use)
+const loginCheck = client.requireLogin();
+if (!loginCheck.isOk()) {
+  throw loginCheck.error; // LoginRequiredError
+}
+
+// Cleanup
+await client.close();
+```
+
+---
+
+## Site
+
+Site operations. Access pages, forums, and members.
+
+### Import
+
+```typescript
+import { Client } from '@ukwhatn/wikidot';
+```
+
+### Getting a Site
+
+```typescript
+const siteResult = await client.site.get('scp-jp');
+if (!siteResult.isOk()) throw siteResult.error;
+const site = siteResult.value;
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `number` | Site ID |
+| `title` | `string` | Site title |
+| `unixName` | `string` | URL identifier (e.g., `scp-jp`) |
+| `domain` | `string` | Site domain |
+| `sslSupported` | `boolean` | SSL support flag |
+| `page` | `PageAccessor` | Single page operations |
+| `pages` | `PagesAccessor` | Page list operations |
+| `forum` | `ForumAccessor` | Forum operations |
+| `member` | `MemberAccessor` | Member management |
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getBaseUrl()` | `string` | Get site base URL |
+| `amcRequest(bodies)` | `WikidotResultAsync<AMCResponse[]>` | Execute AMC requests |
+| `amcRequestSingle(body)` | `WikidotResultAsync<AMCResponse>` | Execute single AMC request |
+
+### Usage
+
+```typescript
+const site = siteResult.value;
+
+console.log(`Site: ${site.title}`);
+console.log(`URL: ${site.getBaseUrl()}`);
+console.log(`SSL: ${site.sslSupported}`);
+```
+
+---
+
+## Page
+
+Page operations including edit, delete, vote, files, and revisions.
+
+### Import
+
+```typescript
+import { Client, SearchPagesQuery } from '@ukwhatn/wikidot';
+```
+
+### Getting a Page
+
+```typescript
+// Single page
+const pageResult = await site.page.get('scp-173');
+if (!pageResult.isOk()) throw pageResult.error;
+const page = pageResult.value;
+
+// With option to return null instead of error
+const pageResult = await site.page.get('nonexistent', { raiseWhenNotFound: false });
+```
+
+### Creating a Page
+
+```typescript
+const createResult = await site.page.create({
+  fullname: 'test:new-page',
+  title: 'New Page Title',
+  source: 'Page content in Wikidot markup',
+  comment: 'Initial creation',
+});
+```
+
+### Page Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `site` | `Site` | Parent site |
+| `fullname` | `string` | Full page name (e.g., `scp:scp-173`) |
+| `name` | `string` | Page name without category |
+| `category` | `string` | Page category |
+| `title` | `string` | Page title |
+| `rating` | `number` | Rating value |
+| `votesCount` | `number` | Total vote count |
+| `ratingPercent` | `number \| null` | 5-star rating percentage |
+| `size` | `number` | Page size in bytes |
+| `tags` | `string[]` | Tag list |
+| `createdBy` | `AbstractUser \| null` | Page creator |
+| `createdAt` | `Date` | Creation date |
+| `updatedBy` | `AbstractUser \| null` | Last editor |
+| `updatedAt` | `Date` | Last update date |
+| `parentFullname` | `string \| null` | Parent page fullname |
+| `revisionsCount` | `number` | Number of revisions |
+| `childrenCount` | `number` | Number of child pages |
+| `commentsCount` | `number` | Number of comments |
+| `commentedBy` | `AbstractUser \| null` | Last commenter |
+| `commentedAt` | `Date \| null` | Last comment date |
+
+### Page Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getUrl()` | `string` | Get page URL |
+| `isIdAcquired()` | `boolean` | Check if page ID is cached |
+| `getSource()` | `WikidotResultAsync<PageSource>` | Get page source |
+| `getRevisions()` | `WikidotResultAsync<PageRevisionCollection>` | Get revision history |
+| `getVotes()` | `WikidotResultAsync<PageVoteCollection>` | Get vote information |
+| `getFiles()` | `WikidotResultAsync<PageFileCollection>` | Get attached files |
+| `getMetas()` | `WikidotResultAsync<PageMetaCollection>` | Get meta tags |
+| `getDiscussion()` | `WikidotResultAsync<ForumThread \| null>` | Get discussion thread |
+| `edit(options)` | `WikidotResultAsync<void>` | Edit page (login required) |
+| `destroy()` | `WikidotResultAsync<void>` | Delete page (login required) |
+| `rename(newFullname)` | `WikidotResultAsync<void>` | Rename page (login required) |
+| `setParent(fullname)` | `WikidotResultAsync<void>` | Set parent page (login required) |
+| `commitTags()` | `WikidotResultAsync<void>` | Save tag changes (login required) |
+| `vote(value)` | `WikidotResultAsync<number>` | Vote (+1/-1), returns new rating (login required) |
+| `cancelVote()` | `WikidotResultAsync<number>` | Cancel vote, returns new rating (login required) |
+| `setMeta(name, content)` | `WikidotResultAsync<void>` | Set meta tag (login required) |
+| `deleteMeta(name)` | `WikidotResultAsync<void>` | Delete meta tag (login required) |
+
+### Edit Options
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `title` | `string` | No | New page title |
+| `source` | `string` | No | New page source |
+| `comment` | `string` | No | Edit comment |
+| `forceEdit` | `boolean` | No | Force edit even if locked |
+
+### Usage
+
+```typescript
+// Get page information
+const page = pageResult.value;
+console.log(`Title: ${page.title}`);
+console.log(`Rating: ${page.rating}`);
+console.log(`Tags: ${page.tags.join(', ')}`);
+console.log(`URL: ${page.getUrl()}`);
+
+// Get source
+const sourceResult = await page.getSource();
+if (sourceResult.isOk()) {
+  console.log(sourceResult.value.wikiText);
+}
+
+// Edit page (login required)
+const editResult = await page.edit({
+  title: 'Updated Title',
+  source: 'Updated content',
+  comment: 'Fixed typo',
+});
+
+// Modify tags
+page.tags.push('new-tag');
+page.tags = page.tags.filter(t => t !== 'old-tag');
+await page.commitTags();
+
+// Vote
+const newRating = await page.vote(1); // +1 vote
+const cancelled = await page.cancelVote(); // Cancel vote
+
+// Set parent page
+await page.setParent('parent-page');
+await page.setParent(null); // Remove parent
+
+// Delete page
+await page.destroy();
+```
+
+---
+
+## SearchPagesQuery
+
+Query expression for ListPagesModule.
+
+### Import
+
+```typescript
+import { SearchPagesQuery } from '@ukwhatn/wikidot';
+```
+
+### Constructor
+
+```typescript
+const query = new SearchPagesQuery({
+  category: 'scp',
+  tags: ['+safe', '-euclid'],
+  rating: '>10',
+  order: 'rating desc',
+  limit: 100,
+});
+```
+
+### Parameters
+
+#### Selection Parameters
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `pagetype` | `string` | Page type | `"*"`, `"normal"`, `"hidden"` |
+| `category` | `string` | Category filter | `"*"`, `"scp"`, `"."` |
+| `tags` | `string \| string[]` | Tag filter (+ for include, - for exclude) | `["scp", "+safe"]`, `"-tale"` |
+| `parent` | `string` | Parent page | `"parent-page"`, `"-"` (no parent) |
+| `linkTo` | `string` | Pages linking to | `"scp-173"` |
+| `createdBy` | `AbstractUser \| string` | Author | `"username"` |
+| `createdAt` | `string` | Creation date | `"2024"`, `"last 7 day"`, `">2024-01-01"` |
+| `updatedAt` | `string` | Update date | `"last 1 week"`, `"<2024-12-31"` |
+| `rating` | `string` | Rating filter | `">50"`, `">=100"` |
+| `votes` | `string` | Vote count filter | `">10"` |
+| `name` | `string` | Page name pattern | `"scp-*"` |
+| `fullname` | `string` | Exact fullname match | `"scp:scp-173"` |
+| `range` | `string` | Range specification | - |
+
+#### Ordering Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `order` | `string` | `"created_at desc"` | Sort order |
+
+Valid order values: `created_at`, `updated_at`, `rating`, `votes`, `name`, `size`, `random` (add `desc` for descending)
+
+#### Pagination Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `offset` | `number` | `0` | Starting position |
+| `limit` | `number` | unlimited | Maximum results |
+| `perPage` | `number` | `250` | Results per request (max 250) |
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `asDict()` | `Record<string, unknown>` | Convert to dictionary for API |
+
+### Usage
+
+```typescript
+// Search pages
+const query = new SearchPagesQuery({
+  category: 'scp',
+  tags: ['safe', '-explained'],
+  rating: '>100',
+  order: 'rating desc',
+  limit: 50,
+});
+
+const pagesResult = await site.pages.search(query);
+if (!pagesResult.isOk()) throw pagesResult.error;
+
+for (const page of pagesResult.value) {
+  console.log(`${page.fullname}: ${page.rating}`);
+}
+
+// Get all pages
+const allPagesResult = await site.pages.all();
+
+// Get recent changes
+const changesResult = await site.pages.getRecentChanges();
+```
+
+---
+
+## PageCollection
+
+Collection of pages with bulk operations.
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `findByFullname(fullname)` | `Page \| undefined` | Find page by fullname |
+| `getPageIds()` | `WikidotResultAsync<PageCollection>` | Bulk fetch page IDs |
+| `getPageSources()` | `WikidotResultAsync<PageCollection>` | Bulk fetch page sources |
+| `getPageRevisions()` | `WikidotResultAsync<PageCollection>` | Bulk fetch revision histories |
+| `getPageVotes()` | `WikidotResultAsync<PageCollection>` | Bulk fetch vote information |
+
+### Usage
+
+```typescript
+const pages = pagesResult.value;
+
+// Find specific page
+const page = pages.findByFullname('scp-173');
+
+// Bulk operations (efficient)
+await pages.getPageIds();
+await pages.getPageSources();
+await pages.getPageRevisions();
+await pages.getPageVotes();
+
+// Iteration
+for (const page of pages) {
+  console.log(`${page.fullname}: ${page.title}`);
+}
+```
+
+---
+
+## PageRevision
+
+Page revision information.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `page` | `Page` | Parent page |
+| `id` | `number` | Revision ID |
+| `revNo` | `number` | Revision number |
+| `createdBy` | `AbstractUser` | Editor |
+| `createdAt` | `Date` | Edit date |
+| `comment` | `string` | Edit comment |
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `isSourceAcquired()` | `boolean` | Check if source is cached |
+| `isHtmlAcquired()` | `boolean` | Check if HTML is cached |
+| `getSource()` | `WikidotResultAsync<string>` | Get revision source |
+| `getHtml()` | `WikidotResultAsync<string>` | Get revision HTML |
+
+### PageRevisionCollection Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `findById(id)` | `PageRevision \| undefined` | Find revision by ID |
+| `getSources()` | `WikidotResultAsync<string[]>` | Bulk fetch sources |
+| `getHtmls()` | `WikidotResultAsync<string[]>` | Bulk fetch HTML |
+
+### Usage
+
+```typescript
+const revisionsResult = await page.getRevisions();
+if (!revisionsResult.isOk()) throw revisionsResult.error;
+const revisions = revisionsResult.value;
+
+for (const rev of revisions) {
+  console.log(`Rev ${rev.revNo}: ${rev.createdAt} by ${rev.createdBy.name}`);
+}
+
+// Get latest revision
+const latest = page.latestRevision;
+
+// Bulk fetch sources
+await revisions.getSources();
+```
+
+---
+
+## PageSource
+
+Page source code container.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `page` | `Page` | Parent page |
+| `wikiText` | `string` | Wikidot markup source |
+
+### Usage
+
+```typescript
+const sourceResult = await page.getSource();
+if (sourceResult.isOk()) {
+  console.log(sourceResult.value.wikiText);
+}
+```
+
+---
+
+## PageVote
+
+Vote information for a page.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `page` | `Page` | Parent page |
+| `user` | `AbstractUser` | Voter |
+| `value` | `number` | Vote value (+1, -1, or numeric) |
+
+### PageVoteCollection Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `findByUser(user)` | `PageVote \| undefined` | Find vote by user |
+
+### Usage
+
+```typescript
+const votesResult = await page.getVotes();
+if (!votesResult.isOk()) throw votesResult.error;
+
+for (const vote of votesResult.value) {
+  console.log(`${vote.user.name}: ${vote.value > 0 ? '+' : ''}${vote.value}`);
+}
+```
+
+---
+
+## PageFile
+
+Attached file information.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `page` | `Page` | Parent page |
+| `id` | `number` | File ID |
+| `name` | `string` | File name |
+| `url` | `string` | Download URL |
+| `mimeType` | `string` | MIME type |
+| `size` | `number` | File size in bytes |
+
+### PageFileCollection Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `findById(id)` | `PageFile \| undefined` | Find file by ID |
+| `findByName(name)` | `PageFile \| undefined` | Find file by name |
+
+### Usage
+
+```typescript
+const filesResult = await page.getFiles();
+if (!filesResult.isOk()) throw filesResult.error;
+
+for (const file of filesResult.value) {
+  console.log(`${file.name}: ${file.size} bytes`);
+  console.log(`  URL: ${file.url}`);
+  console.log(`  Type: ${file.mimeType}`);
+}
+
+// Find specific file
+const image = filesResult.value.findByName('image.png');
+```
+
+---
+
+## ForumCategory
+
+Forum category operations.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `site` | `Site` | Parent site |
+| `id` | `number` | Category ID |
+| `title` | `string` | Category title |
+| `description` | `string` | Category description |
+| `threadsCount` | `number` | Number of threads |
+| `postsCount` | `number` | Number of posts |
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getThreads()` | `WikidotResultAsync<ForumThreadCollection>` | Get threads (cached) |
+| `reloadThreads()` | `WikidotResultAsync<ForumThreadCollection>` | Get threads (force reload) |
+| `createThread(title, description, source)` | `WikidotResultAsync<ForumThread>` | Create new thread (login required) |
+
+### ForumCategoryCollection Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `findById(id)` | `ForumCategory \| undefined` | Find category by ID |
+
+### Usage
+
+```typescript
+// Get all categories
+const categoriesResult = await site.forum.getCategories();
+if (!categoriesResult.isOk()) throw categoriesResult.error;
+const categories = categoriesResult.value;
+
+for (const category of categories) {
+  console.log(`${category.title}: ${category.threadsCount} threads`);
+}
+
+// Get threads in a category
+const category = categories.findById(123);
+const threadsResult = await category.getThreads();
+
+// Create new thread (login required)
+const newThreadResult = await category.createThread(
+  'Thread Title',
+  'Thread description',
+  'First post content in Wikidot markup'
+);
+```
+
+---
+
+## ForumThread
+
+Forum thread operations.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `site` | `Site` | Parent site |
+| `id` | `number` | Thread ID |
+| `title` | `string` | Thread title |
+| `description` | `string` | Thread description |
+| `createdBy` | `AbstractUser \| null` | Thread creator |
+| `createdAt` | `Date` | Creation date |
+| `postCount` | `number` | Number of posts |
+| `category` | `ForumCategory \| null` | Parent category |
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getUrl()` | `string` | Get thread URL |
+| `getPosts()` | `WikidotResultAsync<ForumPostCollection>` | Get all posts |
+| `reply(source, title?, parentPostId?)` | `WikidotResultAsync<ForumThread>` | Reply to thread (login required) |
+
+### Static Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `fromId(site, threadId)` | `WikidotResultAsync<ForumThread>` | Get thread by ID |
+| `getFromId(site, threadId, category?)` | `WikidotResultAsync<ForumThread>` | Get thread by ID with optional category |
+
+### Usage
+
+```typescript
+// Get thread by ID
+const threadResult = await site.forum.getThread(12345);
+// or using Site shortcut
+const threadResult = await ForumThread.fromId(site, 12345);
+
+if (!threadResult.isOk()) throw threadResult.error;
+const thread = threadResult.value;
+
+console.log(`${thread.title}: ${thread.postCount} posts`);
+console.log(`URL: ${thread.getUrl()}`);
+
+// Get posts
+const postsResult = await thread.getPosts();
+
+// Reply to thread (login required)
+await thread.reply('Reply content');
+await thread.reply('Reply with title', 'Re: Title');
+await thread.reply('Reply to specific post', undefined, 67890);
+```
+
+---
+
+## ForumPost
+
+Forum post operations.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `thread` | `ForumThread` | Parent thread |
+| `id` | `number` | Post ID |
+| `title` | `string` | Post title |
+| `text` | `string` | Post content (HTML) |
+| `createdBy` | `AbstractUser` | Post author |
+| `createdAt` | `Date` | Post date |
+| `editedBy` | `AbstractUser \| null` | Last editor |
+| `editedAt` | `Date \| null` | Last edit date |
+| `parentId` | `number \| null` | Parent post ID |
+
+### Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `getSource()` | `WikidotResultAsync<string>` | Get source (Wikidot markup) |
+| `edit(source, title?)` | `WikidotResultAsync<void>` | Edit post (login required) |
+
+### ForumPostCollection Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `findById(id)` | `ForumPost \| undefined` | Find post by ID |
+
+### Usage
+
+```typescript
+const postsResult = await thread.getPosts();
+if (!postsResult.isOk()) throw postsResult.error;
+
+for (const post of postsResult.value) {
+  console.log(`${post.title} by ${post.createdBy.name}`);
+  const sourceResult = await post.getSource();
+  if (sourceResult.isOk()) {
+    console.log(sourceResult.value);
+  }
+}
+
+// Edit post (login required)
+await post.edit('Updated content', 'Updated title');
+```
+
+---
+
+## User
+
+User types and operations.
+
+### Import
+
+```typescript
+import { User, AbstractUser } from '@ukwhatn/wikidot';
+```
+
+### User Types
+
+| Type | Description |
+|------|-------------|
+| `User` | Regular registered user |
+| `DeletedUser` | Deleted user account |
+| `AnonymousUser` | Anonymous user (with IP) |
+| `GuestUser` | Guest user |
+| `WikidotUser` | Wikidot system user |
+
+### AbstractUser Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `number` | User ID |
+| `name` | `string` | Display name |
+| `unixName` | `string \| null` | URL-safe name |
+| `avatarUrl` | `string \| null` | Avatar URL |
+| `ip` | `string \| null` | IP address (anonymous only) |
+| `userType` | `UserType` | User type identifier |
+
+### Type Guards
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `isUser()` | `boolean` | Check if regular user |
+| `isDeletedUser()` | `boolean` | Check if deleted user |
+| `isAnonymousUser()` | `boolean` | Check if anonymous |
+| `isGuestUser()` | `boolean` | Check if guest |
+| `isWikidotUser()` | `boolean` | Check if system user |
+
+### Getting Users
+
+```typescript
+// Single user
+const userResult = await client.user.get('username');
+if (!userResult.isOk()) throw userResult.error;
+const user = userResult.value;
+
+// Multiple users
+const usersResult = await client.user.getBulk(['user1', 'user2', 'user3']);
+```
+
+### UserCollection Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `findByName(name)` | `User \| undefined` | Find user by name |
+| `findById(id)` | `User \| undefined` | Find user by ID |
+| `filterNonNull()` | `User[]` | Get only found users |
+
+### Usage
+
+```typescript
+const user = userResult.value;
+
+console.log(`Name: ${user.name}`);
+console.log(`ID: ${user.id}`);
+console.log(`Avatar: ${user.avatarUrl}`);
+
+// Type checking
+if (user.isUser()) {
+  console.log('Regular user');
+} else if (user.isDeletedUser()) {
+  console.log('Deleted account');
+} else if (user.isAnonymousUser()) {
+  console.log(`Anonymous: ${user.ip}`);
+}
+
+// Bulk fetch
+const users = usersResult.value.filterNonNull();
+for (const u of users) {
+  console.log(u.name);
+}
+```
+
+---
+
+## PrivateMessage
+
+Private message operations (login required).
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `number` | Message ID |
+| `sender` | `AbstractUser` | Sender |
+| `recipient` | `AbstractUser` | Recipient |
+| `subject` | `string` | Subject line |
+| `body` | `string` | Message body |
+| `createdAt` | `Date` | Send date |
+
+### Getting Messages
+
+```typescript
+// Inbox
+const inboxResult = await client.privateMessage.inbox();
+if (!inboxResult.isOk()) throw inboxResult.error;
+
+// Sent box
+const sentResult = await client.privateMessage.sentBox();
+
+// Specific message
+const messageResult = await client.privateMessage.getMessage(12345);
+
+// Search messages
+const searchResult = await client.privateMessage.search('query', 'all');
+```
+
+### Sending Messages
+
+```typescript
+// Get recipient user first
+const userResult = await client.user.get('target-user');
+if (!userResult.isOk()) throw userResult.error;
+
+// Send message
+const sendResult = await client.privateMessage.send(
+  userResult.value,
+  'Subject',
+  'Message body'
+);
+```
+
+### Usage
+
+```typescript
+// List inbox
+const inboxResult = await client.privateMessage.inbox();
+if (inboxResult.isOk()) {
+  for (const msg of inboxResult.value) {
+    console.log(`From: ${msg.sender.name}`);
+    console.log(`Subject: ${msg.subject}`);
+    console.log(`Date: ${msg.createdAt}`);
+  }
+}
+
+// List sent messages
+const sentResult = await client.privateMessage.sentBox();
+if (sentResult.isOk()) {
+  for (const msg of sentResult.value) {
+    console.log(`To: ${msg.recipient.name}`);
+    console.log(`Subject: ${msg.subject}`);
+  }
+}
+```
+
+---
+
+## Error Handling
+
+### Error Hierarchy
+
+```
+WikidotError (base)
+├── UnexpectedError           # Internal inconsistency or bug
+├── SessionError
+│   ├── SessionCreateError    # Login failed
+│   └── LoginRequiredError    # Operation requires login
+├── AMCError                  # Ajax Module Connector errors
+│   ├── AMCHttpError          # HTTP status error (e.g., 404, 500)
+│   ├── WikidotStatusError    # Wikidot API status error
+│   └── ResponseDataError     # Response parsing failed
+├── NotFoundException         # Resource not found
+├── TargetExistsError         # Resource already exists
+├── TargetError               # Resource in invalid state
+├── ForbiddenError            # Access denied
+└── NoElementError            # HTML element not found
+```
+
+### Error Properties
+
+| Error | Properties | Description |
+|-------|------------|-------------|
+| `AMCHttpError` | `statusCode: number` | HTTP status code |
+| `WikidotStatusError` | `statusCode: string` | Wikidot status (e.g., `'not_ok'`, `'try_again'`) |
+
+### Usage
+
+```typescript
+import { NotFoundException, LoginRequiredError } from '@ukwhatn/wikidot';
+
+const result = await site.page.get('nonexistent');
+
+if (!result.isOk()) {
+  const error = result.error;
+
+  if (error instanceof NotFoundException) {
+    console.log('Page not found');
+  } else if (error instanceof LoginRequiredError) {
+    console.log('Please login first');
+  } else {
+    console.log(`Error: ${error.message}`);
+  }
+}
+```
+
+---
+
+## Result Type Utilities
+
+### Import
+
+```typescript
+import { wdOk, wdErr, wdOkAsync, wdErrAsync, combineResults } from '@ukwhatn/wikidot';
+```
+
+### Factory Functions
+
+| Function | Return Type | Description |
+|----------|-------------|-------------|
+| `wdOk(value)` | `WikidotResult<T>` | Create success result |
+| `wdErr(error)` | `WikidotResult<never>` | Create error result |
+| `wdOkAsync(value)` | `WikidotResultAsync<T>` | Create async success result |
+| `wdErrAsync(error)` | `WikidotResultAsync<never>` | Create async error result |
+| `combineResults(results)` | `WikidotResultAsync<T[]>` | Combine multiple results |
+
+### Result Methods (from neverthrow)
+
+| Method | Description |
+|--------|-------------|
+| `isOk()` | Check if success |
+| `isErr()` | Check if error |
+| `value` | Get success value (only if isOk) |
+| `error` | Get error (only if isErr) |
+| `andThen(fn)` | Chain operations |
+| `map(fn)` | Transform success value |
+| `mapErr(fn)` | Transform error |
+| `match({ ok, err })` | Pattern matching |
+
+### Usage
+
+```typescript
+// Chaining with andThen
+const result = await Client.create({ username, password })
+  .andThen(client => client.site.get('scp-jp'))
+  .andThen(site => site.page.get('scp-173'))
+  .map(page => ({ title: page.title, rating: page.rating }));
+
+// Pattern matching
+result.match({
+  ok: (data) => console.log(`Found: ${data.title}`),
+  err: (error) => console.error(`Error: ${error.message}`),
+});
+
+// Combining multiple results
+const results = await combineResults([
+  site.page.get('scp-173'),
+  site.page.get('scp-682'),
+  site.page.get('scp-999'),
+]);
+
+if (results.isOk()) {
+  const [page1, page2, page3] = results.value;
+}
+```
+
+---
+
+## Directory Structure
+
+```
+src/
+├── index.ts                  # Package entry point
+├── common/
+│   ├── decorators.ts         # @RequireLogin decorator
+│   ├── errors/               # Error definitions
+│   │   ├── base.ts           # WikidotError base
+│   │   ├── amc.ts            # AMC errors
+│   │   ├── session.ts        # Session errors
+│   │   └── target.ts         # Target errors
+│   ├── logger.ts             # Logging configuration
+│   └── types/
+│       └── result.ts         # Result type utilities
+├── connector/
+│   ├── amc-client.ts         # AjaxModuleConnectorClient
+│   ├── amc-config.ts         # Configuration
+│   └── auth.ts               # Authentication handling
+├── module/
+│   ├── client/
+│   │   ├── client.ts         # Client class
+│   │   └── accessors/        # UserAccessor, SiteAccessor, etc.
+│   ├── site/
+│   │   ├── site.ts           # Site class
+│   │   └── accessors/        # PageAccessor, PagesAccessor, etc.
+│   ├── page/
+│   │   ├── page.ts           # Page class
+│   │   ├── page-collection.ts
+│   │   ├── page-revision.ts
+│   │   ├── page-source.ts
+│   │   ├── page-vote.ts
+│   │   ├── page-file.ts
+│   │   └── search-query.ts   # SearchPagesQuery
+│   ├── forum/
+│   │   ├── forum-category.ts
+│   │   ├── forum-thread.ts
+│   │   └── forum-post.ts
+│   ├── private-message/
+│   │   └── private-message.ts
+│   ├── user/
+│   │   ├── abstract-user.ts
+│   │   ├── user.ts
+│   │   └── user-collection.ts
+│   └── types.ts              # Shared interfaces (Ref types)
+└── util/
+    ├── parser/               # HTML parsers
+    ├── quick-module.ts       # QuickModule API
+    └── string.ts             # String utilities
+```
+
+---
+
+## Recipes
+
+### Get Top Rated Pages
+
+```typescript
+const query = new SearchPagesQuery({
+  category: 'scp',
+  order: 'rating desc',
+  limit: 10,
+});
+
+const pagesResult = await site.pages.search(query);
+if (pagesResult.isOk()) {
+  for (const page of pagesResult.value) {
+    console.log(`${page.fullname}: +${page.rating}`);
+  }
+}
+```
+
+### Find Pages by Tag
+
+```typescript
+const query = new SearchPagesQuery({
+  tags: ['+safe', '+scp', '-explained'],
+  rating: '>100',
+});
+
+const pagesResult = await site.pages.search(query);
+```
+
+### Get Page History
+
+```typescript
+const pageResult = await site.page.get('scp-173');
+if (!pageResult.isOk()) throw pageResult.error;
+
+const revisionsResult = await pageResult.value.getRevisions();
+if (revisionsResult.isOk()) {
+  for (const rev of revisionsResult.value) {
+    console.log(`Rev ${rev.revNo}: ${rev.comment} by ${rev.createdBy.name}`);
+  }
+}
+```
+
+### Batch Page Operations
+
+```typescript
+const pagesResult = await site.pages.search({
+  category: 'scp',
+  limit: 100,
+});
+
+if (pagesResult.isOk()) {
+  const pages = pagesResult.value;
+
+  // Bulk fetch all data efficiently
+  await pages.getPageIds();
+  await pages.getPageSources();
+  await pages.getPageVotes();
+
+  for (const page of pages) {
+    console.log(`${page.fullname}: ${page.source?.wikiText.length} chars`);
+  }
+}
+```
+
+### Discussion Thread Access
+
+```typescript
+const pageResult = await site.page.get('scp-173');
+if (!pageResult.isOk()) throw pageResult.error;
+
+const discussionResult = await pageResult.value.getDiscussion();
+if (discussionResult.isOk() && discussionResult.value) {
+  const thread = discussionResult.value;
+  console.log(`Comments: ${thread.postCount}`);
+
+  const postsResult = await thread.getPosts();
+  if (postsResult.isOk()) {
+    for (const post of postsResult.value) {
+      console.log(`${post.createdBy.name}: ${post.title}`);
+    }
+  }
+}
+```
+
+### Create and Edit Page
+
+```typescript
+// Create new page
+const createResult = await site.page.create({
+  fullname: 'sandbox:test-page',
+  title: 'Test Page',
+  source: '[[=]]\n++ Welcome\n[[/=]]',
+  comment: 'Initial creation',
+});
+
+if (createResult.isOk()) {
+  // Get the created page
+  const pageResult = await site.page.get('sandbox:test-page');
+  if (pageResult.isOk()) {
+    const page = pageResult.value;
+
+    // Edit page
+    await page.edit({
+      source: '[[=]]\n++ Updated Content\n[[/=]]',
+      comment: 'Updated',
+    });
+
+    // Add tags
+    page.tags.push('test', 'wip');
+    await page.commitTags();
+  }
+}
+```
+
+### Forum Operations
+
+```typescript
+// Get forum categories
+const categoriesResult = await site.forum.getCategories();
+if (!categoriesResult.isOk()) throw categoriesResult.error;
+
+const category = categoriesResult.value.findById(123);
+if (category) {
+  // Create new thread
+  const threadResult = await category.createThread(
+    'New Discussion',
+    'Description of the topic',
+    'First post content here.'
+  );
+
+  if (threadResult.isOk()) {
+    // Reply to thread
+    await threadResult.value.reply(
+      'Great topic!',
+      'Re: New Discussion'
+    );
+  }
+}
+```
+
+---
+
+## Reference Links
+
+- Repository: https://github.com/ukwhatn/wikidot-ts
+- npm: https://www.npmjs.com/package/@ukwhatn/wikidot
+- Python version: https://github.com/ukwhatn/wikidot.py
