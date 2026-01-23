@@ -155,13 +155,24 @@ export class VotingTimeSeriesService {
         FROM "PageVersion" pv
         WHERE pv."validTo" IS NULL
       ),
+      effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+          JOIN latest_versions lv ON lv.version_id = a."pageVerId"
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
       active_versions AS (
         SELECT lv.page_id, lv.version_id
         FROM latest_versions lv
         WHERE lv.is_deleted = false
           AND EXISTS (
             SELECT 1
-            FROM "Attribution" a
+            FROM effective_attributions a
             WHERE a."pageVerId" = lv.version_id
               AND a."userId" = ${userId}
           )
@@ -175,7 +186,7 @@ export class VotingTimeSeriesService {
         WHERE lv.is_deleted = true
           AND EXISTS (
             SELECT 1
-            FROM "Attribution" a
+            FROM effective_attributions a
             WHERE a."pageVerId" = lv.version_id
               AND a."userId" = ${userId}
           )
@@ -507,10 +518,20 @@ export class VotingTimeSeriesService {
     cutoffTime.setHours(cutoffTime.getHours() - hoursAgo);
     
     const users = await this.prisma.$queryRaw<Array<{ userId: number }>>`
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      )
       SELECT DISTINCT a."userId" as "userId"
       FROM "Vote" v
       JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-      JOIN "Attribution" a ON a."pageVerId" = pv.id
+      JOIN effective_attributions a ON a."pageVerId" = pv.id
       JOIN "User" u ON a."userId" = u.id
       WHERE v."timestamp" >= ${cutoffTime}
         AND a."userId" IS NOT NULL

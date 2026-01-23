@@ -79,7 +79,7 @@
             size="S"
             :display-name="a.name"
             :to="a.url || undefined"
-            :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)"
+            :wikidot-id="(a.wikidotId ?? parseUserIdFromUrl(a.url) ?? 0)"
             bare
           />
           <span v-if="authorsMoreCount>0" class="text-xs text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
@@ -169,7 +169,7 @@
           </div>
           
           <div v-if="authorsVisible.length" class="flex items-center flex-wrap gap-1.5">
-            <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)" bare />
+            <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(a.wikidotId ?? parseUserIdFromUrl(a.url) ?? 0)" bare />
             <span v-if="authorsMoreCount>0" class="text-xs text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
           </div>
           <div v-if="internalTags.length" class="flex min-w-0 items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
@@ -224,7 +224,7 @@
       <!-- ===== SM ===== title + mini authors + micro stats (no extra data) -->
       <div v-if="variant === 'sm'" class="flex flex-col gap-1 mt-0.5">
         <div v-if="authorsVisible.length" class="flex items-center flex-wrap gap-1.5">
-          <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(parseUserIdFromUrl(a.url) ?? 0)" bare />
+          <UserCard v-for="(a,idx) in authorsVisible" :key="a.name+idx" size="S" :display-name="a.name" :to="a.url || undefined" :wikidot-id="(a.wikidotId ?? parseUserIdFromUrl(a.url) ?? 0)" bare />
           <span v-if="authorsMoreCount>0" class="text-[11px] text-neutral-400 dark:text-neutral-500">+{{ authorsMoreCount }}</span>
         </div>
         <!-- mobile date moved to header row for SM variant -->
@@ -245,11 +245,19 @@ import { useViewerVotes } from '~/composables/useViewerVotes'
 import { formatDateIsoUtc8 } from '~/utils/timezone'
 import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
   
+  type AuthorEntry = string | {
+    name?: string
+    displayName?: string | null
+    url?: string
+    wikidotId?: number | string | null
+    userWikidotId?: number | string | null
+  }
+
   interface PageLike {
     wikidotId?: number | string
     title?: string
     tags?: string[]
-    authors?: string
+    authors?: string | AuthorEntry[]
     createdDate?: string
     deletedAt?: string | null
     excerpt?: string
@@ -276,7 +284,7 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
     wikidotId?: number | string
     title?: string
     url?: string
-    authors?: Array<{ name: string; url?: string }>
+    authors?: AuthorEntry[]
     dateISO?: string
     tags?: string[]
     excerpt?: string
@@ -349,11 +357,35 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
   })
   const hasFewVotes = computed(() => Number.isFinite(voteCountVal.value) ? voteCountVal.value < 10 : false)
   
-  const authorsList = computed<Array<{ name: string; url?: string }>>(() => {
-    if (Array.isArray(props.authors)) return props.authors
+  const normalizeAuthorName = (raw: string) => raw.replace(/^anon:/i, '').trim()
+  const normalizeAuthorEntry = (entry: AuthorEntry | null | undefined) => {
+    if (!entry) return null
+    if (typeof entry === 'string') {
+      const name = normalizeAuthorName(entry)
+      return name ? { name } : null
+    }
+    const displayName = typeof entry.displayName === 'string' ? entry.displayName : ''
+    const nameRaw = (entry.name ?? displayName ?? '').toString()
+    const name = normalizeAuthorName(nameRaw)
+    if (!name) return null
+    const idRaw = entry.wikidotId ?? entry.userWikidotId ?? null
+    const idNum = Number(idRaw)
+    const wikidotId = Number.isFinite(idNum) && idNum > 0 ? idNum : null
+    const url = (typeof entry.url === 'string' && entry.url.trim())
+      ? entry.url.trim()
+      : (wikidotId ? `/user/${wikidotId}` : undefined)
+    return { name, url, wikidotId }
+  }
+  const normalizeAuthorList = (entries: AuthorEntry[] | undefined | null) => {
+    if (!Array.isArray(entries)) return []
+    return entries.map(normalizeAuthorEntry).filter((author): author is { name: string; url?: string; wikidotId?: number | null } => !!author)
+  }
+  const authorsList = computed<Array<{ name: string; url?: string; wikidotId?: number | null }>>(() => {
+    if (Array.isArray(props.authors)) return normalizeAuthorList(props.authors)
     const s = props.p?.authors
+    if (Array.isArray(s)) return normalizeAuthorList(s)
     if (typeof s === 'string' && s.trim()) {
-      return s.split(/[、,]/).map(x => ({ name: x.trim() })).filter(a => a.name)
+      return s.split(/[、,]/).map(x => normalizeAuthorEntry(x)).filter((author): author is { name: string; url?: string; wikidotId?: number | null } => !!author)
     }
     return []
   })

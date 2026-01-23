@@ -754,14 +754,24 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
               '[]'::json
             ) AS authors
             FROM (
-              SELECT DISTINCT ON (u.id)
-                u."displayName" AS "displayName",
+              SELECT DISTINCT ON (COALESCE(u.id::text, a."anonKey"))
+                CASE
+                  WHEN u."displayName" IS NOT NULL THEN u."displayName"
+                  WHEN a."anonKey" IS NOT NULL THEN regexp_replace(a."anonKey", '^anon:', '')
+                  ELSE NULL
+                END AS "displayName",
                 u."wikidotId"   AS "userWikidotId",
-                ROW_NUMBER() OVER (ORDER BY u.id ASC, a.type ASC) AS rank
-              FROM "Attribution" a
-              JOIN "User" u ON u.id = a."userId"
-              WHERE a."pageVerId" = pv.id
-              ORDER BY u.id, a.type ASC
+                ROW_NUMBER() OVER (ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC) AS rank
+              FROM (
+                SELECT 
+                  a.*,
+                  BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+                FROM "Attribution" a
+                WHERE a."pageVerId" = pv.id
+              ) a
+              LEFT JOIN "User" u ON u.id = a."userId"
+              WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+              ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC
             ) j
           ) attrs ON TRUE
         `;
@@ -970,15 +980,31 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const context = await resolvePageContextByWikidotId(wikidotId);
       if (!context || !context.effectiveVersionId) return res.json([]);
       const sql = `
-        SELECT DISTINCT ON (u.id)
-          u.id AS "userId",
-          u."displayName",
+        WITH attrs AS (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+          WHERE a."pageVerId" = $1
+        ),
+        filtered AS (
+          SELECT * FROM attrs
+          WHERE NOT (has_non_submitter AND type = 'SUBMITTER')
+        )
+        SELECT DISTINCT ON (COALESCE(u.id::text, a."anonKey"))
+          a."userId" AS "userId",
+          CASE
+            WHEN u."displayName" IS NOT NULL THEN u."displayName"
+            WHEN a."anonKey" IS NOT NULL THEN regexp_replace(a."anonKey", '^anon:', '')
+            ELSE NULL
+          END AS "displayName",
           u."wikidotId" AS "userWikidotId",
-          a.type
-        FROM "Attribution" a
-        JOIN "User" u ON u.id = a."userId"
-        WHERE a."pageVerId" = $1
-        ORDER BY u.id, a.type ASC
+          a.type,
+          a."order",
+          a.date
+        FROM filtered a
+        LEFT JOIN "User" u ON u.id = a."userId"
+        ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC
       `;
       const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
       res.json(rows);
@@ -1009,19 +1035,31 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           COALESCE(attrs.attributions, '[]'::json) AS attributions
         FROM "PageVersion" pv
         LEFT JOIN LATERAL (
-          SELECT COALESCE(JSON_AGG(j) FILTER (WHERE j IS NOT NULL), '[]'::json) AS attributions
+          SELECT COALESCE(JSON_AGG(j ORDER BY j_rank) FILTER (WHERE j IS NOT NULL), '[]'::json) AS attributions
           FROM (
-            SELECT DISTINCT ON (u.id)
+            SELECT DISTINCT ON (COALESCE(u.id::text, a."anonKey"))
               JSON_BUILD_OBJECT(
                 'userId', u.id,
-                'displayName', u."displayName",
+                'displayName',
+                  CASE
+                    WHEN u."displayName" IS NOT NULL THEN u."displayName"
+                    WHEN a."anonKey" IS NOT NULL THEN regexp_replace(a."anonKey", '^anon:', '')
+                    ELSE NULL
+                  END,
                 'userWikidotId', u."wikidotId",
                 'type', a.type
-              ) AS j
-            FROM "Attribution" a
-            JOIN "User" u ON u.id = a."userId"
-            WHERE a."pageVerId" = pv.id
-            ORDER BY u.id, a.type ASC
+              ) AS j,
+              ROW_NUMBER() OVER (ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC) AS j_rank
+            FROM (
+              SELECT 
+                a.*,
+                BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+              FROM "Attribution" a
+              WHERE a."pageVerId" = pv.id
+            ) a
+            LEFT JOIN "User" u ON u.id = a."userId"
+            WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+            ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC
           ) s
         ) attrs ON TRUE
         WHERE pv."wikidotId" = $1::int
@@ -1048,15 +1086,31 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       if (check.rowCount === 0) return res.status(404).json({ error: 'not_found' });
 
       const sql = `
-        SELECT DISTINCT ON (u.id)
-          u.id AS "userId",
-          u."displayName",
+        WITH attrs AS (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+          WHERE a."pageVerId" = $1
+        ),
+        filtered AS (
+          SELECT * FROM attrs
+          WHERE NOT (has_non_submitter AND type = 'SUBMITTER')
+        )
+        SELECT DISTINCT ON (COALESCE(u.id::text, a."anonKey"))
+          a."userId" AS "userId",
+          CASE
+            WHEN u."displayName" IS NOT NULL THEN u."displayName"
+            WHEN a."anonKey" IS NOT NULL THEN regexp_replace(a."anonKey", '^anon:', '')
+            ELSE NULL
+          END AS "displayName",
           u."wikidotId" AS "userWikidotId",
-          a.type
-        FROM "Attribution" a
-        JOIN "User" u ON u.id = a."userId"
-        WHERE a."pageVerId" = $1
-        ORDER BY u.id, a.type ASC
+          a.type,
+          a."order",
+          a.date
+        FROM filtered a
+        LEFT JOIN "User" u ON u.id = a."userId"
+        ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC
       `;
       const { rows } = await readPool.query(sql, [versionId]);
       res.json(rows);
@@ -1384,6 +1438,13 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
               SELECT COALESCE(ARRAY_AGG(DISTINCT a."userId") FILTER (WHERE a."userId" IS NOT NULL), ARRAY[]::int[])
               FROM "Attribution" a
               WHERE a."pageVerId" = pv.id
+                AND NOT (
+                  a.type = 'SUBMITTER'
+                  AND EXISTS (
+                    SELECT 1 FROM "Attribution" ax
+                    WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                  )
+                )
             ) AS authors
           FROM "PageVersion" pv
           WHERE pv.id = $1
@@ -1454,6 +1515,13 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
             FROM "Attribution" a2
             WHERE a2."pageVerId" = pv.id
               AND a2."userId" = ANY(t.authors)
+              AND NOT (
+                a2.type = 'SUBMITTER'
+                AND EXISTS (
+                  SELECT 1 FROM "Attribution" ax
+                  WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                )
+              )
           ) AS author_overlap,
           -- 匹配作者详情
           (
@@ -1462,13 +1530,41 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
             JOIN "User" u2 ON u2.id = a2."userId"
             WHERE a2."pageVerId" = pv.id
               AND a2."userId" = ANY(t.authors)
+              AND NOT (
+                a2.type = 'SUBMITTER'
+                AND EXISTS (
+                  SELECT 1 FROM "Attribution" ax
+                  WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                )
+              )
           ) AS matched_authors,
           -- 候选页的作者完整列表（用于展示）
           (
-            SELECT COALESCE(jsonb_agg(DISTINCT jsonb_build_object('userId', u3.id, 'displayName', u3."displayName", 'wikidotId', u3."wikidotId")) FILTER (WHERE u3.id IS NOT NULL), '[]'::jsonb)
-            FROM "Attribution" a3
-            JOIN "User" u3 ON u3.id = a3."userId"
-            WHERE a3."pageVerId" = pv.id
+            SELECT COALESCE(jsonb_agg(j) FILTER (WHERE j IS NOT NULL), '[]'::jsonb)
+            FROM (
+              SELECT DISTINCT ON (COALESCE(u3.id::text, a3."anonKey"))
+                jsonb_build_object(
+                  'userId', u3.id,
+                  'displayName',
+                    CASE
+                      WHEN u3."displayName" IS NOT NULL THEN u3."displayName"
+                      WHEN a3."anonKey" IS NOT NULL THEN regexp_replace(a3."anonKey", '^anon:', '')
+                      ELSE NULL
+                    END,
+                  'wikidotId', u3."wikidotId"
+                ) AS j
+              FROM "Attribution" a3
+              LEFT JOIN "User" u3 ON u3.id = a3."userId"
+              WHERE a3."pageVerId" = pv.id
+                AND NOT (
+                  a3.type = 'SUBMITTER'
+                  AND EXISTS (
+                    SELECT 1 FROM "Attribution" ax
+                    WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                  )
+                )
+              ORDER BY COALESCE(u3.id::text, a3."anonKey"), a3.type ASC, a3."order" ASC
+            ) s
           ) AS authors_full
         FROM "PageVersion" pv
         JOIN "Page" p ON p.id = pv."pageId"
@@ -1490,6 +1586,13 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
               SELECT 1 FROM "Attribution" a3
               WHERE a3."pageVerId" = pv.id
                 AND a3."userId" = ANY(t.authors)
+                AND NOT (
+                  a3.type = 'SUBMITTER'
+                  AND EXISTS (
+                    SELECT 1 FROM "Attribution" ax
+                    WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                  )
+                )
             )
           )
           AND ($3::boolean = false OR pv.category = t.category)
@@ -1738,32 +1841,6 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           SUM(delta) OVER (ORDER BY day ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS "cumulativeRating"
         FROM daily
         ORDER BY day ASC
-      `;
-      const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
-      res.json(rows);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // GET /pages/{wikidotId}/attributions
-  router.get('/:wikidotId/attributions', async (req, res, next) => {
-    try {
-      const { wikidotId } = req.params;
-      const context = await resolvePageContextByWikidotId(wikidotId);
-      if (!context || !context.effectiveVersionId) return res.json([]);
-      const sql = `
-        SELECT 
-          a.type,
-          a."order",
-          a.date,
-          a."userId",
-          u."displayName",
-          u."wikidotId" as "userWikidotId"
-        FROM "Attribution" a
-        LEFT JOIN "User" u ON a."userId" = u.id
-        WHERE a."pageVerId" = $1
-        ORDER BY a.type, a."order"
       `;
       const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
       res.json(rows);

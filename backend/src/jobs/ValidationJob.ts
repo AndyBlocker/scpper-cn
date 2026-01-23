@@ -24,17 +24,26 @@ export type ValidationRow = {
 /**
  * Validate UserStats against recomputed aggregation on current PageVersion + tags.
  * Rules must mirror UserRatingJob:
- * - overall: pages where user has any association (AUTHOR | SUBMITTER | TRANSLATOR)
- * - scp/story/goi/wanderers/art: AUTHOR|SUBMITTER and tags include 原创 + <cat>
- * - translation: any association AND tags not including 原创
+ * - overall: pages where user has any effective attribution
+ * - scp/story/goi/wanderers/art: any effective attribution and tags include 原创 + <cat>
+ * - translation: any effective attribution and tags not including 原创
  */
 export async function validateUserStats(prisma: PrismaClient, limit: number = 200): Promise<ValidationRow[]> {
   const rows = await prisma.$queryRaw<ValidationRow[]>`
-    WITH user_page_roles AS (
+    WITH effective_attributions AS (
+      SELECT a.*
+      FROM (
+        SELECT 
+          a.*,
+          BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+        FROM "Attribution" a
+      ) a
+      WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+    ),
+    user_page_roles AS (
       SELECT a."userId", pv."pageId",
-             MAX(CASE WHEN a.type IN ('AUTHOR','SUBMITTER') THEN 1 ELSE 0 END) AS has_author,
-             MAX(CASE WHEN a.type IN ('TRANSLATOR') THEN 1 ELSE 0 END) AS has_translator
-      FROM "Attribution" a
+             MAX(CASE WHEN a.type IS NOT NULL THEN 1 ELSE 0 END) AS has_author
+      FROM effective_attributions a
       JOIN "PageVersion" pv ON pv.id = a."pageVerId"
       WHERE a."userId" IS NOT NULL AND pv."validTo" IS NULL AND pv."isDeleted" = false
       GROUP BY a."userId", pv."pageId"
@@ -48,8 +57,8 @@ export async function validateUserStats(prisma: PrismaClient, limit: number = 20
       SELECT 
         upr."userId",
         -- overall
-        COUNT(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1) THEN 1 END) AS overall_pages_expected,
-        SUM(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1) THEN cv.rating::float ELSE 0 END) AS overall_rating_expected,
+        COUNT(CASE WHEN upr.has_author = 1 THEN 1 END) AS overall_pages_expected,
+        SUM(CASE WHEN upr.has_author = 1 THEN cv.rating::float ELSE 0 END) AS overall_rating_expected,
 
         -- scp
         COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN 1 END) AS scp_count_expected,
@@ -72,7 +81,7 @@ export async function validateUserStats(prisma: PrismaClient, limit: number = 20
         SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','艺术作品'] THEN cv.rating::float ELSE 0 END) AS art_rating_expected,
 
         -- translation (tag-based; any association; tags NOT containing 原创/作者/掩盖页/段落/补充材料; exclude categories)
-        COUNT(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1)
+        COUNT(CASE WHEN upr.has_author = 1
                      AND NOT (cv.tags @> ARRAY['原创'])
                      AND NOT (cv.tags @> ARRAY['作者'])
                      AND NOT (cv.tags @> ARRAY['掩盖页'])
@@ -80,7 +89,7 @@ export async function validateUserStats(prisma: PrismaClient, limit: number = 20
                      AND NOT (cv.tags @> ARRAY['补充材料'])
                      AND NOT (cv.category IN ('log-of-anomalous-items-cn','short-stories'))
                    THEN 1 END) AS translation_count_expected,
-        SUM(CASE WHEN (upr.has_author = 1 OR upr.has_translator = 1)
+        SUM(CASE WHEN upr.has_author = 1
                      AND NOT (cv.tags @> ARRAY['原创'])
                      AND NOT (cv.tags @> ARRAY['作者'])
                      AND NOT (cv.tags @> ARRAY['掩盖页'])
@@ -140,5 +149,4 @@ export async function validateUserStats(prisma: PrismaClient, limit: number = 20
   `;
   return rows;
 }
-
 

@@ -90,13 +90,23 @@ export class UserRatingSystem {
     
     // 使用复杂SQL一次性计算所有用户的rating
     await this.prisma.$executeRawUnsafe(`
-      WITH user_page_roles AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      user_page_roles AS (
         -- 每个用户-页面的角色汇总：有任何归属即视为作者
         SELECT 
           a."userId",
           pv."pageId",
           MAX(CASE WHEN a.type IS NOT NULL THEN 1 ELSE 0 END) AS has_author
-        FROM "Attribution" a
+        FROM effective_attributions a
         JOIN "PageVersion" pv ON pv.id = a."pageVerId"
         WHERE a."userId" IS NOT NULL
           AND pv."validTo" IS NULL
@@ -239,7 +249,17 @@ export class UserRatingSystem {
   private async updateUserVoteTotals(): Promise<void> {
     console.log('🗳️ 计算用户投票汇总...');
     await this.prisma.$executeRawUnsafe(`
-      WITH votes_cast_raw AS (
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      votes_cast_raw AS (
         -- 原始用户投票明细（包含页面维度）
         SELECT 
           v.id,
@@ -314,7 +334,7 @@ export class UserRatingSystem {
           ORDER BY (pv3."validTo" IS NULL) DESC, (NOT pv3."isDeleted") DESC, pv3."validFrom" DESC NULLS LAST, pv3.id DESC
           LIMIT 1
         ) pv_pick ON TRUE
-        JOIN "Attribution" a ON a."pageVerId" = pv_pick.id
+        JOIN effective_attributions a ON a."pageVerId" = pv_pick.id
         WHERE a."userId" IS NOT NULL
       ),
       votes_received AS (

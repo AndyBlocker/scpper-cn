@@ -72,7 +72,7 @@
                 <UserCard
                   size="sm"
                   :wikidot-id="(person?.userWikidotId ?? 0)"
-                  :display-name="person?.displayName || '(account deleted)'"
+                  :display-name="normalizeAuthorName(person?.displayName) || '(account deleted)'"
                   :to="person?.userWikidotId ? `/user/${person.userWikidotId}` : null"
                   :avatar="true"
                 />
@@ -1789,6 +1789,11 @@ const createdDate = computed(() => {
   if (fr && fr.timestamp) return fr.timestamp
   return page.value?.createdAt || ''
 })
+function normalizeAuthorName(value?: string | null): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  return raw.replace(/^anon:/i, '').trim()
+}
 
 const groupedAttributions = computed(() => {
   const list = Array.isArray(attributions.value) ? attributions.value : []

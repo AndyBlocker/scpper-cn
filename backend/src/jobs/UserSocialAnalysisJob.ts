@@ -158,7 +158,17 @@ export class UserSocialAnalysisJob {
       const valuesSql = batch.map(p => `(${Number(p.fromUserId)}, ${Number(p.toUserId)})`).join(', ');
 
       const sql = `
-        WITH pair_list(from_user_id, to_user_id) AS (
+        WITH effective_attributions AS (
+          SELECT a.*
+          FROM (
+            SELECT 
+              a.*,
+              BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+            FROM "Attribution" a
+          ) a
+          WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+        ),
+        pair_list(from_user_id, to_user_id) AS (
           VALUES ${valuesSql}
         ),
         vote_interactions AS (
@@ -169,7 +179,7 @@ export class UserSocialAnalysisJob {
             v.timestamp
           FROM "Vote" v
           JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          JOIN "Attribution" a ON a."pageVerId" = pv.id
+          JOIN effective_attributions a ON a."pageVerId" = pv.id
           JOIN pair_list pl ON pl.from_user_id = v."userId" AND pl.to_user_id = a."userId"
           WHERE v."userId" IS NOT NULL 
             AND a."userId" IS NOT NULL
@@ -271,35 +281,53 @@ export class UserSocialAnalysisJob {
     if (forceFullAnalysis) {
       // 获取所有有投票交互的用户对
       return await this.prisma.$queryRaw<Array<{ fromUserId: number; toUserId: number }>>`
+        WITH effective_attributions AS (
+          SELECT a.*
+          FROM (
+            SELECT 
+              a.*,
+              BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+            FROM "Attribution" a
+          ) a
+          WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+        )
         SELECT DISTINCT 
           v."userId" as "fromUserId",
           a."userId" as "toUserId"
         FROM "Vote" v
         JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN "Attribution" a ON a."pageVerId" = pv.id
+        JOIN effective_attributions a ON a."pageVerId" = pv.id
         WHERE v."userId" IS NOT NULL 
           AND a."userId" IS NOT NULL
           AND v."userId" != a."userId"
           AND v.direction != 0
-          AND a.type = 'AUTHOR'
         ORDER BY v."userId", a."userId"
         LIMIT ${limit}
       `;
     } else {
       // 增量模式：获取最近有新投票的用户对
       return await this.prisma.$queryRaw<Array<{ fromUserId: number; toUserId: number }>>`
-        WITH recent_interactions AS (
+        WITH effective_attributions AS (
+          SELECT a.*
+          FROM (
+            SELECT 
+              a.*,
+              BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+            FROM "Attribution" a
+          ) a
+          WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+        ),
+        recent_interactions AS (
           SELECT DISTINCT 
             v."userId" as "fromUserId",
             a."userId" as "toUserId"
           FROM "Vote" v
           JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-          JOIN "Attribution" a ON a."pageVerId" = pv.id
+          JOIN effective_attributions a ON a."pageVerId" = pv.id
           WHERE v."userId" IS NOT NULL 
             AND a."userId" IS NOT NULL
             AND v."userId" != a."userId"
             AND v.direction != 0
-            -- any attribution type
             AND pv."validTo" IS NULL
             AND pv."isDeleted" = false
             AND v.timestamp >= NOW() - INTERVAL '7 days'

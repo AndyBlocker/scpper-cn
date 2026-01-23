@@ -99,12 +99,21 @@ export class VotingTimeSeriesCacheJob {
 
     // 🆕 Smart detection: Find users that have attributions but no cache yet
     const usersNeedingInitialCache = await this.prisma.$queryRaw<Array<{ userId: number }>>`
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      )
       SELECT DISTINCT u.id as "userId"
       FROM "User" u
-      JOIN "Attribution" a ON u.id = a."userId"
+      JOIN effective_attributions a ON u.id = a."userId"
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE u."attributionVotingTimeSeriesCache" IS NULL  -- 没有缓存
-        AND a.type = 'AUTHOR'
         AND pv."validTo" IS NULL
         AND EXISTS (
           SELECT 1 FROM "Vote" v
@@ -156,8 +165,18 @@ export class VotingTimeSeriesCacheJob {
 
     // Get all users with attributions on pages that have votes
     const usersWithAttributions = await this.prisma.$queryRaw<Array<{ userId: number }>>`
+      WITH effective_attributions AS (
+        SELECT a.*
+        FROM (
+          SELECT 
+            a.*,
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+          FROM "Attribution" a
+        ) a
+        WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      )
       SELECT DISTINCT a."userId" as "userId"
-      FROM "Attribution" a
+      FROM effective_attributions a
       JOIN "PageVersion" pv ON a."pageVerId" = pv.id
       WHERE a."userId" IS NOT NULL
         AND pv."validTo" IS NULL
