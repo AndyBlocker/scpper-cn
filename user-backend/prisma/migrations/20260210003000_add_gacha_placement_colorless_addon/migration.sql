@@ -1,0 +1,3 @@
+-- No schema changes required for COLORLESS addon.
+-- Slot index 0 rows are created lazily by application logic
+-- in ensurePlacementStateAndSlots(), so existing inventories/wallets remain untouched.

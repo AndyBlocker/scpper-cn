@@ -238,12 +238,16 @@ LIMIT $3 OFFSET $4;
 
 - REST: GET `/search/users?query=&limit=&offset=`（PGroonga）
 ```sql
-SELECT u.id, u."wikidotId", u."displayName",
+SELECT u.id, u."wikidotId", COALESCE(u."displayName", u.username) AS "displayName",
        COALESCE(us."totalRating", 0) AS "totalRating",
        COALESCE(us."pageCount", 0) AS "pageCount"
 FROM "User" u
 LEFT JOIN "UserStats" us ON u.id = us."userId"
-WHERE u."displayName" &@~ $1
+WHERE u."wikidotId" IS NOT NULL
+  AND (
+    u."displayName" &@~ $1
+    OR u.username &@~ $1
+  )
 ORDER BY us."totalRating" DESC NULLS LAST
 LIMIT $2 OFFSET $3;
 ```

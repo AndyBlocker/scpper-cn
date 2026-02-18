@@ -64,6 +64,9 @@ export class UserRatingSystem {
       
       // 第二步：刷新投票统计
       await this.updateUserVoteTotals();
+
+      // 第二点五步：清理无有效作品用户的归属投票时序缓存，避免历史曲线残留
+      await this.clearInactiveUserAttributionVotingCache();
       
       // 第三步：计算排名
       await this.calculateRankings();
@@ -77,6 +80,28 @@ export class UserRatingSystem {
       console.error('❌ 更新用户Rating和Ranking失败:', error);
       throw error;
     }
+  }
+
+  /**
+   * 清理无有效归属作品用户的 attributionVotingTimeSeriesCache
+   * 避免用户在 pageCount 归零后仍展示历史评分曲线
+   */
+  private async clearInactiveUserAttributionVotingCache(): Promise<void> {
+    const clearedCount = await this.prisma.$executeRawUnsafe(`
+      UPDATE "User" u
+      SET
+        "attributionVotingTimeSeriesCache" = NULL,
+        "attributionVotingCacheUpdatedAt" = NULL
+      FROM "UserStats" us
+      WHERE us."userId" = u.id
+        AND us."pageCount" <= 0
+        AND (
+          u."attributionVotingTimeSeriesCache" IS NOT NULL
+          OR u."attributionVotingCacheUpdatedAt" IS NOT NULL
+        )
+    `);
+
+    console.log(`🧹 Cleared attribution voting cache for ${Number(clearedCount || 0)} inactive users`);
   }
 
   /**
@@ -210,32 +235,56 @@ export class UserRatingSystem {
         FROM user_page_roles upr
         JOIN current_versions cv ON cv."pageId" = upr."pageId"
         GROUP BY upr."userId"
+      ),
+      all_users AS (
+        -- 关键修复：以 UserStats 全量用户为基准，左连接贡献结果
+        -- 这样“当前已无有效归属页”的用户会被归零，避免残留历史分数
+        SELECT
+          us."userId",
+          uc.overall_rating,
+          uc.total_pages,
+          uc.avg_sum,
+          uc.avg_pages,
+          uc.scp_rating,
+          uc.scp_pages,
+          uc.translation_rating,
+          uc.translation_pages,
+          uc.goi_rating,
+          uc.goi_pages,
+          uc.story_rating,
+          uc.story_pages,
+          uc.wanderers_rating,
+          uc.wanderers_pages,
+          uc.art_rating,
+          uc.art_pages
+        FROM "UserStats" us
+        LEFT JOIN user_contributions uc ON uc."userId" = us."userId"
       )
       UPDATE "UserStats" us
       SET 
         -- overallRating 用于承载“按过滤口径计算的平均分”
         "overallRating" = CASE 
-                             WHEN COALESCE(uc.avg_pages, 0) > 0 
-                             THEN (COALESCE(uc.avg_sum, 0))::float / NULLIF(uc.avg_pages, 0)::float
+                             WHEN COALESCE(au.avg_pages, 0) > 0 
+                             THEN (COALESCE(au.avg_sum, 0))::float / NULLIF(au.avg_pages, 0)::float
                              ELSE 0::float 
                            END,
         -- totalRating 继续承载“总评分（和）”
-        "totalRating" = COALESCE(uc.overall_rating, 0)::int,
-        "pageCount" = COALESCE(uc.total_pages, 0),
-        "scpRating" = COALESCE(uc.scp_rating, 0),
-        "scpPageCount" = COALESCE(uc.scp_pages, 0),
-        "translationRating" = COALESCE(uc.translation_rating, 0),
-        "translationPageCount" = COALESCE(uc.translation_pages, 0),
-        "goiRating" = COALESCE(uc.goi_rating, 0),
-        "goiPageCount" = COALESCE(uc.goi_pages, 0),
-        "storyRating" = COALESCE(uc.story_rating, 0),
-        "storyPageCount" = COALESCE(uc.story_pages, 0),
-        "wanderersRating" = COALESCE(uc.wanderers_rating, 0),
-        "wanderersPageCount" = COALESCE(uc.wanderers_pages, 0),
-        "artRating" = COALESCE(uc.art_rating, 0),
-        "artPageCount" = COALESCE(uc.art_pages, 0)
-      FROM user_contributions uc
-      WHERE us."userId" = uc."userId"
+        "totalRating" = COALESCE(au.overall_rating, 0)::int,
+        "pageCount" = COALESCE(au.total_pages, 0),
+        "scpRating" = COALESCE(au.scp_rating, 0),
+        "scpPageCount" = COALESCE(au.scp_pages, 0),
+        "translationRating" = COALESCE(au.translation_rating, 0),
+        "translationPageCount" = COALESCE(au.translation_pages, 0),
+        "goiRating" = COALESCE(au.goi_rating, 0),
+        "goiPageCount" = COALESCE(au.goi_pages, 0),
+        "storyRating" = COALESCE(au.story_rating, 0),
+        "storyPageCount" = COALESCE(au.story_pages, 0),
+        "wanderersRating" = COALESCE(au.wanderers_rating, 0),
+        "wanderersPageCount" = COALESCE(au.wanderers_pages, 0),
+        "artRating" = COALESCE(au.art_rating, 0),
+        "artPageCount" = COALESCE(au.art_pages, 0)
+      FROM all_users au
+      WHERE us."userId" = au."userId"
     `);
 
     console.log('✅ 用户rating计算完成');

@@ -98,12 +98,16 @@ LIMIT $6 OFFSET $7;
 SELECT 
   u.id,
   u."wikidotId",
-  u."displayName",
+  COALESCE(u."displayName", u.username) AS "displayName",
   COALESCE(us."totalRating", 0) AS "totalRating",
   COALESCE(us."pageCount", 0) AS "pageCount"
 FROM "User" u
 LEFT JOIN "UserStats" us ON u.id = us."userId"
-WHERE u."displayName" &@~ $1
+WHERE u."wikidotId" IS NOT NULL
+  AND (
+    u."displayName" &@~ $1
+    OR u.username &@~ $1
+  )
 ORDER BY us."totalRating" DESC NULLS LAST
 LIMIT $2 OFFSET $3;
 ```
@@ -112,7 +116,7 @@ LIMIT $2 OFFSET $3;
 ```json
 {
   "results": [
-    { "id": number, "wikidotId": number | null, "displayName": string | null, "totalRating": number, "pageCount": number }
+    { "id": number, "wikidotId": number, "displayName": string | null, "totalRating": number, "pageCount": number }
   ]
 }
 ```
@@ -441,4 +445,3 @@ SELECT type, "displayName", url, language, "recentlyCreatedUrl" FROM "SiteInfo";
 - REST: GET `/stats/user-activity?recordType=&userId=&limit=&offset=`
 - SQL 与返回：见 `bff-rest-mapping.md`。
 - 响应字段：`{ items: UserActivityRecord[], total: number, limit: number, offset: number }`
-

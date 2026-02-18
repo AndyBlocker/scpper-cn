@@ -77,10 +77,7 @@
               <input v-model.trim="walletAdjustForm.email" type="email" placeholder="邮箱" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               <input v-model.number="walletAdjustForm.delta" type="number" placeholder="调整数额（可为负）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               <input v-model.trim="walletAdjustForm.reason" type="text" placeholder="备注（可选）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
-              <label class="inline-flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                <input v-model="walletAdjustForm.allowNegative" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" />
-                允许余额为负
-              </label>
+              <textarea v-model.trim="walletAdjustForm.message" placeholder="用户可见消息（可选，用户访问 gacha 页面时弹窗展示）" rows="2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               <transition name="fade">
                 <p v-if="walletAdjustSingleError" class="rounded-lg border border-rose-200/70 bg-rose-50/70 px-3 py-2 text-xs text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
                   {{ walletAdjustSingleError }}
@@ -103,6 +100,7 @@
               <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">全部钱包</h3>
               <input v-model.number="walletAdjustAllForm.delta" type="number" placeholder="调整数额（可为负）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               <input v-model.trim="walletAdjustAllForm.reason" type="text" placeholder="备注（可选）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <textarea v-model.trim="walletAdjustAllForm.message" placeholder="用户可见消息（可选，用户访问 gacha 页面时弹窗展示）" rows="2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               <label class="inline-flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
                 <input v-model="walletAdjustAllForm.allowNegative" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" />
                 允许余额为负
@@ -130,14 +128,14 @@
         <section class="space-y-5 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="space-y-1">
             <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">卡池与卡片配置</h2>
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">维护常驻卡池、创建卡片并即时同步到抽卡服务。</p>
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">当前为单常驻池模式：仅允许维护一个常驻卡池并配置卡片。</p>
           </header>
 
           <div class="grid gap-5 lg:grid-cols-2">
             <div class="space-y-4 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
               <div class="flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">{{ editingPoolId ? '编辑卡池' : '新增卡池' }}</h3>
-                <button type="button" class="text-xs text-[rgb(var(--accent-strong))] hover:underline" @click="resetPoolForm()">重置</button>
+                <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">{{ editingPoolId ? '编辑常驻卡池' : '初始化常驻卡池' }}</h3>
+                <button type="button" class="text-xs text-[rgb(var(--accent-strong))] hover:underline" @click="resetPoolForm()">{{ editingPoolId ? '重置' : '清空' }}</button>
               </div>
               <div class="space-y-2">
                 <label class="block text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">名称</label>
@@ -171,14 +169,14 @@
                   <input v-model="poolForm.endsAt" type="datetime-local" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
                 </div>
               </div>
-              <div class="space-y-2 rounded-xl border border-neutral-200/70 bg-white/70 p-3 text-xs text-neutral-600 dark:border-neutral-800/60 dark:bg-neutral-900/50 dark:text-neutral-300">
+              <div v-if="!editingPoolId && pools.length === 0" class="space-y-2 rounded-xl border border-neutral-200/70 bg-white/70 p-3 text-xs text-neutral-600 dark:border-neutral-800/60 dark:bg-neutral-900/50 dark:text-neutral-300">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">初始卡片</label>
                 <div class="flex flex-col gap-2">
                   <label class="inline-flex items-center gap-2">
                     <input v-model="poolForm.copyAllCards" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" :disabled="!!editingPoolId" />
                     <span>复制全部现有卡片作为起始内容</span>
                   </label>
-                  <p class="text-[11px] text-neutral-400 dark:text-neutral-500">仅在创建新卡池时生效；可在创建后继续微调或批量删除。</p>
+                  <p class="text-[11px] text-neutral-400 dark:text-neutral-500">仅首次初始化常驻池时生效。</p>
                   <div class="space-y-1" :class="(poolForm.copyAllCards || editingPoolId) ? 'opacity-50 pointer-events-none' : ''">
                     <label class="text-[11px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500">或指定来源卡池</label>
                     <select v-model="poolForm.copyFromPoolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
@@ -208,7 +206,7 @@
                 </button>
                 <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" :disabled="poolLoading" @click="submitPool()">
                   <span v-if="poolLoading">处理中...</span>
-                  <span v-else>{{ editingPoolId ? '保存修改' : '创建卡池' }}</span>
+                  <span v-else>{{ editingPoolId ? '保存修改' : '创建常驻池' }}</span>
                 </button>
               </div>
             </div>
@@ -236,7 +234,6 @@
                     <div class="flex items-center gap-2 text-xs">
                       <button type="button" class="rounded border border-neutral-200 px-2 py-1 text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" @click="selectPoolForCards(pool.id)">查看卡片</button>
                       <button type="button" class="rounded border border-neutral-200 px-2 py-1 text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" @click="startEditPool(pool)">编辑</button>
-                      <button type="button" class="rounded border border-rose-200 px-2 py-1 text-rose-600 hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-500/10" @click="removePool(pool)">删除</button>
                     </div>
                   </div>
                   <p v-if="pool.description" class="text-xs text-neutral-500 dark:text-neutral-400">{{ pool.description }}</p>
@@ -245,9 +242,12 @@
                   </p>
                 </li>
                 <li v-if="pools.length === 0" class="rounded-lg border border-dashed border-neutral-200/70 bg-neutral-50/70 px-3 py-2 text-center text-xs text-neutral-500 dark:border-neutral-800/70 dark:bg-neutral-900/60 dark:text-neutral-400">
-                  暂无卡池，先创建一个常驻卡池吧。
+                  暂无常驻卡池，请先完成初始化。
                 </li>
               </ul>
+              <p v-if="pools.length > 1" class="rounded-lg border border-amber-200/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/12 dark:text-amber-200">
+                检测到多个卡池。当前页面已切换为单常驻池策略，请只保留一个卡池并完成数据收敛。
+              </p>
             </div>
           </div>
 
@@ -518,7 +518,7 @@
           <header class="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">批量移除卡片</h2>
-              <p class="text-sm text-neutral-500 dark:text-neutral-400">配合上方筛选快速清理卡池中不需要的内容。</p>
+              <p class="text-sm text-neutral-500 dark:text-neutral-400">该高风险能力在单常驻池模式下已禁用，请改用逐卡删除。</p>
             </div>
             <span class="text-xs text-neutral-500 dark:text-neutral-400">当前匹配：{{ cardTotal }} 张</span>
           </header>
@@ -535,11 +535,8 @@
               {{ batchRemoveMessage }}
             </p>
           </transition>
-          <div class="flex items-center justify-end">
-            <button type="button" class="rounded-lg border border-rose-200 px-4 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-500/40 dark:text-rose-200 dark:hover:bg-rose-500/10" :disabled="batchRemoveLoading || !cardFilters.poolId" @click="batchRemoveByFilters">
-              <span v-if="batchRemoveLoading">处理中...</span>
-              <span v-else>批量删除匹配卡片</span>
-            </button>
+          <div class="rounded-lg border border-dashed border-amber-200/70 bg-amber-50/65 px-3 py-3 text-xs text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/12 dark:text-amber-200">
+            批量删除入口已禁用，避免误删用户资产关联卡片。
           </div>
         </section>
       </div>
@@ -550,7 +547,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '@/composables/useAuth'
-import { useGacha, type AdminCard, type EconomyConfig, type GachaPool, type MatchMode, type Rarity } from '~/composables/useGacha'
+import { useGacha } from '~/composables/useGacha'
+import type { AdminCard, EconomyConfig, GachaPool, MatchMode, Rarity } from '~/types/gacha'
 
 const { fetchCurrentUser, status: authStatusRef } = useAuth()
 const authStatus = ref(authStatusRef.value)
@@ -560,7 +558,6 @@ const {
   listPools,
   createPool,
   updatePool,
-  deletePool,
   listAdminCards,
   createCard,
   updateCard,
@@ -662,6 +659,7 @@ const walletAdjustForm = reactive({
   email: '',
   delta: 0,
   reason: '',
+  message: '',
   allowNegative: false
 })
 const walletAdjustSingleLoading = ref(false)
@@ -671,6 +669,7 @@ const walletAdjustSingleMessage = ref<string | null>(null)
 const walletAdjustAllForm = reactive({
   delta: 0,
   reason: '',
+  message: '',
   allowNegative: false
 })
 const walletAdjustAllLoading = ref(false)
@@ -690,7 +689,6 @@ const batchProcessing = ref(false)
 const batchError = ref<string | null>(null)
 const batchMessage = ref<string | null>(null)
 const batchMultiplierPresets = [1.1, 1.25, 1.5, 2]
-const batchRemoveLoading = ref(false)
 const batchRemoveError = ref<string | null>(null)
 const batchRemoveMessage = ref<string | null>(null)
 
@@ -839,6 +837,7 @@ function resetWalletAdjustForm() {
   walletAdjustForm.email = ''
   walletAdjustForm.delta = 0
   walletAdjustForm.reason = ''
+  walletAdjustForm.message = ''
   walletAdjustForm.allowNegative = false
   walletAdjustSingleError.value = null
   walletAdjustSingleMessage.value = null
@@ -847,6 +846,7 @@ function resetWalletAdjustForm() {
 function resetWalletAdjustAllForm() {
   walletAdjustAllForm.delta = 0
   walletAdjustAllForm.reason = ''
+  walletAdjustAllForm.message = ''
   walletAdjustAllForm.allowNegative = false
   walletAdjustAllError.value = null
   walletAdjustAllMessage.value = null
@@ -873,6 +873,7 @@ async function submitWalletAdjust() {
       email: email || undefined,
       delta: walletAdjustForm.delta,
       reason: walletAdjustForm.reason.trim() || undefined,
+      message: walletAdjustForm.message.trim() || undefined,
       allowNegative: walletAdjustForm.allowNegative
     })
     if (!res.ok) {
@@ -898,6 +899,7 @@ async function submitWalletAdjustAll() {
     const res = await adjustAllWallets({
       delta: walletAdjustAllForm.delta,
       reason: walletAdjustAllForm.reason.trim() || undefined,
+      message: walletAdjustAllForm.message.trim() || undefined,
       allowNegative: walletAdjustAllForm.allowNegative
     })
     if (!res.ok) {
@@ -962,6 +964,19 @@ function resetPoolForm() {
 }
 
 function startCreatePool() {
+  if (editingPoolId.value) {
+    const target = pools.value.find((pool) => pool.id === editingPoolId.value) ?? pools.value[0]
+    if (target) {
+      startEditPool(target)
+      return
+    }
+    resetPoolForm()
+    return
+  }
+  if (pools.value.length > 0) {
+    poolError.value = '单常驻池模式下不支持新增卡池'
+    return
+  }
   resetPoolForm()
 }
 
@@ -1006,10 +1021,17 @@ async function loadPools(force = false) {
       if (!batchForm.poolId) {
         batchForm.poolId = preferred
       }
+      if (!editingPoolId.value || !pools.value.some((pool) => pool.id === editingPoolId.value)) {
+        const targetPool = pools.value.find((pool) => pool.id === preferred) ?? pools.value[0]
+        if (targetPool) {
+          startEditPool(targetPool)
+        }
+      }
     } else {
       cardFilters.poolId = ''
       cardForm.poolId = ''
       batchForm.poolId = ''
+      resetPoolForm()
     }
   } catch (error: any) {
     poolError.value = error?.message || '加载卡池失败'
@@ -1022,6 +1044,10 @@ async function loadPools(force = false) {
 async function submitPool() {
   if (poolLoading.value) return
   poolError.value = null
+  if (!editingPoolId.value && pools.value.length > 0) {
+    poolError.value = '单常驻池模式下不支持新增卡池'
+    return
+  }
   if (!poolForm.name.trim()) {
     poolError.value = '名称不能为空'
     return
@@ -1075,21 +1101,6 @@ async function submitPool() {
     poolError.value = error?.message || '保存失败'
   } finally {
     poolLoading.value = false
-  }
-}
-
-async function removePool(pool: GachaPool) {
-  if (!confirm(`确认删除卡池「${pool.name}」及其卡片吗？`)) return
-  try {
-    const res = await deletePool(pool.id)
-    if (!res.ok) {
-      poolError.value = res.error || '删除失败'
-      return
-    }
-    showPoolMessage('卡池已删除')
-    await loadPools(true)
-  } catch (error: any) {
-    poolError.value = error?.message || '删除失败'
   }
 }
 
@@ -1332,93 +1343,6 @@ async function submitBatchAdjust() {
     batchError.value = error?.message || '批量调整失败'
   } finally {
     batchProcessing.value = false
-  }
-}
-
-function showBatchRemoveMessage(message: string) {
-  batchRemoveMessage.value = message
-  window.setTimeout(() => {
-    if (batchRemoveMessage.value === message) batchRemoveMessage.value = null
-  }, 4000)
-}
-
-async function fetchCardsForCurrentFilters() {
-  const includeTags = parseTagInput(cardFilters.includeTags)
-  const excludeTags = parseTagInput(cardFilters.excludeTags)
-  const rarity = cardFilters.rarity === 'ALL' ? undefined : cardFilters.rarity
-  const search = cardFilters.search.trim()
-  const poolId = cardFilters.poolId || undefined
-  const items: AdminCard[] = []
-  const pageSize = 200
-  let offset = 0
-  while (true) {
-    const res = await listAdminCards({
-      poolId,
-      rarity,
-      includeTags: includeTags.length ? includeTags : undefined,
-      excludeTags: excludeTags.length ? excludeTags : undefined,
-      search: search || undefined,
-      limit: pageSize,
-      offset
-    })
-    if (!res.ok) {
-      throw new Error(res.error || '加载卡片失败')
-    }
-    const pageItems = res.data ?? []
-    items.push(...pageItems)
-    const total = res.total ?? items.length
-    if (items.length >= total || pageItems.length < pageSize) {
-      break
-    }
-    offset += pageSize
-  }
-  return { items }
-}
-
-async function batchRemoveByFilters() {
-  if (batchRemoveLoading.value) return
-  batchRemoveError.value = null
-  if (!cardFilters.poolId) {
-    batchRemoveError.value = '请先选择卡池作为删除范围'
-    return
-  }
-  if (cardTotal.value === 0) {
-    batchRemoveError.value = '当前筛选没有匹配的卡片'
-    return
-  }
-  if (!confirm(`确认删除筛选范围内的 ${cardTotal.value} 张卡片？\n${cardFilterSummary.value}`)) {
-    return
-  }
-  batchRemoveLoading.value = true
-  try {
-    const { items } = await fetchCardsForCurrentFilters()
-    if (!items.length) {
-      showBatchRemoveMessage('筛选范围内没有可删除的卡片')
-      return
-    }
-    let deleted = 0
-    const failed: Array<{ title: string; error: string }> = []
-    for (const card of items) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await deleteCard(card.id)
-      if (!res.ok) {
-        failed.push({ title: card.title, error: res.error || '删除失败' })
-      } else {
-        deleted += 1
-      }
-    }
-    if (failed.length > 0) {
-      const failedNames = failed.slice(0, 3).map((item) => item.title).join('、')
-      batchRemoveError.value = failed.length > 3 ? `有 ${failed.length} 张卡片删除失败，如：${failedNames}` : `以下卡片删除失败：${failedNames}`
-    }
-    if (deleted > 0) {
-      showBatchRemoveMessage(`已删除 ${deleted} 张卡片`)
-    }
-    await loadCards(true)
-  } catch (error: any) {
-    batchRemoveError.value = error?.message || '批量删除失败'
-  } finally {
-    batchRemoveLoading.value = false
   }
 }
 

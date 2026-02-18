@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useWikidotBinding } from '~/composables/useWikidotBinding'
+import { normalizeBffBase, resolveAssetUrl } from '~/utils/assetUrl'
 
 const {
   currentTask,
   instructions,
   loading,
   error,
+  resolveUsers,
   isPending,
   isExpired,
   hasTask,
@@ -17,18 +19,77 @@ const {
   formatLastChecked
 } = useWikidotBinding()
 
-const wikidotUsername = ref('')
+const runtimeConfig = useRuntimeConfig()
+const bffBase = normalizeBffBase((runtimeConfig.public as any)?.bffBase as string)
+
+const query = ref('')
+const candidates = ref<Array<{ wikidotId: number; displayName: string | null; username: string | null }>>([])
+const selectedUser = ref<{ wikidotId: number; displayName: string | null; username: string | null } | null>(null)
+const resolving = ref(false)
+const resolveError = ref<string | null>(null)
+let resolveTimer: ReturnType<typeof setTimeout> | null = null
+
 const copied = ref(false)
 
 onMounted(() => {
   fetchStatus()
 })
 
+watch(query, (value) => {
+  const trimmed = value.trim()
+  resolveError.value = null
+  selectedUser.value = null
+  candidates.value = []
+
+  if (resolveTimer) {
+    clearTimeout(resolveTimer)
+    resolveTimer = null
+  }
+
+  if (!trimmed) {
+    resolving.value = false
+    return
+  }
+
+  resolveTimer = setTimeout(async () => {
+    resolving.value = true
+    const res = await resolveUsers(trimmed, 8)
+    if (res.ok) {
+      candidates.value = res.users
+      if (res.users.length === 1) {
+        selectedUser.value = res.users[0]
+      }
+    } else {
+      resolveError.value = res.error || '搜索失败'
+    }
+    resolving.value = false
+  }, 250)
+})
+
+const selectedLabel = computed(() => {
+  if (!selectedUser.value) return ''
+  const title = selectedUser.value.displayName || selectedUser.value.username || `User ${selectedUser.value.wikidotId}`
+  const username = selectedUser.value.username ? `@${selectedUser.value.username}` : ''
+  return `${title}${username ? ` (${username})` : ''}`
+})
+
+function avatarUrlFor(wikidotId: number): string {
+  return resolveAssetUrl(`/avatar/${wikidotId}`, bffBase)
+}
+
 async function handleStartBinding() {
-  if (!wikidotUsername.value.trim()) return
-  const result = await startBinding(wikidotUsername.value.trim())
+  const trimmed = query.value.trim()
+  if (!trimmed && !selectedUser.value) return
+
+  const payload = selectedUser.value
+    ? { wikidotId: selectedUser.value.wikidotId }
+    : (/^\d+$/.test(trimmed) ? { wikidotId: Number(trimmed) } : { wikidotUsername: trimmed })
+
+  const result = await startBinding(payload)
   if (result.ok) {
-    wikidotUsername.value = ''
+    query.value = ''
+    candidates.value = []
+    selectedUser.value = null
   }
 }
 
@@ -46,6 +107,16 @@ function copyCode() {
   copied.value = true
   setTimeout(() => { copied.value = false }, 2000)
 }
+
+function selectCandidate(user: { wikidotId: number; displayName: string | null; username: string | null }) {
+  selectedUser.value = user
+  candidates.value = []
+  resolveError.value = null
+}
+
+function clearSelection() {
+  selectedUser.value = null
+}
 </script>
 
 <template>
@@ -54,15 +125,81 @@ function copyCode() {
     <template v-if="!hasTask">
       <form @submit.prevent="handleStartBinding" class="space-y-3">
         <div>
-          <label class="text-xs font-semibold text-neutral-600 dark:text-neutral-400">Wikidot 用户名</label>
+          <label class="text-xs font-semibold text-neutral-600 dark:text-neutral-400">Wikidot 用户</label>
           <input
-            v-model="wikidotUsername"
+            v-model="query"
             type="text"
-            placeholder="输入你的 Wikidot 用户名"
+            placeholder="输入 Wikidot 用户名/昵称，或 Wikidot ID（数字）"
             class="w-full mt-1 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-700"
-            :disabled="loading"
+            :disabled="loading || resolving"
           />
+          <div class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+            建议从下方选单选择（可通过头像判断），并使用 Wikidot ID 绑定更准确。
+          </div>
         </div>
+
+        <div v-if="resolveError" class="rounded-xl bg-red-50 border border-red-200 p-3 dark:bg-red-900/20 dark:border-red-800">
+          <div class="text-sm text-red-700 dark:text-red-300">{{ resolveError }}</div>
+        </div>
+
+        <div v-if="selectedUser" class="rounded-xl border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900/20">
+          <div class="flex items-center gap-3">
+            <img
+              :src="avatarUrlFor(selectedUser.wikidotId)"
+              :alt="selectedLabel"
+              class="h-10 w-10 rounded-full border border-neutral-200 dark:border-neutral-700"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
+            <div class="min-w-0">
+              <div class="text-sm font-semibold text-neutral-800 dark:text-neutral-100 truncate">
+                已选择：{{ selectedLabel }}
+              </div>
+              <div class="text-xs text-neutral-500 dark:text-neutral-400">
+                Wikidot ID: <span class="font-mono">{{ selectedUser.wikidotId }}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="ml-auto text-xs text-neutral-500 hover:underline dark:text-neutral-400"
+              @click="clearSelection"
+            >
+              清除
+            </button>
+          </div>
+        </div>
+
+        <div v-else-if="candidates.length" class="rounded-xl border border-neutral-200 bg-white p-2 dark:border-neutral-700 dark:bg-neutral-900/20">
+          <div class="text-xs font-semibold text-neutral-600 dark:text-neutral-400 px-2 pb-2">请选择匹配用户</div>
+          <div class="max-h-52 overflow-auto">
+            <button
+              v-for="user in candidates"
+              :key="user.wikidotId"
+              type="button"
+              class="w-full flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+              @click="selectCandidate(user)"
+            >
+              <img
+                :src="avatarUrlFor(user.wikidotId)"
+                :alt="user.displayName || user.username || `User ${user.wikidotId}`"
+                class="h-8 w-8 rounded-full border border-neutral-200 dark:border-neutral-700 flex-shrink-0"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+              />
+              <div class="min-w-0 text-left">
+                <div class="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate">
+                  {{ user.displayName || user.username || `User ${user.wikidotId}` }}
+                </div>
+                <div class="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                  <span v-if="user.username">@{{ user.username }}</span>
+                  <span v-if="user.username"> · </span>
+                  ID: <span class="font-mono">{{ user.wikidotId }}</span>
+                </div>
+              </div>
+            </button>
+          </div>
+        </div>
+
         <!-- Error message with better styling -->
         <div v-if="error" class="rounded-xl bg-red-50 border border-red-200 p-3 dark:bg-red-900/20 dark:border-red-800">
           <div class="flex items-start gap-2">
@@ -74,10 +211,10 @@ function copyCode() {
         </div>
         <button
           type="submit"
-          :disabled="!wikidotUsername.trim() || loading"
+          :disabled="(!query.trim() && !selectedUser) || loading || resolving"
           class="rounded-full bg-[rgb(var(--accent))] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {{ loading ? '处理中...' : '开始绑定' }}
+          {{ loading ? '处理中...' : (resolving ? '搜索中...' : '开始绑定') }}
         </button>
       </form>
     </template>

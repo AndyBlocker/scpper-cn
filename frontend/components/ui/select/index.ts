@@ -1,0 +1,5 @@
+export { default as UiSelectRoot } from './SelectRoot.vue'
+export { default as UiSelectTrigger } from './SelectTrigger.vue'
+export { default as UiSelectContent } from './SelectContent.vue'
+export { default as UiSelectItem } from './SelectItem.vue'
+export { default as UiSelectSeparator } from './SelectSeparator.vue'

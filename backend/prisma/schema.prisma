@@ -728,6 +728,45 @@ model AnalysisWatermark {
   cursorTs  DateTime?
 }
 
+model CategoryIndexTick {
+  id               Int      @id @default(autoincrement())
+  category         String
+  asOfTs           DateTime @map("as_of_ts")
+  watermarkTs      DateTime? @map("watermark_ts")
+  voteCutoffDate   DateTime @map("vote_cutoff_date") @db.Date
+  voteRuleVersion  String   @default("utc8-t+1-v1") @map("vote_rule_version")
+  scoreSignalRaw   Decimal  @default(0) @map("score_signal_raw")
+  scoreRef         Decimal  @default(0) @map("score_ref")
+  scoreProvisional Decimal  @default(0) @map("score_provisional")
+  indexMark        Decimal  @map("index_mark")
+  crowdDrag        Decimal? @default(0) @map("crowd_drag")
+  noise            Decimal? @default(0) @map("noise")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([category, asOfTs], map: "uniq_category_index_tick_category_as_of_ts")
+  @@index([category, asOfTs], map: "idx_category_index_tick_category_as_of_ts")
+  @@index([watermarkTs], map: "idx_category_index_tick_watermark_ts")
+}
+
+model CategoryIndexForecastTick {
+  id               Int      @id @default(autoincrement())
+  category         String
+  asOfTs           DateTime @map("as_of_ts")
+  settleDay        DateTime @map("settle_day") @db.Date
+  hourOffset       Int      @map("hour_offset")
+  forecastScore    Decimal  @map("forecast_score")
+  forecastIndex    Decimal  @map("forecast_index")
+  dayCloseScore    Decimal  @map("day_close_score")
+  dayCloseIndex    Decimal  @map("day_close_index")
+  prevDayCloseIndex Decimal @map("prev_day_close_index")
+  isStale          Boolean  @default(false) @map("is_stale")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([category, asOfTs], map: "uniq_category_index_fcst_category_as_of_ts")
+  @@unique([category, settleDay, hourOffset], map: "uniq_category_index_fcst_day_hour")
+  @@index([category, settleDay], map: "idx_category_index_fcst_category_settle_day")
+}
+
 model PageDailyStats {
   id           Int      @id @default(autoincrement())
   pageId       Int

@@ -4,7 +4,7 @@ module.exports = {
       name: 'scpper-sync',
       cwd: __dirname,
       script: '/bin/bash',
-      args: ['-lc', 'proxychains4 npm run sync'],
+      args: ['-lc', 'proxychains4 npm run sync && node --import tsx/esm src/cli/index.ts gacha-sync --pool-id permanent-main-pool'],
       instances: 1,
       exec_mode: 'fork',
       autorestart: false,
@@ -17,4 +17,3 @@ module.exports = {
     },
   ],
 }
-

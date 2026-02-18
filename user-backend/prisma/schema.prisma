@@ -31,6 +31,44 @@ enum GachaMatchMode {
   ANY
 }
 
+enum GachaTradeListingStatus {
+  OPEN
+  SOLD
+  CANCELLED
+  EXPIRED
+}
+
+enum GachaBuyRequestStatus {
+  OPEN
+  FULFILLED
+  CANCELLED
+  EXPIRED
+}
+
+enum GachaBuyRequestMatchLevel {
+  PAGE
+  IMAGE_VARIANT
+  COATING
+}
+
+enum GachaAffixVisualStyle {
+  NONE
+  MONO
+  SILVER
+  GOLD
+  CYAN
+  PRISM
+  COLORLESS
+  WILDCARD
+  SPECTRUM
+  MIRROR
+  ORBIT
+  ECHO
+  NEXUS
+  ANCHOR
+  FLUX
+}
+
 enum WikidotBindingStatus {
   PENDING
   VERIFIED
@@ -55,8 +93,18 @@ model UserAccount {
   gachaBoosts      GachaGlobalBoost[]  @relation("GachaBoostCreatedBy")
   gachaDraws       GachaDraw[]
   gachaInventories GachaInventory[]
+  gachaCardUnlocks GachaCardUnlock[]
   gachaDismantles  GachaDismantleLog[]
   gachaLedgerEntries GachaLedgerEntry[]
+  gachaPlacementState GachaPlacementState?
+  gachaPlacementSlots GachaPlacementSlot[]
+  gachaTradeSellListings GachaTradeListing[] @relation("GachaTradeSeller")
+  gachaTradeBuyListings  GachaTradeListing[] @relation("GachaTradeBuyer")
+  gachaCardInstances     GachaCardInstance[]
+  gachaBuyRequestsBuyer    GachaBuyRequest[] @relation("GachaBuyRequestBuyer")
+  gachaBuyRequestsFulfiller GachaBuyRequest[] @relation("GachaBuyRequestFulfiller")
+  gachaShowcases           GachaShowcase[]
+  apiIdempotencyRecords ApiIdempotencyRecord[]
   createdEvents    CalendarEvent[]
   ftmlProjects     FtmlProject[]
   wikidotBindingTasks WikidotBindingTask[]
@@ -85,6 +133,8 @@ model GachaWallet {
   balance          Int          @default(0)
   totalEarned      Int          @default(0)
   totalSpent       Int          @default(0)
+  purplePityCount  Int          @default(0)
+  goldPityCount    Int          @default(0)
   lastDailyClaimAt DateTime?
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -121,6 +171,7 @@ model GachaCardDefinition {
   title          String
   rarity         GachaRarity
   tags           String[]      @default([])
+  authorKeys     String[]      @default([])
   weight         Int           @default(1)
   rewardTokens   Int           @default(0)
   wikidotId      Int?
@@ -130,8 +181,14 @@ model GachaCardDefinition {
   updatedAt      DateTime      @updatedAt
   pool           GachaPool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
   inventory      GachaInventory[]
+  unlocks        GachaCardUnlock[]
   drawItems      GachaDrawItem[]
   dismantleLogs  GachaDismantleLog[]
+  placementSlots GachaPlacementSlot[]
+  tradeListings  GachaTradeListing[]
+  cardInstances  GachaCardInstance[]
+  buyRequests    GachaBuyRequest[]
+  buyRequestOfferedCards GachaBuyRequestOfferedCard[]
 
   @@index([poolId])
   @@index([rarity])
@@ -190,12 +247,28 @@ model GachaInventory {
   userId    String
   cardId    String
   count     Int                 @default(0)
+  affixStacks Json?
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
   user      UserAccount         @relation(fields: [userId], references: [id], onDelete: Cascade)
   card      GachaCardDefinition @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  placementSlots GachaPlacementSlot[]
 
   @@unique([userId, cardId])
+  @@index([cardId])
+}
+
+model GachaCardUnlock {
+  id              String              @id @default(cuid())
+  userId          String
+  cardId          String
+  firstUnlockedAt DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  user            UserAccount         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card            GachaCardDefinition @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId])
+  @@index([userId, firstUnlockedAt])
   @@index([cardId])
 }
 
@@ -224,6 +297,8 @@ model GachaLedgerEntry {
   user      UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([userId, reason, createdAt], map: "idx_gacha_ledger_user_reason_created_at")
+  @@index([reason, createdAt], map: "idx_gacha_ledger_reason_created_at")
   @@index([walletId])
 }
 
@@ -233,6 +308,85 @@ model GachaRarityReward {
   dismantleReward  Int         @default(0)
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+}
+
+model GachaPlacementState {
+  id            String              @id @default(cuid())
+  userId        String              @unique
+  unlockedSlotCount Int             @default(5)
+  pendingToken  Decimal             @default(0) @db.Decimal(20, 6)
+  lastAccrualAt DateTime            @default(now())
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  user          UserAccount         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GachaPlacementSlot {
+  id         String              @id @default(cuid())
+  userId     String
+  slotIndex  Int
+  cardId     String?
+  inventoryId String?
+  instanceId String?             @unique
+  affixVisualStyle GachaAffixVisualStyle?
+  affixSignature String?
+  affixLabel  String?
+  assignedAt DateTime?
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  user       UserAccount         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card       GachaCardDefinition? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  inventory  GachaInventory?     @relation(fields: [inventoryId], references: [id], onDelete: SetNull)
+  instance   GachaCardInstance?  @relation(fields: [instanceId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, slotIndex])
+  @@index([cardId])
+  @@index([inventoryId])
+  @@index([userId, affixSignature])
+}
+
+model GachaTradeListing {
+  id         String                  @id @default(cuid())
+  sellerId   String
+  buyerId    String?
+  cardId     String
+  quantity   Int                     @default(1)
+  remaining  Int                     @default(1)
+  unitPrice  Int
+  totalPrice Int
+  status     GachaTradeListingStatus @default(OPEN)
+  metadata   Json?
+  expiresAt  DateTime?
+  soldAt     DateTime?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+  seller     UserAccount             @relation("GachaTradeSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyer      UserAccount?            @relation("GachaTradeBuyer", fields: [buyerId], references: [id], onDelete: SetNull)
+  card       GachaCardDefinition     @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  cardInstances GachaCardInstance[]
+
+  @@index([status, createdAt])
+  @@index([status, expiresAt], map: "idx_gacha_trade_status_expires_at")
+  @@index([sellerId, status])
+  @@index([buyerId, status])
+  @@index([cardId, status])
+}
+
+model ApiIdempotencyRecord {
+  id          String      @id @default(cuid())
+  userId      String
+  method      String
+  path        String
+  idemKey     String
+  requestHash String
+  responseJson Json
+  statusCode  Int
+  createdAt   DateTime    @default(now())
+  expireAt    DateTime
+  user        UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, method, path, idemKey])
+  @@index([expireAt])
 }
 
 /// Calendar events for tools calendar (admin-managed)
@@ -292,4 +446,102 @@ model WikidotBindingTask {
   @@index([userId, status])
   @@index([status, expiresAt])
   @@index([wikidotUserId])
+}
+
+model GachaCardInstance {
+  id                String                @id @default(cuid())
+  userId            String
+  cardId            String
+  affixVisualStyle  GachaAffixVisualStyle @default(NONE)
+  affixSignature    String                @default("NONE")
+  affixLabel        String?
+  obtainedAt        DateTime              @default(now())
+  obtainedVia       String                @default("DRAW")
+  tradeListingId    String?
+  buyRequestId      String?
+  isLocked          Boolean               @default(false)
+  lockedAt          DateTime?
+
+  user              UserAccount           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card              GachaCardDefinition   @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  tradeListing      GachaTradeListing?    @relation(fields: [tradeListingId], references: [id], onDelete: SetNull)
+  buyRequest        GachaBuyRequest?      @relation(fields: [buyRequestId], references: [id], onDelete: SetNull)
+  placementSlot     GachaPlacementSlot?
+  showcaseSlot      GachaShowcaseSlot?
+
+  @@index([userId, cardId])
+  @@index([userId, affixSignature])
+  @@index([userId, isLocked])
+  @@index([userId, tradeListingId])
+  @@index([cardId])
+  @@index([tradeListingId])
+  @@index([buyRequestId])
+}
+
+model GachaShowcase {
+  id              String    @id @default(cuid())
+  userId          String
+  name            String    @db.VarChar(30)
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            UserAccount        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slots           GachaShowcaseSlot[]
+
+  @@index([userId, sortOrder])
+}
+
+model GachaShowcaseSlot {
+  id              String    @id @default(cuid())
+  showcaseId      String
+  slotIndex       Int
+  instanceId      String    @unique
+  assignedAt      DateTime  @default(now())
+
+  showcase        GachaShowcase      @relation(fields: [showcaseId], references: [id], onDelete: Cascade)
+  instance        GachaCardInstance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([showcaseId, slotIndex])
+}
+
+model GachaBuyRequest {
+  id              String                      @id @default(cuid())
+  buyerId         String
+  targetCardId    String
+  matchLevel      GachaBuyRequestMatchLevel   @default(IMAGE_VARIANT)
+  requiredCoating GachaAffixVisualStyle?
+  tokenOffer      Int                         @default(0)
+  status          GachaBuyRequestStatus       @default(OPEN)
+  fulfillerId     String?
+  metadata        Json?
+  expiresAt       DateTime?
+  fulfilledAt     DateTime?
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+
+  buyer           UserAccount           @relation("GachaBuyRequestBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  fulfiller       UserAccount?          @relation("GachaBuyRequestFulfiller", fields: [fulfillerId], references: [id], onDelete: SetNull)
+  targetCard      GachaCardDefinition   @relation(fields: [targetCardId], references: [id], onDelete: Restrict)
+  offeredCards    GachaBuyRequestOfferedCard[]
+  lockedInstances GachaCardInstance[]
+
+  @@index([status, createdAt])
+  @@index([status, expiresAt])
+  @@index([buyerId, status])
+  @@index([targetCardId, status])
+}
+
+model GachaBuyRequestOfferedCard {
+  id              String              @id @default(cuid())
+  buyRequestId    String
+  cardId          String
+  quantity        Int                 @default(1)
+  createdAt       DateTime            @default(now())
+
+  buyRequest      GachaBuyRequest     @relation(fields: [buyRequestId], references: [id], onDelete: Cascade)
+  card            GachaCardDefinition @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([buyRequestId])
+  @@index([cardId])
 }

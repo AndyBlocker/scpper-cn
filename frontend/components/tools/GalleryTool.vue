@@ -1,61 +1,145 @@
 <template>
-  <div class="space-y-6">
-    <header class="space-y-2">
-      <h1 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-100">图片画廊</h1>
-      <p class="text-sm text-neutral-600 dark:text-neutral-400">
-        浏览系统已缓存的页面插图，点击可跳转回对应页面。刷新可获取新的随机组合。
-      </p>
+  <div class="gallery-shell space-y-6">
+    <header class="gallery-head rounded-[1.6rem] border border-neutral-200/75 bg-white/88 px-5 py-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.9)] dark:border-neutral-800/70 dark:bg-neutral-900/70">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="space-y-2">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-[rgb(var(--accent-strong))]">Cached Gallery</p>
+          <h1 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-100">图片画廊</h1>
+          <p class="text-sm text-neutral-600 dark:text-neutral-400">
+            浏览系统已缓存的页面插图，点击卡片即可回到对应页面。
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="inline-flex items-center rounded-full border border-neutral-200/80 bg-white/80 px-3 py-1 text-neutral-600 dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-300">
+            当前 {{ galleryImages.length }} 张
+          </span>
+          <button
+            type="button"
+            @click="reload"
+            class="inline-flex items-center gap-2 rounded-full border border-[rgb(var(--accent-strong))]/35 bg-[rgb(var(--accent-strong))]/10 px-3 py-1.5 text-xs font-semibold text-[rgb(var(--accent-strong))] transition hover:bg-[rgb(var(--accent-strong))]/16"
+          >
+            <LucideIcon name="RefreshCcw" class="h-3.5 w-3.5" stroke-width="2" />
+            换一批
+          </button>
+        </div>
+      </div>
     </header>
 
-    <div v-if="pending" class="py-12 text-center text-neutral-500 dark:text-neutral-400">
+    <div v-if="pending" class="rounded-2xl border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
       加载图片中…
     </div>
-    <div v-else-if="error" class="py-12 text-center text-red-600 dark:text-red-400">
+    <div v-else-if="error" class="rounded-2xl border border-rose-200/70 bg-rose-50/80 px-5 py-12 text-center text-rose-600 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-200">
       获取图片失败：{{ error.message || error }}
     </div>
     <div v-else>
-      <div v-if="!galleryImages.length" class="py-12 text-center text-neutral-500 dark:text-neutral-400">
+      <div class="mb-4 grid gap-2 md:grid-cols-[minmax(0,1fr),minmax(130px,160px),minmax(180px,220px),auto]">
+        <input
+          v-model.trim="gallerySearch"
+          type="search"
+          placeholder="搜索标题 / 页面 ID / URL / 作者"
+          class="w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition focus:border-[rgb(var(--accent-strong))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+        >
+        <select
+          v-model="galleryOrientationFilter"
+          class="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition focus:border-[rgb(var(--accent-strong))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+        >
+          <option value="all">全部方向</option>
+          <option value="panorama">超宽</option>
+          <option value="landscape">横图</option>
+          <option value="normal">标准</option>
+          <option value="portrait">竖图</option>
+          <option value="tall">超高</option>
+          <option value="unknown">未知</option>
+        </select>
+        <select
+          v-model="gallerySortMode"
+          class="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition focus:border-[rgb(var(--accent-strong))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+        >
+          <option value="RANDOM">随机顺序</option>
+          <option value="AREA_DESC">尺寸从大到小</option>
+          <option value="AREA_ASC">尺寸从小到大</option>
+          <option value="PAGE_ID_ASC">页面 ID 升序</option>
+        </select>
+        <button
+          type="button"
+          class="inline-flex items-center justify-center rounded-xl border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
+          @click="resetFilters"
+        >
+          重置筛选
+        </button>
+      </div>
+
+      <p class="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
+        匹配 {{ filteredGalleryImages.length }} / {{ galleryImages.length }} 张
+      </p>
+
+      <div v-if="!galleryImages.length" class="rounded-2xl border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
         暂无缓存图片可展示。
       </div>
+      <div v-else-if="!filteredGalleryImages.length" class="rounded-2xl border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
+        当前筛选条件下没有图片。
+      </div>
+
       <div v-else class="gallery-grid">
         <article
-          v-for="item in galleryImages"
+          v-for="item in visibleGalleryImages"
           :key="item.id"
           class="gallery-item group"
         >
           <NuxtLink
             :to="item.pageLink"
-            class="block overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/80 shadow-sm hover:shadow-md transition-shadow"
+            class="gallery-card block overflow-hidden rounded-[1.1rem] border border-neutral-200/75 bg-white/94 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.95)] transition duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-36px_rgba(15,23,42,0.95)] dark:border-neutral-700/70 dark:bg-neutral-900/76"
           >
-            <div class="relative w-full overflow-hidden bg-neutral-100 dark:bg-neutral-900">
+            <div
+              class="gallery-card__media relative w-full overflow-hidden border-b border-neutral-200/70 bg-neutral-100 dark:border-neutral-700/70 dark:bg-neutral-900"
+              :class="`gallery-card__media--${item.orientation}`"
+            >
               <img
                 :src="item.imageSrc"
                 :alt="item.caption"
                 loading="lazy"
-                :class="['transition-transform duration-200', item.imageClass, 'group-hover:scale-[1.03]']"
+                :class="['h-full w-full transition duration-500 group-hover:scale-[1.04]', item.imageClass]"
                 :style="item.imageStyle"
               >
+              <div class="gallery-card__shade" />
+              <div class="gallery-card__foil" />
+
+              <div class="absolute left-2 top-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                <span class="inline-flex rounded-full border border-white/60 bg-black/35 px-2 py-0.5 font-semibold text-white backdrop-blur-sm">
+                  {{ item.orientationLabel }}
+                </span>
+                <span
+                  v-if="item.dimensionLabel"
+                  class="inline-flex rounded-full border border-white/45 bg-black/28 px-2 py-0.5 font-medium text-white/90 backdrop-blur-sm"
+                >
+                  {{ item.dimensionLabel }}
+                </span>
+              </div>
+
+              <div class="gallery-card__cta absolute inset-x-2 bottom-2 flex items-center justify-between rounded-lg border border-white/35 bg-black/35 px-2.5 py-1 text-[10px] text-white/95 backdrop-blur-sm">
+                <span class="truncate">{{ item.pageIdLabel }}</span>
+                <span>查看页面</span>
+              </div>
             </div>
-            <div class="px-3 py-3 space-y-1">
-              <div class="text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate">
+
+            <div class="space-y-1.5 px-3 py-3">
+              <div class="line-clamp-2 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 {{ item.caption }}
               </div>
-              <div class="text-xs text-neutral-500 dark:text-neutral-400 truncate">
-                {{ item.pageUrl }}
+              <div class="truncate text-[11px] text-neutral-500 dark:text-neutral-400">
+                {{ item.pageUrl || '无外链 URL' }}
               </div>
             </div>
           </NuxtLink>
         </article>
       </div>
-
-      <div class="flex items-center justify-center gap-3 pt-6">
+      <div v-if="hasMoreGallery" class="mt-4 flex items-center justify-center">
         <button
           type="button"
-          @click="reload"
-          class="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))] hover:bg-[rgba(var(--accent),0.18)]"
+          class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
+          @click="galleryVisibleCount += GALLERY_PAGE_SIZE"
         >
-          <LucideIcon name="RefreshCcw" class="w-4 h-4" stroke-width="2" />
-          换一批
+          加载更多（剩余 {{ filteredGalleryImages.length - galleryVisibleCount }} 张）
         </button>
       </div>
     </div>
@@ -63,8 +147,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useAsyncData, useNuxtApp, useRuntimeConfig } from 'nuxt/app'
+import LucideIcon from '~/components/LucideIcon.vue'
 import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
 
 const props = withDefaults(defineProps<{ dataKey?: string; initialLimit?: number }>(), {
@@ -72,7 +157,9 @@ const props = withDefaults(defineProps<{ dataKey?: string; initialLimit?: number
   initialLimit: 30
 })
 
-const { $bff } = useNuxtApp()
+const { $bff } = useNuxtApp() as {
+  $bff: (path: string, options?: { params?: Record<string, unknown> }) => Promise<unknown>
+}
 const runtimeConfig = useRuntimeConfig()
 const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase)
 
@@ -90,6 +177,9 @@ const { data, pending, error, refresh } = await useAsyncData(
   () => $bff('/page-images/random', { params: { limit: limit.value } }),
   { watch: [limit] }
 )
+
+type GalleryOrientation = 'unknown' | 'panorama' | 'tall' | 'landscape' | 'portrait' | 'normal'
+type GallerySortMode = 'RANDOM' | 'AREA_DESC' | 'AREA_ASC' | 'PAGE_ID_ASC'
 
 type GalleryImage = {
   pageVersionImageId?: number
@@ -109,21 +199,63 @@ type GalleryImage = {
     title?: string
     alternateTitle?: string
     url?: string
+    authors?: Array<{
+      displayName?: string
+      userWikidotId?: number | null
+    }>
   }
 }
+
+type GalleryViewItem = {
+  id: number | string
+  imageSrc: string
+  imageClass: string
+  imageStyle: string
+  caption: string
+  pageLink: string
+  pageUrl: string
+  pageId: number | null
+  orientation: GalleryOrientation
+  orientationLabel: string
+  dimensionLabel: string
+  pageIdLabel: string
+  pixelArea: number
+  authorText: string
+}
+
+const gallerySearch = ref('')
+const galleryOrientationFilter = ref<GalleryOrientation | 'all'>('all')
+const gallerySortMode = ref<GallerySortMode>('RANDOM')
 
 const galleryImagesRaw = computed<GalleryImage[]>(() => {
   const value = data.value
   return Array.isArray(value) ? (value as GalleryImage[]) : []
 })
 
-const galleryImages = computed(() => {
+function orientationLabel(value: GalleryOrientation) {
+  switch (value) {
+    case 'panorama':
+      return '超宽'
+    case 'tall':
+      return '超高'
+    case 'landscape':
+      return '横图'
+    case 'portrait':
+      return '竖图'
+    case 'normal':
+      return '标准'
+    default:
+      return '未知'
+  }
+}
+
+const galleryImages = computed<GalleryViewItem[]>(() => {
   return galleryImagesRaw.value
-    .map(item => {
+    .map((item) => {
       const width = Number(item.asset?.width ?? item.width ?? 0)
       const height = Number(item.asset?.height ?? item.height ?? 0)
       const ratio = width > 0 && height > 0 ? width / height : null
-      const orientation = ratio == null
+      const orientation: GalleryOrientation = ratio == null
         ? 'unknown'
         : ratio >= 2.2
           ? 'panorama'
@@ -134,19 +266,22 @@ const galleryImages = computed(() => {
               : ratio <= 0.75
                 ? 'portrait'
                 : 'normal'
-      const imageClass = orientation === 'normal' || orientation === 'portrait' || orientation === 'landscape' ? 'object-contain' : 'object-cover'
-      const maxHeight = orientation === 'panorama' ? 260 : orientation === 'tall' ? 420 : 380
-      const imageStyle = orientation === 'normal' || orientation === 'portrait' || orientation === 'landscape'
-        ? 'display: block; width: 100%; height: auto;'
-        : `display: block; width: 100%; max-height: ${maxHeight}px;`
+      const imageClass = 'object-cover'
+      const imageStyle = 'display: block; width: 100%; height: 100%;'
       const imageSrc = resolveAssetPath(item.imageUrl, item.displayUrl ?? item.normalizedUrl ?? item.originUrl)
+      const pageId = Number(item.page?.wikidotId ?? 0)
+      const normalizedPageId = Number.isFinite(pageId) && pageId > 0 ? pageId : null
       const caption = (() => {
         const title = item.page?.title?.trim() || '未命名页面'
         const alt = item.page?.alternateTitle?.trim()
         return alt ? `${title} - ${alt}` : title
       })()
-      const pageLink = item.page?.wikidotId ? `/page/${item.page.wikidotId}` : '#'
+      const pageLink = normalizedPageId ? `/page/${normalizedPageId}` : '#'
       const pageUrl = item.page?.url || ''
+      const authorText = (item.page?.authors ?? [])
+        .map((author) => String(author?.displayName || '').trim())
+        .filter(Boolean)
+        .join(' ')
 
       if (!imageSrc) {
         return null
@@ -159,11 +294,75 @@ const galleryImages = computed(() => {
         imageStyle,
         caption,
         pageLink,
-        pageUrl
+        pageUrl,
+        pageId: normalizedPageId,
+        orientation,
+        orientationLabel: orientationLabel(orientation),
+        dimensionLabel: width > 0 && height > 0 ? `${width}×${height}` : '',
+        pageIdLabel: normalizedPageId ? `#${normalizedPageId}` : '未绑定页面',
+        pixelArea: width > 0 && height > 0 ? width * height : 0,
+        authorText
       }
     })
-    .filter(Boolean)
+    .filter((item): item is GalleryViewItem => item !== null)
 })
+
+const normalizedGallerySearch = computed(() => gallerySearch.value.trim().toLowerCase())
+
+const searchIndex = computed(() => {
+  const map = new Map<number | string, string>()
+  for (const item of galleryImages.value) {
+    map.set(item.id, `${item.caption} ${item.pageIdLabel} ${item.pageUrl} ${item.orientationLabel} ${item.authorText}`.toLowerCase())
+  }
+  return map
+})
+
+const filteredGalleryImages = computed<GalleryViewItem[]>(() => {
+  const keyword = normalizedGallerySearch.value
+  const filtered = galleryImages.value.filter((item) => {
+    if (galleryOrientationFilter.value !== 'all' && item.orientation !== galleryOrientationFilter.value) {
+      return false
+    }
+    if (!keyword) return true
+    const target = searchIndex.value.get(item.id) ?? ''
+    return target.includes(keyword)
+  })
+  if (gallerySortMode.value === 'RANDOM') {
+    return filtered
+  }
+  return [...filtered].sort((a, b) => {
+    if (gallerySortMode.value === 'AREA_DESC') {
+      const areaDiff = b.pixelArea - a.pixelArea
+      if (areaDiff !== 0) return areaDiff
+      return a.caption.localeCompare(b.caption, 'zh-CN')
+    }
+    if (gallerySortMode.value === 'AREA_ASC') {
+      const areaDiff = a.pixelArea - b.pixelArea
+      if (areaDiff !== 0) return areaDiff
+      return a.caption.localeCompare(b.caption, 'zh-CN')
+    }
+    const pageA = a.pageId ?? Number.POSITIVE_INFINITY
+    const pageB = b.pageId ?? Number.POSITIVE_INFINITY
+    if (pageA !== pageB) return pageA - pageB
+    return a.caption.localeCompare(b.caption, 'zh-CN')
+  })
+})
+
+const GALLERY_PAGE_SIZE = 24
+const galleryVisibleCount = ref(GALLERY_PAGE_SIZE)
+const visibleGalleryImages = computed(() => filteredGalleryImages.value.slice(0, galleryVisibleCount.value))
+const hasMoreGallery = computed(() => filteredGalleryImages.value.length > galleryVisibleCount.value)
+
+watch([gallerySearch, galleryOrientationFilter, gallerySortMode], () => {
+  galleryVisibleCount.value = GALLERY_PAGE_SIZE
+})
+
+function resetFilters() {
+  gallerySearch.value = ''
+  galleryOrientationFilter.value = 'all'
+  gallerySortMode.value = 'RANDOM'
+  galleryVisibleCount.value = GALLERY_PAGE_SIZE
+}
 
 const reload = async () => {
   await refresh()
@@ -171,24 +370,61 @@ const reload = async () => {
 </script>
 
 <style scoped>
-.gallery-grid {
-  column-count: 1;
-  column-gap: 1.25rem;
+.gallery-shell {
+  position: relative;
 }
 
-@media (min-width: 640px) {
+.gallery-head {
+  position: relative;
+  overflow: hidden;
+}
+
+.gallery-head::before,
+.gallery-head::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(32px);
+}
+
+.gallery-head::before {
+  left: -5rem;
+  top: -5rem;
+  width: 12rem;
+  height: 12rem;
+  background: rgba(var(--accent), 0.24);
+}
+
+.gallery-head::after {
+  right: -5rem;
+  bottom: -5rem;
+  width: 11rem;
+  height: 11rem;
+  background: rgba(var(--accent-strong), 0.2);
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 720px) {
   .gallery-grid {
+    display: block;
     column-count: 2;
+    column-gap: 1rem;
   }
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 1120px) {
   .gallery-grid {
     column-count: 3;
   }
 }
 
-@media (min-width: 1440px) {
+@media (min-width: 1500px) {
   .gallery-grid {
     column-count: 4;
   }
@@ -197,6 +433,74 @@ const reload = async () => {
 .gallery-item {
   break-inside: avoid;
   -webkit-column-break-inside: avoid;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.gallery-card {
+  position: relative;
+}
+
+.gallery-card__media {
+  min-height: 13rem;
+}
+
+.gallery-card__media--panorama {
+  min-height: 10.5rem;
+}
+
+.gallery-card__media--tall {
+  min-height: 19rem;
+}
+
+.gallery-card__media--landscape {
+  min-height: 12.5rem;
+}
+
+.gallery-card__media--portrait {
+  min-height: 17rem;
+}
+
+.gallery-card__shade {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.06), transparent 36%, rgba(15, 23, 42, 0.4)),
+    linear-gradient(124deg, rgba(255, 255, 255, 0.22), transparent 44%);
+}
+
+.gallery-card__foil {
+  pointer-events: none;
+  position: absolute;
+  inset: -16%;
+  background: linear-gradient(118deg, transparent 24%, rgba(255, 255, 255, 0.46) 38%, transparent 52%);
+  opacity: 0.56;
+  transform: translateX(-30%);
+  transition: transform 0.72s ease, opacity 0.4s ease;
+  mix-blend-mode: screen;
+}
+
+.group:hover .gallery-card__foil {
+  opacity: 0.82;
+  transform: translateX(35%);
+}
+
+.gallery-card__cta {
+  transform: translateY(4px);
+  opacity: 0.94;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.group:hover .gallery-card__cta {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-card,
+  .gallery-card__foil,
+  .gallery-card__cta {
+    transition: none !important;
+  }
 }
 </style>

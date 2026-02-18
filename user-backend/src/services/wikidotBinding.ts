@@ -7,6 +7,24 @@ const TASK_TTL_HOURS = 48;
 
 // BFF base URL for resolving Wikidot users
 const BFF_BASE_URL = process.env.BFF_BASE_URL || 'http://127.0.0.1:4396';
+const BFF_INTERNAL_KEY = (process.env.BFF_INTERNAL_API_KEY || '').trim();
+const BFF_INTERNAL_FETCH_TIMEOUT_MS = Math.max(1000, Math.floor(Number(process.env.BFF_INTERNAL_FETCH_TIMEOUT_MS ?? '4500') || 4500));
+
+async function fetchBffInternal(pathnameWithQuery: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BFF_INTERNAL_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(`${BFF_BASE_URL}${pathnameWithQuery}`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: BFF_INTERNAL_KEY
+        ? { 'x-internal-key': BFF_INTERNAL_KEY }
+        : undefined
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function generateVerificationCode(): string {
   let code = 'SCPPER-';
@@ -25,16 +43,63 @@ interface ResolvedWikidotUser {
 }
 
 export async function resolveWikidotUser(username: string): Promise<ResolvedWikidotUser | null> {
+  let response: Response;
   try {
-    const response = await fetch(`${BFF_BASE_URL}/internal/wikidot-user?username=${encodeURIComponent(username)}`);
-    if (!response.ok) {
-      return null;
-    }
-    const data = await response.json() as { ok: boolean; user?: ResolvedWikidotUser };
-    return data.ok && data.user ? data.user : null;
+    response = await fetchBffInternal(`/internal/wikidot-user?username=${encodeURIComponent(username)}`);
   } catch {
     return null;
   }
+
+  const data = await response.json().catch(() => null) as unknown;
+
+  if (!response.ok) {
+    const errorType = data && typeof data === 'object' ? (data as { error?: string }).error : undefined;
+    if (response.status === 409 && errorType === 'ambiguous') {
+      throw new Error('该用户名匹配多个 Wikidot 用户，请使用更精确的用户名或联系管理员处理');
+    }
+    return null;
+  }
+
+  const parsed = data as { ok?: boolean; user?: ResolvedWikidotUser };
+  return parsed.ok && parsed.user ? parsed.user : null;
+}
+
+export async function resolveWikidotUserById(wikidotId: number): Promise<ResolvedWikidotUser | null> {
+  let response: Response;
+  try {
+    response = await fetchBffInternal(`/internal/wikidot-user?wikidotId=${encodeURIComponent(String(wikidotId))}`);
+  } catch {
+    return null;
+  }
+
+  const data = await response.json().catch(() => null) as unknown;
+  if (!response.ok) {
+    return null;
+  }
+
+  const parsed = data as { ok?: boolean; user?: ResolvedWikidotUser };
+  return parsed.ok && parsed.user ? parsed.user : null;
+}
+
+export async function searchWikidotUsers(query: string, limit: number = 8): Promise<ResolvedWikidotUser[]> {
+  const normalizedLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.floor(limit), 1), 20) : 8;
+
+  let response: Response;
+  try {
+    response = await fetchBffInternal(
+      `/internal/wikidot-user-search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(normalizedLimit))}`
+    );
+  } catch {
+    return [];
+  }
+
+  const data = await response.json().catch(() => null) as unknown;
+  if (!response.ok) return [];
+
+  const parsed = data as { ok?: boolean; users?: ResolvedWikidotUser[] };
+  if (!parsed.ok || !Array.isArray(parsed.users)) return [];
+
+  return parsed.users.filter((user) => Number.isFinite(user.wikidotId) && user.wikidotId > 0);
 }
 
 export interface StartBindingResult {
@@ -50,7 +115,7 @@ export interface StartBindingResult {
 
 export async function startBindingTask(
   userId: string,
-  wikidotUsername: string
+  payload: { wikidotUsername?: string; wikidotId?: number }
 ): Promise<StartBindingResult> {
   // 1. Check if user already has a linked Wikidot account
   const account = await prisma.userAccount.findUnique({
@@ -64,7 +129,21 @@ export async function startBindingTask(
   }
 
   // 2. Resolve Wikidot username to ID
-  const wikidotUser = await resolveWikidotUser(wikidotUsername);
+  const wikidotUsername = payload.wikidotUsername?.trim() || '';
+  const wikidotId = payload.wikidotId;
+
+  let wikidotUser: ResolvedWikidotUser | null = null;
+  let displayInput = '';
+  if (wikidotId && Number.isFinite(wikidotId) && wikidotId > 0) {
+    wikidotUser = await resolveWikidotUserById(wikidotId);
+    displayInput = String(wikidotId);
+  } else if (wikidotUsername) {
+    wikidotUser = await resolveWikidotUser(wikidotUsername);
+    displayInput = wikidotUsername;
+  } else {
+    throw new Error('请输入 Wikidot 用户名或 ID');
+  }
+
   if (!wikidotUser) {
     throw new Error('未找到该 Wikidot 用户，请确认用户名正确且该用户在站点有活动记录');
   }
@@ -114,7 +193,7 @@ export async function startBindingTask(
     data: {
       userId,
       wikidotUserId: wikidotUser.wikidotId,
-      wikidotUsername: wikidotUser.displayName || wikidotUser.username || wikidotUsername,
+      wikidotUsername: wikidotUser.displayName || wikidotUser.username || displayInput,
       verificationCode,
       status: WikidotBindingStatus.PENDING,
       expiresAt
@@ -182,8 +261,9 @@ export async function cancelBindingTask(userId: string): Promise<boolean> {
   const task = await prisma.wikidotBindingTask.findFirst({
     where: {
       userId,
-      status: WikidotBindingStatus.PENDING
-    }
+      status: { in: [WikidotBindingStatus.PENDING, WikidotBindingStatus.EXPIRED] }
+    },
+    orderBy: { createdAt: 'desc' }
   });
 
   if (!task) return false;

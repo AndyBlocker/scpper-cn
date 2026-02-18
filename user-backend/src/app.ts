@@ -4,7 +4,7 @@ import cors from 'cors';
 import pinoHttp from 'pino-http';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
-import { gachaRouter, gachaAdminRouter } from './routes/gacha.js';
+import { gachaRouter, gachaAdminRouter } from './routes/gacha/index.js';
 import { eventsRouter } from './routes/events.js';
 import { ftmlProjectsRouter } from './routes/ftml-projects.js';
 import { wikidotBindingRouter, wikidotBindingInternalRouter } from './routes/wikidotBinding.js';
