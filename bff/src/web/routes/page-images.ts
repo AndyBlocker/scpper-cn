@@ -47,11 +47,45 @@ export function pageImagesRouter(pool: Pool) {
           pv."wikidotId"         AS "wikidotId",
           pv.title                AS title,
           pv."alternateTitle"    AS "alternateTitle",
-          p."currentUrl"         AS url
+          p."currentUrl"         AS url,
+          COALESCE(attrs.authors, '[]'::json) AS authors
         FROM "PageVersionImage" pvi
         JOIN "ImageAsset" ia ON ia.id = pvi."imageAssetId"
         JOIN "PageVersion" pv ON pv.id = pvi."pageVersionId"
         JOIN "Page" p ON p.id = pv."pageId"
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(
+            JSON_AGG(
+              JSON_BUILD_OBJECT(
+                'displayName', j."displayName",
+                'userWikidotId', j."userWikidotId"
+              )
+              ORDER BY j.rank
+            ) FILTER (WHERE j."displayName" IS NOT NULL),
+            '[]'::json
+          ) AS authors
+          FROM (
+            SELECT DISTINCT ON (COALESCE(u.id::text, a."anonKey"))
+              CASE
+                WHEN u."displayName" IS NOT NULL THEN u."displayName"
+                WHEN u."username" IS NOT NULL THEN u."username"
+                WHEN a."anonKey" IS NOT NULL THEN regexp_replace(a."anonKey", '^anon:', '')
+                ELSE NULL
+              END AS "displayName",
+              u."wikidotId" AS "userWikidotId",
+              ROW_NUMBER() OVER (ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC) AS rank
+            FROM (
+              SELECT
+                a.*,
+                BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+              FROM "Attribution" a
+              WHERE a."pageVerId" = pv.id
+            ) a
+            LEFT JOIN "User" u ON u.id = a."userId"
+            WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+            ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC
+          ) j
+        ) attrs ON TRUE
         WHERE pvi.status = 'RESOLVED'
           AND pvi."imageAssetId" IS NOT NULL
           AND ia."storagePath" IS NOT NULL
@@ -80,7 +114,8 @@ export function pageImagesRouter(pool: Pool) {
           wikidotId: row.wikidotId,
           title: row.title,
           alternateTitle: row.alternateTitle,
-          url: row.url
+          url: row.url,
+          authors: Array.isArray(row.authors) ? row.authors : []
         }
       }));
 

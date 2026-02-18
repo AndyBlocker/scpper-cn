@@ -18,6 +18,7 @@ import { showImagesProgress } from './images-progress.js';
 import { countComponentIncludeUsage } from './include-usage.js';
 import { checkRecentAlerts } from './alerts.js';
 import { syncGachaPool } from './gacha-sync.js';
+import { backfillGachaPageImageRefs } from './gacha-backfill-page-image-refs.js';
 
 const program = new Command();
 
@@ -48,6 +49,10 @@ program
   .option('--token-cost <number>', 'Token cost for a single draw')
   .option('--ten-draw-cost <number>', 'Token cost for ten draws (defaults to token-cost ×10)')
   .option('--duplicate-reward <number>', 'Tokens awarded for duplicate cards')
+  .option('--include-tags <tags>', '仅同步包含指定标签的页面（逗号分隔）')
+  .option('--include-match <mode>', 'include-tags 的匹配模式：any|all（默认 any）')
+  .option('--exclude-tags <tags>', '排除包含指定标签的页面（逗号分隔）')
+  .option('--card-id-prefix <prefix>', '生成卡片 ID 的前缀（默认基于 pool-id 自动推导）')
   .option('--inactive', 'Create or update pool as inactive instead of active')
   .option('--dry-run', 'Preview planned changes without writing to the database')
   .option('--limit <number>', 'Only sync the first N pages (0 = all)')
@@ -63,6 +68,18 @@ program
     const duplicateReward = parseIntOption(options.duplicateReward);
     const limit = parseIntOption(options.limit) ?? 0;
 
+    const parseTagsOption = (value: unknown): string[] => {
+      if (value == null) return [];
+      return String(value)
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+    };
+
+    const includeTags = parseTagsOption(options.includeTags);
+    const excludeTags = parseTagsOption(options.excludeTags);
+    const includeMatch = String(options.includeMatch ?? '').toLowerCase() === 'all' ? 'all' : 'any';
+
     await syncGachaPool({
       poolId: options.poolId ? String(options.poolId) : undefined,
       poolName: options.poolName ? String(options.poolName) : undefined,
@@ -70,10 +87,46 @@ program
       tokenCost,
       tenDrawCost,
       duplicateReward,
+      includeTags,
+      includeMatch,
+      excludeTags,
+      cardIdPrefix: options.cardIdPrefix ? String(options.cardIdPrefix) : undefined,
       isActive: options.inactive ? false : undefined,
       dryRun: Boolean(options.dryRun),
       limit
     });
+  });
+
+program
+  .command('gacha-backfill-image-refs')
+  .description('Backfill gacha card imageUrl to /page-images/:assetId for low-variant delivery')
+  .option('--dry-run', 'Preview without writing to user-backend database')
+  .option('--scan-batch-size <number>', 'Backend PageVersion scan batch size', '2000')
+  .option('--update-chunk-size <number>', 'User-backend UPDATE VALUES chunk size', '500')
+  .action(async (options) => {
+    const parseIntOption = (value: unknown, fallback: number): number => {
+      const parsed = Number.parseInt(String(value ?? ''), 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+      return parsed;
+    };
+
+    await backfillGachaPageImageRefs({
+      dryRun: Boolean(options.dryRun),
+      scanBatchSize: parseIntOption(options.scanBatchSize, 2000),
+      updateChunkSize: parseIntOption(options.updateChunkSize, 500)
+    });
+  });
+
+program
+  .command('gacha-sync-split-original')
+  .description('已废弃：v0.2 固定为单常驻池，不再支持按标签拆分卡池')
+  .option('--tag <tag>', '用于拆分的标签（默认：原创）', '原创')
+  .option('--inactive', 'Create or update pools as inactive instead of active')
+  .option('--dry-run', 'Preview planned changes without writing to the database')
+  .option('--limit <number>', 'Only sync the first N matched pages per pool (0 = all)')
+  .action(async (options) => {
+    const tag = String(options.tag ?? '原创').trim() || '原创';
+    throw new Error(`gacha-sync-split-original 已禁用：当前仅允许单常驻池（收到 tag=${tag}）。`);
   });
 
 program

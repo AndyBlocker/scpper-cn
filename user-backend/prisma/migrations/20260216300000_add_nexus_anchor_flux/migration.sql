@@ -1,0 +1,4 @@
+-- AlterEnum
+ALTER TYPE "GachaAffixVisualStyle" ADD VALUE IF NOT EXISTS 'NEXUS';
+ALTER TYPE "GachaAffixVisualStyle" ADD VALUE IF NOT EXISTS 'ANCHOR';
+ALTER TYPE "GachaAffixVisualStyle" ADD VALUE IF NOT EXISTS 'FLUX';

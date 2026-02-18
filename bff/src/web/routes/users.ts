@@ -841,7 +841,31 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
       const bucket = rawGranularity === 'month' ? 'month' : 'week';
       const dateLabel = 'YYYY-MM-DD';
 
-      const cacheKey = `users:${wikidotIdInt}:rating-history:${bucket}`;
+      // 与 UserStats 口径保持一致：当用户当前无有效作品时，历史曲线应为空
+      const sigSql = `
+        SELECT
+          COALESCE(us."pageCount", 0)::int AS "pageCount",
+          COALESCE(us."totalRating", 0)::int AS "totalRating",
+          COALESCE(EXTRACT(EPOCH FROM us."ratingUpdatedAt"), 0)::bigint AS "ratingUpdatedAtEpoch"
+        FROM "User" u
+        LEFT JOIN "UserStats" us ON us."userId" = u.id
+        WHERE u."wikidotId" = $1
+      `;
+      const { rows: sigRows } = await readPool.query(sigSql, [wikidotIdInt]);
+      if (!sigRows?.length) return res.status(404).json({ error: 'not_found' });
+      const sig = sigRows[0] as {
+        pageCount: number;
+        totalRating: number;
+        ratingUpdatedAtEpoch: number | string;
+      };
+      const pageCount = Number(sig.pageCount ?? 0);
+      const totalRating = Number(sig.totalRating ?? 0);
+      const ratingUpdatedAtEpoch = Number(sig.ratingUpdatedAtEpoch ?? 0);
+      if (pageCount <= 0) {
+        return res.json([]);
+      }
+
+      const cacheKey = `users:${wikidotIdInt}:rating-history:${bucket}:${pageCount}:${totalRating}:${ratingUpdatedAtEpoch}`;
       const rows = await cache.remember(cacheKey, 300, async () => {
         const sql = `
 WITH base_user AS (

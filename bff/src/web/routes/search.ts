@@ -34,6 +34,7 @@ type PageSearchArgs = {
   voteCountMax: number | null;
   dateMin: string | null;
   dateMax: string | null;
+  regexMode: boolean;
 };
 
 type PageSearchResult = {
@@ -142,6 +143,35 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     return '';
   };
 
+  // ── 正则搜索辅助 ──────────────────────────────
+  const MAX_REGEX_LENGTH = 200;
+
+  function validateRegex(pattern: string): { valid: boolean; error?: string } {
+    if (!pattern || pattern.trim().length === 0) {
+      return { valid: false, error: '正则表达式不能为空' };
+    }
+    if (pattern.length > MAX_REGEX_LENGTH) {
+      return { valid: false, error: `正则表达式过长（最多 ${MAX_REGEX_LENGTH} 个字符）` };
+    }
+    return { valid: true };
+  }
+
+  async function withRegexTimeout<T>(fn: (client: any) => Promise<T>): Promise<T> {
+    const client = await readPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL statement_timeout = 20000');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   function extractExcerpt(textContent: string | null, maxLength = 160): string | null {
     if (!textContent) return null;
     const cleanText = textContent
@@ -168,7 +198,68 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
   }
 
-  async function executePageSearch(args: PageSearchArgs): Promise<PageSearchResult> {
+  function escapeHtml(str: string): string {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /**
+   * 正则高亮摘要：在 search_text 中找到匹配位置，提取上下文窗口并用
+   * <span class="keyword"> 包裹匹配文本，与 pgroonga_snippet_html 输出格式一致。
+   * 如果 JS 引擎不支持该正则或无匹配，返回 null（调用方降级到 extractExcerpt）。
+   */
+  function highlightRegexSnippet(text: string | null, pattern: string, maxLength = 200): string | null {
+    if (!text || !pattern) return null;
+    try {
+      // 先清理 wiki/HTML/CSS 标记
+      const clean = text
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\[\[[^\]]*\]\]/g, '')
+        .replace(/\{\{[^}]*\}\}/g, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\{[^}]{0,500}\}/g, ' ')
+        .replace(/[a-z-]+\s*:\s*[#\d.]+[a-z%]*\s*;/gi, ' ')
+        .replace(/https?:\/\/\S+/g, '')
+        .replace(/^[#*\-+>|\s]+/gm, '')
+        .replace(/\n+/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (!clean) return null;
+
+      const regex = new RegExp(pattern, 'gi');
+      const firstMatch = regex.exec(clean);
+      if (!firstMatch) return null;
+
+      // 以首个匹配为中心提取窗口
+      const start = Math.max(0, firstMatch.index - 10);
+      const end = Math.min(clean.length, start + maxLength);
+      const window = clean.slice(start, end);
+
+      // 逐段构建 HTML：非匹配部分转义，匹配部分用 <span> 包裹
+      const windowRegex = new RegExp(pattern, 'gi');
+      let result = '';
+      let lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = windowRegex.exec(window)) !== null) {
+        result += escapeHtml(window.slice(lastIndex, m.index));
+        result += '<span class="keyword">' + escapeHtml(m[0]) + '</span>';
+        lastIndex = m.index + m[0].length;
+        // 防止零长度匹配无限循环
+        if (m[0].length === 0) { windowRegex.lastIndex++; }
+      }
+      result += escapeHtml(window.slice(lastIndex));
+
+      if (start > 0) result = '...' + result;
+      if (end < clean.length) result += '...';
+
+      return result;
+    } catch {
+      // JS 引擎不支持该正则语法（如 PostgreSQL 特有的语法），静默降级
+      return null;
+    }
+  }
+
+  async function executePageSearch(args: PageSearchArgs, db: any = readPool): Promise<PageSearchResult> {
     const {
       trimmedQuery,
       limit,
@@ -185,6 +276,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       wantDate,
       candidateLimit,
       snippetTop,
+      regexMode,
       wilson95Min,
       wilson95Max,
       controversyMin,
@@ -441,9 +533,9 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       ];
 
       const [{ rows }, totalRes] = await Promise.all([
-        readPool.query(finalSql, params),
+        db.query(finalSql, params),
         wantTotal
-          ? readPool.query(buildTotalSql(), totalParams)
+          ? db.query(buildTotalSql(), totalParams)
           : Promise.resolve(null as any)
       ]);
 
@@ -455,7 +547,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           new Set(
             rows
               .map((row: any) => Number(row.pageId))
-              .filter((id) => Number.isInteger(id) && id > 0)
+              .filter((id: number) => Number.isInteger(id) && id > 0)
           )
         );
         if (pageIds.length > 0) {
@@ -467,9 +559,9 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
                 AND pv."pageId" = ANY($1::int[])
                 ${deletedFilterClause}
             `;
-          const { rows: snippetRows } = await readPool.query(snippetSql, [pageIds]);
+          const { rows: snippetRows } = await db.query(snippetSql, [pageIds]);
           snippetMap = new Map(
-            snippetRows.map((row) => [
+            snippetRows.map((row: any) => [
               Number(row.pageId),
               extractExcerpt(typeof row.textSnippet === 'string' ? row.textSnippet : null, 180)
             ])
@@ -492,6 +584,215 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     }
 
     // 有查询模式：全文搜索 + 过滤
+
+    // ── 正则模式：单次扫描 + OR 条件 ──────────────────
+    // PGroonga 的 4-CTE 架构不适合正则：每个 CTE 都做全表扫描，4x 冗余
+    // 正则模式改为单次 JOIN 扫描，OR 匹配所有列，直接分页
+    if (regexMode) {
+      const regexMatchCond = `(
+        p."currentUrl" ~* $1
+        OR pv.title ~* $1
+        OR (pv."alternateTitle" IS NOT NULL AND pv."alternateTitle" ~* $1)
+        OR (pv."search_text" <> '' AND pv."search_text" ~* $1)
+      )`;
+
+      const regexBaseSql = `
+        SELECT
+          pv.id,
+          COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
+          pv."pageId",
+          pv.title,
+          pv."alternateTitle",
+          p."currentUrl" AS url,
+          p."firstPublishedAt" AS "firstRevisionAt",
+          CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END AS rating,
+          CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END AS "voteCount",
+          pv."revisionCount",
+          CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END AS "commentCount",
+          CASE WHEN pv."isDeleted" THEN COALESCE(prev.tags, ARRAY[]::text[]) ELSE COALESCE(pv.tags, ARRAY[]::text[]) END AS tags,
+          pv."isDeleted",
+          CASE WHEN pv."isDeleted" THEN pv."validFrom" ELSE NULL END AS "deletedAt",
+          pv."validFrom",
+          ps."wilson95",
+          ps."controversy",
+          LEFT(COALESCE(pv."search_text", ''), 2048) AS search_preview
+        FROM "PageVersion" pv
+        JOIN "Page" p ON pv."pageId" = p.id
+        LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+        LEFT JOIN LATERAL (
+          SELECT rating, "voteCount", "commentCount", tags
+          FROM "PageVersion" pv_prev
+          WHERE pv_prev."pageId" = pv."pageId"
+            AND pv_prev."isDeleted" = false
+          ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+          LIMIT 1
+        ) prev ON TRUE
+        WHERE pv."validTo" IS NULL
+          AND ${regexMatchCond}
+          AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+          AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
+          AND ($4::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) >= $4)
+          AND ($5::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) <= $5)
+          AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
+          AND ($10::float IS NULL OR ps."wilson95" >= $10)
+          AND ($11::float IS NULL OR ps."wilson95" <= $11)
+          AND ($12::float IS NULL OR ps."controversy" >= $12)
+          AND ($13::float IS NULL OR ps."controversy" <= $13)
+          AND ($14::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) >= $14)
+          AND ($15::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) <= $15)
+          AND ($16::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) >= $16)
+          AND ($17::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $17)
+          AND ($18::date IS NULL OR p."firstPublishedAt" >= $18::date)
+          AND ($19::date IS NULL OR p."firstPublishedAt" <= $19::date)
+          ${deletedFilterClause}
+        ORDER BY
+          CASE WHEN $9 = 'rating' THEN (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) END DESC NULLS LAST,
+          CASE WHEN $9 = 'rating_asc' THEN (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) END ASC NULLS LAST,
+          CASE WHEN $9 = 'recent' THEN COALESCE(p."firstPublishedAt", pv."validFrom") END DESC NULLS LAST,
+          CASE WHEN $9 = 'recent_asc' THEN COALESCE(p."firstPublishedAt", pv."validFrom") END ASC NULLS LAST,
+          CASE WHEN $9 = 'wilson95' THEN ps."wilson95" END DESC NULLS LAST,
+          CASE WHEN $9 = 'wilson95_asc' THEN ps."wilson95" END ASC NULLS LAST,
+          CASE WHEN $9 = 'controversy' THEN ps."controversy" END DESC NULLS LAST,
+          CASE WHEN $9 = 'controversy_asc' THEN ps."controversy" END ASC NULLS LAST,
+          CASE WHEN $9 = 'comment_count' THEN (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) END DESC NULLS LAST,
+          CASE WHEN $9 = 'comment_count_asc' THEN (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) END ASC NULLS LAST,
+          CASE WHEN $9 = 'vote_count' THEN (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) END DESC NULLS LAST,
+          CASE WHEN $9 = 'vote_count_asc' THEN (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) END ASC NULLS LAST,
+          (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) DESC NULLS LAST,
+          pv.id DESC
+        LIMIT $7::int OFFSET $8::int
+      `;
+
+      const regexTotalSql = wantTotal ? `
+        SELECT COUNT(DISTINCT pv.id) AS total
+        FROM "PageVersion" pv
+        JOIN "Page" p ON pv."pageId" = p.id
+        LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+        LEFT JOIN LATERAL (
+          SELECT rating, "voteCount", "commentCount", tags
+          FROM "PageVersion" pv_prev
+          WHERE pv_prev."pageId" = pv."pageId"
+            AND pv_prev."isDeleted" = false
+          ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
+          LIMIT 1
+        ) prev ON TRUE
+        WHERE pv."validTo" IS NULL
+          AND ${regexMatchCond}
+          AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
+          AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
+          AND ($4::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) >= $4)
+          AND ($5::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) <= $5)
+          AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
+          AND ($7::float IS NULL OR ps."wilson95" >= $7)
+          AND ($8::float IS NULL OR ps."wilson95" <= $8)
+          AND ($9::float IS NULL OR ps."controversy" >= $9)
+          AND ($10::float IS NULL OR ps."controversy" <= $10)
+          AND ($11::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) >= $11)
+          AND ($12::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) <= $12)
+          AND ($13::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) >= $13)
+          AND ($14::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $14)
+          AND ($15::date IS NULL OR p."firstPublishedAt" >= $15::date)
+          AND ($16::date IS NULL OR p."firstPublishedAt" <= $16::date)
+          ${deletedFilterClause}
+      ` : null;
+
+      const regexParams = [
+        trimmedQuery,           // $1
+        includeTagsParam,       // $2
+        excludeTagsParam,       // $3
+        ratingMinParam,         // $4
+        ratingMaxParam,         // $5
+        enforceExactTags,       // $6
+        limit,                  // $7
+        offset,                 // $8
+        normalizedOrder,        // $9
+        wilson95MinParam,       // $10
+        wilson95MaxParam,       // $11
+        controversyMinParam,    // $12
+        controversyMaxParam,    // $13
+        commentCountMinParam,   // $14
+        commentCountMaxParam,   // $15
+        voteCountMinParam,      // $16
+        voteCountMaxParam,      // $17
+        dateMinParam,           // $18
+        dateMaxParam            // $19
+      ];
+
+      const regexTotalParams = regexTotalSql ? [
+        trimmedQuery,           // $1
+        includeTagsParam,       // $2
+        excludeTagsParam,       // $3
+        ratingMinParam,         // $4
+        ratingMaxParam,         // $5
+        enforceExactTags,       // $6
+        wilson95MinParam,       // $7
+        wilson95MaxParam,       // $8
+        controversyMinParam,    // $9
+        controversyMaxParam,    // $10
+        commentCountMinParam,   // $11
+        commentCountMaxParam,   // $12
+        voteCountMinParam,      // $13
+        voteCountMaxParam,      // $14
+        dateMinParam,           // $15
+        dateMaxParam            // $16
+      ] : null;
+
+      const [{ rows }, totalRes] = await Promise.all([
+        db.query(regexBaseSql, regexParams),
+        regexTotalSql && regexTotalParams
+          ? db.query(regexTotalSql, regexTotalParams)
+          : Promise.resolve(null as any)
+      ]);
+
+      const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
+
+      // 二次查询：为结果行精确提取匹配位置周围的上下文（而非依赖截断的前 2048 字符）
+      let snippetMap: Map<number, string | null> = new Map();
+      if (wantSnippet && rows.length > 0) {
+        const snippetIds = Array.from(new Set(
+          rows.map((r: any) => Number(r.id)).filter((id: number) => Number.isInteger(id) && id > 0)
+        ));
+        if (snippetIds.length > 0) {
+          const regexSnippetSql = `
+            SELECT pv.id,
+              COALESCE(
+                (SELECT substring(pv."search_text" FROM greatest(1, position(m[1] IN pv."search_text") - 10) FOR 300)
+                 FROM regexp_matches(pv."search_text", $1, 'i') AS m LIMIT 1),
+                LEFT(COALESCE(pv."search_text", ''), 300)
+              ) AS context
+            FROM "PageVersion" pv
+            WHERE pv.id = ANY($2::int[])
+          `;
+          const { rows: snippetRows } = await db.query(regexSnippetSql, [trimmedQuery, snippetIds]);
+          for (const sr of snippetRows) {
+            const ctx = typeof sr.context === 'string' ? sr.context : null;
+            snippetMap.set(Number(sr.id), highlightRegexSnippet(ctx, trimmedQuery) ?? extractExcerpt(ctx, 180));
+          }
+        }
+      }
+
+      const results = rows.map((row: any) => {
+        const { search_preview: _searchPreview, ...rest } = row;
+        const snippet = wantSnippet
+          ? snippetMap.get(Number(row.id)) ?? null
+          : null;
+        const base = wantDate ? { ...rest } : (({ firstRevisionAt, ...restNoDate }: any) => restNoDate)(rest);
+        return { ...base, snippet, excerpt: snippet, textScore: null };
+      });
+
+      return total !== undefined ? { results, total } : { results };
+    }
+
+    // ── PGroonga 模式：4-CTE 候选排序 ───────────────────
+    // 根据 regexMode 条件化搜索操作符（下面仅用于 PGroonga 模式）
+    const urlMatchSql = 'p."currentUrl" &@~ pgroonga_query_escape($1)';
+    const titleMatchSql = 'pv.title &@~ pgroonga_query_escape($1)';
+    const altTitleMatchSql = 'pv."alternateTitle" &@~ pgroonga_query_escape($1)';
+    const textMatchSql = 'pv."search_text" &@~ pgroonga_query_escape($1)';
+    const scoreExprSql = 'pgroonga_score(pv.tableoid, pv.ctid) AS score';
+    const aTitleMatchSql = 'a.title &@~ pgroonga_query_escape($1)';
+    const aAltMatchSql = 'a."alternateTitle" &@~ pgroonga_query_escape($1)';
+
     const baseSql = `
         WITH url_hits AS (
           SELECT pv.id AS pv_id,
@@ -501,41 +802,41 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "Page" p
           JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
           WHERE $1::text IS NOT NULL
-            AND p."currentUrl" &@~ pgroonga_query_escape($1)
+            AND ${urlMatchSql}
           LIMIT $10::int
         ),
         title_hits AS (
           SELECT pv.id AS pv_id,
                  0.9 AS weight,
-                 pgroonga_score(pv.tableoid, pv.ctid) AS score,
+                 ${scoreExprSql},
                  'title'::text AS source
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
-            AND pv.title &@~ pgroonga_query_escape($1)
+            AND ${titleMatchSql}
           ORDER BY score DESC
           LIMIT $10::int
         ),
         alternate_hits AS (
           SELECT pv.id AS pv_id,
                  0.8 AS weight,
-                 pgroonga_score(pv.tableoid, pv.ctid) AS score,
+                 ${scoreExprSql},
                  'alternate'::text AS source
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
             AND pv."alternateTitle" IS NOT NULL
-            AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
+            AND ${altTitleMatchSql}
           ORDER BY score DESC
           LIMIT $10::int
         ),
         text_hits AS (
           SELECT pv.id AS pv_id,
                  0.5 AS weight,
-                 pgroonga_score(pv.tableoid, pv.ctid) AS score,
+                 ${scoreExprSql},
                  'text'::text AS source
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
             AND pv."search_text" <> ''
-            AND pv."search_text" &@~ pgroonga_query_escape($1)
+            AND ${textMatchSql}
           ORDER BY score DESC
           LIMIT $10::int
         ),
@@ -643,8 +944,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           CASE WHEN lower(split_part(a.url, '/', 4)) = lower($1) THEN 1 ELSE 0 END AS host_match,
           CASE WHEN lower(a.url) = lower($1) THEN 1 ELSE 0 END AS exact_url,
           CASE WHEN a.title IS NOT NULL AND lower(a.title) = lower($1) THEN 1 ELSE 0 END AS exact_title,
-          CASE WHEN a.title IS NOT NULL AND a.title &@~ pgroonga_query_escape($1) THEN 1 ELSE 0 END AS title_hit,
-          CASE WHEN a."alternateTitle" IS NOT NULL AND a."alternateTitle" &@~ pgroonga_query_escape($1) THEN 1 ELSE 0 END AS alt_hit
+          CASE WHEN a.title IS NOT NULL AND ${aTitleMatchSql} THEN 1 ELSE 0 END AS title_hit,
+          CASE WHEN a."alternateTitle" IS NOT NULL AND ${aAltMatchSql} THEN 1 ELSE 0 END AS alt_hit
         FROM aggregated a
         ORDER BY
           CASE WHEN $9 IN ('rating', 'rating_asc', 'wilson95', 'wilson95_asc', 'controversy', 'controversy_asc', 'comment_count', 'comment_count_asc', 'vote_count', 'vote_count_asc') THEN NULL END,
@@ -683,14 +984,14 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "Page" p
           JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
           WHERE $1::text IS NOT NULL
-            AND p."currentUrl" &@~ pgroonga_query_escape($1)
+            AND ${urlMatchSql}
           LIMIT $7::int
         ),
         title_hits AS (
           SELECT pv.id AS pv_id
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
-            AND pv.title &@~ pgroonga_query_escape($1)
+            AND ${titleMatchSql}
           LIMIT $7::int
         ),
         alternate_hits AS (
@@ -698,7 +999,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
             AND pv."alternateTitle" IS NOT NULL
-            AND pv."alternateTitle" &@~ pgroonga_query_escape($1)
+            AND ${altTitleMatchSql}
           LIMIT $7::int
         ),
         text_hits AS (
@@ -706,7 +1007,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
             AND pv."search_text" <> ''
-            AND pv."search_text" &@~ pgroonga_query_escape($1)
+            AND ${textMatchSql}
           LIMIT $7::int
         ),
         candidates AS (
@@ -800,18 +1101,18 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       : null;
 
     const [{ rows }, totalRes] = await Promise.all([
-      readPool.query(baseSql, params),
-      totalSql && totalParams ? readPool.query(totalSql, totalParams) : Promise.resolve(null as any)
+      db.query(baseSql, params),
+      totalSql && totalParams ? db.query(totalSql, totalParams) : Promise.resolve(null as any)
     ]);
 
     let highlightMap: Map<number, string | null> = new Map();
-    if (wantSnippet && snippetTop > 0 && rows.length > 0) {
+    if (wantSnippet && snippetTop > 0 && rows.length > 0 && !regexMode) {
       const highlightIds = Array.from(
         new Set(
           rows
             .slice(0, snippetTop)
             .map((row: any) => Number(row.id))
-            .filter((id) => Number.isInteger(id) && id > 0)
+            .filter((id: number) => Number.isInteger(id) && id > 0)
         )
       );
 
@@ -825,9 +1126,9 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             ) kw ON TRUE
             WHERE pv.id = ANY($2::int[])
           `;
-        const { rows: snippetRows } = await readPool.query(snippetSql, [trimmedQuery, highlightIds]);
+        const { rows: snippetRows } = await db.query(snippetSql, [trimmedQuery, highlightIds]);
         highlightMap = new Map(
-          snippetRows.map((row) => [Number(row.id), typeof row.snippet === 'string' ? row.snippet : null])
+          snippetRows.map((row: any) => [Number(row.id), typeof row.snippet === 'string' ? row.snippet : null])
         );
       }
     }
@@ -871,6 +1172,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
 
   // GET /search/pages
   router.get('/pages', async (req, res, next) => {
+    let regexMode = false;
     try {
       const {
         query,
@@ -896,7 +1198,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMin,
         voteCountMax,
         dateMin,
-        dateMax
+        dateMax,
+        isRegex
       } = req.query as Record<string, string>;
 
       const normalizedDeletedFilter = normalizeDeletedFilter(deletedFilter);
@@ -913,6 +1216,15 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       const wantDate = String(includeDate).toLowerCase() === 'true';
       const trimmedQuery = query ? query.trim() : '';
       const hasQuery = trimmedQuery.length > 0;
+      regexMode = ['true', '1', 'yes'].includes(String(isRegex || '').toLowerCase()) && hasQuery;
+
+      // 正则校验
+      if (regexMode) {
+        const validation = validateRegex(trimmedQuery);
+        if (!validation.valid) {
+          return res.status(400).json({ error: 'invalid_regex', message: validation.error });
+        }
+      }
       const limitInt = Math.max(0, Number(limit) | 0) || 20;
       const offsetInt = Math.max(0, Number(offset) | 0);
       const includeTagsArray = tags
@@ -924,7 +1236,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       const enforceExactTags =
         ['true', '1', 'yes'].includes(String(onlyIncludeTags || '').toLowerCase()) &&
         !!(includeTagsArray && includeTagsArray.length > 0);
-      const normalizedOrder = (() => {
+      const rawOrder = (() => {
         const key = String(orderBy || '').toLowerCase();
         if (key === 'rating_asc') return 'rating_asc';
         if (key === 'recent_asc') return 'recent_asc';
@@ -947,6 +1259,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         if (key === 'vote_count_desc') return 'vote_count';
         return 'relevance';
       })();
+      // 正则模式下无 PGroonga 相关性分数，自动降级为 rating
+      const normalizedOrder = regexMode && rawOrder === 'relevance' ? 'rating' : rawOrder;
       const ratingMinNumber = parseNullableInt(ratingMin);
       const ratingMaxNumber = parseNullableInt(ratingMax);
       const wilson95MinNumber = parseNullableFloat(wilson95Min);
@@ -984,7 +1298,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         dateMin: dateMinParsed ?? undefined,
         dateMax: dateMaxParsed ?? undefined,
         deleted: normalizedDeletedFilter,
-        exactTags: enforceExactTags
+        exactTags: enforceExactTags,
+        isRegex: regexMode || undefined
       };
 
       const cacheKey = buildCacheKey(
@@ -996,7 +1311,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         return res.json(cached);
       }
 
-      const pageData = await executePageSearch({
+      const searchArgs: PageSearchArgs = {
         trimmedQuery,
         limit: limitInt,
         offset: offsetInt,
@@ -1012,6 +1327,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         wantDate,
         candidateLimit,
         snippetTop,
+        regexMode,
         wilson95Min: wilson95MinNumber,
         wilson95Max: wilson95MaxNumber,
         controversyMin: controversyMinNumber,
@@ -1022,7 +1338,11 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMax: voteCountMaxNumber,
         dateMin: dateMinParsed,
         dateMax: dateMaxParsed
-      });
+      };
+
+      const pageData = regexMode
+        ? await withRegexTimeout(client => executePageSearch(searchArgs, client))
+        : await executePageSearch(searchArgs);
 
       const payload = pageData.total !== undefined
         ? { results: pageData.results, total: pageData.total }
@@ -1030,39 +1350,93 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
 
       await writeCache(cacheKey, payload, defaultCacheTtl);
       return res.json(payload);
-    } catch (err) {
+    } catch (err: any) {
+      if (regexMode && err?.code === '2201B') {
+        return res.status(400).json({
+          error: 'invalid_regex',
+          message: '无效的正则表达式：' + (err.message || '语法错误')
+        });
+      }
+      if (regexMode && err?.message?.includes('statement timeout')) {
+        return res.status(400).json({
+          error: 'regex_timeout',
+          message: '正则表达式执行超时，请简化表达式'
+        });
+      }
       next(err);
     }
   });
 
   // GET /search/users
   router.get('/users', async (req, res, next) => {
+    let userRegexMode = false;
     try {
-      const { query, limit = '20', offset = '0', includeTotal = 'true' } = req.query as Record<string, string>;
+      const { query, limit = '20', offset = '0', includeTotal = 'true', isRegex } = req.query as Record<string, string>;
       if (!query) return res.status(400).json({ error: 'query is required' });
       const wantTotal = String(includeTotal).toLowerCase() === 'true';
+      userRegexMode = ['true', '1', 'yes'].includes(String(isRegex || '').toLowerCase());
+
+      if (userRegexMode) {
+        const validation = validateRegex(query.trim());
+        if (!validation.valid) {
+          return res.status(400).json({ error: 'invalid_regex', message: validation.error });
+        }
+      }
+
+      const userMatchSql = userRegexMode
+        ? `u."displayName" ~* $1 OR u.username ~* $1 OR replace(u.username, '_', ' ') ~* $1`
+        : `u."displayName" &@~ pgroonga_query_escape($1) OR u.username &@~ pgroonga_query_escape($1) OR replace(u.username, '_', ' ') &@~ pgroonga_query_escape($1)`;
+
       const sql = `
-        SELECT 
+        SELECT
           u.id,
           u."wikidotId",
-          u."displayName",
+          COALESCE(u."displayName", u.username) AS "displayName",
           us."overallRank" AS rank,
           COALESCE(us."totalRating", 0) AS "totalRating",
           COALESCE(us."pageCount", 0) AS "pageCount"
         FROM "User" u
         LEFT JOIN "UserStats" us ON u.id = us."userId"
-        WHERE u."displayName" &@~ pgroonga_query_escape($1)
+        WHERE u."wikidotId" IS NOT NULL
+          AND (${userMatchSql})
         ORDER BY us."totalRating" DESC NULLS LAST
         LIMIT $2::int OFFSET $3::int
       `;
-      const [rowsRes, totalRes] = await Promise.all([
-        readPool.query(sql, [query, limit, offset]),
-        wantTotal ? readPool.query(`SELECT COUNT(*) AS total FROM "User" WHERE "displayName" &@~ pgroonga_query_escape($1)`, [query]) : Promise.resolve(null as any)
-      ]);
-      const results = rowsRes.rows;
-      const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
-      res.json(total !== undefined ? { results, total } : { results });
-    } catch (err) {
+      const totalCountSql = `SELECT COUNT(*) AS total FROM "User" u WHERE u."wikidotId" IS NOT NULL AND (${userMatchSql})`;
+
+      if (userRegexMode) {
+        const result = await withRegexTimeout(async (client) => {
+          const [rowsRes, totalRes] = await Promise.all([
+            client.query(sql, [query, limit, offset]),
+            wantTotal ? client.query(totalCountSql, [query]) : Promise.resolve(null as any)
+          ]);
+          return { rowsRes, totalRes };
+        });
+        const results = result.rowsRes.rows;
+        const total = result.totalRes ? Number(result.totalRes.rows?.[0]?.total || 0) : undefined;
+        res.json(total !== undefined ? { results, total } : { results });
+      } else {
+        const [rowsRes, totalRes] = await Promise.all([
+          readPool.query(sql, [query, limit, offset]),
+          wantTotal ? readPool.query(totalCountSql, [query]) : Promise.resolve(null as any)
+        ]);
+        const results = rowsRes.rows;
+        const total = totalRes ? Number(totalRes.rows?.[0]?.total || 0) : undefined;
+        res.json(total !== undefined ? { results, total } : { results });
+      }
+    } catch (err: any) {
+      if (userRegexMode && err?.code === '2201B') {
+        return res.status(400).json({
+          error: 'invalid_regex',
+          message: '无效的正则表达式：' + (err.message || '语法错误')
+        });
+      }
+      if (userRegexMode && err?.message?.includes('statement timeout')) {
+        return res.status(400).json({
+          error: 'regex_timeout',
+          message: '正则表达式执行超时，请简化表达式'
+        });
+      }
       next(err);
     }
   });
@@ -1184,6 +1558,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         wantDate,
         candidateLimit,
         snippetTop,
+        regexMode: false,
         wilson95Min: wilson95MinNumber,
         wilson95Max: wilson95MaxNumber,
         controversyMin: controversyMinNumber,
@@ -1200,14 +1575,19 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         SELECT 
           u.id,
           u."wikidotId",
-          u."displayName",
+          COALESCE(u."displayName", u.username) AS "displayName",
           us."overallRank" AS rank,
           COALESCE(us."totalRating", 0) AS "totalRating",
           COALESCE(us."pageCount", 0) AS "pageCount",
           pgroonga_score(u.tableoid, u.ctid) AS score
         FROM "User" u
         LEFT JOIN "UserStats" us ON u.id = us."userId"
-        WHERE u."displayName" &@~ pgroonga_query_escape($1)
+        WHERE u."wikidotId" IS NOT NULL
+          AND (
+            u."displayName" &@~ pgroonga_query_escape($1)
+            OR u.username &@~ pgroonga_query_escape($1)
+            OR replace(u.username, '_', ' ') &@~ pgroonga_query_escape($1)
+          )
         ORDER BY score DESC NULLS LAST, us."totalRating" DESC NULLS LAST
         LIMIT $2::int OFFSET $3::int
       `;
@@ -1216,7 +1596,12 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       const userCountSql = `
         SELECT COUNT(*) AS total
         FROM "User" u
-        WHERE u."displayName" &@~ pgroonga_query_escape($1)
+        WHERE u."wikidotId" IS NOT NULL
+          AND (
+            u."displayName" &@~ pgroonga_query_escape($1)
+            OR u.username &@~ pgroonga_query_escape($1)
+            OR replace(u.username, '_', ' ') &@~ pgroonga_query_escape($1)
+          )
       `;
 
       const [userRes, userCountRes] = await Promise.all([

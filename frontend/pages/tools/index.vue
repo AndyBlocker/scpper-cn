@@ -99,6 +99,13 @@ const sections = [
         description: '在线编辑和预览 FTML/Wikidot 语法。',
         badge: 'Editor',
         icon: 'FileCode2'
+      },
+      {
+        to: '/tools/text-analysis',
+        title: '文本分析实验室',
+        description: '基于全站文本内容，从词汇统计、作者指纹、语义网络等维度探索文字特征。',
+        badge: 'Text Lab',
+        icon: 'BookOpenText'
       }
     ]
   },

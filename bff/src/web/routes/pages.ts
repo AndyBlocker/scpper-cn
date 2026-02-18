@@ -308,6 +308,156 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     return resolvePageContextByPageId(pageId);
   }
 
+  function parseBatchWikidotIds(input: string | string[] | undefined) {
+    if (!input) return [];
+    const rawValues = Array.isArray(input) ? input : [input];
+    const ids = rawValues
+      .flatMap((value) => String(value).split(','))
+      .map((value) => Number(String(value).trim()))
+      .filter((value) => Number.isInteger(value) && value > 0);
+    return Array.from(new Set(ids));
+  }
+
+  // GET /pages/attributions/batch?ids=123,456
+  router.get('/attributions/batch', async (req, res, next) => {
+    try {
+      const rawIds = parseBatchWikidotIds((req.query.ids ?? req.query.wikidotIds) as string | string[] | undefined);
+      const ids = rawIds.slice(0, 200);
+      if (ids.length === 0) return res.json({ items: [] });
+
+      const sql = `
+        WITH requested AS (
+          SELECT DISTINCT UNNEST($1::int[]) AS "wikidotId"
+        ),
+        page_ctx AS (
+          SELECT
+            r."wikidotId",
+            p.id AS "pageId"
+          FROM requested r
+          LEFT JOIN "Page" p ON p."wikidotId" = r."wikidotId"
+        ),
+        resolved AS (
+          SELECT
+            pc."wikidotId",
+            CASE
+              WHEN current_ver.id IS NULL THEN latest_any.id
+              WHEN current_ver."isDeleted" THEN COALESCE(latest_live.id, current_ver.id)
+              ELSE current_ver.id
+            END AS "effectiveVersionId"
+          FROM page_ctx pc
+          LEFT JOIN LATERAL (
+            SELECT pv.id, pv."isDeleted"
+            FROM "PageVersion" pv
+            WHERE pv."pageId" = pc."pageId" AND pv."validTo" IS NULL
+            ORDER BY pv.id DESC
+            LIMIT 1
+          ) current_ver ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT pv.id
+            FROM "PageVersion" pv
+            WHERE pv."pageId" = pc."pageId" AND pv."isDeleted" = false
+            ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC
+            LIMIT 1
+          ) latest_live ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT pv.id
+            FROM "PageVersion" pv
+            WHERE pv."pageId" = pc."pageId"
+            ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC
+            LIMIT 1
+          ) latest_any ON TRUE
+        ),
+        attrs AS (
+          SELECT
+            r."wikidotId",
+            a."pageVerId",
+            a."userId" AS "attribUserId",
+            a."anonKey",
+            a.type,
+            a."order",
+            a.date,
+            u.id AS "resolvedUserId",
+            u."displayName" AS "userDisplayName",
+            u."username" AS "userUsername",
+            u."wikidotId" AS "userWikidotId",
+            BOOL_OR(a.type <> 'SUBMITTER') OVER (
+              PARTITION BY r."wikidotId", a."pageVerId"
+            ) AS has_non_submitter
+          FROM resolved r
+          LEFT JOIN "Attribution" a ON a."pageVerId" = r."effectiveVersionId"
+          LEFT JOIN "User" u ON u.id = a."userId"
+        ),
+        filtered AS (
+          SELECT *
+          FROM attrs
+          WHERE "pageVerId" IS NOT NULL
+            AND NOT (has_non_submitter AND type = 'SUBMITTER')
+        ),
+        dedup AS (
+          SELECT DISTINCT ON ("wikidotId", COALESCE("resolvedUserId"::text, "anonKey"))
+            "wikidotId",
+            "attribUserId" AS "userId",
+            CASE
+              WHEN "userDisplayName" IS NOT NULL THEN "userDisplayName"
+              WHEN "userUsername" IS NOT NULL THEN "userUsername"
+              WHEN "anonKey" IS NOT NULL THEN regexp_replace("anonKey", '^anon:', '')
+              ELSE NULL
+            END AS "displayName",
+            "userWikidotId",
+            type,
+            "order",
+            date
+          FROM filtered
+          ORDER BY "wikidotId", COALESCE("resolvedUserId"::text, "anonKey"), type ASC, "order" ASC
+        )
+        SELECT
+          "wikidotId",
+          "userId",
+          "displayName",
+          "userWikidotId",
+          type,
+          "order",
+          date
+        FROM dedup
+        ORDER BY "wikidotId" ASC, type ASC, "order" ASC
+      `;
+
+      const { rows } = await readPool.query(sql, [ids]);
+      const byWikidotId = new Map<number, Array<{
+        userId: number | null;
+        displayName: string | null;
+        userWikidotId: number | null;
+        type: string | null;
+        order: number | null;
+        date: string | null;
+      }>>();
+
+      for (const row of rows) {
+        const wikidotId = Number(row.wikidotId);
+        if (!Number.isInteger(wikidotId) || wikidotId <= 0) continue;
+        const list = byWikidotId.get(wikidotId) ?? [];
+        list.push({
+          userId: row.userId == null ? null : Number(row.userId),
+          displayName: row.displayName ?? null,
+          userWikidotId: row.userWikidotId == null ? null : Number(row.userWikidotId),
+          type: row.type ?? null,
+          order: row.order == null ? null : Number(row.order),
+          date: row.date == null ? null : String(row.date)
+        });
+        byWikidotId.set(wikidotId, list);
+      }
+
+      res.json({
+        items: ids.map((wikidotId) => ({
+          wikidotId,
+          attributions: byWikidotId.get(wikidotId) ?? []
+        }))
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.get('/:wikidotId/references', async (req, res, next) => {
     try {
       const { wikidotId } = req.params;

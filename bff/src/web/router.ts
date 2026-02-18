@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { pagesRouter } from './routes/pages.js';
 import { usersRouter } from './routes/users.js';
 import { searchRouter } from './routes/search.js';
@@ -21,9 +21,32 @@ import { trackingRouter } from './routes/tracking.js';
 import { collectionsRouter } from './routes/collections.js';
 import { htmlSnippetsRouter } from './routes/html-snippets.js';
 import { internalRouter } from './routes/internal.js';
+import { textAnalysisRouter } from './routes/text-analysis.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+  const normalizeRemoteIp = (value: string | null | undefined) => {
+    if (!value) return '';
+    return value.replace(/^::ffff:/, '').trim().toLowerCase();
+  };
+  const isLoopbackIp = (value: string | null | undefined) => {
+    const ip = normalizeRemoteIp(value);
+    return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+  };
+  const guardInternalRoutes = (req: Request, res: Response, next: NextFunction) => {
+    const expectedKey = (process.env.BFF_INTERNAL_API_KEY || '').trim();
+    const providedKey = String(req.get('x-internal-key') || '').trim();
+    if (expectedKey && providedKey && providedKey === expectedKey) {
+      return next();
+    }
+
+    // Only trust the actual socket address for unauthenticated internal access.
+    // `x-forwarded-for` can be spoofed when requests hit this service directly.
+    if (isLoopbackIp(req.socket.remoteAddress)) {
+      return next();
+    }
+    return res.status(403).json({ error: 'internal_access_denied' });
+  };
   router.use('/pages', pagesRouter(pool, redis));
   router.use('/users', usersRouter(pool, redis));
   router.use('/search', searchRouter(pool, redis));
@@ -39,7 +62,8 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/references', referencesRouter(pool, redis));
   router.use('/tracking', trackingRouter(pool));
   router.use('/collections', collectionsRouter(pool, redis));
-  router.use('/internal', internalRouter());
+  router.use('/text-analysis', textAnalysisRouter());
+  router.use('/internal', guardInternalRoutes, internalRouter());
   router.use('/', htmlSnippetsRouter);
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service

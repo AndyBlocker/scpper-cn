@@ -29,13 +29,21 @@
           </div>
           <!-- 关键词搜索 -->
           <div class="md:col-span-2">
-            <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">关键词</label>
-            <input 
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300">关键词</label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                <input type="checkbox" v-model="searchForm.isRegex"
+                  class="rounded border-neutral-300 dark:border-neutral-600 text-[rgb(var(--accent))] focus:ring-[rgb(var(--accent))]" />
+                <span class="text-xs text-neutral-500 dark:text-neutral-400">正则搜索</span>
+              </label>
+            </div>
+            <input
               v-model="searchForm.query"
               type="text"
-              placeholder="搜索页面标题或内容..."
+              :placeholder="searchForm.isRegex ? '输入正则表达式，如 SCP-CN-\\d{3,4}' : '搜索页面标题或内容...'"
               class="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
             />
+            <p v-if="regexError" class="text-xs text-red-500 mt-1">{{ regexError }}</p>
           </div>
 
           <!-- 标签过滤 -->
@@ -186,7 +194,7 @@
               v-model="searchForm.orderBy"
               class="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[rgb(var(--accent))] focus:border-transparent transition-all"
             >
-              <option value="relevance">相关性</option>
+              <option v-if="!searchForm.isRegex" value="relevance">相关性</option>
               <optgroup label="评分">
                 <option value="rating">评分：高到低</option>
                 <option value="rating_asc">评分：低到高</option>
@@ -490,10 +498,12 @@ const showExtraFilters = ref(false);
 const searchPerformed = ref(false);
 const initialLoading = ref(false);
 const error = ref(false);
+const regexError = ref('');
 
 // 高级搜索表单
 const searchForm = ref({
   query: '',
+  isRegex: false,
   includeTags: [] as string[],
   excludeTags: [] as string[],
   onlyIncludeTags: false,
@@ -525,6 +535,14 @@ const extraFiltersCount = computed(() => {
   if (searchForm.value.dateMin || searchForm.value.dateMax) count++;
   return count;
 });
+
+// 正则模式切换时自动调整排序
+watch(() => searchForm.value.isRegex, (val) => {
+  if (val && searchForm.value.orderBy === 'relevance') {
+    searchForm.value.orderBy = 'rating'
+  }
+  regexError.value = ''
+})
 
 // Tag联想功能
 const tagSearchQuery = ref('');
@@ -717,6 +735,7 @@ const removeExcludeTag = (tag: string) => {
 const clearForm = () => {
   searchForm.value = {
     query: '',
+    isRegex: false,
     includeTags: [],
     excludeTags: [],
     onlyIncludeTags: false,
@@ -764,6 +783,7 @@ function buildSearchParamsFromForm(includeDefaultsForOrder = false): Record<stri
   const params: Record<string, any> = {}
   const query = searchForm.value.query.trim()
   if (query) params.query = query
+  if (searchForm.value.isRegex) params.isRegex = 'true'
   if (searchForm.value.includeTags.length > 0) params.tags = [...searchForm.value.includeTags]
   if (searchForm.value.onlyIncludeTags) params.onlyIncludeTags = 'true'
   if (searchForm.value.excludeTags.length > 0) params.excludeTags = [...searchForm.value.excludeTags]
@@ -824,9 +844,12 @@ async function fetchUsers(params: Record<string, any> | null = null, options: { 
     }
     userOffset.value = offset + fetched
     userHasMore.value = totalValue !== null ? userOffset.value < totalValue : fetched === limit
-  } catch (err) {
+  } catch (err: any) {
     console.error('搜索用户失败:', err)
-    if (!append) {
+    const errData = err?.data || err?.response?._data
+    if (errData?.error === 'invalid_regex' || errData?.error === 'regex_timeout') {
+      regexError.value = errData.message || '正则表达式错误'
+    } else if (!append) {
       userResults.value = []
       totalUsers.value = 0
       error.value = true
@@ -883,9 +906,12 @@ async function fetchPages(params: Record<string, any> | null = null, options: { 
     }
     pageOffset.value = offset + fetched
     pageHasMore.value = totalValue !== null ? pageOffset.value < totalValue : fetched === limit
-  } catch (err) {
+  } catch (err: any) {
     console.error('搜索页面失败:', err)
-    if (!append) {
+    const errData = err?.data || err?.response?._data
+    if (errData?.error === 'invalid_regex' || errData?.error === 'regex_timeout') {
+      regexError.value = errData.message || '正则表达式错误'
+    } else if (!append) {
       pageResults.value = []
       totalPages.value = 0
       error.value = true
@@ -1085,7 +1111,7 @@ const initializeFromQuery = () => {
   const hasAdvancedParams = query.tags || query.excludeTags || query.ratingMin || query.ratingMax ||
     query.wilson95Min || query.wilson95Max || query.controversyMin || query.controversyMax ||
     query.commentCountMin || query.commentCountMax || query.voteCountMin || query.voteCountMax ||
-    query.dateMin || query.dateMax ||
+    query.dateMin || query.dateMax || query.isRegex === 'true' ||
     (query.orderBy && query.orderBy !== 'relevance') || query.advanced ||
     String(query.onlyIncludeTags || '').toLowerCase() === 'true' ||
     normalizedDeletedFilter !== 'exclude' || normalizedScope !== 'both'
@@ -1101,6 +1127,7 @@ const initializeFromQuery = () => {
   showExtraFilters.value = Boolean(hasExtraFilters)
 
   searchForm.value.query = String((query as any).query ?? query.q ?? '')
+  searchForm.value.isRegex = query.isRegex === 'true'
   searchForm.value.includeTags = query.tags ? (Array.isArray(query.tags) ? query.tags as string[] : [String(query.tags)]) : []
   searchForm.value.excludeTags = query.excludeTags ? (Array.isArray(query.excludeTags) ? query.excludeTags as string[] : [String(query.excludeTags)]) : []
   searchForm.value.onlyIncludeTags = ['true', '1', 'yes'].includes(String(query.onlyIncludeTags || '').toLowerCase())
@@ -1139,6 +1166,7 @@ const initializeFromQuery = () => {
 
 const performSearch = async () => {
   error.value = false
+  regexError.value = ''
   searchPerformed.value = true
   const hasAnyCondition = hasSearchCriteria()
 

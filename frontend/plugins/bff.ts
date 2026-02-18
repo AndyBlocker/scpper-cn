@@ -64,6 +64,10 @@ export default defineNuxtPlugin((nuxtApp) => {
     headers: { accept: 'application/json' },
     credentials: 'include',
     onRequest({ request, options }) {
+      if (typeof request === 'string' && shouldDropBasePrefix(request, bffBase)) {
+        // Guard against accidental '/api/api/*' requests when caller already includes base prefix.
+        options.baseURL = '';
+      }
       const isServer = typeof window === 'undefined';
       const clientDebugFlag = !isServer && hasClientDebugFlag();
       const shouldLogStart = debugFetchTimings || clientDebugFlag;
@@ -237,6 +241,14 @@ export default defineNuxtPlugin((nuxtApp) => {
   function parseNumber(value: unknown, fallback: number): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function shouldDropBasePrefix(path: string, base: string): boolean {
+    if (!path || !base) return false;
+    if (/^https?:\/\//i.test(path)) return false;
+    const normalizedBase = base.replace(/\/+$/u, '');
+    if (!normalizedBase || normalizedBase === '/') return false;
+    return path === normalizedBase || path.startsWith(`${normalizedBase}/`);
   }
 
   function resolveTargetInfo(request: string | Request | URL | any) {

@@ -67,6 +67,15 @@
             <a href="https://ghostpia.xyz/zh_cn" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">《Ghostpia》</a>
             吧！ -- 2025.10.24
           </p>
+          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="9827716" :display-name="'Dyosme'" bare />
+            ：AndyBlocker太牛逼克拉斯了，豆包给Andy生成最新一期彩票中奖号码！PS：Andy保佑我抽卡出Scp049 -- 2026.2.13 
+          </p>
+          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6238162" :display-name="'Northern Lake'" bare />
+            ：答案是42 -- 2026.2.13 
+          </p>
+
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
           </p>

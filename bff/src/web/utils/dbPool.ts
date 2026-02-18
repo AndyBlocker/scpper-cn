@@ -34,9 +34,11 @@ export function initPools(): { primary: Pool; replica: Pool | null } {
     ...POOL_CONFIG
   });
 
-  primaryPool.on('error', (err) => {
-    console.error('[dbPool] Primary pool error:', err.message);
-  });
+  if (typeof (primaryPool as any).on === 'function') {
+    primaryPool.on('error', (err) => {
+      console.error('[dbPool] Primary pool error:', err.message);
+    });
+  }
 
   // 初始化从库连接池（如果配置了）
   if (replicaUrl) {
@@ -45,10 +47,12 @@ export function initPools(): { primary: Pool; replica: Pool | null } {
       ...POOL_CONFIG
     });
 
-    replicaPool.on('error', (err) => {
-      console.error('[dbPool] Replica pool error:', err.message);
-      replicaAvailable = false;
-    });
+    if (typeof (replicaPool as any).on === 'function') {
+      replicaPool.on('error', (err) => {
+        console.error('[dbPool] Replica pool error:', err.message);
+        replicaAvailable = false;
+      });
+    }
 
     // 测试从库连接
     replicaPool.query('SELECT 1')

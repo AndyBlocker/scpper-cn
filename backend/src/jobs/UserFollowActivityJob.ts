@@ -184,6 +184,7 @@ export class UserFollowActivityJob {
               SELECT 1 FROM "UserActivityAlert"
               WHERE "followId" = ${f.id} AND type = 'REVISION' AND ("revisionId" = ${e.revisionId} OR "pageVersionId" = ${e.pageVersionId})
             )
+            ON CONFLICT DO NOTHING
           `);
           created += 1;
           // Mark as existing for subsequent events in same batch
@@ -192,92 +193,74 @@ export class UserFollowActivityJob {
       }
     }
 
-    // Prepare existing unread map for attribution type
-    const attrPageIds = Array.from(new Set([...addEvents.map(e => e.pageId), ...removeEvents.map(e => e.pageId)]));
-    const existingAttr = (revFollowIds.length > 0 && attrPageIds.length > 0)
-      ? await this.prisma.$queryRaw<Array<{ id: number; followId: number; pageId: number }>>`
-          SELECT id, "followId", "pageId"
-          FROM "UserActivityAlert"
-          WHERE "acknowledgedAt" IS NULL AND type = 'ATTRIBUTION'
-            AND "followId" = ANY(${revFollowIds}::int[])
-            AND "pageId" = ANY(${attrPageIds}::int[])
-        `
-      : [];
-    const existingAttrMap = new Map<string, number>();
-    for (const row of existingAttr) {
-      existingAttrMap.set(`${row.followId}:${row.pageId}`, Number(row.id));
-    }
-
     // Process attribution additions
     for (const e of addEvents) {
       const list = followsByTarget.get(e.targetUserId) || [];
       for (const f of list) {
         const eventTime = e.occurredAt instanceof Date && !Number.isNaN(e.occurredAt.getTime()) ? e.occurredAt : now;
         if (!Number.isNaN(f.createdAt.getTime()) && eventTime < f.createdAt) continue;
-        const key = `${f.id}:${e.pageId}`;
-        const unreadId = existingAttrMap.get(key);
-        if (unreadId) {
-          await this.prisma.$executeRaw(Prisma.sql`
-            UPDATE "UserActivityAlert"
-            SET "attributionId" = ${e.attributionId}, "pageVersionId" = ${e.pageVersionId}, "detectedAt" = ${now}
-            WHERE id = ${unreadId}
-          `);
-          updated += 1;
-        } else {
+        const touched = await this.prisma.$executeRaw(Prisma.sql`
+          UPDATE "UserActivityAlert"
+          SET type = 'ATTRIBUTION',
+              "followerId" = ${f.followerId},
+              "targetUserId" = ${e.targetUserId},
+              "pageId" = ${e.pageId},
+              "pageVersionId" = ${e.pageVersionId},
+              "detectedAt" = ${now},
+              "acknowledgedAt" = NULL
+          WHERE "followId" = ${f.id} AND "attributionId" = ${e.attributionId}
+        `);
+        if (touched === 0) {
           await this.prisma.$executeRaw(Prisma.sql`
             INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "attributionId", "pageVersionId", "detectedAt", "createdAt")
-            SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now}
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "UserActivityAlert"
-              WHERE "followId" = ${f.id} AND type = 'ATTRIBUTION' AND ("attributionId" = ${e.attributionId} OR "pageVersionId" = ${e.pageVersionId})
-            )
+            VALUES (${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now})
+            ON CONFLICT ("followId", "type", "pageVersionId") WHERE "pageVersionId" IS NOT NULL DO UPDATE
+            SET "attributionId" = EXCLUDED."attributionId",
+                "followerId" = EXCLUDED."followerId",
+                "targetUserId" = EXCLUDED."targetUserId",
+                "pageId" = EXCLUDED."pageId",
+                "detectedAt" = EXCLUDED."detectedAt",
+                "acknowledgedAt" = NULL
           `);
           created += 1;
-          existingAttrMap.set(key, -1);
+        } else {
+          updated += 1;
         }
       }
     }
 
-    // Also existing unread for removed attribution
-    const existingAttrRemoved = (revFollowIds.length > 0 && attrPageIds.length > 0)
-      ? await this.prisma.$queryRaw<Array<{ id: number; followId: number; pageId: number }>>`
-          SELECT id, "followId", "pageId"
-          FROM "UserActivityAlert"
-          WHERE "acknowledgedAt" IS NULL AND type = 'ATTRIBUTION_REMOVED'
-            AND "followId" = ANY(${revFollowIds}::int[])
-            AND "pageId" = ANY(${attrPageIds}::int[])
-        `
-      : [];
-    const existingAttrRemovedMap = new Map<string, number>();
-    for (const row of existingAttrRemoved) {
-      existingAttrRemovedMap.set(`${row.followId}:${row.pageId}`, Number(row.id));
-    }
     // Process attribution removals
     for (const e of removeEvents) {
       const list = followsByTarget.get(e.targetUserId) || [];
       for (const f of list) {
         const eventTime = e.occurredAt instanceof Date && !Number.isNaN(e.occurredAt.getTime()) ? e.occurredAt : now;
         if (!Number.isNaN(f.createdAt.getTime()) && eventTime < f.createdAt) continue;
-        const key = `${f.id}:${e.pageId}`;
-        const unreadId = existingAttrRemovedMap.get(key);
-        if (unreadId) {
-          await this.prisma.$executeRaw(Prisma.sql`
-            UPDATE "UserActivityAlert"
-            SET "attributionId" = ${e.attributionId}, "pageVersionId" = ${e.pageVersionId}, "detectedAt" = ${now}
-            WHERE id = ${unreadId}
-          `);
-          updated += 1;
-        } else {
+        const touched = await this.prisma.$executeRaw(Prisma.sql`
+          UPDATE "UserActivityAlert"
+          SET type = 'ATTRIBUTION_REMOVED',
+              "followerId" = ${f.followerId},
+              "targetUserId" = ${e.targetUserId},
+              "pageId" = ${e.pageId},
+              "pageVersionId" = ${e.pageVersionId},
+              "detectedAt" = ${now},
+              "acknowledgedAt" = NULL
+          WHERE "followId" = ${f.id} AND "attributionId" = ${e.attributionId}
+        `);
+        if (touched === 0) {
           await this.prisma.$executeRaw(Prisma.sql`
             INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "attributionId", "pageVersionId", "detectedAt", "createdAt")
-            SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION_REMOVED', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now}
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "UserActivityAlert"
-              WHERE "followId" = ${f.id} AND type = 'ATTRIBUTION_REMOVED' AND "pageVersionId" = ${e.pageVersionId}
-            )
+            VALUES (${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION_REMOVED', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now})
+            ON CONFLICT ("followId", "type", "pageVersionId") WHERE "pageVersionId" IS NOT NULL DO UPDATE
+            SET "attributionId" = EXCLUDED."attributionId",
+                "followerId" = EXCLUDED."followerId",
+                "targetUserId" = EXCLUDED."targetUserId",
+                "pageId" = EXCLUDED."pageId",
+                "detectedAt" = EXCLUDED."detectedAt",
+                "acknowledgedAt" = NULL
           `);
           created += 1;
-          existingAttrRemovedMap.set(key, -1);
+        } else {
+          updated += 1;
         }
       }
     }

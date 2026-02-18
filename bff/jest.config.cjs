@@ -5,9 +5,12 @@ module.exports = {
   testPathIgnorePatterns: ['/node_modules/'],
   moduleNameMapper: {
     '^\\./web/router\\.js$': '<rootDir>/src/web/router.ts',
+    '^\\./web/utils/dbPool\\.js$': '<rootDir>/src/web/utils/dbPool.ts',
     '^\\./routes/(.*)\\.js$': '<rootDir>/src/web/routes/$1.ts',
     '^\\./pageImagesConfig\\.js$': '<rootDir>/src/web/pageImagesConfig.ts',
     '^\\.\\./pageImagesConfig\\.js$': '<rootDir>/src/web/pageImagesConfig.ts',
+    '^\\./utils/dbPool\\.js$': '<rootDir>/src/web/utils/dbPool.ts',
+    '^\\.\\./utils/dbPool\\.js$': '<rootDir>/src/web/utils/dbPool.ts',
     '^\\.\\./utils/preview\\.js$': '<rootDir>/src/web/utils/preview.ts',
     '^\\.\\./utils/cache\\.js$': '<rootDir>/src/web/utils/cache.ts',
     '^\\.\\./utils/auth\\.js$': '<rootDir>/src/web/utils/auth.ts',

@@ -24,13 +24,26 @@ export function isAdminEmail(email: string | null | undefined): boolean {
 }
 
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  // Ensure authenticated first
-  await new Promise<void>((resolve) => requireAuth(req, res, () => resolve()));
-  if (!req.authUser) return; // requireAuth already responded with 401
-  if (!isAdminEmail(req.authUser.email)) {
-    res.status(403).json({ error: '无权限' });
-    return;
+  try {
+    // Ensure authenticated first.
+    await new Promise<void>((resolve, reject) => {
+      requireAuth(req, res, (error?: unknown) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+    if (res.headersSent || !req.authUser) {
+      return;
+    }
+    if (!isAdminEmail(req.authUser.email)) {
+      res.status(403).json({ error: '无权限' });
+      return;
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 }
-

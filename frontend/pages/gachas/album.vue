@@ -1,888 +1,617 @@
 <template>
-  <div class="mx-auto flex w-full max-w-6xl flex-col gap-8 py-10">
-    <div v-if="authPending" class="rounded-3xl border border-dashed border-neutral-200/80 bg-white/70 p-10 text-center text-neutral-500 dark:border-neutral-700/70 dark:bg-neutral-900/60 dark:text-neutral-400">
-      正在校验登录状态...
-    </div>
+  <GachaPageShell
+    :auth-pending="authPending"
+    :show-binding-block="showBindingBlock"
+    :wallet-balance="walletBalance"
+    feature-name="图鉴"
+    page="album"
+  >
+    <div class="gacha-page-flow">
+      <GachaErrorBanner :error="errorBanner" :success="successBanner" />
 
-    <div
-      v-else-if="showBindingBlock"
-      class="flex flex-col gap-6 rounded-3xl border border-amber-200/70 bg-amber-50/80 p-8 text-neutral-800 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
-    >
-      <div class="space-y-2">
-        <h2 class="text-2xl font-semibold">需要绑定 Wikidot 账户</h2>
-        <p class="text-sm leading-relaxed">
-          图鉴功能仅对已绑定 Wikidot 的用户开放。请联系管理员完成绑定或前往管理页处理绑定申请。
-        </p>
-      </div>
-      <div class="flex flex-wrap gap-3">
-        <NuxtLink
-          to="/admin"
-          class="inline-flex items-center justify-center rounded-xl bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))]"
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="gacha-tab-btn"
+          :class="{ 'is-active': activeTab === 'album' }"
+          @click="setTab('album')"
         >
-          前往管理页
-        </NuxtLink>
-        <NuxtLink
-          to="/tools"
-          class="inline-flex items-center justify-center rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50"
+          图鉴
+        </button>
+        <button
+          type="button"
+          class="gacha-tab-btn"
+          :class="{ 'is-active': activeTab === 'showcase' }"
+          @click="handleShowcaseTab"
         >
-          返回工具页
-        </NuxtLink>
+          展示柜
+        </button>
+        <button
+          type="button"
+          class="gacha-tab-btn"
+          :class="{ 'is-active': activeTab === 'progress' }"
+          @click="setTab('progress')"
+        >
+          进度
+        </button>
       </div>
-    </div>
 
-    <div v-else class="space-y-8">
-      <section class="grid gap-4 lg:grid-cols-[minmax(0,1.15fr),minmax(0,1fr)]">
-        <div class="flex h-full flex-col justify-between gap-5 rounded-3xl border border-neutral-200/70 bg-white/90 p-6 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
-          <div class="space-y-3">
-            <span class="inline-flex w-fit items-center rounded-full bg-[rgb(var(--accent-strong))]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[rgb(var(--accent-strong))]">
-              图鉴概览
-            </span>
-            <div class="space-y-2">
-              <h2 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">我的收藏图鉴</h2>
-              <p class="text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
-                查看不同卡池的收集成果，并从这里返回抽卡或查看全局进度统计。
-              </p>
+      <Transition name="slide-fade" mode="out-in">
+        <!-- Progress Tab -->
+        <section
+          v-if="activeTab === 'progress'"
+          key="progress-tab"
+          class="surface-card p-5"
+        >
+          <header class="gacha-panel-head">
+            <h2 class="gacha-panel-title">收集进度</h2>
+            <UiButton variant="outline" size="sm" @click="refreshProgress">刷新</UiButton>
+          </header>
+
+          <div v-if="loadingProgress" class="mt-4 flex flex-col gap-3">
+            <GachaSkeleton variant="metric" />
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <GachaSkeleton v-for="i in 5" :key="i" variant="row" />
             </div>
           </div>
-          <div class="flex flex-wrap items-center gap-4 text-xs text-neutral-500 dark:text-neutral-400">
-            <span>当前列表 <strong class="text-neutral-900 dark:text-neutral-100">{{ loading ? '—' : visibleCount }}</strong> / 共 {{ loading ? '—' : total }}</span>
-            <span>已收集 <strong class="text-emerald-600 dark:text-emerald-300">{{ loading ? '—' : ownedCount }}</strong></span>
-            <span>待收集 <strong class="text-neutral-900 dark:text-neutral-100">{{ loading ? '—' : missingCount }}</strong></span>
-            <span>上次刷新 {{ lastUpdated || '尚未刷新' }}</span>
+          <div v-else-if="progressData" class="mt-4 space-y-4">
+            <!-- Three-layer progress overview -->
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="surface-recessed p-4">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="gacha-text-body text-xs font-semibold">页面收集</span>
+                  <span class="gacha-text-kpi" style="font-size:1rem">{{ pagesPercent }}%</span>
+                </div>
+                <span class="gacha-text-body text-sm font-semibold">{{ progressData.pages.collected }} / {{ progressData.pages.total }}</span>
+                <UiProgress class="mt-2 h-2" :model-value="pagesPercent" />
+              </div>
+              <div class="surface-recessed p-4">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="gacha-text-body text-xs font-semibold">异画收集</span>
+                  <span class="gacha-text-kpi" style="font-size:1rem">{{ imageVariantsPercent }}%</span>
+                </div>
+                <span class="gacha-text-body text-sm font-semibold">{{ progressData.imageVariants.collected }} / {{ progressData.imageVariants.total }}</span>
+                <UiProgress class="mt-2 h-2" :model-value="imageVariantsPercent" />
+              </div>
+              <div class="surface-recessed p-4">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="gacha-text-body text-xs font-semibold">镀层收集</span>
+                  <span class="gacha-text-kpi" style="font-size:1rem">{{ coatingsPercent }}%</span>
+                </div>
+                <span class="gacha-text-body text-sm font-semibold">{{ progressData.coatings.collected }} / {{ progressData.coatings.total }}</span>
+                <UiProgress class="mt-2 h-2" :model-value="coatingsPercent" />
+              </div>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <article
+                v-for="entry in rarityEntries"
+                :key="entry.rarity"
+                class="surface-recessed p-3"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-sm font-semibold" style="color:var(--g-text-primary)">{{ rarityLabel(entry.rarity) }}</span>
+                  <span class="text-sm font-semibold" style="color:var(--g-text-secondary)">{{ entry.collected }} / {{ entry.total }}</span>
+                </div>
+                <div class="mt-2 h-2 w-full overflow-hidden rounded-full" :style="{ background: 'var(--g-surface-deep)' }">
+                  <div
+                    class="gacha-progress-animate h-full rounded-full"
+                    :style="{
+                      width: entry.percent + '%',
+                      background: rarityBarColor(entry.rarity)
+                    }"
+                  />
+                </div>
+              </article>
+            </div>
           </div>
-          <div class="flex flex-wrap gap-3">
-            <NuxtLink
-              to="/gachas"
-              class="inline-flex items-center justify-center rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50"
-            >
-              返回抽卡
-            </NuxtLink>
-            <NuxtLink
-              to="/gachas/progress"
-              class="inline-flex items-center justify-center rounded-xl bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))]"
-            >
-              查看收集进度
-            </NuxtLink>
+          <GachaEmptyState v-else icon="📊" title="无数据" class="mt-4" />
+        </section>
+
+        <!-- Showcase Tab -->
+        <section
+          v-else-if="activeTab === 'showcase'"
+          key="showcase-tab"
+          class="surface-card p-5"
+        >
+          <header class="gacha-panel-head">
+            <h2 class="gacha-panel-title">展示柜</h2>
+          </header>
+          <div class="mt-4">
+            <GachaShowcasePanel
+              :showcases="showcase.showcases.value"
+              :meta="showcase.meta.value"
+              :loading="showcase.loadingShowcases.value"
+              :busy="showcase.showcaseBusy.value"
+              :picker-options="showcasePickerOptions"
+              :picker-loading="loadingShowcasePicker"
+              :wallet-balance="walletBalance"
+              @create="showcase.createShowcase"
+              @rename="showcase.renameShowcase"
+              @delete="showcase.deleteShowcase"
+              @set-slot="showcase.setSlot"
+              @clear-slot="showcase.clearSlot"
+              @refresh="refreshShowcaseTabManually"
+              @load-picker="loadShowcasePickerOptions"
+            />
           </div>
-        </div>
-        <div class="rounded-3xl border border-neutral-200/70 bg-white/90 p-6 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
-          <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-neutral-400 dark:text-neutral-500">稀有度分布</h3>
-          <div v-if="rarityBreakdown.length" class="mt-4 flex flex-wrap gap-2">
-            <span
-              v-for="entry in rarityBreakdown"
-              :key="entry.rarity"
-              class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold"
-              :class="rarityChipClassMap[entry.rarity]"
-            >
-              <span>{{ entry.label }}</span>
-              <span class="font-medium text-neutral-900 dark:text-neutral-50">{{ entry.owned }}/{{ entry.total }}</span>
-            </span>
-          </div>
-          <p v-else class="mt-4 rounded-xl border border-dashed border-neutral-200/70 px-3 py-2 text-xs text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
-            暂无数据，尝试调整筛选条件。
-          </p>
-        </div>
-      </section>
+        </section>
 
-      <section class="rounded-3xl border border-neutral-200/70 bg-white/90 p-6 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
-        <header class="flex flex-col gap-2 border-b border-dashed border-neutral-200/70 pb-4 dark:border-neutral-800/60">
-          <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50">稀有度快速筛选</h2>
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">使用下方按钮切换稀有度，右侧按钮可刷新图鉴数据。</p>
-        </header>
-
-        <div class="mt-4 flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            class="inline-flex items-center justify-center rounded-lg border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50 disabled:opacity-50"
-            :disabled="bulkProcessing || duplicateDismantleCount === 0"
-            @click="openBulkDismantle"
-          >
-            一键分解重复
-            <span v-if="duplicateDismantleCount" class="ml-1 text-[10px] text-neutral-400 dark:text-neutral-500">
-              ({{ duplicateDismantleCount }})
-            </span>
-          </button>
-          <button
-            type="button"
-            class="inline-flex items-center justify-center rounded-lg border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50 disabled:opacity-50"
-            :disabled="loading"
-            @click="refreshInventory"
-          >
-            刷新
-          </button>
-        </div>
-
-        <div class="mt-4 flex flex-wrap gap-2">
-          <button
-            v-for="filter in rarityQuickFilters"
-            :key="filter.value"
-            type="button"
-            class="rounded-full border px-3 py-1 text-xs font-medium transition"
-            :class="selectedRarity === filter.value ? 'border-[rgb(var(--accent-strong))] bg-[rgb(var(--accent-strong))]/10 text-[rgb(var(--accent-strong))]' : 'border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-neutral-200'"
-            @click="selectedRarity = filter.value"
-          >
-            {{ filter.label }}
-          </button>
-        </div>
-      </section>
-
-      <section class="rounded-3xl border border-neutral-200/70 bg-white/90 p-6 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
-        <header class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50">卡片列表</h3>
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">
-              共 {{ total }} 张，支持分解重复卡。当前页显示 {{ visibleCount }} 张<span v-if="pageRange.start !== '—'">（第 {{ pageRange.start }} - {{ pageRange.end }} 条）</span>，已收集 {{ ownedCount }} 张。
-            </p>
-          </div>
-          <div class="text-xs text-neutral-400 dark:text-neutral-500">更新时间：{{ lastUpdated || '尚未刷新' }}</div>
-        </header>
-
-        <div v-if="loading" class="mt-6 rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-center text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
-          正在加载图鉴...
-        </div>
-
-        <div v-else-if="items.length" class="mt-6 grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          <div v-for="item in decoratedPaginatedItems" :key="item.cardId" class="group relative min-w-0">
-            <GachaCard
-              :title="item.title"
-              :rarity="item.rarity"
-              :tags="item.tags"
-              :authors="item.authors"
-              :count="item.count"
-              :image-url="item.imageUrl || undefined"
-              :page-url="cardPageUrl(item)"
-              class="transition"
-              :class="item.count === 0 ? 'opacity-60' : ''"
-            >
-              <template #meta>
-              </template>
-              <template #actions>
+        <!-- Album Tab -->
+        <div v-else key="album-tab" class="gacha-page-flow gacha-page-enter">
+          <section class="surface-card p-4">
+            <div class="flex flex-wrap items-center gap-3">
+              <UiInput
+                v-model.trim="searchKeyword"
+                type="search"
+                placeholder="搜索卡牌..."
+                class="w-48 text-sm"
+              />
+              <UiButton variant="outline" size="sm" :disabled="loadingPages" @click="refreshPages(true)">刷新</UiButton>
+              <UiButton
+                variant="outline"
+                size="sm"
+                :disabled="loadingPages || batchDismantling"
+                @click="openQuickDismantleDialog"
+              >
+                快速分解
+              </UiButton>
+              <UiButton
+                variant="outline"
+                size="sm"
+                :disabled="loadingPages || batchDismantling"
+                @click="openBatchDismantleDialog"
+              >
+                精细分解
+              </UiButton>
+              <div class="ml-auto flex items-center gap-1 rounded-full border border-[var(--g-border)] p-1">
                 <button
-                  v-if="item.count > 0"
                   type="button"
-                  class="rounded-lg border border-neutral-200 px-3 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50 disabled:opacity-50"
-                  :disabled="dismantling"
-                  @click.stop="openDismantle(item)"
+                  class="gacha-toggle-btn"
+                  :class="{ 'is-active': albumCardVariant === 'mini' }"
+                  @click="albumCardVariant = 'mini'"
                 >
-                  {{ dismantling && dismantleTarget?.cardId === item.cardId ? '处理中...' : '分解' }}
+                  缩略
                 </button>
-                <span
-                  v-else
-                  class="rounded-lg border border-dashed border-neutral-200 px-3 py-1 text-xs text-neutral-400 dark:border-neutral-700 dark:text-neutral-500"
+                <button
+                  type="button"
+                  class="gacha-toggle-btn"
+                  :class="{ 'is-active': albumCardVariant === 'large' }"
+                  @click="albumCardVariant = 'large'"
                 >
-                  未收集
-                </span>
-              </template>
-            </GachaCard>
+                  大图
+                </button>
+              </div>
+            </div>
+            <div class="mt-3">
+              <GachaRarityFilter v-model="pageRarityFilter" :options="pageRarityFilterOptions" all-label="全部" />
+            </div>
+          </section>
+
+          <section ref="cardGridRef" class="surface-card p-4">
+            <div v-if="loadingPages" :class="albumCardVariant === 'mini' ? 'gacha-card-grid--mini' : 'gacha-card-grid--large'">
+              <GachaSkeleton v-for="i in 12" :key="i" :variant="albumCardVariant === 'mini' ? 'card-mini' : 'card-large'" />
+            </div>
             <div
-              v-if="item.count === 0"
-              class="pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl bg-white/75 text-sm font-semibold text-neutral-500 dark:bg-neutral-900/80 dark:text-neutral-400"
+              v-else-if="filteredVariants.length"
+              :class="albumCardVariant === 'mini' ? 'gacha-card-grid--mini' : 'gacha-card-grid--large'"
             >
-              尚未收集
+              <GachaCard
+                v-for="card in visibleVariants"
+                :key="`${card.cardId}::${card.affixSignature || 'std'}`"
+                class="gacha-card-reveal-target album-card-trigger"
+                :tabindex="albumCardVariant === 'mini' ? 0 : undefined"
+                :role="albumCardVariant === 'mini' ? 'button' : undefined"
+                :aria-label="albumCardVariant === 'mini' ? `查看${card.title}详情` : undefined"
+                :title="card.title"
+                :rarity="card.rarity"
+                :tags="card.tags"
+                :authors="card.authors"
+                :wikidot-id="card.wikidotId"
+                :count="card.count"
+                :image-url="card.imageUrl || undefined"
+                :page-url="albumCardVariant === 'large' ? albumCardPageUrl(card) : null"
+                :variant="albumCardVariant"
+                :affix-visual-style="card.affixVisualStyle"
+                :affix-signature="card.affixSignature"
+                :affix-styles="card.affixStyles"
+                :affix-style-counts="card.affixStyleCounts"
+                :affix-label="card.affixLabel"
+                :locked="(card.lockedCount ?? 0) > 0"
+                @click="onAlbumCardClick(card)"
+                @keydown.enter.prevent="onAlbumCardClick(card)"
+                @keydown.space.prevent="onAlbumCardClick(card)"
+              />
             </div>
-          </div>
-        </div>
+            <GachaEmptyState v-else icon="🔍" title="无匹配结果" description="尝试调整搜索条件或稀有度筛选" />
 
-        <div
-          v-if="items.length && totalPages > 1"
-          class="mt-6 flex flex-col gap-3 rounded-2xl border border-neutral-200/70 bg-white/70 px-4 py-3 text-xs text-neutral-500 dark:border-neutral-800/70 dark:bg-neutral-900/60 sm:flex-row sm:items-center sm:justify-between sm:text-sm"
-        >
-          <div class="flex items-center gap-2">
             <button
+              v-if="albumHasMore"
               type="button"
-              class="inline-flex items-center rounded-lg border border-neutral-200 px-3 py-1.5 font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50 disabled:opacity-50"
-              :disabled="currentPage === 1"
-              @click="goToPreviousPage"
+              class="mt-3 w-full rounded-xl bg-neutral-100 px-3 py-2.5 text-center text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+              @click="albumLoadMore"
             >
-              上一页
+              加载更多 (剩余 {{ filteredVariants.length - ALBUM_RENDER_LIMIT }} 张)
             </button>
-            <button
-              type="button"
-              class="inline-flex items-center rounded-lg border border-neutral-200 px-3 py-1.5 font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50 disabled:opacity-50"
-              :disabled="currentPage === totalPages"
-              @click="goToNextPage"
-            >
-              下一页
-            </button>
-          </div>
-          <div class="flex items-center gap-2">
-            <span>第 {{ currentPage }} / {{ totalPages }} 页</span>
-            <label class="flex items-center gap-1">
-              跳转
-              <select
-                v-model.number="currentPage"
-                class="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
-              >
-                <option v-for="page in pageNumbers" :key="page" :value="page">第 {{ page }} 页</option>
-              </select>
-            </label>
-          </div>
-          <div class="text-neutral-400 dark:text-neutral-500">
-            显示 {{ pageRange.start }} - {{ pageRange.end }} 条
-          </div>
-        </div>
 
-        <p v-else class="mt-6 rounded-2xl border border-dashed border-neutral-200/70 px-4 py-3 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
-          暂无符合条件的卡片。尝试调整稀有度筛选。
-        </p>
-      </section>
+            <p v-if="loadingRemainder" class="mt-3 text-center text-[11px] text-neutral-400 dark:text-neutral-500">
+              正在加载其余卡片...
+            </p>
+          </section>
+        </div>
+      </Transition>
+
+      <GachaAlbumDismantleDialog
+        :open="batchDismantleDialogOpen"
+        :candidates="batchDismantleCandidates"
+        :loading="batchDismantleLoading"
+        :dismantling="batchDismantling"
+        :error="batchDismantleError"
+        @close="closeBatchDismantleDialog"
+        @confirm="confirmBatchDismantle"
+      />
+      <GachaQuickDismantleDialog
+        ref="quickDismantleRef"
+        :open="quickDismantleDialogOpen"
+        @close="closeQuickDismantleDialog"
+        @preview="handleQuickDismantlePreview"
+        @confirm="handleQuickDismantleConfirm"
+      />
+      <GachaAlbumCardDetailDialog
+        :open="cardDetailDialogOpen"
+        :card="selectedCardForDetail"
+        :page-url="selectedCardForDetailPageUrl"
+        :lock-busy="lock.lockBusy.value"
+        :dismantle-busy="detailDismantleBusy"
+        @close="closeCardDetailDialog"
+        @lock="handleLockVariant"
+        @unlock="handleUnlockVariant"
+        @dismantle-one="handleDetailDismantleOne"
+      />
     </div>
-
-    <Teleport to="body">
-      <transition name="fade">
-        <div v-if="dismantleDialog" class="fixed inset-0 z-[70] flex items-center justify-center">
-          <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeDismantle" />
-          <div class="relative z-[71] w-full max-w-md rounded-3xl border border-neutral-200/70 bg-white/95 p-6 shadow-2xl dark:border-neutral-700/70 dark:bg-neutral-900/95">
-            <header class="flex items-start justify-between gap-3">
-              <div>
-                <h3 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50">分解卡片</h3>
-                <p class="text-sm text-neutral-500 dark:text-neutral-400">
-                  分解后会返还 Token，数量取决于卡片稀有度与重复奖励。
-                </p>
-              </div>
-              <button
-                type="button"
-                class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200/70 text-neutral-500 transition hover:text-neutral-900 dark:border-neutral-700/70 dark:text-neutral-400 dark:hover:text-neutral-100"
-                @click="closeDismantle"
-              >
-                <LucideIcon name="X" class="h-4 w-4" />
-              </button>
-            </header>
-
-            <div class="mt-4 space-y-3 text-sm text-neutral-600 dark:text-neutral-300">
-              <div class="rounded-xl border border-neutral-200/70 bg-neutral-50/70 p-3 dark:border-neutral-800/70 dark:bg-neutral-900/60">
-                <h4 class="font-semibold text-neutral-900 dark:text-neutral-100">{{ dismantleTarget?.title }}</h4>
-                <p class="text-xs text-neutral-500 dark:text-neutral-400">
-                  稀有度：{{ rarityLabel(dismantleTarget?.rarity || 'WHITE') }} · 当前拥有：{{ dismantleTarget?.count ?? 0 }}
-                </p>
-              </div>
-
-              <label class="flex flex-col gap-1 text-sm text-neutral-500 dark:text-neutral-400">
-                分解数量
-                <input
-                  v-model.number="dismantleCount"
-                  type="number"
-                  min="1"
-                  :max="dismantleTarget?.count ?? 1"
-                  class="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
-                />
-              </label>
-
-              <transition name="fade">
-                <p
-                  v-if="dismantleError"
-                  class="rounded-xl border border-rose-200/70 bg-rose-50/70 px-3 py-2 text-sm text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
-                >
-                  {{ dismantleError }}
-                </p>
-              </transition>
-            </div>
-
-            <footer class="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                class="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50"
-                @click="closeDismantle"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                class="rounded-xl bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="dismantling"
-                @click="confirmDismantle"
-              >
-                <span v-if="dismantling">处理中...</span>
-                <span v-else>确认分解</span>
-              </button>
-            </footer>
-          </div>
-        </div>
-      </transition>
-    </Teleport>
-
-    <Teleport to="body">
-      <transition name="fade">
-        <div v-if="bulkDialog" class="fixed inset-0 z-[70] flex items-center justify-center">
-          <div
-            class="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            @click="bulkProcessing ? null : closeBulkDismantle"
-          />
-          <div class="relative z-[71] w-full max-w-md rounded-3xl border border-neutral-200/70 bg-white/95 p-6 shadow-2xl dark:border-neutral-700/70 dark:bg-neutral-900/95">
-            <header class="flex items-start justify-between gap-3">
-              <div>
-                <h3 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50">批量分解重复卡片</h3>
-                <p class="text-sm text-neutral-500 dark:text-neutral-400">
-                  自动分解当前筛选下的重复卡片，仅保留每张卡片的一份。
-                </p>
-              </div>
-              <button
-                type="button"
-                class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200/70 text-neutral-500 transition hover:text-neutral-900 dark:border-neutral-700/70 dark:text-neutral-400 dark:hover:text-neutral-100 disabled:opacity-40"
-                :disabled="bulkProcessing"
-                @click="closeBulkDismantle"
-              >
-                <LucideIcon name="X" class="h-4 w-4" />
-              </button>
-            </header>
-
-            <div class="mt-4 space-y-3 text-sm text-neutral-600 dark:text-neutral-300">
-              <div class="rounded-xl border border-neutral-200/70 bg-neutral-50/70 p-3 dark:border-neutral-800/70 dark:bg-neutral-900/60">
-                <p>重复卡片：{{ duplicateCardCount }} 张</p>
-                <p>将要分解：{{ duplicateDismantleCount }} 张（保留一张）</p>
-              </div>
-
-              <p v-if="duplicateDismantleCount === 0" class="text-xs text-neutral-400 dark:text-neutral-500">
-                当前筛选下没有可分解的重复卡片。
-              </p>
-
-              <p v-if="bulkProcessing" class="rounded-xl border border-[rgb(var(--accent-strong))]/30 bg-[rgb(var(--accent-strong))]/5 px-3 py-2 text-sm text-[rgb(var(--accent-strong))]">
-                正在分解第 {{ Math.min(bulkProgress + 1, duplicateCardCount) }} / {{ duplicateCardCount }} 张卡片的重复部分，请稍候...
-              </p>
-
-              <transition name="fade">
-                <p
-                  v-if="bulkError"
-                  class="rounded-xl border border-rose-200/70 bg-rose-50/70 px-3 py-2 text-sm text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
-                >
-                  {{ bulkError }}
-                </p>
-              </transition>
-
-              <transition name="fade">
-                <div
-                  v-if="bulkResult"
-                  class="rounded-xl border border-emerald-200/70 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
-                >
-                  已分解 {{ bulkResult.dismantled }} 张重复卡片，获得 Token {{ bulkResult.reward }}。钱包余额已同步更新。
-                </div>
-              </transition>
-
-              <div
-                v-if="duplicateDialogEntries.length"
-                class="max-h-56 overflow-y-auto rounded-xl border border-neutral-200/70 bg-white/80 dark:border-neutral-700/60 dark:bg-neutral-900/60"
-              >
-                <div class="flex flex-wrap gap-2 px-3 py-3">
-                  <span
-                    v-for="entry in duplicateDialogEntries"
-                    :key="entry.cardId"
-                    class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition"
-                    :class="duplicateChipClassMap[entry.rarity] || duplicateChipClassMap.WHITE"
-                  >
-                    <span class="h-2 w-2 rounded-full" :class="duplicateChipDotClassMap[entry.rarity] || duplicateChipDotClassMap.WHITE" />
-                    <span class="max-w-[10rem] truncate text-[11px] font-medium normal-case">{{ entry.title }}</span>
-                    <span class="text-[10px] uppercase tracking-wide opacity-80">{{ rarityLabel(entry.rarity) }}</span>
-                    <span class="text-[11px] font-semibold text-neutral-500 dark:text-neutral-300">×{{ entry.duplicateCount }}</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <footer class="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                class="rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50 disabled:opacity-50"
-                :disabled="bulkProcessing"
-                @click="closeBulkDismantle"
-              >
-                {{ bulkResult ? '完成' : '取消' }}
-              </button>
-              <button
-                v-if="!bulkResult"
-                type="button"
-                class="rounded-xl bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="bulkProcessing || duplicateDismantleCount === 0"
-                @click="confirmBulkDismantle"
-              >
-                <span v-if="bulkProcessing">处理中...</span>
-                <span v-else>开始分解</span>
-              </button>
-            </footer>
-          </div>
-        </div>
-      </transition>
-    </Teleport>
-  </div>
+  </GachaPageShell>
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref, watch } from 'vue'
-import { navigateTo } from '#app'
-import LucideIcon from '~/components/LucideIcon.vue'
-import GachaCard from '~/components/GachaCard.vue'
-import { useAuth } from '~/composables/useAuth'
-import { useGacha, type InventoryItem, type Rarity } from '~/composables/useGacha'
-import { usePageAuthors } from '~/composables/usePageAuthors'
+import { computed, ref, nextTick, watch } from 'vue'
+import GachaPageShell from '~/components/gacha/GachaPageShell.vue'
+import GachaErrorBanner from '~/components/gacha/GachaErrorBanner.vue'
+import GachaSkeleton from '~/components/gacha/GachaSkeleton.vue'
+import GachaEmptyState from '~/components/gacha/GachaEmptyState.vue'
+import GachaAlbumDismantleDialog from '~/components/gacha/GachaAlbumDismantleDialog.vue'
+import GachaAlbumCardDetailDialog from '~/components/gacha/GachaAlbumCardDetailDialog.vue'
+import GachaQuickDismantleDialog from '~/components/gacha/GachaQuickDismantleDialog.vue'
+import GachaShowcasePanel from '~/components/gacha/GachaShowcasePanel.vue'
+import GachaRarityFilter from '~/components/gacha/GachaRarityFilter.vue'
+import GachaCard from '~/components/gacha/GachaCard.vue'
+import { UiButton } from '~/components/ui/button'
+import { UiInput } from '~/components/ui/input'
+import { UiProgress } from '~/components/ui/progress'
+import { useGachaPage } from '~/composables/useGachaPage'
+import { useGachaAlbum } from '~/composables/useGachaAlbum'
+import { useGachaLock } from '~/composables/useGachaLock'
+import { useGachaShowcase } from '~/composables/useGachaShowcase'
+import { useGachaPageLifecycle } from '~/composables/useGachaPageLifecycle'
+import { useQueryTab } from '~/composables/useQueryTab'
+import { useScrollReveal } from '~/composables/useScrollReveal'
+import { rarityLabel, raritySortWeight } from '~/utils/gachaRarity'
+import { progressPercent, formatTokens } from '~/utils/gachaFormatters'
+import type { Progress, Rarity, AlbumPageVariant, DismantleKeepScope } from '~/types/gacha'
+import type { ShowcasePickerOption } from '~/components/gacha/GachaShowcaseSlotPicker.vue'
 
-const { status, user, loading: authLoading, fetchCurrentUser } = useAuth()
-const gacha = useGacha()
-const { getConfig, getInventory, dismantle } = gacha
+const pageRarityFilterOptions: Array<Rarity | 'ALL'> = ['ALL', 'GOLD', 'PURPLE', 'BLUE', 'GREEN', 'WHITE']
 
-const INVENTORY_PAGE_SIZE = 120
-const MAX_INVENTORY_PAGES = 25
-const inventoryDateFormatter = new Intl.DateTimeFormat('zh-CN', {
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit'
+const page = useGachaPage({ pageName: 'album' })
+const {
+  authPending, showBindingBlock,
+  errorBanner, successBanner, gacha,
+  emitError, emitSuccess
+} = page
+
+const album = useGachaAlbum(page)
+const lock = useGachaLock(page)
+const showcase = useGachaShowcase(page)
+const {
+  loadingPages, loadingRemainder, searchKeyword, pageRarityFilter,
+  filteredVariants,
+  refreshPages, updateVariantLockStatus,
+  batchDismantleDialogOpen, batchDismantleCandidates,
+  batchDismantleLoading, batchDismantling, batchDismantleError,
+  openBatchDismantleDialog, closeBatchDismantleDialog, confirmBatchDismantle,
+  quickDismantleDialogOpen,
+  openQuickDismantleDialog, closeQuickDismantleDialog,
+  previewQuickDismantle, confirmQuickDismantle,
+  loadInitial
+} = album
+
+const quickDismantleRef = ref<InstanceType<typeof GachaQuickDismantleDialog> | null>(null)
+
+const { activeTab, setTab } = useQueryTab<'album' | 'showcase' | 'progress'>({ defaultTab: 'album' })
+
+const albumCardVariant = ref<'mini' | 'large'>('mini')
+const cardDetailDialogOpen = ref(false)
+const selectedCardForDetail = ref<AlbumPageVariant | null>(null)
+const detailDismantleBusy = ref(false)
+
+// ─── Album grid progressive render ─────────────────────
+const ALBUM_RENDER_LIMIT = 60
+const ALBUM_RENDER_BATCH = 20
+const albumShowAll = ref(false)
+const albumRenderBudget = ref(ALBUM_RENDER_BATCH)
+let albumRafId: number | null = null
+
+const visibleVariants = computed(() => {
+  const limit = albumShowAll.value ? albumRenderBudget.value : Math.min(albumRenderBudget.value, ALBUM_RENDER_LIMIT)
+  return filteredVariants.value.slice(0, limit)
 })
+const albumHasMore = computed(() => !albumShowAll.value && filteredVariants.value.length > ALBUM_RENDER_LIMIT)
 
-const authPending = computed(() => status.value === 'unknown' || authLoading.value)
-const showBindingBlock = computed(() => status.value === 'authenticated' && !user.value?.linkedWikidotId)
-
-watch(status, (next) => {
-  if (next === 'unauthenticated') {
-    navigateTo('/auth/login', { replace: true })
-  }
-})
-
-onMounted(() => {
-  if (status.value === 'unknown') {
-    fetchCurrentUser().catch((error) => {
-      console.warn('[gacha-album] fetchCurrentUser failed', error)
-    })
-  } else if (status.value === 'unauthenticated') {
-    navigateTo('/auth/login', { replace: true })
-  }
-})
-
-const rarityOptions: Array<{ value: Rarity; label: string }> = [
-  { value: 'GOLD', label: '金色' },
-  { value: 'PURPLE', label: '紫色' },
-  { value: 'BLUE', label: '蓝色' },
-  { value: 'GREEN', label: '绿色' },
-  { value: 'WHITE', label: '白色' }
-]
-const rarityQuickFilters: Array<{ value: 'ALL' | Rarity; label: string }> = [
-  { value: 'ALL', label: '全部' },
-  ...rarityOptions
-]
-const rarityOrder: Record<Rarity, number> = {
-  GOLD: 0,
-  PURPLE: 1,
-  BLUE: 2,
-  GREEN: 3,
-  WHITE: 4
-}
-const inventoryTitleCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
-const rarityChipClassMap: Record<Rarity, string> = {
-  GOLD: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-400/60 dark:bg-amber-500/10 dark:text-amber-200',
-  PURPLE: 'border-purple-300 bg-purple-50 text-purple-700 dark:border-purple-400/60 dark:bg-purple-500/10 dark:text-purple-200',
-  BLUE: 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-400/60 dark:bg-blue-500/10 dark:text-blue-200',
-  GREEN: 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-400/60 dark:bg-emerald-500/10 dark:text-emerald-200',
-  WHITE: 'border-neutral-200 bg-neutral-50 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300'
-}
-const duplicateChipClassMap: Record<Rarity, string> = {
-  GOLD: 'border-amber-300 bg-amber-50/80 text-amber-700 dark:border-amber-400/60 dark:bg-amber-500/10 dark:text-amber-200',
-  PURPLE: 'border-purple-300 bg-purple-50/80 text-purple-700 dark:border-purple-400/60 dark:bg-purple-500/10 dark:text-purple-200',
-  BLUE: 'border-blue-300 bg-blue-50/80 text-blue-700 dark:border-blue-400/60 dark:bg-blue-500/10 dark:text-blue-200',
-  GREEN: 'border-emerald-300 bg-emerald-50/80 text-emerald-700 dark:border-emerald-400/60 dark:bg-emerald-500/10 dark:text-emerald-200',
-  WHITE: 'border-neutral-200 bg-white/80 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300'
-}
-const duplicateChipDotClassMap: Record<Rarity, string> = {
-  GOLD: 'bg-amber-400',
-  PURPLE: 'bg-purple-400',
-  BLUE: 'bg-blue-400',
-  GREEN: 'bg-emerald-400',
-  WHITE: 'bg-neutral-400'
-}
-const selectedRarity = ref<'ALL' | Rarity>('ALL')
-const items = ref<InventoryItem[]>([])
-const total = ref(0)
-const loading = ref(false)
-const lastUpdated = ref<string | null>(null)
-
-const pageAuthors = usePageAuthors()
-const currentPage = ref(1)
-const paginatedItems = computed(() => {
-  const start = (currentPage.value - 1) * INVENTORY_PAGE_SIZE
-  return items.value.slice(start, start + INVENTORY_PAGE_SIZE)
-})
-const totalPages = computed(() => {
-  if (items.value.length <= 0) return 1
-  return Math.max(1, Math.ceil(items.value.length / INVENTORY_PAGE_SIZE))
-})
-const pageNumbers = computed(() => Array.from({ length: totalPages.value }, (_, index) => index + 1))
-const pageRange = computed(() => {
-  if (!paginatedItems.value.length) {
-    return { start: '—', end: '—' }
-  }
-  const startIndex = (currentPage.value - 1) * INVENTORY_PAGE_SIZE + 1
-  const endIndex = startIndex + paginatedItems.value.length - 1
-  return { start: String(startIndex), end: String(endIndex) }
-})
-
-const dismantleDialog = ref(false)
-const dismantleTarget = ref<InventoryItem | null>(null)
-const dismantleCount = ref(1)
-const dismantleError = ref<string | null>(null)
-const dismantling = ref(false)
-
-const activated = ref(false)
-
-const visibleCount = computed(() => paginatedItems.value.length)
-const ownedCount = computed(() => items.value.filter((item) => item.count > 0).length)
-const missingCount = computed(() => Math.max(0, total.value - ownedCount.value))
-const rarityBreakdown = computed(() => {
-  const summary: Record<Rarity, { total: number; owned: number }> = {
-    GOLD: { total: 0, owned: 0 },
-    PURPLE: { total: 0, owned: 0 },
-    BLUE: { total: 0, owned: 0 },
-    GREEN: { total: 0, owned: 0 },
-    WHITE: { total: 0, owned: 0 }
-  }
-
-  items.value.forEach((item) => {
-    const entry = summary[item.rarity]
-    if (!entry) return
-    entry.total += 1
-    if (item.count > 0) {
-      entry.owned += 1
+function startAlbumProgressiveRender() {
+  albumRenderBudget.value = ALBUM_RENDER_BATCH
+  if (albumRafId != null) cancelAnimationFrame(albumRafId)
+  function step() {
+    const target = albumShowAll.value ? filteredVariants.value.length : ALBUM_RENDER_LIMIT
+    if (albumRenderBudget.value < target) {
+      albumRenderBudget.value = Math.min(albumRenderBudget.value + ALBUM_RENDER_BATCH, target)
+      albumRafId = requestAnimationFrame(step)
+    } else {
+      albumRafId = null
     }
-  })
+  }
+  albumRafId = requestAnimationFrame(step)
+}
 
-  return (Object.keys(summary) as Rarity[])
-    .map((rarity) => ({
-      rarity,
-      label: rarityLabel(rarity),
-      total: summary[rarity].total,
-      owned: summary[rarity].owned
-    }))
-    .filter((entry) => entry.total > 0)
-    .sort((a, b) => rarityOrder[a.rarity] - rarityOrder[b.rarity])
+function albumLoadMore() {
+  albumShowAll.value = true
+  startAlbumProgressiveRender()
+}
+
+// Scroll-reveal for card grid
+const cardGridRef = ref<HTMLElement | null>(null)
+const { refresh: refreshReveal, debouncedRefresh: debouncedReveal } = useScrollReveal(cardGridRef, {
+  selector: '.gacha-card-reveal-target',
+  rootMargin: '0px 0px -30px 0px'
 })
 
-const decoratedPaginatedItems = computed(() =>
-  paginatedItems.value.map((item) => ({
-    ...item,
-    authors: pageAuthors.getAuthors(item.wikidotId)
-  }))
+// Re-trigger reveal and progressive render when cards or variant change
+watch([filteredVariants, albumCardVariant], () => {
+  albumShowAll.value = false
+  startAlbumProgressiveRender()
+  nextTick(() => refreshReveal())
+})
+
+watch(albumRenderBudget, () => {
+  nextTick(() => debouncedReveal())
+})
+
+const progressData = ref<Progress | null>(null)
+const loadingProgress = ref(false)
+
+const pagesPercent = computed(() => {
+  if (!progressData.value || progressData.value.pages.total === 0) return 0
+  return Math.min(100, Math.round((progressData.value.pages.collected / progressData.value.pages.total) * 100))
+})
+
+const imageVariantsPercent = computed(() => {
+  if (!progressData.value || progressData.value.imageVariants.total === 0) return 0
+  return Math.min(100, Math.round((progressData.value.imageVariants.collected / progressData.value.imageVariants.total) * 100))
+})
+
+const coatingsPercent = computed(() => {
+  if (!progressData.value || progressData.value.coatings.total === 0) return 0
+  return Math.min(100, Math.round((progressData.value.coatings.collected / progressData.value.coatings.total) * 100))
+})
+
+const rarityEntries = computed(() =>
+  [...(progressData.value?.pages.byRarity ?? [])]
+    .sort((a, b) => (raritySortWeight[a.rarity] ?? 99) - (raritySortWeight[b.rarity] ?? 99))
+    .map((entry) => ({ ...entry, percent: progressPercent(entry.collected, entry.total) }))
 )
 
-const duplicateEntries = computed(() => items.value.filter((item) => item.count > 1))
-const duplicateDialogEntries = computed(() =>
-  duplicateEntries.value
-    .map((item) => ({
-      cardId: item.cardId,
-      title: item.title,
-      duplicateCount: Math.max(0, item.count - 1),
-      rarity: item.rarity
-    }))
-    .filter((entry) => entry.duplicateCount > 0)
-    .sort((a, b) => {
-      const diff = b.duplicateCount - a.duplicateCount
-      if (diff !== 0) return diff
-      return inventoryTitleCollator.compare(a.title, b.title)
-    })
-)
-const duplicateCardCount = computed(() => duplicateDialogEntries.value.length)
-const duplicateDismantleCount = computed(() =>
-  duplicateEntries.value.reduce((acc, item) => acc + Math.max(0, item.count - 1), 0)
-)
-
-const bulkDialog = ref(false)
-const bulkProcessing = ref(false)
-const bulkError = ref<string | null>(null)
-const bulkResult = ref<{ dismantled: number; reward: number } | null>(null)
-const bulkProgress = ref(0)
-
-function rarityLabel(rarity: Rarity) {
-  switch (rarity) {
-    case 'GOLD':
-      return '金色'
-    case 'PURPLE':
-      return '紫色'
-    case 'BLUE':
-      return '蓝色'
-    case 'GREEN':
-      return '绿色'
-    case 'WHITE':
-      return '白色'
-    default:
-      return rarity
-  }
+const rarityBarColorMap: Record<Rarity, string> = {
+  GOLD: 'var(--g-rarity-gold)',
+  PURPLE: 'var(--g-rarity-purple)',
+  BLUE: 'var(--g-rarity-blue)',
+  GREEN: 'var(--g-rarity-green)',
+  WHITE: 'var(--g-rarity-white)'
 }
-function cardPageUrl(item: InventoryItem | null) {
-  if (!item) return null
-  if (item.wikidotId != null) {
-    return `/page/${item.wikidotId}`
-  }
-  if (item.pageId != null) {
-    return `/page/${item.pageId}`
-  }
+
+function rarityBarColor(rarity: Rarity): string {
+  return rarityBarColorMap[rarity] || 'rgb(var(--accent-strong))'
+}
+
+function albumCardPageUrl(card: { wikidotId: number | null; pageId: number | null }) {
+  if (card.wikidotId != null) return `/page/${card.wikidotId}`
+  if (card.pageId != null) return `/page/${card.pageId}`
   return null
 }
 
-function sortInventoryEntries(list: InventoryItem[]) {
-  return [...list].sort((a, b) => {
-    const rarityDiff = rarityOrder[a.rarity] - rarityOrder[b.rarity]
-    if (rarityDiff !== 0) return rarityDiff
-    const ownershipDiff = Number(b.count > 0) - Number(a.count > 0)
-    if (ownershipDiff !== 0) return ownershipDiff
-    return inventoryTitleCollator.compare(a.title, b.title)
-  })
+const selectedCardForDetailPageUrl = computed(() =>
+  selectedCardForDetail.value ? albumCardPageUrl(selectedCardForDetail.value) : null
+)
+
+function onAlbumCardClick(card: AlbumPageVariant) {
+  if (albumCardVariant.value !== 'mini') return
+  selectedCardForDetail.value = card
+  cardDetailDialogOpen.value = true
 }
 
-async function refreshInventory() {
-  if (!activated.value) {
-    items.value = []
-    total.value = 0
-    currentPage.value = 1
+function closeCardDetailDialog() {
+  cardDetailDialogOpen.value = false
+}
+
+async function handleLockVariant(cardId: string, affixSignature: string) {
+  const ok = await lock.lockVariant(cardId, affixSignature)
+  if (ok) updateVariantLockStatus(cardId, affixSignature, true)
+}
+
+async function handleUnlockVariant(cardId: string, affixSignature: string) {
+  const ok = await lock.unlockVariant(cardId, affixSignature)
+  if (ok) updateVariantLockStatus(cardId, affixSignature, false)
+}
+
+async function handleDetailDismantleOne() {
+  if (detailDismantleBusy.value) return
+  const card = selectedCardForDetail.value
+  if (!card) return
+
+  const lockedCount = Math.max(0, Number(card.lockedCount || 0))
+  const freeCount = Math.max(0, Number(card.count || 0) - lockedCount)
+  if (freeCount <= 0) {
+    emitError('该变体当前没有可分解的空闲卡片')
     return
   }
-  loading.value = true
+
+  detailDismantleBusy.value = true
   try {
-    const aggregated: InventoryItem[] = []
-    let totalCount = 0
-    let offset = 0
-    let failed = false
-
-    for (let page = 0; page < MAX_INVENTORY_PAGES; page += 1) {
-      const res = await getInventory({
-        rarity: selectedRarity.value !== 'ALL' ? selectedRarity.value : undefined,
-        limit: INVENTORY_PAGE_SIZE,
-        offset
-      })
-      if (!res.ok) {
-        console.warn('[gacha-album] load inventory failed', res.error)
-        failed = true
-        break
-      }
-      const batch = res.data ?? []
-      aggregated.push(...batch)
-      if (res.total != null) {
-        totalCount = res.total
-      }
-      if (!totalCount) {
-        totalCount = aggregated.length
-      }
-      if (aggregated.length >= totalCount) {
-        break
-      }
-      if (batch.length === 0) {
-        break
-      }
-      offset += batch.length
-    }
-
-    if (!failed) {
-      const sorted = sortInventoryEntries(aggregated)
-      items.value = sorted
-      total.value = totalCount || sorted.length
-      lastUpdated.value = inventoryDateFormatter.format(new Date())
-      currentPage.value = 1
-    }
-  } catch (error) {
-    console.warn('[gacha-album] load inventory failed', error)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function refreshConfig(force = false) {
-  try {
-    const res = await getConfig(force)
-    if (res.ok && res.data) {
-      activated.value = res.data.activated
-    }
-  } catch (error) {
-    console.warn('[gacha-album] refresh config failed', error)
-  }
-}
-
-watch(totalPages, (next) => {
-  const maxPage = Number.isFinite(next) && next > 0 ? Math.floor(next) : 1
-  if (currentPage.value > maxPage) {
-    currentPage.value = maxPage
-  }
-  if (currentPage.value < 1) {
-    currentPage.value = 1
-  }
-})
-
-watch(currentPage, (page, prev) => {
-  if (!Number.isFinite(page) || page < 1) {
-    currentPage.value = 1
-    return
-  }
-  if (page > totalPages.value) {
-    currentPage.value = totalPages.value
-    return
-  }
-  if (page !== prev && paginatedItems.value.length === 0 && items.value.length) {
-    currentPage.value = Math.max(1, Math.ceil(items.value.length / INVENTORY_PAGE_SIZE))
-  }
-})
-
-watch([selectedRarity, showBindingBlock], ([, blocked]) => {
-  if (!blocked) {
-    refreshInventory().catch((error) => {
-      console.warn('[gacha-album] inventory refresh failed', error)
-    })
-  }
-})
-
-watch(paginatedItems, (list) => {
-  pageAuthors.ensureAuthors(list.map((item) => item.wikidotId))
-}, { immediate: true })
-
-watch(bulkDialog, (open) => {
-  if (open) {
-    pageAuthors.ensureAuthors(duplicateEntries.value.map((item) => item.wikidotId))
-  }
-})
-
-onMounted(() => {
-  if (!showBindingBlock.value) {
-    Promise.allSettled([refreshConfig(), refreshInventory()]).catch((error) => {
-      console.warn('[gacha-album] initial load failed', error)
-    })
-  }
-})
-
-onActivated(() => {
-  if (!showBindingBlock.value) {
-    refreshInventory().catch((error) => {
-      console.warn('[gacha-album] activated refresh failed', error)
-    })
-  }
-})
-
-watch(showBindingBlock, (blocked) => {
-  if (!blocked) {
-    Promise.allSettled([refreshConfig(true), refreshInventory()]).catch((error) => {
-      console.warn('[gacha-album] load after unblocked failed', error)
-    })
-  }
-})
-
-function goToPreviousPage() {
-  if (currentPage.value <= 1) return
-  currentPage.value -= 1
-}
-
-function goToNextPage() {
-  if (currentPage.value >= totalPages.value) return
-  currentPage.value += 1
-}
-
-function openDismantle(item: InventoryItem) {
-  dismantleTarget.value = item
-  dismantleCount.value = Math.min(1, item.count || 1)
-  if (item.count > 0) {
-    dismantleCount.value = 1
-  }
-  dismantleError.value = null
-  dismantleDialog.value = true
-}
-
-function closeDismantle() {
-  dismantleDialog.value = false
-  dismantleTarget.value = null
-  dismantleCount.value = 1
-  dismantleError.value = null
-  dismantling.value = false
-}
-
-async function confirmDismantle() {
-  if (!dismantleTarget.value) return
-  const count = Number(dismantleCount.value)
-  if (!Number.isFinite(count) || count <= 0) {
-    dismantleError.value = '分解数量无效'
-    return
-  }
-  if (count > dismantleTarget.value.count) {
-    dismantleError.value = '数量超过拥有数量'
-    return
-  }
-  dismantling.value = true
-  dismantleError.value = null
-  try {
-    const res = await dismantle(dismantleTarget.value.cardId, count)
+    const res = await gacha.dismantle(
+      card.cardId,
+      1,
+      card.affixVisualStyle,
+      card.affixSignature || undefined
+    )
     if (!res.ok) {
-      dismantleError.value = res.error || '分解失败'
+      emitError(res.error || '分解失败')
       return
     }
-    await Promise.allSettled([refreshInventory(), getConfig(true)])
-    closeDismantle()
+
+    emitSuccess(`已分解 1 张卡片，返还 ${formatTokens(res.reward || 0)} Token`)
+    const signature = card.affixSignature || 'NONE'
+    const index = album.inventoryVariants.value.findIndex((item) =>
+      item.cardId === card.cardId && (item.affixSignature || 'NONE') === signature
+    )
+
+    if (index >= 0) {
+      const target = album.inventoryVariants.value[index]
+      const nextCount = Math.max(0, Number(target.count || 0) - 1)
+      target.count = nextCount
+      if (typeof target.lockedCount === 'number') {
+        target.lockedCount = Math.min(Math.max(0, Number(target.lockedCount || 0)), nextCount)
+      }
+      if (nextCount <= 0) {
+        album.inventoryVariants.value.splice(index, 1)
+      }
+    }
+
+    const nextCard = album.inventoryVariants.value.find((item) =>
+      item.cardId === card.cardId && (item.affixSignature || 'NONE') === signature
+    ) || null
+    if (nextCard) {
+      selectedCardForDetail.value = nextCard
+    } else {
+      closeCardDetailDialog()
+    }
   } catch (error: any) {
-    dismantleError.value = error?.message || '分解失败'
+    emitError(error?.message || '分解失败')
   } finally {
-    dismantling.value = false
+    detailDismantleBusy.value = false
   }
 }
 
-function openBulkDismantle() {
-  bulkError.value = null
-  bulkResult.value = null
-  bulkProgress.value = 0
-  bulkDialog.value = true
+async function handleQuickDismantlePreview(maxRarity: Rarity, keepAtLeast: number, keepScope: DismantleKeepScope) {
+  if (!quickDismantleRef.value) return
+  quickDismantleRef.value.previewLoading = true
+  quickDismantleRef.value.previewError = null
+  await previewQuickDismantle(maxRarity, keepAtLeast, keepScope)
+  quickDismantleRef.value.previewData = album.quickDismantlePreview.value
+  quickDismantleRef.value.previewLoading = album.quickDismantlePreviewLoading.value
+  quickDismantleRef.value.previewError = album.quickDismantlePreviewError.value
 }
 
-function closeBulkDismantle() {
-  if (bulkProcessing.value) return
-  bulkDialog.value = false
-  bulkError.value = null
-  bulkResult.value = null
-  bulkProgress.value = 0
+async function handleQuickDismantleConfirm(maxRarity: Rarity, keepAtLeast: number, keepScope: DismantleKeepScope) {
+  if (!quickDismantleRef.value) return
+  quickDismantleRef.value.confirming = true
+  quickDismantleRef.value.confirmError = null
+  await confirmQuickDismantle(maxRarity, keepAtLeast, keepScope)
+  quickDismantleRef.value.confirming = album.quickDismantleConfirming.value
+  quickDismantleRef.value.confirmError = album.quickDismantleConfirmError.value
 }
 
-async function confirmBulkDismantle() {
-  if (duplicateDismantleCount.value === 0) {
-    bulkError.value = '当前没有可分解的重复卡片'
-    return
-  }
-  const tasks = duplicateEntries.value
-    .map((item) => ({ cardId: item.cardId, count: Math.max(0, item.count - 1) }))
-    .filter((entry) => entry.count > 0)
-  if (tasks.length === 0) {
-    bulkError.value = '当前没有可分解的重复卡片'
-    return
-  }
-  bulkProcessing.value = true
-  bulkError.value = null
-  bulkResult.value = null
-  bulkProgress.value = 0
-  dismantling.value = true
-  let totalReward = 0
-  let totalDismantled = 0
+// ─── Showcase helpers ──────────────────────────────────
+const showcasePickerOptions = ref<ShowcasePickerOption[]>([])
+const loadingShowcasePicker = ref(false)
+const showcaseTabLoaded = ref(false)
+
+async function refreshShowcaseTab(force = false) {
+  if (!force && showcaseTabLoaded.value) return
+  const ok = await showcase.refreshShowcases()
+  if (ok) showcaseTabLoaded.value = true
+}
+
+async function handleShowcaseTab() {
+  setTab('showcase')
+  await refreshShowcaseTab()
+}
+
+async function refreshShowcaseTabManually() {
+  await refreshShowcaseTab(true)
+}
+
+async function loadShowcasePickerOptions() {
+  loadingShowcasePicker.value = true
   try {
-    for (let index = 0; index < tasks.length; index += 1) {
-      bulkProgress.value = index
-      const task = tasks[index]
-      const res = await dismantle(task.cardId, task.count)
-      if (!res.ok) {
-        bulkError.value = res.error || '分解失败'
-        break
-      }
-      totalReward += res.reward ?? 0
-      totalDismantled += task.count
-      const target = items.value.find((item) => item.cardId === task.cardId)
-      if (target) {
-        target.count = res.remaining
-      }
+    const res = await gacha.getFreeInstances(2000, { includePlaced: true, includeLocked: true })
+    if (!res.ok) {
+      showcasePickerOptions.value = []
+      return
     }
-    if (!bulkError.value) {
-      await Promise.allSettled([refreshInventory(), getConfig(true)])
-      bulkResult.value = {
-        dismantled: totalDismantled,
-        reward: totalReward
-      }
-    }
-  } catch (error: any) {
-    bulkError.value = error?.message || '分解失败'
+    showcasePickerOptions.value = (res.items ?? []).map((inst) => ({
+      cardId: inst.cardId,
+      instanceId: inst.instanceId,
+      title: inst.title,
+      rarity: inst.rarity,
+      tags: inst.tags ?? [],
+      imageUrl: inst.imageUrl,
+      authors: inst.authors ?? null,
+      wikidotId: inst.wikidotId ?? null,
+      affixVisualStyle: inst.affixVisualStyle || 'NONE',
+      affixSignature: inst.affixSignature || 'NONE',
+      affixLabel: inst.affixLabel || null,
+      isLocked: inst.isLocked ?? false
+    }))
+  } catch {
+    showcasePickerOptions.value = []
   } finally {
-    bulkProcessing.value = false
-    dismantling.value = false
-    if (!bulkError.value && bulkResult.value == null) {
-      bulkResult.value = {
-        dismantled: totalDismantled,
-        reward: totalReward
-      }
-    }
-    if (!bulkError.value) {
-      bulkProgress.value = tasks.length
-    }
+    loadingShowcasePicker.value = false
   }
 }
+
+watch(() => activeTab.value, (tab) => {
+  if (tab === 'showcase') {
+    void refreshShowcaseTab()
+  }
+}, { immediate: true })
+
+async function refreshProgress() {
+  loadingProgress.value = true
+  try {
+    const res = await gacha.getProgress()
+    progressData.value = res.ok ? res.data : null
+  } catch {
+    progressData.value = null
+  } finally {
+    loadingProgress.value = false
+  }
+}
+
+const { walletBalance } = useGachaPageLifecycle({
+  page,
+  tag: 'gacha-album',
+  loadInitial: async () => {
+    await Promise.allSettled([loadInitial(), refreshProgress()])
+  }
+})
 </script>
+
+<style scoped>
+.album-card-trigger {
+  cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+.album-card-trigger:focus-visible {
+  outline: 2px solid rgb(var(--accent-strong) / 0.65);
+  outline-offset: 2px;
+}
+</style>

@@ -162,7 +162,6 @@ export class VotingTimeSeriesService {
             a.*,
             BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
           FROM "Attribution" a
-          JOIN latest_versions lv ON lv.version_id = a."pageVerId"
         ) a
         WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
       ),
@@ -187,7 +186,8 @@ export class VotingTimeSeriesService {
           AND EXISTS (
             SELECT 1
             FROM effective_attributions a
-            WHERE a."pageVerId" = lv.version_id
+            JOIN "PageVersion" pv_attr ON pv_attr.id = a."pageVerId"
+            WHERE pv_attr."pageId" = lv.page_id
               AND a."userId" = ${userId}
           )
       ),
@@ -215,6 +215,12 @@ export class VotingTimeSeriesService {
           FROM "PageVersion" pv
           WHERE pv."pageId" = dv.page_id
             AND (pv."isDeleted" = false OR pv.id = dv.deletion_version_id)
+            AND EXISTS (
+              SELECT 1
+              FROM effective_attributions ea
+              WHERE ea."pageVerId" = pv.id
+                AND ea."userId" = ${userId}
+            )
           ORDER BY
             CASE WHEN pv."isDeleted" = false THEN 0 ELSE 1 END,
             pv."validTo" DESC NULLS LAST,

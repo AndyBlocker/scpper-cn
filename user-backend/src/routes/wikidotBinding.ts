@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/requireAuth.js';
 import {
   startBindingTask,
+  searchWikidotUsers,
   getBindingTaskStatus,
   cancelBindingTask,
   getPendingTasks,
@@ -12,7 +13,27 @@ import {
 } from '../services/wikidotBinding.js';
 
 const startSchema = z.object({
-  wikidotUsername: z.string().trim().min(1, '请输入 Wikidot 用户名').max(100, '用户名过长')
+  wikidotUsername: z.string().trim().min(1, '请输入 Wikidot 用户名').max(100, '用户名过长').optional(),
+  wikidotId: z.preprocess((value) => {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string' && value.trim()) return Number(value);
+    return undefined;
+  }, z.number().int().positive('Wikidot ID 必须是正整数').optional())
+}).refine((data) => Boolean(data.wikidotUsername || data.wikidotId), {
+  message: '请输入 Wikidot 用户名或 Wikidot ID'
+});
+
+const resolveSchema = z.object({
+  query: z.preprocess(
+    (value) => Array.isArray(value) ? value[0] : value,
+    z.string().trim().max(100, '查询过长').optional()
+  ),
+  limit: z.preprocess((value) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (typeof raw === 'number') return raw;
+    if (typeof raw === 'string' && raw.trim()) return Number.parseInt(raw, 10);
+    return undefined;
+  }, z.number().int().min(1).max(20).optional())
 });
 
 const completeSchema = z.object({
@@ -53,7 +74,10 @@ export function wikidotBindingRouter() {
       }
 
       const payload = startSchema.parse(req.body ?? {});
-      const result = await startBindingTask(req.authUser.id, payload.wikidotUsername);
+      const result = await startBindingTask(req.authUser.id, {
+        wikidotUsername: payload.wikidotUsername,
+        wikidotId: payload.wikidotId
+      });
 
       res.json({
         ok: true,
@@ -73,6 +97,27 @@ export function wikidotBindingRouter() {
           step4: '保存页面，等待系统自动验证（通常需要数小时）'
         }
       });
+    } catch (error) {
+      const { status, body } = createErrorResponse(error);
+      res.status(status).json(body);
+    }
+  });
+
+  // Resolve Wikidot users by query (username/displayName/id)
+  router.get('/resolve', requireAuth, async (req, res) => {
+    try {
+      if (!req.authUser) {
+        return res.status(401).json({ error: '未登录' });
+      }
+
+      const payload = resolveSchema.parse(req.query ?? {});
+      const query = payload.query?.trim() || '';
+      if (!query) {
+        return res.json({ ok: true, users: [] });
+      }
+
+      const users = await searchWikidotUsers(query, payload.limit ?? 8);
+      return res.json({ ok: true, users });
     } catch (error) {
       const { status, body } = createErrorResponse(error);
       res.status(status).json(body);
@@ -122,7 +167,7 @@ export function wikidotBindingRouter() {
       const cancelled = await cancelBindingTask(req.authUser.id);
 
       if (!cancelled) {
-        return res.status(404).json({ error: '没有进行中的绑定任务' });
+        return res.status(404).json({ error: '没有可取消的绑定任务' });
       }
 
       res.json({ ok: true });

@@ -10,6 +10,8 @@ import { PageMetricMonitorJob } from './PageMetricMonitorJob';
 import { UserFollowActivityJob } from './UserFollowActivityJob';
 import { UserCollectionService } from '../services/UserCollectionService.js';
 import { WikidotBindingVerifyJob } from './WikidotBindingVerifyJob.js';
+import { runCategoryIndexTickJob } from './CategoryIndexTickJob.js';
+import { runCategoryIndexForecastJob } from './CategoryIndexForecastJob.js';
 // @ts-ignore - importing from scripts folder
 // import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
@@ -56,6 +58,8 @@ export class IncrementalAnalyzeJob {
         'page_metric_alerts',
         'user_follow_alerts',
         'user_collection_sanitizer',
+        'category_index_tick',
+        'category_index_forecast',
         // 新增：作者分类基准
         'category_benchmarks',
         // Wikidot 账号绑定验证
@@ -181,6 +185,14 @@ export class IncrementalAnalyzeJob {
             });
             console.log('  ✓ Category benchmarks cache cleared');
             break;
+          case 'category_index_tick':
+            await this.prisma.categoryIndexTick.deleteMany({});
+            console.log('  ✓ Category index ticks cleared');
+            break;
+          case 'category_index_forecast':
+            await (this.prisma as any).categoryIndexForecastTick?.deleteMany?.({});
+            console.log('  ✓ Category index forecast ticks cleared');
+            break;
           case 'materialized_views':
             // 物化视图需要先DROP再重建，这里只记录日志
             console.log('  ⚠️ Materialized views will be refreshed (not dropped)');
@@ -222,6 +234,8 @@ export class IncrementalAnalyzeJob {
         const alwaysRunTasks = new Set([
           'site_overview_daily',
           'category_benchmarks',
+          'category_index_tick',
+          'category_index_forecast',
           'materialized_views',
           'series_stats',
           'trending_stats',
@@ -321,6 +335,24 @@ export class IncrementalAnalyzeJob {
         case 'category_benchmarks':
           await computeUserCategoryBenchmarks(this.prisma);
           break;
+        case 'category_index_tick': {
+          const summary = await runCategoryIndexTickJob({
+            forceFullBackfill: Boolean(forceFullAnalysis || options.forceFullHistory)
+          });
+          console.log(
+            `✅ Category index tick generated=${summary.generated}, window=${summary.fromAsOfTs ?? '-'} -> ${summary.toAsOfTs ?? '-'}, sourceWatermark=${summary.sourceWatermarkTs ?? '-'}`
+          );
+          break;
+        }
+        case 'category_index_forecast': {
+          const summary = await runCategoryIndexForecastJob({
+            lookbackDays: forceFullAnalysis || options.forceFullHistory ? 120 : 45
+          });
+          console.log(
+            `✅ Category index forecast upserted=${summary.upserted}, window=${summary.fromAsOfTs ?? '-'} -> ${summary.toAsOfTs ?? '-'}, sourceTick=${summary.sourceTickTs ?? '-'}`
+          );
+          break;
+        }
         case 'page_metric_alerts': {
           const monitor = new PageMetricMonitorJob(this.prisma);
           await monitor.run(changeSet.map(item => item.id));
@@ -346,7 +378,9 @@ export class IncrementalAnalyzeJob {
       }
 
       // 更新水位线
-      await this.updateWatermark(taskName, changeSet);
+      if (taskName !== 'category_index_tick' && taskName !== 'category_index_forecast') {
+        await this.updateWatermark(taskName, changeSet);
+      }
 
     } catch (error) {
       console.error(`❌ Task ${taskName} failed:`, error);
@@ -363,6 +397,10 @@ export class IncrementalAnalyzeJob {
    * 获取变更集 - 找出自上次水位线后发生变化的 pageVersionId
    */
   private async getChangeSet(taskName: string, forceFullAnalysis = false): Promise<Array<{ id: number; lastChange: Date }>> {
+    if (taskName === 'category_index_tick' || taskName === 'category_index_forecast') {
+      return [];
+    }
+
     if (forceFullAnalysis) {
       // 强制全量分析 - 返回所有有效的 pageVersion
       const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`

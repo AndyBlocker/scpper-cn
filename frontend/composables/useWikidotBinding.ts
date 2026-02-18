@@ -12,6 +12,12 @@ export interface WikidotBindingTask {
   failureReason: string | null
 }
 
+export interface ResolvedWikidotUser {
+  wikidotId: number
+  displayName: string | null
+  username: string | null
+}
+
 export interface StartBindingResponse {
   ok: boolean
   task?: WikidotBindingTask
@@ -30,6 +36,17 @@ export interface StatusResponse {
   ok: boolean
   task: WikidotBindingTask | null
   error?: string
+}
+
+export interface ResolveUsersResponse {
+  ok: boolean
+  users: ResolvedWikidotUser[]
+  error?: string
+}
+
+export interface StartBindingPayload {
+  wikidotUsername?: string
+  wikidotId?: number
 }
 
 export function useWikidotBinding() {
@@ -65,13 +82,13 @@ export function useWikidotBinding() {
     }
   }
 
-  async function startBinding(wikidotUsername: string): Promise<{ ok: boolean; error?: string }> {
+  async function startBinding(payload: StartBindingPayload): Promise<{ ok: boolean; error?: string }> {
     loading.value = true
     error.value = null
     try {
       const res = await $bff<StartBindingResponse>('/wikidot-binding/start', {
         method: 'POST',
-        body: { wikidotUsername }
+        body: payload
       })
       if (res.ok && res.task) {
         currentTask.value = res.task
@@ -98,7 +115,31 @@ export function useWikidotBinding() {
     }
   }
 
-  async function cancelBinding(): Promise<{ ok: boolean }> {
+  async function resolveUsers(query: string, limit = 8): Promise<{ ok: boolean; users: ResolvedWikidotUser[]; error?: string }> {
+    try {
+      const res = await $bff<ResolveUsersResponse>('/wikidot-binding/resolve', {
+        method: 'GET',
+        query: { query, limit }
+      })
+      if (!res.ok) {
+        return { ok: false, users: [], error: res.error || 'Failed to resolve user' }
+      }
+      return { ok: true, users: Array.isArray(res.users) ? res.users : [] }
+    } catch (e: unknown) {
+      let msg = '请求失败'
+      if (e && typeof e === 'object') {
+        const fetchError = e as { data?: { error?: string }; message?: string }
+        if (fetchError.data?.error) {
+          msg = fetchError.data.error
+        } else if (fetchError.message) {
+          msg = fetchError.message
+        }
+      }
+      return { ok: false, users: [], error: msg }
+    }
+  }
+
+  async function cancelBinding(): Promise<{ ok: boolean; error?: string }> {
     loading.value = true
     error.value = null
     try {
@@ -106,8 +147,29 @@ export function useWikidotBinding() {
       currentTask.value = null
       instructions.value = null
       return { ok: true }
-    } catch {
-      return { ok: false }
+    } catch (e: unknown) {
+      let statusCode: number | null = null
+      let msg = '取消绑定失败'
+
+      if (e && typeof e === 'object') {
+        const fetchError = e as { statusCode?: number; data?: { error?: string }; message?: string }
+        statusCode = Number.isFinite(Number(fetchError.statusCode)) ? Number(fetchError.statusCode) : null
+        if (fetchError.data?.error) {
+          msg = fetchError.data.error
+        } else if (fetchError.message) {
+          msg = fetchError.message
+        }
+      }
+
+      // Expired task can already be absent on server; allow client to continue retry flow.
+      if (statusCode === 404) {
+        currentTask.value = null
+        instructions.value = null
+        return { ok: true }
+      }
+
+      error.value = msg
+      return { ok: false, error: msg }
     } finally {
       loading.value = false
     }
@@ -146,6 +208,7 @@ export function useWikidotBinding() {
     hasTask,
     fetchStatus,
     startBinding,
+    resolveUsers,
     cancelBinding,
     getTimeRemaining,
     formatLastChecked
