@@ -10,7 +10,7 @@ export function internalRouter() {
     category: string;
     asOfTs: Date;
     watermarkTs: Date | null;
-    voteCutoffDate: Date;
+    voteCutoffDate: string;
     voteRuleVersion: string;
     indexMark: string;
     crowdDrag: string | null;
@@ -348,7 +348,7 @@ export function internalRouter() {
            category,
            ("as_of_ts" AT TIME ZONE 'UTC') AS "asOfTs",
            (CASE WHEN "watermark_ts" IS NULL THEN NULL ELSE ("watermark_ts" AT TIME ZONE 'UTC') END) AS "watermarkTs",
-           "vote_cutoff_date" AS "voteCutoffDate",
+           to_char("vote_cutoff_date", 'YYYY-MM-DD') AS "voteCutoffDate",
            "vote_rule_version" AS "voteRuleVersion",
            "index_mark"::text AS "indexMark",
            "crowd_drag"::text AS "crowdDrag",
@@ -369,7 +369,7 @@ export function internalRouter() {
           category: row.category,
           asOfTs: row.asOfTs.toISOString(),
           watermarkTs: row.watermarkTs ? row.watermarkTs.toISOString() : null,
-          voteCutoffDate: row.voteCutoffDate.toISOString().slice(0, 10),
+          voteCutoffDate: row.voteCutoffDate,
           voteRuleVersion: row.voteRuleVersion,
           indexMark: Number(row.indexMark || 0),
           crowdDrag: Number(row.crowdDrag || 0),
@@ -410,7 +410,7 @@ export function internalRouter() {
            category,
            ("as_of_ts" AT TIME ZONE 'UTC') AS "asOfTs",
            (CASE WHEN "watermark_ts" IS NULL THEN NULL ELSE ("watermark_ts" AT TIME ZONE 'UTC') END) AS "watermarkTs",
-           "vote_cutoff_date" AS "voteCutoffDate",
+           to_char("vote_cutoff_date", 'YYYY-MM-DD') AS "voteCutoffDate",
            "vote_rule_version" AS "voteRuleVersion",
            "index_mark"::text AS "indexMark",
            "crowd_drag"::text AS "crowdDrag",
@@ -432,7 +432,7 @@ export function internalRouter() {
           category: row.category,
           asOfTs: row.asOfTs.toISOString(),
           watermarkTs: row.watermarkTs ? row.watermarkTs.toISOString() : null,
-          voteCutoffDate: row.voteCutoffDate.toISOString().slice(0, 10),
+          voteCutoffDate: row.voteCutoffDate,
           voteRuleVersion: row.voteRuleVersion,
           indexMark: Number(row.indexMark || 0),
           crowdDrag: Number(row.crowdDrag || 0),
