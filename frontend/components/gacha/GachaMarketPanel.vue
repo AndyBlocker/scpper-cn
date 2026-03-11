@@ -7,7 +7,7 @@
  * D. 折叠区（多空深度、结算、统计、诊断、排行榜）
  * E. 开仓弹窗（Dialog）
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type {
   MarketContract, MarketTick, MarketCandle, MarketPositionMarker,
   MarketTickDiagnostics, MarketPosition, MarketSettlement,
@@ -31,6 +31,7 @@ import {
   UiDialogContent
 } from '~/components/ui/dialog'
 import MarketCandlestickChart from '~/components/gacha/MarketCandlestickChart.vue'
+import GachaConfirmDialog from '~/components/gacha/GachaConfirmDialog.vue'
 
 const props = withDefaults(defineProps<{
   contracts: MarketContract[]
@@ -146,6 +147,8 @@ const watermarkLagLabel = computed(() => formatLagDuration(props.tickDiagnostics
 
 // ─── 开仓弹窗 ──────────────────────────────────────────────
 const tradeDialogOpen = ref(false)
+const openPositionConfirmOpen = ref(false)
+const openPositionSubmitting = ref(false)
 const side = ref<MarketPositionSide>('LONG')
 const lockTier = ref<MarketLockTier>('T1')
 const stake = ref<number>(120)
@@ -181,21 +184,81 @@ const estimatedOpenFee = computed(() => {
   return Math.floor(s * feeRate)
 })
 
-function openTradeDialog() {
-  tradeDialogOpen.value = true
-}
-
-function handleSubmit() {
+const openPositionPayload = computed(() => {
   const contract = selectedContract.value
-  if (!contract) return
-  tradeDialogOpen.value = false
-  emit('open-position', {
+  if (!contract) return null
+  return {
     contractId: contract.id,
     side: side.value,
     lockTier: lockTier.value,
     stake: stake.value,
     leverage: leverage.value
-  })
+  }
+})
+
+const openPositionConfirmDetails = computed(() => {
+  const contract = selectedContract.value
+  const contractLabel = contract
+    ? `${marketCategoryLabel(contract.category || contract.symbol)} · ${contract.symbol}`
+    : '--'
+  return [
+    { label: '合约名', value: contractLabel },
+    { label: '方向', value: side.value === 'LONG' ? '做多' : '做空' },
+    { label: '锁仓', value: lockTier.value },
+    { label: '本金', value: `${formatTokens(stake.value)}T` },
+    { label: '杠杆', value: `${leverage.value}x` },
+    { label: '预估手续费', value: `${formatTokens(estimatedOpenFee.value)}T` }
+  ]
+})
+
+watch(() => props.opening, (isOpening, wasOpening) => {
+  if (!openPositionSubmitting.value) return
+  if (!isOpening && wasOpening) {
+    openPositionSubmitting.value = false
+    openPositionConfirmOpen.value = false
+  }
+})
+
+function openTradeDialog() {
+  tradeDialogOpen.value = true
+}
+
+function handleTradeDialogOpenChange(nextOpen: boolean) {
+  tradeDialogOpen.value = nextOpen
+}
+
+function handleStakeChange(value: string | number) {
+  stake.value = Number(value)
+}
+
+function handleLeverageChange(value: string | number) {
+  leverage.value = Number(value)
+}
+
+function handleSubmit() {
+  if (!openPositionPayload.value || props.opening) return
+  tradeDialogOpen.value = false
+  openPositionConfirmOpen.value = true
+  openPositionSubmitting.value = false
+}
+
+async function handleConfirmOpenPosition() {
+  const payload = openPositionPayload.value
+  if (!payload || props.opening || openPositionSubmitting.value) return
+  openPositionSubmitting.value = true
+  emit('open-position', payload)
+  await nextTick()
+  if (!props.opening) {
+    openPositionSubmitting.value = false
+    openPositionConfirmOpen.value = false
+  }
+}
+
+function handleCancelOpenPositionConfirm() {
+  if (props.opening || openPositionSubmitting.value) return
+  openPositionSubmitting.value = false
+  openPositionConfirmOpen.value = false
+  tradeDialogOpen.value = true
 }
 
 function formatExpiry(expireAt: string | null | undefined) {
@@ -483,7 +546,7 @@ function formatExpiry(expireAt: string | null | undefined) {
     </details>
 
     <!-- E. 开仓弹窗 -->
-    <UiDialogRoot :open="tradeDialogOpen" @update:open="(v: boolean) => tradeDialogOpen = v">
+    <UiDialogRoot :open="tradeDialogOpen" @update:open="handleTradeDialogOpenChange">
       <UiDialogPortal>
         <UiDialogOverlay class="market-dialog-overlay" />
         <UiDialogContent class="market-trade-dialog">
@@ -534,7 +597,7 @@ function formatExpiry(expireAt: string | null | undefined) {
                 <span>保证金</span>
                 <UiSelectRoot
                   :model-value="String(stake)"
-                  @update:model-value="(v) => stake = Number(v)"
+                  @update:model-value="handleStakeChange"
                 >
                   <UiSelectTrigger class="w-full" placeholder="保证金" />
                   <UiSelectContent>
@@ -552,7 +615,7 @@ function formatExpiry(expireAt: string | null | undefined) {
                 <span>杠杆</span>
                 <UiSelectRoot
                   :model-value="String(leverage)"
-                  @update:model-value="(v) => leverage = Number(v)"
+                  @update:model-value="handleLeverageChange"
                 >
                   <UiSelectTrigger class="w-full" placeholder="杠杆" />
                   <UiSelectContent>
@@ -584,6 +647,17 @@ function formatExpiry(expireAt: string | null | undefined) {
         </UiDialogContent>
       </UiDialogPortal>
     </UiDialogRoot>
+
+    <GachaConfirmDialog
+      :open="openPositionConfirmOpen"
+      title="确认开仓"
+      :description="`确认按以下参数开仓 ${marketCategoryLabel(selectedContract?.category || selectedContract?.symbol)} 吗？`"
+      confirm-text="确认开仓"
+      :busy="opening || openPositionSubmitting"
+      :details="openPositionConfirmDetails"
+      @cancel="handleCancelOpenPositionConfirm"
+      @confirm="handleConfirmOpenPosition"
+    />
   </section>
 </template>
 

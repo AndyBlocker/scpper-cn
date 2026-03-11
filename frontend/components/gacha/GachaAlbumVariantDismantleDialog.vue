@@ -40,10 +40,14 @@ watch(() => props.open, (val) => {
 function handleConfirm() {
   emit('confirm', count.value)
 }
+
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
 </script>
 
 <template>
-  <UiDialogRoot :open="open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="max-w-md">

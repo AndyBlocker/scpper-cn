@@ -126,6 +126,10 @@ function pickerLoadMore() {
   )
 }
 
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
+
 watch([search, rarityFilter], () => {
   pickerVisibleCount.value = PICKER_PAGE_SIZE
 })
@@ -141,7 +145,7 @@ watch(() => props.slotIndex, (val) => {
 </script>
 
 <template>
-  <UiDialogRoot :open="slotIndex != null" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="slotIndex != null" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="placement-picker-dialog p-0">
@@ -186,7 +190,7 @@ watch(() => props.slotIndex, (val) => {
 
         <!-- 卡片网格 -->
         <div class="placement-picker-scroll">
-          <div v-if="!filteredOptions.length" class="mt-4 rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
+          <div v-if="!filteredOptions.length" class="mt-4 rounded-lg border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
             {{ loading ? '正在加载可放置卡片...' : '当前筛选条件下没有可放置卡片。' }}
           </div>
 
@@ -205,6 +209,7 @@ watch(() => props.slotIndex, (val) => {
                 :image-url="item.imageUrl || undefined"
                 :affix-visual-style="item.primaryAffixStyle"
                 :affix-label="item.affixLabel"
+                :retired="item.isRetired"
                 :count="item.count"
               >
                 <template #meta>

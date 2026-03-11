@@ -135,10 +135,14 @@ watch(() => props.open, (val) => {
     nextTick(() => searchInputRef.value?.focus())
   }
 })
+
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
 </script>
 
 <template>
-  <UiDialogRoot :open="open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="max-w-5xl p-0">
@@ -170,13 +174,13 @@ watch(() => props.open, (val) => {
 
           <!-- 内容区 -->
           <div class="flex-1 overflow-y-auto px-5 pb-5">
-            <div v-if="loading" class="mt-4 rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
+            <div v-if="loading" class="mt-4 rounded-lg border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
               正在加载页面变体...
             </div>
 
             <div v-else-if="variants.length" class="mt-3 space-y-3">
               <!-- 搜索 / 排序 / 筛选 -->
-              <div class="rounded-2xl border border-neutral-200/70 bg-neutral-50/85 p-3 dark:border-neutral-800/70 dark:bg-neutral-900/60">
+              <div class="rounded-lg border border-neutral-200/70 bg-neutral-50/85 p-3 dark:border-neutral-800/70 dark:bg-neutral-900/60">
                 <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                   <div class="flex flex-wrap items-center gap-2">
                     <UiInput
@@ -272,7 +276,7 @@ watch(() => props.open, (val) => {
                 <article
                   v-for="variant in filteredVariants"
                   :key="variantStackKey(variant)"
-                  class="album-variant-tile variant-stack-card rounded-2xl border border-neutral-200/70 bg-white/88 p-2.5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70"
+                  class="album-variant-tile variant-stack-card rounded-lg border border-neutral-200/70 bg-white/88 p-2.5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70"
                 >
                   <div class="mb-2.5 flex items-center justify-between gap-2 rounded-xl border border-neutral-200/75 bg-white/80 px-2.5 py-1.5 dark:border-neutral-700/70 dark:bg-neutral-900/75">
                     <div class="min-w-0">
@@ -299,6 +303,7 @@ watch(() => props.open, (val) => {
                     :wikidot-id="variant.wikidotId"
                     :count="variant.count"
                     :image-url="variant.imageUrl || undefined"
+                    :retired="variant.isRetired"
                     :affix-visual-style="variant.affixVisualStyle"
                     :affix-signature="variant.affixSignature"
                     :affix-styles="variant.affixStyles"
@@ -332,12 +337,12 @@ watch(() => props.open, (val) => {
                 </article>
               </div>
 
-              <p v-else class="rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
+              <p v-else class="rounded-lg border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
                 当前筛选下暂无可展示变体。
               </p>
             </div>
 
-            <p v-else class="mt-4 rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
+            <p v-else class="mt-4 rounded-lg border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
               当前页面暂无可展示变体。
             </p>
           </div>

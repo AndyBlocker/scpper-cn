@@ -92,10 +92,14 @@ const imageIndex = computed(() => props.card?.imageIndex ?? 0)
 const displayTitleText = computed(() =>
   props.card ? displayCardTitle(props.card.title) : '--'
 )
+
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
 </script>
 
 <template>
-  <UiDialogRoot :open="open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="max-w-4xl p-0">
@@ -177,6 +181,7 @@ const displayTitleText = computed(() =>
               :wikidot-id="props.card.wikidotId"
               :image-url="props.card.imageUrl || undefined"
               variant="large"
+              :retired="props.card.isRetired"
               :affix-visual-style="props.card.affixVisualStyle"
               :affix-signature="props.card.affixSignature"
               :affix-styles="props.card.affixStyles"
@@ -184,7 +189,7 @@ const displayTitleText = computed(() =>
               :affix-label="props.card.affixLabel"
             />
 
-            <section class="space-y-3 rounded-2xl border border-neutral-200/70 bg-white/80 p-3 dark:border-neutral-700/70 dark:bg-neutral-900/60">
+            <section class="space-y-3 rounded-lg border border-neutral-200/70 bg-white/80 p-3 dark:border-neutral-700/70 dark:bg-neutral-900/60">
               <div class="flex flex-wrap gap-1.5 text-[11px]">
                 <GachaAffixChip
                   v-for="part in affixParts"
