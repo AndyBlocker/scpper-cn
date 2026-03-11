@@ -196,11 +196,14 @@ export class PhaseAProcessor {
           try {
             const currentVersion = await loadCurrentVersion();
             if (currentVersion) {
+              const nextAttributionCount = node.attributions.length;
               await this.attrService.importAttributions(currentVersion.id, node.attributions);
-              await this.store.prisma.pageVersion.update({
-                where: { id: currentVersion.id },
-                data: { attributionCount: node.attributions.length }
-              });
+              if (currentVersion.attributionCount !== nextAttributionCount) {
+                await this.store.prisma.pageVersion.update({
+                  where: { id: currentVersion.id },
+                  data: { attributionCount: nextAttributionCount }
+                });
+              }
             }
           } catch (e) {
             Logger.warn('Phase A attribution import failed', {
@@ -214,10 +217,11 @@ export class PhaseAProcessor {
         if (wikidotId != null && node.commentCount != null) {
           try {
             const currentVersion = await loadCurrentVersion();
-            if (currentVersion) {
+            const nextCommentCount = Number(node.commentCount);
+            if (currentVersion && currentVersion.commentCount !== nextCommentCount) {
               await this.store.prisma.pageVersion.update({
                 where: { id: currentVersion.id },
-                data: { commentCount: Number(node.commentCount) }
+                data: { commentCount: nextCommentCount }
               });
             }
           } catch (e) {
