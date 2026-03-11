@@ -222,9 +222,13 @@ export function cssProxyRouter() {
     const wantsCss = requestWantsCss(req, url);
 
     if (!url || !isAllowedUrl(url)) {
-      const body = cssErrorComment('Invalid or disallowed URL');
-      setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
-      return res.status(400).send(body);
+      if (wantsCss) {
+        const body = cssErrorComment('Invalid or disallowed URL');
+        setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
+        return res.status(400).send(body);
+      }
+      setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
+      return res.status(400).send('invalid or disallowed url');
     }
 
     try {

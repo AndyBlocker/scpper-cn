@@ -34,8 +34,10 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             COUNT(fp.id)::int AS "catCount",
             COUNT(fp.id)::int AS rating
           FROM "ForumPost" fp
+          JOIN "ForumThread" ft ON ft.id = fp."threadId"
           JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
           WHERE fp."isDeleted" = false
+            AND ft."isDeleted" = false
             AND fp."createdByWikidotId" IS NOT NULL
             AND fp."createdByType" = 'user'
           GROUP BY u.id, u."displayName", u."wikidotId"
@@ -47,7 +49,9 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           SELECT COUNT(*)::int AS total FROM (
             SELECT fp."createdByWikidotId"
             FROM "ForumPost" fp
+            JOIN "ForumThread" ft ON ft.id = fp."threadId"
             WHERE fp."isDeleted" = false
+              AND ft."isDeleted" = false
               AND fp."createdByWikidotId" IS NOT NULL
               AND fp."createdByType" = 'user'
             GROUP BY fp."createdByWikidotId"

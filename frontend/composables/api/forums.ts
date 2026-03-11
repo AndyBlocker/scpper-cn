@@ -92,7 +92,7 @@ export function useForumsApi() {
     }>('/forums/search', { params: { q, page, limit } })
   }
 
-  async function locatePost(postId: number, order: 'asc' | 'desc' = 'desc', limit = 50) {
+  async function locatePost(postId: number, order: 'asc' | 'desc' = 'asc', limit = 50) {
     return $bff<{ threadId: number; postId: number; page: number }>(
       `/forums/posts/${postId}/locate`,
       { params: { order, limit } },

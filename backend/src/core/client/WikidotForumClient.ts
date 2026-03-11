@@ -39,6 +39,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function redactProxyForLog(rawProxy: string): string {
+  try {
+    const parsed = new URL(rawProxy);
+    const auth = parsed.username || parsed.password ? '[redacted]@' : '';
+    const port = parsed.port ? `:${parsed.port}` : '';
+    return `${parsed.protocol}//${auth}${parsed.hostname}${port}`;
+  } catch {
+    return '[configured]';
+  }
+}
+
 export class WikidotForumClient {
   private client: any = null;
   private site: any = null;
@@ -57,7 +68,7 @@ export class WikidotForumClient {
       return;
     }
     setGlobalDispatcher(new ProxyAgent(proxy));
-    Logger.info(`[ForumClient] Proxy set to ${proxy} (IP pool)`);
+    Logger.info(`[ForumClient] Proxy set to ${redactProxyForLog(proxy)} (IP pool)`);
   }
 
   async connect(): Promise<void> {

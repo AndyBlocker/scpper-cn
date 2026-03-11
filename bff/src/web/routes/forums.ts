@@ -400,7 +400,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
         return res.status(400).json({ error: 'invalid_post_id' });
       }
 
-      const order = req.query.order === 'asc' ? 'ASC' : 'DESC';
+      const order = req.query.order === 'desc' ? 'DESC' : 'ASC';
       const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
 
       const cacheKey = `forums:locate:${postId}:o${order}:l${limit}`;

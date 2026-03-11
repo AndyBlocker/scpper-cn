@@ -36,6 +36,13 @@ function sanitizeCss(cssText: string): string {
     .join('; ')
 }
 
+function rewriteRelativeCssUrls(cssText: string): string {
+  return cssText.replace(
+    /url\(\s*(["']?)(\/[^)"']*)\1\s*\)/gi,
+    (_match, quote, path) => `url(${quote}${absolutizeWikidotPath(path)}${quote})`,
+  )
+}
+
 // 使用独立的 DOMPurify 钩子注册，避免污染全局 DOMPurify 实例。
 // 通过 flag 确保只注册一次（即使模块被 HMR 重新加载）。
 let hookRegistered = false
@@ -46,6 +53,7 @@ function ensureHook(): void {
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     if (node.hasAttribute('style')) {
       let cleaned = sanitizeCss(node.getAttribute('style')!)
+      cleaned = rewriteRelativeCssUrls(cleaned)
       // 折叠块的 display 由 CSS 类控制，需要移除内联 display
       if ((node as Element).classList?.contains('collapsible-block-unfolded')) {
         cleaned = cleaned
@@ -86,6 +94,7 @@ const ALLOWED_TAGS = [
 const ALLOWED_ATTR = [
   'href', 'src', 'alt', 'title', 'class', 'id',
   'style', // 通过 afterSanitizeAttributes 钩子做 CSS 属性级过滤
+  'srcset',
   'target', 'rel', 'width', 'height',
   'colspan', 'rowspan', 'scope', 'headers',
   'start', 'type', 'reversed', // 列表属性
@@ -94,13 +103,50 @@ const ALLOWED_ATTR = [
   'color', 'size', 'face', // <font> 属性
 ]
 
+const WIKIDOT_SITE_BASE = 'https://scp-wiki-cn.wikidot.com'
+
+function absolutizeWikidotPath(path: string): string {
+  return `${WIKIDOT_SITE_BASE}/${String(path || '').replace(/^\/+/u, '')}`
+}
+
+function rewriteRelativeSrcset(rawSrcset: string): string {
+  return rawSrcset
+    .split(',')
+    .map((part) => {
+      const segment = part.trim()
+      if (!segment) return ''
+      const [rawUrl, ...descriptors] = segment.split(/\s+/u)
+      if (!rawUrl) return ''
+      const nextUrl = rawUrl.startsWith('/') ? absolutizeWikidotPath(rawUrl) : rawUrl
+      return [nextUrl, ...descriptors].join(' ')
+    })
+    .filter(Boolean)
+    .join(', ')
+}
+
+function rewriteRelativeForumUrls(html: string): string {
+  return html
+    .replace(
+      /href="\/([^"]*?)"/g,
+      (_match, path) => `href="${absolutizeWikidotPath(path)}" target="_blank" rel="noopener noreferrer"`,
+    )
+    .replace(
+      /\b(src|poster)="\/([^"]*?)"/g,
+      (_match, attr, path) => `${attr}="${absolutizeWikidotPath(path)}"`,
+    )
+    .replace(
+      /\bsrcset="([^"]*?)"/g,
+      (_match, srcset) => `srcset="${rewriteRelativeSrcset(srcset)}"`,
+    )
+}
+
 /**
  * 对论坛帖子的 HTML 内容进行安全过滤并转换 Wikidot 相对链接。
  *
  * - 允许 Wikidot 渲染引擎生成的格式化标签（p, strong, a, img, table 等）
  * - 移除危险标签（script, iframe, style, form, object 等）和事件处理属性
  * - 内联 style 属性通过 CSS 属性白名单过滤（允许 color、display 等，禁止 position、z-index 等）
- * - 将 Wikidot 站内相对链接转换为绝对链接（在净化之后执行）
+ * - 将 Wikidot 站内相对链接和媒体地址转换为绝对链接（在净化之后执行）
  * - 保留已转义的 HTML 实体（如 &lt;div&gt;），不会二次渲染为标签
  */
 export function sanitizeForumHtml(html: string | null | undefined): string {
@@ -116,11 +162,8 @@ export function sanitizeForumHtml(html: string | null | undefined): string {
     ALLOW_DATA_ATTR: false,
   })
 
-  // 2. 转换 Wikidot 相对链接为绝对链接（在净化之后执行，更安全）
-  sanitized = sanitized.replace(
-    /href="\/([^"]*?)"/g,
-    'href="https://scp-wiki-cn.wikidot.com/$1" target="_blank" rel="noopener noreferrer"',
-  )
+  // 2. 转换 Wikidot 相对链接和媒体地址为绝对链接（在净化之后执行，更安全）
+  sanitized = rewriteRelativeForumUrls(sanitized)
 
   return sanitized
 }
