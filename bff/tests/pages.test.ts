@@ -145,32 +145,34 @@ describe('Tags routes', () => {
 
   test('GET /tags returns aggregated tags sorted by count desc by default', async () => {
     queryMock.mockResolvedValueOnce({
+      rows: [{ count: 0 }]
+    });
+    queryMock.mockResolvedValueOnce({
       rows: [
         {
           tag: 'scp',
           page_count: 12,
-          latest_activity: '2024-05-01T00:00:00.000Z',
-          oldest_activity: '2010-01-01T00:00:00.000Z'
+          latest_page_date: '2024-05-01T00:00:00.000Z'
         }
       ]
     });
     const app = await createServer();
     const res = await request(app).get('/tags').expect(200);
 
-    expect(queryMock).toHaveBeenCalledTimes(1);
-    const [sql] = queryMock.mock.calls[0];
-    expect(sql).toContain('WITH current_tags AS');
-    expect(sql).toContain('JOIN "Page" p ON p.id = pv."pageId"');
-    expect(sql).toContain('LEFT JOIN LATERAL');
-    expect(sql).toContain('MIN(r."timestamp")');
-    expect(sql).toContain('COUNT(*)::int AS page_count');
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    const [cacheSql] = queryMock.mock.calls[0];
+    const [sql] = queryMock.mock.calls[1];
+    expect(cacheSql).toContain('FROM "TagValidationCache"');
+    expect(sql).toContain('CROSS JOIN LATERAL unnest(pv.tags) AS t(tag)');
+    expect(sql).toContain('COUNT(DISTINCT pv."pageId")::int as page_count');
+    expect(sql).toContain('MAX(pv."createdAt") as latest_page_date');
     expect(sql).toContain('ORDER BY page_count desc');
     expect(res.body.tags[0]).toEqual({
       tag: 'scp',
       pageCount: 12,
-      latestActivity: '2024-05-01T00:00:00.000Z',
-      oldestActivity: '2010-01-01T00:00:00.000Z'
+      latestActivity: '2024-05-01T00:00:00.000Z'
     });
+    expect(res.body.meta.cached).toBe(false);
     expect(res.body.meta.sort).toBe('count');
     expect(res.body.meta.order).toBe('desc');
     expect(res.body.meta.limit).toBeNull();
@@ -178,13 +180,16 @@ describe('Tags routes', () => {
   });
 
   test('GET /tags supports alpha sort and pagination', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ count: 1 }] });
     queryMock.mockResolvedValueOnce({ rows: [] });
     const app = await createServer();
-    await request(app).get('/tags?sort=alpha&order=asc&limit=5&offset=10').expect(200);
+    const res = await request(app).get('/tags?sort=alpha&order=asc&limit=5&offset=10').expect(200);
 
-    const [sql, params] = queryMock.mock.calls[0];
+    const [sql, params] = queryMock.mock.calls[1];
     expect(sql).toContain('ORDER BY tag asc');
+    expect(sql).toContain('FROM "TagValidationCache"');
     expect(params).toEqual([5, 10]);
+    expect(res.body.meta.cached).toBe(true);
   });
 
   test('GET /tags rejects unsupported sort option', async () => {
