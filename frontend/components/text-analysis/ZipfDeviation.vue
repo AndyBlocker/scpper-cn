@@ -16,9 +16,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import type { ZipfAnalysis } from '~/types/text-analysis'
 
+const zipfAnalysisEndpoint: string = '/api/text-analysis/zipf-analysis'
+
 const { data: zipfData, pending } = useAsyncData<ZipfAnalysis>(
   'text-analysis-zipf',
-  () => $fetch('/api/text-analysis/zipf-analysis')
+  () => $fetch<ZipfAnalysis>(zipfAnalysisEndpoint)
 )
 
 const alpha = computed(() => zipfData.value?.alpha?.toFixed(3) || '—')

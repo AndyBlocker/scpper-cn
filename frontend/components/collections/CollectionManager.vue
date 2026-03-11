@@ -1,14 +1,10 @@
 <template>
   <div class="space-y-6">
-    <section class="relative overflow-hidden rounded-3xl border border-neutral-200/80 bg-white/95 p-8 shadow-[0_22px_55px_rgba(15,23,42,0.08)] dark:border-neutral-800/70 dark:bg-neutral-950/80 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
-      <div class="pointer-events-none absolute inset-0">
-        <div class="absolute -left-24 -top-24 h-60 w-60 rounded-full bg-[rgba(var(--accent),0.12)] blur-3xl dark:bg-[rgba(var(--accent),0.35)]" />
-        <div class="absolute bottom-0 right-0 h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-400/25" />
-      </div>
-      <div class="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+    <section class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white p-8 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950">
+      <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div class="max-w-2xl space-y-4">
           <div class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-neutral-500 shadow-sm backdrop-blur-sm dark:bg-neutral-900/70 dark:text-neutral-300">
-            <LucideIcon name="Sparkle" class="h-4 w-4 text-[rgb(var(--accent))]" />
+            <LucideIcon name="Sparkle" class="h-4 w-4 text-[var(--g-accent)]" />
             管理收藏夹
           </div>
           <div class="space-y-2">
@@ -21,7 +17,7 @@
         <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/95 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:-translate-y-0.5 hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-200"
+            class="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/95 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:-translate-y-0.5 hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-200"
             @click="handleRefresh"
           >
             <LucideIcon name="RefreshCw" class="h-4 w-4" />
@@ -29,7 +25,7 @@
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_16px_44px_rgba(37,99,235,0.35)] transition hover:-translate-y-0.5"
+            class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
             @click="openCreate"
           >
             <LucideIcon name="Plus" class="h-4.5 w-4.5" />
@@ -55,19 +51,19 @@
           <div
             v-for="n in 4"
             :key="`collection-skeleton-${n}`"
-            class="h-36 rounded-2xl bg-neutral-100/80 animate-pulse dark:bg-neutral-800/50"
+            class="h-36 rounded-lg bg-neutral-100/80 animate-pulse dark:bg-neutral-800/50"
           />
         </div>
 
         <div
           v-else-if="error"
-          class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-red-200 bg-red-50/80 p-10 text-center text-sm text-red-600 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-200"
+          class="flex flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-red-50/80 p-10 text-center text-sm text-red-600 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-200"
         >
           <LucideIcon name="AlertTriangle" class="h-5 w-5" />
           <p>加载收藏夹失败：{{ error }}</p>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+            class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
             @click="handleRefresh"
           >
             再试一次
@@ -76,9 +72,9 @@
 
         <div
           v-else-if="collectionList.length === 0"
-          class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/80 p-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
+          class="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50/80 p-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
         >
-          <LucideIcon name="BookmarkPlus" class="h-5 w-5 text-[rgb(var(--accent))]" />
+          <LucideIcon name="BookmarkPlus" class="h-5 w-5 text-[var(--g-accent)]" />
           <p>目前还没有收藏夹。可以先创建一个，或在页面右上角点击星标快速收藏。</p>
         </div>
 
@@ -92,21 +88,21 @@
           >
             <button
               type="button"
-              class="group relative w-full overflow-hidden rounded-2xl border border-transparent bg-white/90 p-5 text-left shadow-[0_12px_30px_rgba(15,23,42,0.04)] backdrop-blur-sm transition duration-300 hover:-translate-y-1 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)] dark:bg-neutral-900/80 dark:shadow-[0_26px_60px_rgba(0,0,0,0.5)]"
+              class="group relative w-full overflow-hidden rounded-lg border border-transparent bg-white/90 p-5 text-left shadow-sm backdrop-blur-sm transition duration-300 hover:-translate-y-1 hover:shadow-sm dark:bg-neutral-900/80 dark:shadow-lg"
               :class="collection.id === activeId
-                ? 'ring-2 ring-[rgba(var(--accent),0.45)] shadow-[0_26px_60px_rgba(37,99,235,0.25)] dark:ring-[rgba(var(--accent),0.5)]'
-                : 'border-neutral-200/80 hover:border-[rgba(var(--accent),0.35)] dark:border-neutral-800/70'"
+                ? 'ring-2 ring-[var(--g-accent-border)] shadow dark:ring-[rgba(var(--accent),0.5)]'
+                : 'border-neutral-200/80 hover:border-[var(--g-accent-border)] dark:border-neutral-800/70'"
               @click="select(collection.id)"
             >
               <div
-                class="pointer-events-none absolute inset-0 rounded-2xl opacity-0 transition group-hover:opacity-90"
+                class="pointer-events-none absolute inset-0 rounded-lg opacity-0 transition group-hover:opacity-90"
                 :class="accentGradient(collection.id)"
               />
               <div class="relative z-10 flex flex-col gap-4">
                 <div class="flex items-start justify-between gap-3">
                   <div class="space-y-2">
                     <div class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-neutral-600 shadow-sm dark:bg-neutral-900/70 dark:text-neutral-300">
-                      <LucideIcon name="Layers" class="h-3.5 w-3.5 text-[rgb(var(--accent))]" />
+                      <LucideIcon name="Layers" class="h-3.5 w-3.5 text-[var(--g-accent)]" />
                       {{ collection.itemCount }} 条目
                     </div>
                     <h4 class="text-base font-semibold text-neutral-900 dark:text-neutral-100">{{ collection.title }}</h4>
@@ -139,7 +135,7 @@
         </ul>
       </div>
 
-      <div v-if="activeDetail" class="relative overflow-hidden rounded-3xl border border-neutral-200/80 bg-white/95 shadow-[0_24px_60px_rgba(15,23,42,0.1)] dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-[0_32px_70px_rgba(0,0,0,0.6)]">
+      <div v-if="activeDetail" class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white/95 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-lg">
         <div class="relative h-48 overflow-hidden">
           <div
             class="absolute inset-0 opacity-90"
@@ -189,7 +185,7 @@
             <div class="flex items-center gap-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                 @click="openEdit"
               >
                 <LucideIcon name="Pencil" class="h-3.5 w-3.5" />
@@ -210,7 +206,7 @@
             <div
               v-for="(item, index) in activeItems"
               :key="item.id"
-              class="rounded-2xl border border-neutral-200/80 bg-white/90 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-800/70 dark:bg-neutral-900/70"
+              class="rounded-lg border border-neutral-200/80 bg-white/90 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg dark:border-neutral-800/70 dark:bg-neutral-900/70"
             >
               <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div class="space-y-3">
@@ -218,7 +214,7 @@
                     <NuxtLink
                       v-if="item.page.wikidotId"
                       :to="`/page/${item.page.wikidotId}`"
-                      class="inline-flex items-center gap-1 hover:text-[rgb(var(--accent))]"
+                      class="inline-flex items-center gap-1 hover:text-[var(--g-accent)]"
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -249,7 +245,7 @@
                     v-model="annotations[item.id]"
                     rows="2"
                     maxlength="1200"
-                    class="w-full rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 text-sm text-neutral-700 focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.25)] dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
+                    class="w-full rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 text-sm text-neutral-700 focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-strong)] dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
                     placeholder="为这篇页面写点读后感或整理要点..."
                     @blur="handleAnnotationSave(item)"
                   />
@@ -257,7 +253,7 @@
                     <span>批注会自动保存，也可以随时在收藏面板中调整。</span>
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-0.5 font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                      class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-0.5 font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                       @click="handleAnnotationSave(item)"
                     >
                       <LucideIcon name="Save" class="h-3 w-3" />
@@ -269,7 +265,7 @@
                   <div class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-neutral-50/80 px-2 py-1 text-xs font-semibold text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200">
                     <button
                       type="button"
-                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[rgb(var(--accent))]"
+                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[var(--g-accent)]"
                       :disabled="index === 0"
                       @click="moveItem(index, index - 1)"
                     >
@@ -278,7 +274,7 @@
                     <span class="px-2 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">排序</span>
                     <button
                       type="button"
-                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[rgb(var(--accent))]"
+                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[var(--g-accent)]"
                       :disabled="index === activeItems.length - 1"
                       @click="moveItem(index, index + 1)"
                     >
@@ -287,7 +283,7 @@
                   </div>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-1 text-xs font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                    class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-1 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                     @click="togglePin(item)"
                   >
                     <LucideIcon :name="item.pinned ? 'BookmarkX' : 'Bookmark'" class="h-3.5 w-3.5" />
@@ -306,7 +302,7 @@
             </div>
           </div>
 
-          <div v-else class="rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/80 p-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
+          <div v-else class="rounded-lg border border-dashed border-neutral-300 bg-neutral-50/80 p-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
             这个收藏夹还没有条目。前往页面点击“收藏”按钮即可快速加入。
           </div>
         </div>
@@ -529,7 +525,7 @@ async function handleRefresh() {
 function formatTime(value: string) {
   try {
     const date = new Date(value)
-    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', timeZone: 'Asia/Shanghai' })
   } catch {
     return value.slice(0, 10)
   }

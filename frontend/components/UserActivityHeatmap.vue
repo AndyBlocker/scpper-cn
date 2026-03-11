@@ -1,7 +1,7 @@
 <template>
   <div>
     <div v-if="isLoading" class="h-48 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
-      <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" stroke-width="2" />
+      <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[var(--g-accent)]" stroke-width="2" />
       <span class="ml-2 text-sm">加载热力图...</span>
     </div>
     <div v-else-if="loadError" class="p-4 bg-red-50/70 dark:bg-red-900/20 text-sm text-red-600 dark:text-red-400 rounded-lg">
@@ -306,7 +306,8 @@ function formatDisplayDate(date: Date) {
   return date.toLocaleDateString('zh-CN', {
     month: 'numeric',
     day: 'numeric',
-    weekday: 'short'
+    weekday: 'short',
+    timeZone: 'Asia/Shanghai',
   });
 }
 

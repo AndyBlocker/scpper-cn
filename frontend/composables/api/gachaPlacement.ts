@@ -9,7 +9,7 @@ const PLACEMENT_CACHE_MS = 10_000
 let placementInflight: Promise<{ ok: true; data: PlacementOverview } | { ok: false; error: string }> | null = null
 
 export function useGachaPlacementApi(core: GachaCoreContext) {
-  const { $bff, state, withPlacementImageVariant } = core
+  const { $bff, state, withPlacementImageVariant, captureWalletSeq, setWalletIfFresh } = core
 
   async function getPlacement(force = false) {
     if (!force && state.value.placement && state.value.placementFetchedAt) {
@@ -33,7 +33,7 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
         }
         const message = res?.error || '加载放置信息失败'
         return { ok: false as const, error: message }
-      } catch (error: any) {
+      } catch (error: unknown) {
         const message = normalizeError(error, '加载放置信息失败')
         return { ok: false as const, error: message }
       } finally {
@@ -62,7 +62,7 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
       }
       const message = res?.error || '放置卡片失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '放置卡片失败')
       return { ok: false as const, error: message }
     }
@@ -81,7 +81,7 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
       }
       const message = res?.error || '清空槽位失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '清空槽位失败')
       return { ok: false as const, error: message }
     }
@@ -89,6 +89,7 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
 
   async function unlockPlacementSlot() {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ placement: PlacementOverview; wallet?: Wallet }>>('/gacha/placement/slots/unlock', {
         method: 'POST'
       })
@@ -97,14 +98,13 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
         state.value.placement = mapped
         state.value.placementFetchedAt = new Date().toISOString()
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, data: mapped, wallet: res.wallet ?? null }
       }
       const message = res?.error || '解锁槽位失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '解锁槽位失败')
       return { ok: false as const, error: message }
     }
@@ -128,7 +128,7 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
       }
       const message = res?.error || '设置无色挂载失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '设置无色挂载失败')
       return { ok: false as const, error: message }
     }
@@ -147,7 +147,7 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
       }
       const message = res?.error || '清空无色挂载失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '清空无色挂载失败')
       return { ok: false as const, error: message }
     }
@@ -156,6 +156,7 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
   async function claimPlacement(idempotencyKey?: string) {
     try {
       const key = (idempotencyKey || '').trim() || core.createIdempotencyKey('placement-claim')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ claimedToken: number; wallet: Wallet; placement: PlacementOverview }>>('/gacha/placement/claim', {
         method: 'POST',
         headers: {
@@ -165,15 +166,14 @@ export function useGachaPlacementApi(core: GachaCoreContext) {
       })
       if (res?.ok && res.wallet && res.placement) {
         const mapped = withPlacementImageVariant(res.placement)
-        state.value.wallet = res.wallet
-        state.value.walletFetchedAt = new Date().toISOString()
+        setWalletIfFresh(res.wallet, walletSeq)
         state.value.placement = mapped
         state.value.placementFetchedAt = new Date().toISOString()
         return { ok: true as const, claimedToken: Number(res.claimedToken || 0), wallet: res.wallet, placement: mapped }
       }
       const message = res?.error || '领取放置收益失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '领取放置收益失败')
       return { ok: false as const, error: message }
     }

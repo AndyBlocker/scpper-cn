@@ -22,6 +22,8 @@ const props = defineProps<{
   busy: boolean
   pickerOptions: ShowcasePickerOption[]
   pickerLoading: boolean
+  pickerTotal: number
+  pickerHasMore: boolean
   walletBalance: number
 }>()
 
@@ -33,6 +35,8 @@ const emit = defineEmits<{
   clearSlot: [showcaseId: string, slotIndex: number]
   refresh: []
   loadPicker: []
+  pickerQueryChange: [payload: { search: string; rarity: ShowcasePickerOption['rarity'] | 'ALL' }]
+  pickerLoadMore: []
 }>()
 
 // Create showcase
@@ -153,7 +157,7 @@ const needPayToCreate = computed(() => canCreatePaid.value)
       <article
         v-for="sc in props.showcases"
         :key="sc.id"
-        class="surface-card overflow-hidden rounded-2xl border border-neutral-200/70 dark:border-neutral-700/70"
+        class="surface-card overflow-hidden rounded-lg border border-neutral-200/70 dark:border-neutral-700/70"
       >
         <!-- Showcase Header -->
         <header class="flex flex-wrap items-center gap-2 border-b border-neutral-200/50 px-4 py-3 dark:border-neutral-700/50">
@@ -196,6 +200,7 @@ const needPayToCreate = computed(() => canCreatePaid.value)
                   :authors="slot.card.authors"
                   :image-url="slot.card.imageUrl || undefined"
                   :wikidot-id="slot.card.wikidotId"
+                  :retired="slot.card.isRetired"
                   variant="mini"
                   :hide-footer="true"
                   :affix-visual-style="slot.card.affixVisualStyle"
@@ -232,10 +237,14 @@ const needPayToCreate = computed(() => canCreatePaid.value)
     <GachaShowcaseSlotPicker
       :open="pickerOpen"
       :options="pickerOptions"
+      :total="pickerTotal"
+      :has-more="pickerHasMore"
       :loading="pickerLoading"
       :busy="busy"
       @close="pickerOpen = false"
       @select="handlePickerSelect"
+      @query-change="emit('pickerQueryChange', $event)"
+      @load-more="emit('pickerLoadMore')"
     />
 
     <!-- Delete Confirm -->

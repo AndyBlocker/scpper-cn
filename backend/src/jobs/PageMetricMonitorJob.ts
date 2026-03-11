@@ -4,6 +4,7 @@ import { Logger } from '../utils/Logger.js';
 
 const AUTO_WATCH_SOURCE = 'AUTO_OWNERSHIP';
 const DEFAULT_VOTE_THRESHOLD = 20;
+const DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION = true;
 // Keep well under PostgreSQL bind parameter limits for raw queries.
 const PAGE_ID_CHUNK_SIZE = 10000;
 
@@ -20,11 +21,30 @@ function parseRevisionFilter(config: Prisma.JsonValue | null | undefined): Revis
   return 'ANY';
 }
 
-function buildRevisionConfig(filter: RevisionAlertFilter): Prisma.JsonObject {
-  return { revisionFilter: filter };
+function parseIgnoreLinkedWikidotSelfRevision(config: Prisma.JsonValue | null | undefined): boolean {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION;
+  }
+  const raw = (config as Record<string, unknown>).ignoreLinkedWikidotSelfRevision;
+  if (typeof raw === 'boolean') {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    const normalised = raw.trim().toLowerCase();
+    if (normalised === 'true') return true;
+    if (normalised === 'false') return false;
+  }
+  return DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION;
 }
 
-function isConfigObject(value: Prisma.JsonValue | null | undefined): value is Record<string, unknown> {
+function buildRevisionConfig(filter: RevisionAlertFilter, ignoreLinkedWikidotSelfRevision = DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION): Prisma.JsonObject {
+  return {
+    revisionFilter: filter,
+    ignoreLinkedWikidotSelfRevision
+  };
+}
+
+function isConfigObject(value: Prisma.JsonValue | null | undefined): value is Prisma.JsonObject {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -247,7 +267,12 @@ export class PageMetricMonitorJob {
           select: { userId: true, metric: true, config: true }
         });
 
-    const preferenceMap = new Map<string, { voteThreshold?: number; revisionFilter?: RevisionAlertFilter; muted?: boolean }>();
+    const preferenceMap = new Map<string, {
+      voteThreshold?: number;
+      revisionFilter?: RevisionAlertFilter;
+      ignoreLinkedWikidotSelfRevision?: boolean;
+      muted?: boolean;
+    }>();
     for (const pref of preferences) {
       const key = `${pref.userId}:${pref.metric}`;
       const current = preferenceMap.get(key) ?? {};
@@ -259,7 +284,9 @@ export class PageMetricMonitorJob {
         }
       } else if (pref.metric === PageMetricType.REVISION_COUNT) {
         const filter = parseRevisionFilter(pref.config);
+        const ignoreLinkedWikidotSelfRevision = parseIgnoreLinkedWikidotSelfRevision(pref.config);
         current.revisionFilter = filter;
+        current.ignoreLinkedWikidotSelfRevision = ignoreLinkedWikidotSelfRevision;
       }
 
       const muted = parseMuted(pref.config);
@@ -303,9 +330,10 @@ export class PageMetricMonitorJob {
           lastObserved = baselineVote;
         } else {
           const filter = pref?.revisionFilter ?? 'ANY';
+          const ignoreLinkedWikidotSelfRevision = pref?.ignoreLinkedWikidotSelfRevision ?? DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION;
           thresholdType = PageMetricThresholdType.ANY_CHANGE;
           thresholdValue = null;
-          config = buildRevisionConfig(filter);
+          config = buildRevisionConfig(filter, ignoreLinkedWikidotSelfRevision);
           lastObserved = null;
         }
 
@@ -732,14 +760,15 @@ export class PageMetricMonitorJob {
         count: number;
       }>>(Prisma.sql`
         SELECT pv."pageId" AS "pageId",
-               r."userId" AS "userId",
+               COALESCE(r."userId", ru.id) AS "userId",
                COUNT(*)::int AS "count"
         FROM "Revision" r
         JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
+        LEFT JOIN "User" ru ON ru."wikidotId" = r."wikidotId"
         WHERE pv."pageId" = ANY(${pageIdArray})
           AND pv."validTo" IS NULL
           AND pv."isDeleted" = false
-        GROUP BY pv."pageId", r."userId"
+        GROUP BY pv."pageId", COALESCE(r."userId", ru.id)
       `);
 
       const attributionRows = await this.prisma.$queryRaw<Array<{ pageId: number; userId: number }>>(Prisma.sql`
@@ -790,14 +819,18 @@ export class PageMetricMonitorJob {
 
       for (const watch of watches) {
         const filter = parseRevisionFilter(watch.config);
+        const ignoreLinkedWikidotSelfRevision = parseIgnoreLinkedWikidotSelfRevision(watch.config);
         const total = totalCounts.get(watch.pageId) ?? 0;
         const userMap = perPageUserCounts.get(watch.pageId) ?? new Map<number | null, number>();
         const ownerCount = userMap.get(watch.userId) ?? 0;
 
         let relevant = total;
-        if (filter === 'NON_OWNER') {
-          relevant = Math.max(0, total - ownerCount);
-        } else if (filter === 'NON_OWNER_NO_ATTR') {
+        const shouldExcludeOwner = ignoreLinkedWikidotSelfRevision || filter === 'NON_OWNER' || filter === 'NON_OWNER_NO_ATTR';
+        if (shouldExcludeOwner) {
+          relevant = Math.max(0, relevant - ownerCount);
+        }
+
+        if (filter === 'NON_OWNER_NO_ATTR') {
           let attributionCount = 0;
           const credited = attributionMap.get(watch.pageId);
           if (credited && credited.size > 0) {
@@ -808,7 +841,7 @@ export class PageMetricMonitorJob {
               attributionCount += userMap.get(creditedUserId) ?? 0;
             }
           }
-          relevant = Math.max(0, total - ownerCount - attributionCount);
+          relevant = Math.max(0, relevant - attributionCount);
         }
 
         if (watch.lastObserved === null) {

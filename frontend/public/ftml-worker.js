@@ -4,17 +4,19 @@
 // Requirements:
 //  - Serve via HTTP(S) (not file://) so module worker can load.
 //  - The FTML wasm bundle exists at ./ftml/ftml.js and ./ftml/ftml_bg.wasm
+//  - Built with: wasm-pack build --target web
 
-import initFtml, * as Ftml from "./ftml/ftml.js";
-
-const {
+import initFtml, {
   preprocess,
   tokenize,
   parse,
+  render_html,
+  render_text,
+  expand_includes_via_bff,
   PageInfo,
   WikitextSettings,
   version,
-} = Ftml;
+} from "./ftml/ftml.js";
 
 const DEFAULT_INTERWIKI_PREFIXES = {
   wikipedia: "https://wikipedia.org/wiki/$$",
@@ -135,6 +137,86 @@ function replaceIncludeVariables(content, variables) {
   return result;
 }
 
+function toTagSetFromPageMeta(pageMeta) {
+  const out = new Set();
+  const rawTags = pageMeta?.tags;
+
+  if (Array.isArray(rawTags)) {
+    rawTags.forEach((tag) => {
+      const text = String(tag || "").trim();
+      if (text) out.add(text);
+    });
+    return out;
+  }
+
+  if (typeof rawTags === "string") {
+    rawTags
+      .split(/[\s,]+/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .forEach((tag) => out.add(tag));
+  }
+
+  return out;
+}
+
+function checkIftagsExpression(rawExpr, tagSet) {
+  const expr = String(rawExpr || "").trim();
+  if (!expr) return false;
+
+  let requiredOk = true;
+  let prohibitedOk = true;
+  let presentOk = false;
+  let hasPresent = false;
+
+  expr.split(/\s+/).forEach((tokenRaw) => {
+    const token = String(tokenRaw || "").trim();
+    if (!token) return;
+
+    if (token.startsWith("+")) {
+      const name = token.slice(1);
+      if (!name) return;
+      requiredOk = requiredOk && tagSet.has(name);
+      return;
+    }
+
+    if (token.startsWith("-")) {
+      const name = token.slice(1);
+      if (!name) return;
+      prohibitedOk = prohibitedOk && !tagSet.has(name);
+      return;
+    }
+
+    hasPresent = true;
+    presentOk = presentOk || tagSet.has(token);
+  });
+
+  if (!hasPresent) presentOk = true;
+  return requiredOk && prohibitedOk && presentOk;
+}
+
+/**
+ * Compatibility shim for Wikidot pattern:
+ * [[div [[iftags ...]] attr="..." [[/iftags]]]]
+ *
+ * FTML currently does not always parse conditional attributes in block openers.
+ * We rewrite this to a plain [[div ...]] or [[div]] before preprocess/parse.
+ */
+function applyInlineIftagsDivCompatibility(source, pageMeta) {
+  const text = String(source || "");
+  if (!/\[\[\s*div\s+\[\[\s*iftags\b/i.test(text)) return text;
+
+  const tags = toTagSetFromPageMeta(pageMeta);
+  const re = /\[\[\s*div\s+\[\[\s*iftags\s+([\s\S]*?)\]\]([\s\S]*?)\[\[\s*\/iftags\s*\]\]\s*\]\]/gi;
+
+  return text.replace(re, (_all, rawExpr, rawAttrs) => {
+    const pass = checkIftagsExpression(rawExpr, tags);
+    const attrs = String(rawAttrs || "").trim();
+    if (pass && attrs) return `[[div ${attrs}]]`;
+    return "[[div]]";
+  });
+}
+
 /**
  * 使用 Worker 的 fetch API 从 BFF 获取页面源码
  */
@@ -142,8 +224,21 @@ async function fetchPageSourceFromBff(bffBase, pageName, siteBase) {
   const base = String(bffBase || "").replace(/\/+$/, "");
   const site = String(siteBase || "").replace(/\/+$/, "");
 
+  // Handle cross-site include prefix :site-slug:page-name
+  // e.g. ":scp-wiki-cn:theme:wish-for-miracle" -> page = "theme:wish-for-miracle"
+  let resolvedPage = pageName;
+  const crossSiteMatch = String(pageName || "").match(/^:([^:]+):(.+)$/);
+  if (crossSiteMatch) {
+    const includeSite = crossSiteMatch[1];
+    resolvedPage = crossSiteMatch[2];
+    // Only allow scp-wiki-cn cross-site includes (same site)
+    if (includeSite !== "scp-wiki-cn") {
+      return { ok: false, error: `cross-site include not supported: ${includeSite}` };
+    }
+  }
+
   // 构建页面 URL
-  const pageUrl = `${site}/${pageName}`;
+  const pageUrl = `${site}/${resolvedPage}`;
   const encoded = encodeURIComponent(pageUrl);
   const requestUrl = `${base}/pages/latest-source?url=${encoded}`;
 
@@ -270,8 +365,7 @@ async function ensureInitialized() {
   if (wasmReady) return;
   if (!wasmInitPromise) {
     wasmInitPromise = (async () => {
-      const wasmUrl = new URL("./ftml/ftml_bg.wasm", import.meta.url);
-      await initFtml({ module_or_path: wasmUrl });
+      await initFtml();
       wasmReady = true;
       try { ftmlVersion = typeof version === "function" ? version() : null; }
       catch { ftmlVersion = null; }
@@ -284,8 +378,8 @@ async function ensureInitialized() {
 }
 
 function getRenderFn() {
-  if (typeof Ftml.render_html === "function") return Ftml.render_html;
-  if (typeof Ftml.render_text === "function") return Ftml.render_text;
+  if (typeof render_html === "function") return render_html;
+  if (typeof render_text === "function") return render_text;
   return null;
 }
 
@@ -532,9 +626,9 @@ async function expandIncludesSmart(source, settings, includeMode, includeApi, in
   includeMisses += 1;
 
   // 尝试使用 FTML 原生 includer
-  if (typeof Ftml.expand_includes_via_bff === "function") {
+  if (typeof expand_includes_via_bff === "function") {
     try {
-      const expandedResult = await Ftml.expand_includes_via_bff(
+      const expandedResult = await expand_includes_via_bff(
         text,
         settings,
         includeApi,
@@ -702,6 +796,7 @@ async function doRender(req) {
     console.warn("[FTML Worker] include 展开失败，使用原始源码：", e);
     includeStats.lastNote = "展开失败: " + String(e);
   }
+  expandedText = applyInlineIftagsDivCompatibility(expandedText, pageMeta);
   const includeMs = performance.now() - t_inc;
 
   // ---- preprocess ----
@@ -826,6 +921,75 @@ async function doRender(req) {
   };
 }
 
+async function doRenderNav(req) {
+  const includeApi = String(req?.includeApi || "");
+  const includeBaseUrl = String(req?.includeBaseUrl || "");
+  const includeMode = String(req?.includeMode || "hybrid");
+  const layout = String(req?.layout || "wikidot");
+  const topPageName = String(req?.topPageName || "nav:top");
+  const sidePageName = String(req?.sidePageName || "nav:side");
+  const pageMeta = req?.pageMeta || {};
+
+  await ensureInitialized();
+
+  async function renderNavPage(pageName) {
+    const result = {
+      pageName,
+      ok: false,
+      html: "",
+      error: "",
+    };
+
+    if (!pageName) {
+      result.ok = true;
+      return result;
+    }
+
+    const sourceResult = await fetchPageSourceFromBff(
+      includeApi,
+      pageName,
+      includeBaseUrl
+    );
+    if (!sourceResult.ok || typeof sourceResult.source !== "string") {
+      result.error = sourceResult.error || "not_found";
+      return result;
+    }
+
+    try {
+      const renderResult = await doRender({
+        source: sourceResult.source,
+        mode: "page",
+        layout,
+        includeMode,
+        includeApi,
+        includeBaseUrl,
+        pageMeta,
+      });
+      result.ok = true;
+      result.html = String(renderResult?.html || "");
+      return result;
+    } catch (e) {
+      result.error = String(e);
+      return result;
+    }
+  }
+
+  const [topBar, sideBar] = await Promise.all([
+    renderNavPage(topPageName),
+    renderNavPage(sidePageName),
+  ]);
+
+  const errors = [];
+  if (!topBar.ok) errors.push(`Top bar 渲染失败(${topBar.pageName}): ${topBar.error}`);
+  if (!sideBar.ok) errors.push(`Side bar 渲染失败(${sideBar.pageName}): ${sideBar.error}`);
+
+  return {
+    topBarHtml: topBar.ok ? topBar.html : "",
+    sideBarHtml: sideBar.ok ? sideBar.html : "",
+    errors,
+  };
+}
+
 self.addEventListener("message", async (ev) => {
   const msg = ev.data || {};
   const type = msg.type;
@@ -862,6 +1026,28 @@ self.addEventListener("message", async (ev) => {
         ok: false,
         error: errText,
         includeStats: { hits: includeHits, misses: includeMisses, lastMode: String(msg.includeMode || ""), lastNote: "错误" },
+      });
+    }
+    return;
+  }
+
+  if (type === "render-nav") {
+    const seq = msg.seq || 0;
+    try {
+      const result = await doRenderNav(msg);
+      self.postMessage({
+        type: "render-nav-result",
+        seq,
+        ok: true,
+        ...result,
+      });
+    } catch (e) {
+      const errText = (e && e.stack) ? String(e.stack) : String(e);
+      self.postMessage({
+        type: "render-nav-result",
+        seq,
+        ok: false,
+        error: errText,
       });
     }
   }

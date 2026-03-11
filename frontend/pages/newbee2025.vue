@@ -1,16 +1,16 @@
 <template>
   <div class="max-w-6xl mx-auto px-4 py-12 space-y-12">
-    <section class="rounded-3xl border border-white/70 bg-white/90 px-6 py-10 shadow-[0_24px_60px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-neutral-900/85 dark:shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
+    <section class="rounded-lg border border-white/70 bg-white/90 px-6 py-10 shadow-sm backdrop-blur dark:border-white/10 dark:bg-neutral-900/85 dark:shadow-lg">
       <div class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div class="space-y-4">
-          <div class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.35)] bg-[rgba(var(--accent),0.1)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[rgb(var(--accent))]">
+          <div class="inline-flex items-center gap-2 rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--g-accent)]">
             <span>Newbee 2025</span>
           </div>
           <div class="space-y-3">
             <h1 class="text-3xl font-semibold text-neutral-900 dark:text-neutral-50 sm:text-4xl">2025“群雄逐鹿”新秀竞赛</h1>
           </div>
         </div>
-        <div class="rounded-2xl border border-[rgba(var(--accent),0.4)] bg-[rgba(var(--accent),0.08)] px-6 py-5 text-sm text-[rgb(var(--accent-strong))]">
+        <div class="rounded-lg border border-[rgba(var(--accent),0.4)] bg-[var(--g-accent-soft)] px-6 py-5 text-sm text-[rgb(var(--accent-strong))]">
           <div class="font-semibold">当前更新时间</div>
           <div class="mt-1 font-mono text-lg tracking-wide">
             {{ nowFormatted }}
@@ -31,7 +31,7 @@
         <div
           v-for="milestone in milestoneStates"
           :key="milestone.key"
-          class="relative rounded-2xl border p-5 transition-colors"
+          class="relative rounded-lg border p-5 transition-colors"
           :class="[
             'border-neutral-200/80 bg-white/80 dark:border-neutral-800/70 dark:bg-neutral-900/80 backdrop-blur',
             milestone.key === nextMilestoneKey && milestone.status === 'upcoming' ? 'ring-2 ring-[rgba(var(--accent),0.65)]' : ''
@@ -42,7 +42,7 @@
               <div class="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{{ milestone.label }}</div>
               <div class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{{ milestone.display }}</div>
             </div>
-            <span class="rounded-full bg-[rgba(var(--accent),0.12)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent))]">
+            <span class="rounded-full bg-[var(--g-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--g-accent)]">
               {{ milestone.status === 'upcoming' ? '倒计时' : '已结束' }}
             </span>
           </div>
@@ -58,7 +58,7 @@
 
     <section class="space-y-4">
       <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-50">参赛规则</h2>
-      <div class="rounded-2xl border border-neutral-200/80 bg-white/85 p-6 leading-7 text-neutral-700 shadow-sm backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-900/80 dark:text-neutral-300 dark:shadow-none">
+      <div class="rounded-lg border border-neutral-200/80 bg-white/85 p-6 leading-7 text-neutral-700 shadow-sm backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-900/80 dark:text-neutral-300 dark:shadow-none">
         <p>本届比赛为参赛作品设置了三个可选主题：控制、收容、保护。</p>
         <p class="mt-3">参赛选手在投稿时，应当为自己的作品选择一个主题，同时该作品内容应当符合你所选的主题。</p>
         <p class="mt-3">根据你选择的主题，请为你的作品打上“_2025新竞控制”，“_2025新竞收容”，或者“_2025新竞保护”标签。</p>
@@ -75,7 +75,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:text-neutral-300"
+          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
           @click="refreshTrackHighlights"
           :disabled="entriesPending"
         >
@@ -86,7 +86,7 @@
         <div
           v-for="track in trackHighlights"
           :key="track.def.key"
-          class="space-y-3 rounded-2xl border border-neutral-200/80 bg-white/85 p-4 backdrop-blur transition-colors dark:border-neutral-800/70 dark:bg-neutral-900/80"
+          class="space-y-3 rounded-lg border border-neutral-200/80 bg-white/85 p-4 backdrop-blur transition-colors dark:border-neutral-800/70 dark:bg-neutral-900/80"
           :style="track.palette.card"
         >
           <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -151,7 +151,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:text-neutral-300"
+          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
           @click="refreshThemeHighlights"
           :disabled="entriesPending"
         >
@@ -162,7 +162,7 @@
         <div
           v-for="theme in themeHighlights"
           :key="theme.def.key"
-          class="space-y-3 rounded-2xl border border-neutral-200/80 bg-white/85 p-4 backdrop-blur transition-colors dark:border-neutral-800/70 dark:bg-neutral-900/80"
+          class="space-y-3 rounded-lg border border-neutral-200/80 bg-white/85 p-4 backdrop-blur transition-colors dark:border-neutral-800/70 dark:bg-neutral-900/80"
           :style="themePalettes[theme.def.key]?.card"
         >
           <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -209,7 +209,7 @@
             <button
               type="button"
               class="rounded-full px-3 py-1 transition"
-              :class="orderMode === 'created' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-400'"
+              :class="orderMode === 'created' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-500 dark:text-neutral-400'"
               @click="orderMode = 'created'"
             >
               按时间
@@ -217,7 +217,7 @@
             <button
               type="button"
               class="rounded-full px-3 py-1 transition"
-              :class="orderMode === 'random' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-400'"
+              :class="orderMode === 'random' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-500 dark:text-neutral-400'"
               @click="orderMode = 'random'"
             >
               随机
@@ -226,7 +226,7 @@
           <button
             v-if="orderMode === 'random'"
             type="button"
-            class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:text-neutral-300"
+            class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
             @click="reshuffleEntries"
             :disabled="entriesPending"
           >
@@ -234,14 +234,14 @@
           </button>
         </div>
       </div>
-      <div v-if="entriesPending" class="rounded-2xl border border-dashed border-neutral-200/60 bg-white/60 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/60 dark:text-neutral-400">
+      <div v-if="entriesPending" class="rounded-lg border border-dashed border-neutral-200/60 bg-white/60 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/60 dark:text-neutral-400">
         正在加载参赛作品…
       </div>
-      <div v-else-if="entriesError" class="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+      <div v-else-if="entriesError" class="rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
         加载参赛作品失败：{{ entriesError.message || entriesError }}
       </div>
       <div v-else>
-        <div v-if="displayedEntries.length === 0" class="rounded-2xl border border-dashed border-neutral-200/60 bg-white/70 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/70 dark:text-neutral-400">
+        <div v-if="displayedEntries.length === 0" class="rounded-lg border border-dashed border-neutral-200/60 bg-white/70 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/70 dark:text-neutral-400">
           暂未收录带有“2025新秀竞赛”标签的作品。
         </div>
         <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

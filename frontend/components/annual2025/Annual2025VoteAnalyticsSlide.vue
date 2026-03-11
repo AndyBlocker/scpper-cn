@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div class="max-w-5xl w-full mx-auto px-2">
         <div class="flex items-center gap-2 md:gap-3 mb-6 md:mb-8">
-          <div class="p-1.5 md:p-2 bg-[rgb(var(--accent))] rounded-lg">
+          <div class="p-1.5 md:p-2 bg-[var(--g-accent)] rounded-lg">
             <LucideIcon name="Vote" class="w-4 h-4 md:w-5 md:h-5 text-white" />
           </div>
           <h2 class="text-2xl md:text-3xl font-bold">投票数据分析</h2>
@@ -13,7 +13,7 @@
           <div class="bento-card col-span-1 md:col-span-2">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">月度投票趋势</span>
-              <LucideIcon name="TrendingUp" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="TrendingUp" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="flex items-end gap-1 md:gap-2 h-32 md:h-40 mt-3 md:mt-4">
               <div
@@ -52,7 +52,7 @@
           <div class="bento-card">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">分类投票分布</span>
-              <LucideIcon name="PieChart" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="PieChart" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="space-y-2 mt-3">
               <div
@@ -84,7 +84,7 @@
           <div class="bento-card">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">投票统计</span>
-              <LucideIcon name="BarChart2" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="BarChart2" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="grid grid-cols-2 gap-3 mt-3">
               <div class="text-center p-3 bg-[rgba(var(--fg),0.03)] rounded-lg">
@@ -95,8 +95,8 @@
                 <div class="text-xl md:text-2xl font-bold text-red-400">{{ formatNumber(siteData.overview.votes.down) }}</div>
                 <div class="text-[10px] text-[rgb(var(--muted))]">DownVotes</div>
               </div>
-              <div class="col-span-2 text-center p-3 bg-[rgba(var(--accent),0.1)] rounded-lg">
-                <div class="text-2xl md:text-3xl font-bold text-[rgb(var(--accent))]">{{ siteData.overview.votes.upRate }}%</div>
+              <div class="col-span-2 text-center p-3 bg-[var(--g-accent-soft)] rounded-lg">
+                <div class="text-2xl md:text-3xl font-bold text-[var(--g-accent)]">{{ siteData.overview.votes.upRate }}%</div>
                 <div class="text-[10px] text-[rgb(var(--muted))]">年度UpVote率</div>
               </div>
             </div>

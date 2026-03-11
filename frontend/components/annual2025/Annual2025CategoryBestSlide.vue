@@ -13,7 +13,7 @@
           <div
             v-for="(item, idx) in siteData.categoryBest"
             :key="idx"
-            class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-2xl p-4 md:p-6 flex items-start gap-3 md:gap-4 hover:bg-[rgba(var(--fg),0.03)] transition-colors"
+            class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-lg p-4 md:p-6 flex items-start gap-3 md:gap-4 hover:bg-[rgba(var(--fg),0.03)] transition-colors"
           >
             <div class="p-2 md:p-3 rounded-lg md:rounded-xl" :class="item.iconBgClass">
               <LucideIcon :name="item.icon" class="w-5 h-5 md:w-6 md:h-6" :class="item.iconClass" />

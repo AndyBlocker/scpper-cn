@@ -3,7 +3,7 @@
     <!-- 无数据确认弹窗 -->
     <Teleport to="body">
       <div v-if="showNoDataConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl p-6 md:p-8 max-w-md w-full shadow-2xl">
+        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-6 md:p-8 max-w-md w-full shadow-2xl">
           <div class="flex items-center gap-3 mb-4">
             <div class="w-12 h-12 bg-amber-500/20 rounded-full flex items-center justify-center">
               <LucideIcon name="AlertTriangle" class="w-6 h-6 text-amber-500" />
@@ -20,13 +20,13 @@
           <div class="flex gap-3">
             <button
               @click="cancelNoDataConfirm"
-              class="flex-1 px-4 py-2.5 bg-transparent border border-[rgb(var(--panel-border))] text-[rgb(var(--fg))] rounded-lg font-medium transition-colors hover:border-[rgb(var(--accent))]"
+              class="flex-1 px-4 py-2.5 bg-transparent border border-[rgb(var(--panel-border))] text-[rgb(var(--fg))] rounded-lg font-medium transition-colors hover:border-[var(--g-accent)]"
             >
               返回
             </button>
             <button
               @click="confirmNoDataContinue"
-              class="flex-1 px-4 py-2.5 bg-[rgb(var(--accent))] hover:bg-[rgb(var(--accent-strong))] text-white rounded-lg font-medium transition-colors"
+              class="flex-1 px-4 py-2.5 bg-[var(--g-accent)] hover:bg-[rgb(var(--accent-strong))] text-white rounded-lg font-medium transition-colors"
             >
               继续浏览
             </button>
@@ -463,8 +463,8 @@ onUnmounted(() => {
 }
 
 .annual-summary :deep(.bento-card) {
-  @apply bg-[rgb(var(--panel))] backdrop-blur-md border border-[rgb(var(--panel-border))] rounded-xl md:rounded-2xl p-3 md:p-6 flex flex-col relative overflow-hidden;
-  @apply hover:border-[rgba(var(--accent),0.3)] transition-all duration-500;
+  @apply bg-[rgb(var(--panel))] backdrop-blur-md border border-[rgb(var(--panel-border))] rounded-xl md:rounded-lg p-3 md:p-6 flex flex-col relative overflow-hidden;
+  @apply hover:border-[var(--g-accent-border)] transition-all duration-500;
 }
 
 .annual-summary :deep(.bento-header) {
@@ -570,7 +570,7 @@ onUnmounted(() => {
 }
 
 .annual-summary :deep(.contributor-card) {
-  @apply bg-gradient-to-b from-[rgb(var(--panel))] to-[rgb(var(--bg))] border rounded-2xl p-6 relative flex flex-col items-center text-center;
+  @apply bg-gradient-to-b from-[rgb(var(--panel))] to-[rgb(var(--bg))] border rounded-lg p-6 relative flex flex-col items-center text-center;
   @apply transform hover:-translate-y-2 transition-transform duration-500 shadow-xl;
 }
 

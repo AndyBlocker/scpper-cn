@@ -18,7 +18,7 @@
     <div class="toolbar-group justify-end">
       <label class="toolbar-field">
         <span class="toolbar-label">视图</span>
-        <select :value="uiLayout" @change="$emit('update:uiLayout', ($event.target as HTMLSelectElement).value)" class="toolbar-select">
+        <select :value="uiLayout" @change="$emit('update:uiLayout', ($event.target as HTMLSelectElement).value as UiLayout)" class="toolbar-select">
           <option value="both">编辑 + 预览</option>
           <option value="editor-only">仅编辑</option>
           <option value="preview-only">仅预览</option>
@@ -27,7 +27,7 @@
 
       <label class="toolbar-field">
         <span class="toolbar-label">预览宽度</span>
-        <select :value="previewDevice" @change="$emit('update:previewDevice', ($event.target as HTMLSelectElement).value)" class="toolbar-select">
+        <select :value="previewDevice" @change="$emit('update:previewDevice', ($event.target as HTMLSelectElement).value as PreviewDevice)" class="toolbar-select">
           <option value="desktop">桌面</option>
           <option value="tablet">平板</option>
           <option value="mobile">手机</option>

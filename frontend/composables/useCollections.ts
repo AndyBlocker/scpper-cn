@@ -1,5 +1,6 @@
 import { useNuxtApp, useState } from 'nuxt/app'
 import { computed } from 'vue'
+import { getErrorMessage } from '~/utils/httpError'
 
 export type CollectionVisibility = 'PUBLIC' | 'PRIVATE'
 
@@ -114,13 +115,13 @@ export function useCollections() {
         state.value.collections = []
         state.value.total = 0
         state.value.lastFetchedAt = null
-        markError(res?.error || '加载收藏夹失败')
+        markError('加载收藏夹失败')
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       state.value.collections = []
       state.value.total = 0
       state.value.lastFetchedAt = null
-      const message = error?.message || '加载收藏夹失败'
+      const message = getErrorMessage(error, '加载收藏夹失败')
       console.warn('[collections] fetchCollections error', message, error)
       markError(message)
     } finally {
@@ -148,10 +149,10 @@ export function useCollections() {
         }
         return detail
       }
-      markError(res?.error || '收藏夹不存在')
+      markError('收藏夹不存在')
       return null
-    } catch (error: any) {
-      markError(error?.message || '加载收藏夹失败')
+    } catch (error: unknown) {
+      markError(getErrorMessage(error, '加载收藏夹失败'))
       return null
     }
   }
@@ -183,8 +184,8 @@ export function useCollections() {
       const message = res?.error || '创建收藏夹失败'
       markError(message)
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '创建收藏夹失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '创建收藏夹失败')
       markError(message)
       return { ok: false as const, error: message }
     } finally {
@@ -217,8 +218,8 @@ export function useCollections() {
       const message = res?.error || '更新失败'
       markError(message)
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '更新失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '更新失败')
       markError(message)
       return { ok: false as const, error: message }
     } finally {
@@ -243,8 +244,8 @@ export function useCollections() {
       const message = res?.error || '删除失败'
       markError(message)
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '删除失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '删除失败')
       markError(message)
       return { ok: false as const, error: message }
     } finally {
@@ -269,8 +270,8 @@ export function useCollections() {
       const message = res?.error || '添加失败'
       markError(message)
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '添加失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '添加失败')
       markError(message)
       return { ok: false as const, error: message }
     } finally {
@@ -301,8 +302,8 @@ export function useCollections() {
       const message = res?.error || '更新失败'
       markError(message)
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '更新失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '更新失败')
       markError(message)
       return { ok: false as const, error: message }
     } finally {
@@ -328,8 +329,8 @@ export function useCollections() {
       const message = res?.error || '删除失败'
       markError(message)
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '删除失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '删除失败')
       markError(message)
       return { ok: false as const, error: message }
     } finally {
@@ -357,8 +358,8 @@ export function useCollections() {
       const message = res?.error || '排序失败'
       markError(message)
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '排序失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '排序失败')
       markError(message)
       return { ok: false as const, error: message }
     } finally {

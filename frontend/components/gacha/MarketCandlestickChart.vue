@@ -226,30 +226,31 @@ function buildAreaData(): AreaData<UTCTimestamp>[] {
   return points
 }
 
-function buildMarkers(): SeriesMarker<Time>[] {
-  return (props.markers || [])
-    .map((item) => {
-      const time = parseUnixSeconds(item.ts)
-      if (time == null) return null
-      const isLong = item.side === 'LONG'
-      if (item.kind === 'OPEN') {
-        return {
-          time: asUtcTimestamp(time),
-          position: isLong ? 'belowBar' : 'aboveBar',
-          shape: isLong ? 'arrowUp' : 'arrowDown',
-          color: isLong ? '#16a34a' : '#e11d48',
-          text: isLong ? 'L' : 'S'
-        } satisfies SeriesMarker<Time>
-      }
-      return {
+function buildMarkers(): SeriesMarker<UTCTimestamp>[] {
+  const markers: SeriesMarker<UTCTimestamp>[] = []
+  for (const item of props.markers || []) {
+    const time = parseUnixSeconds(item.ts)
+    if (time == null) continue
+    const isLong = item.side === 'LONG'
+    if (item.kind === 'OPEN') {
+      markers.push({
         time: asUtcTimestamp(time),
-        position: 'inBar',
-        shape: 'circle',
-        color: isLong ? '#059669' : '#be123c',
-        text: item.kind === 'SETTLE' ? 'C' : 'E'
-      } satisfies SeriesMarker<Time>
+        position: isLong ? 'belowBar' : 'aboveBar',
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        color: isLong ? '#16a34a' : '#e11d48',
+        text: isLong ? 'L' : 'S'
+      })
+      continue
+    }
+    markers.push({
+      time: asUtcTimestamp(time),
+      position: 'inBar',
+      shape: 'circle',
+      color: isLong ? '#059669' : '#be123c',
+      text: item.kind === 'SETTLE' ? 'C' : 'E'
     })
-    .filter((item): item is SeriesMarker<Time> => Boolean(item))
+  }
+  return markers
 }
 
 async function loadLwc() {

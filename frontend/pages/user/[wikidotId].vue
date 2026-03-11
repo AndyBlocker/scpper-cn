@@ -4,7 +4,7 @@
     <div v-else>
       <div v-if="userPending || statsPending" class="p-8 text-center">
         <div class="inline-flex items-center gap-2">
-          <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" stroke-width="2" />
+          <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[var(--g-accent)]" stroke-width="2" />
           <span class="text-neutral-600 dark:text-neutral-400">加载中...</span>
         </div>
       </div>
@@ -13,9 +13,9 @@
       </div>
       <div v-else class="space-y-6">
       <!-- Header -->
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3 mb-4">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b-2 border-[var(--g-accent-medium)] dark:border-[var(--g-accent-strong)] pb-3 mb-4">
         <div class="flex items-center gap-3">
-          <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
+          <div class="h-8 w-1 bg-[var(--g-accent)] rounded" />
           <h2 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">用户详情</h2>
         </div>
         <div class="flex items-center gap-3 w-full sm:w-auto sm:justify-end">
@@ -26,8 +26,8 @@
             :title="isFollowingThis ? '取消收藏作者' : '收藏作者'"
             class="inline-flex items-center justify-center h-9 w-9 rounded-full border transition shadow-sm"
             :class="isFollowingThis
-              ? 'border-[rgba(var(--accent),0.45)] bg-[rgba(var(--accent),0.10)] text-[rgb(var(--accent))] dark:border-[rgba(var(--accent),0.45)]'
-              : 'border-neutral-200 bg-white/80 text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300'"
+              ? 'border-[rgba(var(--accent),0.45)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] dark:border-[rgba(var(--accent),0.45)]'
+              : 'border-neutral-200 bg-white/80 text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300'"
             @click="toggleFollow"
           >
             <!-- Use the same star geometry for both states to ensure equal visual size -->
@@ -59,7 +59,7 @@
               <div class="w-20 h-3 rounded bg-neutral-100 animate-pulse dark:bg-neutral-700/60 ml-auto"></div>
             </div>
             <div v-else-if="stats?.rank" class="text-right shrink-0">
-              <div class="text-2xl sm:text-3xl font-bold text-[rgb(var(--accent))] whitespace-nowrap overflow-hidden">#{{ stats.rank }}</div>
+              <div class="text-2xl sm:text-3xl font-bold text-[var(--g-accent)] whitespace-nowrap overflow-hidden">#{{ stats.rank }}</div>
               <div class="text-xs text-neutral-600 dark:text-neutral-400">综合排名</div>
             </div>
           </div>
@@ -69,12 +69,12 @@
             <div v-if="user?.firstActivityAt" class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3">
               <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">首次活动</div>
               <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatDate(user.firstActivityAt) }}</div>
-              <div v-if="user?.firstActivityType" class="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
+              <div v-if="user?.firstActivityType && !isForumPostActivity(user?.firstActivityType)" class="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
                 {{ formatActivityType(user.firstActivityType) }}
               </div>
               <div v-if="user?.firstActivityPageWikidotId || user?.firstActivityPageTitle" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
                 <div class="flex flex-wrap items-start gap-1">
-                  <NuxtLink :to="`/page/${user.firstActivityPageWikidotId}`" class="hover:text-[rgb(var(--accent))] truncate max-w-full block">
+                  <NuxtLink :to="`/page/${user.firstActivityPageWikidotId}`" class="hover:text-[var(--g-accent)] truncate max-w-full block">
                     {{ user.firstActivityPageTitle || '未知页面' }}
                   </NuxtLink>
                   <span v-if="user?.firstActivityType === 'VOTE'" :class="[
@@ -89,14 +89,33 @@
                   — {{ user.firstActivityComment }}
                 </div>
               </div>
+              <div v-else-if="isForumPostActivity(user?.firstActivityType)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
+                <NuxtLink
+                  :to="forumPostLink(user?.firstActivityForumThreadId, user?.firstActivityForumPostId)"
+                  class="block text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:text-[var(--g-accent)] break-words overflow-hidden"
+                  style="display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical;"
+                >
+                  发帖 - {{ user?.firstActivityForumThreadTitle || '论坛主题' }} - {{ user?.firstActivityForumPostTitle || '无标题' }}
+                </NuxtLink>
+                <div
+                  v-if="user?.firstActivityForumExcerpt"
+                  class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden"
+                  style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;"
+                >
+                  {{ user.firstActivityForumExcerpt }}
+                </div>
+              </div>
             </div>
             <div v-if="user?.lastActivityAt" class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3">
               <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">最近活动</div>
               <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatDate(user.lastActivityAt) }}</div>
+              <div v-if="user?.lastActivityType && !isForumPostActivity(user?.lastActivityType)" class="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
+                {{ formatActivityType(user.lastActivityType) }}
+              </div>
               <div v-if="user?.lastActivityType === 'VOTE' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
                 <div class="flex flex-wrap items-start gap-1">
                   <span class="shrink-0">投票 ·</span>
-                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[rgb(var(--accent))] truncate max-w-full block">
+                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[var(--g-accent)] truncate max-w-full block">
                     {{ user.lastActivityPageTitle || '未知页面' }}
                   </NuxtLink>
                   <span :class="[
@@ -110,12 +129,28 @@
               <div v-else-if="user?.lastActivityType === 'REVISION' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
                 <div class="flex flex-wrap items-start gap-1">
                   <span class="shrink-0">{{ formatRevisionType(user?.lastActivityRevisionType || '') }} ·</span>
-                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[rgb(var(--accent))] truncate max-w-full block">
+                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[var(--g-accent)] truncate max-w-full block">
                     {{ user.lastActivityPageTitle || '未知页面' }}
                   </NuxtLink>
                 </div>
                 <div v-if="user?.lastActivityComment" class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">
                   — {{ user.lastActivityComment }}
+                </div>
+              </div>
+              <div v-else-if="isForumPostActivity(user?.lastActivityType)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
+                <NuxtLink
+                  :to="forumPostLink(user?.lastActivityForumThreadId, user?.lastActivityForumPostId)"
+                  class="block text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:text-[var(--g-accent)] break-words overflow-hidden"
+                  style="display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical;"
+                >
+                  发帖 - {{ user?.lastActivityForumThreadTitle || '论坛主题' }} - {{ user?.lastActivityForumPostTitle || '无标题' }}
+                </NuxtLink>
+                <div
+                  v-if="user?.lastActivityForumExcerpt"
+                  class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden"
+                  style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;"
+                >
+                  {{ user.lastActivityForumExcerpt }}
                 </div>
               </div>
             </div>
@@ -158,10 +193,10 @@
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">分类表现</h3>
             <div class="inline-flex w-full sm:w-auto rounded-md overflow-hidden border border-neutral-200 dark:border-neutral-800 justify-center sm:justify-start">
               <button type="button" class="px-2 py-1 text-xs"
-                :class="categoryView==='list' ? 'bg-[rgb(var(--accent))] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
+                :class="categoryView==='list' ? 'bg-[var(--g-accent)] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
                 @click="categoryView='list'">列表</button>
               <button type="button" class="px-2 py-1 text-xs"
-                :class="categoryView==='radar' ? 'bg-[rgb(var(--accent))] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
+                :class="categoryView==='radar' ? 'bg-[var(--g-accent)] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
                 @click="categoryView='radar'">雷达</button>
             </div>
           </div>
@@ -199,16 +234,12 @@
 
       <section
         v-if="publicCollectionsLoading || publicCollections.length > 0"
-        class="relative overflow-hidden rounded-3xl border border-neutral-200/80 bg-white/95 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.1)] dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-[0_32px_70px_rgba(0,0,0,0.6)]"
+        class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950"
       >
-        <div class="pointer-events-none absolute inset-0">
-          <div class="absolute -right-16 -top-10 h-48 w-48 rounded-full bg-[rgba(var(--accent),0.12)] blur-3xl dark:bg-[rgba(var(--accent),0.28)]" />
-          <div class="absolute bottom-0 left-0 h-56 w-56 rounded-full bg-purple-400/10 blur-3xl dark:bg-purple-400/20" />
-        </div>
-        <div class="relative z-10 space-y-6">
+        <div class="space-y-6">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <h3 class="flex items-center gap-2 text-base font-semibold text-neutral-800 dark:text-neutral-100">
-              <LucideIcon name="BookmarkPlus" class="h-5 w-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="BookmarkPlus" class="h-5 w-5 text-[var(--g-accent)]" />
               公开收藏夹
             </h3>
             <span v-if="!publicCollectionsLoading && publicCollections.length > 0" class="text-xs text-neutral-500 dark:text-neutral-400">
@@ -216,14 +247,14 @@
             </span>
           </div>
           <div v-if="publicCollectionsLoading" class="grid gap-4 md:grid-cols-2">
-            <div v-for="n in 3" :key="`collection-skeleton-${n}`" class="h-40 rounded-3xl bg-neutral-100/80 animate-pulse dark:bg-neutral-800/60" />
+            <div v-for="n in 3" :key="`collection-skeleton-${n}`" class="h-40 rounded-lg bg-neutral-100/80 animate-pulse dark:bg-neutral-800/60" />
           </div>
           <div v-else class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <NuxtLink
               v-for="collection in publicCollections"
               :key="collection.id"
               :to="`/user/${wikidotId}/collections/${collection.slug}`"
-              class="block rounded-3xl focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)]"
+              class="block rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
             >
               <CollectionCard :collection="collection" :show-visibility="false" :clickable="false">
                 <template #footer>
@@ -286,7 +317,7 @@
               :class="[
                 'py-3 px-1 border-b-2 font-medium text-sm transition-colors',
                 activeTab === tab.key
-                  ? 'border-[rgb(var(--accent))] text-[rgb(var(--accent))]'
+                  ? 'border-[var(--g-accent)] text-[var(--g-accent)]'
                   : 'border-transparent text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-300'
               ]"
             >
@@ -311,7 +342,7 @@
         <!-- Works List -->
         <div class="p-6">
           <div v-if="worksPending" class="text-center py-8">
-            <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[rgb(var(--accent))] mx-auto" stroke-width="2" />
+            <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[var(--g-accent)] mx-auto" stroke-width="2" />
           </div>
           <div v-else-if="!works || works.length === 0" class="text-center py-8 text-neutral-500 dark:text-neutral-400">
             暂无{{ currentTabLabel }}作品
@@ -365,7 +396,7 @@
               <div v-for="a in favAuthors" :key="`fa-${a.userId}`" class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2 min-w-0">
                   <UserAvatar :wikidot-id="a.wikidotId" :name="a.displayName || String(a.wikidotId || a.userId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
-                  <NuxtLink :to="`/user/${a.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                  <NuxtLink :to="`/user/${a.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
                     {{ a.displayName || a.wikidotId || a.userId }}
                   </NuxtLink>
                 </div>
@@ -392,7 +423,7 @@
               <div v-for="fan in fanAuthors" :key="`fan-${fan.userId}`" class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2 min-w-0">
                   <UserAvatar :wikidot-id="fan.wikidotId" :name="fan.displayName || String(fan.wikidotId || fan.userId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
-                  <NuxtLink :to="`/user/${fan.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                  <NuxtLink :to="`/user/${fan.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
                     {{ fan.displayName || fan.wikidotId || fan.userId }}
                   </NuxtLink>
                 </div>
@@ -417,7 +448,7 @@
             </div>
             <div v-else-if="favTags && favTags.length > 0" class="space-y-2">
               <div v-for="t in favTags" :key="`ft-${t.tag}`" class="flex items-center justify-between">
-                <NuxtLink :to="`/search?tags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                <NuxtLink :to="`/search?tags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
                   #{{ t.tag }}
                 </NuxtLink>
                 <div class="text-xs shrink-0 inline-flex items-center gap-1">
@@ -441,7 +472,7 @@
             </div>
             <div v-else-if="hateTags && hateTags.length > 0" class="space-y-2">
               <div v-for="t in hateTags" :key="`ht-${t.tag}`" class="flex items-center justify-between">
-                <NuxtLink :to="`/search?excludeTags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate">
+                <NuxtLink :to="`/search?excludeTags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
                   #{{ t.tag }}
                 </NuxtLink>
                 <div class="text-xs shrink-0 inline-flex items-center gap-1">
@@ -477,7 +508,7 @@
                      'bg-neutral-50 dark:bg-neutral-800'
                    ]">
                 <div class="flex-1 min-w-0">
-                  <NuxtLink :to="`/page/${vote.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] truncate block">
+                  <NuxtLink :to="`/page/${vote.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate block">
                     {{ composeTitle(vote.pageTitle, vote.pageAlternateTitle) || 'Untitled' }}
                   </NuxtLink>
                   <div class="text-xs text-neutral-600 dark:text-neutral-400">{{ formatRelativeTime(vote.timestamp) }}</div>
@@ -516,7 +547,7 @@
                 </span>
                 <div class="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap shrink-0">{{ formatRelativeTime(revision.timestamp) }}</div>
               </div>
-              <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[rgb(var(--accent))] mt-1 block truncate">
+              <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] mt-1 block truncate">
                 {{ composeTitle(revision.pageTitle, revision.pageAlternateTitle) || 'Untitled' }}
               </NuxtLink>
               <div v-if="revision.comment" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">{{ revision.comment }}</div>
@@ -531,23 +562,37 @@
         </div>
       </div>
 
-      <!-- Activity Records -->
-      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-        <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">成就记录</h3>
-        <div v-if="rawActivityPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div v-for="n in 3" :key="`record-skeleton-${n}`" class="h-20 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
-        </div>
-        <div v-else-if="activityRecords && activityRecords.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div v-for="record in activityRecords" :key="record.id" class="flex items-center justify-between p-3 bg-neutral-50 dark:bg-neutral-800 rounded-lg">
-            <div>
-              <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatRecordType(record.recordType) }}</div>
-              <div v-if="record.achievedAt" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1">{{ formatDate(record.achievedAt) }}</div>
-            </div>
-            <div v-if="record.value" class="text-lg font-bold text-[rgb(var(--accent))]">{{ Number(record.value).toFixed(0) }}</div>
+      <!-- Recent Forum Posts -->
+      <ClientOnly>
+        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
+          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">最近论坛发帖</h3>
+          <div v-if="forumPostsPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div v-for="n in 6" :key="`forum-skeleton-${n}`" class="h-20 rounded bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
+          </div>
+          <div v-else-if="forumPosts && forumPosts.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            <NuxtLink
+              v-for="post in forumPosts"
+              :key="post.id"
+              :to="`/forums/t/${post.threadId}`"
+              class="p-2 rounded border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 block"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span v-if="post.categoryTitle" class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 max-w-[120px] truncate">{{ post.categoryTitle }}</span>
+                <div class="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap shrink-0">{{ formatRelativeTime(String(post.createdAt ?? '')) }}</div>
+              </div>
+              <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100 mt-1 truncate">{{ post.threadTitle || post.title || '无标题' }}</div>
+              <div v-if="post.textHtml" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;" v-html="stripHtml(post.textHtml)"></div>
+            </NuxtLink>
+          </div>
+          <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无论坛发帖</div>
+          <div v-if="!forumPostsPending && forumPosts && forumPosts.length > 0" class="flex items-center justify-between mt-3">
+            <button @click="prevForumPage" :disabled="forumPostPage === 1" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
+            <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ forumPostPage }} / {{ forumTotalPages }} 页</div>
+            <button @click="nextForumPage" :disabled="forumPostPage >= forumTotalPages" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
           </div>
         </div>
-        <div v-else class="text-sm text-neutral-500 terse dark:text-neutral-400">暂无成就记录</div>
-      </div>
+      </ClientOnly>
+
       </div>
     </div>
   </div>
@@ -555,6 +600,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, watchEffect } from 'vue'
+import { useAsyncData, useHead, useNuxtApp, useRoute, useState } from '#imports'
 import { useAuth } from '~/composables/useAuth'
 import { useFollows } from '~/composables/useFollows'
 import { useCollections, type CollectionSummary } from '~/composables/useCollections'
@@ -562,14 +608,6 @@ import CollectionCard from '~/components/collections/CollectionCard.vue'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { orderTags } from '~/composables/useTagOrder'
 import { formatDateUtc8, formatDateIsoUtc8, diffUtc8CalendarDays, startOfUtc8Day, nowUtc8 } from '~/utils/timezone'
-// Note: avoid importing Nuxt auto-imported composables to prevent linter conflicts
-
-// Declarations for Nuxt auto-imported globals to satisfy type checker in this environment
-declare const useAsyncData: any
-declare const useNuxtApp: any
-declare const useRoute: any
-declare const useState: any
-declare const useHead: any
 
 type UserDailyStatRecord = {
   date: string;
@@ -584,14 +622,14 @@ type HeatmapRange = {
   endIso: string;
 };
 
+const isClient = typeof window !== 'undefined'
+
 // 简易调试开关（可通过 window.__DEV_DEBUG__ = true 打开）
-// @ts-ignore
-const __DEV_DEBUG__ = isClient && (window as any).__DEV_DEBUG__ === true
+const __DEV_DEBUG__ = isClient && (window as Window & { __DEV_DEBUG__?: boolean }).__DEV_DEBUG__ === true
 const route = useRoute();
 const isCollectionsRoute = computed(() => route.path.includes('/collections/'));
 const {$bff} = useNuxtApp();
 const { hydratePages: hydrateViewerVotes } = useViewerVotes()
-const isClient = typeof window !== 'undefined'
 
 const toItems = (payload: unknown): any[] => {
   if (Array.isArray(payload)) {
@@ -652,7 +690,7 @@ const userPageTitle = computed(() => {
 function revisionTypeClass(type: string) {
   const t = String(type || '')
   if (t === 'PAGE_CREATED' || t === 'PAGE_RESTORED') {
-    return 'bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]'
+    return 'bg-[var(--g-accent-soft)] dark:bg-[var(--g-accent-strong)] text-[var(--g-accent)]'
   }
   if (t === 'PAGE_EDITED') {
     return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
@@ -1053,23 +1091,36 @@ watchEffect(() => {
   }
 })
 
-// Fetch activity records
-const { data: rawActivityRecords, pending: rawActivityPending } = await useAsyncData(
-  () => `user-activity-${wikidotId.value}`,
-  () => $bff(`/stats/user-activity`, { 
-    params: { 
-      userId: user.value?.id,
-      limit: 6
-    } 
+// Forum posts
+const forumPostPage = ref(1)
+const forumPostPageSize = 9
+type ForumPostItem = { id: number; title?: string; textHtml?: string; createdAt?: string; threadId: number; threadTitle?: string; categoryId?: number; categoryTitle?: string; createdByName?: string }
+const { data: rawForumPosts, pending: forumPostsPending } = await useAsyncData(
+  () => `user-forum-posts-${wikidotId.value}-${forumPostPage.value}`,
+  () => $bff(`/forums/users/${wikidotId.value}/posts`, {
+    params: { page: forumPostPage.value, limit: forumPostPageSize }
   }),
   {
-    watch: [() => user.value?.id],
+    watch: [() => wikidotId.value, forumPostPage],
     server: false,
     lazy: true,
-    default: () => []
+    default: () => ({ posts: [], total: 0, page: 1, limit: forumPostPageSize })
   }
-);
-const activityRecords = computed(() => toItems(rawActivityRecords.value))
+)
+const forumPosts = computed<ForumPostItem[]>(() => {
+  const val = rawForumPosts.value as any
+  return Array.isArray(val?.posts) ? val.posts : []
+})
+const forumTotalPages = computed(() => {
+  const val = rawForumPosts.value as any
+  const total = Number(val?.total || 0)
+  return Math.max(1, Math.ceil(total / forumPostPageSize))
+})
+function prevForumPage() { if (forumPostPage.value > 1) forumPostPage.value-- }
+function nextForumPage() { if (forumPostPage.value < forumTotalPages.value) forumPostPage.value++ }
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').trim().slice(0, 200)
+}
 
 // Fetch rating history
 const { data: ratingHistory, pending: ratingHistoryPending } = await useAsyncData(
@@ -1329,8 +1380,29 @@ function formatActivityType(type: string) {
     'PAGE_TRANSLATED': '翻译页面',
     'VOTE_CAST': '投票',
     'COMMENT_POSTED': '发表评论',
+    'VOTE': '投票',
+    'REVISION': '修订',
+    'FORUM_POST': '论坛发帖',
+    'forum_post': '论坛发帖',
+    'attribution': '页面归属',
+    'revision': '修订',
+    'vote': '投票',
   };
   return typeMap[type] || type;
+}
+
+function isForumPostActivity(type: string | null | undefined) {
+  return String(type || '').toUpperCase() === 'FORUM_POST';
+}
+
+function forumPostLink(threadId: number | string | null | undefined, postId: number | string | null | undefined) {
+  const tid = Number(threadId);
+  if (!Number.isFinite(tid) || tid <= 0) return '/forums';
+  const pid = Number(postId);
+  if (Number.isFinite(pid) && pid > 0) {
+    return `/forums/t/${tid}?postId=${pid}`;
+  }
+  return `/forums/t/${tid}`;
 }
 
 function formatRevisionType(type: string) {
@@ -1343,19 +1415,6 @@ function formatRevisionType(type: string) {
     'METADATA_CHANGED': '修改元数据',
     'TAGS_CHANGED': '修改标签',
     'SOURCE_CHANGED': '编辑内容',
-  };
-  return typeMap[type] || type;
-}
-
-function formatRecordType(type: string) {
-  const typeMap: Record<string, string> = {
-    'MOST_PRODUCTIVE_DAY': '最高产的一天',
-    'LONGEST_STREAK': '最长连续活动',
-    'FIRST_100_RATING': '首次达到100评分',
-    'FIRST_500_RATING': '首次达到500评分',
-    'FIRST_1000_RATING': '首次达到1000评分',
-    'TOP_RATED_PAGE': '最高评分页面',
-    'MOST_CONTROVERSIAL': '最具争议页面',
   };
   return typeMap[type] || type;
 }

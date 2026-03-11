@@ -86,7 +86,6 @@ const goldPity = computed(() => {
           'pool-deck-card--active ring-2 ring-[rgb(var(--accent-strong))]/60 ring-offset-2 ring-offset-white dark:ring-offset-neutral-900'
         ]"
       >
-        <div class="absolute -right-12 -top-12 h-24 w-24 rounded-full bg-white/28 blur-2xl dark:bg-white/5" />
         <div class="pool-deck-card__grain" />
         <div class="pool-deck-card__foil" />
 
@@ -169,7 +168,7 @@ const goldPity = computed(() => {
       </article>
     </div>
 
-    <p v-else class="rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
+    <p v-else class="rounded-lg border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
       暂无可用卡池，请稍后再试。
     </p>
   </section>

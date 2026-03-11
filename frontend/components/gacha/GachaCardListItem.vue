@@ -24,6 +24,7 @@ const props = defineProps<{
   estimatedReward?: number
   selected?: boolean
   locked?: boolean
+  retired?: boolean
   disabled?: boolean
 }>()
 
@@ -51,10 +52,13 @@ const affixParts = computed(() => resolveAffixParts(props))
         <span v-if="locked" class="text-xs text-amber-500" title="已锁定">&#x1F512;</span>
         <h4 class="truncate text-xs font-semibold text-neutral-900 dark:text-neutral-100">{{ displayCardTitle(title) }}</h4>
       </div>
-      <div class="flex flex-wrap items-center gap-1 text-[10px]">
-        <span class="inline-flex rounded-full border px-1.5 py-0.5 font-semibold" :class="rarityChipClassMap[rarity] || rarityChipClassMap.WHITE">
-          {{ rarityLabel(rarity) }}
-        </span>
+      <div class="flex flex-wrap items-start gap-1 text-[10px]">
+        <div class="card-list-meta-left">
+          <span class="inline-flex rounded-full border px-1.5 py-0.5 font-semibold" :class="rarityChipClassMap[rarity] || rarityChipClassMap.WHITE">
+            {{ rarityLabel(rarity) }}
+          </span>
+          <span v-if="retired" class="card-list-meta-retired">绝版</span>
+        </div>
         <GachaAffixChip
           v-for="part in affixParts.filter((p) => p.style !== 'NONE')"
           :key="`list-affix-${part.style}-${part.count}`"
@@ -144,6 +148,7 @@ html.dark .card-list-item--selected {
 
 .card-list-thumb {
   flex-shrink: 0;
+  position: relative;
   width: 40px;
   height: 40px;
   border-radius: 0.5rem;
@@ -153,5 +158,34 @@ html.dark .card-list-item--selected {
 
 html.dark .card-list-thumb {
   background: rgb(30 41 59);
+}
+
+.card-list-meta-left {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.card-list-meta-retired {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 22px;
+  height: 12px;
+  padding: 0 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(190, 24, 93, 0.28);
+  background: linear-gradient(135deg, rgba(255, 241, 242, 0.95), rgba(255, 228, 230, 0.88));
+  color: rgb(159 18 57);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+html.dark .card-list-meta-retired {
+  border-color: rgba(251, 113, 133, 0.28);
+  background: linear-gradient(135deg, rgba(76, 5, 25, 0.88), rgba(136, 19, 55, 0.72));
+  color: rgb(255 228 230);
 }
 </style>

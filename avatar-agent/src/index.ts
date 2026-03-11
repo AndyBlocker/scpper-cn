@@ -2,6 +2,12 @@ import { buildServer } from "./server.js";
 import { cfg } from "./config.js";
 import { log } from "./logger.js";
 import { startImageCacheWorker } from "./image-cache/worker.js";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
+
+if (cfg.upstreamProxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(cfg.upstreamProxyUrl));
+  log.info({ proxy: cfg.upstreamProxyUrl }, "avatar-agent outbound requests use proxy");
+}
 
 const app = await buildServer();
 const imageWorker = await startImageCacheWorker();

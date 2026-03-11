@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import type { RowDataPacket } from 'mysql2';
 import mysql from 'mysql2/promise';
 import { DatabaseStore } from '../src/core/store/DatabaseStore.js';
 import { Logger } from '../src/utils/Logger.js';
@@ -44,6 +45,8 @@ type LegacyRevision = {
   userUnixName?: string;
 };
 
+type MysqlRow<T extends object> = RowDataPacket & T;
+
 function parseWikidotIds(raw?: (string | string[])[]): number[] {
   if (!raw) return [];
   const flattened = raw.flatMap((entry) => (Array.isArray(entry) ? entry : String(entry).split(',')));
@@ -88,7 +91,7 @@ async function connectLegacyMysql(config: MysqlConfig): Promise<{ connection: my
 
   const discovery = await tryConnect();
   try {
-    const [rows] = await discovery.execute<Array<{ db: string }>>(
+    const [rows] = await discovery.execute<Array<MysqlRow<{ db: string }>>>(
       `SELECT table_schema AS db
          FROM information_schema.tables
         WHERE table_name IN ('pages', 'revisions', 'users')
@@ -108,15 +111,15 @@ async function connectLegacyMysql(config: MysqlConfig): Promise<{ connection: my
 }
 
 async function fetchLegacyRevisions(mysqlConn: mysql.Connection, wikidotId: number): Promise<LegacyRevision[]> {
-  const [rows] = await mysqlConn.query<Array<{
+  const [rows] = await mysqlConn.query<Array<MysqlRow<{
     WikidotId: number | null;
     RevisionIndex: number | null;
     DateTime: string;
     Comments: string | null;
-    UserId: number | null;
+    UserLegacyId: number | null;
     DisplayName: string | null;
     WikidotName: string | null;
-  }>>(
+  }>>>(
     `SELECT r.WikidotId,
             r.RevisionIndex,
             r.DateTime,

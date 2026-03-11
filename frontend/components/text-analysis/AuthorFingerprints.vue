@@ -37,7 +37,7 @@
                 <span
                   v-for="w in a.topWords.slice(0, 6)"
                   :key="w.word"
-                  class="inline-block mr-1.5 mb-1 px-2 py-0.5 text-xs rounded-full bg-[rgba(var(--accent),0.1)] text-[rgb(var(--accent))]"
+                  class="inline-block mr-1.5 mb-1 px-2 py-0.5 text-xs rounded-full bg-[var(--g-accent-soft)] text-[var(--g-accent)]"
                   :title="`TF-IDF: ${w.tfidf.toFixed(4)}`"
                 >
                   {{ w.word }}
@@ -57,7 +57,9 @@ import type { AuthorFingerprint } from '~/types/text-analysis'
 
 const { data: authors, pending } = useAsyncData<{ items: AuthorFingerprint[]; total: number }>(
   'text-analysis-authors',
-  () => $fetch('/api/text-analysis/author-fingerprints?limit=200')
+  () => $fetch<{ items: AuthorFingerprint[]; total: number }>('/api/text-analysis/author-fingerprints', {
+    params: { limit: 200 }
+  })
 )
 
 const search = ref('')

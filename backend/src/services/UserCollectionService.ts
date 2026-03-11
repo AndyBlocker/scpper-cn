@@ -21,11 +21,7 @@ export class UserCollectionService {
         AND (p."isDeleted" = true)
     `;
 
-    const removed = typeof removalResult === 'number'
-      ? removalResult
-      : Array.isArray(removalResult) && removalResult.length > 0 && typeof removalResult[0] === 'number'
-        ? removalResult[0]
-        : 0;
+    const removed = Number(removalResult) || 0;
 
     if (removed > 0) {
       Logger.info(`[collections] Pruned ${removed} invalid collection items referencing deleted pages.`);

@@ -1,5 +1,5 @@
 import type { FetchOptions } from 'ofetch';
-import consola from 'consola';
+import { consola } from 'consola';
 
 type DebugMeta = {
   startAt: number;
@@ -251,12 +251,14 @@ export default defineNuxtPlugin((nuxtApp) => {
     return path === normalizedBase || path.startsWith(`${normalizedBase}/`);
   }
 
-  function resolveTargetInfo(request: string | Request | URL | any) {
+  function resolveTargetInfo(request: string | Request | URL | { url?: string } | null | undefined) {
     let path = '';
     if (typeof request === 'string') {
       path = request;
-    } else if (request instanceof Request || request instanceof URL) {
+    } else if (request instanceof Request) {
       path = request.url;
+    } else if (request instanceof URL) {
+      path = request.toString();
     } else if (request && typeof request === 'object' && typeof request.url === 'string') {
       path = request.url;
     }

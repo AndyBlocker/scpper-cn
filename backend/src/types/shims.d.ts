@@ -64,3 +64,15 @@ declare module 'ora' {
   }
   export default function ora(text?: string): OraInstance;
 }
+
+declare module 'cli-progress' {
+  export class SingleBar {
+    constructor(options?: Record<string, unknown>, preset?: Record<string, unknown>);
+    start(total: number, startValue: number, payload?: Record<string, unknown>): void;
+    update(value: number, payload?: Record<string, unknown>): void;
+    increment(delta?: number): void;
+    stop(): void;
+  }
+
+  export const Presets: Record<string, Record<string, unknown>>;
+}

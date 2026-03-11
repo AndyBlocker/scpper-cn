@@ -5,7 +5,7 @@ import type {
 } from '~/types/gacha'
 
 export function useGachaMissionsApi(core: GachaCoreContext) {
-  const { $bff, state } = core
+  const { $bff, state, captureWalletSeq, setWalletIfFresh } = core
 
   async function getMissions() {
     try {
@@ -14,21 +14,21 @@ export function useGachaMissionsApi(core: GachaCoreContext) {
         return { ok: true as const, data: res.items ?? [] }
       }
       return { ok: false as const, error: res?.error || '加载任务失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载任务失败') }
     }
   }
 
   async function claimMission(missionKey: string) {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ mission: MissionItem; wallet?: Wallet; tickets?: TicketBalance }>>(`/gacha/missions/${missionKey}/claim`, {
         method: 'POST',
         body: {}
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -42,21 +42,21 @@ export function useGachaMissionsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '领取任务奖励失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '领取任务奖励失败') }
     }
   }
 
   async function claimAllMissions() {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ claimed: number; items?: Array<{ missionKey: string; claimedAt: string }>; wallet?: Wallet; tickets?: TicketBalance }>>('/gacha/missions/claim-all', {
         method: 'POST',
         body: {}
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -71,7 +71,7 @@ export function useGachaMissionsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '领取任务奖励失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '领取任务奖励失败') }
     }
   }
@@ -83,21 +83,21 @@ export function useGachaMissionsApi(core: GachaCoreContext) {
         return { ok: true as const, data: res.items ?? [] }
       }
       return { ok: false as const, error: res?.error || '加载成就失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载成就失败') }
     }
   }
 
   async function claimAchievement(achievementKey: string) {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ achievement: AchievementItem; wallet?: Wallet; tickets?: TicketBalance }>>(`/gacha/achievements/${achievementKey}/claim`, {
         method: 'POST',
         body: {}
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -111,21 +111,21 @@ export function useGachaMissionsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '领取成就奖励失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '领取成就奖励失败') }
     }
   }
 
   async function claimAllAchievements() {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ claimed: number; items?: Array<{ achievementKey: string; claimedAt: string }>; wallet?: Wallet; tickets?: TicketBalance }>>('/gacha/achievements/claim-all', {
         method: 'POST',
         body: {}
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -140,7 +140,7 @@ export function useGachaMissionsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '领取成就奖励失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '领取成就奖励失败') }
     }
   }

@@ -4,7 +4,7 @@ import type { BuyRequest, BuyRequestMatchLevel, AffixVisualStyle, CardCatalogIte
 import type { BuyRequestSortMode } from '~/utils/gachaConstants'
 
 export function useGachaBuyRequestApi(core: GachaCoreContext) {
-  const { $bff, state, createIdempotencyKey, withCardVariant } = core
+  const { $bff, state, createIdempotencyKey, withCardVariant, captureWalletSeq, setWalletIfFresh } = core
 
   const withBuyRequestCardVariant = (request: BuyRequest): BuyRequest => ({
     ...request,
@@ -23,6 +23,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
     sort?: BuyRequestSortMode
     limit?: number
     offset?: number
+    fulfillableOnly?: boolean
   } = {}) {
     try {
       const res = await $bff<ApiResponse<{
@@ -37,7 +38,8 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
           rarity: params.rarity,
           sort: params.sort,
           limit: params.limit != null ? String(params.limit) : undefined,
-          offset: params.offset != null ? String(params.offset) : undefined
+          offset: params.offset != null ? String(params.offset) : undefined,
+          fulfillableOnly: params.fulfillableOnly ? '1' : undefined
         }
       })
       if (res?.ok) {
@@ -49,7 +51,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '加载求购列表失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载求购列表失败') }
     }
   }
@@ -63,21 +65,22 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
         return { ok: true as const, data: (res.items ?? []).map(withBuyRequestCardVariant) }
       }
       return { ok: false as const, error: res?.error || '加载我的求购失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载我的求购失败') }
     }
   }
 
   async function getCardCatalog() {
     try {
-      const res = await $bff<ApiResponse<{ cards: CardCatalogItem[] }>>('/gacha/trade/buy-requests/card-catalog', {
+      const res = await $bff<ApiResponse<{ pages: Array<{ variants: Array<{ id: string; imageUrl: string | null; isRetired?: boolean }>; title: string }> }>>('/gacha/trade/buy-requests/card-catalog', {
         method: 'GET'
       })
       if (res?.ok) {
-        return { ok: true as const, data: (res.cards ?? []).map(withCardVariant) }
+        const cards = (res.pages ?? []).flatMap(p => p.variants.map(v => withCardVariant({ ...v, title: p.title })))
+        return { ok: true as const, data: cards }
       }
       return { ok: false as const, error: res?.error || '加载卡片目录失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载卡片目录失败') }
     }
   }
@@ -93,13 +96,14 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
           title: withCardVariant({ title: page.title, imageUrl: null }).title,
           variants: page.variants.map(v => ({
             id: v.id,
-            imageUrl: withCardVariant({ title: '', imageUrl: v.imageUrl }).imageUrl ?? null
+            imageUrl: withCardVariant({ title: '', imageUrl: v.imageUrl }).imageUrl ?? null,
+            isRetired: !!v.isRetired
           }))
         }))
         return { ok: true as const, data: pages }
       }
       return { ok: false as const, error: res?.error || '加载页面目录失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载页面目录失败') }
     }
   }
@@ -114,6 +118,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
   }) {
     try {
       const idemKey = createIdempotencyKey('buy-request-create')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ buyRequest: BuyRequest; wallet?: Wallet }>>('/gacha/trade/buy-requests', {
         method: 'POST',
         headers: { 'x-idempotency-key': idemKey },
@@ -121,8 +126,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -131,23 +135,29 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '创建求购失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '创建求购失败') }
     }
   }
 
-  async function fulfillBuyRequest(buyRequestId: string) {
+  async function fulfillBuyRequest(
+    buyRequestId: string,
+    payload?: { selectedCardId?: string; selectedAffixSignature?: string }
+  ) {
     try {
       const idemKey = createIdempotencyKey('buy-request-fulfill')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ buyRequest: BuyRequest; wallet?: Wallet }>>(`/gacha/trade/buy-requests/${encodeURIComponent(buyRequestId)}/fulfill`, {
         method: 'POST',
         headers: { 'x-idempotency-key': idemKey },
-        body: {}
+        body: {
+          selectedCardId: payload?.selectedCardId,
+          selectedAffixSignature: payload?.selectedAffixSignature
+        }
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -156,7 +166,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '接受求购失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '接受求购失败') }
     }
   }
@@ -164,6 +174,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
   async function cancelBuyRequest(buyRequestId: string) {
     try {
       const idemKey = createIdempotencyKey('buy-request-cancel')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ buyRequest: BuyRequest; wallet?: Wallet }>>(`/gacha/trade/buy-requests/${encodeURIComponent(buyRequestId)}/cancel`, {
         method: 'POST',
         headers: { 'x-idempotency-key': idemKey },
@@ -171,8 +182,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -181,7 +191,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '取消求购失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '取消求购失败') }
     }
   }

@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type { GachaPageContext } from '~/composables/useGachaPage'
 import type {
   AffixVisualStyle,
@@ -72,14 +72,22 @@ export function useGachaTrade(page: GachaPageContext) {
   const tradePublicTotal = ref(0)
   const tradePublicLoadingMore = ref(false)
   const tradePublicQueryLoading = ref(false)
+  const myTradeTotal = ref(0)
+  const myTradePage = ref(1)
+  const MY_TRADE_PAGE_SIZE = 40
 
   // ─── Internal Flags ───────────────────────────────────
-  const TRADE_PUBLIC_PAGE_SIZE = 120
+  const TRADE_PUBLIC_PAGE_SIZE = 40
   const TRADE_PUBLIC_QUERY_DEBOUNCE_MS = 280
+  const BACKGROUND_REFRESH_DELAY_MS = 300
   let tradePublicQueryTimer: ReturnType<typeof setTimeout> | null = null
   let tradePublicRequestSeq = 0
   let tradeAuthorQueueTimer: ReturnType<typeof setTimeout> | null = null
   const tradeAuthorQueue = new Set<number>()
+  let backgroundRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+  // ─── Lightweight ownedCardIds (Phase 2) ──────────────
+  const ownedCardIdsRef = ref<Set<string>>(new Set())
 
   // ─── Buy Request State ─────────────────────────────────
   const buyRequests = ref<BuyRequest[]>([])
@@ -92,11 +100,12 @@ export function useGachaTrade(page: GachaPageContext) {
   const buyRequestSearch = ref('')
   const buyRequestSortMode = ref<BuyRequestSortMode>('LATEST')
   const buyRequestRarityFilter = ref<Rarity | 'ALL'>('ALL')
+  const buyRequestFulfillableOnly = ref(false)
   const buyRequestPublicOffset = ref(0)
   const buyRequestPublicTotal = ref(0)
   const buyRequestPublicLoadingMore = ref(false)
   const buyRequestPublicQueryLoading = ref(false)
-  const BUY_REQUEST_PUBLIC_PAGE_SIZE = 60
+  const BUY_REQUEST_PUBLIC_PAGE_SIZE = 40
   const BUY_REQUEST_QUERY_DEBOUNCE_MS = 280
   let buyRequestQueryTimer: ReturnType<typeof setTimeout> | null = null
   let buyRequestRequestSeq = 0
@@ -228,6 +237,7 @@ export function useGachaTrade(page: GachaPageContext) {
     title: item.title,
     rarity: item.rarity,
     imageUrl: item.imageUrl ?? null,
+    isRetired: !!item.isRetired,
     wikidotId: item.wikidotId ?? null,
     pageId: item.pageId ?? null,
     tags: item.tags ?? [],
@@ -245,7 +255,12 @@ export function useGachaTrade(page: GachaPageContext) {
   const tradeQuantityMax = computed(() => Math.max(1, selectedTradeCardOption.value?.availableCount ?? 1))
 
   // Broad set of all owned card IDs (regardless of placement/lock/showcase), for buy request fulfillment check
-  const ownedCardIds = computed(() => new Set(placementOptions.value.map((item) => item.cardId)))
+  // Uses lightweight endpoint when available, falls back to full inventory
+  const ownedCardIds = computed(() => {
+    if (ownedCardIdsRef.value.size > 0) return ownedCardIdsRef.value
+    if (placementOptions.value.length > 0) return new Set(placementOptions.value.map((item) => item.cardId))
+    return ownedCardIdsRef.value
+  })
 
   const publicTradeListings = computed(() => tradeListings.value
     .filter((item) => item.status === 'OPEN' && item.remaining > 0))
@@ -402,21 +417,11 @@ export function useGachaTrade(page: GachaPageContext) {
     const chunk = res.data ?? []
     seedAuthorCacheForListings(chunk)
     queueAuthorHydration(chunk.map((listing) => listing.card.wikidotId))
-    if (reset) {
-      tradeListings.value = chunk
-    } else {
-      const merged = new Map<string, TradeListing>()
-      for (const listing of tradeListings.value) {
-        merged.set(listing.id, listing)
-      }
-      for (const listing of chunk) {
-        merged.set(listing.id, listing)
-      }
-      tradeListings.value = Array.from(merged.values())
-    }
-    const totalRaw = Number(res.pagination?.total ?? tradeListings.value.length)
-    tradePublicTotal.value = Number.isFinite(totalRaw) ? Math.max(0, totalRaw) : tradeListings.value.length
-    tradePublicOffset.value = offset + chunk.length
+    // Pure page replacement — no accumulative merge
+    tradeListings.value = chunk
+    const totalRaw = Number(res.pagination?.total ?? chunk.length)
+    tradePublicTotal.value = Number.isFinite(totalRaw) ? Math.max(0, totalRaw) : chunk.length
+    tradePublicOffset.value = offset
     return { ok: true as const, stale: false as const, data: tradeListings.value }
   }
 
@@ -426,7 +431,6 @@ export function useGachaTrade(page: GachaPageContext) {
       || tradeLoading.value
       || tradePublicLoadingMore.value
       || tradePublicQueryLoading.value
-      || !tradePublicHasMore.value
     ) return
     tradePublicLoadingMore.value = true
     try {
@@ -436,6 +440,19 @@ export function useGachaTrade(page: GachaPageContext) {
       }
     } finally {
       tradePublicLoadingMore.value = false
+    }
+  }
+
+  async function loadPublicTradePage(page: number) {
+    tradePublicOffset.value = (page - 1) * TRADE_PUBLIC_PAGE_SIZE
+    tradePublicQueryLoading.value = true
+    try {
+      const res = await loadPublicTradeListings(false)
+      if (!res.ok && !res.stale) {
+        emitError(res.error || '加载挂牌失败')
+      }
+    } finally {
+      tradePublicQueryLoading.value = false
     }
   }
 
@@ -507,7 +524,11 @@ export function useGachaTrade(page: GachaPageContext) {
       const [, publicRes, mineRes] = await Promise.all([
         syncInventory ? refreshPlacementOptions() : Promise.resolve(),
         loadPublicTradeListings(resetPublic),
-        gacha.getMyTradeListings()
+        gacha.getMyTradeListings({
+          status: tradeMyStatusFilter.value === 'ALL' ? undefined : tradeMyStatusFilter.value,
+          limit: MY_TRADE_PAGE_SIZE,
+          offset: (myTradePage.value - 1) * MY_TRADE_PAGE_SIZE
+        })
       ])
       if (!publicRes.ok && !publicRes.stale) {
         emitError(publicRes.error || '加载集换市场失败')
@@ -516,6 +537,7 @@ export function useGachaTrade(page: GachaPageContext) {
         emitError(mineRes.error || '加载我的挂牌失败')
       } else {
         myTradeListings.value = mineRes.data ?? []
+        myTradeTotal.value = mineRes.pagination?.total ?? myTradeListings.value.length
         seedAuthorCacheForListings(myTradeListings.value)
         queueAuthorHydration(myTradeListings.value.map((listing) => listing.card.wikidotId))
       }
@@ -527,6 +549,108 @@ export function useGachaTrade(page: GachaPageContext) {
       }
     } finally {
       tradeLoading.value = false
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // INSTANT UPDATE HELPERS
+  // ═══════════════════════════════════════════════════════
+
+  /** Locally adjust inventory count for instant feedback after mutations */
+  function applyLocalInventoryDelta(cardId: string, affixSig: string | undefined, delta: number) {
+    const items = placementOptions.value
+    const key = placementSlotKey(cardId, affixSig, undefined)
+    const idx = key ? items.findIndex((item) => placementSlotKey(item.cardId, item.affixSignature, item.affixVisualStyle) === key) : -1
+    if (idx >= 0) {
+      const item = items[idx]!
+      const newCount = Math.max(0, item.count + delta)
+      if (newCount <= 0) {
+        placementOptions.value = items.filter((_, i) => i !== idx)
+      } else {
+        placementOptions.value = items.map((it, i) => i === idx ? { ...it, count: newCount } : it)
+      }
+    }
+    // Also update ownedCardIdsRef
+    if (delta > 0) {
+      const next = new Set(ownedCardIdsRef.value)
+      next.add(cardId)
+      ownedCardIdsRef.value = next
+    }
+  }
+
+  /** Replace a listing in-place within a ref array (by id) */
+  function updateListingInPlace(list: Ref<TradeListing[]>, updated: TradeListing) {
+    const idx = list.value.findIndex((item) => item.id === updated.id)
+    if (idx >= 0) {
+      list.value = list.value.map((item, i) => i === idx ? updated : item)
+    }
+  }
+
+  /** Replace a buy request in-place within a ref array (by id) */
+  function updateBuyRequestInPlace(list: Ref<BuyRequest[]>, updated: BuyRequest) {
+    const idx = list.value.findIndex((item) => item.id === updated.id)
+    if (idx >= 0) {
+      list.value = list.value.map((item, i) => i === idx ? updated : item)
+    }
+  }
+
+  /** Debounced background refresh — runs silently 300ms after last mutation */
+  function scheduleBackgroundRefresh() {
+    if (backgroundRefreshTimer) clearTimeout(backgroundRefreshTimer)
+    backgroundRefreshTimer = setTimeout(() => {
+      backgroundRefreshTimer = null
+      // Silent refresh: don't set loading flags to avoid UI flash
+      void Promise.allSettled([
+        loadPublicTradeListings(false),
+        gacha.getMyTradeListings({
+          status: tradeMyStatusFilter.value === 'ALL' ? undefined : tradeMyStatusFilter.value,
+          limit: MY_TRADE_PAGE_SIZE,
+          offset: (myTradePage.value - 1) * MY_TRADE_PAGE_SIZE
+        }).then((mineRes) => {
+          if (mineRes.ok) {
+            myTradeListings.value = mineRes.data ?? []
+            myTradeTotal.value = mineRes.pagination?.total ?? myTradeListings.value.length
+            seedAuthorCacheForListings(myTradeListings.value)
+          }
+        }),
+        loadPublicBuyRequests(false),
+        gacha.getMyBuyRequests().then((mineRes) => {
+          if (mineRes.ok) {
+            myBuyRequests.value = mineRes.data ?? []
+            seedAuthorCacheForBuyRequests(myBuyRequests.value)
+          }
+        })
+      ])
+    }, BACKGROUND_REFRESH_DELAY_MS)
+  }
+
+  /** Refresh ownedCardIds from lightweight endpoint */
+  async function refreshOwnedCardIds() {
+    if (!activated.value) {
+      ownedCardIdsRef.value = new Set()
+      return
+    }
+    try {
+      const res = await gacha.getOwnedCardIds()
+      if (res.ok) {
+        ownedCardIdsRef.value = new Set(res.data)
+      }
+    } catch (error) {
+      console.warn('[gacha] load owned card ids failed', error)
+    }
+  }
+
+  /** Refresh card catalog on demand */
+  async function refreshCardCatalog() {
+    try {
+      const catalogRes = await gacha.getPageCatalog()
+      if (catalogRes.ok) {
+        cardCatalog.value = catalogRes.data ?? []
+        seedAuthorCacheForCatalog(cardCatalog.value)
+        queueAuthorHydration(cardCatalog.value.map((p) => p.wikidotId))
+      }
+    } catch (error) {
+      console.warn('[gacha] load card catalog failed', error)
     }
   }
 
@@ -552,8 +676,13 @@ export function useGachaTrade(page: GachaPageContext) {
       if (res.wallet) {
         handleWalletUpdated(res.wallet)
       }
-      await refreshTradePanel({ syncInventory: false, resetPublic: true })
-      placementOptionsRefreshQueued.value = true
+      // Instant update: insert new listing at the top of myTradeListings
+      myTradeListings.value = [res.listing, ...myTradeListings.value]
+      myTradeTotal.value += 1
+      // Reduce local inventory for the listed card
+      applyLocalInventoryDelta(payload.cardId, payload.affixSignature, -payload.quantity)
+      // Background refresh for eventual consistency
+      scheduleBackgroundRefresh()
     } finally {
       tradeSubmitting.value = false
     }
@@ -571,8 +700,15 @@ export function useGachaTrade(page: GachaPageContext) {
       if (res.wallet) {
         handleWalletUpdated(res.wallet)
       }
-      await refreshTradePanel({ syncInventory: false, resetPublic: true })
-      placementOptionsRefreshQueued.value = true
+      // Instant update: update listing in public/my lists (status/remaining change)
+      updateListingInPlace(tradeListings, res.listing)
+      updateListingInPlace(myTradeListings, res.listing)
+      // Buyer now owns this card
+      const next = new Set(ownedCardIdsRef.value)
+      next.add(listing.cardId)
+      ownedCardIdsRef.value = next
+      // Background refresh for eventual consistency
+      scheduleBackgroundRefresh()
     } finally {
       tradeBuyingId.value = null
     }
@@ -590,8 +726,13 @@ export function useGachaTrade(page: GachaPageContext) {
       if (res.wallet) {
         handleWalletUpdated(res.wallet)
       }
-      await refreshTradePanel({ syncInventory: false, resetPublic: true })
-      placementOptionsRefreshQueued.value = true
+      // Instant update: update listing status in my list
+      updateListingInPlace(myTradeListings, res.listing)
+      updateListingInPlace(tradeListings, res.listing)
+      // Restore inventory for cancelled cards
+      applyLocalInventoryDelta(listing.cardId, listing.affixBreakdown?.[0]?.affixSignature, listing.remaining)
+      // Background refresh for eventual consistency
+      scheduleBackgroundRefresh()
     } finally {
       tradeCancelId.value = null
     }
@@ -645,7 +786,8 @@ export function useGachaTrade(page: GachaPageContext) {
       rarity: buyRequestRarityFilter.value === 'ALL' ? undefined : buyRequestRarityFilter.value,
       sort: buyRequestSortMode.value,
       limit: BUY_REQUEST_PUBLIC_PAGE_SIZE,
-      offset
+      offset,
+      fulfillableOnly: buyRequestFulfillableOnly.value
     })
     if (requestSeq !== buyRequestRequestSeq) {
       return { ok: false as const, stale: true, error: '' }
@@ -654,22 +796,16 @@ export function useGachaTrade(page: GachaPageContext) {
     const chunk = res.data ?? []
     seedAuthorCacheForBuyRequests(chunk)
     queueAuthorHydration(chunk.map((br) => br.targetCard.wikidotId))
-    if (reset) {
-      buyRequests.value = chunk
-    } else {
-      const merged = new Map<string, BuyRequest>()
-      for (const br of buyRequests.value) merged.set(br.id, br)
-      for (const br of chunk) merged.set(br.id, br)
-      buyRequests.value = Array.from(merged.values())
-    }
-    const totalRaw = Number(res.pagination?.total ?? buyRequests.value.length)
-    buyRequestPublicTotal.value = Number.isFinite(totalRaw) ? Math.max(0, totalRaw) : buyRequests.value.length
-    buyRequestPublicOffset.value = offset + chunk.length
+    // Pure page replacement — no accumulative merge
+    buyRequests.value = chunk
+    const totalRaw = Number(res.pagination?.total ?? chunk.length)
+    buyRequestPublicTotal.value = Number.isFinite(totalRaw) ? Math.max(0, totalRaw) : chunk.length
+    buyRequestPublicOffset.value = offset
     return { ok: true as const, stale: false as const }
   }
 
   async function loadMorePublicBuyRequests() {
-    if (!activated.value || buyRequestLoading.value || buyRequestPublicLoadingMore.value || !buyRequestPublicHasMore.value) return
+    if (!activated.value || buyRequestLoading.value || buyRequestPublicLoadingMore.value) return
     buyRequestPublicLoadingMore.value = true
     try {
       const res = await loadPublicBuyRequests(false)
@@ -694,6 +830,17 @@ export function useGachaTrade(page: GachaPageContext) {
     }
   }
 
+  async function loadPublicBuyRequestPage(page: number) {
+    buyRequestPublicOffset.value = (page - 1) * BUY_REQUEST_PUBLIC_PAGE_SIZE
+    buyRequestPublicQueryLoading.value = true
+    try {
+      const res = await loadPublicBuyRequests(false)
+      if (!res.ok && !res.stale) emitError(res.error || '加载求购列表失败')
+    } finally {
+      buyRequestPublicQueryLoading.value = false
+    }
+  }
+
   function scheduleBuyRequestQueryRefresh() {
     clearBuyRequestQueryTimer()
     buyRequestQueryTimer = setTimeout(() => {
@@ -706,24 +853,29 @@ export function useGachaTrade(page: GachaPageContext) {
     search?: string
     sort?: BuyRequestSortMode
     rarity?: Rarity | 'ALL'
+    fulfillableOnly?: boolean
   }) {
     const nextSearch = String(payload.search ?? '').trim()
     const nextSortMode = payload.sort ?? 'LATEST'
     const nextRarity = payload.rarity ?? 'ALL'
+    const nextFulfillable = payload.fulfillableOnly ?? false
     const changed = (
       nextSearch !== buyRequestSearch.value
       || nextSortMode !== buyRequestSortMode.value
       || nextRarity !== buyRequestRarityFilter.value
+      || nextFulfillable !== buyRequestFulfillableOnly.value
     )
     if (!changed) return
     buyRequestSearch.value = nextSearch
     buyRequestSortMode.value = nextSortMode
     buyRequestRarityFilter.value = nextRarity
+    buyRequestFulfillableOnly.value = nextFulfillable
     scheduleBuyRequestQueryRefresh()
   }
 
-  async function refreshBuyRequestPanel(options: { resetPublic?: boolean } = {}) {
+  async function refreshBuyRequestPanel(options: { resetPublic?: boolean; loadCatalog?: boolean } = {}) {
     const resetPublic = options.resetPublic ?? true
+    const loadCatalog = options.loadCatalog ?? false
     clearBuyRequestQueryTimer()
     if (!activated.value) {
       buyRequests.value = []
@@ -735,24 +887,32 @@ export function useGachaTrade(page: GachaPageContext) {
     if (buyRequestLoading.value) return
     buyRequestLoading.value = true
     try {
-      const [publicRes, mineRes, catalogRes] = await Promise.all([
+      const promises: Promise<unknown>[] = [
         loadPublicBuyRequests(resetPublic),
-        gacha.getMyBuyRequests(),
-        cardCatalog.value.length === 0 ? gacha.getPageCatalog() : Promise.resolve({ ok: true as const, data: cardCatalog.value })
-      ])
+        gacha.getMyBuyRequests().then((mineRes) => {
+          if (!mineRes.ok) {
+            emitError(mineRes.error || '加载我的求购失败')
+          } else {
+            myBuyRequests.value = mineRes.data ?? []
+            seedAuthorCacheForBuyRequests(myBuyRequests.value)
+            queueAuthorHydration(myBuyRequests.value.map((br) => br.targetCard.wikidotId))
+          }
+        })
+      ]
+      if (loadCatalog && cardCatalog.value.length === 0) {
+        promises.push(
+          gacha.getPageCatalog().then((catalogRes) => {
+            if (catalogRes.ok) {
+              cardCatalog.value = catalogRes.data ?? []
+              seedAuthorCacheForCatalog(cardCatalog.value)
+              queueAuthorHydration(cardCatalog.value.map((p) => p.wikidotId))
+            }
+          })
+        )
+      }
+      const results = await Promise.all(promises)
+      const publicRes = results[0] as { ok: boolean; stale?: boolean; error?: string }
       if (!publicRes.ok && !publicRes.stale) emitError(publicRes.error || '加载求购列表失败')
-      if (!mineRes.ok) {
-        emitError(mineRes.error || '加载我的求购失败')
-      } else {
-        myBuyRequests.value = mineRes.data ?? []
-        seedAuthorCacheForBuyRequests(myBuyRequests.value)
-        queueAuthorHydration(myBuyRequests.value.map((br) => br.targetCard.wikidotId))
-      }
-      if (catalogRes.ok) {
-        cardCatalog.value = catalogRes.data ?? []
-        seedAuthorCacheForCatalog(cardCatalog.value)
-        queueAuthorHydration(cardCatalog.value.map((p) => p.wikidotId))
-      }
     } finally {
       buyRequestLoading.value = false
     }
@@ -775,29 +935,37 @@ export function useGachaTrade(page: GachaPageContext) {
         return
       }
       if (res.wallet) handleWalletUpdated(res.wallet)
-      await Promise.all([
-        refreshBuyRequestPanel({ resetPublic: true }),
-        refreshPlacementOptions()
-      ])
+      // Instant update: insert new buy request at the top
+      myBuyRequests.value = [res.buyRequest, ...myBuyRequests.value]
+      // Reduce inventory for offered cards
+      for (const offered of payload.offeredCards) {
+        applyLocalInventoryDelta(offered.cardId, offered.affixSignature, -offered.quantity)
+      }
+      // Background refresh for eventual consistency
+      scheduleBackgroundRefresh()
     } finally {
       buyRequestSubmitting.value = false
     }
   }
 
-  async function handleFulfillBuyRequest(buyRequestId: string) {
+  async function handleFulfillBuyRequest(
+    buyRequestId: string,
+    options?: { selectedCardId?: string; selectedAffixSignature?: string }
+  ) {
     if (buyRequestFulfillingId.value) return
     buyRequestFulfillingId.value = buyRequestId
     try {
-      const res = await gacha.fulfillBuyRequest(buyRequestId)
+      const res = await gacha.fulfillBuyRequest(buyRequestId, options)
       if (!res.ok) {
         emitError(res.error || '接受求购失败')
         return
       }
       if (res.wallet) handleWalletUpdated(res.wallet)
-      await Promise.all([
-        refreshBuyRequestPanel({ resetPublic: true }),
-        refreshPlacementOptions()
-      ])
+      // Instant update: update the buy request in both lists
+      updateBuyRequestInPlace(buyRequests, res.buyRequest)
+      updateBuyRequestInPlace(myBuyRequests, res.buyRequest)
+      // Background refresh for eventual consistency
+      scheduleBackgroundRefresh()
     } finally {
       buyRequestFulfillingId.value = null
     }
@@ -807,16 +975,25 @@ export function useGachaTrade(page: GachaPageContext) {
     if (buyRequestCancelId.value) return
     buyRequestCancelId.value = buyRequestId
     try {
+      // Find the request before cancelling to know which cards to restore
+      const br = [...myBuyRequests.value, ...buyRequests.value].find((b) => b.id === buyRequestId)
       const res = await gacha.cancelBuyRequest(buyRequestId)
       if (!res.ok) {
         emitError(res.error || '取消求购失败')
         return
       }
       if (res.wallet) handleWalletUpdated(res.wallet)
-      await Promise.all([
-        refreshBuyRequestPanel({ resetPublic: true }),
-        refreshPlacementOptions()
-      ])
+      // Instant update: update the buy request in both lists
+      updateBuyRequestInPlace(myBuyRequests, res.buyRequest)
+      updateBuyRequestInPlace(buyRequests, res.buyRequest)
+      // Restore inventory for offered cards
+      if (br?.offeredCards) {
+        for (const offered of br.offeredCards) {
+          applyLocalInventoryDelta(offered.card.id ?? offered.cardId, undefined, offered.quantity)
+        }
+      }
+      // Background refresh for eventual consistency
+      scheduleBackgroundRefresh()
     } finally {
       buyRequestCancelId.value = null
     }
@@ -851,6 +1028,10 @@ export function useGachaTrade(page: GachaPageContext) {
   function cleanup() {
     clearTradePublicQueryTimer()
     clearBuyRequestQueryTimer()
+    if (backgroundRefreshTimer) {
+      clearTimeout(backgroundRefreshTimer)
+      backgroundRefreshTimer = null
+    }
     if (tradeAuthorQueueTimer) {
       clearTimeout(tradeAuthorQueueTimer)
       tradeAuthorQueueTimer = null
@@ -897,6 +1078,8 @@ export function useGachaTrade(page: GachaPageContext) {
     tradePublicTotal,
     tradePublicLoadingMore,
     tradePublicQueryLoading,
+    myTradeTotal,
+    myTradePage,
 
     // Trade computed
     tradeCardOptions,
@@ -911,6 +1094,7 @@ export function useGachaTrade(page: GachaPageContext) {
     // Trade handlers
     loadPublicTradeListings,
     loadMorePublicTradeListings,
+    loadPublicTradePage,
     refreshTradePanel,
     refreshPublicTradeListingsByQuery,
     setPublicTradeQuery,
@@ -931,6 +1115,7 @@ export function useGachaTrade(page: GachaPageContext) {
     buyRequestSearch,
     buyRequestSortMode,
     buyRequestRarityFilter,
+    buyRequestFulfillableOnly,
     buyRequestPublicOffset,
     buyRequestPublicTotal,
     buyRequestPublicLoadingMore,
@@ -944,12 +1129,17 @@ export function useGachaTrade(page: GachaPageContext) {
     // Buy Request handlers
     loadPublicBuyRequests,
     loadMorePublicBuyRequests,
+    loadPublicBuyRequestPage,
     refreshBuyRequestPanel,
     refreshPublicBuyRequestsByQuery,
     setBuyRequestQuery,
     handleCreateBuyRequest,
     handleFulfillBuyRequest,
     handleCancelBuyRequest,
+
+    // Lazy-load helpers
+    refreshOwnedCardIds,
+    refreshCardCatalog,
 
     // Lifecycle
     loadInitial,

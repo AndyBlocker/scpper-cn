@@ -19,6 +19,12 @@ import { countComponentIncludeUsage } from './include-usage.js';
 import { checkRecentAlerts } from './alerts.js';
 import { syncGachaPool } from './gacha-sync.js';
 import { backfillGachaPageImageRefs } from './gacha-backfill-page-image-refs.js';
+import { repairGachaCardImageMapping } from './gacha-repair-card-image-mapping.js';
+import { repairGachaGhostCards } from './gacha-repair-ghost-cards.js';
+import { ForumSyncProcessor } from '../core/processors/ForumSyncProcessor.js';
+import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
+import { runSyncHourlyScheduler } from './sync-hourly.js';
+import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
 
 const program = new Command();
 
@@ -41,19 +47,45 @@ program
   });
 
 program
+  .command('sync-hourly')
+  .description('Run sync at top of every hour; skip triggers while previous cycle is still running')
+  .option('--concurrency <n>', 'Number of concurrent requests for sync', '4')
+  .option('--pool-id <id>', 'Deprecated: ignored in single-pool mode')
+  .option('--run-immediately', 'Run one cycle on startup before waiting for next top-of-hour trigger')
+  .option('--skip-gacha', 'Skip post-sync gacha-sync step')
+  .option('--skip-forum', 'Skip post-sync forum-sync step')
+  .action(async (options) => {
+    if (options.poolId) {
+      console.warn(`[sync-hourly] --pool-id=${String(options.poolId)} is deprecated and ignored in single-pool mode.`);
+    }
+    await runSyncHourlyScheduler({
+      concurrency: String(options.concurrency ?? '4'),
+      runImmediately: Boolean(options.runImmediately),
+      runGacha: !Boolean(options.skipGacha),
+      runForum: !Boolean(options.skipForum)
+    });
+  });
+
+program
+  .command('wikidot-binding-verify-loop')
+  .description('Run Wikidot binding verification in a fixed interval loop')
+  .option('--interval-seconds <n>', 'Seconds between cycles (minimum 30)', '300')
+  .option('--run-immediately', 'Run one cycle immediately on startup')
+  .action(async (options) => {
+    const parsedInterval = Number.parseInt(String(options.intervalSeconds ?? '300'), 10);
+    const intervalSeconds = Number.isFinite(parsedInterval) ? parsedInterval : 300;
+
+    await runWikidotBindingVerifyLoop({
+      intervalSeconds,
+      runImmediately: Boolean(options.runImmediately)
+    });
+  });
+
+program
   .command('gacha-sync')
   .description('Sync or rebuild gacha card pools using latest page data')
-  .option('--pool-id <id>', 'Override pool id')
   .option('--pool-name <name>', 'Display name for the pool')
   .option('--description <text>', 'Pool description')
-  .option('--token-cost <number>', 'Token cost for a single draw')
-  .option('--ten-draw-cost <number>', 'Token cost for ten draws (defaults to token-cost ×10)')
-  .option('--duplicate-reward <number>', 'Tokens awarded for duplicate cards')
-  .option('--include-tags <tags>', '仅同步包含指定标签的页面（逗号分隔）')
-  .option('--include-match <mode>', 'include-tags 的匹配模式：any|all（默认 any）')
-  .option('--exclude-tags <tags>', '排除包含指定标签的页面（逗号分隔）')
-  .option('--card-id-prefix <prefix>', '生成卡片 ID 的前缀（默认基于 pool-id 自动推导）')
-  .option('--inactive', 'Create or update pool as inactive instead of active')
   .option('--dry-run', 'Preview planned changes without writing to the database')
   .option('--limit <number>', 'Only sync the first N pages (0 = all)')
   .action(async (options) => {
@@ -63,35 +95,11 @@ program
       return Number.isFinite(parsed) ? parsed : undefined;
     };
 
-    const tokenCost = parseIntOption(options.tokenCost);
-    const tenDrawCost = parseIntOption(options.tenDrawCost);
-    const duplicateReward = parseIntOption(options.duplicateReward);
     const limit = parseIntOption(options.limit) ?? 0;
 
-    const parseTagsOption = (value: unknown): string[] => {
-      if (value == null) return [];
-      return String(value)
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0);
-    };
-
-    const includeTags = parseTagsOption(options.includeTags);
-    const excludeTags = parseTagsOption(options.excludeTags);
-    const includeMatch = String(options.includeMatch ?? '').toLowerCase() === 'all' ? 'all' : 'any';
-
     await syncGachaPool({
-      poolId: options.poolId ? String(options.poolId) : undefined,
       poolName: options.poolName ? String(options.poolName) : undefined,
       description: options.description ? String(options.description) : undefined,
-      tokenCost,
-      tenDrawCost,
-      duplicateReward,
-      includeTags,
-      includeMatch,
-      excludeTags,
-      cardIdPrefix: options.cardIdPrefix ? String(options.cardIdPrefix) : undefined,
-      isActive: options.inactive ? false : undefined,
       dryRun: Boolean(options.dryRun),
       limit
     });
@@ -114,6 +122,38 @@ program
       dryRun: Boolean(options.dryRun),
       scanBatchSize: parseIntOption(options.scanBatchSize, 2000),
       updateChunkSize: parseIntOption(options.updateChunkSize, 500)
+    });
+  });
+
+program
+  .command('gacha-repair-card-image-mapping')
+  .description('Repair gacha card imageUrl mapping drift caused by image order changes')
+  .option('--dry-run', 'Preview without writing to user-backend database')
+  .option('--page-chunk-size <number>', 'PageVersion window query chunk size', '5000')
+  .option('--version-chunk-size <number>', 'PageVersion image reconstruction chunk size', '300')
+  .option('--update-chunk-size <number>', 'User-backend UPDATE VALUES chunk size', '500')
+  .action(async (options) => {
+    const parseIntOption = (value: unknown, fallback: number): number => {
+      const parsed = Number.parseInt(String(value ?? ''), 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+      return parsed;
+    };
+
+    await repairGachaCardImageMapping({
+      dryRun: Boolean(options.dryRun),
+      pageChunkSize: parseIntOption(options.pageChunkSize, 5000),
+      versionChunkSize: parseIntOption(options.versionChunkSize, 300),
+      updateChunkSize: parseIntOption(options.updateChunkSize, 500)
+    });
+  });
+
+program
+  .command('gacha-repair-ghost-cards')
+  .description('Merge invalid retired no-image ghost cards into canonical page variants')
+  .option('--dry-run', 'Preview without writing to user-backend database')
+  .action(async (options) => {
+    await repairGachaGhostCards({
+      dryRun: Boolean(options.dryRun)
     });
   });
 
@@ -908,6 +948,30 @@ program
       json: Boolean(options.json),
       userDbUrl: options.userDbUrl
     });
+  });
+
+program
+  .command('forum-sync')
+  .description('Sync forum data from Wikidot (categories, threads, posts)')
+  .option('--full', 'Full sync (re-fetch all threads and posts)')
+  .option('--dry-run', 'Preview mode (no database writes)')
+  .option('--category <id>', 'Only sync a specific category by ID')
+  .option('--skip-user-activity-refresh', 'Skip post-sync user activity completeness refresh')
+  .action(async (options) => {
+    WikidotForumClient.setupProxy();
+    const processor = new ForumSyncProcessor({
+      full: Boolean(options.full),
+      dryRun: Boolean(options.dryRun),
+      categoryId: options.category ? Number.parseInt(String(options.category), 10) : undefined,
+    });
+    const result = await processor.run();
+    console.log(`Forum sync result: ${JSON.stringify(result, null, 2)}`);
+    if (!options.dryRun && !options.skipUserActivityRefresh) {
+      console.log('Refreshing user_data_completeness after forum sync...');
+      await analyzeIncremental({ tasks: ['user_data_completeness'] });
+      console.log('User activity completeness refresh done.');
+    }
+    await disconnectPrisma();
   });
 
 program

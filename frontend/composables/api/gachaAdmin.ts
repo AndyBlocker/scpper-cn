@@ -32,7 +32,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载概率提升列表失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载概率提升列表失败')
       return { ok: false as const, error: message }
     } finally {
@@ -59,7 +59,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '新增概率提升失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '新增概率提升失败')
       return { ok: false as const, error: message }
     }
@@ -85,7 +85,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '更新概率提升失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '更新概率提升失败')
       return { ok: false as const, error: message }
     }
@@ -100,7 +100,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '删除失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '删除失败')
       return { ok: false as const, error: message }
     }
@@ -120,7 +120,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '更新经济配置失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '更新经济配置失败')
       return { ok: false as const, error: message }
     }
@@ -153,7 +153,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载卡池失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载卡池失败')
       return { ok: false as const, error: message }
     }
@@ -183,7 +183,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '新增卡池失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '新增卡池失败')
       return { ok: false as const, error: message }
     }
@@ -211,7 +211,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '更新卡池失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '更新卡池失败')
       return { ok: false as const, error: message }
     }
@@ -227,7 +227,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '删除卡池失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '删除卡池失败')
       return { ok: false as const, error: message }
     }
@@ -258,7 +258,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '新增卡片失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '新增卡片失败')
       return { ok: false as const, error: message }
     }
@@ -289,7 +289,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '更新卡片失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '更新卡片失败')
       return { ok: false as const, error: message }
     }
@@ -304,7 +304,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '删除卡片失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '删除卡片失败')
       return { ok: false as const, error: message }
     }
@@ -341,7 +341,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载卡片失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载卡片失败')
       return { ok: false as const, error: message }
     }
@@ -374,7 +374,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '批量调整失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '批量调整失败')
       return { ok: false as const, error: message }
     }
@@ -411,7 +411,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '调整 Token 失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '调整 Token 失败')
       return { ok: false as const, error: message }
     }
@@ -455,7 +455,7 @@ export function useGachaAdminApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载分析数据失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载分析数据失败')
       return { ok: false as const, error: message }
     }

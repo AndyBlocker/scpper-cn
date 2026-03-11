@@ -79,15 +79,60 @@ function detectPathPrefix(req: Request) {
   return '';
 }
 
+function cleanHost(value: string | undefined) {
+  if (!value) return '';
+  return value.split(',')[0]?.trim() || '';
+}
+
+function isLoopbackHost(host: string) {
+  if (!host) return true;
+  const normalized = host
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .replace(/:\d+$/, '')
+    .trim()
+    .toLowerCase();
+  return (
+    normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1'
+  );
+}
+
+function hostAndProtoFromUrl(raw: string | undefined) {
+  if (!raw) return { host: '', proto: '' };
+  try {
+    const parsed = new URL(raw);
+    return {
+      host: parsed.host || '',
+      proto: parsed.protocol ? parsed.protocol.replace(/:$/, '') : ''
+    };
+  } catch {
+    return { host: '', proto: '' };
+  }
+}
+
 function sanitizeBaseUrl(base: string | undefined, req: Request) {
   const prefix = detectPathPrefix(req);
   if (base && base.trim().length > 0) {
     const cleaned = base.trim().replace(/\/+$/, '');
     return prefix ? `${cleaned}${prefix}`.replace(/\/+$/, '') : cleaned;
   }
-  const forwardedProto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim();
-  const proto = forwardedProto && forwardedProto.length > 0 ? forwardedProto : req.protocol;
-  const host = req.get('host') || '';
+  const forwardedHost = cleanHost(req.headers['x-forwarded-host'] as string | undefined);
+  const forwardedProto = cleanHost(req.headers['x-forwarded-proto'] as string | undefined);
+  const originParts = hostAndProtoFromUrl(String(req.get('origin') || ''));
+  const refererParts = hostAndProtoFromUrl(String(req.get('referer') || ''));
+
+  let host = forwardedHost || cleanHost(req.get('host') || '');
+  if (!host || isLoopbackHost(host)) {
+    host = originParts.host || refererParts.host || host;
+  }
+
+  let proto = forwardedProto || req.protocol;
+  if (!proto || proto === 'http') {
+    proto = originParts.proto || refererParts.proto || proto;
+  }
+
   const raw = `${proto}://${host}${prefix}`;
   return raw.replace(/\/+$/, '');
 }

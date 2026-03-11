@@ -148,7 +148,7 @@
           <div class="bento-card py-3">
             <div class="bento-header mb-2">
               <span class="text-xs font-medium text-[rgb(var(--muted))]">作者总评分榜</span>
-              <LucideIcon name="Users" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Users" class="w-4 h-4 text-[var(--g-accent)]" />
             </div>
             <div class="space-y-3">
               <div>
@@ -162,7 +162,7 @@
                     class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
-                      :class="idx === 0 ? 'bg-[rgb(var(--accent))] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
+                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
                     <UserAvatar
                       :wikidot-id="author.wikidotId"
                       :name="author.displayName"
@@ -173,7 +173,7 @@
                       <div class="text-xs md:text-sm font-bold truncate">{{ author.displayName }}</div>
                       <div class="text-[9px] text-[rgb(var(--muted))]">{{ author.pageCount }} 篇 · 均分 {{ author.avgRating }}</div>
                     </div>
-                    <div class="text-xs md:text-sm font-bold text-[rgb(var(--accent))]">+{{ author.totalRating }}</div>
+                    <div class="text-xs md:text-sm font-bold text-[var(--g-accent)]">+{{ author.totalRating }}</div>
                   </NuxtLink>
                 </div>
                 <div v-else class="text-[9px] text-[rgb(var(--muted))]">暂无原创上榜</div>
@@ -189,7 +189,7 @@
                     class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
-                      :class="idx === 0 ? 'bg-[rgb(var(--accent))] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
+                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
                     <UserAvatar
                       :wikidot-id="author.wikidotId"
                       :name="author.displayName"
@@ -200,7 +200,7 @@
                       <div class="text-xs md:text-sm font-bold truncate">{{ author.displayName }}</div>
                       <div class="text-[9px] text-[rgb(var(--muted))]">{{ author.pageCount }} 篇 · 均分 {{ author.avgRating }}</div>
                     </div>
-                    <div class="text-xs md:text-sm font-bold text-[rgb(var(--accent))]">+{{ author.totalRating }}</div>
+                    <div class="text-xs md:text-sm font-bold text-[var(--g-accent)]">+{{ author.totalRating }}</div>
                   </NuxtLink>
                 </div>
                 <div v-else class="text-[9px] text-[rgb(var(--muted))]">暂无翻译上榜</div>

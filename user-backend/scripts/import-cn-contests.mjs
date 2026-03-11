@@ -22,6 +22,54 @@ function sanitizeId(slug) {
   return `cn-${safe}`;
 }
 
+function normalizeTitle(title) {
+  return String(title || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titleKey(title) {
+  return normalizeTitle(title).toLowerCase();
+}
+
+function eventFingerprint(title, startsAt, endsAt) {
+  const s = new Date(startsAt).valueOf();
+  const e = new Date(endsAt).valueOf();
+  return `${normalizeTitle(title)}|${s}|${e}`;
+}
+
+function preferenceScore(ev) {
+  let score = 0;
+  if (String(ev?.id || '').startsWith('cn-')) score += 4;
+  if (ev?.summary) score += 2;
+  if (ev?.detailsMd) score += 1;
+  return score;
+}
+
+function preferEvent(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const sa = preferenceScore(a);
+  const sb = preferenceScore(b);
+  if (sa !== sb) return sa > sb ? a : b;
+  return String(a.id) < String(b.id) ? a : b;
+}
+
+function dedupeById(items) {
+  const out = [];
+  const seen = new Set();
+  for (const it of items) {
+    if (seen.has(it.id)) {
+      // Duplicate input id should never create duplicate DB rows; keep first and warn.
+      console.warn(`[warn] duplicate input id ignored: ${it.id}`);
+      continue;
+    }
+    seen.add(it.id);
+    out.push(it);
+  }
+  return out;
+}
+
 function toItemsFromPublicJson() {
   const publicJson = path.join(repoRoot, 'frontend', 'public', 'contests-cn-events.json');
   if (!exists(publicJson)) return null;
@@ -193,13 +241,28 @@ function toItemsFromExternal() {
 
 async function main() {
   const fromPublic = toItemsFromPublicJson();
-  const items = fromPublic ?? toItemsFromExternal();
-  if (!items || items.length === 0) {
+  const rawItems = fromPublic ?? toItemsFromExternal();
+  if (!rawItems || rawItems.length === 0) {
     console.error('No contest items found to import.');
     process.exit(1);
   }
+  const items = dedupeById(rawItems);
+  const dryRun = process.argv.includes('--dry-run');
 
-  let created = 0, updated = 0;
+  const existingEvents = await prisma.calendarEvent.findMany({
+    select: { id: true, title: true, summary: true, detailsMd: true, startsAt: true, endsAt: true }
+  });
+  const existingById = new Map(existingEvents.map((ev) => [ev.id, ev]));
+  const existingByFp = new Map();
+  const existingByTitle = new Map();
+  for (const ev of existingEvents) {
+    const fp = eventFingerprint(ev.title, ev.startsAt, ev.endsAt);
+    existingByFp.set(fp, preferEvent(existingByFp.get(fp), ev));
+    const tk = titleKey(ev.title);
+    existingByTitle.set(tk, preferEvent(existingByTitle.get(tk), ev));
+  }
+
+  let created = 0, updated = 0, matchedExisting = 0, matchedByTitle = 0;
   for (const it of items) {
     const data = {
       title: it.title,
@@ -210,16 +273,59 @@ async function main() {
       detailsMd: it.detailsMd,
       isPublished: true
     };
-    const existing = await prisma.calendarEvent.findUnique({ where: { id: it.id } }).catch(() => null);
-    if (existing) {
-      await prisma.calendarEvent.update({ where: { id: it.id }, data });
+
+    const existingBySameId = existingById.get(it.id) || null;
+    if (existingBySameId) {
+      if (!dryRun) {
+        await prisma.calendarEvent.update({ where: { id: it.id }, data });
+      }
       updated++;
+      existingById.set(it.id, { ...existingBySameId, ...data });
+      const fp = eventFingerprint(it.title, it.startsAt, it.endsAt);
+      existingByFp.set(fp, { ...existingBySameId, ...data });
+      existingByTitle.set(titleKey(it.title), { ...existingBySameId, ...data });
     } else {
-      await prisma.calendarEvent.create({ data: { id: it.id, ...data } });
-      created++;
+      const fp = eventFingerprint(it.title, it.startsAt, it.endsAt);
+      const existingBySameFp = existingByFp.get(fp) || null;
+      if (existingBySameFp) {
+        if (!dryRun) {
+          await prisma.calendarEvent.update({ where: { id: existingBySameFp.id }, data });
+        }
+        matchedExisting++;
+        const merged = { ...existingBySameFp, ...data };
+        existingById.set(existingBySameFp.id, merged);
+        existingByFp.set(fp, merged);
+        existingByTitle.set(titleKey(it.title), merged);
+      } else {
+        const existingBySameTitle = existingByTitle.get(titleKey(it.title)) || null;
+        if (existingBySameTitle) {
+          if (!dryRun) {
+            await prisma.calendarEvent.update({ where: { id: existingBySameTitle.id }, data });
+          }
+          matchedByTitle++;
+          const merged = { ...existingBySameTitle, ...data };
+          existingById.set(existingBySameTitle.id, merged);
+          existingByFp.set(fp, merged);
+          existingByTitle.set(titleKey(it.title), merged);
+        } else {
+          if (!dryRun) {
+            await prisma.calendarEvent.create({ data: { id: it.id, ...data } });
+          }
+          created++;
+          const createdEvent = { id: it.id, ...data };
+          existingById.set(it.id, createdEvent);
+          existingByFp.set(fp, createdEvent);
+          existingByTitle.set(titleKey(it.title), createdEvent);
+        }
+      }
     }
   }
-  console.log(`Imported contests → created: ${created}, updated: ${updated}`);
+
+  if (dryRun) {
+    console.log(`Dry run only. Input: ${items.length}, would create: ${created}, would updateById: ${updated}, wouldMatchExistingByTimeTitle: ${matchedExisting}, wouldMatchExistingByTitle: ${matchedByTitle}`);
+  } else {
+    console.log(`Imported contests → created: ${created}, updatedById: ${updated}, matchedExistingByTimeTitle: ${matchedExisting}, matchedExistingByTitle: ${matchedByTitle}`);
+  }
 }
 
 main().finally(async () => { await prisma.$disconnect(); });

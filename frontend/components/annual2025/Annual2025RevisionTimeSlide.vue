@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div class="max-w-5xl w-full mx-auto px-2">
         <div class="flex items-center gap-2 md:gap-3 mb-6 md:mb-8">
-          <div class="p-1.5 md:p-2 bg-[rgb(var(--accent))] rounded-lg">
+          <div class="p-1.5 md:p-2 bg-[var(--g-accent)] rounded-lg">
             <LucideIcon name="Clock" class="w-4 h-4 md:w-5 md:h-5 text-white" />
           </div>
           <h2 class="text-2xl md:text-3xl font-bold">编辑时间分布</h2>
@@ -14,7 +14,7 @@
             <div class="bento-card">
               <div class="bento-header">
                 <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">24小时编辑分布</span>
-                <LucideIcon name="Clock" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+                <LucideIcon name="Clock" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
               </div>
               <div class="flex items-center justify-center mt-4">
                 <Annual2025ClockPlot class="w-48 h-48 md:w-56 md:h-56" :hours="siteData.hourlyRevisions" />
@@ -36,7 +36,7 @@
             <div class="bento-card">
               <div class="bento-header">
                 <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">时段分布</span>
-                <LucideIcon name="Sun" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+                <LucideIcon name="Sun" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
               </div>
               <div class="space-y-2 mt-3">
                 <div
@@ -62,7 +62,7 @@
             <div class="bento-card">
               <div class="bento-header">
                 <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">星期编辑分布</span>
-                <LucideIcon name="CalendarCheck" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+                <LucideIcon name="CalendarCheck" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
               </div>
               <div v-if="hasWeekdayData" class="space-y-2 mt-3">
                 <div
@@ -73,7 +73,7 @@
                   <span class="bar-axis w-10">{{ day.weekday }}</span>
                   <div class="bar-track h-3 md:h-4 flex-1">
                     <div
-                      class="bar-fill-x h-full bg-[rgb(var(--accent))]"
+                      class="bar-fill-x h-full bg-[var(--g-accent)]"
                       :style="{ width: `${day.percent}%`, '--bar-delay': `${i * 60}ms` }"
                     />
                   </div>
@@ -82,14 +82,14 @@
               </div>
               <div v-else class="text-[10px] text-[rgb(var(--muted))] mt-3">暂无数据</div>
               <div v-if="hasWeekdayData" class="mt-2 text-[10px] text-[rgb(var(--muted))]">
-                编辑最多: <span class="text-[rgb(var(--accent))] font-semibold">{{ peakWeekday }}</span>
+                编辑最多: <span class="text-[var(--g-accent)] font-semibold">{{ peakWeekday }}</span>
               </div>
             </div>
 
             <div class="bento-card">
               <div class="bento-header">
                 <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">月度编辑量</span>
-                <LucideIcon name="Calendar" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+                <LucideIcon name="Calendar" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
               </div>
               <div class="flex items-end gap-1 mt-3">
                 <div

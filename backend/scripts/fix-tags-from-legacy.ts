@@ -6,6 +6,7 @@
 //   npm run fix:tags-from-legacy -- --since 2025-10-29 --dry-run
 
 import { Command } from 'commander';
+import type { RowDataPacket } from 'mysql2';
 import mysql from 'mysql2/promise';
 import { getPrismaClient, disconnectPrisma } from '../src/utils/db-connection.js';
 import { Logger } from '../src/utils/Logger.js';
@@ -24,6 +25,8 @@ type MysqlConfig = {
   password: string;
   database?: string;
 };
+
+type MysqlRow<T extends object> = RowDataPacket & T;
 
 const SITE_NAME_CN = 'scp-wiki-cn';
 const SITE_SHORT_CN = 'cn';
@@ -72,7 +75,7 @@ async function connectLegacyMysql(config: MysqlConfig): Promise<mysql.Connection
 
 async function fetchCnTagsForPage(mysqlConn: mysql.Connection, wikidotId: number): Promise<string[] | null> {
   // 优先使用 view_tags（按 SiteName 精准过滤到 CN）
-  const [rows] = await mysqlConn.query<Array<{ Tag: string | null }>>(
+  const [rows] = await mysqlConn.query<Array<MysqlRow<{ Tag: string | null }>>>(
     `SELECT Tag FROM view_tags WHERE SiteName = ? AND PageId = ?`,
     [SITE_NAME_CN, wikidotId]
   );
@@ -82,7 +85,7 @@ async function fetchCnTagsForPage(mysqlConn: mysql.Connection, wikidotId: number
   if (tags.length > 0) return tags;
 
   // 兜底：join tags → pages → sites（使用 ShortName='cn'）
-  const [fallback] = await mysqlConn.query<Array<{ Tag: string | null }>>(
+  const [fallback] = await mysqlConn.query<Array<MysqlRow<{ Tag: string | null }>>>(
     `SELECT t.Tag
        FROM tags t
        JOIN pages p ON p.WikidotId = t.PageId
@@ -172,7 +175,7 @@ async function main() {
       }
 
       // 检查 legacy 是否存在该 wikidotId（限定 CN）
-      const [existRows] = await mysqlConn.query<Array<{ cnt: number }>>(
+      const [existRows] = await mysqlConn.query<Array<MysqlRow<{ cnt: number }>>>(
         `SELECT COUNT(*) AS cnt
            FROM pages p
            JOIN sites s ON s.WikidotId = p.SiteId
@@ -237,4 +240,3 @@ main().catch((err) => {
   Logger.error('fix-tags-from-legacy 脚本失败', err);
   process.exit(1);
 });
-

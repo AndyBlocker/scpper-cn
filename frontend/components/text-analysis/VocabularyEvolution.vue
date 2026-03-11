@@ -14,9 +14,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { VocabEvolutionBucket } from '~/types/text-analysis'
 
+const vocabularyEvolutionEndpoint: string = '/api/text-analysis/vocabulary-evolution'
+
 const { data: buckets, pending } = useAsyncData<VocabEvolutionBucket[]>(
   'text-analysis-evolution',
-  () => $fetch('/api/text-analysis/vocabulary-evolution')
+  () => $fetch<VocabEvolutionBucket[]>(vocabularyEvolutionEndpoint)
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)

@@ -2,7 +2,7 @@
   <Teleport to="body">
     <transition name="fade">
       <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/70 backdrop-blur-sm px-4 py-8">
-        <div class="relative w-full max-w-2xl rounded-3xl border border-white/10 bg-white/95 p-6 shadow-2xl dark:border-neutral-700 dark:bg-neutral-950/90">
+        <div class="relative w-full max-w-2xl rounded-lg border border-white/10 bg-white/95 p-6 shadow-2xl dark:border-neutral-700 dark:bg-neutral-950/90">
           <button
             type="button"
             class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:text-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:text-white"
@@ -26,7 +26,7 @@
                 type="text"
                 maxlength="80"
                 required
-                class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
+                class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                 placeholder="收藏夹名称"
               >
             </div>
@@ -38,7 +38,7 @@
                   v-model="local.description"
                   rows="4"
                   maxlength="800"
-                  class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
+                  class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                   placeholder="向他人介绍这个收藏夹（可选）"
                 />
                 <p class="text-right text-[11px] text-neutral-400 dark:text-neutral-500">{{ (local.description?.length || 0) }}/800</p>
@@ -49,7 +49,7 @@
                   v-model="local.notes"
                   rows="4"
                   maxlength="1200"
-                  class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
+                  class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                   placeholder="只有自己可见的笔记（可选）"
                 />
                 <p class="text-right text-[11px] text-neutral-400 dark:text-neutral-500">{{ (local.notes?.length || 0) }}/1200</p>
@@ -62,19 +62,19 @@
                 v-model="local.coverImageUrl"
                 type="url"
                 maxlength="400"
-                class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
+                class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                 placeholder="https://example.com/cover.jpg"
               >
               <p class="text-[11px] text-neutral-400 dark:text-neutral-500">建议使用 1200×640 或更高分辨率的图片，链接需可公开访问。</p>
               <div
                 v-if="local.coverImageUrl"
-                class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-50/80 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
+                class="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/80 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
               >
                 <div class="flex items-center justify-between text-xs font-medium text-neutral-600 dark:text-neutral-300">
                   <span>封面预览与位置</span>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-3 py-1 text-[11px] font-semibold text-neutral-600 transition hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                    class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-3 py-1 text-[11px] font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                     @click="resetCoverTransform"
                   >
                     <LucideIcon name="RefreshCcw" class="h-3.5 w-3.5" />
@@ -106,7 +106,7 @@
                       min="-60"
                       max="60"
                       step="1"
-                      class="flex-1 accent-[rgb(var(--accent))]"
+                      class="flex-1 accent-[var(--g-accent)]"
                       @input="local.coverImageOffsetY = clampOffset(local.coverImageOffsetY)"
                     >
                     <span class="w-20 text-right font-medium">垂直 {{ local.coverImageOffsetY.toFixed(0) }}%</span>
@@ -119,7 +119,7 @@
                       min="-60"
                       max="60"
                       step="1"
-                      class="flex-1 accent-[rgb(var(--accent))]"
+                      class="flex-1 accent-[var(--g-accent)]"
                       @input="local.coverImageOffsetX = clampOffset(local.coverImageOffsetX)"
                     >
                     <span class="w-20 text-right font-medium">水平 {{ local.coverImageOffsetX.toFixed(0) }}%</span>
@@ -132,7 +132,7 @@
                       min="0.75"
                       max="2.5"
                       step="0.05"
-                      class="flex-1 accent-[rgb(var(--accent))]"
+                      class="flex-1 accent-[var(--g-accent)]"
                       @input="local.coverImageScale = clampScale(local.coverImageScale)"
                     >
                     <span class="w-24 text-right font-medium">缩放 ×{{ local.coverImageScale.toFixed(2) }}</span>
@@ -146,7 +146,7 @@
                 <input
                   v-model="local.isDefault"
                   type="checkbox"
-                  class="mt-1 h-4 w-4 rounded border-neutral-300 text-[rgb(var(--accent))] focus:ring-[rgb(var(--accent))]"
+                  class="mt-1 h-4 w-4 rounded border-neutral-300 text-[var(--g-accent)] focus:ring-[var(--g-accent)]"
                 >
                 <div class="space-y-1">
                   <div class="text-sm font-medium text-neutral-800 dark:text-neutral-100">设为默认收藏夹</div>
@@ -161,7 +161,7 @@
                     :class="[
                       'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition',
                       local.visibility === 'PUBLIC'
-                        ? 'bg-[rgba(var(--accent),0.15)] text-[rgb(var(--accent))]'
+                        ? 'bg-[var(--g-accent-medium)] text-[var(--g-accent)]'
                         : 'bg-neutral-200/60 text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300'
                     ]"
                     @click="toggleVisibility"
@@ -182,14 +182,14 @@
             <div class="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-4 py-2 text-sm font-semibold text-neutral-600 hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-4 py-2 text-sm font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                 @click="$emit('close')"
               >
                 取消
               </button>
               <button
                 type="submit"
-                class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(37,99,235,0.35)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
                 :disabled="saving || !local.title.trim()"
               >
                 <LucideIcon v-if="saving" name="Loader2" class="h-4.5 w-4.5 animate-spin" />

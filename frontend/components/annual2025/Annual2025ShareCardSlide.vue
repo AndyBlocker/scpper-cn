@@ -2,7 +2,7 @@
   <section class="slide bg-[rgb(var(--bg))]" :class="{ 'slide-active': isActive }">
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
-        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl p-8 md:p-12">
+        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
           <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="Share2" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
@@ -12,13 +12,13 @@
         </div>
       </div>
       <div v-else class="relative w-full max-w-sm md:max-w-md mx-auto px-4">
-        <div id="share-card" class="bg-white text-black p-5 md:p-8 rounded-2xl md:rounded-[2rem] shadow-[0_0_50px_rgba(255,255,255,0.2)] relative z-10">
+        <div id="share-card" class="bg-white text-black p-5 md:p-8 rounded-lg md:rounded-[2rem] shadow relative z-10">
           <div class="flex items-center gap-3 md:gap-5 mb-4 md:mb-6">
             <UserAvatar
               :wikidot-id="userData.wikidotId"
               :name="userData.displayName"
               :size="64"
-              class="w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl shadow-lg"
+              class="w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-lg shadow-lg"
             />
             <div class="flex-1">
               <div class="font-black text-xl md:text-2xl tracking-tight">{{ userData.displayName }}</div>
@@ -73,7 +73,7 @@
           </div>
 
           <div
-            class="bg-gradient-to-r from-gray-900 to-gray-800 text-white p-3 md:p-4 rounded-xl md:rounded-2xl mb-3 md:mb-4 relative group"
+            class="bg-gradient-to-r from-gray-900 to-gray-800 text-white p-3 md:p-4 rounded-xl md:rounded-lg mb-3 md:mb-4 relative group"
             :class="{ 'cursor-pointer': canSelectAchievements }"
             @click="canSelectAchievements && (showAchievementPicker = true)"
           >
@@ -132,8 +132,8 @@
           </div>
         </div>
 
-        <div class="absolute top-3 md:top-4 -right-3 md:-right-4 w-full h-full bg-[rgb(var(--accent))] rounded-2xl md:rounded-[2rem] -z-10 opacity-60" />
-        <div class="absolute top-6 md:top-8 -right-6 md:-right-8 w-full h-full bg-[rgb(var(--accent-strong))] rounded-2xl md:rounded-[2rem] -z-20 opacity-40" />
+        <div class="absolute top-3 md:top-4 -right-3 md:-right-4 w-full h-full bg-[var(--g-accent)] rounded-lg md:rounded-[2rem] -z-10 opacity-60" />
+        <div class="absolute top-6 md:top-8 -right-6 md:-right-8 w-full h-full bg-[rgb(var(--accent-strong))] rounded-lg md:rounded-[2rem] -z-20 opacity-40" />
       </div>
 
       <div class="mt-10 md:mt-16 text-center text-[rgb(var(--muted))] text-xs md:text-sm">
@@ -147,7 +147,7 @@
           class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           @click.self="showAchievementPicker = false"
         >
-          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl p-5 md:p-6 max-w-md w-full shadow-2xl max-h-[80vh] overflow-y-auto">
+          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-5 md:p-6 max-w-md w-full shadow-2xl max-h-[80vh] overflow-y-auto">
             <div class="flex items-center justify-between mb-4">
               <h3 class="text-lg font-bold text-[rgb(var(--fg))]">选择展示的成就</h3>
               <button
@@ -165,13 +165,13 @@
                 @click="toggleAchievement(idx)"
                 class="w-full flex items-start gap-3 p-3 rounded-xl border transition-all text-left"
                 :class="selectedIndices.includes(idx)
-                  ? 'bg-[rgba(var(--accent),0.1)] border-[rgb(var(--accent))]'
+                  ? 'bg-[var(--g-accent-soft)] border-[var(--g-accent)]'
                   : 'bg-[rgba(var(--fg),0.03)] border-transparent hover:border-[rgba(var(--fg),0.1)]'"
               >
                 <div
                   class="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5"
                   :class="selectedIndices.includes(idx)
-                    ? 'border-[rgb(var(--accent))] bg-[rgb(var(--accent))]'
+                    ? 'border-[var(--g-accent)] bg-[var(--g-accent)]'
                     : 'border-[rgb(var(--muted))]'"
                 >
                   <LucideIcon
@@ -185,7 +185,7 @@
                     <span class="text-yellow-500">{{ ach.title.includes('第一') ? '🏆' : '⭐' }}</span>
                     <span
                       v-if="selectedIndices.includes(idx)"
-                      class="text-[10px] px-1.5 py-0.5 bg-[rgb(var(--accent))] text-white rounded font-medium"
+                      class="text-[10px] px-1.5 py-0.5 bg-[var(--g-accent)] text-white rounded font-medium"
                     >
                       #{{ selectedIndices.indexOf(idx) + 1 }}
                     </span>
@@ -201,7 +201,7 @@
               </span>
               <button
                 @click="showAchievementPicker = false"
-                class="px-4 py-2 bg-[rgb(var(--accent))] hover:bg-[rgb(var(--accent-strong))] text-white rounded-lg font-medium transition-colors"
+                class="px-4 py-2 bg-[var(--g-accent)] hover:bg-[rgb(var(--accent-strong))] text-white rounded-lg font-medium transition-colors"
               >
                 确定
               </button>

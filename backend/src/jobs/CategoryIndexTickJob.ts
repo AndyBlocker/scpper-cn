@@ -38,6 +38,26 @@ type TickRunSummary = {
 
 type CategoryOffsetHistory = Map<number, number[]>;
 
+type HourlyBaseline = Map<number, number>;  // key = dow*24+hour, value = median count
+
+type MicroBaselineContext = {
+  revision: Map<MarketCategory, HourlyBaseline>;
+  forum: HourlyBaseline;
+  revisionDataDays: number;
+  forumDataDays: number;
+};
+
+type RawStatsQueryResult = {
+  currentNonVote: CategoryWindowStats;
+  currentVote: CategoryWindowStats;
+  pageCountStart: number;
+  baselineRev: number;
+  baselineVotesTotal: number;
+  baselineApproval: number;
+  baselineNet: number;
+  baselineDelRate: number;
+};
+
 const CATEGORY_LIST: MarketCategory[] = [
   'OVERALL',
   'TRANSLATION',
@@ -91,6 +111,17 @@ const NOISE_AMPLITUDE = 0.003;
 
 const BASELINE_MEDIAN_WEEKS = 12;
 
+// ─── Micro-Signal Layer ───
+const MICRO_REV_WINDOW_HOURS = 4;
+const MICRO_FORUM_WINDOW_HOURS = 4;
+const REV_MICRO_SCALE = 1.2;
+const FORUM_MICRO_SCALE = 1.5;
+const REV_MICRO_WEIGHT = 0.10;
+const FORUM_MICRO_WEIGHT = 0.05;
+const VOTE_AMP_K = 0.4;
+const MICRO_BASELINE_WEEKS = 12;
+const MICRO_MIN_BASELINE_DAYS = 14;
+
 const FALLBACK_BACKFILL_HOURS = 24;
 const MAX_BACKFILL_HOURS = 24 * 14;
 const SCORE_HISTORY_WINDOW_PER_OFFSET = DRIFT_WINDOW_WEEKS;
@@ -142,6 +173,27 @@ function addUtc8Days(input: Date, days: number) {
 
 function minDate(a: Date, b: Date) {
   return new Date(Math.min(a.getTime(), b.getTime()));
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function pad3(value: number) {
+  return String(value).padStart(3, '0');
+}
+
+function toUtcNaiveTimestamp(date: Date) {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`
+    + ` ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}.${pad3(date.getUTCMilliseconds())}`;
+}
+
+/**
+ * The DB columns here are mostly `timestamp without time zone`.
+ * Bind as UTC-naive text to avoid implicit timezone conversion by PostgreSQL session tz.
+ */
+function utcNaiveTimestampSql(date: Date) {
+  return Prisma.sql`${toUtcNaiveTimestamp(date)}::timestamp`;
 }
 
 function clamp(value: number, minValue: number, maxValue: number) {
@@ -241,6 +293,7 @@ export class CategoryIndexTickJob {
 
     const scoreHistory = await this.loadScoreHistoryByOffset();
     const marginSnapshot = await this.loadCrowdMarginSnapshot();
+    const microBaselines = await this.loadMicroBaselines();
     const weekOpenCache = new Map<string, number>();
     let generated = 0;
     let firstGenerated: Date | null = null;
@@ -249,7 +302,77 @@ export class CategoryIndexTickJob {
     for (let cursorTs = startAsOf.getTime(); cursorTs <= nowAsOf.getTime(); cursorTs += HOUR_MS) {
       const asOfTs = new Date(cursorTs);
       const watermarkTs = sourceWatermark ? new Date(Math.min(sourceWatermark.getTime(), asOfTs.getTime())) : asOfTs;
-      const rawSignals = await this.computeRawSignals(asOfTs, watermarkTs);
+
+      const asOfDay = startOfUtc8Day(asOfTs);
+      const watermarkDay = startOfUtc8Day(watermarkTs);
+      const voteCutoff = addUtc8Days(asOfDay, -1);
+      const nonVoteEnd = minDate(voteCutoff, watermarkDay);
+      const voteEnd = minDate(voteCutoff, watermarkDay);
+      const weekStart = startOfUtc8Week(asOfTs);
+      const dayStart = startOfUtc8Day(asOfTs);
+
+      // ─── Pre-query micro-signal data for this tick ───
+      const revWindow = new Map<MarketCategory, number>();
+      const cumRevToday = new Map<MarketCategory, number>();
+      const revWindowStart = new Date(asOfTs.getTime() - MICRO_REV_WINDOW_HOURS * HOUR_MS);
+      for (const category of CATEGORY_LIST) {
+        const [windowCount, cumCount] = await Promise.all([
+          this.queryRecentRevisionCount(revWindowStart, asOfTs, category),
+          this.queryRecentRevisionCount(dayStart, asOfTs, category),
+        ]);
+        revWindow.set(category, windowCount);
+        cumRevToday.set(category, cumCount);
+      }
+      const forumWindowStart = new Date(asOfTs.getTime() - MICRO_FORUM_WINDOW_HOURS * HOUR_MS);
+      const recentForumCount = await this.queryRecentForumPostCount(forumWindowStart, asOfTs);
+
+      // ─── Compute raw signals with interpolation for all categories ───
+      const rawSignals = new Map<MarketCategory, RawSignal>();
+      for (const category of CATEGORY_LIST) {
+        const rawStats = await this.queryRawStats(category, weekStart, voteEnd, nonVoteEnd);
+
+        // Query transition day stats for interpolation
+        const [transitionDayNonVote, transitionDayVote] = await Promise.all([
+          this.queryWindowStats(category, voteEnd, voteEnd, { includeContentMetrics: true }),
+          this.queryWindowStats(category, voteEnd, voteEnd, { includeContentMetrics: false }),
+        ]);
+
+        // Compute alpha (revision-adaptive interpolation rate)
+        const expectedDailyRevs = this.getDailyRevisionBaseline(asOfTs, microBaselines.revision.get(category));
+        const alpha = Math.min(1, (cumRevToday.get(category) ?? 0) / Math.max(1, expectedDailyRevs));
+
+        // Interpolate current stats — gradually include the transition day
+        const interpolatedNonVote: CategoryWindowStats = {
+          revisions: Math.max(0, rawStats.currentNonVote.revisions - (1 - alpha) * transitionDayNonVote.revisions),
+          votesUp: rawStats.currentNonVote.votesUp,
+          votesDown: rawStats.currentNonVote.votesDown,
+          totalVotes: rawStats.currentNonVote.totalVotes,
+          newPages: Math.max(0, rawStats.currentNonVote.newPages - (1 - alpha) * transitionDayNonVote.newPages),
+          deletedPages: Math.max(0, rawStats.currentNonVote.deletedPages - (1 - alpha) * transitionDayNonVote.deletedPages),
+        };
+        const interpolatedVote: CategoryWindowStats = {
+          revisions: rawStats.currentVote.revisions,
+          votesUp: Math.max(0, rawStats.currentVote.votesUp - (1 - alpha) * transitionDayVote.votesUp),
+          votesDown: Math.max(0, rawStats.currentVote.votesDown - (1 - alpha) * transitionDayVote.votesDown),
+          totalVotes: Math.max(0, rawStats.currentVote.totalVotes - (1 - alpha) * transitionDayVote.totalVotes),
+          newPages: 0,
+          deletedPages: 0,
+        };
+
+        const rawSignal = this.computeSignalsFromStats(
+          category,
+          interpolatedNonVote,
+          interpolatedVote,
+          rawStats.pageCountStart,
+          rawStats.baselineRev,
+          rawStats.baselineVotesTotal,
+          rawStats.baselineApproval,
+          rawStats.baselineNet,
+          rawStats.baselineDelRate,
+        );
+        rawSignals.set(category, rawSignal);
+      }
+
       const overallSignal = rawSignals.get('OVERALL');
       if (!overallSignal) continue;
       const offsetBucket = weeklyOffsetBucket(asOfTs);
@@ -300,13 +423,25 @@ export class CategoryIndexTickJob {
           : category === 'TRANSLATION'
             ? DRIFT_BETA_TRANSLATION
             : DRIFT_BETA_OTHERS;
-        const weekStart = startOfUtc8Week(asOfTs);
         const rawScoreProvisional = clamp(scoreSignalRaw - driftBeta * scoreRef, -SCORE_CLAMP, SCORE_CLAMP);
 
         // Crowd drag: reduce price push when one side is over-concentrated
         const crowdDrag = this.computeCrowdDrag(category, marginSnapshot);
         const rawScoreWithDrag = clamp(rawScoreProvisional - crowdDrag, -SCORE_CLAMP, SCORE_CLAMP);
-        const scoreProvisional = asOfTs.getTime() === weekStart.getTime() ? 0 : rawScoreWithDrag;
+
+        // Micro signal: intra-day price movement from real-time activity
+        const microScore = this.computeMicroSignal(
+          asOfTs, category,
+          revWindow.get(category) ?? 0,
+          recentForumCount,
+          microBaselines,
+          rawSignal.dVotesTotal
+        );
+
+        const scoreWithMicro = rawScoreWithDrag + microScore;
+        const scoreProvisional = asOfTs.getTime() === weekStart.getTime()
+          ? 0
+          : clamp(scoreWithMicro, -SCORE_CLAMP, SCORE_CLAMP);
         const weekKey = `${category}:${weekStart.toISOString()}`;
 
         let indexOpen = weekOpenCache.get(weekKey);
@@ -491,79 +626,291 @@ export class CategoryIndexTickJob {
     return output;
   }
 
-  private async computeRawSignals(asOfTs: Date, watermarkTs: Date) {
-    const asOfDay = startOfUtc8Day(asOfTs);
-    const watermarkDay = startOfUtc8Day(watermarkTs);
-    const voteCutoff = addUtc8Days(asOfDay, -1);
-    const nonVoteEnd = minDate(voteCutoff, watermarkDay);
-    const voteEnd = minDate(voteCutoff, watermarkDay);
-    const weekStart = startOfUtc8Week(asOfTs);
+  private async queryRawStats(
+    category: MarketCategory,
+    weekStart: Date,
+    voteEnd: Date,
+    nonVoteEnd: Date
+  ): Promise<RawStatsQueryResult> {
+    // Current week stats
+    const [currentNonVoteStats, currentVoteStats, currentPageCountStart] = await Promise.all([
+      this.queryWindowStats(category, weekStart, nonVoteEnd, { includeContentMetrics: true }),
+      this.queryWindowStats(category, weekStart, voteEnd, { includeContentMetrics: false }),
+      this.queryLivePageCountAt(category, weekStart)
+    ]);
 
-    const map = new Map<MarketCategory, RawSignal>();
-    for (const category of CATEGORY_LIST) {
-      // Current week stats
-      const [currentNonVoteStats, currentVoteStats, currentPageCountStart] = await Promise.all([
-        this.queryWindowStats(category, weekStart, nonVoteEnd, { includeContentMetrics: true }),
-        this.queryWindowStats(category, weekStart, voteEnd, { includeContentMetrics: false }),
-        this.queryLivePageCountAt(category, weekStart)
-      ]);
-
-      // Baseline: median of the past BASELINE_MEDIAN_WEEKS weeks at the same relative offset
-      const histNonVotePromises: Promise<CategoryWindowStats>[] = [];
-      const histVotePromises: Promise<CategoryWindowStats>[] = [];
-      const histPageCountPromises: Promise<number>[] = [];
-      for (let w = 1; w <= BASELINE_MEDIAN_WEEKS; w++) {
-        const hWeekStart = addUtc8Days(weekStart, -7 * w);
-        const hNonVoteEnd = addUtc8Days(nonVoteEnd, -7 * w);
-        const hVoteEnd = addUtc8Days(voteEnd, -7 * w);
-        histNonVotePromises.push(this.queryWindowStats(category, hWeekStart, hNonVoteEnd, { includeContentMetrics: true }));
-        histVotePromises.push(this.queryWindowStats(category, hWeekStart, hVoteEnd, { includeContentMetrics: false }));
-        histPageCountPromises.push(this.queryLivePageCountAt(category, hWeekStart));
-      }
-      const [histNonVote, histVote, histPageCount] = await Promise.all([
-        Promise.all(histNonVotePromises),
-        Promise.all(histVotePromises),
-        Promise.all(histPageCountPromises)
-      ]);
-
-      const baselineRev = median(histNonVote.map(s => safeLog1p(s.revisions)));
-      const baselineVotesTotal = median(histVote.map(s => safeLog1p(s.totalVotes)));
-      const baselineApproval = median(histVote.map(s => {
-        const up = s.votesUp;
-        const down = s.votesDown;
-        return logit((up + SENTIMENT_ALPHA) / (Math.max(0, up + down) + SENTIMENT_ALPHA + SENTIMENT_BETA));
-      }));
-      const baselineNet = median(histNonVote.map(s => signedLog1p(s.newPages - s.deletedPages)));
-      const baselineDelRate = median(histNonVote.map((s, i) => {
-        return safeLog1p(s.deletedPages / Math.max(1, histPageCount[i]));
-      }));
-
-      const dRev = safeLog1p(currentNonVoteStats.revisions) - baselineRev;
-      const dVotesTotal = safeLog1p(currentVoteStats.totalVotes) - baselineVotesTotal;
-      const approvalNow = (
-        currentVoteStats.votesUp + SENTIMENT_ALPHA
-      ) / (
-        Math.max(0, currentVoteStats.votesUp + currentVoteStats.votesDown) + SENTIMENT_ALPHA + SENTIMENT_BETA
-      );
-      const dSentiment = logit(approvalNow) - baselineApproval;
-
-      const netNow = currentNonVoteStats.newPages - currentNonVoteStats.deletedPages;
-      const dNet = signedLog1p(netNow) - baselineNet;
-
-      const delRateNow = currentNonVoteStats.deletedPages / Math.max(1, currentPageCountStart);
-      const dDelRate = safeLog1p(delRateNow) - baselineDelRate;
-
-      map.set(category, {
-        category,
-        dRev,
-        dVotesTotal,
-        dSentiment,
-        dNet,
-        dDelRate,
-        voteCount: Math.max(0, currentVoteStats.totalVotes)
-      });
+    // Baseline: median of the past BASELINE_MEDIAN_WEEKS weeks at the same relative offset
+    const histNonVotePromises: Promise<CategoryWindowStats>[] = [];
+    const histVotePromises: Promise<CategoryWindowStats>[] = [];
+    const histPageCountPromises: Promise<number>[] = [];
+    for (let w = 1; w <= BASELINE_MEDIAN_WEEKS; w++) {
+      const hWeekStart = addUtc8Days(weekStart, -7 * w);
+      const hNonVoteEnd = addUtc8Days(nonVoteEnd, -7 * w);
+      const hVoteEnd = addUtc8Days(voteEnd, -7 * w);
+      histNonVotePromises.push(this.queryWindowStats(category, hWeekStart, hNonVoteEnd, { includeContentMetrics: true }));
+      histVotePromises.push(this.queryWindowStats(category, hWeekStart, hVoteEnd, { includeContentMetrics: false }));
+      histPageCountPromises.push(this.queryLivePageCountAt(category, hWeekStart));
     }
-    return map;
+    const [histNonVote, histVote, histPageCount] = await Promise.all([
+      Promise.all(histNonVotePromises),
+      Promise.all(histVotePromises),
+      Promise.all(histPageCountPromises)
+    ]);
+
+    const baselineRev = median(histNonVote.map(s => safeLog1p(s.revisions)));
+    const baselineVotesTotal = median(histVote.map(s => safeLog1p(s.totalVotes)));
+    const baselineApproval = median(histVote.map(s => {
+      const up = s.votesUp;
+      const down = s.votesDown;
+      return logit((up + SENTIMENT_ALPHA) / (Math.max(0, up + down) + SENTIMENT_ALPHA + SENTIMENT_BETA));
+    }));
+    const baselineNet = median(histNonVote.map(s => signedLog1p(s.newPages - s.deletedPages)));
+    const baselineDelRate = median(histNonVote.map((s, i) => {
+      return safeLog1p(s.deletedPages / Math.max(1, histPageCount[i]));
+    }));
+
+    return {
+      currentNonVote: currentNonVoteStats,
+      currentVote: currentVoteStats,
+      pageCountStart: currentPageCountStart,
+      baselineRev,
+      baselineVotesTotal,
+      baselineApproval,
+      baselineNet,
+      baselineDelRate,
+    };
+  }
+
+  private computeSignalsFromStats(
+    category: MarketCategory,
+    currentNonVote: CategoryWindowStats,
+    currentVote: CategoryWindowStats,
+    pageCountStart: number,
+    baselineRev: number,
+    baselineVotesTotal: number,
+    baselineApproval: number,
+    baselineNet: number,
+    baselineDelRate: number
+  ): RawSignal {
+    const dRev = safeLog1p(currentNonVote.revisions) - baselineRev;
+    const dVotesTotal = safeLog1p(currentVote.totalVotes) - baselineVotesTotal;
+    const approvalNow = (
+      currentVote.votesUp + SENTIMENT_ALPHA
+    ) / (
+      Math.max(0, currentVote.votesUp + currentVote.votesDown) + SENTIMENT_ALPHA + SENTIMENT_BETA
+    );
+    const dSentiment = logit(approvalNow) - baselineApproval;
+
+    const netNow = currentNonVote.newPages - currentNonVote.deletedPages;
+    const dNet = signedLog1p(netNow) - baselineNet;
+
+    const delRateNow = currentNonVote.deletedPages / Math.max(1, pageCountStart);
+    const dDelRate = safeLog1p(delRateNow) - baselineDelRate;
+
+    return {
+      category,
+      dRev,
+      dVotesTotal,
+      dSentiment,
+      dNet,
+      dDelRate,
+      voteCount: Math.max(0, currentVote.totalVotes),
+    };
+  }
+
+  // ─── Micro-Signal Layer Methods ───
+
+  private async loadMicroBaselines(): Promise<MicroBaselineContext> {
+    const now = new Date();
+    const baselineEnd = startOfUtc8Day(now);
+    const baselineStart = addUtc8Days(baselineEnd, -(MICRO_BASELINE_WEEKS * 7));
+    const baselineStartTs = utcNaiveTimestampSql(baselineStart);
+    const baselineEndTs = utcNaiveTimestampSql(baselineEnd);
+
+    const revisionBaselines = new Map<MarketCategory, HourlyBaseline>();
+    let revisionDataDays = 0;
+
+    for (const category of CATEGORY_LIST) {
+      const predicate = categoryPredicateSql(category);
+      const rows = await this.prisma.$queryRaw<Array<{
+        dow: number;
+        hour: number;
+        median_count: number;
+      }>>(Prisma.sql`
+        WITH hourly AS (
+          SELECT
+            EXTRACT(DOW FROM r.timestamp + INTERVAL '8 hours')::int AS dow,
+            EXTRACT(HOUR FROM r.timestamp + INTERVAL '8 hours')::int AS hour,
+            DATE(r.timestamp + INTERVAL '8 hours') AS day,
+            COUNT(*) AS cnt
+          FROM "Revision" r
+          JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+          WHERE r.timestamp >= ${baselineStartTs}
+            AND r.timestamp < ${baselineEndTs}
+            AND ${predicate}
+          GROUP BY 1, 2, 3
+        )
+        SELECT dow, hour,
+          PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cnt)::double precision AS median_count
+        FROM hourly
+        GROUP BY dow, hour
+      `);
+
+      const baseline = new Map<number, number>();
+      for (const row of rows) {
+        baseline.set(Number(row.dow) * 24 + Number(row.hour), Number(row.median_count) || 0);
+      }
+      revisionBaselines.set(category, baseline);
+
+      // Use OVERALL's data days as the global indicator
+      if (category === 'OVERALL') {
+        const dayCountRows = await this.prisma.$queryRaw<Array<{ data_days: number }>>(Prisma.sql`
+          SELECT COUNT(DISTINCT DATE(r.timestamp + INTERVAL '8 hours'))::int AS data_days
+          FROM "Revision" r
+          WHERE r.timestamp >= ${baselineStartTs}
+            AND r.timestamp < ${baselineEndTs}
+        `);
+        revisionDataDays = Number(dayCountRows[0]?.data_days ?? 0);
+      }
+    }
+
+    // Forum baselines (global, not per-category)
+    const forumRows = await this.prisma.$queryRaw<Array<{
+      dow: number;
+      hour: number;
+      median_count: number;
+    }>>(Prisma.sql`
+      WITH hourly AS (
+        SELECT
+          EXTRACT(DOW FROM "createdAt" + INTERVAL '8 hours')::int AS dow,
+          EXTRACT(HOUR FROM "createdAt" + INTERVAL '8 hours')::int AS hour,
+          DATE("createdAt" + INTERVAL '8 hours') AS day,
+          COUNT(*) AS cnt
+        FROM "ForumPost"
+        WHERE "createdAt" >= ${baselineStartTs}
+          AND "createdAt" < ${baselineEndTs}
+          AND "createdAt" IS NOT NULL
+        GROUP BY 1, 2, 3
+      )
+      SELECT dow, hour,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cnt)::double precision AS median_count
+      FROM hourly
+      GROUP BY dow, hour
+    `);
+
+    const forumBaseline = new Map<number, number>();
+    for (const row of forumRows) {
+      forumBaseline.set(Number(row.dow) * 24 + Number(row.hour), Number(row.median_count) || 0);
+    }
+
+    const forumDayCountRows = await this.prisma.$queryRaw<Array<{ data_days: number }>>(Prisma.sql`
+      SELECT COUNT(DISTINCT DATE("createdAt" + INTERVAL '8 hours'))::int AS data_days
+      FROM "ForumPost"
+      WHERE "createdAt" >= ${baselineStartTs}
+        AND "createdAt" < ${baselineEndTs}
+        AND "createdAt" IS NOT NULL
+    `);
+    const forumDataDays = Number(forumDayCountRows[0]?.data_days ?? 0);
+
+    return {
+      revision: revisionBaselines,
+      forum: forumBaseline,
+      revisionDataDays,
+      forumDataDays,
+    };
+  }
+
+  private async queryRecentRevisionCount(
+    start: Date, end: Date, category: MarketCategory
+  ): Promise<number> {
+    const startTs = utcNaiveTimestampSql(start);
+    const endTs = utcNaiveTimestampSql(end);
+    const predicate = categoryPredicateSql(category);
+    const rows = await this.prisma.$queryRaw<Array<{ cnt: number }>>(Prisma.sql`
+      SELECT COUNT(*)::int AS cnt
+      FROM "Revision" r
+      JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
+      WHERE r.timestamp >= ${startTs}
+        AND r.timestamp < ${endTs}
+        AND pv."isDeleted" = false
+        AND ${predicate}
+    `);
+    return Number(rows[0]?.cnt ?? 0);
+  }
+
+  private async queryRecentForumPostCount(start: Date, end: Date): Promise<number> {
+    const startTs = utcNaiveTimestampSql(start);
+    const endTs = utcNaiveTimestampSql(end);
+    const rows = await this.prisma.$queryRaw<Array<{ cnt: number }>>(Prisma.sql`
+      SELECT COUNT(*)::int AS cnt
+      FROM "ForumPost"
+      WHERE "createdAt" >= ${startTs}
+        AND "createdAt" < ${endTs}
+        AND "createdAt" IS NOT NULL
+    `);
+    return Number(rows[0]?.cnt ?? 0);
+  }
+
+  private getWindowBaseline(
+    asOfTs: Date, windowHours: number, baseline?: HourlyBaseline
+  ): number {
+    if (!baseline) return 0;
+    let sum = 0;
+    for (let h = 0; h < windowHours; h++) {
+      const ts = new Date(asOfTs.getTime() - h * HOUR_MS);
+      const shifted = addUtc8Offset(ts);
+      const dow = shifted.getUTCDay();
+      const hour = shifted.getUTCHours();
+      sum += baseline.get(dow * 24 + hour) ?? 0;
+    }
+    return sum;
+  }
+
+  private getDailyRevisionBaseline(
+    asOfTs: Date, baseline?: HourlyBaseline
+  ): number {
+    if (!baseline) return 1;
+    const shifted = addUtc8Offset(asOfTs);
+    const dow = shifted.getUTCDay();
+    let sum = 0;
+    for (let h = 0; h < 24; h++) {
+      sum += baseline.get(dow * 24 + h) ?? 0;
+    }
+    return Math.max(1, sum);
+  }
+
+  private computeMicroSignal(
+    asOfTs: Date,
+    category: MarketCategory,
+    recentRevCount: number,
+    recentForumCount: number,
+    baselines: MicroBaselineContext,
+    dVotesTotal: number
+  ): number {
+    // 1. Revision deviation
+    const revBaseline = this.getWindowBaseline(
+      asOfTs, MICRO_REV_WINDOW_HOURS, baselines.revision.get(category)
+    );
+    const revDev = baselines.revisionDataDays >= MICRO_MIN_BASELINE_DAYS
+      ? (safeLog1p(recentRevCount) - safeLog1p(revBaseline)) / REV_MICRO_SCALE
+      : 0;
+
+    // 2. Forum deviation
+    const forumBaseline = this.getWindowBaseline(
+      asOfTs, MICRO_FORUM_WINDOW_HOURS, baselines.forum
+    );
+    const forumDev = baselines.forumDataDays >= MICRO_MIN_BASELINE_DAYS
+      ? (safeLog1p(recentForumCount) - safeLog1p(forumBaseline)) / FORUM_MICRO_SCALE
+      : 0;
+
+    // 3. Vote amplitude modulation
+    const voteAmp = 1 + VOTE_AMP_K * Math.tanh(Math.abs(dVotesTotal));
+
+    // 4. Combine
+    return voteAmp * (
+      REV_MICRO_WEIGHT * clamp(revDev, -Z_CLAMP, Z_CLAMP)
+      + FORUM_MICRO_WEIGHT * clamp(forumDev, -Z_CLAMP, Z_CLAMP)
+    );
   }
 
   private async queryWindowStats(

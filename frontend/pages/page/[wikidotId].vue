@@ -4,7 +4,7 @@
     <!-- Loading -->
     <div v-if="pagePending" class="p-10 text-center">
       <div class="inline-flex items-center gap-2">
-        <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[rgb(var(--accent))]" stroke-width="2" aria-hidden="true" />
+        <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[var(--g-accent)]" stroke-width="2" aria-hidden="true" />
         <span class="text-neutral-600 dark:text-neutral-400">加载中…</span>
       </div>
     </div>
@@ -47,7 +47,7 @@
               <span
                 @click.stop.prevent="copySourceUrl"
                 :title="copiedSource ? '已复制' : '复制 URL'"
-                :class="['inline-flex items-center gap-0.5 px-1 py-0.5 rounded transition-colors', copiedSource ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'bg-neutral-200/60 dark:bg-neutral-700/60 text-neutral-600 dark:text-neutral-300']"
+                :class="['inline-flex items-center gap-0.5 px-1 py-0.5 rounded transition-colors', copiedSource ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'bg-neutral-200/60 dark:bg-neutral-700/60 text-neutral-600 dark:text-neutral-300']"
               >
                 <LucideIcon name="Copy" class="w-3 h-3" stroke-width="2" aria-hidden="true" />
               </span>
@@ -115,7 +115,7 @@
             <h2 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">核心指标</h2>
             <button
               type="button"
-              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
               @click="copyAnchorLink('metrics')"
               :title="copiedAnchorId === 'metrics' ? '已复制链接' : '复制该段落链接'"
             >
@@ -141,7 +141,7 @@
               <div class="text-red-600 dark:text-red-400 text-right">↓ {{ downvotes }}</div>
             </div>
             <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden flex">
-              <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: upvotePct + '%' }" aria-hidden="true"></div>
+              <div class="h-full bg-[var(--g-accent)]" :style="{ width: upvotePct + '%' }" aria-hidden="true"></div>
               <div class="h-full bg-red-500" :style="{ width: downvotePct + '%' }" aria-hidden="true"></div>
             </div>
           </div>
@@ -156,7 +156,7 @@
             </div>
             <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">总票数 {{ totalVotes }}</div>
             <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-              <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: likeRatioPct + '%' }" aria-hidden="true"></div>
+              <div class="h-full bg-[var(--g-accent)]" :style="{ width: likeRatioPct + '%' }" aria-hidden="true"></div>
             </div>
           </div>
 
@@ -172,7 +172,7 @@
               在相同票数下更稳健的支持率估计
             </div>
             <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-              <div class="h-full bg-[rgb(var(--accent))]" :style="{ width: Math.max(0, Math.min(100, wilsonLB * 100)) + '%' }" aria-hidden="true"></div>
+              <div class="h-full bg-[var(--g-accent)]" :style="{ width: Math.max(0, Math.min(100, wilsonLB * 100)) + '%' }" aria-hidden="true"></div>
             </div>
           </div>
 
@@ -198,7 +198,7 @@
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">评分趋势</h3>
             <button
               type="button"
-              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
               @click="copyAnchorLink('rating-history')"
               :title="copiedAnchorId === 'rating-history' ? '已复制链接' : '复制该段落链接'"
             >
@@ -213,7 +213,7 @@
         </div>
         <div v-else-if="ratingHistoryError" class="rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 p-6 text-sm text-neutral-600 dark:text-neutral-400">
           加载评分趋势失败。
-          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRatingHistory()">重试</button>
+          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[var(--g-accent)] hover:underline" @click="refreshRatingHistory()">重试</button>
         </div>
         <ClientOnly v-else>
           <RatingHistoryChart
@@ -237,7 +237,7 @@
               <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近修订</h3>
               <button
                 type="button"
-                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
                 @click="copyAnchorLink('revisions')"
                 :title="copiedAnchorId === 'revisions' ? '已复制链接' : '复制该段落链接'"
               >
@@ -254,7 +254,7 @@
 
           <div v-else-if="revisionsError" class="flex-1 flex flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
             加载修订记录失败。
-            <button type="button" class="inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRevisions()">重试</button>
+            <button type="button" class="inline-flex items-center gap-1 text-[var(--g-accent)] hover:underline" @click="refreshRevisions()">重试</button>
           </div>
 
           <div v-else-if="!revisionsPaged || revisionsPaged.length === 0" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
@@ -329,7 +329,7 @@
               <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">最近投票</h3>
               <button
                 type="button"
-                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
                 @click="copyAnchorLink('votes')"
                 :title="copiedAnchorId === 'votes' ? '已复制链接' : '复制该段落链接'"
               >
@@ -346,7 +346,7 @@
 
           <div v-else-if="recentVotesError" class="flex-1 flex flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
             加载投票记录失败。
-            <button type="button" class="inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRecentVotes()">重试</button>
+            <button type="button" class="inline-flex items-center gap-1 text-[var(--g-accent)] hover:underline" @click="refreshRecentVotes()">重试</button>
           </div>
 
           <div v-else-if="!recentVotes || recentVotes.length === 0" class="flex-1 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
@@ -421,7 +421,7 @@
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">相关页面</h3>
             <button
               type="button"
-              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
               @click="copyAnchorLink('related')"
               :title="copiedAnchorId === 'related' ? '已复制链接' : '复制该段落链接'"
             >
@@ -431,7 +431,7 @@
           </div>
           <button
             type="button"
-            class="hidden sm:inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-xs text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+            class="hidden sm:inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-xs text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
             @click="refreshRelatedPages()"
             title="刷新推荐"
           >
@@ -452,7 +452,7 @@
         </div>
         <div v-else-if="relatedError" class="rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 p-6 text-sm text-neutral-600 dark:text-neutral-400">
           加载推荐失败。
-          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshRelatedPages()">重试</button>
+          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[var(--g-accent)] hover:underline" @click="refreshRelatedPages()">重试</button>
         </div>
         <div v-else-if="relatedPages && relatedPages.length > 0" class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <PageCard
@@ -488,7 +488,7 @@
               <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">相关图片</h3>
               <button
                 type="button"
-                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
                 @click="copyAnchorLink('page-images')"
                 :title="copiedAnchorId === 'page-images' ? '已复制链接' : '复制该段落链接'"
               >
@@ -515,8 +515,8 @@
                   :class="[
                     'px-3 py-1 font-medium transition-colors',
                     pageImageColumns === option.value
-                      ? 'bg-white dark:bg-neutral-700 text-[rgb(var(--accent))] shadow'
-                      : 'text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))]'
+                      ? 'bg-white dark:bg-neutral-700 text-[var(--g-accent)] shadow'
+                      : 'text-neutral-600 dark:text-neutral-300 hover:text-[var(--g-accent)]'
                   ]"
                 >
                   {{ option.label }} ({{ option.value }})
@@ -526,13 +526,13 @@
             <div class="inline-flex items-center gap-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-neutral-600 dark:text-neutral-300 hover:border-[rgb(var(--accent))] hover:text-[rgb(var(--accent))] disabled:opacity-40"
+                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-neutral-600 dark:text-neutral-300 hover:border-[var(--g-accent)] hover:text-[var(--g-accent)] disabled:opacity-40"
                 @click="pageImagePage = Math.max(1, pageImagePage - 1)"
                 :disabled="pageImagePage <= 1"
               >上一页</button>
               <button
                 type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-neutral-600 dark:text-neutral-300 hover:border-[rgb(var(--accent))] hover:text-[rgb(var(--accent))] disabled:opacity-40"
+                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-neutral-600 dark:text-neutral-300 hover:border-[var(--g-accent)] hover:text-[var(--g-accent)] disabled:opacity-40"
                 @click="pageImagePage = Math.min(pageImageTotalPages, pageImagePage + 1)"
                 :disabled="pageImagePage >= pageImageTotalPages"
               >下一页</button>
@@ -543,17 +543,20 @@
         <div v-if="pageImagesPending" class="mt-6 text-sm text-neutral-500 dark:text-neutral-400">正在加载图片…</div>
         <div v-else-if="pageImagesError" class="mt-6 rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 p-6 text-sm text-neutral-600 dark:text-neutral-400">
           加载图片失败。
-          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[rgb(var(--accent))] hover:underline" @click="refreshPageImages()">重试</button>
+          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[var(--g-accent)] hover:underline" @click="refreshPageImages()">重试</button>
         </div>
         <div v-else-if="hasPageImages" class="page-images-grid mt-4" :style="pageImageGridStyle">
           <figure
             v-for="img in paginatedPageImages"
-            :key="img.pageVersionImageId || img.normalizedUrl || img.originUrl"
+            :key="img.imageKey"
             class="group space-y-2"
           >
-            <div
-              class="relative w-full overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900/40"
+            <button
+              type="button"
+              class="page-image-trigger relative w-full overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900/40"
               :style="img.aspectStyle"
+              :title="`放大查看：${img.label || pageDisplayTitle}`"
+              @click="openPageImagePreview(img)"
             >
               <img
                 :src="img.imageSrc"
@@ -562,13 +565,45 @@
                 loading="lazy"
                 class="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
               >
-            </div>
-            <figcaption class="text-xs text-neutral-600 dark:text-neutral-400 truncate">
-              {{ img.label || '图片资源' }}
+              <span class="page-image-zoom-chip">点击放大</span>
+            </button>
+            <figcaption class="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+              <span class="min-w-0 flex-1 truncate">
+                {{ img.label || '图片资源' }}
+              </span>
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
+                :title="copiedPageImageKey === img.imageKey ? '已复制图片 URL' : '复制图片 URL'"
+                @click="copyPageImageUrl(img)"
+              >
+                <LucideIcon
+                  v-if="copiedPageImageKey === img.imageKey"
+                  name="Check"
+                  class="h-3.5 w-3.5"
+                  stroke-width="2"
+                  aria-hidden="true"
+                />
+                <LucideIcon
+                  v-else
+                  name="Copy"
+                  class="h-3.5 w-3.5"
+                  stroke-width="2"
+                  aria-hidden="true"
+                />
+              </button>
             </figcaption>
           </figure>
         </div>
         <div v-else class="mt-6 text-sm text-neutral-500 dark:text-neutral-400">暂无图片。</div>
+        <ImagePreviewDialog
+          v-if="pageImagePreviewItem"
+          v-model:open="pageImagePreviewOpen"
+          :src="pageImagePreviewItem.imageSrcFull || pageImagePreviewItem.imageSrc"
+          :alt="pageImagePreviewItem.label || pageDisplayTitle"
+          :title="pageImagePreviewItem.label || pageDisplayTitle"
+          :copy-url="pageImagePreviewItem.copyUrl"
+        />
       </section>
 
       <!-- Source Viewer -->
@@ -578,7 +613,7 @@
             <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">页面源码</h3>
             <button
               type="button"
-              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[rgb(var(--accent))] hover:border-[rgba(var(--accent),0.35)] dark:text-neutral-400 dark:hover:text-[rgb(var(--accent))]"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
               @click="copyAnchorLink('page-source')"
               :title="copiedAnchorId === 'page-source' ? '已复制链接' : '复制该段落链接'"
             >
@@ -606,7 +641,7 @@
                 <span class="diff-label text-neutral-500 dark:text-neutral-300">基准</span>
                 <select
                   v-model="baseVersionId"
-                  class="diff-select flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)]"
+                  class="diff-select flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
                 >
                   <option v-for="v in orderedVersions" :key="`b-${v.pageVersionId}`" :value="v.pageVersionId">
                     {{ v.validTo ? '历史' : '当前' }} · {{ formatDate(v.createdAt) }} · {{ v.title || '' }}
@@ -617,7 +652,7 @@
                 <span class="diff-label text-neutral-500 dark:text-neutral-300">对比</span>
                 <select
                   v-model="compareVersionId"
-                  class="diff-select flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)]"
+                  class="diff-select flex-1 min-w-0 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
                 >
                   <option v-for="v in orderedVersions" :key="`c-${v.pageVersionId}`" :value="v.pageVersionId">
                     {{ v.validTo ? '历史' : '当前' }} · {{ formatDate(v.createdAt) }} · {{ v.title || '' }}
@@ -632,7 +667,7 @@
                     :class="[
                       'diff-view-toggle__btn px-3 py-1 rounded-full text-[11px] font-medium transition-colors',
                       diffViewMode === 'unified'
-                        ? 'bg-white text-[rgb(var(--accent))] shadow-sm dark:bg-neutral-700'
+                        ? 'bg-white text-[var(--g-accent)] shadow-sm dark:bg-neutral-700'
                         : 'text-neutral-600 hover:text-neutral-800 dark:text-neutral-300 dark:hover:text-neutral-100'
                     ]"
                     @click="diffViewMode = 'unified'"
@@ -644,7 +679,7 @@
                     :class="[
                       'diff-view-toggle__btn px-3 py-1 rounded-full text-[11px] font-medium transition-colors',
                       diffViewMode === 'split'
-                        ? 'bg-white text-[rgb(var(--accent))] shadow-sm dark:bg-neutral-700'
+                        ? 'bg-white text-[var(--g-accent)] shadow-sm dark:bg-neutral-700'
                         : 'text-neutral-600 hover:text-neutral-800 dark:text-neutral-300 dark:hover:text-neutral-100'
                     ]"
                     @click="diffViewMode = 'split'"
@@ -657,7 +692,7 @@
                 <span class="diff-label text-neutral-500 dark:text-neutral-300">上下文</span>
                 <select
                   v-model.number="diffContextLines"
-                  class="diff-select diff-select--narrow flex-none px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)]"
+                  class="diff-select diff-select--narrow flex-none px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
                 >
                   <option :value="1">1</option>
                   <option :value="2">2</option>
@@ -726,7 +761,7 @@
                   </div>
                   <div v-else
                        :class="['grid grid-cols-[56px_56px_1fr] gap-2 px-3 py-1 border-b border-neutral-200 dark:border-neutral-800 whitespace-pre-wrap',
-                         row.type === 'added' ? 'bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.2)] text-[rgb(var(--accent))]' :
+                         row.type === 'added' ? 'bg-[var(--g-accent-soft)] dark:bg-[var(--g-accent-strong)] text-[var(--g-accent)]' :
                          row.type === 'removed' ? 'bg-red-100/60 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
                          'text-neutral-800 dark:text-neutral-200']">
                     <span class="text-right text-[10px] text-neutral-400">
@@ -769,7 +804,7 @@
                     <span :class="[
                         'block whitespace-pre-wrap',
                         row.changeType === 'added' || row.changeType === 'modified'
-                          ? 'bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.2)] text-[rgb(var(--accent))] rounded'
+                          ? 'bg-[var(--g-accent-soft)] dark:bg-[var(--g-accent-strong)] text-[var(--g-accent)] rounded'
                           : '']">
                       {{ row.right.text || ' ' }}
                     </span>
@@ -780,27 +815,28 @@
           </div>
         </div>
       </section>
+
+      <!-- Forum Discussion Section -->
+      <ForumsDiscussionSection
+        v-if="page?.wikidotId"
+        :wikidot-id="Number(page.wikidotId)"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useHead } from '#imports'
+import { definePageMeta, useAsyncData, useHead, useNuxtApp, useRoute, useRuntimeConfig } from '#imports'
 import { orderTags } from '~/composables/useTagOrder'
 import { onBeforeRouteUpdate } from 'vue-router'
 import { useAuth } from '~/composables/useAuth'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { formatDateUtc8, formatDateIsoUtc8, diffUtc8CalendarDays } from '~/utils/timezone'
 import CollectionPicker from '~/components/collections/CollectionPicker.vue'
-import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
-
-// Nuxt auto imports for type checker
-declare const useAsyncData: any
-declare const useNuxtApp: any
-declare const useRoute: any
-declare const definePageMeta: any
-declare const useRuntimeConfig: any
+import ImagePreviewDialog from '~/components/media/ImagePreviewDialog.vue'
+import { normalizeBffBase, pickExternalAssetUrl, resolveWithFallback } from '~/utils/assetUrl'
+import { copyTextWithFallback } from '~/utils/clipboard'
 
 const route = useRoute();
 const {$bff} = useNuxtApp();
@@ -875,13 +911,29 @@ const pageImagesRaw = computed(() => {
   return Array.isArray(images) ? images : []
 })
 
-const pageImages = computed(() => {
+type PageImageItem = {
+  imageKey: string
+  width: number
+  height: number
+  ratio: number | null
+  orientation: 'unknown' | 'wide' | 'tall' | 'normal'
+  aspectStyle: string
+  label: string
+  imageSrc: string
+  imageSrcFull: string
+  copyUrl: string
+  pageVersionImageId?: number
+  normalizedUrl?: string
+  originUrl?: string
+}
+
+const pageImages = computed<PageImageItem[]>(() => {
   const raw = pageImagesRaw.value
-  return raw.map((img: any) => {
+  return raw.map((img: any): PageImageItem | null => {
     const width = Number(img.width ?? img.assetWidth ?? 0)
     const height = Number(img.height ?? img.assetHeight ?? 0)
     const ratio = width > 0 && height > 0 ? width / height : null
-    const orientation = ratio == null ? 'unknown' : ratio >= 1.7 ? 'wide' : ratio <= 0.65 ? 'tall' : 'normal'
+    const orientation: PageImageItem['orientation'] = ratio == null ? 'unknown' : ratio >= 1.7 ? 'wide' : ratio <= 0.65 ? 'tall' : 'normal'
     const aspectStyle = ratio == null
       ? 'aspect-ratio: 4 / 3;'
       : orientation === 'wide'
@@ -904,9 +956,12 @@ const pageImages = computed(() => {
     const lowSrc = resolveAssetPath(img.imageUrl, labelSource, true)
     const imageSrc = lowSrc || fullSrc
     if (!imageSrc) return null
+    const imageKey = String(img.pageVersionImageId || img.normalizedUrl || img.originUrl || imageSrc)
+    const copyUrl = pickExternalAssetUrl(img.displayUrl, img.originUrl, img.normalizedUrl) || fullSrc || imageSrc
 
     return {
       ...img,
+      imageKey,
       width,
       height,
       ratio,
@@ -914,9 +969,10 @@ const pageImages = computed(() => {
       aspectStyle,
       label,
       imageSrc,
-      imageSrcFull: fullSrc
+      imageSrcFull: fullSrc || imageSrc,
+      copyUrl
     }
-  }).filter(Boolean)
+  }).filter((img): img is PageImageItem => img !== null)
 })
 
 const hasPageImages = computed(() => pageImages.value.length > 0)
@@ -966,6 +1022,17 @@ const pageImageSizeOptions = [
 ]
 
 const pageImageColumns = ref<number>(6)
+type PageImagePreviewPayload = {
+  imageKey: string
+  label: string
+  imageSrc: string
+  imageSrcFull: string
+  copyUrl: string
+}
+const pageImagePreviewOpen = ref(false)
+const pageImagePreviewItem = ref<PageImagePreviewPayload | null>(null)
+const copiedPageImageKey = ref<string | null>(null)
+let pageImageCopyTimer: ReturnType<typeof setTimeout> | null = null
 const pageImageRows = computed(() => {
   const cols = pageImageColumns.value
   if (cols >= 9) return 5
@@ -996,14 +1063,53 @@ const pageImageGridStyle = computed(() => ({
   '--columns': String(Math.max(1, Math.min(pageImageColumns.value, 12)))
 }))
 
+function openPageImagePreview(img: PageImageItem) {
+  pageImagePreviewItem.value = {
+    imageKey: img.imageKey,
+    label: img.label,
+    imageSrc: img.imageSrc,
+    imageSrcFull: img.imageSrcFull || img.imageSrc,
+    copyUrl: img.copyUrl || img.imageSrcFull || img.imageSrc
+  }
+  pageImagePreviewOpen.value = true
+}
+
+async function copyPageImageUrl(img: PageImageItem) {
+  const imageKey = img.imageKey
+  const target = (img.copyUrl || img.imageSrcFull || img.imageSrc || '').trim()
+  if (!imageKey || !target) return
+
+  const copied = await copyTextWithFallback(target, '请复制图片 URL')
+  if (!copied) return
+
+  copiedPageImageKey.value = imageKey
+  if (pageImageCopyTimer) clearTimeout(pageImageCopyTimer)
+  pageImageCopyTimer = setTimeout(() => {
+    if (copiedPageImageKey.value === imageKey) copiedPageImageKey.value = null
+  }, 1800)
+}
+
 watch(pageImages, () => {
   if (pageImagePage.value > pageImageTotalPages.value) {
     pageImagePage.value = pageImageTotalPages.value
+  }
+  if (pageImagePreviewItem.value) {
+    const exists = pageImages.value.some((img) => img.imageKey === pageImagePreviewItem.value?.imageKey)
+    if (!exists) {
+      pageImagePreviewOpen.value = false
+      pageImagePreviewItem.value = null
+    }
   }
 })
 
 watch(pageImageColumns, () => {
   pageImagePage.value = 1
+})
+
+watch(wikidotId, () => {
+  pageImagePreviewOpen.value = false
+  pageImagePreviewItem.value = null
+  copiedPageImageKey.value = null
 })
 
 const { data: stats, pending: statsPending } = await useAsyncData(
@@ -1835,7 +1941,7 @@ function formatRevisionType(type: string) {
 function revisionTypeClass(type: string) {
   const t = String(type || '')
   if (t === 'PAGE_CREATED' || t === 'PAGE_RESTORED') {
-    return 'bg-[rgba(var(--accent),0.12)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]'
+    return 'bg-[var(--g-accent-soft)] dark:bg-[var(--g-accent-strong)] text-[var(--g-accent)]'
   }
   if (t === 'PAGE_EDITED') {
     return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
@@ -1919,7 +2025,9 @@ async function copySourceUrl(){
     await navigator.clipboard?.writeText(url)
     copiedSource.value = true
     setTimeout(() => { copiedSource.value = false }, 1200)
-  } catch {}
+  } catch {
+    // Clipboard writes can fail when the browser denies permission.
+  }
 }
 
 // Tags - show all (ordered)
@@ -2012,7 +2120,9 @@ function downloadSource(){
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-  } catch {}
+  } catch {
+    // Blob downloads can fail in restricted environments.
+  }
 }
 
 // Clean up (for any listeners we might add later)
@@ -2034,6 +2144,10 @@ onBeforeUnmount(() => {
   if (anchorCopyTimer) {
     clearTimeout(anchorCopyTimer)
     anchorCopyTimer = null
+  }
+  if (pageImageCopyTimer) {
+    clearTimeout(pageImageCopyTimer)
+    pageImageCopyTimer = null
   }
 })
 </script>
@@ -2069,7 +2183,7 @@ onBeforeUnmount(() => {
 }
 
 .diff-view-toggle__btn:focus-visible {
-  outline: 2px solid rgba(var(--accent), 0.45);
+  outline: 2px solid var(--g-accent-border);
   outline-offset: 1px;
 }
 
@@ -2087,6 +2201,41 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(var(--columns, 6), minmax(0, 1fr));
+}
+
+.page-image-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border-width: 1px;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.page-image-trigger:focus-visible {
+  outline: 2px solid var(--g-accent-border);
+  outline-offset: 1px;
+}
+
+.page-image-zoom-chip {
+  pointer-events: none;
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(15, 23, 42, 0.48);
+  padding: 0.15rem 0.5rem;
+  font-size: 10px;
+  line-height: 1.2;
+  color: rgba(248, 250, 252, 0.95);
+  opacity: 0.86;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.group:hover .page-image-zoom-chip {
+  opacity: 1;
+  transform: translateY(-1px);
 }
 
 @media (max-width: 1024px) {

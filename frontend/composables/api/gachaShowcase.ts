@@ -9,6 +9,7 @@ export interface ShowcaseSlotCard {
   rarity: Rarity
   imageUrl: string | null
   tags: string[]
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   wikidotId: number | null
   pageId: number | null
@@ -38,7 +39,7 @@ export interface ShowcaseMeta {
 }
 
 export function useGachaShowcaseApi(core: GachaCoreContext) {
-  const { $bff, state, withCardVariant } = core
+  const { $bff, state, withCardVariant, captureWalletSeq, setWalletIfFresh } = core
 
   const withShowcaseSlotCardVariant = (slot: ShowcaseSlot): ShowcaseSlot => ({
     ...slot,
@@ -66,26 +67,26 @@ export function useGachaShowcaseApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '获取展示柜失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '获取展示柜失败') }
     }
   }
 
   async function createShowcase(name: string) {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ showcase: Showcase; wallet?: Wallet }>>('/gacha/showcases', {
         method: 'POST',
         body: { name }
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, showcase: withShowcaseCardVariant(res.showcase) }
       }
       return { ok: false as const, error: res?.error || '创建展示柜失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '创建展示柜失败') }
     }
   }
@@ -98,7 +99,7 @@ export function useGachaShowcaseApi(core: GachaCoreContext) {
       })
       if (res?.ok) return { ok: true as const }
       return { ok: false as const, error: res?.error || '重命名失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '重命名失败') }
     }
   }
@@ -110,7 +111,7 @@ export function useGachaShowcaseApi(core: GachaCoreContext) {
       })
       if (res?.ok) return { ok: true as const }
       return { ok: false as const, error: res?.error || '删除展示柜失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '删除展示柜失败') }
     }
   }
@@ -123,7 +124,7 @@ export function useGachaShowcaseApi(core: GachaCoreContext) {
       })
       if (res?.ok) return { ok: true as const, slot: withShowcaseSlotCardVariant(res.slot) }
       return { ok: false as const, error: res?.error || '放入卡片失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '放入卡片失败') }
     }
   }
@@ -135,7 +136,7 @@ export function useGachaShowcaseApi(core: GachaCoreContext) {
       })
       if (res?.ok) return { ok: true as const }
       return { ok: false as const, error: res?.error || '移除卡片失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '移除卡片失败') }
     }
   }
@@ -148,7 +149,7 @@ export function useGachaShowcaseApi(core: GachaCoreContext) {
       })
       if (res?.ok) return { ok: true as const }
       return { ok: false as const, error: res?.error || '重排卡片失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '重排卡片失败') }
     }
   }

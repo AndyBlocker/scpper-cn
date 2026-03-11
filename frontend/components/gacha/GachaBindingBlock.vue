@@ -17,14 +17,14 @@ defineProps<{
 <template>
   <div
     v-if="authPending"
-    class="gacha-binding-block relative z-[2] rounded-3xl border border-dashed border-neutral-200/80 bg-white/70 p-10 text-center text-neutral-500 dark:border-neutral-700/70 dark:bg-neutral-900/60 dark:text-neutral-400"
+    class="gacha-binding-block relative z-[2] rounded-lg border border-dashed border-neutral-200/80 bg-white/70 p-10 text-center text-neutral-500 dark:border-neutral-700/70 dark:bg-neutral-900/60 dark:text-neutral-400"
   >
     正在校验登录状态...
   </div>
 
   <div
     v-else-if="showBindingBlock"
-    class="gacha-binding-block gacha-binding-block--warn relative z-[2] flex flex-col gap-6 rounded-3xl border border-amber-200/70 bg-amber-50/80 p-8 text-neutral-800 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
+    class="gacha-binding-block gacha-binding-block--warn relative z-[2] flex flex-col gap-6 rounded-lg border border-amber-200/70 bg-amber-50/80 p-8 text-neutral-800 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
   >
     <div class="space-y-2">
       <h2 class="text-2xl font-semibold">需要绑定 Wikidot 账户</h2>

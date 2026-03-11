@@ -18,6 +18,7 @@ interface ReforgeCardOption {
   title: string
   rarity: Rarity
   imageUrl: string | null
+  isRetired?: boolean
   wikidotId?: number | null
   tags: string[]
   authors?: Array<{ name: string; wikidotId: number | null }> | null
@@ -92,7 +93,7 @@ function clearReforgeCardId() {
 </script>
 
 <template>
-  <article class="rounded-2xl border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
+  <article class="rounded-lg border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
     <header class="flex items-center justify-between">
       <h4 class="text-sm font-semibold text-neutral-900 dark:text-neutral-100">票券仓库</h4>
       <span class="text-[11px] text-neutral-500 dark:text-neutral-400">{{ loading ? '同步中...' : '实时' }}</span>
@@ -193,6 +194,7 @@ function clearReforgeCardId() {
                 :title="item.title"
                 :rarity="item.rarity"
                 :image-url="item.imageUrl || undefined"
+                :retired="item.isRetired"
                 :affix-visual-style="item.affixStyles?.[0]"
               >
                 <template #meta>

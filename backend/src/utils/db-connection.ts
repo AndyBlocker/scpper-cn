@@ -45,7 +45,7 @@ export function getPrismaClient(): PrismaClient {
           maxReadConnections: 10,
         }
       }
-    });
+    } as any);
   }
   
   if (!signalsBound) {

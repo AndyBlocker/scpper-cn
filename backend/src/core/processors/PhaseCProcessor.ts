@@ -32,7 +32,7 @@ export class PhaseCProcessor {
     this.queue = new TaskQueue(concurrency);
   }
 
-  async run(testMode = false): Promise<void> {
+  async run(testMode = false, onProgress?: () => void): Promise<void> {
     Logger.info('=== Phase C: Targeted Complex Page Processing ===');
     
     const BATCH_LIMIT = testMode ? 100 : 3000;
@@ -144,7 +144,8 @@ export class PhaseCProcessor {
       const trackProgress = async (wikidotId: number, success = true): Promise<void> => {
         roundProcessedCount++;
         if (bar) bar.increment(1);
-        
+        onProgress?.();
+
         if (success) {
           try {
             await this.store.clearDirtyFlag(wikidotId, 'C');
