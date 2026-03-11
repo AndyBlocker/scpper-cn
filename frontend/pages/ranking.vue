@@ -639,7 +639,7 @@ function formatMetric(u: RankUser): string {
   return formatInt(u.rating ?? u.overallRating);
 }
 
-useHead({ title: '作者排行 - SCPPER-CN' });
+useHead({ title: '作者排行' });
 </script>
 
 <style scoped>

@@ -68,8 +68,8 @@ function jumpToPage() {
 useHead({
   title: computed(() =>
     data.value?.thread?.title
-      ? `${data.value.thread.title} - 讨论 - SCPPER-CN`
-      : '讨论帖子 - SCPPER-CN'
+      ? `${data.value.thread.title} - 讨论`
+      : '讨论帖子'
   ),
 })
 

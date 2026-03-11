@@ -28,7 +28,7 @@
         <div class="rounded-lg border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-6 py-5 text-sm text-[rgb(var(--accent-strong))]">
           <div class="font-semibold">当前更新时间</div>
           <div class="mt-1 font-mono text-lg tracking-wide">
-            {{ nowFormatted }}
+            <ClientOnly>{{ nowFormatted }}<template #fallback>--</template></ClientOnly>
           </div>
           <div class="mt-2 text-xs text-[rgba(var(--accent-strong),0.7)]">基于浏览器本地时间</div>
         </div>
@@ -63,6 +63,7 @@
           <p class="text-sm text-neutral-500 dark:text-neutral-400">北京时间（GMT+08）为准，实时更新至下一关键节点。</p>
         </div>
       </div>
+      <ClientOnly>
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <div
           v-for="milestone in milestoneStates"
@@ -93,6 +94,7 @@
           </div>
         </div>
       </div>
+      </ClientOnly>
     </section>
 
     <section class="space-y-4">
@@ -494,6 +496,7 @@ const orderMode = ref<'created' | 'random'>('created')
 const displayedEntries = computed(() => (orderMode.value === 'created' ? entriesByCreated.value : entriesByRandom.value))
 
 watch(filteredEntries, list => {
+  if (!isClient) return
   if (!Array.isArray(list) || list.length === 0) {
     highlightEntries.value = []
     randomEntries.value = []
@@ -501,7 +504,15 @@ watch(filteredEntries, list => {
   }
   resampleHighlights()
   reshuffleEntries()
-}, { immediate: true })
+})
+
+onMounted(() => {
+  const list = filteredEntries.value
+  if (Array.isArray(list) && list.length > 0) {
+    resampleHighlights()
+    reshuffleEntries()
+  }
+})
 
 watch(
   () => [entriesByCreated.value, entriesByRandom.value],

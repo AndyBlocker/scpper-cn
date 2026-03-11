@@ -36,25 +36,32 @@ function sanitizeCss(cssText: string): string {
     .join('; ')
 }
 
-// 对 style 属性进行 CSS 属性级别过滤（DOMPurify 钩子，模块加载时注册一次）
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.hasAttribute('style')) {
-    let cleaned = sanitizeCss(node.getAttribute('style')!)
-    // 折叠块的 display 由 CSS 类控制，需要移除内联 display（否则优先级更高会覆盖 CSS 规则）
-    if ((node as Element).classList?.contains('collapsible-block-unfolded')) {
-      cleaned = cleaned
-        .split(';')
-        .filter(d => !d.trim().toLowerCase().startsWith('display'))
-        .join('; ')
-        .trim()
+// 使用独立的 DOMPurify 钩子注册，避免污染全局 DOMPurify 实例。
+// 通过 flag 确保只注册一次（即使模块被 HMR 重新加载）。
+let hookRegistered = false
+
+function ensureHook(): void {
+  if (hookRegistered) return
+  hookRegistered = true
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.hasAttribute('style')) {
+      let cleaned = sanitizeCss(node.getAttribute('style')!)
+      // 折叠块的 display 由 CSS 类控制，需要移除内联 display
+      if ((node as Element).classList?.contains('collapsible-block-unfolded')) {
+        cleaned = cleaned
+          .split(';')
+          .filter(d => !d.trim().toLowerCase().startsWith('display'))
+          .join('; ')
+          .trim()
+      }
+      if (cleaned) {
+        node.setAttribute('style', cleaned)
+      } else {
+        node.removeAttribute('style')
+      }
     }
-    if (cleaned) {
-      node.setAttribute('style', cleaned)
-    } else {
-      node.removeAttribute('style')
-    }
-  }
-})
+  })
+}
 
 // ── HTML 标签 / 属性白名单 ──
 
@@ -93,22 +100,27 @@ const ALLOWED_ATTR = [
  * - 允许 Wikidot 渲染引擎生成的格式化标签（p, strong, a, img, table 等）
  * - 移除危险标签（script, iframe, style, form, object 等）和事件处理属性
  * - 内联 style 属性通过 CSS 属性白名单过滤（允许 color、display 等，禁止 position、z-index 等）
- * - 将 Wikidot 站内相对链接转换为绝对链接
+ * - 将 Wikidot 站内相对链接转换为绝对链接（在净化之后执行）
  * - 保留已转义的 HTML 实体（如 &lt;div&gt;），不会二次渲染为标签
  */
 export function sanitizeForumHtml(html: string | null | undefined): string {
   if (!html) return ''
 
-  // 1. 先转换 Wikidot 相对链接为绝对链接
-  const withAbsoluteLinks = html.replace(
-    /href="\/([^"]*?)"/g,
-    'href="https://scp-wiki-cn.wikidot.com/$1" target="_blank" rel="noopener noreferrer"',
-  )
+  // 确保 CSS 过滤钩子已注册（幂等，只注册一次）
+  ensureHook()
 
-  // 2. DOMPurify 过滤：只保留安全标签和属性
-  return DOMPurify.sanitize(withAbsoluteLinks, {
+  // 1. DOMPurify 过滤：只保留安全标签和属性
+  let sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
   })
+
+  // 2. 转换 Wikidot 相对链接为绝对链接（在净化之后执行，更安全）
+  sanitized = sanitized.replace(
+    /href="\/([^"]*?)"/g,
+    'href="https://scp-wiki-cn.wikidot.com/$1" target="_blank" rel="noopener noreferrer"',
+  )
+
+  return sanitized
 }

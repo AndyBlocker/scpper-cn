@@ -716,7 +716,7 @@ useHead(() => {
   const title = userPageTitle.value
   const description = user.value?.displayName
     ? `${user.value.displayName} 的用户资料 - 查看作品、投票记录和统计数据`
-    : '用户详情 - SCPPER-CN'
+    : '用户详情'
   return {
     title,
     meta: [

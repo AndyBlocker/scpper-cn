@@ -521,7 +521,8 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
       const page = Math.max(1, Number(req.query.page) || 1);
       const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
       const offset = (page - 1) * limit;
-      const searchPattern = `%${q}%`;
+      const escapedQ = q.replace(/[%_\\]/g, '\\$&');
+      const searchPattern = `%${escapedQ}%`;
 
       const [postsResult, countResult] = await Promise.all([
         readPool.query(`

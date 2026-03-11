@@ -173,7 +173,7 @@ let requestToken = 0
 
 useHead(() => {
   const tag = decodedTag.value
-  const title = tag ? `#${tag} 标签详情 - SCPPER-CN` : '标签详情 - SCPPER-CN'
+  const title = tag ? `#${tag} 标签详情` : '标签详情'
   const description = tag
     ? `浏览 #${tag} 标签下的热门页面和最新动态。`
     : '浏览标签的热门页面。'

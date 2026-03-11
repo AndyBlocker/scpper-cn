@@ -119,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { NuxtLink } from '#components'
 import { orderTags } from '~/composables/useTagOrder'
 import { usePageAuthors } from '~/composables/usePageAuthors'
@@ -407,6 +407,13 @@ function onMouseLeave() {
   tiltY.value = 0
   isHovering.value = false
 }
+
+onBeforeUnmount(() => {
+  if (tiltRafId != null) {
+    cancelAnimationFrame(tiltRafId)
+    tiltRafId = null
+  }
+})
 
 const tiltStyle = computed(() => {
   if (!isHovering.value) return {}

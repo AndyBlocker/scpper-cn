@@ -1906,7 +1906,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             .filter((v) => Number.isInteger(v) && v > 0)
         : [];
 
-      const searchPattern = `%${query}%`;
+      const escapedQuery = query.replace(/[%_\\]/g, '\\$&');
+      const searchPattern = `%${escapedQuery}%`;
 
       // Build WHERE clauses
       const conditions: string[] = [

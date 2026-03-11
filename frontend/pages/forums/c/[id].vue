@@ -24,8 +24,8 @@ const totalPages = computed(() => {
 useHead({
   title: computed(() =>
     data.value?.category?.title
-      ? `${data.value.category.title} - 讨论 - SCPPER-CN`
-      : '讨论分类 - SCPPER-CN'
+      ? `${data.value.category.title} - 讨论`
+      : '讨论分类'
   ),
 })
 
