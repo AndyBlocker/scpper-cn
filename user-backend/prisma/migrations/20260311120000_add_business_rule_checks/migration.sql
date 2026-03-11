@@ -19,7 +19,7 @@ ALTER TABLE "GachaTradeListing" ADD CONSTRAINT "GachaTradeListing_quantity_nonne
 
 -- Placement slot count must be within the valid range (5 default, 10 max).
 ALTER TABLE "GachaPlacementState" ADD CONSTRAINT "GachaPlacementState_slots_range"
-  CHECK ("unlockedSlotCount" >= 1 AND "unlockedSlotCount" <= 20);
+  CHECK ("unlockedSlotCount" >= 1 AND "unlockedSlotCount" <= 10);
 
 -- Pending placement tokens must be non-negative.
 ALTER TABLE "GachaPlacementState" ADD CONSTRAINT "GachaPlacementState_pending_nonneg"
