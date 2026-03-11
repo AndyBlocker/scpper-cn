@@ -174,7 +174,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
             FROM "ForumThread" t
             LEFT JOIN "ForumCategory" c ON c.id = t."categoryId"
             LEFT JOIN "Page" p ON p.id = t."pageId"
-            WHERE t.id = $1
+            WHERE t.id = $1 AND t."isDeleted" = false
           `, [threadId]),
           readPool.query(`
             SELECT id, "threadId", "parentId", title, "textHtml", "createdByName",
@@ -533,6 +533,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
           JOIN "ForumThread" t ON t.id = p."threadId"
           LEFT JOIN "ForumCategory" c ON c.id = t."categoryId"
           WHERE p."isDeleted" = false
+            AND t."isDeleted" = false
             AND (p."textHtml" ILIKE $1 OR p.title ILIKE $1 OR t.title ILIKE $1)
           ORDER BY p."createdAt" DESC NULLS LAST
           LIMIT $2 OFFSET $3
@@ -542,6 +543,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "ForumPost" p
           JOIN "ForumThread" t ON t.id = p."threadId"
           WHERE p."isDeleted" = false
+            AND t."isDeleted" = false
             AND (p."textHtml" ILIKE $1 OR p.title ILIKE $1 OR t.title ILIKE $1)
         `, [searchPattern]),
       ]);

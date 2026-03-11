@@ -73,7 +73,9 @@ function startProgressiveRender() {
   renderBudget.value = 0
   cancelProgressiveRender()
   function step() {
-    const target = showAll.value ? Infinity : RENDER_LIMIT
+    const target = showAll.value
+      ? filteredCandidates.value.length
+      : Math.min(filteredCandidates.value.length, RENDER_LIMIT)
     if (renderBudget.value < target) {
       renderBudget.value = Math.min(renderBudget.value + RENDER_BATCH, target)
       renderRafId = requestAnimationFrame(step)
