@@ -3,7 +3,11 @@ import { GraphQLClient } from '../client/GraphQLClient.js';
 import { CoreQueries } from '../graphql/CoreQueries.js';
 import { PointEstimator } from '../graphql/PointEstimator.js';
 import { DatabaseStore } from '../store/DatabaseStore.js';
-import { AttributionService } from '../store/AttributionService.js';
+import {
+  AttributionService,
+  buildDisplayNameAnonKey,
+  normalizeAttributionAnonKey
+} from '../store/AttributionService.js';
 import { Logger } from '../../utils/Logger.js';
 import { Progress } from '../../utils/Progress.js';
 import type { PageVersion } from '@prisma/client';
@@ -114,13 +118,17 @@ const normalizeIncomingAttributionSignature = (rawAttributions: unknown[]): stri
         : Number.parseInt(String(wikidotIdRaw ?? ''), 10);
       if (Number.isFinite(wikidotId)) {
         actorKey = `u:${wikidotId}`;
-      } else if (typeof userRecord.displayName === 'string' && userRecord.displayName.trim()) {
-        actorKey = `a:anon:${userRecord.displayName.trim()}`;
+      } else {
+        const anonKey = buildDisplayNameAnonKey(userRecord.displayName);
+        if (anonKey) {
+          actorKey = `a:${anonKey}`;
+        }
       }
     }
 
-    if (!actorKey && typeof attr.anonKey === 'string' && attr.anonKey.trim()) {
-      actorKey = `a:${attr.anonKey.trim()}`;
+    const normalizedAnonKey = normalizeAttributionAnonKey(attr.anonKey);
+    if (!actorKey && normalizedAnonKey) {
+      actorKey = `a:${normalizedAnonKey}`;
     }
 
     // Mirror AttributionService: entries without a stable actor are ignored.
@@ -137,10 +145,11 @@ const normalizeStoredAttributionSignature = (
   attributions: CurrentVersionAttributionSnapshot[]
 ): string[] => {
   const normalized = attributions.flatMap((attr) => {
+    const normalizedAnonKey = normalizeAttributionAnonKey(attr.anonKey);
     const actorKey = attr.user?.wikidotId != null
       ? `u:${attr.user.wikidotId}`
-      : attr.anonKey
-        ? `a:${attr.anonKey}`
+      : normalizedAnonKey
+        ? `a:${normalizedAnonKey}`
         : null;
     // Mirror incoming side: entries without a stable actor are excluded.
     if (!actorKey) return [];
