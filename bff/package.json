@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "node ../scripts/service-runner.mjs bff dev",
     "build": "node ../scripts/service-runner.mjs bff build",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "node ../backend/node_modules/eslint/bin/eslint.js \"src/**/*.{ts,js}\"",
+    "typecheck": "node ../scripts/service-bin-runner.mjs bff tsc -p tsconfig.json --noEmit",
+    "lint": "node ../scripts/service-bin-runner.mjs backend eslint \"src/**/*.{ts,js}\"",
     "start": "node ../scripts/service-runner.mjs bff start",
-    "test": "jest",
+    "test": "node ../scripts/service-bin-runner.mjs bff jest",
     "profile:search": "node scripts/profile-search.mjs",
     "latency:search": "node scripts/profile-bff-latency.mjs",
     "probe": "node scripts/probe-bff.mjs",

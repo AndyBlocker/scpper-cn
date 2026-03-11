@@ -82,8 +82,9 @@ Created worktree:
 Next steps:
   cd "$target_path"
   bash scripts/install-hooks.sh
-  # Install dependencies only for the services you will touch.
-  # Example: cd frontend && npm install
+  # Commands wired through the repo wrappers can temporarily reuse the protected checkout's installed dependencies.
+  # If a service changes dependencies, install them inside the worktree, e.g.:
+  #   cd frontend && npm install
 EOF
     ;;
   list)

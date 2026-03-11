@@ -37,7 +37,8 @@ bash scripts/dev-worktree.sh create feat/<topic>
 - 基于 `origin/main` 创建或复用 branch
 - 创建独立 worktree
 - 尝试复制各服务现有 `.env` 到新 worktree，避免手工重配
-- 不复制 `node_modules`；首次进入新 worktree 后，按你要开发的服务执行 `npm install`
+- 不复制 `node_modules`；已接入 wrapper 的命令会在缺少本地依赖时临时复用受保护 checkout 的已安装依赖
+- 如果目标服务的依赖清单有变化，或你需要完全独立的依赖树，再在对应目录执行 `npm install`
 
 ## Branching Rules
 
@@ -56,7 +57,7 @@ bash scripts/dev-worktree.sh create feat/<topic>
 1. 在受保护 checkout 执行 `bash scripts/install-hooks.sh`，只需一次。
 2. 新任务开始前执行 `bash scripts/dev-worktree.sh create feat/<topic>`。
 3. `cd` 到新 worktree 后再运行开发命令。
-4. 如目标服务还没有依赖，先在对应目录执行 `npm install`。
+4. 先直接运行已接入 wrapper 的命令；如果某个服务脚本仍依赖本地 `node_modules`，或者依赖本身有变化，再在对应目录执行 `npm install`。
 5. 在 feature branch 提交，推送并开 PR。
 6. PR 上先做自动/人工检查，再做双 agent review。
 7. 合并后回到受保护 checkout，同步 `main`，再部署给 PM2。

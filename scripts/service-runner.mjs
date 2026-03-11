@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
+import { ensureSharedNodeModules, findMainWorktree, getBranchName, getRepoRoot } from './shared-node-modules.mjs';
 
 const [, , serviceName, action] = process.argv;
 
@@ -26,45 +27,9 @@ const PROD_PORTS = {
   'mail-agent': '3110'
 };
 
-function git(args) {
-  return execFileSync('git', args, {
-    cwd: process.cwd(),
-    encoding: 'utf8'
-  }).trim();
-}
-
-function findMainWorktree() {
-  const raw = git(['worktree', 'list', '--porcelain']);
-  const rows = raw.split(/\r?\n/);
-  const worktrees = [];
-  let current = null;
-
-  for (const row of rows) {
-    if (!row) {
-      if (current) worktrees.push(current);
-      current = null;
-      continue;
-    }
-    if (row.startsWith('worktree ')) {
-      if (current) worktrees.push(current);
-      current = { path: row.slice('worktree '.length), branch: '' };
-      continue;
-    }
-    if (row.startsWith('branch ') && current) {
-      current.branch = row.slice('branch '.length).replace(/^refs\/heads\//, '');
-    }
-  }
-
-  if (current) {
-    worktrees.push(current);
-  }
-
-  return worktrees.find((entry) => entry.branch === 'main')?.path ?? '';
-}
-
-const repoRoot = git(['rev-parse', '--show-toplevel']);
-const branch = git(['branch', '--show-current']);
-const mainWorktreePath = findMainWorktree();
+const repoRoot = getRepoRoot();
+const branch = getBranchName(repoRoot);
+const mainWorktreePath = findMainWorktree(repoRoot);
 const isProtectedMainWorktree = repoRoot === mainWorktreePath;
 const allowProtected = process.env.SCPPER_ALLOW_PROTECTED === '1' || process.env.SCPPER_ALLOW_MAIN === '1';
 const isProtectedBranch = branch === 'main' || branch === 'master';
@@ -184,6 +149,11 @@ const servicePath = config.cwd;
 const servicePathBin = path.join(servicePath, 'node_modules', '.bin');
 const rootBin = path.join(repoRoot, 'node_modules', '.bin');
 const selectedEnv = useProdDefaults ? config.prodEnv : config.devEnv;
+const { cleanup } = ensureSharedNodeModules({
+  repoRoot,
+  mainWorktreePath,
+  services: [serviceName]
+});
 
 const child = spawn(command, {
   cwd: servicePath,
@@ -196,7 +166,30 @@ const child = spawn(command, {
   stdio: 'inherit'
 });
 
+let cleanedUp = false;
+
+function runCleanup() {
+  if (cleanedUp) {
+    return;
+  }
+  cleanedUp = true;
+  cleanup();
+}
+
+for (const eventName of ['SIGINT', 'SIGTERM']) {
+  process.on(eventName, () => {
+    child.kill(eventName);
+  });
+}
+
+child.on('error', (err) => {
+  runCleanup();
+  console.error(err);
+  process.exit(1);
+});
+
 child.on('exit', (code, signal) => {
+  runCleanup();
   if (signal) {
     process.kill(process.pid, signal);
     return;
