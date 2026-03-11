@@ -10,14 +10,34 @@ import { initPools } from './web/utils/dbPool.js';
 export async function createServer() {
   const app = express();
   app.disable('x-powered-by');
+  // Trust the first proxy (Nginx) so req.ip maps to real client IP.
+  app.set('trust proxy', 1);
   app.use(helmet());
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
-  app.use(pinoHttp());
+  app.use(pinoHttp({
+    autoLogging: {
+      ignore: (req) => req.url === '/healthz'
+    },
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'req.headers["x-internal-key"]',
+        'res.headers["set-cookie"]'
+      ],
+      censor: '[REDACTED]'
+    }
+  }));
 
   // Proxy avatar to avatar-agent early to avoid interference
   // Important: include '/avatar' in target so that Express mount path truncation is compensated.
-  app.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200/avatar', changeOrigin: false, xfwd: true }));
+  const avatarAgentBase = (process.env.AVATAR_AGENT_BASE_URL || 'http://127.0.0.1:3200').replace(/\/$/, '');
+  app.use('/avatar', createProxyMiddleware({
+    target: `${avatarAgentBase}/avatar`,
+    changeOrigin: false,
+    xfwd: true
+  }));
 
   const allowDblessTestMode = process.env.NODE_ENV === 'test' && !process.env.DATABASE_URL;
   if (allowDblessTestMode) {
@@ -54,12 +74,13 @@ export async function createServer() {
 
   app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-  // Basic error handler (JSON) for easier debugging
+  // Global error handler – never leak internal details in production
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: any, _req: any, res: any, _next: any) => {
     // eslint-disable-next-line no-console
     console.error(err);
-    const message = err?.message || 'Internal Server Error';
+    const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
+    const message = isDev ? (err?.message || 'Internal Server Error') : 'Internal Server Error';
     res.status(500).json({ error: message });
   });
 

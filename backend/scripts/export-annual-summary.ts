@@ -16,8 +16,7 @@ import path from 'path';
 import {
   generateUserFirstsData as generateUserFirstsFromAnalysis,
   METRIC_TEMPLATES as IMPORTED_METRIC_TEMPLATES,
-  type ScoredLeader,
-  type TagLeader
+  type ScoredLeader
 } from './user-firsts-analysis.ts';
 
 const DEFAULT_YEAR = 2025;
@@ -1030,15 +1029,18 @@ function yearRange(year: number) {
   };
 }
 
-async function runInBatches<T>(tasks: Array<() => Promise<T>>, batchSize: number): Promise<T[]> {
-  const results: T[] = [];
+async function runInBatches<const T extends readonly unknown[]>(
+  tasks: { [K in keyof T]: () => Promise<T[K]> },
+  batchSize: number
+): Promise<T> {
+  const results: unknown[] = [];
   const size = Math.max(1, Math.floor(batchSize));
   for (let i = 0; i < tasks.length; i += size) {
     const batch = tasks.slice(i, i + size).map(task => task());
     const batchResults = await Promise.all(batch);
     results.push(...batchResults);
   }
-  return results;
+  return results as unknown as T;
 }
 
 // ============ Site Statistics ============
@@ -1195,14 +1197,7 @@ async function getSiteOverview(year: number) {
       GROUP BY tag
       ORDER BY count DESC
     `
-  ], Math.min(EXPORT_CONCURRENCY, 3)) as [
-    { total: bigint; originals: bigint; translations: bigint }[],
-    { total: bigint }[],
-    { total: bigint; newThisYear: bigint; activeThisYear: bigint; authors: bigint; translators: bigint; voters: bigint }[],
-    { total: bigint; up: bigint; down: bigint }[],
-    { totalOriginal: bigint; totalTranslation: bigint }[],
-    { tag: string; count: bigint }[]
-  ];
+  ], Math.min(EXPORT_CONCURRENCY, 3));
 
   const byCategory: Record<string, number> = {};
   const categoryKeyMap: Record<string, string> = {
@@ -4009,17 +4004,7 @@ async function getCategoryDetails(year: number) {
         ORDER BY count DESC
         LIMIT 10
       `
-    ], CATEGORY_QUERY_CONCURRENCY) as [
-      { month: Date; originals: bigint; translations: bigint; totalRating: bigint }[],
-      { totalPages: bigint; originals: bigint; translations: bigint; totalWords: bigint; avgRating: number; avgWordCount: number }[],
-      { wikidotId: number; title: string; currentUrl: string; rating: number; authorDisplayName: string; wordCount: number; isOriginal: boolean }[],
-      { wikidotId: number; title: string; currentUrl: string; rating: number; authorDisplayName: string; wordCount: number; isOriginal: boolean }[],
-      { wikidotId: number; title: string; currentUrl: string; rating: number; authorDisplayName: string; wordCount: number; isOriginal: boolean }[],
-      { userId: number; wikidotId: number | null; displayName: string; pageCount: bigint; totalRating: bigint }[],
-      { userId: number; wikidotId: number | null; displayName: string; pageCount: bigint; totalRating: bigint }[],
-      { userId: number; wikidotId: number | null; displayName: string; pageCount: bigint; totalRating: bigint }[],
-      { tag: string; count: bigint; avgRating: number }[]
-    ];
+    ], CATEGORY_QUERY_CONCURRENCY);
 
     const stats = overallStats[0];
     const totalPages = Number(stats.totalPages);

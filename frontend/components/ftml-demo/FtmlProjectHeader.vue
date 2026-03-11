@@ -14,12 +14,12 @@
     </div>
 
     <div class="header-center">
-      <select :value="uiLayout" @change="$emit('update:uiLayout', ($event.target as HTMLSelectElement).value)" class="mini-select" title="视图">
+      <select :value="uiLayout" @change="$emit('update:uiLayout', ($event.target as HTMLSelectElement).value as UiLayout)" class="mini-select" title="视图">
         <option value="both">双栏</option>
         <option value="editor-only">编辑</option>
         <option value="preview-only">预览</option>
       </select>
-      <select :value="previewDevice" @change="$emit('update:previewDevice', ($event.target as HTMLSelectElement).value)" class="mini-select" title="预览宽度">
+      <select :value="previewDevice" @change="$emit('update:previewDevice', ($event.target as HTMLSelectElement).value as PreviewDevice)" class="mini-select" title="预览宽度">
         <option value="desktop">桌面</option>
         <option value="tablet">平板</option>
         <option value="mobile">手机</option>

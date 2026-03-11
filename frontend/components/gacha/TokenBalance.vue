@@ -1,5 +1,5 @@
 <template>
-  <div class="token-balance-panel relative flex min-h-[9.5rem] flex-col overflow-hidden rounded-[24px] border border-white/45 bg-white/78 p-4 shadow-[0_24px_70px_-40px_rgba(10,37,64,0.9)] backdrop-blur-xl dark:border-neutral-700/65 dark:bg-neutral-950/62 sm:p-5">
+  <div class="token-balance-panel relative flex min-h-[9.5rem] flex-col overflow-hidden rounded-[24px] border border-white/45 bg-white/78 p-4 shadow-lg backdrop-blur-xl dark:border-neutral-700/65 dark:bg-neutral-950/62 sm:p-5">
     <div class="token-balance-panel__glow token-balance-panel__glow--a" />
     <div class="token-balance-panel__glow token-balance-panel__glow--b" />
 
@@ -234,7 +234,7 @@ html.dark .token-balance-panel::before {
   top: -3rem;
   width: 13rem;
   height: 13rem;
-  background: rgb(var(--accent) / 0.32);
+  background: var(--g-accent-border);
 }
 
 .token-balance-panel__glow--b {

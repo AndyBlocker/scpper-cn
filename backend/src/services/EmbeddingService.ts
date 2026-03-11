@@ -82,6 +82,8 @@ export class EmbeddingService extends EventEmitter {
   }
 
   private async initializePythonService(): Promise<void> {
+    const pythonPath = this.config.pythonPath ?? 'python3';
+
     // Create Python script for embedding generation
     const pythonScript = `
 import sys
@@ -139,7 +141,7 @@ while True:
     await fs.writeFile(scriptPath, pythonScript);
 
     // Start Python process
-    this.pythonProcess = spawn(this.config.pythonPath, [scriptPath], {
+    this.pythonProcess = spawn(pythonPath, [scriptPath], {
       stdio: ['pipe', 'pipe', 'pipe']
     });
 

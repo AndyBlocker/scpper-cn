@@ -133,7 +133,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[linear-gradient(rgba(var(--accent),0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(var(--accent),0.03)_1px,transparent_1px)] bg-[length:50px_50px]" />
+      <div class="w-full h-full bg-[linear-gradient(var(--g-accent-hover)_1px,transparent_1px),linear-gradient(90deg,var(--g-accent-hover)_1px,transparent_1px)] bg-[length:50px_50px]" />
     </div>
   </section>
 </template>

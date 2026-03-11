@@ -123,13 +123,14 @@ export function usePageAuthors() {
   async function ensureAuthors(ids: Array<number | null | undefined>) {
     hydrateCacheFromStorage()
     const now = Date.now()
-    const targets = Array.from(
-      new Set(
-        ids
-          .map((id) => (Number.isFinite(Number(id)) ? Number(id) : null))
-          .filter((id): id is number => Number.isFinite(id) && id > 0)
-      )
-    ).filter((id) => (
+    const normalizedIds: number[] = []
+    for (const rawId of ids) {
+      const id = Number(rawId)
+      if (Number.isFinite(id) && id > 0) {
+        normalizedIds.push(id)
+      }
+    }
+    const targets = Array.from(new Set(normalizedIds)).filter((id) => (
       cache.value[id] == null
       && pending.value[id] !== true
       && Number(failUntil.value[id] ?? 0) <= now

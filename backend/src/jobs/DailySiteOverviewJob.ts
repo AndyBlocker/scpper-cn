@@ -285,7 +285,7 @@ ON CONFLICT (date) DO UPDATE SET
       const rows = await this.prisma.$queryRawUnsafe<any[]>(sql, startDate, endDate);
       Logger.info(`[DryRun] SiteOverviewDaily ${startDate}..${endDate} rows=${rows.length}`);
       if (rows.length) {
-        Logger.info(rows.slice(0, Math.min(5, rows.length)));
+        Logger.info(JSON.stringify(rows.slice(0, Math.min(5, rows.length))));
       }
     } else {
       await this.prisma.$executeRawUnsafe(sql, startDate, endDate);

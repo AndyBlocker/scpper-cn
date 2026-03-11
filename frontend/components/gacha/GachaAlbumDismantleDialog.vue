@@ -39,7 +39,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  confirm: [rows: Array<{ cardId: string; count: number; affixVisualStyle: string; affixSignature: string }>]
+  confirm: [rows: Array<{ cardId: string; count: number; affixVisualStyle: string; affixSignature: string }>, keepAtLeast: number]
 }>()
 
 // ─── 筛选状态 ────────────────────────────────────────────
@@ -62,6 +62,7 @@ const pageAuthors = usePageAuthors()
 const RENDER_LIMIT = 40
 const RENDER_BATCH = 20
 const showAll = ref(false)
+const confirmPending = ref(false)
 
 // ─── 渐进式渲染 ─────────────────────────────────────────
 
@@ -72,7 +73,9 @@ function startProgressiveRender() {
   renderBudget.value = 0
   cancelProgressiveRender()
   function step() {
-    const target = showAll.value ? Infinity : RENDER_LIMIT
+    const target = showAll.value
+      ? filteredCandidates.value.length
+      : Math.min(filteredCandidates.value.length, RENDER_LIMIT)
     if (renderBudget.value < target) {
       renderBudget.value = Math.min(renderBudget.value + RENDER_BATCH, target)
       renderRafId = requestAnimationFrame(step)
@@ -274,12 +277,16 @@ function selectAllFiltered() {
 }
 
 function handleConfirm() {
+  if (confirmPending.value || props.dismantling || props.loading || !indexReady.value || selectedRows.value.length <= 0) {
+    return
+  }
+  confirmPending.value = true
   emit('confirm', selectedRows.value.map((r) => ({
     cardId: r.item.cardId,
     count: r.dismantleCount,
     affixVisualStyle: r.item.affixVisualStyle || 'NONE',
     affixSignature: r.item.affixSignature || resolveAffixSignatureFromSource(r.item)
-  })))
+  })), Math.max(0, Math.floor(Number(keepAtLeast.value || 0))))
 }
 
 function dismantleCountFor(item: AlbumPageVariant) {
@@ -295,6 +302,7 @@ function dismantleRewardFor(item: AlbumPageVariant) {
 // 打开时重置
 watch(() => props.open, (val) => {
   if (val) {
+    confirmPending.value = false
     resetFilters()
     clearSelection()
     showAll.value = false
@@ -305,8 +313,15 @@ watch(() => props.open, (val) => {
       void buildIndexAsync(props.candidates)
     }
   } else {
+    confirmPending.value = false
     cancelProgressiveRender()
     abortIndexBuild()
+  }
+})
+
+watch(() => props.dismantling, (dismantling) => {
+  if (!dismantling) {
+    confirmPending.value = false
   }
 })
 
@@ -323,10 +338,14 @@ watch(() => props.candidates, (items) => {
     void buildIndexAsync(items)
   }
 })
+
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
 </script>
 
 <template>
-  <UiDialogRoot :open="open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="max-w-5xl">
@@ -436,7 +455,7 @@ watch(() => props.candidates, (items) => {
           </div>
 
           <!-- 候选列表 -->
-          <div class="rounded-2xl border border-neutral-200/70 bg-neutral-50/70 p-2 dark:border-neutral-800/70 dark:bg-neutral-900/60">
+          <div class="rounded-lg border border-neutral-200/70 bg-neutral-50/70 p-2 dark:border-neutral-800/70 dark:bg-neutral-900/60">
             <div v-if="loading || !indexReady" class="px-3 py-8 text-center text-sm text-neutral-500 dark:text-neutral-400">
               <template v-if="loading">正在加载候选变体...</template>
               <template v-else>正在准备索引 ({{ indexProgress }}/{{ candidates.length }})...</template>
@@ -450,6 +469,7 @@ watch(() => props.candidates, (items) => {
                 :image-url="item.imageUrl"
                 :count="item.count"
                 :locked="(item.lockedCount ?? 0) >= item.count"
+                :retired="item.isRetired"
                 :affix-visual-style="item.affixVisualStyle"
                 :affix-signature="item.affixSignature"
                 :affix-styles="item.affixStyles"

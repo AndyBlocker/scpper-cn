@@ -5,17 +5,17 @@ import type {
 } from '~/types/gacha'
 
 export function useGachaTicketsApi(core: GachaCoreContext) {
-  const { $bff, state, withCardVariant, normalizeCardTitle, createIdempotencyKey } = core
+  const { $bff, state, withCardVariant, normalizeCardTitle, createIdempotencyKey, captureWalletSeq, setWalletIfFresh } = core
 
   async function getTickets() {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ tickets: TicketBalance; wallet?: Wallet }>>('/gacha/tickets', {
         method: 'GET'
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -27,7 +27,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '加载票券失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载票券失败') }
     }
   }
@@ -35,6 +35,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
   async function useDrawTicket() {
     try {
       const idemKey = createIdempotencyKey('ticket-draw')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ tickets: TicketBalance; data?: DrawResult }>>('/gacha/tickets/draw/use', {
         method: 'POST',
         headers: {
@@ -46,8 +47,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
         const mappedItems = res.data?.items?.map(withCardVariant) ?? []
         const data = res.data ? { ...res.data, items: mappedItems } : null
         if (data?.wallet) {
-          state.value.wallet = data.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(data.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -60,7 +60,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '使用单抽券失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '使用单抽券失败') }
     }
   }
@@ -68,6 +68,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
   async function useDraw10Ticket() {
     try {
       const idemKey = createIdempotencyKey('ticket-draw10')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ tickets: TicketBalance; data?: DrawResult }>>('/gacha/tickets/draw10/use', {
         method: 'POST',
         headers: {
@@ -79,8 +80,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
         const mappedItems = res.data?.items?.map(withCardVariant) ?? []
         const data = res.data ? { ...res.data, items: mappedItems } : null
         if (data?.wallet) {
-          state.value.wallet = data.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(data.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -93,7 +93,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '使用十连券失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '使用十连券失败') }
     }
   }
@@ -127,7 +127,7 @@ export function useGachaTicketsApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '使用改造券失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '使用改造券失败') }
     }
   }

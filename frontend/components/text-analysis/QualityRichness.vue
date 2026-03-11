@@ -14,9 +14,13 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { QualityRichnessPoint } from '~/types/text-analysis'
 
+const qualityRichnessEndpoint: string = '/api/text-analysis/quality-richness'
+
 const { data: items, pending } = useAsyncData<{ items: QualityRichnessPoint[]; total: number }>(
   'text-analysis-quality',
-  () => $fetch('/api/text-analysis/quality-richness?limit=500')
+  () => $fetch<{ items: QualityRichnessPoint[]; total: number }>(qualityRichnessEndpoint, {
+    params: { limit: 500 }
+  })
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)

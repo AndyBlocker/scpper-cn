@@ -1,9 +1,9 @@
 <template>
-  <UiDialogRoot :open="props.open" @update:open="(v) => { if (!v) emit('close') }">
+  <UiDialogRoot :open="props.open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay class="!z-[58] !bg-black/50 !backdrop-blur-sm" />
       <UiDialogContent
-        class="reforge-modal z-[61] mx-2 flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-white/40 bg-white/92 p-0 shadow-[0_42px_120px_-62px_rgba(15,23,42,0.95)] backdrop-blur-xl max-h-[calc(100dvh-2rem)] dark:border-neutral-700/70 dark:bg-neutral-950/88 sm:mx-0 sm:rounded-[26px]"
+        class="reforge-modal z-[61] mx-2 flex w-full max-w-md flex-col overflow-hidden rounded-lg border border-white/40 bg-white/92 p-0 shadow-lg backdrop-blur-xl max-h-[calc(100dvh-2rem)] dark:border-neutral-700/70 dark:bg-neutral-950/88 sm:mx-0 sm:rounded-[26px]"
       >
         <!-- Glow layers -->
         <div class="reforge-modal__glow reforge-modal__glow--a" />
@@ -49,6 +49,7 @@
                     :affix-signature="selectedCard.affixSignature"
                     :affix-styles="selectedCard.affixStyles"
                     :affix-style-counts="selectedCard.affixStyleCounts"
+                    :retired="selectedCard.isRetired"
                     variant="mini"
                   />
                 </template>
@@ -86,6 +87,7 @@
                       :wikidot-id="resultCardWikidotId"
                       :authors="resultCardAuthors"
                       :image-url="beforeCardImageUrl"
+                      :retired="resultCardIsRetired"
                       :affix-signature="result.before.affixSignature"
                       :affix-visual-style="result.before.affixVisualStyle"
                       :affix-label="result.before.affixLabel"
@@ -113,6 +115,7 @@
                       :wikidot-id="resultCardWikidotId"
                       :authors="resultCardAuthors"
                       :image-url="afterCardImageUrl"
+                      :retired="resultCardIsRetired"
                       :affix-signature="result.after.affixSignature"
                       :affix-visual-style="result.after.affixVisualStyle"
                       :affix-label="result.after.affixLabel"
@@ -148,8 +151,11 @@
             </UiButton>
           </template>
           <template v-else>
-            <UiButton class="flex-1" @click="emit('close')">
-              关闭
+            <UiButton variant="outline" class="flex-1" @click="emit('close')">
+              确认
+            </UiButton>
+            <UiButton class="flex-1" @click="emit('reforge-again')">
+              再来一次
             </UiButton>
           </template>
         </footer>
@@ -177,6 +183,7 @@ interface ReforgeCardOption {
   title: string
   rarity: Rarity
   imageUrl: string | null
+  isRetired?: boolean
   wikidotId?: number | null
   tags: string[]
   authors?: Array<{ name: string; wikidotId: number | null }> | null
@@ -201,6 +208,7 @@ const props = defineProps<{
     rarity: Rarity
     imageUrl: string | null
     tags: string[]
+    isRetired?: boolean
     wikidotId: number | null
     authors: Array<{ name: string; wikidotId: number | null }> | null
   } | null
@@ -210,12 +218,18 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'confirm'): void
+  (e: 'reforge-again'): void
 }>()
+
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
 
 // Result card visual data — use resultCardVisual if available, else fallback
 const beforeCardRarity = computed<Rarity>(() => props.resultCardVisual?.rarity ?? 'WHITE')
 const beforeCardTags = computed<string[]>(() => props.resultCardVisual?.tags ?? [])
 const beforeCardImageUrl = computed(() => props.resultCardVisual?.imageUrl || undefined)
+const resultCardIsRetired = computed(() => !!props.resultCardVisual?.isRetired)
 const resultCardWikidotId = computed(() => props.resultCardVisual?.wikidotId ?? null)
 const resultCardAuthors = computed(() => props.resultCardVisual?.authors ?? null)
 

@@ -45,8 +45,8 @@ const containerRef = ref<HTMLDivElement | null>(null)
 const chartRef = shallowRef<IChartApi | null>(null)
 const candleSeriesRef = shallowRef<ISeriesApi<'Candlestick'> | null>(null)
 const areaSeriesRef = shallowRef<ISeriesApi<'Area'> | null>(null)
-const markerApiRef = shallowRef<ISeriesMarkersPluginApi<UTCTimestamp> | null>(null)
-const areaMarkerApiRef = shallowRef<ISeriesMarkersPluginApi<UTCTimestamp> | null>(null)
+const markerApiRef = shallowRef<ISeriesMarkersPluginApi<Time> | null>(null)
+const areaMarkerApiRef = shallowRef<ISeriesMarkersPluginApi<Time> | null>(null)
 const resizeObserverRef = shallowRef<ResizeObserver | null>(null)
 const themeObserverRef = shallowRef<MutationObserver | null>(null)
 let lwcModule: LwcModule | null = null
@@ -227,29 +227,30 @@ function buildAreaData(): AreaData<UTCTimestamp>[] {
 }
 
 function buildMarkers(): SeriesMarker<UTCTimestamp>[] {
-  return (props.markers || [])
-    .map((item) => {
-      const time = parseUnixSeconds(item.ts)
-      if (time == null) return null
-      const isLong = item.side === 'LONG'
-      if (item.kind === 'OPEN') {
-        return {
-          time: asUtcTimestamp(time),
-          position: isLong ? 'belowBar' : 'aboveBar',
-          shape: isLong ? 'arrowUp' : 'arrowDown',
-          color: isLong ? '#16a34a' : '#e11d48',
-          text: isLong ? 'L' : 'S'
-        } satisfies SeriesMarker<UTCTimestamp>
-      }
-      return {
+  const markers: SeriesMarker<UTCTimestamp>[] = []
+  for (const item of props.markers || []) {
+    const time = parseUnixSeconds(item.ts)
+    if (time == null) continue
+    const isLong = item.side === 'LONG'
+    if (item.kind === 'OPEN') {
+      markers.push({
         time: asUtcTimestamp(time),
-        position: 'inBar',
-        shape: 'circle',
-        color: isLong ? '#059669' : '#be123c',
-        text: item.kind === 'SETTLE' ? 'C' : 'E'
-      } satisfies SeriesMarker<UTCTimestamp>
+        position: isLong ? 'belowBar' : 'aboveBar',
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        color: isLong ? '#16a34a' : '#e11d48',
+        text: isLong ? 'L' : 'S'
+      })
+      continue
+    }
+    markers.push({
+      time: asUtcTimestamp(time),
+      position: 'inBar',
+      shape: 'circle',
+      color: isLong ? '#059669' : '#be123c',
+      text: item.kind === 'SETTLE' ? 'C' : 'E'
     })
-    .filter((item): item is SeriesMarker<UTCTimestamp> => Boolean(item))
+  }
+  return markers
 }
 
 async function loadLwc() {

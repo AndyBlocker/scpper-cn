@@ -11,6 +11,7 @@ import type {
 import { normalizeTickets, emptyTickets, formatRewardSummary } from '~/utils/gachaFormatters'
 import { missionStatusRank } from '~/utils/gachaConstants'
 import type { ClaimToastItem } from '~/components/gacha/GachaClaimToast.vue'
+import { normalizeError } from '~/composables/api/gachaCore'
 
 /**
  * missions 页面的状态和逻辑。
@@ -130,8 +131,8 @@ export function useGachaMissions(page: GachaPageContext) {
         return
       }
       tickets.value = normalizeTickets(res.tickets)
-    } catch (error: any) {
-      emitError(error?.message || '加载票券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '加载票券失败'))
     } finally {
       ticketsLoading.value = false
     }
@@ -150,8 +151,8 @@ export function useGachaMissions(page: GachaPageContext) {
         return
       }
       missions.value = res.data ?? []
-    } catch (error: any) {
-      emitError(error?.message || '加载任务失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '加载任务失败'))
     } finally {
       missionLoading.value = false
     }
@@ -170,8 +171,8 @@ export function useGachaMissions(page: GachaPageContext) {
         return
       }
       achievements.value = res.data ?? []
-    } catch (error: any) {
-      emitError(error?.message || '加载成就失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '加载成就失败'))
     } finally {
       achievementLoading.value = false
     }
@@ -207,8 +208,8 @@ export function useGachaMissions(page: GachaPageContext) {
         handleWalletUpdated(res.data.wallet)
       }
       await Promise.allSettled([refreshMissionsPanel(), refreshAchievementsPanel()])
-    } catch (error: any) {
-      emitError(error?.message || '使用票券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '使用票券失败'))
     } finally {
       ticketAction.value = null
     }
@@ -229,8 +230,8 @@ export function useGachaMissions(page: GachaPageContext) {
       if (res.result?.cardId) {
         reforgeCardId.value = res.result.cardId
       }
-    } catch (error: any) {
-      emitError(error?.message || '使用改造券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '使用改造券失败'))
     } finally {
       ticketAction.value = null
     }
@@ -251,8 +252,8 @@ export function useGachaMissions(page: GachaPageContext) {
       const matched = missions.value.find(m => m.missionKey === missionKey)
       if (matched) pushClaimToast('mission', matched.title, matched.reward)
       await refreshMissionsPanel()
-    } catch (error: any) {
-      emitError(error?.message || '领取任务奖励失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '领取任务奖励失败'))
     } finally {
       missionClaiming.value = null
     }
@@ -272,8 +273,8 @@ export function useGachaMissions(page: GachaPageContext) {
       const count = res.claimed ?? missionClaimableCount.value
       if (count > 0) pushBatchClaimToast('mission', count)
       await refreshMissionsPanel()
-    } catch (error: any) {
-      emitError(error?.message || '领取任务奖励失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '领取任务奖励失败'))
     } finally {
       missionClaiming.value = null
     }
@@ -294,8 +295,8 @@ export function useGachaMissions(page: GachaPageContext) {
       const matched = achievements.value.find(a => a.achievementKey === achievementKey)
       if (matched) pushClaimToast('achievement', matched.title, matched.reward)
       await refreshAchievementsPanel()
-    } catch (error: any) {
-      emitError(error?.message || '领取成就奖励失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '领取成就奖励失败'))
     } finally {
       achievementClaiming.value = null
     }
@@ -315,8 +316,8 @@ export function useGachaMissions(page: GachaPageContext) {
       const count = res.claimed ?? achievementClaimableCount.value
       if (count > 0) pushBatchClaimToast('achievement', count)
       await refreshAchievementsPanel()
-    } catch (error: any) {
-      emitError(error?.message || '领取成就奖励失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '领取成就奖励失败'))
     } finally {
       achievementClaiming.value = null
     }

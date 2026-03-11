@@ -414,7 +414,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="rounded-2xl border border-cyan-500/20 bg-neutral-900 p-5 text-white shadow-xl">
+        <div class="rounded-lg border border-cyan-500/20 bg-neutral-900 p-5 text-white shadow-xl">
           <div class="flex items-center justify-between text-[10px] uppercase tracking-widest text-cyan-200/70">
             <span>Neural Uplink</span>
             <span>Core</span>
@@ -504,7 +504,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="rounded-3xl border-b-8 border-r-8 border-[#c5c5c0] bg-[#e5e5e0] p-5 text-neutral-700 shadow-xl">
+        <div class="rounded-lg border-b-8 border-r-8 border-[#c5c5c0] bg-[#e5e5e0] p-5 text-neutral-700 shadow-xl">
           <div class="flex items-center justify-between text-[10px] uppercase tracking-widest text-neutral-500">
             <span>Cassette Deck</span>
             <span>Core</span>
@@ -601,7 +601,7 @@ onUnmounted(() => {
           <p class="text-sm text-neutral-500 dark:text-neutral-400">可作为活动专题或特殊页面风格。</p>
         </div>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div class="paper-scope rounded-3xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-6 font-serif text-[rgb(var(--fg))] shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+          <div class="paper-scope rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-6 font-serif text-[rgb(var(--fg))] shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
             <div class="flex items-center justify-between text-[10px] uppercase tracking-[0.25em] text-[rgb(var(--muted))]">
               <span>The Archives</span>
               <span>Extra</span>
@@ -645,7 +645,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="rounded-2xl border border-white/10 bg-slate-900/60 p-5 text-slate-100 backdrop-blur-xl shadow-[0_20px_60px_-40px_rgba(59,130,246,0.5)]">
+          <div class="rounded-lg border border-white/10 bg-slate-900/60 p-5 text-slate-100 backdrop-blur-xl shadow-[0_20px_60px_-40px_rgba(59,130,246,0.5)]">
             <div class="flex items-center justify-between text-[10px] uppercase tracking-widest text-slate-300">
               <span>Reality Anchor</span>
               <span>Extra</span>
@@ -689,7 +689,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="rounded-2xl border border-slate-800 bg-slate-950 p-5 text-slate-100 shadow-xl">
+          <div class="rounded-lg border border-slate-800 bg-slate-950 p-5 text-slate-100 shadow-xl">
             <div class="flex items-center justify-between text-[10px] uppercase tracking-widest text-slate-400">
               <span>Overwatch Command</span>
               <span>Extra</span>
@@ -736,7 +736,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section class="paper-scope max-w-7xl mx-auto pb-24 space-y-12 rounded-3xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--bg))] p-8 md:p-12 text-[rgb(var(--fg))] shadow-[0_24px_60px_-40px_rgba(0,0,0,0.35)]">
+    <section class="paper-scope max-w-7xl mx-auto pb-24 space-y-12 rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--bg))] p-8 md:p-12 text-[rgb(var(--fg))] shadow-[0_24px_60px_-40px_rgba(0,0,0,0.35)]">
       <div>
         <h2 class="text-2xl font-semibold font-serif tracking-tight leading-tight text-[rgb(var(--fg))]">SCPper Core UI Blocks</h2>
         <p class="text-[rgb(var(--muted))] max-w-3xl leading-relaxed">
@@ -745,7 +745,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Typography & Content</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">文本</span>
@@ -814,7 +814,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Buttons & Badges</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">交互</span>
@@ -869,7 +869,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Forms</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">表单</span>
@@ -922,7 +922,7 @@ onUnmounted(() => {
           </form>
         </div>
 
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)] space-y-4">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)] space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Cards & Metrics</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">指标</span>
@@ -1009,7 +1009,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Content Blocks</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">内容</span>
@@ -1031,7 +1031,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Stats & Progress</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">状态</span>
@@ -1067,7 +1067,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Lists & Alerts</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">列表</span>
@@ -1094,7 +1094,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Tables & Pagination</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">数据</span>
@@ -1148,7 +1148,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Empty States</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">空状态</span>
@@ -1172,7 +1172,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+        <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
           <div class="flex items-center justify-between">
             <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Loading States</h3>
             <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">加载</span>
@@ -1203,7 +1203,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="rounded-2xl border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
+      <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-7 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.25)]">
         <div class="flex items-center justify-between">
           <h3 class="text-lg font-semibold font-serif text-[rgb(var(--fg))]">Navigation & Tabs</h3>
           <span class="text-[10px] uppercase tracking-widest text-[rgb(var(--muted))]">导航</span>

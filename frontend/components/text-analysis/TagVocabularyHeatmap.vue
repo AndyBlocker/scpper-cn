@@ -16,9 +16,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import type { TagVocabHeatmapData } from '~/types/text-analysis'
 
+const tagVocabularyHeatmapEndpoint: string = '/api/text-analysis/tag-vocabulary-heatmap'
+
 const { data: heatData, pending } = useAsyncData<TagVocabHeatmapData>(
   'text-analysis-tag-heatmap',
-  () => $fetch('/api/text-analysis/tag-vocabulary-heatmap')
+  () => $fetch<TagVocabHeatmapData>(tagVocabularyHeatmapEndpoint)
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)

@@ -53,65 +53,40 @@ function handleInput(event: Event) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  // Ctrl/Cmd + Enter to render
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault()
     emit('render')
     return
   }
-  // Ctrl/Cmd + S to save
+
   if (event.key === 's' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault()
     emit('save')
-    return
   }
 }
 
 function handleWrapperClick() {
-  console.log('[FtmlEditor] Wrapper clicked, cmEditor:', cmEditor ? 'exists' : 'null')
   if (cmEditor) {
     cmEditor.focus()
-    console.log('[FtmlEditor] Focus called on CodeMirror')
-  } else if (textareaRef.value) {
-    textareaRef.value.focus()
-    console.log('[FtmlEditor] Focus called on textarea')
+  } else {
+    textareaRef.value?.focus()
   }
 }
 
 // Initialize CodeMirror (client-side only)
 async function initCodeMirror() {
-  console.log('[FtmlEditor] initCodeMirror called')
-
-  if (typeof window === 'undefined') {
-    console.log('[FtmlEditor] Not in browser, skipping')
-    return
-  }
-  if (cmEditor) {
-    console.log('[FtmlEditor] Already initialized, skipping')
-    return
-  }
+  if (typeof window === 'undefined' || cmEditor) return
 
   // Wait for next tick to ensure textarea is mounted
   await nextTick()
 
-  console.log('[FtmlEditor] After nextTick, textareaRef:', textareaRef.value ? 'exists' : 'null')
-  console.log('[FtmlEditor] editorWrapRef:', editorWrapRef.value ? 'exists' : 'null')
-
-  if (editorWrapRef.value) {
-    const rect = editorWrapRef.value.getBoundingClientRect()
-    console.log('[FtmlEditor] Container dimensions:', rect.width, 'x', rect.height)
-  }
-
   if (!textareaRef.value) {
-    console.warn('[FtmlEditor] textarea ref is null, skipping CodeMirror init')
     return
   }
 
   try {
-    console.log('[FtmlEditor] Importing CodeMirror...')
-    // CodeMirror 5 uses UMD, need to import differently
-    const CodeMirror = await import('codemirror').then(m => m.default || m)
-    console.log('[FtmlEditor] CodeMirror imported:', typeof CodeMirror)
+    // CodeMirror 5 uses UMD
+    const CodeMirror = await import('codemirror').then((m) => m.default || m)
 
     // Import modes and addons
     await import('codemirror/mode/gfm/gfm')
@@ -129,7 +104,6 @@ async function initCodeMirror() {
         token: (stream: any) => {
           // [[module]] or [[div]] or [[/div]] blocks
           if (stream.match(/\[\[\/?\w+/)) {
-            // Continue to match until ]]
             while (!stream.eol()) {
               if (stream.match(']]')) break
               stream.next()
@@ -193,19 +167,13 @@ async function initCodeMirror() {
 
           stream.next()
           return null
-        }
+        },
       })
     })
 
     await nextTick()
+    if (!textareaRef.value) return
 
-    // Re-check after async operations - the ref might have become null
-    if (!textareaRef.value) {
-      console.warn('[FtmlEditor] textarea ref became null after async imports')
-      return
-    }
-
-    console.log('[FtmlEditor] Creating CodeMirror instance...')
     cmEditor = CodeMirror.fromTextArea(textareaRef.value, {
       lineNumbers: true,
       lineWrapping: true,
@@ -217,11 +185,9 @@ async function initCodeMirror() {
       autoCloseBrackets: true,
       styleActiveLine: true,
     })
-    console.log('[FtmlEditor] CodeMirror instance created')
 
     cmEditor.setValue(props.modelValue)
     cmInitialized.value = true
-    console.log('[FtmlEditor] cmInitialized set to true')
 
     // Refresh editor after a short delay to apply CSS fixes
     setTimeout(() => cmEditor?.refresh(), 100)
@@ -244,13 +210,12 @@ async function initCodeMirror() {
       }
     })
 
-    // Focus the editor
     cmEditor.focus()
-    console.log('[FtmlEditor] Initialization complete, editor focused')
   } catch (e) {
     console.error('[FtmlEditor] CodeMirror initialization failed:', e)
     cmInitialized.value = false
     cmEditor = null
+
     // Ensure textarea is visible and focusable
     if (textareaRef.value) {
       textareaRef.value.style.position = ''
@@ -274,13 +239,14 @@ watch(
 
 onMounted(async () => {
   await initCodeMirror()
-  // If first attempt failed but textarea exists, try again after a short delay
+
+  // Retry once after mount transitions complete.
   if (!cmEditor && textareaRef.value) {
     setTimeout(() => {
       if (!cmEditor && textareaRef.value) {
         initCodeMirror()
       }
-    }, 100)
+    }, 120)
   }
 })
 

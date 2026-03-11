@@ -26,14 +26,14 @@
             >{{ viewerVoteBadge.label }}</span>
             <span
               v-if="trackingModule"
-              class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[rgba(var(--accent),0.45)] text-[rgb(var(--accent))] bg-[rgba(var(--accent),0.12)]"
+              class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[var(--g-accent-border)] text-[var(--g-accent)] bg-[var(--g-accent-soft)]"
               title="包含 scpper-tracking-module"
             >
               追踪
             </span>
           </div>
         </div>
-        
+
       </div>
 
       <!-- sm header -->
@@ -50,7 +50,7 @@
             >{{ viewerVoteBadge.label }}</span>
             <span
               v-if="trackingModule"
-              class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[rgba(var(--accent),0.45)] text-[rgb(var(--accent))] bg-[rgba(var(--accent),0.12)]"
+              class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[var(--g-accent-border)] text-[var(--g-accent)] bg-[var(--g-accent-soft)]"
               title="包含 scpper-tracking-module"
             >
               追踪
@@ -102,7 +102,7 @@
         <!-- excerpt (max 3 lines) -> enforce uniform height across cards -->
         <div>
           <div class="h-[48px] overflow-hidden flex items-center">
-            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 italic border-l border-[rgb(var(--accent)_/_0.3)] pl-2 clamp-3">
+            <p v-if="excerpt" class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 italic border-l border-[var(--g-accent-border)] pl-2 clamp-3">
               "{{ excerpt }}"
             </p>
           </div>
@@ -130,12 +130,12 @@
           <svg :width="'100%'" height="48" viewBox="0 0 300 48" preserveAspectRatio="none">
             <defs>
               <linearGradient :id="`gradient-${wikidotId || 'pg'}`" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" :style="{ stopColor: 'rgb(var(--accent))', stopOpacity: 0.28 }" />
-                <stop offset="100%" :style="{ stopColor: 'rgb(var(--accent))', stopOpacity: 0 }" />
+                <stop offset="0%" :style="{ stopColor: 'var(--g-accent)', stopOpacity: 0.28 }" />
+                <stop offset="100%" :style="{ stopColor: 'var(--g-accent)', stopOpacity: 0 }" />
               </linearGradient>
             </defs>
             <polyline :points="computedSparkPoints || ''" :fill="`url(#gradient-${wikidotId || 'pg'})`" stroke="none" />
-            <polyline :points="computedSparkLine || ''" fill="none" :stroke="'rgb(var(--accent))'" stroke-width="1.5" stroke-linecap="round" />
+            <polyline :points="computedSparkLine || ''" fill="none" :stroke="'var(--g-accent)'" stroke-width="1.5" stroke-linecap="round" />
           </svg>
         </div>
         <div v-else class="mt-1 h-12 rounded border border-[rgb(var(--panel-border)_/_0.35)] bg-[rgb(var(--panel)_/_0.5)] flex items-center justify-center">
@@ -159,13 +159,13 @@
               >{{ viewerVoteBadge.label }}</span>
               <span
                 v-if="trackingModule"
-                class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[rgba(var(--accent),0.45)] text-[rgb(var(--accent))] bg-[rgba(var(--accent),0.12)]"
+                class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border border-[var(--g-accent-border)] text-[var(--g-accent)] bg-[var(--g-accent-soft)]"
                 title="包含 scpper-tracking-module"
               >
                 追踪
               </span>
             </div>
-            
+
           </div>
           
           <div v-if="authorsVisible.length" class="flex items-center flex-wrap gap-1.5">
@@ -253,17 +253,23 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
     userWikidotId?: number | string | null
   }
 
+  type NormalizedAuthor = {
+    name: string
+    url?: string
+    wikidotId?: number | null
+  }
+
   interface PageLike {
     wikidotId?: number | string
     title?: string
     tags?: string[]
     authors?: string | AuthorEntry[]
-    createdDate?: string
+    createdDate?: string | null
     deletedAt?: string | null
-    excerpt?: string
+    excerpt?: string | null
     rating?: number
     voteCount?: number
-    commentCount?: number
+    commentCount?: number | null
     controversy?: number | string
     wilson95?: number
     sparkLine?: string | null
@@ -285,12 +291,12 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
     title?: string
     url?: string
     authors?: AuthorEntry[]
-    dateISO?: string
+    dateISO?: string | null
     tags?: string[]
-    excerpt?: string
+    excerpt?: string | null
     rating?: number
     voteCount?: number
-    comments?: number
+    comments?: number | null
     controversy?: number | string
     wilson95?: number
     sparkline?: number[]
@@ -358,7 +364,7 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
   const hasFewVotes = computed(() => Number.isFinite(voteCountVal.value) ? voteCountVal.value < 10 : false)
   
   const normalizeAuthorName = (raw: string) => raw.replace(/^anon:/i, '').trim()
-  const normalizeAuthorEntry = (entry: AuthorEntry | null | undefined) => {
+  const normalizeAuthorEntry = (entry: AuthorEntry | null | undefined): NormalizedAuthor | null => {
     if (!entry) return null
     if (typeof entry === 'string') {
       const name = normalizeAuthorName(entry)
@@ -374,18 +380,26 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
     const url = (typeof entry.url === 'string' && entry.url.trim())
       ? entry.url.trim()
       : (wikidotId ? `/user/${wikidotId}` : undefined)
-    return { name, url, wikidotId }
+    if (url && wikidotId != null) return { name, url, wikidotId }
+    if (url) return { name, url }
+    if (wikidotId != null) return { name, wikidotId }
+    return { name }
   }
-  const normalizeAuthorList = (entries: AuthorEntry[] | undefined | null) => {
+  const normalizeAuthorList = (entries: AuthorEntry[] | undefined | null): NormalizedAuthor[] => {
     if (!Array.isArray(entries)) return []
-    return entries.map(normalizeAuthorEntry).filter((author): author is { name: string; url?: string; wikidotId?: number | null } => !!author)
+    return entries
+      .map(normalizeAuthorEntry)
+      .filter((author): author is NormalizedAuthor => author !== null)
   }
-  const authorsList = computed<Array<{ name: string; url?: string; wikidotId?: number | null }>>(() => {
+  const authorsList = computed<NormalizedAuthor[]>(() => {
     if (Array.isArray(props.authors)) return normalizeAuthorList(props.authors)
     const s = props.p?.authors
     if (Array.isArray(s)) return normalizeAuthorList(s)
     if (typeof s === 'string' && s.trim()) {
-      return s.split(/[、,]/).map(x => normalizeAuthorEntry(x)).filter((author): author is { name: string; url?: string; wikidotId?: number | null } => !!author)
+      return s
+        .split(/[、,]/)
+        .map(x => normalizeAuthorEntry(x))
+        .filter((author): author is NormalizedAuthor => author !== null)
     }
     return []
   })
@@ -591,7 +605,7 @@ const controversyText = computed(() => {
   const baseClass = [
     'relative w-full max-w-full min-w-0 rounded-xl transition-all duration-200 overflow-hidden card-hover-bg backdrop-blur-md',
     'bg-[rgb(var(--panel)_/_0.94)] border border-[rgb(var(--panel-border)_/_0.45)]',
-    'shadow-[0_18px_46px_rgba(15,23,42,0.08)] dark:shadow-[0_24px_60px_rgba(0,0,0,0.42)]'
+    'shadow-sm dark:shadow-lg'
   ].join(' ')
 
   const hasPremiumQuality = computed(() => {
@@ -604,7 +618,7 @@ const controversyText = computed(() => {
     if (variant.value === 'lg') {
       return [
         baseClass,
-        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
+        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[var(--g-accent)]' : '',
         hoverImageUrl.value ? 'has-hover-bg' : '',
         (hoverImageUrl.value && isHovering.value) ? 'is-hovering' : '',
         hasPremiumQuality.value ? 'border-[#D4AF37] dark:border-[#D4AF37]' : '',
@@ -614,7 +628,7 @@ const controversyText = computed(() => {
     if (variant.value === 'md') {
       return [
         baseClass,
-        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
+        to.value ? 'hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 ring-[var(--g-accent)]' : '',
         hoverImageUrl.value ? 'has-hover-bg' : '',
         (hoverImageUrl.value && isHovering.value) ? 'is-hovering' : '',
         hasPremiumQuality.value ? 'border-[#D4AF37] dark:border-[#D4AF37]' : '',
@@ -623,7 +637,7 @@ const controversyText = computed(() => {
     }
     return [
       baseClass,
-      to.value ? 'hover:shadow-sm cursor-pointer focus:outline-none focus:ring-2 ring-[rgb(var(--accent))]' : '',
+      to.value ? 'hover:shadow-sm cursor-pointer focus:outline-none focus:ring-2 ring-[var(--g-accent)]' : '',
       hasPremiumQuality.value ? 'border-[#D4AF37] dark:border-[#D4AF37]' : '',
       'p-2.5 flex flex-col gap-1'
     ].join(' ')
@@ -678,7 +692,7 @@ const controversyText = computed(() => {
   color: inherit;
   text-decoration: none;
 }
-.tag-link:hover{ color: rgb(var(--accent)); text-decoration: underline; }
+.tag-link:hover{ color: var(--g-accent); text-decoration: underline; }
 .tags-track{
   @apply relative flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-hidden;
 }
@@ -692,8 +706,8 @@ const controversyText = computed(() => {
   color: rgb(var(--muted) / 0.7);
   transition: color .2s ease;
 }
-.tag-fav:hover{ color: rgb(var(--accent)); }
-.tag-pill[data-active='true'] .tag-fav{ color: rgb(var(--accent)); }
+.tag-fav:hover{ color: var(--g-accent); }
+.tag-pill[data-active='true'] .tag-fav{ color: var(--g-accent); }
 
 /* Hover background image only near the header; extremely subtle */
 .card-hover-bg::before {

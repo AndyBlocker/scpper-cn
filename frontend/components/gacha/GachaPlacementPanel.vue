@@ -166,7 +166,7 @@ const groupedComboBonuses = computed<PlacementComboDisplayBonus[]>(() => {
 
 <template>
   <section class="surface-card placement-lab p-3 sm:p-4">
-    <header class="placement-hero rounded-2xl border border-neutral-200/75 bg-gradient-to-br from-cyan-50 via-white to-emerald-50 p-4 dark:border-neutral-700/70 dark:from-cyan-500/10 dark:via-neutral-900/75 dark:to-emerald-500/10">
+    <header class="placement-hero rounded-lg border border-neutral-200/75 bg-gradient-to-br from-cyan-50 via-white to-emerald-50 p-4 dark:border-neutral-700/70 dark:from-cyan-500/10 dark:via-neutral-900/75 dark:to-emerald-500/10">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="space-y-1.5">
           <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-700 dark:text-cyan-200">Idle Engine</p>
@@ -236,7 +236,7 @@ const groupedComboBonuses = computed<PlacementComboDisplayBonus[]>(() => {
     </header>
 
     <div v-if="placement" class="mt-4 space-y-4">
-      <div v-if="placement.comboBonuses?.length" class="rounded-2xl border border-amber-200/70 bg-amber-50/80 p-3 text-xs text-amber-800 dark:border-amber-500/35 dark:bg-amber-500/12 dark:text-amber-100">
+      <div v-if="placement.comboBonuses?.length" class="rounded-lg border border-amber-200/70 bg-amber-50/80 p-3 text-xs text-amber-800 dark:border-amber-500/35 dark:bg-amber-500/12 dark:text-amber-100">
         <p class="font-semibold">已触发挂机组合</p>
         <p v-if="hasCappedComboRules" class="mt-1 text-[11px] text-amber-700/90 dark:text-amber-100/85">
           同作者/同标签规则：额外组合按强度递减，同类型总加成上限为 +25%。
@@ -273,6 +273,7 @@ const groupedComboBonuses = computed<PlacementComboDisplayBonus[]>(() => {
               :image-url="colorlessAddon.card.imageUrl || undefined"
               :wikidot-id="colorlessAddon.card.wikidotId"
               :locked="colorlessAddon.card.isLocked"
+              :retired="colorlessAddon.card.isRetired"
               variant="mini"
               :hide-footer="true"
               :affix-visual-style="colorlessAddon.card.affixVisualStyle"
@@ -334,6 +335,7 @@ const groupedComboBonuses = computed<PlacementComboDisplayBonus[]>(() => {
               :image-url="slot.card.imageUrl || undefined"
               :wikidot-id="slot.card.wikidotId"
               :locked="slot.card.isLocked"
+              :retired="slot.card.isRetired"
               variant="mini"
               :hide-footer="true"
               :affix-visual-style="slot.card.affixVisualStyle"
@@ -373,7 +375,7 @@ const groupedComboBonuses = computed<PlacementComboDisplayBonus[]>(() => {
       </div>
     </div>
 
-    <p v-else class="mt-4 rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
+    <p v-else class="mt-4 rounded-lg border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
       正在加载放置信息...
     </p>
   </section>

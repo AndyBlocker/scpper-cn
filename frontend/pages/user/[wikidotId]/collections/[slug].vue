@@ -1,7 +1,7 @@
 <template>
   <div class="mx-auto max-w-5xl space-y-8 py-10">
     <div class="flex items-center gap-3 text-sm text-neutral-500 dark:text-neutral-400">
-      <NuxtLink :to="`/user/${wikidotId}`" class="inline-flex items-center gap-1 hover:text-[rgb(var(--accent))]">
+      <NuxtLink :to="`/user/${wikidotId}`" class="inline-flex items-center gap-1 hover:text-[var(--g-accent)]">
         <LucideIcon name="ArrowLeft" class="h-4 w-4" />
         返回作者页
       </NuxtLink>
@@ -9,16 +9,16 @@
       <span>收藏夹</span>
     </div>
 
-    <div v-if="pending" class="rounded-3xl border border-neutral-200 bg-white/80 p-10 text-center text-sm text-neutral-500 shadow-lg dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
+    <div v-if="pending" class="rounded-lg border border-neutral-200 bg-white/80 p-10 text-center text-sm text-neutral-500 shadow-lg dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
       正在载入收藏夹...
     </div>
 
-    <div v-else-if="error" class="rounded-3xl border border-red-200 bg-red-50 p-10 text-center text-sm font-medium text-red-600 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300">
+    <div v-else-if="error" class="rounded-lg border border-red-200 bg-red-50 p-10 text-center text-sm font-medium text-red-600 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300">
       {{ errorMessage }}
     </div>
 
     <div v-else-if="detail" class="space-y-6">
-      <section class="relative overflow-hidden rounded-3xl border border-white/50 bg-white/90 shadow-[0_26px_70px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-neutral-950/75 dark:shadow-[0_32px_80px_rgba(0,0,0,0.6)]">
+      <section class="relative overflow-hidden rounded-lg border border-white/50 bg-white/90 shadow dark:border-white/10 dark:bg-neutral-950/75 dark:shadow-lg">
         <div class="absolute inset-0">
           <div
             v-if="detail.collection.coverImageUrl"
@@ -84,7 +84,7 @@
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">收藏条目</h2>
           <span class="text-xs text-neutral-500 dark:text-neutral-400">共 {{ detail.items.length }} 条</span>
         </div>
-        <div v-if="detail.items.length === 0" class="rounded-3xl border border-dashed border-neutral-300/80 bg-neutral-50/80 px-10 py-12 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300">
+        <div v-if="detail.items.length === 0" class="rounded-lg border border-dashed border-neutral-300/80 bg-neutral-50/80 px-10 py-12 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300">
           <LucideIcon name="Inbox" class="mx-auto mb-3 h-8 w-8 text-neutral-300 dark:text-neutral-600" />
           暂无公开条目。
         </div>
@@ -93,14 +93,14 @@
             v-for="(item, index) in detail.items"
             :key="item.id"
             :class="[
-              'group relative overflow-hidden rounded-2xl border p-5 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-[0_22px_50px_rgba(15,23,42,0.14)]',
+              'group relative overflow-hidden rounded-lg border p-5 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-sm',
               item.pinned
-                ? 'border-[rgba(var(--accent),0.45)] bg-[rgba(var(--accent),0.05)] dark:border-[rgba(var(--accent),0.45)] dark:bg-[rgba(var(--accent),0.16)]'
+                ? 'border-[rgba(var(--accent),0.45)] bg-[var(--g-accent-hover)] dark:border-[rgba(var(--accent),0.45)] dark:bg-[var(--g-accent-medium)]'
                 : 'border-neutral-200/80 bg-white/95 dark:border-neutral-800/70 dark:bg-neutral-900/80'
             ]"
           >
             <div class="absolute inset-0 pointer-events-none opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-              <div class="absolute inset-0 bg-gradient-to-br from-[rgba(var(--accent),0.12)] via-transparent to-transparent" />
+              <div class="absolute inset-0 bg-gradient-to-br from-[var(--g-accent-soft)] via-transparent to-transparent" />
             </div>
             <span
               v-if="item.pinned"
@@ -112,14 +112,14 @@
             <div class="relative z-10 flex flex-col gap-4">
               <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div class="flex items-start gap-4">
-                  <div class="hidden h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[rgba(var(--accent),0.35)] bg-[rgba(var(--accent),0.12)] text-sm font-semibold text-[rgb(var(--accent))] md:flex">
+                  <div class="hidden h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] text-sm font-semibold text-[var(--g-accent)] md:flex">
                     {{ index + 1 }}
                   </div>
                   <div class="min-w-0 space-y-2">
                     <NuxtLink
                       v-if="item.page.wikidotId"
                       :to="`/page/${item.page.wikidotId}`"
-                      class="text-lg font-semibold text-neutral-900 transition hover:text-[rgb(var(--accent))] dark:text-neutral-100"
+                      class="text-lg font-semibold text-neutral-900 transition hover:text-[var(--g-accent)] dark:text-neutral-100"
                     >
                       {{ item.page.title ?? `页面 #${item.page.wikidotId}` }}
                     </NuxtLink>
@@ -140,7 +140,7 @@
                       </span>
                       <span
                         v-if="item.pinned"
-                        class="inline-flex items-center gap-1 rounded-full bg-[rgba(var(--accent),0.12)] px-2 py-0.5 font-medium text-[rgb(var(--accent))]"
+                        class="inline-flex items-center gap-1 rounded-full bg-[var(--g-accent-soft)] px-2 py-0.5 font-medium text-[var(--g-accent)]"
                       >
                         <LucideIcon name="BookmarkCheck" class="h-3.5 w-3.5" />
                         已置顶
@@ -151,7 +151,7 @@
                 <NuxtLink
                   v-if="item.page.wikidotId"
                   :to="`/page/${item.page.wikidotId}`"
-                  class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.35)] bg-white/90 px-4 py-1.5 text-xs font-semibold text-[rgb(var(--accent))] shadow-sm transition hover:translate-x-0.5 hover:bg-white dark:border-[rgba(var(--accent),0.35)] dark:bg-neutral-900/80"
+                  class="inline-flex items-center gap-2 rounded-full border border-[var(--g-accent-border)] bg-white/90 px-4 py-1.5 text-xs font-semibold text-[var(--g-accent)] shadow-sm transition hover:translate-x-0.5 hover:bg-white dark:border-[var(--g-accent-border)] dark:bg-neutral-900/80"
                 >
                   <LucideIcon name="ArrowUpRight" class="h-3.5 w-3.5" />
                   前往页面
@@ -159,7 +159,7 @@
               </div>
               <blockquote
                 v-if="item.annotation"
-                class="relative rounded-2xl border border-neutral-200/80 bg-neutral-50/90 px-5 py-4 text-sm leading-relaxed text-neutral-700 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-200"
+                class="relative rounded-lg border border-neutral-200/80 bg-neutral-50/90 px-5 py-4 text-sm leading-relaxed text-neutral-700 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-200"
               >
                 <LucideIcon name="Quote" class="absolute left-4 top-4 h-4 w-4 text-neutral-300 dark:text-neutral-500" />
                 <p class="pl-6 whitespace-pre-wrap">
@@ -242,7 +242,7 @@ useHead(() => ({
 function formatDate(value: string | null) {
   if (!value) return '—'
   try {
-    return new Date(value).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
+    return new Date(value).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Shanghai' })
   } catch {
     return value.slice(0, 10)
   }

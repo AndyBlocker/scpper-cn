@@ -47,12 +47,15 @@
 
         <!-- Top badge row -->
         <div class="gacha-card__top">
-          <UiBadge
-            :variant="props.rarity"
-            :class="effectiveVariant === 'mini' ? 'gacha-card__badge--mini' : ''"
-          >
-            {{ rarityLabel(props.rarity) }}
-          </UiBadge>
+          <div class="gacha-card__top-left">
+            <UiBadge
+              :variant="props.rarity"
+              :class="effectiveVariant === 'mini' ? 'gacha-card__badge--mini' : ''"
+            >
+              {{ rarityLabel(props.rarity) }}
+            </UiBadge>
+            <div v-if="props.retired" class="gacha-card__retired-indicator">绝版</div>
+          </div>
           <UiTooltipProvider v-if="affix.isCoated.value" :delay-duration="180">
             <UiTooltip>
               <UiTooltipTrigger as-child>
@@ -66,7 +69,11 @@
         </div>
 
         <!-- Lock indicator -->
-        <div v-if="props.locked" class="gacha-card__lock-indicator">
+        <div
+          v-if="props.locked"
+          class="gacha-card__lock-indicator"
+          :class="{ 'gacha-card__lock-indicator--with-retired': props.retired }"
+        >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
         </div>
 
@@ -112,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { NuxtLink } from '#components'
 import { orderTags } from '~/composables/useTagOrder'
 import { usePageAuthors } from '~/composables/usePageAuthors'
@@ -144,6 +151,7 @@ const props = defineProps<{
   density?: 'default' | 'compact'
   hideFooter?: boolean
   locked?: boolean
+  retired?: boolean
 }>()
 
 type MajorType = 'SCP' | 'TALE' | 'GOIF' | 'ART' | 'WANDERERS' | 'OTHER'
@@ -166,7 +174,7 @@ const majorTypeMetaMap: Record<MajorType, { label: string; className: string }> 
   OTHER: { label: 'OTHER', className: 'gacha-card__major-type--other' }
 }
 
-const authorTagPrefix = /^(?:作者|author|authors|by|译者|translator|translators?)[\s:：_\-－\/\\|]+(.+)$/i
+const authorTagPrefix = /^(?:作者|author|authors|by|译者|translator|translators?)[\s:：_\-－/\\|]+(.+)$/i
 const authorTagPrefixCompact = /^(?:作者|author|authors|by|译者|translator|translators?)(.+)$/i
 const authorGenericKeys = new Set([
   'unknown',
@@ -188,7 +196,7 @@ function normalizeTagToken(raw: unknown) {
 }
 
 function compactTagToken(raw: string) {
-  return String(raw || '').toLowerCase().replace(/[\s_:\-\/\\：；，、|]+/g, '')
+  return String(raw || '').toLowerCase().replace(/[\s_:\-/\\：；，、|]+/g, '')
 }
 
 function normalizeAuthorLabel(raw: string) {
@@ -204,7 +212,7 @@ function normalizeAuthorKey(raw: string) {
     .trim()
     .toLowerCase()
     .replace(/^[#@]+/, '')
-    .replace(/[\s_:\-\/\\\.\u3000：；，、|]+/g, '')
+    .replace(/[\s_:\-/\\.\u3000：；，、|]+/g, '')
 }
 
 function hasTagAlias(
@@ -291,7 +299,8 @@ const visibleTags = computed(() => {
   return effectiveVariant.value === 'mini' ? base.slice(0, 1) : base.slice(0, 4)
 })
 
-const tagLookup = computed(() => {
+// --- Merged: tag lookup + major type (single computed instead of 4) ---
+const majorTypeMeta = computed(() => {
   const normalized = new Set<string>()
   const compact = new Set<string>()
   for (const raw of props.tags ?? []) {
@@ -300,33 +309,32 @@ const tagLookup = computed(() => {
     normalized.add(token)
     compact.add(compactTagToken(token))
   }
-  return { normalized, compact }
+  const lookup = { normalized, compact }
+  let type: MajorType = 'OTHER'
+  if (hasTagAlias(lookup, majorTypeAliasMap.SCP)) type = 'SCP'
+  else if (hasTagAlias(lookup, majorTypeAliasMap.TALE)) type = 'TALE'
+  else if (hasTagAlias(lookup, majorTypeAliasMap.GOIF)) type = 'GOIF'
+  else if (hasTagAlias(lookup, majorTypeAliasMap.ART)) type = 'ART'
+  else if (hasTagAlias(lookup, majorTypeAliasMap.WANDERERS)) type = 'WANDERERS'
+  return majorTypeMetaMap[type]
 })
 
-const majorType = computed<MajorType>(() => {
-  if (hasTagAlias(tagLookup.value, majorTypeAliasMap.SCP)) return 'SCP'
-  if (hasTagAlias(tagLookup.value, majorTypeAliasMap.TALE)) return 'TALE'
-  if (hasTagAlias(tagLookup.value, majorTypeAliasMap.GOIF)) return 'GOIF'
-  if (hasTagAlias(tagLookup.value, majorTypeAliasMap.ART)) return 'ART'
-  if (hasTagAlias(tagLookup.value, majorTypeAliasMap.WANDERERS)) return 'WANDERERS'
-  return 'OTHER'
-})
+const majorTypeLabel = computed(() => majorTypeMeta.value.label)
+const majorTypeClass = computed(() => majorTypeMeta.value.className)
 
-const majorTypeLabel = computed(() => majorTypeMetaMap[majorType.value].label)
-const majorTypeClass = computed(() => majorTypeMetaMap[majorType.value].className)
-
-const propAuthors = computed<CardAuthor[]>(() => normalizeAuthors(props.authors))
-const cachedAuthors = computed<CardAuthor[]>(() => {
-  const wikidotId = Number(props.wikidotId)
-  if (!Number.isFinite(wikidotId) || wikidotId <= 0) return []
-  return normalizeAuthors(pageAuthors.getAuthors(wikidotId))
-})
-const tagAuthors = computed<CardAuthor[]>(() => extractAuthorsFromTags(props.tags))
+// --- Merged: author resolution (single computed instead of 4) ---
 const resolvedAuthors = computed<CardAuthor[]>(() => {
-  if (propAuthors.value.length) return propAuthors.value
-  if (cachedAuthors.value.length) return cachedAuthors.value
-  if (tagAuthors.value.length) return tagAuthors.value
-  return []
+  // Priority 1: explicit prop authors
+  const fromProps = normalizeAuthors(props.authors)
+  if (fromProps.length) return fromProps
+  // Priority 2: cached page authors (by wikidotId)
+  const wikidotId = Number(props.wikidotId)
+  if (Number.isFinite(wikidotId) && wikidotId > 0) {
+    const fromCache = normalizeAuthors(pageAuthors.getAuthors(wikidotId))
+    if (fromCache.length) return fromCache
+  }
+  // Priority 3: extract from tags
+  return extractAuthorsFromTags(props.tags)
 })
 const primaryAuthor = computed<CardAuthor>(() => (
   resolvedAuthors.value[0] ?? { name: '未知作者', wikidotId: null }
@@ -358,7 +366,7 @@ const affixSource = computed<AffixSource>(() => ({
 const affixLabelRef = computed(() => props.affixLabel)
 const affix = useCardAffix(affixSource, affixLabelRef)
 
-// 3D Tilt + Foil angle (mouse tracking)
+// 3D Tilt + Foil angle (mouse tracking) with RAF throttle
 const tiltX = ref(0)
 const tiltY = ref(0)
 const foilAngle = ref(0)
@@ -372,22 +380,40 @@ if (import.meta.client) {
 
 const maxTilt = computed(() => effectiveVariant.value === 'mini' ? 2 : 4)
 
+let tiltRafId: number | null = null
+
 function onMouseMove(e: MouseEvent) {
   if (!supportsHover.value || !cardRef.value) return
-  const rect = cardRef.value.getBoundingClientRect()
-  const x = (e.clientX - rect.left) / rect.width
-  const y = (e.clientY - rect.top) / rect.height
-  tiltX.value = (y - 0.5) * -maxTilt.value
-  tiltY.value = (x - 0.5) * maxTilt.value
-  foilAngle.value = Math.atan2(y - 0.5, x - 0.5) * (180 / Math.PI) + 180
-  isHovering.value = true
+  if (tiltRafId != null) return // skip if RAF pending
+  tiltRafId = requestAnimationFrame(() => {
+    tiltRafId = null
+    if (!cardRef.value) return
+    const rect = cardRef.value.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    tiltX.value = (y - 0.5) * -maxTilt.value
+    tiltY.value = (x - 0.5) * maxTilt.value
+    foilAngle.value = Math.atan2(y - 0.5, x - 0.5) * (180 / Math.PI) + 180
+    isHovering.value = true
+  })
 }
 
 function onMouseLeave() {
+  if (tiltRafId != null) {
+    cancelAnimationFrame(tiltRafId)
+    tiltRafId = null
+  }
   tiltX.value = 0
   tiltY.value = 0
   isHovering.value = false
 }
+
+onBeforeUnmount(() => {
+  if (tiltRafId != null) {
+    cancelAnimationFrame(tiltRafId)
+    tiltRafId = null
+  }
+})
 
 const tiltStyle = computed(() => {
   if (!isHovering.value) return {}
@@ -567,9 +593,17 @@ html.dark .gacha-card__fallback-icon {
   left: 6px;
   right: 6px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 4px;
+}
+
+.gacha-card__top-left {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
 }
 
 .gacha-card--mini .gacha-card__top {
@@ -598,9 +632,38 @@ html.dark .gacha-card__fallback-icon {
   pointer-events: none;
 }
 
+.gacha-card__lock-indicator--with-retired {
+  top: 52px;
+}
+
 .gacha-card__lock-indicator svg {
   width: 12px;
   height: 12px;
+}
+
+.gacha-card__retired-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(190, 24, 93, 0.28);
+  background: linear-gradient(135deg, rgba(255, 241, 242, 0.92), rgba(255, 228, 230, 0.82));
+  color: rgb(159 18 57);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  box-shadow: 0 8px 18px -12px rgba(159, 18, 57, 0.45);
+}
+
+html.dark .gacha-card__retired-indicator {
+  border-color: rgba(251, 113, 133, 0.28);
+  background: linear-gradient(135deg, rgba(76, 5, 25, 0.88), rgba(136, 19, 55, 0.72));
+  color: rgb(255 228 230);
 }
 
 .gacha-card--mini .gacha-card__lock-indicator {
@@ -611,9 +674,20 @@ html.dark .gacha-card__fallback-icon {
   border-radius: 4px;
 }
 
+.gacha-card--mini .gacha-card__lock-indicator--with-retired {
+  top: 34px;
+}
+
 .gacha-card--mini .gacha-card__lock-indicator svg {
   width: 10px;
   height: 10px;
+}
+
+.gacha-card--mini .gacha-card__retired-indicator {
+  min-width: 34px;
+  height: 16px;
+  padding: 0 6px;
+  font-size: 8px;
 }
 
 .gacha-card__media-bottom {

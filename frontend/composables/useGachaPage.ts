@@ -1,5 +1,6 @@
 import { provide, ref, watch, onMounted, type InjectionKey, type Ref } from 'vue'
 import { useGachaAuth } from '~/composables/useGachaAuth'
+import { normalizeError } from '~/composables/api/gachaCore'
 import type { GachaFeatureStatus, Wallet } from '~/types/gacha'
 import type { GachaNotification } from '~/components/gacha/GachaNotificationPopup.vue'
 
@@ -29,13 +30,13 @@ export function useGachaPage(options?: { pageName?: string }) {
   async function refreshFeatureStatus() {
     try {
       const res = await gacha.getFeatures()
-      if (res.ok && res.data) {
-        featureStatus.value = res.data
-      } else {
-        console.warn(`${tag} load feature status failed`, res.error || '加载玩法状态失败')
+      if (!res.ok) {
+        console.warn(`${tag} load feature status failed`, res.error)
+        return
       }
-    } catch (error: any) {
-      console.warn(`${tag} load feature status failed`, error?.message || '加载玩法状态失败')
+      featureStatus.value = res.data
+    } catch (error: unknown) {
+      console.warn(`${tag} load feature status failed`, normalizeError(error, '加载玩法状态失败'))
     }
   }
 

@@ -1,7 +1,7 @@
 <template>
   <div class="max-w-5xl mx-auto w-full py-14 space-y-12">
     <header class="space-y-5 text-center sm:text-left">
-      <div class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.35)] bg-[rgba(var(--accent),0.08)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--accent))]">
+      <div class="inline-flex items-center gap-2 rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--g-accent)]">
         <span>工具枢纽</span>
       </div>
       <div class="space-y-3">
@@ -24,13 +24,13 @@
           v-for="item in section.items"
           :key="item.to"
           :to="item.to"
-          class="group relative flex flex-col gap-4 rounded-2xl border border-white/70 bg-white/90 p-6 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg dark:border-white/10 dark:bg-neutral-900/80"
+          class="group relative flex flex-col gap-4 rounded-lg border border-white/70 bg-white/90 p-6 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg dark:border-white/10 dark:bg-neutral-900/80"
         >
-          <div class="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[rgba(var(--accent),0.08)] text-[rgb(var(--accent))]">
+          <div class="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--g-accent-soft)] text-[var(--g-accent)]">
             <LucideIcon :name="item.icon" class="h-6 w-6" />
           </div>
           <div class="space-y-2">
-            <h3 class="text-lg font-semibold text-neutral-900 transition-colors group-hover:text-[rgb(var(--accent))] dark:text-neutral-100">{{ item.title }}</h3>
+            <h3 class="text-lg font-semibold text-neutral-900 transition-colors group-hover:text-[var(--g-accent)] dark:text-neutral-100">{{ item.title }}</h3>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">{{ item.description }}</p>
           </div>
           <span class="absolute right-6 top-6 text-xs font-medium uppercase tracking-wide text-[rgba(var(--accent),0.7)]">
@@ -127,6 +127,13 @@ const sections = [
         description: '查看倒计时、参赛规则以及“2025新秀竞赛”标签下的参赛作品展示。',
         badge: 'Newbee 2025',
         icon: 'Trophy'
+      },
+      {
+        to: '/winter-contest-2026',
+        title: '2026冬季征文：循环',
+        description: '查看征文导语、赛程节点、规则与“2026冬季征文”标签下的参赛作品。',
+        badge: 'Winter 2026',
+        icon: 'Snowflake'
       }
     ]
   }

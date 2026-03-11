@@ -53,7 +53,7 @@
           <div class="bento-card col-span-2 row-span-2">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium uppercase tracking-wider text-[rgb(var(--muted))]">按分类</span>
-              <LucideIcon name="PieChart" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="PieChart" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="space-y-2 mt-2">
               <div
@@ -106,7 +106,7 @@
           <div v-if="stats.topAuthors && stats.topAuthors.length > 0" class="bento-card col-span-2 md:col-span-4">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium uppercase tracking-wider text-[rgb(var(--muted))]">今年创建并删除页面最多的作者</span>
-              <LucideIcon name="Users" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Users" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
               <div

@@ -1,12 +1,12 @@
 <template>
   <div class="gallery-shell space-y-6">
-    <header class="gallery-head rounded-[1.6rem] border border-neutral-200/75 bg-white/88 px-5 py-5 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.9)] dark:border-neutral-800/70 dark:bg-neutral-900/70">
+    <header class="gallery-head rounded-[1.6rem] border border-neutral-200/75 bg-white/88 px-5 py-5 shadow-lg dark:border-neutral-800/70 dark:bg-neutral-900/70">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="space-y-2">
           <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-[rgb(var(--accent-strong))]">Cached Gallery</p>
           <h1 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-100">图片画廊</h1>
           <p class="text-sm text-neutral-600 dark:text-neutral-400">
-            浏览系统已缓存的页面插图，点击卡片即可回到对应页面。
+            浏览系统已缓存的页面插图，点击图片可放大查看，并支持一键复制图片 URL。
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs">
@@ -16,7 +16,7 @@
           <button
             type="button"
             @click="reload"
-            class="inline-flex items-center gap-2 rounded-full border border-[rgb(var(--accent-strong))]/35 bg-[rgb(var(--accent-strong))]/10 px-3 py-1.5 text-xs font-semibold text-[rgb(var(--accent-strong))] transition hover:bg-[rgb(var(--accent-strong))]/16"
+            class="inline-flex items-center gap-2 rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-3 py-1.5 text-xs font-semibold text-[rgb(var(--accent-strong))] transition hover:bg-[var(--g-accent-medium)]"
           >
             <LucideIcon name="RefreshCcw" class="h-3.5 w-3.5" stroke-width="2" />
             换一批
@@ -25,10 +25,10 @@
       </div>
     </header>
 
-    <div v-if="pending" class="rounded-2xl border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
+    <div v-if="pending" class="rounded-lg border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
       加载图片中…
     </div>
-    <div v-else-if="error" class="rounded-2xl border border-rose-200/70 bg-rose-50/80 px-5 py-12 text-center text-rose-600 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-200">
+    <div v-else-if="error" class="rounded-lg border border-rose-200/70 bg-rose-50/80 px-5 py-12 text-center text-rose-600 dark:border-rose-500/35 dark:bg-rose-500/10 dark:text-rose-200">
       获取图片失败：{{ error.message || error }}
     </div>
     <div v-else>
@@ -73,10 +73,10 @@
         匹配 {{ filteredGalleryImages.length }} / {{ galleryImages.length }} 张
       </p>
 
-      <div v-if="!galleryImages.length" class="rounded-2xl border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
+      <div v-if="!galleryImages.length" class="rounded-lg border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
         暂无缓存图片可展示。
       </div>
-      <div v-else-if="!filteredGalleryImages.length" class="rounded-2xl border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
+      <div v-else-if="!filteredGalleryImages.length" class="rounded-lg border border-dashed border-neutral-200/80 px-5 py-12 text-center text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-400">
         当前筛选条件下没有图片。
       </div>
 
@@ -86,13 +86,15 @@
           :key="item.id"
           class="gallery-item group"
         >
-          <NuxtLink
-            :to="item.pageLink"
-            class="gallery-card block overflow-hidden rounded-[1.1rem] border border-neutral-200/75 bg-white/94 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.95)] transition duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-36px_rgba(15,23,42,0.95)] dark:border-neutral-700/70 dark:bg-neutral-900/76"
+          <div
+            class="gallery-card block overflow-hidden rounded-[1.1rem] border border-neutral-200/75 bg-white/94 shadow-lg transition duration-300 hover:-translate-y-1 hover:shadow-lg dark:border-neutral-700/70 dark:bg-neutral-900/76"
           >
-            <div
-              class="gallery-card__media relative w-full overflow-hidden border-b border-neutral-200/70 bg-neutral-100 dark:border-neutral-700/70 dark:bg-neutral-900"
+            <button
+              type="button"
+              class="gallery-card__media gallery-card__media-btn relative w-full overflow-hidden border-b border-neutral-200/70 bg-neutral-100 dark:border-neutral-700/70 dark:bg-neutral-900"
               :class="`gallery-card__media--${item.orientation}`"
+              :title="`放大查看：${item.caption}`"
+              @click="openGalleryPreview(item)"
             >
               <img
                 :src="item.imageSrc"
@@ -118,19 +120,49 @@
 
               <div class="gallery-card__cta absolute inset-x-2 bottom-2 flex items-center justify-between rounded-lg border border-white/35 bg-black/35 px-2.5 py-1 text-[10px] text-white/95 backdrop-blur-sm">
                 <span class="truncate">{{ item.pageIdLabel }}</span>
-                <span>查看页面</span>
+                <span>点击放大</span>
               </div>
-            </div>
+            </button>
 
             <div class="space-y-1.5 px-3 py-3">
               <div class="line-clamp-2 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 {{ item.caption }}
               </div>
-              <div class="truncate text-[11px] text-neutral-500 dark:text-neutral-400">
-                {{ item.pageUrl || '无外链 URL' }}
+              <div class="flex items-center gap-2">
+                <div class="min-w-0 flex-1 truncate text-[11px] text-neutral-500 dark:text-neutral-400">
+                  {{ item.pageUrl || '无外链 URL' }}
+                </div>
+                <button
+                  type="button"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
+                  :title="copiedGalleryImageId === item.id ? '已复制图片 URL' : '复制图片 URL'"
+                  @click="copyGalleryImageUrl(item)"
+                >
+                  <LucideIcon
+                    v-if="copiedGalleryImageId === item.id"
+                    name="Check"
+                    class="h-3.5 w-3.5"
+                    stroke-width="2"
+                    aria-hidden="true"
+                  />
+                  <LucideIcon
+                    v-else
+                    name="Copy"
+                    class="h-3.5 w-3.5"
+                    stroke-width="2"
+                    aria-hidden="true"
+                  />
+                </button>
+                <NuxtLink
+                  v-if="item.pageId"
+                  :to="item.pageLink"
+                  class="inline-flex items-center rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-medium text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
+                >
+                  查看页面
+                </NuxtLink>
               </div>
             </div>
-          </NuxtLink>
+          </div>
         </article>
       </div>
       <div v-if="hasMoreGallery" class="mt-4 flex items-center justify-center">
@@ -142,15 +174,26 @@
           加载更多（剩余 {{ filteredGalleryImages.length - galleryVisibleCount }} 张）
         </button>
       </div>
+      <ImagePreviewDialog
+        v-if="galleryPreviewItem"
+        v-model:open="galleryPreviewOpen"
+        :src="galleryPreviewItem.imageSrcFull || galleryPreviewItem.imageSrc"
+        :alt="galleryPreviewItem.caption"
+        :title="galleryPreviewItem.caption"
+        :copy-url="galleryPreviewItem.copyUrl"
+        :link-to="galleryPreviewItem.pageId ? galleryPreviewItem.pageLink : null"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useAsyncData, useNuxtApp, useRuntimeConfig } from 'nuxt/app'
 import LucideIcon from '~/components/LucideIcon.vue'
-import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
+import ImagePreviewDialog from '~/components/media/ImagePreviewDialog.vue'
+import { normalizeBffBase, pickExternalAssetUrl, resolveWithFallback } from '~/utils/assetUrl'
+import { copyTextWithFallback } from '~/utils/clipboard'
 
 const props = withDefaults(defineProps<{ dataKey?: string; initialLimit?: number }>(), {
   dataKey: 'tools-gallery',
@@ -163,10 +206,11 @@ const { $bff } = useNuxtApp() as {
 const runtimeConfig = useRuntimeConfig()
 const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase)
 
-const resolveAssetPath = (path?: string | null, fallback?: string | null) => {
+const resolveAssetPath = (path?: string | null, fallback?: string | null, preferLow = true) => {
+  const full = resolveWithFallback(path ?? '', fallback ?? '', bffBase)
+  if (!preferLow) return full
   const low = resolveWithFallback(path ?? '', fallback ?? '', bffBase, { variant: 'low' })
-  if (low) return low
-  return resolveWithFallback(path ?? '', fallback ?? '', bffBase)
+  return low || full
 }
 
 const limit = ref(props.initialLimit)
@@ -209,6 +253,8 @@ type GalleryImage = {
 type GalleryViewItem = {
   id: number | string
   imageSrc: string
+  imageSrcFull: string
+  copyUrl: string
   imageClass: string
   imageStyle: string
   caption: string
@@ -226,6 +272,10 @@ type GalleryViewItem = {
 const gallerySearch = ref('')
 const galleryOrientationFilter = ref<GalleryOrientation | 'all'>('all')
 const gallerySortMode = ref<GallerySortMode>('RANDOM')
+const galleryPreviewOpen = ref(false)
+const galleryPreviewItem = ref<GalleryViewItem | null>(null)
+const copiedGalleryImageId = ref<number | string | null>(null)
+let galleryCopyTimer: ReturnType<typeof setTimeout> | null = null
 
 const galleryImagesRaw = computed<GalleryImage[]>(() => {
   const value = data.value
@@ -268,7 +318,9 @@ const galleryImages = computed<GalleryViewItem[]>(() => {
                 : 'normal'
       const imageClass = 'object-cover'
       const imageStyle = 'display: block; width: 100%; height: 100%;'
-      const imageSrc = resolveAssetPath(item.imageUrl, item.displayUrl ?? item.normalizedUrl ?? item.originUrl)
+      const fullSrc = resolveAssetPath(item.imageUrl, item.displayUrl ?? item.normalizedUrl ?? item.originUrl, false)
+      const imageSrc = resolveAssetPath(item.imageUrl, item.displayUrl ?? item.normalizedUrl ?? item.originUrl, true)
+      const copyUrl = pickExternalAssetUrl(item.displayUrl, item.originUrl, item.normalizedUrl) || fullSrc || imageSrc
       const pageId = Number(item.page?.wikidotId ?? 0)
       const normalizedPageId = Number.isFinite(pageId) && pageId > 0 ? pageId : null
       const caption = (() => {
@@ -290,6 +342,8 @@ const galleryImages = computed<GalleryViewItem[]>(() => {
       return {
         id: item.pageVersionImageId ?? `${item.pageVersionId}-${imageSrc}`,
         imageSrc,
+        imageSrcFull: fullSrc || imageSrc,
+        copyUrl,
         imageClass,
         imageStyle,
         caption,
@@ -367,6 +421,31 @@ function resetFilters() {
 const reload = async () => {
   await refresh()
 }
+
+function openGalleryPreview(item: GalleryViewItem) {
+  galleryPreviewItem.value = item
+  galleryPreviewOpen.value = true
+}
+
+async function copyGalleryImageUrl(item: GalleryViewItem) {
+  const target = item.copyUrl || item.imageSrcFull || item.imageSrc
+  if (!target) return
+  const copied = await copyTextWithFallback(target, '请复制图片 URL')
+  if (!copied) return
+
+  copiedGalleryImageId.value = item.id
+  if (galleryCopyTimer) clearTimeout(galleryCopyTimer)
+  galleryCopyTimer = setTimeout(() => {
+    if (copiedGalleryImageId.value === item.id) copiedGalleryImageId.value = null
+  }, 1800)
+}
+
+onBeforeUnmount(() => {
+  if (galleryCopyTimer) {
+    clearTimeout(galleryCopyTimer)
+    galleryCopyTimer = null
+  }
+})
 </script>
 
 <style scoped>
@@ -393,7 +472,7 @@ const reload = async () => {
   top: -5rem;
   width: 12rem;
   height: 12rem;
-  background: rgba(var(--accent), 0.24);
+  background: var(--g-accent-strong);
 }
 
 .gallery-head::after {
@@ -401,7 +480,7 @@ const reload = async () => {
   bottom: -5rem;
   width: 11rem;
   height: 11rem;
-  background: rgba(var(--accent-strong), 0.2);
+  background: var(--g-accent-strong);
 }
 
 .gallery-grid {
@@ -442,6 +521,20 @@ const reload = async () => {
 
 .gallery-card__media {
   min-height: 13rem;
+}
+
+.gallery-card__media-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.gallery-card__media-btn:focus-visible {
+  outline: 2px solid var(--g-accent-border);
+  outline-offset: -2px;
 }
 
 .gallery-card__media--panorama {

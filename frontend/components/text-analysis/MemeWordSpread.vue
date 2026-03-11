@@ -14,9 +14,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { MemeWordSeries } from '~/types/text-analysis'
 
+const memeWordSpreadEndpoint: string = '/api/text-analysis/meme-word-spread'
+
 const { data: series, pending } = useAsyncData<MemeWordSeries[]>(
   'text-analysis-meme',
-  () => $fetch('/api/text-analysis/meme-word-spread')
+  () => $fetch<MemeWordSeries[]>(memeWordSpreadEndpoint)
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)

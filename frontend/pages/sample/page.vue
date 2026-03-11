@@ -297,7 +297,7 @@ definePageMeta({ layout: 'default' })
 
 .glow-1 {
   @apply w-[520px] h-[520px] -top-40 right-1/4;
-  background: radial-gradient(circle, rgb(var(--accent) / 0.22), transparent 70%);
+  background: radial-gradient(circle, var(--g-accent-strong), transparent 70%);
 }
 
 .noise-layer {
@@ -384,7 +384,7 @@ definePageMeta({ layout: 'default' })
 
   .page-subtitle {
     @apply text-lg sm:text-xl lg:text-2xl font-semibold tracking-tight;
-    color: rgb(var(--accent));
+    color: var(--g-accent);
     font-family: 'Times New Roman', 'Songti SC', serif;
   }
 
@@ -409,7 +409,7 @@ definePageMeta({ layout: 'default' })
 
 
 .author-name:hover {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .author-role {
@@ -446,7 +446,7 @@ definePageMeta({ layout: 'default' })
   .tag-primary {
     background: rgb(var(--accent-weak));
     color: rgb(var(--accent-strong));
-    border-color: rgb(var(--accent));
+    border-color: var(--g-accent);
   }
 
 
@@ -569,7 +569,7 @@ definePageMeta({ layout: 'default' })
 
 
 .section-title svg {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 /* Chart */
@@ -680,8 +680,8 @@ definePageMeta({ layout: 'default' })
 
 
 .revision-type.edit {
-  background: rgb(var(--accent) / 0.1);
-  color: rgb(var(--accent));
+  background: var(--g-accent-soft);
+  color: var(--g-accent);
 }
 
 .revision-type.tags {

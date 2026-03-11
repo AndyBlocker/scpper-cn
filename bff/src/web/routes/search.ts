@@ -13,6 +13,8 @@ type PageSearchArgs = {
   offset: number;
   includeTags: string[] | null;
   excludeTags: string[] | null;
+  authorIds: number[] | null;
+  authorMatch: 'any' | 'all';
   ratingMin: number | null;
   ratingMax: number | null;
   enforceExactTags: boolean;
@@ -46,7 +48,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
 
   // 读写分离：search 全部是读操作，使用从库
-  const readPool = getReadPoolSync();
+  const readPool = getReadPoolSync(pool);
 
   const defaultCacheTtl = (() => {
     const parsed = Number(process.env.SEARCH_CACHE_TTL ?? 30);
@@ -103,35 +105,65 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     }
   }
 
-  const parseNullableInt = (value: string | undefined): number | null => {
+  const parseNullableInt = (value: unknown): number | null => {
     if (value === undefined || value === null || value === '') return null;
-    const parsed = Number(value);
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (raw === undefined || raw === null || raw === '') return null;
+    const parsed = Number(raw);
     if (!Number.isFinite(parsed)) return null;
     return Math.trunc(parsed);
   };
 
-  const parseNullableFloat = (value: string | undefined): number | null => {
+  const parseNullableFloat = (value: unknown): number | null => {
     if (value === undefined || value === null || value === '') return null;
-    const parsed = Number(value);
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (raw === undefined || raw === null || raw === '') return null;
+    const parsed = Number(raw);
     if (!Number.isFinite(parsed)) return null;
     return parsed;
   };
 
-  const parseNullableDate = (value: string | undefined): string | null => {
+  const parseNullableDate = (value: unknown): string | null => {
     if (value === undefined || value === null || value === '') return null;
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (raw === undefined || raw === null || raw === '') return null;
     // 支持 YYYY-MM-DD 格式
-    const dateMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const dateMatch = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!dateMatch) return null;
     const [, year, month, day] = dateMatch;
     const y = parseInt(year, 10);
     const m = parseInt(month, 10);
     const d = parseInt(day, 10);
     if (y < 1970 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const parsed = new Date(Date.UTC(y, m - 1, d));
+    if (
+      Number.isNaN(parsed.getTime())
+      || parsed.getUTCFullYear() !== y
+      || parsed.getUTCMonth() + 1 !== m
+      || parsed.getUTCDate() !== d
+    ) return null;
     return `${year}-${month}-${day}`;
   };
 
-  const normalizeDeletedFilter = (raw: string | undefined): DeletedFilterMode => {
-    const normalized = String(raw || 'any').toLowerCase();
+  const parseNullableIntArray = (value: unknown): number[] | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const rawValues = Array.isArray(value) ? value : [value];
+    const parsed = rawValues
+      .flatMap((item) => String(item).split(','))
+      .map((item) => Number.parseInt(item.trim(), 10))
+      .filter((item) => Number.isInteger(item) && item > 0);
+    const unique = Array.from(new Set(parsed));
+    return unique.length > 0 ? unique : null;
+  };
+
+  const normalizeAuthorMatch = (value: unknown): 'any' | 'all' => {
+    const normalized = String(value || 'any').toLowerCase();
+    return normalized === 'all' ? 'all' : 'any';
+  };
+
+  const normalizeDeletedFilter = (raw: unknown): DeletedFilterMode => {
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    const normalized = String(value || 'any').toLowerCase();
     if (normalized === 'only') return 'only';
     if (normalized === 'exclude') return 'exclude';
     return 'any';
@@ -266,6 +298,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       offset,
       includeTags,
       excludeTags,
+      authorIds,
+      authorMatch,
       ratingMin,
       ratingMax,
       enforceExactTags,
@@ -291,6 +325,9 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
 
     const includeTagsParam = includeTags && includeTags.length > 0 ? includeTags : null;
     const excludeTagsParam = excludeTags && excludeTags.length > 0 ? excludeTags : null;
+    const authorIdsParam = authorIds && authorIds.length > 0 ? authorIds : null;
+    const authorMatchParam: 'any' | 'all' = authorMatch === 'all' ? 'all' : 'any';
+    const authorIdsCountParam = authorIdsParam ? authorIdsParam.length : null;
     const ratingMinParam = typeof ratingMin === 'number' ? ratingMin : null;
     const ratingMaxParam = typeof ratingMax === 'number' ? ratingMax : null;
     const wilson95MinParam = typeof wilson95Min === 'number' ? wilson95Min : null;
@@ -305,6 +342,54 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     const dateMaxParam = dateMax || null;
     const deletedFilterClause = buildDeletedFilterClause(deletedFilter);
     const hasQuery = trimmedQuery.length > 0;
+
+    const buildAuthorFilterClause = (
+      versionExpr: string,
+      authorIdsPlaceholder: number,
+      authorMatchPlaceholder: number,
+      authorCountPlaceholder: number
+    ) => `
+      AND (
+        $${authorIdsPlaceholder}::int[] IS NULL
+        OR (
+          CASE WHEN $${authorMatchPlaceholder}::text = 'all' THEN (
+            SELECT COUNT(DISTINCT u."wikidotId")
+            FROM "Attribution" a
+            JOIN "User" u ON u.id = a."userId"
+            WHERE a."pageVerId" = ${versionExpr}
+              AND u."wikidotId" IS NOT NULL
+              AND u."wikidotId" = ANY($${authorIdsPlaceholder}::int[])
+              AND (
+                a.type <> 'SUBMITTER'
+                OR NOT EXISTS (
+                  SELECT 1
+                  FROM "Attribution" ax
+                  WHERE ax."pageVerId" = ${versionExpr}
+                    AND ax.type <> 'SUBMITTER'
+                )
+              )
+          ) >= COALESCE($${authorCountPlaceholder}::int, 0)
+          ELSE EXISTS (
+            SELECT 1
+            FROM "Attribution" a
+            JOIN "User" u ON u.id = a."userId"
+            WHERE a."pageVerId" = ${versionExpr}
+              AND u."wikidotId" IS NOT NULL
+              AND u."wikidotId" = ANY($${authorIdsPlaceholder}::int[])
+              AND (
+                a.type <> 'SUBMITTER'
+                OR NOT EXISTS (
+                  SELECT 1
+                  FROM "Attribution" ax
+                  WHERE ax."pageVerId" = ${versionExpr}
+                    AND ax.type <> 'SUBMITTER'
+                )
+              )
+          )
+          END
+        )
+      )
+    `;
 
     if (!hasQuery) {
       // 无查询模式：纯过滤
@@ -352,6 +437,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
               AND ($16::int IS NULL OR pv."voteCount" <= $16)
               AND ($17::date IS NULL OR p."firstPublishedAt" >= $17::date)
               AND ($18::date IS NULL OR p."firstPublishedAt" <= $18::date)
+              ${buildAuthorFilterClause('pv.id', 19, 20, 21)}
           ),
           deleted_pages AS (
             -- 已删除页面：需要LATERAL子查询获取前一个有效版本
@@ -377,7 +463,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             JOIN "Page" p ON pv."pageId" = p.id
             LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
             LEFT JOIN LATERAL (
-              SELECT rating, "voteCount", "commentCount", tags
+              SELECT id, rating, "voteCount", "commentCount", tags
               FROM "PageVersion" pv_prev
               WHERE pv_prev."pageId" = pv."pageId"
                 AND pv_prev."isDeleted" = false
@@ -401,6 +487,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
               AND ($16::int IS NULL OR prev."voteCount" <= $16)
               AND ($17::date IS NULL OR p."firstPublishedAt" >= $17::date)
               AND ($18::date IS NULL OR p."firstPublishedAt" <= $18::date)
+              ${buildAuthorFilterClause('COALESCE(prev.id, pv.id)', 19, 20, 21)}
           ),
           base AS (
             ${deletedFilter === 'only' ? 'SELECT * FROM deleted_pages' :
@@ -449,7 +536,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMinParam,      // $15
         voteCountMaxParam,      // $16
         dateMinParam,           // $17
-        dateMaxParam            // $18
+        dateMaxParam,           // $18
+        authorIdsParam,         // $19
+        authorMatchParam,       // $20
+        authorIdsCountParam     // $21
       ];
 
       // 优化的 total 计数查询
@@ -476,6 +566,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             AND ($13::int IS NULL OR pv."voteCount" <= $13)
             AND ($14::date IS NULL OR p."firstPublishedAt" >= $14::date)
             AND ($15::date IS NULL OR p."firstPublishedAt" <= $15::date)
+            ${buildAuthorFilterClause('pv.id', 16, 17, 18)}
         `;
         const deletedCountSql = `
           SELECT COUNT(*) AS cnt
@@ -483,7 +574,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           LEFT JOIN LATERAL (
-            SELECT rating, "voteCount", "commentCount", tags
+            SELECT id, rating, "voteCount", "commentCount", tags
             FROM "PageVersion" pv_prev
             WHERE pv_prev."pageId" = pv."pageId"
               AND pv_prev."isDeleted" = false
@@ -507,6 +598,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             AND ($13::int IS NULL OR prev."voteCount" <= $13)
             AND ($14::date IS NULL OR p."firstPublishedAt" >= $14::date)
             AND ($15::date IS NULL OR p."firstPublishedAt" <= $15::date)
+            ${buildAuthorFilterClause('COALESCE(prev.id, pv.id)', 16, 17, 18)}
         `;
         if (deletedFilter === 'exclude') return activeCountSql;
         if (deletedFilter === 'only') return deletedCountSql;
@@ -529,7 +621,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMinParam,      // $12
         voteCountMaxParam,      // $13
         dateMinParam,           // $14
-        dateMaxParam            // $15
+        dateMaxParam,           // $15
+        authorIdsParam,         // $16
+        authorMatchParam,       // $17
+        authorIdsCountParam     // $18
       ];
 
       const [{ rows }, totalRes] = await Promise.all([
@@ -620,7 +715,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         JOIN "Page" p ON pv."pageId" = p.id
         LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
         LEFT JOIN LATERAL (
-          SELECT rating, "voteCount", "commentCount", tags
+          SELECT id, rating, "voteCount", "commentCount", tags
           FROM "PageVersion" pv_prev
           WHERE pv_prev."pageId" = pv."pageId"
             AND pv_prev."isDeleted" = false
@@ -644,6 +739,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           AND ($17::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $17)
           AND ($18::date IS NULL OR p."firstPublishedAt" >= $18::date)
           AND ($19::date IS NULL OR p."firstPublishedAt" <= $19::date)
+          ${buildAuthorFilterClause('COALESCE(CASE WHEN pv."isDeleted" THEN prev.id ELSE pv.id END, pv.id)', 20, 21, 22)}
           ${deletedFilterClause}
         ORDER BY
           CASE WHEN $9 = 'rating' THEN (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) END DESC NULLS LAST,
@@ -669,7 +765,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         JOIN "Page" p ON pv."pageId" = p.id
         LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
         LEFT JOIN LATERAL (
-          SELECT rating, "voteCount", "commentCount", tags
+          SELECT id, rating, "voteCount", "commentCount", tags
           FROM "PageVersion" pv_prev
           WHERE pv_prev."pageId" = pv."pageId"
             AND pv_prev."isDeleted" = false
@@ -693,6 +789,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           AND ($14::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $14)
           AND ($15::date IS NULL OR p."firstPublishedAt" >= $15::date)
           AND ($16::date IS NULL OR p."firstPublishedAt" <= $16::date)
+          ${buildAuthorFilterClause('COALESCE(CASE WHEN pv."isDeleted" THEN prev.id ELSE pv.id END, pv.id)', 17, 18, 19)}
           ${deletedFilterClause}
       ` : null;
 
@@ -715,7 +812,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMinParam,      // $16
         voteCountMaxParam,      // $17
         dateMinParam,           // $18
-        dateMaxParam            // $19
+        dateMaxParam,           // $19
+        authorIdsParam,         // $20
+        authorMatchParam,       // $21
+        authorIdsCountParam     // $22
       ];
 
       const regexTotalParams = regexTotalSql ? [
@@ -734,7 +834,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMinParam,      // $13
         voteCountMaxParam,      // $14
         dateMinParam,           // $15
-        dateMaxParam            // $16
+        dateMaxParam,           // $16
+        authorIdsParam,         // $17
+        authorMatchParam,       // $18
+        authorIdsCountParam     // $19
       ] : null;
 
       const [{ rows }, totalRes] = await Promise.all([
@@ -874,7 +977,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           LEFT JOIN LATERAL (
-            SELECT rating, "voteCount", "commentCount", tags
+            SELECT id, rating, "voteCount", "commentCount", tags
             FROM "PageVersion" pv_prev
             WHERE pv_prev."pageId" = pv."pageId"
               AND pv_prev."isDeleted" = false
@@ -897,6 +1000,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             AND ($18::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $18)
             AND ($19::date IS NULL OR p."firstPublishedAt" >= $19::date)
             AND ($20::date IS NULL OR p."firstPublishedAt" <= $20::date)
+            ${buildAuthorFilterClause('COALESCE(CASE WHEN pv."isDeleted" THEN prev.id ELSE pv.id END, pv.id)', 21, 22, 23)}
             ${deletedFilterClause}
         ),
         aggregated AS (
@@ -1026,7 +1130,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           LEFT JOIN LATERAL (
-            SELECT rating, "voteCount", "commentCount", tags
+            SELECT id, rating, "voteCount", "commentCount", tags
             FROM "PageVersion" pv_prev
             WHERE pv_prev."pageId" = pv."pageId"
               AND pv_prev."isDeleted" = false
@@ -1049,6 +1153,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             AND ($15::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $15)
             AND ($16::date IS NULL OR p."firstPublishedAt" >= $16::date)
             AND ($17::date IS NULL OR p."firstPublishedAt" <= $17::date)
+            ${buildAuthorFilterClause('COALESCE(CASE WHEN pv."isDeleted" THEN prev.id ELSE pv.id END, pv.id)', 18, 19, 20)}
             ${deletedFilterClause}
         )
         SELECT COUNT(*) AS total FROM filtered
@@ -1075,7 +1180,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       voteCountMinParam,      // $17
       voteCountMaxParam,      // $18
       dateMinParam,           // $19
-      dateMaxParam            // $20
+      dateMaxParam,           // $20
+      authorIdsParam,         // $21
+      authorMatchParam,       // $22
+      authorIdsCountParam     // $23
     ];
 
     const totalParams = totalSql
@@ -1096,7 +1204,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           voteCountMinParam,      // $14
           voteCountMaxParam,      // $15
           dateMinParam,           // $16
-          dateMaxParam            // $17
+          dateMaxParam,           // $17
+          authorIdsParam,         // $18
+          authorMatchParam,       // $19
+          authorIdsCountParam     // $20
         ]
       : null;
 
@@ -1180,6 +1291,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         offset = '0',
         tags,
         excludeTags,
+        authorIds,
+        authorMatch,
         ratingMin,
         ratingMax,
         deletedFilter,
@@ -1200,23 +1313,28 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         dateMin,
         dateMax,
         isRegex
-      } = req.query as Record<string, string>;
+      } = req.query as Record<string, string | string[] | undefined>;
 
       const normalizedDeletedFilter = normalizeDeletedFilter(deletedFilter);
+      const authorIdsArray = parseNullableIntArray(authorIds);
+      const normalizedAuthorMatch = normalizeAuthorMatch(authorMatch);
       const hasFilters = tags || excludeTags || ratingMin || ratingMax ||
         wilson95Min || wilson95Max || controversyMin || controversyMax ||
         commentCountMin || commentCountMax || voteCountMin || voteCountMax ||
-        dateMin || dateMax || normalizedDeletedFilter !== 'any';
+        dateMin || dateMax || normalizedDeletedFilter !== 'any' ||
+        Boolean(authorIdsArray && authorIdsArray.length > 0);
       if (!query && !hasFilters) {
         return res.status(400).json({ error: 'query or filters are required' });
       }
 
+      const normalizedQuery = Array.isArray(query) ? query[0] : query;
+      const normalizedIsRegex = Array.isArray(isRegex) ? isRegex[0] : isRegex;
       const wantTotal = String(includeTotal).toLowerCase() === 'true';
       const wantSnippet = String(includeSnippet).toLowerCase() === 'true';
       const wantDate = String(includeDate).toLowerCase() === 'true';
-      const trimmedQuery = query ? query.trim() : '';
+      const trimmedQuery = normalizedQuery ? normalizedQuery.trim() : '';
       const hasQuery = trimmedQuery.length > 0;
-      regexMode = ['true', '1', 'yes'].includes(String(isRegex || '').toLowerCase()) && hasQuery;
+      regexMode = ['true', '1', 'yes'].includes(String(normalizedIsRegex || '').toLowerCase()) && hasQuery;
 
       // 正则校验
       if (regexMode) {
@@ -1297,6 +1415,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMax: voteCountMaxNumber ?? undefined,
         dateMin: dateMinParsed ?? undefined,
         dateMax: dateMaxParsed ?? undefined,
+        authorIds: authorIdsArray ?? undefined,
+        authorMatch: authorIdsArray ? normalizedAuthorMatch : undefined,
         deleted: normalizedDeletedFilter,
         exactTags: enforceExactTags,
         isRegex: regexMode || undefined
@@ -1317,6 +1437,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         offset: offsetInt,
         includeTags: includeTagsArray,
         excludeTags: excludeTagsArray,
+        authorIds: authorIdsArray,
+        authorMatch: normalizedAuthorMatch,
         ratingMin: ratingMinNumber,
         ratingMax: ratingMaxNumber,
         enforceExactTags,
@@ -1453,6 +1575,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         userLimit,
         tags,
         excludeTags,
+        authorIds,
+        authorMatch,
         ratingMin,
         ratingMax,
         deletedFilter,
@@ -1471,11 +1595,13 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMax,
         dateMin,
         dateMax
-      } = req.query as Record<string, string>;
+      } = req.query as Record<string, string | string[] | undefined>;
 
-      if (!query) return res.status(400).json({ error: 'query is required' });
+      const normalizedQuery = Array.isArray(query) ? query[0] : query;
+      if (!normalizedQuery) return res.status(400).json({ error: 'query is required' });
 
-      const trimmedQuery = query.trim();
+      const trimmedQuery = normalizedQuery.trim();
+      const normalizedOrderBy = String(Array.isArray(orderBy) ? orderBy[0] : (orderBy || 'relevance'));
       const totalLimit = Math.max(0, Number(limit) | 0);
       const totalOffset = Math.max(0, Number(offset) | 0);
       const defaultPageCap = Math.max(0, Math.min(totalLimit || 20, Math.ceil((totalLimit || 20) * 0.6)));
@@ -1490,6 +1616,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       const excludeTagsArray = excludeTags
         ? (Array.isArray(excludeTags) ? (excludeTags as string[]) : [excludeTags as string])
         : null;
+      const authorIdsArray = parseNullableIntArray(authorIds);
+      const normalizedAuthorMatch = normalizeAuthorMatch(authorMatch);
       const ratingMinNumber = parseNullableInt(ratingMin);
       const ratingMaxNumber = parseNullableInt(ratingMax);
       const wilson95MinNumber = parseNullableFloat(wilson95Min);
@@ -1511,7 +1639,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         offset: totalOffset,
         pageLimit: pageCap,
         userLimit: userCap,
-        orderBy,
+        orderBy: normalizedOrderBy,
         tags: includeTagsArray,
         excludeTags: excludeTagsArray,
         ratingMin: ratingMinNumber ?? undefined,
@@ -1526,6 +1654,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         voteCountMax: voteCountMaxNumber ?? undefined,
         dateMin: dateMinParsed ?? undefined,
         dateMax: dateMaxParsed ?? undefined,
+        authorIds: authorIdsArray ?? undefined,
+        authorMatch: authorIdsArray ? normalizedAuthorMatch : undefined,
         deleted: normalizedDeletedFilter,
         includeSnippet: wantSnippet,
         includeDate: wantDate,
@@ -1548,6 +1678,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         offset: 0,
         includeTags: includeTagsArray,
         excludeTags: excludeTagsArray,
+        authorIds: authorIdsArray,
+        authorMatch: normalizedAuthorMatch,
         ratingMin: ratingMinNumber,
         ratingMax: ratingMaxNumber,
         enforceExactTags,
@@ -1656,7 +1788,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       }));
 
       let sorted = hybrid;
-      switch ((orderBy || 'relevance').toLowerCase()) {
+      switch (normalizedOrderBy.toLowerCase()) {
         case 'pages_first':
           sorted = hybrid.sort((a, b) => (a.type === b.type ? b.combinedScore - a.combinedScore : a.type === 'page' ? -1 : 1));
           break;
@@ -1698,7 +1830,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         meta: {
           counts: { pages: totalPages, users: totalUsers },
           usedCaps: { pageLimit: pageCap, userLimit: userCap },
-          orderBy
+          orderBy: normalizedOrderBy
         }
       };
 
@@ -1753,6 +1885,101 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       }));
       
       res.json({ results });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ─── Forum post search ────────────────────────────────
+  router.get('/forums', async (req, res, next) => {
+    try {
+      const query = String(req.query.query || '').trim();
+      if (!query || query.length < 2) {
+        return res.status(400).json({ error: 'query_too_short', message: '关键词至少需要 2 个字符' });
+      }
+
+      const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const wantTotal = String(req.query.includeTotal || 'true') === 'true';
+
+      const dateMin = req.query.dateMin ? String(req.query.dateMin) : null;
+      const dateMax = req.query.dateMax ? String(req.query.dateMax) : null;
+
+      const rawAuthorIds = req.query.authorIds;
+      const authorIds: number[] = rawAuthorIds
+        ? (Array.isArray(rawAuthorIds) ? rawAuthorIds : [rawAuthorIds])
+            .flatMap((v) => String(v).split(','))
+            .map((v) => Number.parseInt(v.trim(), 10))
+            .filter((v) => Number.isInteger(v) && v > 0)
+        : [];
+
+      const escapedQuery = query.replace(/[%_\\]/g, '\\$&');
+      const searchPattern = `%${escapedQuery}%`;
+
+      // Build WHERE clauses
+      const conditions: string[] = [
+        'p."isDeleted" = false',
+        't."isDeleted" = false',
+        `(p."textHtml" ILIKE $1 OR p.title ILIKE $1 OR t.title ILIKE $1)`,
+      ];
+      const params: any[] = [searchPattern];
+      let paramIdx = 2;
+
+      if (dateMin) {
+        conditions.push(`p."createdAt" >= $${paramIdx}`);
+        params.push(dateMin);
+        paramIdx++;
+      }
+      if (dateMax) {
+        conditions.push(`p."createdAt" < ($${paramIdx}::date + interval '1 day')`);
+        params.push(dateMax);
+        paramIdx++;
+      }
+      if (authorIds.length > 0) {
+        conditions.push(`p."createdByWikidotId" = ANY($${paramIdx}::int[])`);
+        params.push(authorIds);
+        paramIdx++;
+      }
+
+      const whereClause = conditions.join(' AND ');
+
+      const baseFrom = `
+        FROM "ForumPost" p
+        JOIN "ForumThread" t ON t.id = p."threadId"
+        LEFT JOIN "ForumCategory" c ON c.id = t."categoryId"
+        WHERE ${whereClause}
+      `;
+
+      const queries: Promise<any>[] = [
+        readPool.query(`
+          SELECT p.id AS "postId", p.title, p."textHtml",
+                 p."createdByName", p."createdByWikidotId", p."createdAt",
+                 p."threadId",
+                 t.title AS "threadTitle",
+                 c.title AS "categoryTitle"
+          ${baseFrom}
+          ORDER BY p."createdAt" DESC NULLS LAST
+          LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
+        `, [...params, limit, offset]),
+      ];
+
+      if (wantTotal) {
+        queries.push(
+          readPool.query(`SELECT COUNT(*)::int AS total ${baseFrom}`, params)
+        );
+      }
+
+      const results = await Promise.all(queries);
+      const rows = results[0].rows;
+
+      const payload: { results: any[]; total?: number } = {
+        results: rows,
+      };
+      if (wantTotal && results[1]) {
+        payload.total = results[1].rows[0]?.total ?? 0;
+      }
+
+      return res.json(payload);
     } catch (err) {
       next(err);
     }

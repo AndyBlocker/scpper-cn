@@ -1,9 +1,8 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 const command = process.env.NUXT_COMMAND || process.env.npm_lifecycle_event || '';
 const isDevCommand = command === 'dev';
-// Keep dev server artifacts out of the production output directories.
-const buildDir = isDevCommand ? '.nuxt-dev' : '.nuxt';
 const outputDir = isDevCommand ? '.output-dev' : '.output';
+const bffProxyTarget = process.env.BFF_PROXY_TARGET || 'http://127.0.0.1:4396';
 
 const envBoolean = (value: string | undefined, fallback = false) => {
   if (!value) return fallback;
@@ -19,9 +18,21 @@ const envNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const apiDevProxy: any = {
+  target: bffProxyTarget,
+  changeOrigin: true,
+  prependPath: false,
+  rewrite: (path: string) => path.replace(/^\/api/, '')
+};
+
+const passthroughDevProxy = {
+  target: bffProxyTarget,
+  changeOrigin: true
+};
+
 export default defineNuxtConfig({
   srcDir: '.',
-  buildDir,
+  buildDir: '.nuxt',
   compatibilityDate: '2025-08-23',
   // Vite 构建参数：使用 esbuild（多线程）最小化与更高目标，显著缩短构建时间
   vite: {
@@ -29,7 +40,20 @@ export default defineNuxtConfig({
       minify: 'esbuild',
       target: 'esnext',
       sourcemap: false,
-      cssCodeSplit: true
+      cssCodeSplit: true,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return;
+            if (id.includes('highlight.js')) return 'vendor-highlight';
+            if (id.includes('chart.js') || id.includes('vue-chartjs')) return 'vendor-chart';
+            if (id.includes('codemirror')) return 'vendor-codemirror';
+            if (id.includes('lightweight-charts')) return 'vendor-lightweight-charts';
+            if (id.includes('graphology') || id.includes('sigma') || id.includes('elkjs') || id.includes('d3-force')) return 'vendor-graph';
+            if (id.includes('radix-vue')) return 'vendor-radix';
+          }
+        }
+      }
     },
     esbuild: {
       legalComments: 'none'
@@ -56,7 +80,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       // 使用环境变量或默认值
-      // 开发: BFF_BASE=http://localhost:4396 npm run dev
+      // 开发: BFF_PROXY_TARGET=http://127.0.0.1:14396 npm run dev
       // 生产: BFF_BASE=/api npm run build
       bffBase: process.env.BFF_BASE || '/api',
       debugFetchTimings: envBoolean(process.env.DEBUG_FETCH_TIMINGS, false),
@@ -71,28 +95,26 @@ export default defineNuxtConfig({
     preset: 'node-server',
     // 在生产环境代理 /api 请求到 BFF 服务
     devProxy: {
-      '/api': {
-        target: 'http://localhost:4396',
-        changeOrigin: true,
-        prependPath: false,
-        rewrite: (path: string) => path.replace(/^\/api/, '')
-      }
+      '/api': apiDevProxy,
+      '/css-proxy': passthroughDevProxy,
+      '/html-snippet': passthroughDevProxy,
+      '/html-snippets': passthroughDevProxy
     },
     // 生产环境也启用代理
     routeRules: {
-      '/api/**': { proxy: 'http://localhost:4396/**' }
+      '/api/**': { proxy: `${bffProxyTarget}/**` },
+      '/css-proxy': { proxy: `${bffProxyTarget}/css-proxy` },
+      '/html-snippet': { proxy: `${bffProxyTarget}/html-snippet` },
+      '/html-snippet/**': { proxy: `${bffProxyTarget}/html-snippet/**` },
+      '/html-snippets': { proxy: `${bffProxyTarget}/html-snippets` },
+      '/html-snippets/**': { proxy: `${bffProxyTarget}/html-snippets/**` }
     }
   },
   app: {
     head: {
       htmlAttrs: { lang: 'zh-CN' },
       title: 'SCPPER-CN',
-      titleTemplate: (titleChunk?: string) => {
-        const base = 'SCPPER-CN';
-        if (!titleChunk) return base;
-        // Avoid duplicating base when pages already include it
-        return titleChunk.includes(base) ? titleChunk : `${titleChunk} - ${base}`;
-      },
+      titleTemplate: '%s - SCPPER-CN',
       meta: [
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'theme-color', content: '#0A0A0B', media: '(prefers-color-scheme: dark)' },
@@ -214,6 +236,6 @@ export default defineNuxtConfig({
       __dangerouslyDisableSanitizersByTagID: {
         'theme-init': ['innerHTML']
       }
-    }
+    } as any
   }
 });

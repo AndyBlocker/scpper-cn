@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-8">
     <section>
-      <div class="flex items-center justify-between border-b-2 border-[rgba(var(--accent),0.18)] dark:border-[rgba(var(--accent),0.24)] pb-3 mb-4">
+      <div class="flex items-center justify-between border-b-2 border-[var(--g-accent-medium)] dark:border-[var(--g-accent-strong)] pb-3 mb-4">
         <div class="flex items-center gap-3">
-          <div class="h-8 w-1 bg-[rgb(var(--accent))] rounded" />
+          <div class="h-8 w-1 bg-[var(--g-accent)] rounded" />
           <h1 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">关于 SCPPER-CN</h1>
         </div>
       </div>
@@ -20,23 +20,23 @@
           <h2 class="text-base font-semibold text-neutral-800 dark:text-neutral-100">版权信息</h2>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             网站数据、文章内容来源于
-            <a href="https://crom.avn.sh/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">CROM</a>
+            <a href="https://crom.avn.sh/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">CROM</a>
             从
-            <a href="https://scp-wiki-cn.wikidot.com/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">SCP基金会中文维基</a>
+            <a href="https://scp-wiki-cn.wikidot.com/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">SCP基金会中文维基</a>
             爬取的数据。用户头像数据来源于 Wikidot。若无特殊说明，以上数据遵循
-            <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">CC-BY-SA 3.0</a>
+            <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">CC-BY-SA 3.0</a>
             授权协议。
           </p>
           <p class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             网站图标由
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="3471238" :display-name="'breaddddd'" bare />
             创作，遵循
-            <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">CC-BY-SA 3.0</a>
+            <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">CC-BY-SA 3.0</a>
             授权协议。
           </p>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             2025.10.31更新：基于
-            <a href="https://scpper.com/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">SCPPER</a>
+            <a href="https://scpper.com/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">SCPPER</a>
             的数据，额外增添了约1万条自2017年起SCPPER记录的已删除页面。感谢Fifty Nine在过程中的帮助与支持，他创建了SCPPER，自2016年起不断维护至今，在本网站的建立初期提供了宝贵的建议与数据支持。
           </p>
 
@@ -64,7 +64,7 @@
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6513052" :display-name="'14#7_MonochromeMix'" bare />
             ：来玩
-            <a href="https://ghostpia.xyz/zh_cn" target="_blank" rel="noopener noreferrer" class="underline hover:text-[rgb(var(--accent))]">《Ghostpia》</a>
+            <a href="https://ghostpia.xyz/zh_cn" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">《Ghostpia》</a>
             吧！ -- 2025.10.24
           </p>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
@@ -88,25 +88,25 @@
           <ul class="mt-3 space-y-2">
             <!-- done -->
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Check" class="w-4 h-4 text-[var(--g-accent)]" />
               分数走势
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Check" class="w-4 h-4 text-[var(--g-accent)]" />
               User&amp;Page Search
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Check" class="w-4 h-4 text-[var(--g-accent)]" />
               Ranking Category
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Check" class="w-4 h-4 text-[var(--g-accent)]" />
               用户头像获取与缓存
             </li>
 
             <!-- todo -->
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <LucideIcon name="Check" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Check" class="w-4 h-4 text-[var(--g-accent)]" />
               SCP作品Alternative Title展示
             </li>
             <li class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
@@ -144,7 +144,7 @@
 import { useHead } from 'nuxt/app'
 
 useHead({
-  title: '关于 - SCPPER-CN',
+  title: '关于',
   meta: [
     { name: 'description', content: '关于 SCPPER-CN 数据分析平台与项目说明。' }
   ]

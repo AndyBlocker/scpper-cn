@@ -19,8 +19,8 @@
             type="button"
             :aria-pressed="pageSize === s"
             @click="setPageSize(s)"
-            class="px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
-            :class="pageSize === s ? 'bg-[rgb(var(--accent))] text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
+            class="px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--g-accent)] transition-colors"
+            :class="pageSize === s ? 'bg-[var(--g-accent)] text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
           >
             {{ s }}
           </button>
@@ -40,15 +40,15 @@
           aria-label="类别"
         >
           <button
-            v-for="([key, label], i) in CATEGORIES"
+            v-for="[key, label] in CATEGORIES"
             :key="key"
             role="tab"
             type="button"
             :aria-selected="category === key"
             @click="category = key"
-            class="px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
+            class="px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-[var(--g-accent)] transition-colors"
             :class="category === key
-              ? 'bg-[rgb(var(--accent))] text-white'
+              ? 'bg-[var(--g-accent)] text-white'
               : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
           >
             {{ label }}
@@ -66,8 +66,8 @@
             type="button"
             :aria-pressed="pageSize === s"
             @click="setPageSize(s)"
-            class="px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
-            :class="pageSize === s ? 'bg-[rgb(var(--accent))] text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
+            class="px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--g-accent)] transition-colors"
+            :class="pageSize === s ? 'bg-[var(--g-accent)] text-white' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
           >
             {{ s }}
           </button>
@@ -94,7 +94,23 @@
 
         <!-- 表头右侧：使用与正文一致的网格，并加 ref 用于测量 -->
         <div class="col-span-4 md:col-span-5 px-0 relative">
+          <!-- 论坛模式：简化为单列"发帖数" -->
+          <div v-if="isForumCategory" class="flex items-center justify-center h-full">
+            <button
+              class="th-btn justify-center"
+              :class="sortedHeadClass('count')"
+              :aria-sort="ariaSort('count')"
+              @click="toggleSort('count')"
+              title="按发帖数排序"
+            >
+              发帖数
+              <span v-if="sortBy==='count'">{{ sortDir==='asc' ? '▲' : '▼' }}</span>
+            </button>
+          </div>
+
+          <!-- 正常模式：进度条 + 三项数值 -->
           <div
+            v-else
             ref="headGridEl"
             class="metric-head-grid grid grid-cols-3 md:grid-cols-5 items-stretch gap-2"
           >
@@ -206,7 +222,7 @@
         <div class="mt-4">
           <button
             type="button"
-            class="px-3 py-1.5 text-xs rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]"
+            class="px-3 py-1.5 text-xs rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent)]"
             @click="setSortDefault('rating'); goToPage(1)"
           >
             重置筛选
@@ -244,18 +260,24 @@
               :display-name="u.displayName"
               :subtitle="u.favTag ? ('#'+u.favTag) : undefined"
               :sm-avatar-size="22"
-              sm-text-class="text-[13px] leading-none font-medium text-[rgb(var(--accent))] dark:text-[rgb(var(--accent))] truncate max-w-[160px]"
+              sm-text-class="text-[13px] leading-none font-medium text-[var(--g-accent)] dark:text-[var(--g-accent)] truncate max-w-[160px]"
             />
           </div>
 
           <!-- 度量：进度条(桌面) + 三项数值 -->
           <div class="col-span-4 md:col-span-5 px-0">
-            <div class="metric-grid grid grid-cols-1 md:grid-cols-5 items-stretch gap-2">
+            <!-- 论坛模式：仅显示发帖数 -->
+            <div v-if="isForumCategory" class="flex items-center justify-center h-full text-center text-sm text-neutral-900 dark:text-neutral-100 tabular-nums font-semibold">
+              {{ formatInt(u.catCount ?? u.postCount ?? u.pageCount) }}
+            </div>
+
+            <!-- 正常模式：进度条 + 三项数值 -->
+            <div v-else class="metric-grid grid grid-cols-1 md:grid-cols-5 items-stretch gap-2">
               <!-- 进度条 -->
               <div class="hidden md:flex md:items-center md:col-start-1 md:col-span-2 h-full">
                 <div class="h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
                   <div
-                    class="h-full rounded-full bg-[rgb(var(--accent))] transition-[width] duration-200"
+                    class="h-full rounded-full bg-[var(--g-accent)] transition-[width] duration-200"
                     :style="{ width: metricPercent(u) + '%' }"
                     role="progressbar"
                     :aria-valuenow="Math.round(metricPercent(u))"
@@ -307,7 +329,7 @@
             <button
               @click="goToPage(page - 1)"
               :disabled="page === 1"
-              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent)] bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
             >
               上一页
             </button>
@@ -315,15 +337,15 @@
               v-for="p in visiblePages"
               :key="p"
               @click="goToPage(p)"
-              class="min-w-[2rem] text-center px-2 py-1 border border-neutral-200 dark:border-neutral-700 rounded focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] transition-colors"
-              :class="p === page ? 'bg-[rgb(var(--accent))] text-white border-[rgb(var(--accent))]' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
+              class="min-w-[2rem] text-center px-2 py-1 border border-neutral-200 dark:border-neutral-700 rounded focus:outline-none focus:ring-2 focus:ring-[var(--g-accent)] transition-colors"
+              :class="p === page ? 'bg-[var(--g-accent)] text-white border-[var(--g-accent)]' : 'bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'"
             >
               {{ p }}
             </button>
             <button
               @click="goToPage(page + 1)"
               :disabled="page === totalPages"
-              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              class="px-2.5 py-1 border border-neutral-200 dark:border-neutral-700 rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent)] bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800"
             >
               下一页
             </button>
@@ -364,6 +386,7 @@ type RankUser = {
   // 分类视图兼容
   catCount?: number;
   catMean?: number;
+  postCount?: number;
 };
 
 const route = useRoute();
@@ -389,6 +412,7 @@ const CATEGORIES = [
   ['translation', '翻译'],
   ['wanderers', '被放逐者之图书馆'],
   ['art', '艺术作品'],
+  ['forum', '论坛'],
 ] as const;
 
 const page = ref<number>(parseInt((route.query.page as string) || '1', 10) || 1);
@@ -400,6 +424,8 @@ const sortBy = ref<string>(sanitizedSort);
 const sortDir = ref<string>((route.query.dir as string) || 'desc'); // 移动端不暴露 UI，但仍沿用参数
 
 const offset = computed(() => (page.value - 1) * pageSize.value);
+
+const isForumCategory = computed(() => category.value === 'forum');
 
 /** —— 数据获取 —— */
 type RankResponse = { total: number; items: RankUser[] };
@@ -425,11 +451,13 @@ const startIndex = computed(() => offset.value + 1);
 
 /** —— 进度条：随当前排序指标变化 —— */
 function metricLabel(k: string) {
+  if (isForumCategory.value) return '发帖数';
   if (k === 'count') return '作品数';
   if (k === 'mean') return '均分';
   return '总分';
 }
 function metricValue(u: RankUser): number {
+  if (isForumCategory.value) return Number(u.catCount ?? u.postCount ?? u.pageCount ?? 0) || 0;
   if (sortBy.value === 'count') return Number(u.catCount ?? u.pageCount ?? 0) || 0;
   if (sortBy.value === 'mean') return Number(u.catMean ?? u.meanRating ?? 0) || 0;
   return Number(u.rating ?? u.overallRating ?? 0) || 0;
@@ -445,7 +473,14 @@ function metricPercent(u: RankUser) {
 }
 
 /** —— 交互 —— */
-watch(category, () => { page.value = 1; updateQuery(); });
+watch(category, () => {
+  page.value = 1;
+  if (isForumCategory.value) {
+    sortBy.value = 'count';
+    sortDir.value = 'desc';
+  }
+  updateQuery();
+});
 watch(page, () => { updateQuery(); });
 watch(pageSize, () => { page.value = 1; updateQuery(); });
 watch(sortBy, () => { page.value = 1; updateQuery(); scheduleMeasure(); });
@@ -583,7 +618,7 @@ function rankBadgeClass(rank: number) {
 }
 function sortedHeadClass(key: string) {
   const active = sortBy.value === key;
-  return active ? 'bg-[rgba(var(--accent),0.14)] dark:bg-[rgba(var(--accent),0.22)] text-[rgb(var(--accent))]' : '';
+  return active ? 'bg-[var(--g-accent-medium)] dark:bg-[var(--g-accent-strong)] text-[var(--g-accent)]' : '';
 }
 function formatInt(v?: unknown): string {
   const n = Number(v);
@@ -598,12 +633,13 @@ function formatMean(v?: unknown): string {
 
 // 根据当前排序指标格式化展示值（移动端使用）
 function formatMetric(u: RankUser): string {
+  if (isForumCategory.value) return formatInt(u.catCount ?? u.postCount ?? u.pageCount);
   if (sortBy.value === 'count') return formatInt(u.catCount ?? u.pageCount);
   if (sortBy.value === 'mean') return formatMean(u.catMean ?? u.meanRating);
   return formatInt(u.rating ?? u.overallRating);
 }
 
-useHead({ title: '作者排行 - SCPPER-CN' });
+useHead({ title: '作者排行' });
 </script>
 
 <style scoped>
@@ -636,7 +672,7 @@ useHead({ title: '作者排行 - SCPPER-CN' });
   top: 0; bottom: 0;                      /* 覆盖整行高度（包含 py） */
   left: var(--hl-left, -9999px);          /* 未测量前隐藏 */
   width: var(--hl-width, 0);
-  background-color: rgba(var(--accent),0.14);
+  background-color: var(--g-accent-medium);
   pointer-events: none;
   border-radius: 0px;                     /* 需要无圆角可设为 0 */
 }
@@ -650,7 +686,7 @@ useHead({ title: '作者排行 - SCPPER-CN' });
   top: 0; bottom: 0;
   left: var(--hhl-left, -9999px);
   width: var(--hhl-width, 0);
-  background-color: rgba(var(--accent),0.14);
+  background-color: var(--g-accent-medium);
   pointer-events: none;
   border-radius: 6px;
 }

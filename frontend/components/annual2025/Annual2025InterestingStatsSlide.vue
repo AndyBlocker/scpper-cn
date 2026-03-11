@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div class="max-w-5xl w-full mx-auto px-2">
         <div class="flex items-center gap-2 md:gap-3 mb-6 md:mb-8">
-          <div class="p-1.5 md:p-2 bg-[rgb(var(--accent))] rounded-lg">
+          <div class="p-1.5 md:p-2 bg-[var(--g-accent)] rounded-lg">
             <LucideIcon name="Sparkles" class="w-4 h-4 md:w-5 md:h-5 text-white" />
           </div>
           <h2 class="text-2xl md:text-3xl font-bold">有趣数据</h2>

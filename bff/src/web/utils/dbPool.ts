@@ -1,4 +1,11 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
+
+// Fix: pg 默认将 "timestamp without time zone" 按本地时区解析，
+// 但 Prisma 以 UTC 存储 DateTime，导致 BFF 读出的时间偏移 8 小时。
+// OID 1114 = timestamp without time zone
+if (types && typeof types.setTypeParser === 'function') {
+  types.setTypeParser(1114, (str: string) => new Date(str + '+00'));
+}
 
 // 连接池配置
 const POOL_CONFIG = {
@@ -108,8 +115,14 @@ export function getReadPool(): Pool {
  * 同步获取只读连接池（供路由直接使用）
  * 这是一个便捷方法，用于在路由中直接获取读连接池
  */
-export function getReadPoolSync(): Pool {
-  return getReadPool();
+export function getReadPoolSync(fallbackPool?: Pool): Pool {
+  if (primaryPool) {
+    return getReadPool();
+  }
+  if (fallbackPool) {
+    return fallbackPool;
+  }
+  throw new Error('Database pools not initialized. Call initPools() first.');
 }
 
 /**

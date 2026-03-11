@@ -42,6 +42,8 @@ type LegacyUserMeta = {
   displayName: string | null;
 };
 
+type DbClient = PrismaClient | Prisma.TransactionClient;
+
 const DEFAULT_LEGACY_SCHEMA = 'legacy_votes_cn';
 const DEFAULT_MAX_DATE = '2022-06-01';
 const DEFAULT_TIMEZONE = '+00:00';
@@ -157,14 +159,17 @@ function normalizeTimezone(input: string): string {
   return trimmed;
 }
 
-async function withTransaction<T>(prisma: PrismaClient, task: (tx: PrismaClient) => Promise<T>): Promise<T> {
+async function withTransaction<T>(
+  prisma: PrismaClient,
+  task: (tx: Prisma.TransactionClient) => Promise<T>
+): Promise<T> {
   return prisma.$transaction((inner) => task(inner), {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     timeout: 300_000
   });
 }
 
-async function ensureLegacySchema(prisma: PrismaClient, schema: string): Promise<void> {
+async function ensureLegacySchema(prisma: DbClient, schema: string): Promise<void> {
   const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>(Prisma.sql`
     select exists (
       select 1
@@ -178,7 +183,10 @@ async function ensureLegacySchema(prisma: PrismaClient, schema: string): Promise
   }
 }
 
-async function getLegacySiteInfo(prisma: PrismaClient, schema: string): Promise<{ siteId: number; domain: string; protocol: string; baseUrl: string }> {
+async function getLegacySiteInfo(
+  prisma: DbClient,
+  schema: string
+): Promise<{ siteId: number; domain: string; protocol: string; baseUrl: string } | null> {
   const result = await prisma.$queryRawUnsafe<Array<{ WikidotId: number; Domain: string; Protocol: string }>>(
     `select "WikidotId", "Domain", coalesce("Protocol", 'https') as "Protocol"
        from "${schema}"."sites"
@@ -197,7 +205,7 @@ async function getLegacySiteInfo(prisma: PrismaClient, schema: string): Promise<
 }
 
 async function collectLegacyPages(
-  prisma: PrismaClient,
+  prisma: DbClient,
   schema: string,
   baseUrl: string,
   pageWhitelist: number[]
@@ -239,7 +247,7 @@ async function collectLegacyPages(
 }
 
 async function collectLegacyVoteStats(
-  prisma: PrismaClient,
+  prisma: DbClient,
   schema: string,
   maxDateIso: string,
   pageWhitelist: number[]
@@ -349,12 +357,12 @@ async function fetchMysqlPageMeta(
   const chunks = chunkArray(wids, 1_000);
   const result: Array<{ wikidotId: number; deleted: boolean; lastUpdate: Date | null }> = [];
   for (const chunk of chunks) {
-    const [rows] = await mysql.query<Array<{ WikidotId: number; Deleted: number; LastUpdate: string | null }>>(
+    const [rows] = await mysql.query(
       `SELECT WikidotId, Deleted, LastUpdate
          FROM pages
         WHERE WikidotId IN (${chunk.map(() => '?').join(',')})`,
       chunk
-    );
+    ) as [Array<{ WikidotId: number; Deleted: number; LastUpdate: string | null }>, unknown];
     for (const row of rows) {
       result.push({
         wikidotId: Number(row.WikidotId),
@@ -367,7 +375,7 @@ async function fetchMysqlPageMeta(
 }
 
 async function collectMissingUsers(
-  prisma: PrismaClient,
+  prisma: DbClient,
   schema: string,
   maxDateIso: string,
   pageWhitelist: number[]
@@ -402,12 +410,12 @@ async function enrichUserMeta(ids: number[], mysql: mysql.Connection): Promise<L
   const chunks = chunkArray(ids, 1_000);
   const result: LegacyUserMeta[] = [];
   for (const chunk of chunks) {
-    const [rows] = await mysql.query<Array<{ WikidotId: number; WikidotName: string; DisplayName: string | null }>>(
+    const [rows] = await mysql.query(
       `SELECT WikidotId, WikidotName, DisplayName
          FROM users
         WHERE WikidotId IN (${chunk.map(() => '?').join(',')})`,
       chunk
-    );
+    ) as [Array<{ WikidotId: number; WikidotName: string; DisplayName: string | null }>, unknown];
     for (const row of rows) {
       result.push({
         wikidotId: Number(row.WikidotId),
@@ -443,7 +451,7 @@ async function printSummary(summary: {
 }
 
 async function createMissingPages(
-  prisma: PrismaClient,
+  prisma: DbClient,
   pages: LegacyPageMeta[],
   siteInfo: { baseUrl: string },
   chunkSize: number
@@ -461,12 +469,12 @@ async function createMissingPages(
         wikidotId: page.pageWid,
         url,
         currentUrl: url,
-        urlHistory: [url],
+        urlHistory: [url] as string[],
         isDeleted: page.deleted,
         firstPublishedAt: firstPublished,
         createdAt: now,
         updatedAt: now
-      } as const;
+      };
     });
     const result = await prisma.page.createMany({
       data,
@@ -521,7 +529,7 @@ function mergePageIdMaps(
 }
 
 async function createHistoricalPageVersions(
-  prisma: PrismaClient,
+  prisma: DbClient,
   pageMap: Map<number, { pageId: number; earliest: Date | null; latest: Date | null; slug: string; title: string | null; deleted: boolean }>,
   cutoffIso: string,
   chunkSize: number
@@ -618,7 +626,7 @@ async function createHistoricalPageVersions(
 }
 
 async function reassignLegacyRevisions(
-  prisma: PrismaClient,
+  prisma: DbClient,
   versionMap: Map<number, number>,
   cutoffIso: string,
   chunkSize: number,
@@ -686,7 +694,7 @@ async function reassignLegacyRevisions(
 }
 
 async function upsertMissingUsers(
-  prisma: PrismaClient,
+  prisma: DbClient,
   users: LegacyUserMeta[],
   chunkSize: number
 ): Promise<void> {
@@ -708,7 +716,7 @@ async function upsertMissingUsers(
 }
 
 async function purgePreCutoffVotes(
-  prisma: PrismaClient,
+  prisma: DbClient,
   cutoffIso: string,
   targetPageIds: number[],
   chunkSize = INSERT_BATCH_SIZE
@@ -770,7 +778,7 @@ async function purgePreCutoffVotes(
 }
 
 async function insertLegacyVotes(
-  prisma: PrismaClient,
+  prisma: DbClient,
   schema: string,
   cutoffIso: string,
   versionMap: Map<number, number>,
@@ -819,6 +827,7 @@ async function insertLegacyVotes(
   });
   const widToUserId = new Map<number, number>();
   for (const row of userLookup) {
+    if (row.wikidotId == null) continue;
     widToUserId.set(row.wikidotId, row.id);
   }
 
@@ -911,14 +920,14 @@ async function connectLegacyMysql(config: MysqlLegacyConfig): Promise<{ connecti
 
   const discovery = await tryConnect();
   try {
-    const [rows] = await discovery.execute<Array<{ db: string }>>(
+    const [rows] = await discovery.execute(
       `SELECT table_schema AS db
          FROM information_schema.tables
         WHERE table_name IN ('sites', 'pages', 'votes', 'vote_history', 'users')
           AND table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
         GROUP BY table_schema
         ORDER BY table_schema`
-    );
+    ) as [Array<{ db: string }>, unknown];
     if (rows.length === 0) {
       throw new Error('未能自动探测到包含 legacy 数据的 MySQL 数据库。');
     }

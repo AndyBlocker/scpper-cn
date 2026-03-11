@@ -17,6 +17,7 @@ import GachaRarityFilter from '~/components/gacha/GachaRarityFilter.vue'
 import GachaAffixChip from '~/components/gacha/GachaAffixChip.vue'
 import GachaCard from '~/components/gacha/GachaCard.vue'
 import GachaCardMini from '~/components/gacha/GachaCardMini.vue'
+import GachaPagination from '~/components/gacha/GachaPagination.vue'
 import { UiButton } from '~/components/ui/button'
 import { UiInput } from '~/components/ui/input'
 import { UiSelectRoot, UiSelectTrigger, UiSelectContent, UiSelectItem } from '~/components/ui/select'
@@ -36,6 +37,7 @@ interface TradeCardOption {
   title: string
   rarity: Rarity
   imageUrl: string | null
+  isRetired?: boolean
   wikidotId?: number | null
   pageId?: number | null
   tags?: string[]
@@ -47,6 +49,17 @@ interface TradeCardOption {
   affixVisualStyle?: AffixVisualStyle
   affixLabel?: string
 }
+
+interface BuyRequestFulfillPayload {
+  buyRequestId: string
+  selectedCardId?: string
+  selectedAffixSignature?: string
+}
+
+type BuyRequestDraft =
+  | { targetCardId: string; matchLevel: 'PAGE' }
+  | { targetCardId: string; matchLevel: 'IMAGE_VARIANT' }
+  | { targetCardId: string; matchLevel: 'COATING'; requiredCoating: AffixVisualStyle }
 
 type TradeSortMode = 'LATEST' | 'PRICE_ASC' | 'PRICE_DESC' | 'TOTAL_ASC' | 'TOTAL_DESC' | 'RARITY_DESC'
 
@@ -86,6 +99,7 @@ const emit = defineEmits<{
   buy: [listingId: string]
   cancel: [listingId: string]
   'load-more': []
+  'trade-page-change': [page: number]
   'query-change': [payload: {
     search: string
     searchMode: 'ALL' | 'CARD' | 'SELLER'
@@ -101,15 +115,19 @@ const emit = defineEmits<{
     offeredCards: Array<{ cardId: string; affixSignature?: string; quantity: number }>
     expiresHours: number
   }>]
-  'fulfill-buy-request': [buyRequestId: string]
+  'fulfill-buy-request': [payload: BuyRequestFulfillPayload]
   'cancel-buy-request': [buyRequestId: string]
   'buy-request-load-more': []
+  'buy-request-page-change': [page: number]
   'buy-request-query-change': [payload: {
     search: string
     sort: BuyRequestSortMode
     rarity: Rarity | 'ALL'
+    fulfillableOnly: boolean
   }]
   'refresh-buy-requests': [options?: { resetPublic?: boolean }]
+  'request-inventory': []
+  'request-catalog': []
 }>()
 
 // ─── 表单状态 ────────────────────────────────────────────
@@ -126,19 +144,31 @@ const activeSubTab = ref<TradeSubTab>('market')
 const showCreateForm = ref(false)
 const showBuyRequestForm = ref(false)
 
+// Lazy-load: emit request-inventory when create form opens
+watch(showCreateForm, (val) => {
+  if (val) emit('request-inventory')
+})
+
+// Lazy-load: emit request-catalog when buy request form opens
+watch(showBuyRequestForm, (val) => {
+  if (val) emit('request-catalog')
+})
+
 // ─── Picker 分页 ─────────────────────────────────────
 const PICKER_PAGE_SIZE = 30
 const pickerVisibleCount = ref(PICKER_PAGE_SIZE)
 
 // ─── 公共挂牌客户端渐进渲染 ────────────────────────────
-const LISTING_PAGE_SIZE = 36
+const LISTING_PAGE_SIZE = 40
+const TRADE_PAGE_SIZE = 40
 const listingVisibleCount = ref(LISTING_PAGE_SIZE)
-const visiblePublicListings = computed(() => props.publicListings.slice(0, listingVisibleCount.value))
-const hasMoreListingsLocal = computed(() => props.publicListings.length > listingVisibleCount.value)
+const visiblePublicListings = computed(() => props.publicListings)
+const tradePublicPage = ref(1)
 
 // ─── 求购列表客户端渐进渲染 ────────────────────────────
-const BR_PAGE_SIZE = 36
+const BR_PAGE_SIZE = 40
 const brVisibleCount = ref(BR_PAGE_SIZE)
+const buyRequestPublicPage = ref(1)
 
 // ─── 筛选 / 排序状态 ────────────────────────────────────
 
@@ -172,14 +202,64 @@ function closeMyListingDetail() {
 
 // ─── 求购详情 ─────────────────────────────────────
 const selectedBuyRequest = ref<BuyRequest | null>(null)
+const selectedFulfillStackKey = ref<string>('')
 const pageAuthors = usePageAuthors()
 
 function openBuyRequestDetail(br: BuyRequest) {
   selectedBuyRequest.value = br
+  if (!props.inventoryLoading && props.cardOptions.length === 0) {
+    emit('request-inventory')
+  }
 }
 
 function closeBuyRequestDetail() {
   selectedBuyRequest.value = null
+}
+
+function handleMyListingDialogChange(nextOpen: boolean) {
+  if (!nextOpen) closeMyListingDetail()
+}
+
+function handlePublicListingDialogChange(nextOpen: boolean) {
+  if (!nextOpen) closeListingDetail()
+}
+
+function handleBuyRequestDialogChange(nextOpen: boolean) {
+  if (!nextOpen) closeBuyRequestDetail()
+}
+
+const buyRequestFulfillCandidates = computed(() => {
+  const br = selectedBuyRequest.value
+  if (!br || br.status !== 'OPEN' || br.buyerId === props.userId) return []
+  if (br.matchLevel === 'PAGE') {
+    const targetPageId = br.targetCard.pageId
+    if (targetPageId == null) return []
+    return props.cardOptions.filter((item) => item.pageId === targetPageId)
+  }
+  if (br.matchLevel === 'COATING') {
+    const requiredCoating = br.requiredCoating
+    if (!requiredCoating || requiredCoating === 'NONE') return []
+    return props.cardOptions.filter((item) => item.cardId === br.targetCardId && item.affixVisualStyle === requiredCoating)
+  }
+  return props.cardOptions.filter((item) => item.cardId === br.targetCardId)
+})
+
+const selectedBuyRequestFulfillOption = computed(() =>
+  buyRequestFulfillCandidates.value.find((item) => item.stackKey === selectedFulfillStackKey.value)
+  ?? buyRequestFulfillCandidates.value[0]
+  ?? null
+)
+
+function handleFulfillBuyRequestFromDetail() {
+  const br = selectedBuyRequest.value
+  if (!br) return
+  const selected = selectedBuyRequestFulfillOption.value
+  emit('fulfill-buy-request', {
+    buyRequestId: br.id,
+    selectedCardId: selected?.cardId,
+    selectedAffixSignature: selected?.affixSignature
+  })
+  closeBuyRequestDetail()
 }
 
 // ─── 求购创建表单状态 ──────────────────────────────
@@ -232,25 +312,27 @@ const brFilteredCatalog = computed(() => {
   })
 })
 
-const brDerivedPayloads = computed(() => {
+const brDerivedPayloads = computed<BuyRequestDraft[]>(() => {
   if (!brSelectedPage.value) return []
   const page = brSelectedPage.value
+  const firstVariantId = page.variants[0]?.id
+  if (!firstVariantId) return []
   // No specific variants → PAGE level (single request)
   if (brSelectedVariantIds.value.length === 0) {
-    return [{ targetCardId: page.variants[0]?.id ?? '', matchLevel: 'PAGE' as BuyRequestMatchLevel }]
+    return [{ targetCardId: firstVariantId, matchLevel: 'PAGE' }]
   }
   // Specific variants, no coatings → IMAGE_VARIANT for each
   if (brSelectedCoatings.value.length === 0) {
-    return brSelectedVariantIds.value.map(vid => ({
+    return brSelectedVariantIds.value.map((vid) => ({
       targetCardId: vid,
-      matchLevel: 'IMAGE_VARIANT' as BuyRequestMatchLevel
+      matchLevel: 'IMAGE_VARIANT'
     }))
   }
   // Specific variants + specific coatings → COATING for each combo
-  return brSelectedVariantIds.value.flatMap(vid =>
-    brSelectedCoatings.value.map(coating => ({
+  return brSelectedVariantIds.value.flatMap((vid) =>
+    brSelectedCoatings.value.map((coating) => ({
       targetCardId: vid,
-      matchLevel: 'COATING' as BuyRequestMatchLevel,
+      matchLevel: 'COATING',
       requiredCoating: coating
     }))
   )
@@ -398,6 +480,7 @@ function brResetFilters() {
   brRarityFilter.value = 'ALL'
   brQuerySuppressed = false
   brVisibleCount.value = BR_PAGE_SIZE
+  buyRequestPublicPage.value = 1
   emitBrQuery()
 }
 
@@ -405,7 +488,8 @@ function emitBrQuery() {
   emit('buy-request-query-change', {
     search: brSearchInput.value.trim(),
     sort: brSortMode.value,
-    rarity: brRarityFilter.value
+    rarity: brRarityFilter.value,
+    fulfillableOnly: brShowFulfillableOnly.value
   })
 }
 
@@ -519,29 +603,14 @@ const filteredMyTradeListings = computed(() =>
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 )
 
-const myCardIdSet = computed(() => new Set(props.cardOptions.map((c) => c.cardId)))
-
-function canFulfillBuyRequest(br: BuyRequest) {
-  if (br.status !== 'OPEN' || br.buyerId === props.userId) return false
-  const cardSet = props.ownedCardIds ?? myCardIdSet.value
-  if (br.matchLevel === 'PAGE') {
-    const targetPageId = br.targetCard.pageId
-    if (!targetPageId) return cardSet.has(br.targetCardId)
-    return props.cardOptions.some((c) => c.pageId === targetPageId)
-      || props.pageCatalog.some((p) => p.pageId === targetPageId && p.variants.some((v) => cardSet.has(v.id)))
-  }
-  return cardSet.has(br.targetCardId)
+function toggleFulfillableOnly() {
+  brShowFulfillableOnly.value = !brShowFulfillableOnly.value
+  brVisibleCount.value = BR_PAGE_SIZE
+  buyRequestPublicPage.value = 1
+  emitBrQuery()
 }
 
-// Fulfillable buy request computed properties
-const fulfillableBrCount = computed(() =>
-  props.publicBuyRequests.filter((br) => canFulfillBuyRequest(br)).length
-)
-
-const displayedBuyRequests = computed(() => {
-  if (!brShowFulfillableOnly.value) return props.publicBuyRequests
-  return props.publicBuyRequests.filter((br) => canFulfillBuyRequest(br))
-})
+const displayedBuyRequests = computed(() => props.publicBuyRequests)
 
 const visibleBuyRequests = computed(() => displayedBuyRequests.value.slice(0, brVisibleCount.value))
 const hasMoreBrLocal = computed(() => displayedBuyRequests.value.length > brVisibleCount.value)
@@ -617,6 +686,7 @@ function resetFilters() {
   tradeRarityFilter.value = 'ALL'
   suppressMarketQueryWatch = false
   listingVisibleCount.value = LISTING_PAGE_SIZE
+  tradePublicPage.value = 1
   emitMarketQuery()
 }
 
@@ -672,12 +742,14 @@ watch(() => props.cardOptions, (options) => {
 watch(tradeSearch, () => {
   if (suppressMarketQueryWatch) return
   listingVisibleCount.value = LISTING_PAGE_SIZE
+  tradePublicPage.value = 1
   scheduleMarketQueryEmit()
 })
 
 watch([tradeSearchMode, tradeSortMode, tradeRarityFilter], () => {
   if (suppressMarketQueryWatch) return
   listingVisibleCount.value = LISTING_PAGE_SIZE
+  tradePublicPage.value = 1
   emitMarketQuery()
 })
 
@@ -690,9 +762,21 @@ watch(tradeQuantityMax, (max) => {
   if (tradeQuantity.value > max) tradeQuantity.value = max
 })
 
+watch([() => selectedBuyRequest.value?.id, buyRequestFulfillCandidates], () => {
+  const candidates = buyRequestFulfillCandidates.value
+  if (!candidates.length) {
+    selectedFulfillStackKey.value = ''
+    return
+  }
+  if (!candidates.some((item) => item.stackKey === selectedFulfillStackKey.value)) {
+    selectedFulfillStackKey.value = candidates[0]!.stackKey
+  }
+}, { immediate: true })
+
 watch(brSearchInput, () => {
   if (brQuerySuppressed) return
   brVisibleCount.value = BR_PAGE_SIZE
+  buyRequestPublicPage.value = 1
   emitBrQuery()
 })
 
@@ -752,7 +836,7 @@ watch([brSortMode, brRarityFilter], () => {
         </button>
 
         <Transition name="trade-collapse">
-          <article v-if="showCreateForm" class="mt-2 rounded-2xl border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
+          <article v-if="showCreateForm" class="mt-2 rounded-lg border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
             <p class="text-[11px] text-neutral-500 dark:text-neutral-400">仅可上架未放置、且当前可用的库存数量。</p>
 
             <div v-if="inventoryLoading && !cardOptions.length" class="gacha-empty mt-3">
@@ -805,6 +889,7 @@ watch([brSortMode, brRarityFilter], () => {
                         :title="item.title"
                         :rarity="item.rarity"
                         :image-url="item.imageUrl || undefined"
+                        :retired="item.isRetired"
                         :affix-visual-style="item.affixVisualStyle"
                         :affix-label="item.affixLabel"
                       >
@@ -919,6 +1004,7 @@ watch([brSortMode, brRarityFilter], () => {
                 :title="listing.card.title"
                 :rarity="listing.card.rarity"
                 :image-url="listing.card.imageUrl || undefined"
+                :retired="listing.card.isRetired"
                 :affix-visual-style="listing.card.affixVisualStyle || listing.affixBreakdown?.[0]?.affixVisualStyle"
                 :affix-label="listing.card.affixLabel || listing.affixBreakdown?.[0]?.affixLabel"
                 :hide-footer="true"
@@ -933,23 +1019,19 @@ watch([brSortMode, brRarityFilter], () => {
         </div>
       </div>
 
-      <div v-if="hasMoreListingsLocal" class="mt-3 flex items-center justify-center">
-        <UiButton variant="outline" size="sm" @click="listingVisibleCount += LISTING_PAGE_SIZE">
-          显示更多已加载挂牌（剩余 {{ publicListings.length - listingVisibleCount }} 条）
-        </UiButton>
-      </div>
-
-      <div v-if="publicHasMore" class="mt-3 flex items-center justify-center">
-        <UiButton variant="outline" size="sm" :disabled="publicLoadingMore || loading" @click="emit('load-more')">
-          {{ publicLoadingMore ? '加载中...' : '加载更多挂牌' }}
-        </UiButton>
-      </div>
+      <GachaPagination
+        :current="tradePublicPage"
+        :total="publicTotal"
+        :page-size="TRADE_PAGE_SIZE"
+        :loading="loading || publicLoadingMore"
+        @change="(p: number) => { tradePublicPage = p; emit('trade-page-change', p) }"
+      />
     </div>
 
     <!-- ═══ 我的 Tab ═══ -->
     <div v-else-if="activeSubTab === 'mine'" class="mt-4 space-y-4">
       <!-- 我的挂牌 -->
-      <article class="rounded-2xl border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
+      <article class="rounded-lg border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
         <header class="flex flex-wrap items-center justify-between gap-2">
           <h4 class="text-xs font-semibold text-neutral-700 dark:text-neutral-200">我的挂牌 ({{ filteredMyTradeListings.length }})</h4>
           <UiSelectRoot v-model="tradeMyStatusFilter">
@@ -977,6 +1059,7 @@ watch([brSortMode, brRarityFilter], () => {
                 :title="listing.card.title"
                 :rarity="listing.card.rarity"
                 :image-url="listing.card.imageUrl || undefined"
+                :retired="listing.card.isRetired"
                 :affix-visual-style="listing.card.affixVisualStyle || listing.affixBreakdown?.[0]?.affixVisualStyle"
                 :affix-label="listing.card.affixLabel || listing.affixBreakdown?.[0]?.affixLabel"
                 :hide-footer="true"
@@ -995,7 +1078,7 @@ watch([brSortMode, brRarityFilter], () => {
       </article>
 
       <!-- 我的求购 -->
-      <article class="rounded-2xl border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
+      <article class="rounded-lg border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
         <h4 class="text-xs font-semibold text-neutral-700 dark:text-neutral-200">我的求购 ({{ myBuyRequests.length }})</h4>
         <p v-if="!myBuyRequests.length" class="gacha-empty mt-2">暂无求购记录。</p>
         <div v-else class="mt-3 gacha-trade-item-grid">
@@ -1011,6 +1094,7 @@ watch([brSortMode, brRarityFilter], () => {
                 :title="br.targetCard.title"
                 :rarity="br.targetCard.rarity"
                 :image-url="br.targetCard.imageUrl || undefined"
+                :retired="br.targetCard.isRetired"
                 :hide-footer="true"
               />
             </div>
@@ -1044,7 +1128,7 @@ watch([brSortMode, brRarityFilter], () => {
         </button>
 
         <Transition name="trade-collapse">
-          <article v-if="showBuyRequestForm" class="mt-2 rounded-2xl border border-cyan-200/60 bg-cyan-50/40 p-4 dark:border-cyan-800/50 dark:bg-cyan-950/30">
+          <article v-if="showBuyRequestForm" class="mt-2 rounded-lg border border-cyan-200/60 bg-cyan-50/40 p-4 dark:border-cyan-800/50 dark:bg-cyan-950/30">
             <p class="mt-1 text-[10px] text-neutral-500 dark:text-neutral-400">指定想要的卡片，可使用 Token 或自己的卡牌出价。</p>
 
             <div class="mt-3 space-y-3">
@@ -1080,6 +1164,7 @@ watch([brSortMode, brRarityFilter], () => {
                           :title="entry.title"
                           :rarity="entry.rarity"
                           :image-url="entry.variants[0]?.imageUrl || undefined"
+                          :retired="entry.isRetired"
                           :hide-footer="true"
                         />
                       </button>
@@ -1124,6 +1209,7 @@ watch([brSortMode, brRarityFilter], () => {
                       :title="brSelectedPage.title"
                       :rarity="brSelectedPage.rarity"
                       :image-url="v.imageUrl || undefined"
+                      :retired="v.isRetired"
                       :hide-footer="true"
                     />
                   </button>
@@ -1199,6 +1285,7 @@ watch([brSortMode, brRarityFilter], () => {
                         :title="item.title"
                         :rarity="item.rarity"
                         :image-url="item.imageUrl || undefined"
+                        :retired="item.isRetired"
                         :affix-visual-style="item.affixVisualStyle"
                         :affix-label="item.affixLabel"
                       >
@@ -1253,11 +1340,10 @@ watch([brSortMode, brRarityFilter], () => {
       </div>
 
       <!-- 公共求购浏览 -->
-      <article class="rounded-2xl border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
+      <article class="rounded-lg border border-neutral-200/75 bg-neutral-50/75 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/55">
         <header class="flex flex-wrap items-center justify-between gap-2">
           <h4 class="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
             公共求购
-            <span v-if="fulfillableBrCount > 0" class="br-fulfillable-header-badge">{{ fulfillableBrCount }} 可接</span>
           </h4>
           <UiButton variant="outline" size="sm" :disabled="buyRequestLoading" @click="emit('refresh-buy-requests', { resetPublic: true })">
             {{ buyRequestLoading ? '刷新中...' : '刷新' }}
@@ -1265,15 +1351,15 @@ watch([brSortMode, brRarityFilter], () => {
         </header>
 
         <!-- 可接单筛选开关 -->
-        <div v-if="fulfillableBrCount > 0" class="mt-2">
+        <div v-if="userId" class="mt-2">
           <button
             type="button"
             class="br-fulfillable-toggle"
             :class="{ 'br-fulfillable-toggle--active': brShowFulfillableOnly }"
-            @click="brShowFulfillableOnly = !brShowFulfillableOnly; brVisibleCount = BR_PAGE_SIZE"
+            @click="toggleFulfillableOnly"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="br-fulfillable-toggle__icon"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clip-rule="evenodd" /></svg>
-            仅显示我可接的求购 ({{ fulfillableBrCount }})
+            仅显示我可接的求购
           </button>
         </div>
 
@@ -1308,7 +1394,6 @@ watch([brSortMode, brRarityFilter], () => {
             :key="`public-br-${br.id}`"
             type="button"
             class="trade-item-row"
-            :class="{ 'trade-item-row--fulfillable': canFulfillBuyRequest(br) }"
             @click="openBuyRequestDetail(br)"
           >
             <div class="trade-item-row__card">
@@ -1316,6 +1401,7 @@ watch([brSortMode, brRarityFilter], () => {
                 :title="br.targetCard.title"
                 :rarity="br.targetCard.rarity"
                 :image-url="br.targetCard.imageUrl || undefined"
+                :retired="br.targetCard.isRetired"
                 :hide-footer="true"
               />
             </div>
@@ -1325,10 +1411,6 @@ watch([brSortMode, brRarityFilter], () => {
               <span class="flex items-center gap-1">
                 <span class="trade-item-row__time">{{ buyRequestRemainingLabel(br) }}</span>
                 <span class="br-match-chip">{{ buyRequestMatchLevelShortMap[br.matchLevel] }}</span>
-              </span>
-              <span v-if="canFulfillBuyRequest(br)" class="trade-item-row__fulfillable-badge">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="10" height="10"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clip-rule="evenodd" /></svg>
-                可接单
               </span>
             </div>
           </button>
@@ -1340,16 +1422,18 @@ watch([brSortMode, brRarityFilter], () => {
           </UiButton>
         </div>
 
-        <div v-if="buyRequestPublicHasMore && !brShowFulfillableOnly" class="mt-3 flex items-center justify-center">
-          <UiButton variant="outline" size="sm" :disabled="buyRequestPublicLoadingMore || buyRequestLoading" @click="emit('buy-request-load-more')">
-            {{ buyRequestPublicLoadingMore ? '加载中...' : '加载更多' }}
-          </UiButton>
-        </div>
+        <GachaPagination
+          :current="buyRequestPublicPage"
+          :total="buyRequestPublicTotal"
+          :page-size="40"
+          :loading="buyRequestPublicLoadingMore || buyRequestLoading"
+          @change="(p: number) => { buyRequestPublicPage = p; emit('buy-request-page-change', p) }"
+        />
       </article>
     </div>
 
     <!-- 挂牌详情弹窗 -->
-    <UiDialogRoot :open="!!selectedMyListing" @update:open="(v) => { if (!v) closeMyListingDetail() }">
+    <UiDialogRoot :open="!!selectedMyListing" @update:open="handleMyListingDialogChange">
       <UiDialogPortal>
         <UiDialogOverlay />
         <UiDialogContent class="max-w-lg p-0">
@@ -1377,6 +1461,7 @@ watch([brSortMode, brRarityFilter], () => {
                     :wikidot-id="selectedMyListing.card.wikidotId"
                     :authors="selectedMyListing.card.authors"
                     :image-url="selectedMyListing.card.imageUrl || undefined"
+                    :retired="selectedMyListing.card.isRetired"
                     variant="mini"
                     :hide-footer="true"
                     :affix-visual-style="selectedMyListing.card.affixVisualStyle || selectedMyListing.affixBreakdown?.[0]?.affixVisualStyle"
@@ -1470,7 +1555,7 @@ watch([brSortMode, brRarityFilter], () => {
       </UiDialogPortal>
     </UiDialogRoot>
 
-    <UiDialogRoot :open="!!selectedPublicListing" @update:open="(v) => { if (!v) closeListingDetail() }">
+    <UiDialogRoot :open="!!selectedPublicListing" @update:open="handlePublicListingDialogChange">
       <UiDialogPortal>
         <UiDialogOverlay />
         <UiDialogContent class="max-w-lg p-0">
@@ -1498,6 +1583,7 @@ watch([brSortMode, brRarityFilter], () => {
                     :wikidot-id="selectedPublicListing.card.wikidotId"
                     :authors="selectedPublicListing.card.authors"
                     :image-url="selectedPublicListing.card.imageUrl || undefined"
+                    :retired="selectedPublicListing.card.isRetired"
                     variant="mini"
                     :hide-footer="true"
                     :affix-visual-style="selectedPublicListing.card.affixVisualStyle || selectedPublicListing.affixBreakdown?.[0]?.affixVisualStyle"
@@ -1580,7 +1666,7 @@ watch([brSortMode, brRarityFilter], () => {
     </UiDialogRoot>
 
     <!-- 求购详情弹窗 -->
-    <UiDialogRoot :open="!!selectedBuyRequest" @update:open="(v) => { if (!v) closeBuyRequestDetail() }">
+    <UiDialogRoot :open="!!selectedBuyRequest" @update:open="handleBuyRequestDialogChange">
       <UiDialogPortal>
         <UiDialogOverlay />
         <UiDialogContent class="max-w-lg p-0">
@@ -1608,6 +1694,7 @@ watch([brSortMode, brRarityFilter], () => {
                     :wikidot-id="selectedBuyRequest.targetCard.wikidotId"
                     :authors="selectedBuyRequest.targetCard.authors"
                     :image-url="selectedBuyRequest.targetCard.imageUrl || undefined"
+                    :retired="selectedBuyRequest.targetCard.isRetired"
                     variant="mini"
                     :hide-footer="true"
                   />
@@ -1665,18 +1752,62 @@ watch([brSortMode, brRarityFilter], () => {
                     </div>
                   </div>
 
+                  <div
+                    v-if="selectedBuyRequest.status === 'OPEN' && selectedBuyRequest.buyerId !== userId"
+                    class="space-y-1.5"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-[10px] font-semibold text-neutral-500 dark:text-neutral-400">选择要提供的卡牌</span>
+                      <span v-if="buyRequestFulfillCandidates.length > 1" class="text-[10px] text-neutral-500 dark:text-neutral-400">
+                        可选 {{ buyRequestFulfillCandidates.length }} 种
+                      </span>
+                    </div>
+                    <p
+                      v-if="inventoryLoading && !cardOptions.length"
+                      class="text-[11px] text-neutral-500 dark:text-neutral-400"
+                    >
+                      正在加载你的可交付库存...
+                    </p>
+                    <div v-else-if="buyRequestFulfillCandidates.length > 0" class="gacha-card-grid--mini">
+                      <button
+                        v-for="item in buyRequestFulfillCandidates"
+                        :key="`br-fulfill-candidate-${item.stackKey}`"
+                        type="button"
+                        class="trade-create-card"
+                        :class="{ 'trade-create-card--selected': selectedFulfillStackKey === item.stackKey }"
+                        @click="selectedFulfillStackKey = item.stackKey"
+                      >
+                        <GachaCardMini
+                          :title="item.title"
+                          :rarity="item.rarity"
+                          :image-url="item.imageUrl || undefined"
+                          :retired="item.isRetired"
+                          :affix-visual-style="item.affixVisualStyle"
+                          :affix-label="item.affixLabel"
+                        >
+                          <template #meta>
+                            <span class="trade-remaining-chip">可交付 {{ item.availableCount }}</span>
+                          </template>
+                        </GachaCardMini>
+                      </button>
+                    </div>
+                    <p v-else class="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      暂无可直接交付库存，将由系统自动尝试释放符合条件的卡牌。
+                    </p>
+                  </div>
+
                   <UiButton
                     v-if="selectedBuyRequest.status === 'OPEN' && selectedBuyRequest.buyerId !== userId"
                     class="w-full"
-                    :disabled="buyRequestFulfillingId === selectedBuyRequest.id || !canFulfillBuyRequest(selectedBuyRequest)"
-                    @click="emit('fulfill-buy-request', selectedBuyRequest.id); closeBuyRequestDetail()"
+                    :disabled="buyRequestFulfillingId === selectedBuyRequest.id"
+                    @click="handleFulfillBuyRequestFromDetail"
                   >
                     {{
                       buyRequestFulfillingId === selectedBuyRequest.id
                         ? '接受中...'
-                        : canFulfillBuyRequest(selectedBuyRequest)
-                          ? '接受求购（出售目标卡）'
-                          : '库存不足，无法接受'
+                        : buyRequestFulfillCandidates.length > 1
+                          ? '选择并接受求购'
+                          : '接受求购（出售目标卡）'
                     }}
                   </UiButton>
 
@@ -2131,6 +2262,8 @@ html.dark .trade-collapse-toggle:hover {
   text-align: left;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 
 .trade-item-row:hover {

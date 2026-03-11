@@ -16,15 +16,19 @@ import { tagsRouter } from './routes/tags.js';
 import { alertsRouter } from './routes/alerts.js';
 import { followsRouter } from './routes/follows.js';
 import { followAlertsRouter } from './routes/followAlerts.js';
+import { forumAlertsRouter } from './routes/forumAlerts.js';
 import { referencesRouter } from './routes/references.js';
 import { trackingRouter } from './routes/tracking.js';
 import { collectionsRouter } from './routes/collections.js';
 import { htmlSnippetsRouter } from './routes/html-snippets.js';
 import { internalRouter } from './routes/internal.js';
 import { textAnalysisRouter } from './routes/text-analysis.js';
+import { forumsRouter } from './routes/forums.js';
+import { cssProxyRouter } from './routes/css-proxy.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+  const avatarAgentBase = (process.env.AVATAR_AGENT_BASE_URL || 'http://127.0.0.1:3200').replace(/\/$/, '');
   const normalizeRemoteIp = (value: string | null | undefined) => {
     if (!value) return '';
     return value.replace(/^::ffff:/, '').trim().toLowerCase();
@@ -59,15 +63,18 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/alerts', alertsRouter(pool, redis));
   router.use('/follows', followsRouter(pool, redis));
   router.use('/alerts/follow', followAlertsRouter(pool, redis));
+  router.use('/alerts/forum', forumAlertsRouter(pool, redis));
   router.use('/references', referencesRouter(pool, redis));
   router.use('/tracking', trackingRouter(pool));
   router.use('/collections', collectionsRouter(pool, redis));
   router.use('/text-analysis', textAnalysisRouter());
+  router.use('/forums', forumsRouter(pool, redis));
+  router.use(cssProxyRouter());
   router.use('/internal', guardInternalRoutes, internalRouter());
   router.use('/', htmlSnippetsRouter);
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
   // Proxy avatar endpoints to avatar-agent service
-  router.use('/avatar', createProxyMiddleware({ target: 'http://127.0.0.1:3200', changeOrigin: false, xfwd: true }));
+  router.use('/avatar', createProxyMiddleware({ target: avatarAgentBase, changeOrigin: false, xfwd: true }));
   const userBackendBase = process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455';
   if (userBackendBase !== 'disable') {
     const normalizedTarget = userBackendBase.replace(/\/$/, '');

@@ -1,5 +1,6 @@
 import { writeFile } from 'fs/promises';
 import fetch from 'node-fetch';
+import type { IntrospectionQuery } from 'graphql';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -102,7 +103,10 @@ async function main() {
     throw new Error(`Failed to fetch schema: ${res.status} ${res.statusText} - ${text}`);
   }
 
-  const data = await res.json();
+  const data = await res.json() as {
+    data: IntrospectionQuery;
+    errors?: unknown;
+  };
   if (data.errors) {
     throw new Error(`GraphQL errors: ${JSON.stringify(data.errors, null, 2)}`);
   }
@@ -120,5 +124,4 @@ main().catch(err => {
   console.error(err);
   process.exit(1);
 });
-
 

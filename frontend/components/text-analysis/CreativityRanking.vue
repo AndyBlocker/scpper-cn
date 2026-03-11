@@ -28,7 +28,7 @@
               <td class="py-2 pr-3 text-neutral-400">{{ idx + 1 }}</td>
               <td class="py-2 pr-3 font-medium text-neutral-800 dark:text-neutral-200 max-w-xs truncate">{{ item.title }}</td>
               <td class="py-2 pr-3 text-neutral-600 dark:text-neutral-400">{{ item.rating }}</td>
-              <td class="py-2 pr-3 text-[rgb(var(--accent))]">{{ (item.rareWordDensity * 100).toFixed(1) }}%</td>
+              <td class="py-2 pr-3 text-[var(--g-accent)]">{{ (item.rareWordDensity * 100).toFixed(1) }}%</td>
               <td class="py-2 text-neutral-600 dark:text-neutral-400">{{ item.uniqueRareWords }}</td>
             </tr>
           </tbody>
@@ -42,9 +42,13 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { CreativityEntry } from '~/types/text-analysis'
 
+const creativityRankingEndpoint: string = '/api/text-analysis/creativity-ranking'
+
 const { data: items, pending } = useAsyncData<{ items: CreativityEntry[]; total: number }>(
   'text-analysis-creativity',
-  () => $fetch('/api/text-analysis/creativity-ranking?limit=100')
+  () => $fetch<{ items: CreativityEntry[]; total: number }>(creativityRankingEndpoint, {
+    params: { limit: 100 }
+  })
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
