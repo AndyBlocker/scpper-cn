@@ -15,7 +15,19 @@ export function createApp() {
   app.use(helmet());
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
-  app.use(pinoHttp());
+  app.use(pinoHttp({
+    autoLogging: {
+      ignore: (req) => req.url === '/healthz'
+    },
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'res.headers["set-cookie"]'
+      ],
+      censor: '[REDACTED]'
+    }
+  }));
 
   app.use('/auth', authRouter());
   app.use('/admin', adminRouter());
@@ -30,9 +42,13 @@ export function createApp() {
     res.json({ ok: true });
   });
 
+  // Global error handler – never leak internal details in production
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
+    // eslint-disable-next-line no-console
+    console.error(err);
+    const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
+    const message = isDev && err instanceof Error ? err.message : 'Internal Server Error';
     res.status(500).json({ error: message });
   });
 

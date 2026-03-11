@@ -5,12 +5,20 @@ import { consola } from 'consola';
 import { createCache } from '../utils/cache.js';
 import { getReadPoolSync } from '../utils/dbPool.js';
 
+function parsePositiveInt(value: unknown): number | null {
+	const parsed = Number(value);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		return null;
+	}
+	return parsed;
+}
+
 export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	const router = Router();
 	const cache = createCache(redis);
 
 	// 读写分离：stats 全部是读操作，使用从库
-	const readPool = getReadPoolSync();
+		const readPool = getReadPoolSync(pool);
 	const log = consola.withTag('stats');
 	const slowQueryThresholdMs = Number.isFinite(Number(process.env.STATS_QUERY_SLOW_MS))
 		? Number(process.env.STATS_QUERY_SLOW_MS)
@@ -78,15 +86,15 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	router.get('/site/overview', async (req, res, next) => {
 		try {
 			// 缓存 1 小时 - 站点概览变化较慢，减少 sync 期间的数据库压力
-		const payload = await cache.remember('stats:site:overview', 3600, async () => {
+		const payload = await cache.remember('stats:site:overview:v2', 3600, async () => {
 				const reqLabel = `site.overview:${Date.now().toString(36)}`;
 				const requestStart = process.hrtime.bigint();
 
 				// 从 SiteStats 获取基础数据
 				const siteSql = `
 					SELECT
-						date,
-						"updatedAt",
+						("date"::timestamp AT TIME ZONE 'Asia/Shanghai') AS date,
+						("updatedAt" AT TIME ZONE 'Asia/Shanghai') AS "updatedAt",
 						"totalUsers",
 						"activeUsers",
 						"totalPages",
@@ -352,7 +360,21 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 	const cache = createCache(redis);
 
 	// 读写分离：extendStats 全部是读操作，使用从库
-	const readPool = getReadPoolSync();
+		const readPool = getReadPoolSync(pool);
+
+	router.param('wikidotId', (req, res, next, value) => {
+		if (parsePositiveInt(value) === null) {
+			return res.status(400).json({ error: 'invalid_wikidotId' });
+		}
+		return next();
+	});
+
+	router.param('id', (req, res, next, value) => {
+		if (parsePositiveInt(value) === null) {
+			return res.status(400).json({ error: 'invalid_user_id' });
+		}
+		return next();
+	});
 
   // GET /stats/category-benchmarks
   // Read precomputed payload from LeaderboardCache written by backend Analyze
@@ -391,9 +413,11 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 	router.get('/pages/:wikidotId', async (req, res, next) => {
 		try {
 			const { wikidotId } = req.params as Record<string, string>;
-			const cacheKey = `stats:pages:${wikidotId}`;
+			const wikidotIdInt = parsePositiveInt(wikidotId);
+			if (wikidotIdInt === null) return res.status(400).json({ error: 'invalid_wikidotId' });
+			const cacheKey = `stats:pages:${wikidotIdInt}`;
 			const result = await cache.remember(cacheKey, 180, async () => {
-				const pageRes = await readPool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
+				const pageRes = await readPool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotIdInt]);
 				if (pageRes.rows.length === 0) return null;
 				const pageId = pageRes.rows[0].id;
 
@@ -469,8 +493,10 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 	router.get('/pages/:wikidotId/daily', async (req, res, next) => {
 		try {
 			const { wikidotId } = req.params as Record<string, string>;
+			const wikidotIdInt = parsePositiveInt(wikidotId);
+			if (wikidotIdInt === null) return res.status(400).json({ error: 'invalid_wikidotId' });
 			const { startDate, endDate, limit = '100', offset = '0' } = req.query as Record<string, string>;
-			const pageRes = await readPool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
+			const pageRes = await readPool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotIdInt]);
 			if (pageRes.rows.length === 0) return res.status(404).json({ error: 'not_found' });
 			const pageId = pageRes.rows[0].id;
 			const sql = `
@@ -494,6 +520,8 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 	router.get('/users/:id/daily', async (req, res, next) => {
 		try {
 			const { id } = req.params as Record<string, string>;
+			const userId = parsePositiveInt(id);
+			if (userId === null) return res.status(400).json({ error: 'invalid_user_id' });
 			const { startDate, endDate, limit = '100', offset = '0' } = req.query as Record<string, string>;
 			const limitInt = Math.max(0, Math.min(parseInt(limit, 10) || 100, 1000));
 			const offsetInt = Math.max(0, parseInt(offset, 10) || 0);
@@ -534,8 +562,8 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 			`;
 
 			const [votesRes, revisionsRes] = await Promise.all([
-				readPool.query(votesSql, [id, startDate || null, endDate || null]),
-				readPool.query(revisionsSql, [id, startDate || null, endDate || null])
+				readPool.query(votesSql, [userId, startDate || null, endDate || null]),
+				readPool.query(revisionsSql, [userId, startDate || null, endDate || null])
 			]);
 
 			const merged = new Map<string, {

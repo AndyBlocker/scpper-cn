@@ -27,9 +27,12 @@
             @error="emitError"
           />
 
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2" role="tablist" @keydown="handleTabKeydown">
             <button
               type="button"
+              role="tab"
+              :aria-selected="activeTab === 'draw'"
+              :tabindex="activeTab === 'draw' ? 0 : -1"
               class="gacha-tab-btn"
               :class="{ 'is-active': activeTab === 'draw' }"
               @click="setTab('draw')"
@@ -38,6 +41,9 @@
             </button>
             <button
               type="button"
+              role="tab"
+              :aria-selected="activeTab === 'history'"
+              :tabindex="activeTab === 'history' ? 0 : -1"
               class="gacha-tab-btn"
               :class="{ 'is-active': activeTab === 'history' }"
               @click="setTab('history')"
@@ -46,6 +52,9 @@
             </button>
             <button
               type="button"
+              role="tab"
+              :aria-selected="activeTab === 'tickets'"
+              :tabindex="activeTab === 'tickets' ? 0 : -1"
               class="gacha-tab-btn"
               :class="{ 'is-active': activeTab === 'tickets' }"
               @click="setTab('tickets')"
@@ -118,11 +127,12 @@
     :confirming="reforgeConfirming"
     @close="closeReforgeModal"
     @confirm="confirmReforge"
+    @reforge-again="reforgeAgain"
   />
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, onBeforeUnmount } from 'vue'
 import GachaPageShell from '~/components/gacha/GachaPageShell.vue'
 import GachaWalletBar from '~/components/gacha/GachaWalletBar.vue'
 import GachaErrorBanner from '~/components/gacha/GachaErrorBanner.vue'
@@ -156,9 +166,14 @@ const {
   handleTicketDraw,
   refreshReforgeCardOptions,
   reforgeModalOpen, reforgeModalPhase, reforgeConfirming,
-  selectedReforgeCardOption, openReforgeModal, closeReforgeModal, confirmReforge,
-  loadInitial, handleWalletUpdated
+  selectedReforgeCardOption, openReforgeModal, closeReforgeModal, reforgeAgain, confirmReforge,
+  loadInitial, handleWalletUpdated,
+  cleanup: cleanupDraw
 } = idx
+
+onBeforeUnmount(() => {
+  cleanupDraw()
+})
 
 const { state } = page.gacha
 const purplePityCount = computed(() => Number(state.value.wallet?.purplePityCount ?? 0))
@@ -166,6 +181,20 @@ const goldPityCount = computed(() => Number(state.value.wallet?.goldPityCount ??
 
 const router = useRouter()
 const { activeTab, setTab } = useQueryTab<'draw' | 'history' | 'tickets'>({ defaultTab: 'draw' })
+
+const indexTabs: Array<'draw' | 'history' | 'tickets'> = ['draw', 'history', 'tickets']
+function handleTabKeydown(e: KeyboardEvent) {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  e.preventDefault()
+  const idx = indexTabs.indexOf(activeTab.value)
+  const next = e.key === 'ArrowRight'
+    ? indexTabs[(idx + 1) % indexTabs.length]
+    : indexTabs[(idx - 1 + indexTabs.length) % indexTabs.length]
+  setTab(next)
+  const tablist = (e.currentTarget as HTMLElement)
+  const nextBtn = tablist?.querySelector<HTMLElement>('[aria-selected="true"]')
+  nextBtn?.focus()
+}
 
 const ticketTotal = computed(() =>
   tickets.value.drawTicket + tickets.value.draw10Ticket + tickets.value.affixReforgeTicket
@@ -179,6 +208,7 @@ const reforgeResultCardVisual = computed(() => {
     rarity: option.rarity,
     imageUrl: option.imageUrl,
     tags: option.tags,
+    isRetired: !!option.isRetired,
     wikidotId: option.wikidotId ?? null,
     authors: option.authors ?? null
   }

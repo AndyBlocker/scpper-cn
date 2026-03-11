@@ -1,9 +1,9 @@
 <template>
-  <UiDialogRoot :open="props.open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="props.open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay class="!z-[58] !bg-black/50 !backdrop-blur-sm" />
       <UiDialogContent
-        class="result-modal-shell z-[61] mx-2 flex w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/40 bg-white/92 p-0 shadow-[0_42px_120px_-62px_rgba(15,23,42,0.95)] backdrop-blur-xl max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] dark:border-neutral-700/70 dark:bg-neutral-950/88 sm:mx-0 sm:rounded-[30px] sm:max-h-[calc(100vh-4rem)] sm:max-h-[calc(100dvh-4rem)]"
+        class="result-modal-shell z-[61] mx-2 flex w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-white/40 bg-white/92 p-0 shadow-lg backdrop-blur-xl max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] dark:border-neutral-700/70 dark:bg-neutral-950/88 sm:mx-0 sm:rounded-[30px] sm:max-h-[calc(100vh-4rem)] sm:max-h-[calc(100dvh-4rem)]"
       >
         <div class="result-modal-shell__glow result-modal-shell__glow--a" />
         <div class="result-modal-shell__glow result-modal-shell__glow--b" />
@@ -61,6 +61,7 @@
                     :count="1"
                     :image-url="displayItems[0].imageUrl || undefined"
                     :page-url="pageUrl(displayItems[0])"
+                    :retired="displayItems[0].isRetired"
                     :affix-visual-style="displayItems[0].affixVisualStyle"
                     :affix-label="displayItems[0].affixLabel"
                     :affix-signature="displayItems[0].affixSignature"
@@ -102,6 +103,7 @@
                     :count="1"
                     :image-url="item.imageUrl || undefined"
                     :page-url="pageUrl(item)"
+                    :retired="item.isRetired"
                     :affix-visual-style="item.affixVisualStyle"
                     :affix-label="item.affixLabel"
                     :affix-signature="item.affixSignature"
@@ -186,6 +188,10 @@ const emit = defineEmits<{
   (e: 'draw-again'): void
   (e: 'view-album'): void
 }>()
+
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
 
 const prefersReducedMotion = ref(false)
 
@@ -284,14 +290,14 @@ function pageUrl(item: DrawItem | null | undefined) {
   pointer-events: none;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.22) 55%, rgba(15, 23, 42, 0.05)),
-    radial-gradient(circle at 15% 20%, rgb(var(--accent) / 0.22), transparent 46%),
+    radial-gradient(circle at 15% 20%, var(--g-accent-strong), transparent 46%),
     radial-gradient(circle at 86% 86%, rgb(var(--accent-strong) / 0.17), transparent 44%);
 }
 
 html.dark .result-modal-shell::before {
   background:
     linear-gradient(135deg, rgba(15, 23, 42, 0.82), rgba(15, 23, 42, 0.28) 55%, rgba(15, 23, 42, 0.1)),
-    radial-gradient(circle at 15% 20%, rgb(var(--accent) / 0.26), transparent 48%),
+    radial-gradient(circle at 15% 20%, var(--g-accent-strong), transparent 48%),
     radial-gradient(circle at 86% 86%, rgb(var(--accent-strong) / 0.2), transparent 46%);
 }
 
@@ -308,7 +314,7 @@ html.dark .result-modal-shell::before {
   top: -4rem;
   width: 14rem;
   height: 14rem;
-  background: rgb(var(--accent) / 0.3);
+  background: var(--g-accent-border);
 }
 
 .result-modal-shell__glow--b {

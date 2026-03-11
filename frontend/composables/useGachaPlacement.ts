@@ -19,6 +19,7 @@ import { displayCardTitle } from '~/utils/gachaTitle'
 import { paginatedLoadAll } from '~/utils/gachaPagination'
 import { usePageAuthors } from '~/composables/usePageAuthors'
 import { resolveAuthorSearchText } from '~/utils/gachaAuthorSearch'
+import { normalizeError } from '~/composables/api/gachaCore'
 
 /**
  * placement.vue (放置页面) 的状态管理和业务逻辑。
@@ -196,6 +197,7 @@ export function useGachaPlacement(page: GachaPageContext) {
       title: current.title,
       rarity: current.rarity,
       tags: current.tags ?? [],
+      isRetired: !!current.isRetired,
       authors: current.authors ?? [],
       imageUrl: current.imageUrl ?? null,
       wikidotId: current.wikidotId ?? null,
@@ -534,8 +536,8 @@ export function useGachaPlacement(page: GachaPageContext) {
       closePlacementPicker()
       // 后台刷新库存，不阻塞弹窗关闭
       refreshPlacementOptions()
-    } catch (error: any) {
-      emitError(error?.message || '放置卡片失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '放置卡片失败'))
     } finally {
       placementSlotUpdating.value = null
     }
@@ -555,8 +557,8 @@ export function useGachaPlacement(page: GachaPageContext) {
         closePlacementPicker()
       }
       refreshPlacementOptions()
-    } catch (error: any) {
-      emitError(error?.message || '清空槽位失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '清空槽位失败'))
     } finally {
       placementSlotUpdating.value = null
     }
@@ -589,8 +591,8 @@ export function useGachaPlacement(page: GachaPageContext) {
       placement.value = res.data
       closePlacementAddonPicker()
       refreshPlacementOptions()
-    } catch (error: any) {
-      emitError(error?.message || '设置无色挂载失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '设置无色挂载失败'))
     } finally {
       placementAddonUpdating.value = false
     }
@@ -611,8 +613,8 @@ export function useGachaPlacement(page: GachaPageContext) {
         handleWalletUpdated(res.wallet)
       }
       await refreshPlacementOptions()
-    } catch (error: any) {
-      emitError(error?.message || '解锁槽位失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '解锁槽位失败'))
     } finally {
       placementUnlocking.value = false
     }
@@ -630,8 +632,8 @@ export function useGachaPlacement(page: GachaPageContext) {
       placement.value = res.data
       closePlacementAddonPicker()
       refreshPlacementOptions()
-    } catch (error: any) {
-      emitError(error?.message || '清空无色挂载失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '清空无色挂载失败'))
     } finally {
       placementAddonUpdating.value = false
     }
@@ -658,8 +660,8 @@ export function useGachaPlacement(page: GachaPageContext) {
       } else {
         await refreshPlacement(true)
       }
-    } catch (error: any) {
-      emitError(error?.message || '领取失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '领取失败'))
     } finally {
       placementClaiming.value = false
     }
@@ -767,6 +769,19 @@ export function useGachaPlacement(page: GachaPageContext) {
 
     // Lifecycle
     loadInitial,
+
+    // Cleanup (call from onBeforeUnmount)
+    cleanup: () => {
+      if (pickerSearchTimer) {
+        clearTimeout(pickerSearchTimer)
+        pickerSearchTimer = null
+      }
+      if (placementAuthorQueueTimer) {
+        clearTimeout(placementAuthorQueueTimer)
+        placementAuthorQueueTimer = null
+      }
+      placementAuthorQueue.clear()
+    },
 
     // Utility
     displayCardTitle

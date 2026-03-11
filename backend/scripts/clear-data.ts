@@ -8,6 +8,19 @@ type ClearOptions = {
   tables?: string[];
 };
 
+function deleteManyIfPresent(prisma: PrismaClient, delegateName: string): Promise<unknown> {
+  const delegate = (prisma as unknown as Record<string, unknown>)[delegateName];
+  if (
+    delegate &&
+    typeof delegate === 'object' &&
+    'deleteMany' in delegate &&
+    typeof (delegate as { deleteMany?: unknown }).deleteMany === 'function'
+  ) {
+    return (delegate as { deleteMany: () => Promise<unknown> }).deleteMany();
+  }
+  return Promise.resolve({ count: 0 });
+}
+
 async function clearDatabase(options: ClearOptions = {}): Promise<void> {
   if (options.help) {
     // Help text in Chinese to mirror compiled output
@@ -129,8 +142,8 @@ async function clearSpecificTables(prisma: PrismaClient, tableList: string[]): P
     DirtyPage: () => prisma.dirtyPage.deleteMany(),
     PageMetaStaging: () => prisma.pageMetaStaging.deleteMany(),
     UserStats: () => prisma.userStats.deleteMany(),
-    SearchIndex: () => prisma.searchIndex.deleteMany(),
-    UserSearchIndex: () => prisma.userSearchIndex.deleteMany(),
+    SearchIndex: () => deleteManyIfPresent(prisma, 'searchIndex'),
+    UserSearchIndex: () => deleteManyIfPresent(prisma, 'userSearchIndex'),
   };
   for (const table of tables) {
     if (tableMap[table]) {
@@ -151,8 +164,8 @@ async function clearRelatedData(prisma: PrismaClient): Promise<void> {
     { name: 'Attribution', op: () => prisma.attribution.deleteMany() },
     { name: 'PageStats', op: () => prisma.pageStats.deleteMany() },
     { name: 'SourceVersion', op: () => prisma.sourceVersion.deleteMany() },
-    { name: 'SearchIndex', op: () => prisma.searchIndex.deleteMany() },
-    { name: 'UserSearchIndex', op: () => prisma.userSearchIndex.deleteMany() },
+    { name: 'SearchIndex', op: () => deleteManyIfPresent(prisma, 'searchIndex') },
+    { name: 'UserSearchIndex', op: () => deleteManyIfPresent(prisma, 'userSearchIndex') },
     { name: 'DirtyPage', op: () => prisma.dirtyPage.deleteMany() },
   ];
   for (const { name, op } of operations) {
@@ -170,8 +183,8 @@ async function clearExceptUsers(prisma: PrismaClient): Promise<void> {
     { name: 'Attribution', op: () => prisma.attribution.deleteMany() },
     { name: 'PageStats', op: () => prisma.pageStats.deleteMany() },
     { name: 'SourceVersion', op: () => prisma.sourceVersion.deleteMany() },
-    { name: 'SearchIndex', op: () => prisma.searchIndex.deleteMany() },
-    { name: 'UserSearchIndex', op: () => prisma.userSearchIndex.deleteMany() },
+    { name: 'SearchIndex', op: () => deleteManyIfPresent(prisma, 'searchIndex') },
+    { name: 'UserSearchIndex', op: () => deleteManyIfPresent(prisma, 'userSearchIndex') },
     { name: 'UserStats', op: () => prisma.userStats.deleteMany() },
     { name: 'PageVersion', op: () => prisma.pageVersion.deleteMany() },
     { name: 'Page', op: () => prisma.page.deleteMany() },
@@ -193,8 +206,8 @@ async function clearAllData(prisma: PrismaClient): Promise<void> {
     { name: 'Attribution', op: () => prisma.attribution.deleteMany() },
     { name: 'PageStats', op: () => prisma.pageStats.deleteMany() },
     { name: 'SourceVersion', op: () => prisma.sourceVersion.deleteMany() },
-    { name: 'SearchIndex', op: () => prisma.searchIndex.deleteMany() },
-    { name: 'UserSearchIndex', op: () => prisma.userSearchIndex.deleteMany() },
+    { name: 'SearchIndex', op: () => deleteManyIfPresent(prisma, 'searchIndex') },
+    { name: 'UserSearchIndex', op: () => deleteManyIfPresent(prisma, 'userSearchIndex') },
     { name: 'UserStats', op: () => prisma.userStats.deleteMany() },
     { name: 'UserDailyStats', op: () => prisma.userDailyStats.deleteMany() },
     { name: 'PageDailyStats', op: () => prisma.pageDailyStats.deleteMany() },
@@ -300,5 +313,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(1);
     });
 }
-
-

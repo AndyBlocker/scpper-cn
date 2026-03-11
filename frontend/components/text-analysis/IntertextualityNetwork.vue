@@ -22,9 +22,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { IntertextualityData } from '~/types/text-analysis'
 
+const intertextualityEndpoint: string = '/api/text-analysis/intertextuality-network'
+
 const { data: netData, pending } = useAsyncData<IntertextualityData>(
   'text-analysis-intertextuality',
-  () => $fetch('/api/text-analysis/intertextuality-network')
+  () => $fetch<IntertextualityData>(intertextualityEndpoint)
 )
 
 const sigmaEl = ref<HTMLElement | null>(null)
@@ -57,7 +59,7 @@ async function render() {
       import('graphology-layout-forceatlas2')
     ])
 
-    const Graph = graphologyMod.default || graphologyMod.Graph
+    const Graph = graphologyMod.default
     const Sigma = sigmaMod.default || sigmaMod.Sigma
     const fa2 = fa2Mod.default || fa2Mod
 

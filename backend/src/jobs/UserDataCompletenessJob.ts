@@ -136,20 +136,32 @@ export class UserDataCompletenessJob {
             r."userId",
             r."timestamp" as activity_time,
             'revision' as activity_type,
-            CONCAT('Created revision #', r."revisionNumber") as activity_details
+            CONCAT('Created revision #', r."wikidotId") as activity_details
           FROM "Revision" r
           WHERE r."userId" IS NOT NULL
           
           UNION ALL
           
           -- 页面创建活动（通过 Attribution）
-          SELECT 
+          SELECT
             a."userId",
             a."date" as activity_time,
             'attribution' as activity_type,
             CONCAT('Attributed as ', a."type") as activity_details
           FROM effective_attributions a
           WHERE a."userId" IS NOT NULL AND a."date" IS NOT NULL
+
+          UNION ALL
+
+          -- 论坛发帖活动
+          SELECT
+            u.id AS "userId",
+            fp."createdAt" AS activity_time,
+            'forum_post' AS activity_type,
+            'Forum post' AS activity_details
+          FROM "ForumPost" fp
+          JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+          WHERE fp."createdByWikidotId" IS NOT NULL AND fp."createdAt" IS NOT NULL AND fp."isDeleted" = false
         ) all_activities
         GROUP BY "userId", activity_type, activity_details
         ORDER BY "userId", first_activity
@@ -218,6 +230,14 @@ export class UserDataCompletenessJob {
           SELECT a."userId", a."date" as activity_time
           FROM effective_attributions a
           WHERE a."userId" IS NOT NULL AND a."date" IS NOT NULL
+
+          UNION ALL
+
+          -- 论坛发帖活动
+          SELECT u.id AS "userId", fp."createdAt" AS activity_time
+          FROM "ForumPost" fp
+          JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+          WHERE fp."createdByWikidotId" IS NOT NULL AND fp."createdAt" IS NOT NULL AND fp."isDeleted" = false
         ) all_activities
         GROUP BY "userId"
       )

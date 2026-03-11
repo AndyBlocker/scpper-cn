@@ -4,7 +4,7 @@
     <header class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex items-center gap-3">
         <div
-          class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.25)] bg-[rgba(var(--accent),0.08)] px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-[rgb(var(--accent))]"
+          class="inline-flex items-center gap-2 rounded-full border border-[var(--g-accent-strong)] bg-[var(--g-accent-soft)] px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--g-accent)]"
         >
           <LucideIcon name="CalendarDays" class="h-4 w-4" />
           <span>活动月历</span>
@@ -44,7 +44,7 @@
         <article
           v-for="(m, mIdx) in months"
           :key="'m-' + mIdx + '-' + format(m, 'yyyyMM')"
-          class="rounded-2xl border border-neutral-200/70 bg-white/90 p-2.5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/80 overflow-hidden"
+          class="rounded-lg border border-neutral-200/70 bg-white/90 p-2.5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/80 overflow-hidden"
         >
           <!-- Month Header -->
           <div class="mb-0.5 px-0.5 flex items-center justify-between">
@@ -158,7 +158,7 @@
         @click.self="closeDetail"
       >
         <div
-          class="w-full max-w-2xl rounded-2xl bg-white p-5 text-neutral-800 shadow-xl dark:bg-neutral-900 dark:text-neutral-200"
+          class="w-full max-w-2xl rounded-lg bg-white p-5 text-neutral-800 shadow-xl dark:bg-neutral-900 dark:text-neutral-200"
           role="dialog"
           aria-modal="true"
           aria-labelledby="detail-title"
@@ -179,7 +179,7 @@
           </div>
           <div
             v-if="detailSummary"
-            class="mt-3 rounded-xl border border-[rgb(var(--accent)_/_0.25)] bg-[rgb(var(--accent)_/_0.06)] p-3 text-sm"
+            class="mt-3 rounded-xl border border-[var(--g-accent-strong)] bg-[var(--g-accent-soft)] p-3 text-sm"
           >
             {{ detailSummary }}
           </div>
@@ -345,7 +345,7 @@ function buildSegments(weeksForMonth: DayCell[][], month: Date, maxRows: number)
         colStart: clampedStart,
         colEnd: clampedEnd,
         row: 0,
-        color: e.color || 'rgb(var(--accent))',
+        color: e.color || 'var(--g-accent)',
         title: e.title,
         summary: e.summary ?? null,
         eventId: e.id,
@@ -510,28 +510,49 @@ const detailColor = ref<string | null>(null);
 const detailDateRange = ref('');
 let md: any = null;
 
+const escapeHtml = (code: string) => code.replace(/[&<>]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[char] as string));
+
 async function ensureMarkdown() {
   if (!md) {
-    const [mdLib, hljsMod, anchorMod, taskMod] = await Promise.all([
+    const [mdLib, hljsMod, xmlMod, jsMod, tsMod, cssMod, jsonMod, bashMod, markdownMod, anchorMod, taskMod] = await Promise.all([
       import('markdown-it'),
-      import('highlight.js'),
+      import('highlight.js/lib/core'),
+      import('highlight.js/lib/languages/xml'),
+      import('highlight.js/lib/languages/javascript'),
+      import('highlight.js/lib/languages/typescript'),
+      import('highlight.js/lib/languages/css'),
+      import('highlight.js/lib/languages/json'),
+      import('highlight.js/lib/languages/bash'),
+      import('highlight.js/lib/languages/markdown'),
       import('markdown-it-anchor').catch(() => ({ default: undefined })),
       import('markdown-it-task-lists').catch(() => ({ default: undefined }))
     ]);
     const MarkdownIt = (mdLib as any).default ?? (mdLib as any);
     const hljs = (hljsMod as any).default ?? (hljsMod as any);
+    hljs.registerLanguage('xml', (xmlMod as any).default ?? xmlMod);
+    hljs.registerLanguage('html', (xmlMod as any).default ?? xmlMod);
+    hljs.registerLanguage('javascript', (jsMod as any).default ?? jsMod);
+    hljs.registerLanguage('js', (jsMod as any).default ?? jsMod);
+    hljs.registerLanguage('typescript', (tsMod as any).default ?? tsMod);
+    hljs.registerLanguage('ts', (tsMod as any).default ?? tsMod);
+    hljs.registerLanguage('css', (cssMod as any).default ?? cssMod);
+    hljs.registerLanguage('json', (jsonMod as any).default ?? jsonMod);
+    hljs.registerLanguage('bash', (bashMod as any).default ?? bashMod);
+    hljs.registerLanguage('shell', (bashMod as any).default ?? bashMod);
+    hljs.registerLanguage('markdown', (markdownMod as any).default ?? markdownMod);
     const mdInstance = new MarkdownIt({
       linkify: true,
       breaks: true,
       html: false,
       highlight(code: string, lang: string) {
         try {
-          if (lang && hljs.getLanguage(lang)) {
-            return `<pre><code class="hljs language-${lang}">${hljs.highlight(code, { language: lang, ignoreIllegals: true }).value}</code></pre>`;
+          const normalizedLang = lang?.trim().toLowerCase();
+          if (normalizedLang && hljs.getLanguage(normalizedLang)) {
+            return `<pre><code class="hljs language-${normalizedLang}">${hljs.highlight(code, { language: normalizedLang, ignoreIllegals: true }).value}</code></pre>`;
           }
-          return `<pre><code class="hljs">${hljs.highlightAuto(code).value}</code></pre>`;
+          return `<pre><code class="hljs">${hljs.highlightAuto(code, ['xml', 'javascript', 'typescript', 'css', 'json', 'bash', 'markdown']).value}</code></pre>`;
         } catch {
-          return `<pre><code>${code.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))}</code></pre>`;
+          return `<pre><code>${escapeHtml(code)}</code></pre>`;
         }
       }
     });
@@ -581,7 +602,7 @@ function openAgenda(ev: RawEvent) {
     colStart: 0,
     colEnd: 0,
     row: 0,
-    color: ev.color || 'rgb(var(--accent))',
+    color: ev.color || 'var(--g-accent)',
     title: ev.title,
     summary: ev.summary ?? null,
     eventId: ev.id,

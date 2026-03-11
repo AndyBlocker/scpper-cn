@@ -1,5 +1,6 @@
 import { computed, ref, watch, onMounted } from 'vue'
 import { navigateTo } from 'nuxt/app'
+import { normalizeError } from '~/composables/api/gachaCore'
 import { useAuth } from '~/composables/useAuth'
 import { useGacha } from '~/composables/useGacha'
 
@@ -45,8 +46,8 @@ export function useGachaAuth() {
         activationError.value = result.error || '激活失败'
       }
       return result
-    } catch (error: any) {
-      activationError.value = error?.message || '激活失败'
+    } catch (error: unknown) {
+      activationError.value = normalizeError(error, '激活失败')
       return { ok: false as const, error: activationError.value }
     } finally {
       activating.value = false

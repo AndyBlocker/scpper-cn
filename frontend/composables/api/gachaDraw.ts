@@ -6,11 +6,12 @@ import type {
 } from '~/types/gacha'
 
 export function useGachaDrawApi(core: GachaCoreContext) {
-  const { $bff, state, withCardVariant, createIdempotencyKey } = core
+  const { $bff, state, withCardVariant, createIdempotencyKey, captureWalletSeq, setWalletIfFresh } = core
 
   async function draw(payload: { poolId: string; count: number; paymentMethod?: DrawPaymentMethod }) {
     try {
       const idemKey = createIdempotencyKey('draw')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ data: DrawResult; tickets?: TicketBalance; paymentMethod?: DrawPaymentMethod }>>('/gacha/draw', {
         method: 'POST',
         headers: {
@@ -26,8 +27,7 @@ export function useGachaDrawApi(core: GachaCoreContext) {
         const mappedItems = res.data?.items?.map(withCardVariant) ?? []
         const data = res.data ? { ...res.data, items: mappedItems } : res.data
         if (data?.wallet) {
-          state.value.wallet = data.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(data.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -42,7 +42,7 @@ export function useGachaDrawApi(core: GachaCoreContext) {
       }
       const message = res?.error || '抽卡失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '抽卡失败')
       return { ok: false as const, error: message }
     }
@@ -66,13 +66,13 @@ export function useGachaDrawApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载历史失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载历史失败')
       return { ok: false as const, error: message }
     }
   }
 
-  async function getInventory(params: { poolId?: string; rarity?: Rarity; limit?: number; offset?: number; skipTotal?: boolean; affixFilter?: string }) {
+  async function getInventory(params: { poolId?: string; rarity?: Rarity; limit?: number; offset?: number; skipTotal?: boolean; affixFilter?: string; search?: string }) {
     try {
       const res = await $bff<ApiResponse<{ items: InventoryItem[]; total: number; pageRows?: number }>>('/gacha/inventory', {
         method: 'GET',
@@ -82,7 +82,8 @@ export function useGachaDrawApi(core: GachaCoreContext) {
           limit: params.limit != null ? String(params.limit) : undefined,
           offset: params.offset != null ? String(params.offset) : undefined,
           skipTotal: params.skipTotal ? '1' : undefined,
-          affixFilter: params.affixFilter || undefined
+          affixFilter: params.affixFilter || undefined,
+          search: params.search || undefined
         }
       })
       if (res?.ok) {
@@ -91,7 +92,7 @@ export function useGachaDrawApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载图鉴失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载图鉴失败')
       return { ok: false as const, error: message }
     }
@@ -110,7 +111,7 @@ export function useGachaDrawApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载进度失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载进度失败')
       return { ok: false as const, error: message }
     }

@@ -9,6 +9,7 @@ module.exports = {
       max_memory_restart: '300M',
       env: {
         NODE_ENV: 'production',
+        PORT: '3200',
         AVATAR_ROOT: '/home/andyblocker/scpper-cn/.data/avatar-agent/avatars',
         DEFAULT_AVATAR: '/home/andyblocker/scpper-cn/avatar-agent/default-avatar.png',
         LOG_LEVEL: 'info',
@@ -32,5 +33,3 @@ module.exports = {
     }
   ]
 };
-
-

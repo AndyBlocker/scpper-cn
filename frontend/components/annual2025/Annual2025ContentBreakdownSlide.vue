@@ -171,7 +171,7 @@
                 class="flex items-center justify-between gap-2"
               >
                 <div class="flex items-center gap-1.5 min-w-0">
-                  <span class="w-1.5 h-1.5 rounded-full bg-[rgb(var(--accent))] flex-shrink-0" />
+                  <span class="w-1.5 h-1.5 rounded-full bg-[var(--g-accent)] flex-shrink-0" />
                   <span class="text-[10px] md:text-xs text-[rgb(var(--fg))] truncate">#{{ tag.tag }}</span>
                 </div>
                 <div class="text-right">

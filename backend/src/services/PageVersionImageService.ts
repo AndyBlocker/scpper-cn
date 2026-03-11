@@ -169,7 +169,7 @@ export class PageVersionImageService {
         include: { ingestJob: true }
       });
       const existingByNormalized = new Map<string, ExistingImageRecord>(
-        existing.map(item => [item.normalizedUrl, item as unknown as ExistingImageRecord])
+        existing.map((item: { normalizedUrl: string }) => [item.normalizedUrl, item as unknown as ExistingImageRecord])
       );
       const seen = new Set<string>();
       const now = new Date();
@@ -269,9 +269,12 @@ export class PageVersionImageService {
 }
 
 function toMetadataWithFlag(original: Prisma.JsonValue | null, patch: Record<string, unknown>): Prisma.JsonValue {
-  const base = (original && typeof original === 'object' && !Array.isArray(original)) ? { ...original } : {};
+  const base: Record<string, unknown> =
+    original && typeof original === 'object' && !Array.isArray(original)
+      ? { ...(original as Record<string, unknown>) }
+      : {};
   for (const [key, value] of Object.entries(patch)) {
     base[key] = value;
   }
-  return base as Prisma.JsonValue;
+  return base as Prisma.JsonObject;
 }

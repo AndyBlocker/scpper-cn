@@ -169,7 +169,8 @@ function formatTime(isoString: string): string {
   return date.toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: 'short',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: 'Asia/Shanghai',
   })
 }
 

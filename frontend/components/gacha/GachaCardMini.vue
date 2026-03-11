@@ -15,15 +15,18 @@
       >
       <div v-else class="gcm__fallback" />
       <div class="gcm__rarity-band" />
-      <span v-if="props.locked" class="gcm__lock">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="10" height="10"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
-      </span>
       <div class="gcm__top">
-        <UiBadge :variant="props.rarity" class="gcm__badge">
-          {{ rarityShort }}
-        </UiBadge>
+        <div class="gcm__top-left">
+          <UiBadge :variant="props.rarity" class="gcm__badge">
+            {{ rarityShort }}
+          </UiBadge>
+          <span v-if="props.retired" class="gcm__retired">绝版</span>
+        </div>
         <span v-if="coatingChip" class="gcm__chip" :class="chipClass">{{ coatingChip }}</span>
       </div>
+      <span v-if="props.locked" class="gcm__lock" :class="{ 'gcm__lock--with-retired': props.retired }">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="10" height="10"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
+      </span>
     </div>
     <div class="gcm__content">
       <h3 class="gcm__title">{{ displayTitle }}</h3>
@@ -64,6 +67,7 @@ const props = defineProps<{
   affixVisualStyle?: AffixVisualStyle | null
   affixLabel?: string | null
   locked?: boolean
+  retired?: boolean
   hideFooter?: boolean
 }>()
 
@@ -194,9 +198,17 @@ const coatingVars = computed(() => {
   left: 3px;
   right: 3px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 2px;
+}
+
+.gcm__top-left {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
 }
 
 .gcm__badge {
@@ -252,6 +264,33 @@ html.dark .gcm__chip--prism { border-color: rgba(167, 139, 250, 0.5); color: rgb
   background: rgba(0, 0, 0, 0.5);
   color: rgba(255, 255, 255, 0.85);
   pointer-events: none;
+}
+
+.gcm__lock--with-retired {
+  top: 34px;
+}
+
+.gcm__retired {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 14px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(190, 24, 93, 0.28);
+  background: linear-gradient(135deg, rgba(255, 241, 242, 0.95), rgba(255, 228, 230, 0.88));
+  color: rgb(159 18 57);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+html.dark .gcm__retired {
+  border-color: rgba(251, 113, 133, 0.28);
+  background: linear-gradient(135deg, rgba(76, 5, 25, 0.88), rgba(136, 19, 55, 0.72));
+  color: rgb(255 228 230);
 }
 
 /* ── Content ── */

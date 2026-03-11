@@ -1,8 +1,11 @@
 {
   "scripts": {
-    "mail:start": "node mail-agent/src/server.mjs",
-    "mail:dev": "NODE_ENV=development node --watch mail-agent/src/server.mjs",
-    "mail:test": "node mail-agent/scripts/test-send.mjs"
+    "mail:start": "node scripts/service-runner.mjs mail-agent start",
+    "mail:dev": "NODE_ENV=development node scripts/service-runner.mjs mail-agent dev",
+    "mail:test": "node mail-agent/scripts/test-send.mjs",
+    "workflow:install-hooks": "bash scripts/install-hooks.sh",
+    "workflow:worktree": "bash scripts/dev-worktree.sh",
+    "workflow:list-worktrees": "bash scripts/dev-worktree.sh list"
   },
   "dependencies": {
     "dotenv": "^17.2.3",

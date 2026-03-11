@@ -4,8 +4,8 @@
       <div class="max-w-5xl w-full grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 px-2">
         <div class="space-y-4 md:space-y-6">
           <div class="relative group">
-            <div class="absolute inset-0 bg-gradient-to-r from-yellow-500 to-orange-500 rounded-xl md:rounded-2xl blur opacity-20 group-hover:opacity-40 transition-opacity duration-500" />
-            <div class="bg-[rgb(var(--panel))] border border-yellow-500/30 p-5 md:p-8 rounded-xl md:rounded-2xl relative h-full flex flex-col justify-between">
+            <div class="absolute inset-0 bg-gradient-to-r from-yellow-500 to-orange-500 rounded-xl md:rounded-lg blur opacity-20 group-hover:opacity-40 transition-opacity duration-500" />
+            <div class="bg-[rgb(var(--panel))] border border-yellow-500/30 p-5 md:p-8 rounded-xl md:rounded-lg relative h-full flex flex-col justify-between">
               <div>
                 <div class="flex justify-between items-start mb-3 md:mb-4">
                   <div class="bg-yellow-500/20 text-yellow-500 px-2 md:px-3 py-1 rounded-full text-[10px] md:text-xs font-bold flex items-center gap-1">
@@ -31,8 +31,8 @@
           </div>
 
           <div class="relative group">
-            <div class="absolute inset-0 bg-gradient-to-r from-sky-500 to-blue-500 rounded-xl md:rounded-2xl blur opacity-20 group-hover:opacity-40 transition-opacity duration-500" />
-            <div class="bg-[rgb(var(--panel))] border border-sky-500/30 p-4 md:p-6 rounded-xl md:rounded-2xl relative h-full flex flex-col justify-between">
+            <div class="absolute inset-0 bg-gradient-to-r from-sky-500 to-blue-500 rounded-xl md:rounded-lg blur opacity-20 group-hover:opacity-40 transition-opacity duration-500" />
+            <div class="bg-[rgb(var(--panel))] border border-sky-500/30 p-4 md:p-6 rounded-xl md:rounded-lg relative h-full flex flex-col justify-between">
               <div>
                 <div class="flex justify-between items-start mb-3 md:mb-4">
                   <div class="bg-sky-500/15 text-sky-400 px-2 md:px-3 py-1 rounded-full text-[10px] md:text-xs font-bold flex items-center gap-1">
@@ -62,7 +62,7 @@
           <div class="bento-card">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">年度热门标签</span>
-              <LucideIcon name="Hash" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Hash" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="flex flex-wrap gap-2 md:gap-3">
               <div
@@ -79,7 +79,7 @@
           <div class="bento-card">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">月度发布趋势</span>
-              <LucideIcon name="Activity" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Activity" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="text-[10px] text-[rgb(var(--muted))] mt-1">
               原 {{ formatNumber(monthlySummary.originals) }} / 译 {{ formatNumber(monthlySummary.translations) }} / 总 {{ formatNumber(monthlySummary.total) }}
@@ -90,10 +90,10 @@
                 :key="item.monthLabel"
                 class="flex-1 flex flex-col items-center justify-end"
               >
-                <div class="bar-value text-[rgb(var(--accent))] mb-1">{{ item.total }}</div>
+                <div class="bar-value text-[var(--g-accent)] mb-1">{{ item.total }}</div>
                 <div class="w-full h-24 md:h-32 flex items-end">
                   <div
-                    class="w-full bg-[rgb(var(--accent))] hover:bg-[rgb(var(--accent-strong))] bar-fill-y"
+                    class="w-full bg-[var(--g-accent)] hover:bg-[rgb(var(--accent-strong))] bar-fill-y"
                     :style="{ height: item.total === 0 ? '10px' : `${Math.max((item.total / monthlyTrendMax) * 100, 12)}%`, minHeight: '10px', '--bar-delay': `${i * 40}ms` }"
                   />
                 </div>
@@ -105,7 +105,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[linear-gradient(rgba(var(--accent),0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(var(--accent),0.03)_1px,transparent_1px)] bg-[length:50px_50px]" />
+      <div class="w-full h-full bg-[linear-gradient(var(--g-accent-hover)_1px,transparent_1px),linear-gradient(90deg,var(--g-accent-hover)_1px,transparent_1px)] bg-[length:50px_50px]" />
     </div>
   </section>
 </template>

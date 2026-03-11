@@ -1,0 +1,552 @@
+/* ============================================
+   SCP FOUNDATION ARCHIVE AESTHETIC
+   档案馆美学 - 机密文档风格
+   ============================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Crimson+Pro:wght@400;600;700&display=swap');
+
+:root {
+  /* 配色：冷战档案馆 */
+  --archive-bg: #1a1a1a;
+  --archive-surface: #242424;
+  --archive-elevated: #2d2d2d;
+  --archive-border: #3a3a3a;
+
+  /* 琥珀色 CRT 显示 */
+  --archive-amber: #d97706;
+  --archive-amber-dim: #92400e;
+  --archive-amber-glow: rgba(217, 119, 6, 0.3);
+
+  /* 文字色 */
+  --archive-text-primary: #e5e5e5;
+  --archive-text-secondary: #a3a3a3;
+  --archive-text-tertiary: #737373;
+
+  /* 状态色 */
+  --archive-classified: #dc2626;
+  --archive-approved: #16a34a;
+
+  /* 字体 */
+  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+  --font-serif: 'Crimson Pro', 'Georgia', serif;
+}
+
+/* ============================================
+   基础样式
+   ============================================ */
+body {
+  font-family: var(--font-mono);
+  background: var(--archive-bg);
+  color: var(--archive-text-primary);
+  line-height: 1.6;
+}
+
+/* 纸张纹理背景 */
+.archive-page {
+  position: relative;
+  min-height: 100vh;
+}
+
+.archive-page::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255, 255, 255, 0.01) 2px,
+      rgba(255, 255, 255, 0.01) 4px
+    );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.archive-content {
+  position: relative;
+  z-index: 2;
+}
+
+/* ============================================
+   档案检索终端
+   ============================================ */
+.archive-terminal {
+  position: relative;
+  max-width: 48rem;
+  margin: 0 auto;
+  background: var(--archive-surface);
+  border: 2px solid var(--archive-border);
+  border-radius: 4px;
+  padding: 1.5rem;
+  box-shadow:
+    0 0 20px rgba(217, 119, 6, 0.1),
+    inset 0 0 60px rgba(0, 0, 0, 0.3);
+}
+
+/* 终端头部 */
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--archive-border);
+}
+
+.terminal-title {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--archive-amber);
+}
+
+.terminal-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.625rem;
+  color: var(--archive-text-tertiary);
+}
+
+.status-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--archive-approved);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* 搜索输入框 */
+.terminal-input-wrapper {
+  position: relative;
+}
+
+.terminal-input {
+  width: 100%;
+  height: 3.5rem;
+  padding: 0 3rem 0 1rem;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  background: var(--archive-bg);
+  border: 1px solid var(--archive-border);
+  border-radius: 2px;
+  color: var(--archive-text-primary);
+  transition: all 0.3s ease;
+}
+
+.terminal-input:focus {
+  outline: none;
+  border-color: var(--archive-amber);
+  box-shadow: 0 0 0 3px var(--archive-amber-glow);
+}
+
+.terminal-input::placeholder {
+  color: var(--archive-text-tertiary);
+}
+
+/* 扫描线效果 */
+.terminal-input-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(217, 119, 6, 0.05) 50%,
+    transparent 100%
+  );
+  animation: scanline 4s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+/* 光标闪烁 */
+.terminal-cursor {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 1.2rem;
+  background: var(--archive-amber);
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ============================================
+   分类文件夹卡片
+   ============================================ */
+.archive-folder {
+  position: relative;
+  background: var(--archive-surface);
+  border: 1px solid var(--archive-border);
+  border-left: 3px solid var(--archive-amber);
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.archive-folder::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -3px;
+  width: 60px;
+  height: 8px;
+  background: var(--archive-amber);
+  clip-path: polygon(0 0, 100% 0, 90% 100%, 0 100%);
+}
+
+.archive-folder:hover {
+  border-left-color: var(--archive-amber);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transform: translateY(-2px);
+}
+
+/* 文件夹编号 */
+.folder-number {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--archive-text-tertiary);
+  letter-spacing: 0.1em;
+}
+
+/* 分类标签 */
+.folder-classification {
+  display: inline-block;
+  margin-bottom: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: var(--archive-amber-dim);
+  color: var(--archive-amber);
+  border: 1px solid var(--archive-amber);
+}
+
+/* 统计数值 */
+.folder-value {
+  font-family: var(--font-serif);
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--archive-text-primary);
+  margin: 0.5rem 0;
+  text-shadow: 0 0 10px var(--archive-amber-glow);
+}
+
+.folder-label {
+  font-size: 0.75rem;
+  color: var(--archive-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.folder-detail {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--archive-border);
+  font-size: 0.75rem;
+  color: var(--archive-text-tertiary);
+}
+
+/* ============================================
+   机密通知横幅
+   ============================================ */
+.classified-notice {
+  position: relative;
+  background: var(--archive-elevated);
+  border: 2px solid var(--archive-classified);
+  padding: 2rem;
+  overflow: hidden;
+}
+
+.classified-notice::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 10px,
+    rgba(220, 38, 38, 0.05) 10px,
+    rgba(220, 38, 38, 0.05) 20px
+  );
+  pointer-events: none;
+}
+
+.classified-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.classified-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  background: var(--archive-classified);
+  color: white;
+  border: 2px solid var(--archive-classified);
+  transform: rotate(-2deg);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+}
+
+.classified-title {
+  font-family: var(--font-serif);
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--archive-text-primary);
+  margin-bottom: 0.75rem;
+}
+
+.classified-content {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--archive-text-secondary);
+  margin-bottom: 1.5rem;
+}
+
+.classified-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: var(--archive-text-tertiary);
+  margin-bottom: 1.5rem;
+}
+
+.classified-metadata span {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.classified-metadata span::before {
+  content: '▸';
+  color: var(--archive-amber);
+}
+
+/* ============================================
+   档案列表
+   ============================================ */
+.archive-list {
+  background: var(--archive-surface);
+  border: 1px solid var(--archive-border);
+  padding: 1.5rem;
+}
+
+.archive-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--archive-border);
+}
+
+.archive-list-title {
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--archive-text-primary);
+}
+
+.archive-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border-left: 2px solid transparent;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.archive-item:hover {
+  background: var(--archive-bg);
+  border-left-color: var(--archive-amber);
+}
+
+.archive-item-content {
+  flex: 1;
+}
+
+.archive-item-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--archive-text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.archive-item-meta {
+  font-size: 0.75rem;
+  color: var(--archive-text-tertiary);
+}
+
+.archive-item-badge {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--archive-bg);
+  border: 1px solid var(--archive-border);
+  color: var(--archive-amber);
+}
+
+/* ============================================
+   按钮样式
+   ============================================ */
+.archive-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--archive-amber);
+  color: var(--archive-bg);
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.archive-btn:hover {
+  background: #f59e0b;
+  box-shadow: 0 0 20px var(--archive-amber-glow);
+}
+
+.archive-btn-secondary {
+  background: transparent;
+  color: var(--archive-text-secondary);
+  border: 1px solid var(--archive-border);
+}
+
+.archive-btn-secondary:hover {
+  background: var(--archive-surface);
+  border-color: var(--archive-amber);
+  color: var(--archive-amber);
+  box-shadow: none;
+}
+
+/* ============================================
+   打字机效果
+   ============================================ */
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+.typewriter {
+  overflow: hidden;
+  white-space: nowrap;
+  animation: typewriter 2s steps(40) 1s forwards;
+  width: 0;
+}
+
+/* ============================================
+   网格布局
+   ============================================ */
+.archive-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.archive-grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.archive-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 1024px) {
+  .archive-grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .archive-grid-2,
+  .archive-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   间距工具
+   ============================================ */
+.archive-section {
+  padding: 3rem 0;
+}
+
+.archive-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+/* ============================================
+   滚动条样式
+   ============================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--archive-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--archive-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--archive-amber-dim);
+}
+
+/* ============================================
+   选择样式
+   ============================================ */
+::selection {
+  background: var(--archive-amber-glow);
+  color: var(--archive-text-primary);
+}

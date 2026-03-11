@@ -63,11 +63,15 @@ watch(() => props.open, (val) => {
   }
 })
 
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
+
 defineExpose({ previewData, previewLoading, previewError, confirming, confirmError })
 </script>
 
 <template>
-  <UiDialogRoot :open="open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="max-w-lg">
@@ -119,7 +123,7 @@ defineExpose({ previewData, previewLoading, previewError, confirming, confirmErr
             {{ previewError }}
           </div>
 
-          <div v-if="previewData" class="rounded-2xl border border-neutral-200/70 bg-neutral-50/70 p-4 dark:border-neutral-700/70 dark:bg-neutral-900/60">
+          <div v-if="previewData" class="rounded-lg border border-neutral-200/70 bg-neutral-50/70 p-4 dark:border-neutral-700/70 dark:bg-neutral-900/60">
             <h4 class="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500 dark:text-neutral-400">预览结果</h4>
             <div class="mt-3 space-y-1.5">
               <div

@@ -9,6 +9,7 @@ interface AlertPreferencesResponse {
   preferences: {
     voteCountThreshold: number;
     revisionFilter: RevisionFilterOption;
+    ignoreLinkedWikidotSelfRevision?: boolean;
     mutedMetrics?: Partial<Record<AlertMetric, boolean>>;
   };
 }
@@ -18,6 +19,7 @@ interface UpdatePreferencesResponse extends AlertPreferencesResponse {}
 interface AlertPreferences {
   voteCountThreshold: number;
   revisionFilter: RevisionFilterOption;
+  ignoreLinkedWikidotSelfRevision: boolean;
   mutedMetrics: Record<AlertMetric, boolean>;
 }
 
@@ -33,6 +35,7 @@ function createDefaultPreferences(): AlertPreferences {
   return {
     voteCountThreshold: 20,
     revisionFilter: 'ANY',
+    ignoreLinkedWikidotSelfRevision: true,
     mutedMetrics: { ...DEFAULT_MUTED_METRICS }
   };
 }
@@ -49,6 +52,9 @@ function normalisePreferences(preferences?: AlertPreferencesResponse['preference
     : fallback.voteCountThreshold;
 
   const revisionFilter: RevisionFilterOption = (preferences.revisionFilter ?? fallback.revisionFilter) as RevisionFilterOption;
+  const ignoreLinkedWikidotSelfRevision = typeof preferences.ignoreLinkedWikidotSelfRevision === 'boolean'
+    ? preferences.ignoreLinkedWikidotSelfRevision
+    : fallback.ignoreLinkedWikidotSelfRevision;
 
   const mutedMetrics: Record<AlertMetric, boolean> = { ...DEFAULT_MUTED_METRICS };
   if (preferences.mutedMetrics && typeof preferences.mutedMetrics === 'object') {
@@ -63,6 +69,7 @@ function normalisePreferences(preferences?: AlertPreferencesResponse['preference
   return {
     voteCountThreshold,
     revisionFilter,
+    ignoreLinkedWikidotSelfRevision,
     mutedMetrics
   };
 }

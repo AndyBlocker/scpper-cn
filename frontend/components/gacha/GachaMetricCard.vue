@@ -80,8 +80,8 @@ withDefaults(defineProps<{
 
 /* Tone: accent */
 .gacha-metric--accent {
-  border-color: rgb(var(--accent) / 0.15);
-  background: rgb(var(--accent) / 0.03);
+  border-color: var(--g-accent-medium);
+  background: var(--g-accent-hover);
 }
 
 .gacha-metric--accent .gacha-metric__value {

@@ -3,17 +3,17 @@
     <div class="slide-content">
       <div class="max-w-5xl w-full mx-auto px-2">
         <div class="flex items-center gap-2 md:gap-3 mb-6 md:mb-8">
-          <div class="p-1.5 md:p-2 bg-[rgb(var(--accent))] rounded-lg">
+          <div class="p-1.5 md:p-2 bg-[var(--g-accent)] rounded-lg">
             <LucideIcon name="Globe" class="w-4 h-4 md:w-5 md:h-5 text-white" />
           </div>
           <h2 class="text-2xl md:text-3xl font-bold">全站数据概览</h2>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-          <div class="bento-card col-span-2 row-span-2 bg-gradient-to-br from-[rgba(var(--accent),0.15)] to-transparent">
+          <div class="bento-card col-span-2 row-span-2 bg-gradient-to-br from-[var(--g-accent-medium)] to-transparent">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium uppercase tracking-wider text-[rgb(var(--muted))]">年度新增文档</span>
-              <LucideIcon name="FileText" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="FileText" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="text-4xl md:text-6xl font-black text-[rgb(var(--fg))] mb-2">
               <Annual2025CountUp :end="siteData.overview.pages.total" />
@@ -42,7 +42,7 @@
           <div class="bento-card">
             <div class="bento-header">
               <span class="text-[10px] md:text-sm font-medium uppercase tracking-wider text-[rgb(var(--muted))]">总字数</span>
-              <LucideIcon name="PenTool" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="PenTool" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="text-xl md:text-3xl font-bold">
               {{ formatNumber(siteData.overview.words.total) }}
@@ -53,7 +53,7 @@
           <div class="bento-card">
             <div class="bento-header">
               <span class="text-[10px] md:text-sm font-medium uppercase tracking-wider text-[rgb(var(--muted))]">活跃用户</span>
-              <LucideIcon name="Users" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Users" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="text-xl md:text-3xl font-bold">
               {{ siteData.overview.users.activeThisYear }}
@@ -61,10 +61,10 @@
             <div class="text-[10px] md:text-xs text-[rgb(var(--muted))] mt-1">新注册 {{ siteData.overview.users.newThisYear }} 人</div>
           </div>
 
-          <div class="bento-card col-span-2 bg-gradient-to-r from-[rgba(var(--accent),0.08)] to-transparent">
+          <div class="bento-card col-span-2 bg-gradient-to-r from-[var(--g-accent-soft)] to-transparent">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium uppercase tracking-wider text-[rgb(var(--muted))]">社区投票</span>
-              <LucideIcon name="ThumbsUp" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="ThumbsUp" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="flex justify-between items-end">
               <div>

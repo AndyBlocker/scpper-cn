@@ -22,9 +22,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { CooccurrenceData } from '~/types/text-analysis'
 
+const cooccurrenceEndpoint: string = '/api/text-analysis/cooccurrence-network'
+
 const { data: netData, pending } = useAsyncData<CooccurrenceData>(
   'text-analysis-cooccurrence',
-  () => $fetch('/api/text-analysis/cooccurrence-network')
+  () => $fetch<CooccurrenceData>(cooccurrenceEndpoint)
 )
 
 const sigmaEl = ref<HTMLElement | null>(null)
@@ -52,7 +54,7 @@ async function render() {
       import('graphology-layout-forceatlas2')
     ])
 
-    const Graph = graphologyMod.default || graphologyMod.Graph
+    const Graph = graphologyMod.default
     const Sigma = sigmaMod.default || sigmaMod.Sigma
     const fa2 = fa2Mod.default || fa2Mod
 

@@ -9,6 +9,7 @@ export interface LockedInstance {
   rarity: Rarity
   imageUrl: string | null
   tags: string[]
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   wikidotId: number | null
   pageId: number | null
@@ -36,7 +37,7 @@ export function useGachaLockApi(core: GachaCoreContext) {
         return { ok: true as const, locked: res.locked ?? 0, alreadyLocked: res.alreadyLocked ?? 0 }
       }
       return { ok: false as const, error: res?.error || '锁定失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '锁定失败') }
     }
   }
@@ -51,7 +52,7 @@ export function useGachaLockApi(core: GachaCoreContext) {
         return { ok: true as const, locked: res.locked ?? 0, alreadyLocked: res.alreadyLocked ?? 0 }
       }
       return { ok: false as const, error: res?.error || '锁定失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '锁定失败') }
     }
   }
@@ -66,7 +67,7 @@ export function useGachaLockApi(core: GachaCoreContext) {
         return { ok: true as const, unlocked: res.unlocked ?? 0, alreadyUnlocked: res.alreadyUnlocked ?? 0 }
       }
       return { ok: false as const, error: res?.error || '解锁失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '解锁失败') }
     }
   }
@@ -81,7 +82,7 @@ export function useGachaLockApi(core: GachaCoreContext) {
         return { ok: true as const, unlocked: res.unlocked ?? 0, alreadyUnlocked: res.alreadyUnlocked ?? 0 }
       }
       return { ok: false as const, error: res?.error || '解锁失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '解锁失败') }
     }
   }
@@ -95,26 +96,44 @@ export function useGachaLockApi(core: GachaCoreContext) {
         return { ok: true as const, items: (res.items ?? []).map(withLockedInstanceCardVariant) }
       }
       return { ok: false as const, error: res?.error || '获取锁定列表失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '获取锁定列表失败') }
     }
   }
 
-  async function getFreeInstances(limit = 500, options?: { includePlaced?: boolean; includeLocked?: boolean }) {
+  async function getFreeInstances(params: {
+    limit?: number | 'all'
+    offset?: number
+    search?: string
+    rarity?: Rarity | 'ALL'
+    includePlaced?: boolean
+    includeLocked?: boolean
+    sort?: 'LATEST' | 'PICKER'
+  } = {}) {
+    const limit = params.limit ?? 500
     try {
-      const res = await $bff<ApiResponse<{ items: LockedInstance[] }>>('/gacha/instances/free', {
+      const res = await $bff<ApiResponse<{ items: LockedInstance[]; total?: number; pageRows?: number }>>('/gacha/instances/free', {
         method: 'GET',
         params: {
-          limit: String(limit),
-          includePlaced: options?.includePlaced ? '1' : undefined,
-          includeLocked: options?.includeLocked ? '1' : undefined
+          limit: limit === 'all' ? 'all' : String(limit),
+          offset: params.offset != null ? String(params.offset) : undefined,
+          search: params.search?.trim() || undefined,
+          rarity: params.rarity && params.rarity !== 'ALL' ? params.rarity : undefined,
+          includePlaced: params.includePlaced ? '1' : undefined,
+          includeLocked: params.includeLocked ? '1' : undefined,
+          sort: params.sort ?? undefined
         }
       })
       if (res?.ok) {
-        return { ok: true as const, items: (res.items ?? []).map(withLockedInstanceCardVariant) }
+        return {
+          ok: true as const,
+          items: (res.items ?? []).map(withLockedInstanceCardVariant),
+          total: Math.max(0, Number(res.total ?? 0)),
+          pageRows: Math.max(0, Number(res.pageRows ?? 0))
+        }
       }
       return { ok: false as const, error: res?.error || '获取自由实例失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '获取自由实例失败') }
     }
   }

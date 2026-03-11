@@ -31,6 +31,7 @@ const METRIC_ALIAS: Record<string, string> = {
 
 const AUTO_WATCH_SOURCE = 'AUTO_OWNERSHIP';
 const DEFAULT_VOTE_THRESHOLD = 20;
+const DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION = true;
 const MUTABLE_METRICS = ['COMMENT_COUNT', 'VOTE_COUNT', 'REVISION_COUNT'] as const;
 type MutableMetric = typeof MUTABLE_METRICS[number];
 
@@ -60,6 +61,18 @@ function sanitizeRevisionFilter(value: unknown): RevisionFilter | null {
   }
   const upper = value.toUpperCase();
   return (REVISION_FILTERS as string[]).includes(upper) ? (upper as RevisionFilter) : null;
+}
+
+function sanitizeBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalised = value.trim().toLowerCase();
+    if (normalised === 'true') return true;
+    if (normalised === 'false') return false;
+  }
+  return null;
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
@@ -111,6 +124,17 @@ function extractRevisionFilter(config: any, fallback: RevisionFilter): RevisionF
   return fallback;
 }
 
+function extractIgnoreLinkedWikidotSelfRevision(config: any, fallback: boolean): boolean {
+  if (config && typeof config === 'object') {
+    const candidate = (config as Record<string, unknown>).ignoreLinkedWikidotSelfRevision;
+    const sanitised = sanitizeBoolean(candidate);
+    if (sanitised !== null) {
+      return sanitised;
+    }
+  }
+  return fallback;
+}
+
 function extractMuted(config: any): boolean | null {
   if (!config || typeof config !== 'object') {
     return null;
@@ -127,9 +151,15 @@ function extractMuted(config: any): boolean | null {
   return null;
 }
 
-async function resolvePreferences(readPool: Pool, userId: number): Promise<{ voteCountThreshold: number; revisionFilter: RevisionFilter; mutedMetrics: Record<MutableMetric, boolean> }> {
+async function resolvePreferences(readPool: Pool, userId: number): Promise<{
+  voteCountThreshold: number;
+  revisionFilter: RevisionFilter;
+  ignoreLinkedWikidotSelfRevision: boolean;
+  mutedMetrics: Record<MutableMetric, boolean>;
+}> {
   let voteThreshold = DEFAULT_VOTE_THRESHOLD;
   let revisionFilter: RevisionFilter = 'ANY';
+  let ignoreLinkedWikidotSelfRevision = DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION;
   let hasVotePref = false;
   let hasRevisionPref = false;
   const mutedMetrics: Record<MutableMetric, boolean> = {
@@ -151,6 +181,7 @@ async function resolvePreferences(readPool: Pool, userId: number): Promise<{ vot
       hasVotePref = true;
     } else if (row.metric === 'REVISION_COUNT') {
       revisionFilter = extractRevisionFilter(row.config, revisionFilter);
+      ignoreLinkedWikidotSelfRevision = extractIgnoreLinkedWikidotSelfRevision(row.config, ignoreLinkedWikidotSelfRevision);
       hasRevisionPref = true;
     }
 
@@ -198,6 +229,7 @@ async function resolvePreferences(readPool: Pool, userId: number): Promise<{ vot
     const row = revisionWatch.rows[0];
     if (row) {
       revisionFilter = extractRevisionFilter(row.config, revisionFilter);
+      ignoreLinkedWikidotSelfRevision = extractIgnoreLinkedWikidotSelfRevision(row.config, ignoreLinkedWikidotSelfRevision);
     }
   }
 
@@ -224,6 +256,7 @@ async function resolvePreferences(readPool: Pool, userId: number): Promise<{ vot
   return {
     voteCountThreshold: voteThreshold,
     revisionFilter,
+    ignoreLinkedWikidotSelfRevision,
     mutedMetrics
   };
 }
@@ -255,7 +288,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
   const cache = createCache(redis);
 
   // 读写分离：读操作使用从库，写操作使用主库
-  const readPool = getReadPoolSync();
+  const readPool = getReadPoolSync(pool);
 
   router.get('/', async (req, res, next) => {
     try {
@@ -372,6 +405,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
 
       const voteThresholdInput = req.body?.voteCountThreshold;
       const revisionFilterInput = req.body?.revisionFilter;
+      const ignoreLinkedWikidotSelfRevisionInput = req.body?.ignoreLinkedWikidotSelfRevision;
 
       const updates: Array<'vote' | 'revision'> = [];
       let voteThreshold: number | null = null;
@@ -391,7 +425,21 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
           return res.status(400).json({ ok: false, error: 'invalid_revision_filter', allowed: REVISION_FILTERS });
         }
         revisionFilter = sanitised;
-        updates.push('revision');
+        if (!updates.includes('revision')) {
+          updates.push('revision');
+        }
+      }
+
+      let ignoreLinkedWikidotSelfRevision: boolean | null = null;
+      if (ignoreLinkedWikidotSelfRevisionInput !== undefined) {
+        const sanitised = sanitizeBoolean(ignoreLinkedWikidotSelfRevisionInput);
+        if (sanitised === null) {
+          return res.status(400).json({ ok: false, error: 'invalid_ignore_linked_wikidot_self_revision' });
+        }
+        ignoreLinkedWikidotSelfRevision = sanitised;
+        if (!updates.includes('revision')) {
+          updates.push('revision');
+        }
       }
 
       if (updates.length === 0) {
@@ -451,40 +499,88 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
           }
         }
 
-        if (updates.includes('revision') && revisionFilter !== null) {
-          const updatePref = await client.query(
+        if (updates.includes('revision')) {
+          const prefRow = await client.query<{ id: number; config: any }>(
             `
-              UPDATE "UserMetricPreference"
-              SET "config" = jsonb_set(COALESCE("config", '{}'::jsonb), '{revisionFilter}', to_jsonb($2::text), true),
-                  "updatedAt" = NOW()
+              SELECT id, "config"
+              FROM "UserMetricPreference"
               WHERE "userId" = $1
                 AND "metric" = 'REVISION_COUNT'::"PageMetricType"
+              LIMIT 1
+              FOR UPDATE
             `,
-            [userId, revisionFilter]
+            [userId]
           );
 
-          if (updatePref.rowCount === 0) {
-            await client.query(
-              `
-                INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
-                VALUES ($1, 'REVISION_COUNT'::"PageMetricType", jsonb_build_object('revisionFilter', $2::text), NOW(), NOW())
-              `,
-              [userId, revisionFilter]
+          const existingPref = prefRow.rows[0];
+          const nextPrefConfig = isJsonObject(existingPref?.config) ? { ...existingPref.config } : {};
+          if (revisionFilter !== null) {
+            nextPrefConfig.revisionFilter = revisionFilter;
+          } else {
+            nextPrefConfig.revisionFilter = extractRevisionFilter(nextPrefConfig, 'ANY');
+          }
+          if (ignoreLinkedWikidotSelfRevision !== null) {
+            nextPrefConfig.ignoreLinkedWikidotSelfRevision = ignoreLinkedWikidotSelfRevision;
+          } else {
+            nextPrefConfig.ignoreLinkedWikidotSelfRevision = extractIgnoreLinkedWikidotSelfRevision(
+              nextPrefConfig,
+              DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION
             );
           }
 
-          await client.query(
+          if (existingPref) {
+            await client.query(
+              `
+                UPDATE "UserMetricPreference"
+                SET "config" = $2::jsonb,
+                    "updatedAt" = NOW()
+                WHERE id = $1
+              `,
+              [existingPref.id, JSON.stringify(nextPrefConfig)]
+            );
+          } else {
+            await client.query(
+              `
+                INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
+                VALUES ($1, 'REVISION_COUNT'::"PageMetricType", $2::jsonb, NOW(), NOW())
+              `,
+              [userId, JSON.stringify(nextPrefConfig)]
+            );
+          }
+
+          const watchRows = await client.query<{ id: number; config: any }>(
             `
-              UPDATE "PageMetricWatch"
-              SET "config" = jsonb_set(COALESCE("config", '{}'::jsonb), '{revisionFilter}', to_jsonb($2::text), true),
-                  "lastObserved" = NULL,
-                  "updatedAt" = NOW()
+              SELECT id, "config"
+              FROM "PageMetricWatch"
               WHERE "userId" = $1
                 AND "metric" = 'REVISION_COUNT'::"PageMetricType"
-                AND "source" = $3
+                AND "source" = $2
             `,
-            [userId, revisionFilter, AUTO_WATCH_SOURCE]
+            [userId, AUTO_WATCH_SOURCE]
           );
+
+          for (const watch of watchRows.rows) {
+            const nextWatchConfig = isJsonObject(watch.config) ? { ...watch.config } : {};
+            nextWatchConfig.revisionFilter = revisionFilter ?? extractRevisionFilter(
+              nextWatchConfig,
+              extractRevisionFilter(nextPrefConfig, 'ANY')
+            );
+            nextWatchConfig.ignoreLinkedWikidotSelfRevision = ignoreLinkedWikidotSelfRevision ?? extractIgnoreLinkedWikidotSelfRevision(
+              nextWatchConfig,
+              extractIgnoreLinkedWikidotSelfRevision(nextPrefConfig, DEFAULT_IGNORE_LINKED_WIKIDOT_SELF_REVISION)
+            );
+
+            await client.query(
+              `
+                UPDATE "PageMetricWatch"
+                SET "config" = $2::jsonb,
+                    "lastObserved" = NULL,
+                    "updatedAt" = NOW()
+                WHERE id = $1
+              `,
+              [watch.id, JSON.stringify(nextWatchConfig)]
+            );
+          }
         }
 
         await client.query('COMMIT');

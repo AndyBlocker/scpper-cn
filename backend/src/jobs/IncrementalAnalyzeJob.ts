@@ -3,8 +3,6 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { getPrismaClient } from '../utils/db-connection';
 import { VotingTimeSeriesCacheJob } from './VotingTimeSeriesCacheJob';
 import { runDailySiteOverview } from './DailySiteOverviewJob.js';
-import { UserDataCompletenessJob } from './UserDataCompletenessJob';
-import { UserSocialAnalysisJob } from './UserSocialAnalysisJob';
 import { computeUserCategoryBenchmarks } from './UserCategoryBenchmarksJob';
 import { PageMetricMonitorJob } from './PageMetricMonitorJob';
 import { UserFollowActivityJob } from './UserFollowActivityJob';
@@ -66,7 +64,23 @@ export class IncrementalAnalyzeJob {
         'wikidot_binding_verify'
       ];
 
-      const tasksToRun = options.tasks || availableTasks;
+      const disableBindingVerifyByEnv = ['1', 'true', 'yes', 'on'].includes(
+        String(process.env.DISABLE_WIKIDOT_BINDING_VERIFY ?? '').trim().toLowerCase()
+      );
+
+      const requestedTasks = options.tasks || availableTasks;
+      const tasksToRun = requestedTasks.filter((taskName) => {
+        if (taskName !== 'wikidot_binding_verify') return true;
+        if (!disableBindingVerifyByEnv) return true;
+        console.log('⏭️ Task wikidot_binding_verify: disabled by DISABLE_WIKIDOT_BINDING_VERIFY');
+        return false;
+      });
+
+      if (tasksToRun.length === 0) {
+        console.log('ℹ️ No analysis tasks selected after environment filtering.');
+        return;
+      }
+
       const forceFullHistory = options.forceFullHistory ?? options.forceFullAnalysis ?? false;
 
       // 如果是强制全量分析，先清理相关分析数据
@@ -110,6 +124,8 @@ export class IncrementalAnalyzeJob {
             await this.prisma.$executeRaw`
               UPDATE "User" 
               SET "firstActivityAt" = NULL, 
+                  "firstActivityType" = NULL,
+                  "firstActivityDetails" = NULL,
                   "lastActivityAt" = NULL
             `;
             console.log('  ✓ User activity timestamps cleared');
@@ -252,7 +268,8 @@ export class IncrementalAnalyzeJob {
         }
       }
 
-      console.log(`🔍 Task ${taskName}: Processing ${changeSet.length} changed page versions`);
+      const changeLabel = taskName === 'user_data_completeness' ? 'changed records' : 'changed page versions';
+      console.log(`🔍 Task ${taskName}: Processing ${changeSet.length} ${changeLabel}`);
 
       // 根据任务类型执行相应的处理逻辑
       switch (taskName) {
@@ -402,6 +419,35 @@ export class IncrementalAnalyzeJob {
     }
 
     if (forceFullAnalysis) {
+      if (taskName === 'user_data_completeness') {
+        const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
+          WITH page_changes AS (
+            SELECT pv.id, pv."updatedAt" as "lastChange"
+            FROM "PageVersion" pv
+            WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+          ),
+          forum_changes AS (
+            SELECT
+              (-u.id) AS id,
+              MAX(COALESCE(fp."editedAt", fp."createdAt", fp."syncedAt")) AS "lastChange"
+            FROM "ForumPost" fp
+            JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+            WHERE fp."isDeleted" = false
+              AND fp."createdByType" = 'user'
+              AND COALESCE(fp."editedAt", fp."createdAt", fp."syncedAt") IS NOT NULL
+            GROUP BY u.id
+          )
+          SELECT id, "lastChange"
+          FROM (
+            SELECT id, "lastChange" FROM page_changes
+            UNION ALL
+            SELECT id, "lastChange" FROM forum_changes
+          ) all_changes
+          ORDER BY "lastChange" DESC
+        `;
+        return result;
+      }
+
       // 强制全量分析 - 返回所有有效的 pageVersion
       const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
         SELECT pv.id, pv."updatedAt" as "lastChange"
@@ -421,6 +467,35 @@ export class IncrementalAnalyzeJob {
     // 如果没有水位线，进行全量分析
     if (!cursorTs) {
       console.log(`No watermark found for task ${taskName}, performing full analysis`);
+      if (taskName === 'user_data_completeness') {
+        const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
+          WITH page_changes AS (
+            SELECT pv.id, pv."updatedAt" as "lastChange"
+            FROM "PageVersion" pv
+            WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
+          ),
+          forum_changes AS (
+            SELECT
+              (-u.id) AS id,
+              MAX(COALESCE(fp."editedAt", fp."createdAt", fp."syncedAt")) AS "lastChange"
+            FROM "ForumPost" fp
+            JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+            WHERE fp."isDeleted" = false
+              AND fp."createdByType" = 'user'
+              AND COALESCE(fp."editedAt", fp."createdAt", fp."syncedAt") IS NOT NULL
+            GROUP BY u.id
+          )
+          SELECT id, "lastChange"
+          FROM (
+            SELECT id, "lastChange" FROM page_changes
+            UNION ALL
+            SELECT id, "lastChange" FROM forum_changes
+          ) all_changes
+          ORDER BY "lastChange" DESC
+        `;
+        return result;
+      }
+
       const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
         SELECT pv.id, pv."updatedAt" as "lastChange"
         FROM "PageVersion" pv
@@ -437,69 +512,149 @@ export class IncrementalAnalyzeJob {
     // - Prisma 读取时错误地将其解释为 UTC 时间，但数值部分是正确的
     // - 使用 ISO 字符串去掉 Z 后缀，让 PostgreSQL 将其解释为不带时区的本地时间
     const cursorTsStr = cursorTs.toISOString().replace('Z', '');
-    const result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
-      WITH cursor_check AS (
-        SELECT ${cursorTsStr}::timestamp as cursor_ts
-      ),
-      -- 检查投票变化
-      vote_changes AS (
-        SELECT v."pageVersionId" AS id, max(v."timestamp") AS changed_at
-        FROM "Vote" v
-        CROSS JOIN cursor_check c
-        WHERE v."timestamp" >= c.cursor_ts
-        GROUP BY v."pageVersionId"
-      ),
-      -- 检查修订版本变化
-      revision_changes AS (
-        SELECT r."pageVersionId" AS id, max(r."timestamp") AS changed_at
-        FROM "Revision" r
-        CROSS JOIN cursor_check c
-        WHERE r."timestamp" >= c.cursor_ts
-        GROUP BY r."pageVersionId"
-      ),
-      -- 检查归属变化
-      attribution_changes AS (
-        SELECT a."pageVerId" AS id, max(a."date") AS changed_at
-        FROM "Attribution" a
-        CROSS JOIN cursor_check c
-        WHERE a."date" IS NOT NULL AND a."date" >= c.cursor_ts
-        GROUP BY a."pageVerId"
-      ),
-      -- 检查页面版本本身的更新（重要：包括新创建的页面）
-      page_version_changes AS (
-        SELECT pv.id, pv."updatedAt" AS changed_at
-        FROM "PageVersion" pv
-        CROSS JOIN cursor_check c
-        WHERE pv."updatedAt" >= c.cursor_ts
-          AND pv."validTo" IS NULL
-          AND pv."isDeleted" = false
-      ),
-      -- 检查页面表的更新
-      page_changes AS (
-        SELECT pv.id, p."updatedAt" AS changed_at
-        FROM "Page" p
-        JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
-        CROSS JOIN cursor_check c
-        WHERE p."updatedAt" >= c.cursor_ts
-          AND pv."isDeleted" = false
-      )
-      SELECT id, max(changed_at) AS "lastChange"
-      FROM (
-        SELECT id, changed_at FROM vote_changes
-        UNION ALL
-        SELECT id, changed_at FROM revision_changes
-        UNION ALL
-        SELECT id, changed_at FROM attribution_changes
-        UNION ALL
-        SELECT id, changed_at FROM page_version_changes
-        UNION ALL
-        SELECT id, changed_at FROM page_changes
-      ) all_changes
-      GROUP BY id
-      ORDER BY "lastChange" DESC
-    `;
+    let result: Array<{ id: number; lastChange: Date }>;
+    if (taskName === 'user_data_completeness') {
+      result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
+        WITH cursor_check AS (
+          SELECT ${cursorTsStr}::timestamp as cursor_ts
+        ),
+        -- 检查投票变化
+        vote_changes AS (
+          SELECT v."pageVersionId" AS id, max(v."timestamp") AS changed_at
+          FROM "Vote" v
+          CROSS JOIN cursor_check c
+          WHERE v."timestamp" >= c.cursor_ts
+          GROUP BY v."pageVersionId"
+        ),
+        -- 检查修订版本变化
+        revision_changes AS (
+          SELECT r."pageVersionId" AS id, max(r."timestamp") AS changed_at
+          FROM "Revision" r
+          CROSS JOIN cursor_check c
+          WHERE r."timestamp" >= c.cursor_ts
+          GROUP BY r."pageVersionId"
+        ),
+        -- 检查归属变化
+        attribution_changes AS (
+          SELECT a."pageVerId" AS id, max(a."date") AS changed_at
+          FROM "Attribution" a
+          CROSS JOIN cursor_check c
+          WHERE a."date" IS NOT NULL AND a."date" >= c.cursor_ts
+          GROUP BY a."pageVerId"
+        ),
+        -- 检查页面版本本身的更新（重要：包括新创建的页面）
+        page_version_changes AS (
+          SELECT pv.id, pv."updatedAt" AS changed_at
+          FROM "PageVersion" pv
+          CROSS JOIN cursor_check c
+          WHERE pv."updatedAt" >= c.cursor_ts
+            AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false
+        ),
+        -- 检查页面表的更新
+        page_changes AS (
+          SELECT pv.id, p."updatedAt" AS changed_at
+          FROM "Page" p
+          JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
+          CROSS JOIN cursor_check c
+          WHERE p."updatedAt" >= c.cursor_ts
+            AND pv."isDeleted" = false
+        ),
+        -- 检查论坛发帖变化（负 userId 作为增量变更标记）
+        forum_changes AS (
+          SELECT
+            (-u.id) AS id,
+            MAX(COALESCE(fp."editedAt", fp."createdAt", fp."syncedAt")) AS changed_at
+          FROM "ForumPost" fp
+          JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+          CROSS JOIN cursor_check c
+          WHERE fp."isDeleted" = false
+            AND fp."createdByType" = 'user'
+            AND COALESCE(fp."editedAt", fp."createdAt", fp."syncedAt") >= c.cursor_ts
+          GROUP BY u.id
+        )
+        SELECT id, max(changed_at) AS "lastChange"
+        FROM (
+          SELECT id, changed_at FROM vote_changes
+          UNION ALL
+          SELECT id, changed_at FROM revision_changes
+          UNION ALL
+          SELECT id, changed_at FROM attribution_changes
+          UNION ALL
+          SELECT id, changed_at FROM page_version_changes
+          UNION ALL
+          SELECT id, changed_at FROM page_changes
+          UNION ALL
+          SELECT id, changed_at FROM forum_changes
+        ) all_changes
+        GROUP BY id
+        ORDER BY "lastChange" DESC
+      `;
+    } else {
+      result = await this.prisma.$queryRaw<Array<{ id: number; lastChange: Date }>>`
+        WITH cursor_check AS (
+          SELECT ${cursorTsStr}::timestamp as cursor_ts
+        ),
+        -- 检查投票变化
+        vote_changes AS (
+          SELECT v."pageVersionId" AS id, max(v."timestamp") AS changed_at
+          FROM "Vote" v
+          CROSS JOIN cursor_check c
+          WHERE v."timestamp" >= c.cursor_ts
+          GROUP BY v."pageVersionId"
+        ),
+        -- 检查修订版本变化
+        revision_changes AS (
+          SELECT r."pageVersionId" AS id, max(r."timestamp") AS changed_at
+          FROM "Revision" r
+          CROSS JOIN cursor_check c
+          WHERE r."timestamp" >= c.cursor_ts
+          GROUP BY r."pageVersionId"
+        ),
+        -- 检查归属变化
+        attribution_changes AS (
+          SELECT a."pageVerId" AS id, max(a."date") AS changed_at
+          FROM "Attribution" a
+          CROSS JOIN cursor_check c
+          WHERE a."date" IS NOT NULL AND a."date" >= c.cursor_ts
+          GROUP BY a."pageVerId"
+        ),
+        -- 检查页面版本本身的更新（重要：包括新创建的页面）
+        page_version_changes AS (
+          SELECT pv.id, pv."updatedAt" AS changed_at
+          FROM "PageVersion" pv
+          CROSS JOIN cursor_check c
+          WHERE pv."updatedAt" >= c.cursor_ts
+            AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false
+        ),
+        -- 检查页面表的更新
+        page_changes AS (
+          SELECT pv.id, p."updatedAt" AS changed_at
+          FROM "Page" p
+          JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
+          CROSS JOIN cursor_check c
+          WHERE p."updatedAt" >= c.cursor_ts
+            AND pv."isDeleted" = false
+        )
+        SELECT id, max(changed_at) AS "lastChange"
+        FROM (
+          SELECT id, changed_at FROM vote_changes
+          UNION ALL
+          SELECT id, changed_at FROM revision_changes
+          UNION ALL
+          SELECT id, changed_at FROM attribution_changes
+          UNION ALL
+          SELECT id, changed_at FROM page_version_changes
+          UNION ALL
+          SELECT id, changed_at FROM page_changes
+        ) all_changes
+        GROUP BY id
+        ORDER BY "lastChange" DESC
+      `;
+    }
 
-    console.log(`Task ${taskName}: Found ${result.length} changed page versions since ${cursorTs.toISOString()}`);
+    console.log(`Task ${taskName}: Found ${result.length} changed records since ${cursorTs.toISOString()}`);
     return result;
   }
 
@@ -797,8 +952,13 @@ export class IncrementalAnalyzeJob {
     
     console.log('🔧 Updating user data completeness...');
     
-    // 从变更集中提取受影响的用户
-    const pageVersionIds = changeSet.map(c => c.id);
+    // 约定：id > 0 为 pageVersionId；id < 0 为 forum 变更标记（其绝对值为 userId）
+    const pageVersionIds = changeSet.filter(c => c.id > 0).map(c => c.id);
+    const forumUserIds = Array.from(new Set(
+      changeSet
+        .filter(c => c.id < 0)
+        .map(c => Math.abs(c.id))
+    ));
     
     const affectedUsers = await this.prisma.$queryRaw<Array<{ userId: number }>>`
       WITH effective_attributions AS (
@@ -811,30 +971,43 @@ export class IncrementalAnalyzeJob {
           WHERE a."pageVerId" = ANY(${pageVersionIds}::int[])
         ) a
         WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+      ),
+      page_affected_users AS (
+        SELECT DISTINCT "userId"
+        FROM (
+          -- 投票的用户
+          SELECT v."userId"
+          FROM "Vote" v
+          WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
+            AND v."userId" IS NOT NULL
+
+          UNION
+
+          -- 创建修订的用户
+          SELECT r."userId"
+          FROM "Revision" r
+          WHERE r."pageVersionId" = ANY(${pageVersionIds}::int[])
+            AND r."userId" IS NOT NULL
+
+          UNION
+
+          -- 页面归属的用户
+          SELECT a."userId"
+          FROM effective_attributions a
+          WHERE a."pageVerId" = ANY(${pageVersionIds}::int[])
+            AND a."userId" IS NOT NULL
+        ) affected_users
+      ),
+      forum_affected_users AS (
+        SELECT u.id AS "userId"
+        FROM "User" u
+        WHERE u.id = ANY(${forumUserIds}::int[])
       )
       SELECT DISTINCT "userId" 
       FROM (
-        -- 投票的用户
-        SELECT v."userId"
-        FROM "Vote" v
-        WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
-          AND v."userId" IS NOT NULL
-        
+        SELECT "userId" FROM page_affected_users
         UNION
-        
-        -- 创建修订的用户
-        SELECT r."userId"
-        FROM "Revision" r
-        WHERE r."pageVersionId" = ANY(${pageVersionIds}::int[])
-          AND r."userId" IS NOT NULL
-        
-        UNION
-        
-        -- 页面归属的用户
-        SELECT a."userId"
-        FROM effective_attributions a
-        WHERE a."pageVerId" = ANY(${pageVersionIds}::int[])
-          AND a."userId" IS NOT NULL
+        SELECT "userId" FROM forum_affected_users
       ) affected_users
     `;
     
@@ -842,92 +1015,122 @@ export class IncrementalAnalyzeJob {
     
     const userIds = affectedUsers.map(u => u.userId);
     console.log(`  📝 Updating data completeness for ${userIds.length} affected users`);
-    
-    // 执行用户数据完整性更新
-    const job = new UserDataCompletenessJob(this.prisma);
-    
+
     // 针对特定用户进行更新
     await this.prisma.$executeRaw`
       WITH effective_attributions AS (
         SELECT a.*
         FROM (
-          SELECT 
+          SELECT
             a.*,
             BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
           FROM "Attribution" a
         ) a
         WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
       ),
-      vote_activity AS (
-        SELECT 
-          "userId",
-          MIN(timestamp) as first_vote,
-          MAX(timestamp) as last_vote
-        FROM "Vote"
-        WHERE "userId" = ANY(${userIds}::int[])
-        GROUP BY "userId"
-      ),
-      revision_activity AS (
-        SELECT 
-          "userId",
-          MIN(timestamp) as first_revision,
-          MAX(timestamp) as last_revision
-        FROM "Revision"
-        WHERE "userId" = ANY(${userIds}::int[])
-        GROUP BY "userId"
-      ),
-      attribution_activity AS (
-        SELECT 
-          "userId",
-          MIN(date) as first_attribution,
-          MAX(date) as last_attribution
-        FROM effective_attributions
-        WHERE "userId" = ANY(${userIds}::int[])
-          AND date IS NOT NULL
-        GROUP BY "userId"
-      ),
-      user_activity AS (
-        SELECT 
-          u.id as "userId",
-          LEAST(
-            COALESCE(va.first_vote, '9999-12-31'::timestamp),
-            COALESCE(ra.first_revision, '9999-12-31'::timestamp),
-            COALESCE(aa.first_attribution, '9999-12-31'::timestamp)
-          ) as first_activity,
-          GREATEST(
-            COALESCE(va.last_vote, '1900-01-01'::timestamp),
-            COALESCE(ra.last_revision, '1900-01-01'::timestamp),
-            COALESCE(aa.last_attribution, '1900-01-01'::timestamp)
-          ) as last_activity
-        FROM "User" u
-        LEFT JOIN vote_activity va ON u.id = va."userId"
-        LEFT JOIN revision_activity ra ON u.id = ra."userId"
-        LEFT JOIN attribution_activity aa ON u.id = aa."userId"
+      all_activity AS (
+        SELECT
+          v."userId",
+          v."timestamp" AS activity_time,
+          'vote'::text AS activity_type,
+          'Voted on page'::text AS activity_details
+        FROM "Vote" v
+        WHERE v."userId" = ANY(${userIds}::int[])
+
+        UNION ALL
+
+        SELECT
+          r."userId",
+          r."timestamp" AS activity_time,
+          'revision'::text AS activity_type,
+          CONCAT('Created revision #', r."wikidotId") AS activity_details
+        FROM "Revision" r
+        WHERE r."userId" = ANY(${userIds}::int[])
+
+        UNION ALL
+
+        SELECT
+          a."userId",
+          a."date" AS activity_time,
+          'attribution'::text AS activity_type,
+          CONCAT('Attributed as ', a."type") AS activity_details
+        FROM effective_attributions a
+        WHERE a."userId" = ANY(${userIds}::int[])
+          AND a."date" IS NOT NULL
+
+        UNION ALL
+
+        SELECT
+          u.id AS "userId",
+          fp."createdAt" AS activity_time,
+          'forum_post'::text AS activity_type,
+          'Forum post'::text AS activity_details
+        FROM "ForumPost" fp
+        JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
         WHERE u.id = ANY(${userIds}::int[])
+          AND fp."createdAt" IS NOT NULL
+          AND fp."isDeleted" = false
+          AND fp."createdByType" = 'user'
+      ),
+      user_first_activity AS (
+        SELECT DISTINCT ON ("userId")
+          "userId",
+          activity_time AS first_activity,
+          activity_type,
+          activity_details
+        FROM all_activity
+        ORDER BY "userId", activity_time ASC
+      ),
+      user_last_activity AS (
+        SELECT
+          "userId",
+          MAX(activity_time) AS last_activity
+        FROM all_activity
+        GROUP BY "userId"
+      ),
+      merged AS (
+        SELECT
+          COALESCE(ufa."userId", ula."userId") AS "userId",
+          ufa.first_activity,
+          ufa.activity_type,
+          ufa.activity_details,
+          ula.last_activity
+        FROM user_first_activity ufa
+        FULL OUTER JOIN user_last_activity ula ON ula."userId" = ufa."userId"
       )
       UPDATE "User" u
-      SET 
-        "firstActivityAt" = CASE 
-          WHEN ua.first_activity < '9999-12-31'::timestamp 
-          THEN COALESCE(u."firstActivityAt", ua.first_activity)
+      SET
+        "firstActivityAt" = CASE
+          WHEN m.first_activity IS NULL THEN u."firstActivityAt"
+          WHEN u."firstActivityAt" IS NULL OR u."firstActivityAt" > m.first_activity
+          THEN m.first_activity
           ELSE u."firstActivityAt"
         END,
-        "lastActivityAt" = CASE 
-          WHEN ua.last_activity > '1900-01-01'::timestamp 
-          THEN GREATEST(COALESCE(u."lastActivityAt", '1900-01-01'::timestamp), ua.last_activity)
-          ELSE u."lastActivityAt"
+        "firstActivityType" = CASE
+          WHEN m.first_activity IS NULL THEN u."firstActivityType"
+          WHEN u."firstActivityAt" IS NULL OR u."firstActivityAt" > m.first_activity
+          THEN m.activity_type
+          ELSE u."firstActivityType"
         END,
-        "username" = CASE 
-          WHEN u."username" IS NULL AND u."wikidotId" < 0 
-          THEN CONCAT('guest_', ABS(u."wikidotId"))
-          WHEN u."username" IS NULL AND u."displayName" IS NULL 
-          THEN '(user deleted)'
-          WHEN u."username" IS NULL AND u."displayName" IS NOT NULL 
-          THEN LOWER(REPLACE(u."displayName", ' ', '_'))
+        "firstActivityDetails" = CASE
+          WHEN m.first_activity IS NULL THEN u."firstActivityDetails"
+          WHEN u."firstActivityAt" IS NULL OR u."firstActivityAt" > m.first_activity
+          THEN m.activity_details
+          ELSE u."firstActivityDetails"
+        END,
+        "lastActivityAt" = CASE
+          WHEN m.last_activity IS NULL THEN u."lastActivityAt"
+          ELSE GREATEST(COALESCE(u."lastActivityAt", '1900-01-01'::timestamp), m.last_activity)
+        END,
+        "username" = CASE
+          WHEN u."username" IS NULL AND u."wikidotId" < 0 THEN CONCAT('guest_', ABS(u."wikidotId"))
+          WHEN u."username" IS NULL AND u."displayName" IS NULL THEN '(user deleted)'
+          WHEN u."username" IS NULL AND u."displayName" IS NOT NULL THEN LOWER(REPLACE(u."displayName", ' ', '_'))
           ELSE u."username"
         END
-      FROM user_activity ua
-      WHERE u.id = ua."userId"
+      FROM merged m
+      WHERE u.id = m."userId"
+        AND u.id = ANY(${userIds}::int[])
     `;
     
     console.log('✅ User data completeness updated');
@@ -961,10 +1164,7 @@ export class IncrementalAnalyzeJob {
     
     const userIds = votingUsers.map(u => u.userId);
     console.log(`  📊 Analyzing social patterns for ${userIds.length} users`);
-    
-    // 执行社交分析更新
-    const job = new UserSocialAnalysisJob(this.prisma);
-    
+
     // 更新标签偏好（仅针对有新投票的用户）
     await this.prisma.$executeRaw`
       WITH user_tag_votes AS (

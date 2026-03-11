@@ -6,303 +6,48 @@ import { prisma } from '../../db.js';
 import { requireAuth } from '../../middleware/requireAuth.js';
 import { requireAdmin } from '../../middleware/requireAdmin.js';
 
-type Tx = Prisma.TransactionClient;
-
-const DAILY_REWARD = 100;
-const UTC8_OFFSET_MINUTES = 8 * 60;
-const INITIAL_WALLET_BALANCE = 500;
-const FIXED_DRAW_TOKEN_COST = 10;
-const FIXED_TEN_DRAW_TOKEN_COST = 100;
-const PURPLE_PITY_THRESHOLD = 60;
-const GOLD_PITY_THRESHOLD = 120;
-const MAX_DRAW_COUNT = 10;
-const ALLOWED_DRAW_COUNTS = new Set([1, 10]);
-const PLACEMENT_SLOT_COUNT_DEFAULT = 5;
-const PLACEMENT_SLOT_COUNT_MAX = 10;
-const PLACEMENT_SLOT_UNLOCK_COSTS = [1000, 1500, 2000, 3000, 5000] as const;
-const PLACEMENT_BUFFER_CAP_BASE = Math.max(0, Math.floor(Number(process.env.GACHA_PLACEMENT_BUFFER_CAP_BASE ?? '3000') || 3000));
-const PLACEMENT_OPTION_LIMIT = Math.max(120, Math.floor(Number(process.env.GACHA_INVENTORY_QUERY_LIMIT_MAX ?? '1000') || 0));
-const ALBUM_PAGE_QUERY_LIMIT_MAX = 5000;
-const PLACEMENT_DECIMAL_SCALE = 6;
-const DEFAULT_PLACEMENT_YIELD_BOOST_PERCENT = Number(process.env.GACHA_PLACEMENT_YIELD_BOOST_PERCENT ?? '0');
-const IDEMPOTENCY_TTL_HOURS = 24;
-const DEFAULT_DUPLICATE_REWARD = 0;
-const DEFAULT_CARD_WEIGHT = 1;
-const BASE_PLACEMENT_YIELD_BY_RARITY: Record<GachaRarity, number> = {
-  WHITE: 0.5,
-  GREEN: 0.7,
-  BLUE: 1.0,
-  PURPLE: 1.5,
-  GOLD: 2.0
-};
-const PERMANENT_POOL_ID = process.env.GACHA_PERMANENT_POOL_ID || 'permanent-main-pool';
-
-function parseBooleanEnv(value: string | undefined): boolean | null {
-  if (value == null) return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  return null;
-}
-
-const featureAllEnv = parseBooleanEnv(process.env.GACHA_FEATURE_ALL);
-const defaultFeatureFlag = featureAllEnv ?? true;
-const FEATURE_FLAGS = {
-  draw: parseBooleanEnv(process.env.GACHA_FEATURE_DRAW) ?? defaultFeatureFlag,
-  placement: parseBooleanEnv(process.env.GACHA_FEATURE_PLACEMENT) ?? defaultFeatureFlag,
-  album: parseBooleanEnv(process.env.GACHA_FEATURE_ALBUM) ?? defaultFeatureFlag,
-  tickets: parseBooleanEnv(process.env.GACHA_FEATURE_TICKETS) ?? defaultFeatureFlag,
-  missions: parseBooleanEnv(process.env.GACHA_FEATURE_MISSIONS) ?? defaultFeatureFlag,
-  achievements: parseBooleanEnv(process.env.GACHA_FEATURE_ACHIEVEMENTS) ?? defaultFeatureFlag,
-  market: parseBooleanEnv(process.env.GACHA_FEATURE_MARKET) ?? defaultFeatureFlag,
-  trade: parseBooleanEnv(process.env.GACHA_FEATURE_TRADE) ?? defaultFeatureFlag,
-  buyRequest: parseBooleanEnv(process.env.GACHA_FEATURE_BUY_REQUEST) ?? defaultFeatureFlag
-} as const;
-
-const MARKET_POSITION_MAX_OPEN = 5;
-const MARKET_LOT_TOKEN = 10;
-const INDEX_BASE = 100;
-const BFF_BASE_URL = process.env.BFF_BASE_URL || 'http://127.0.0.1:4396';
-const BFF_INTERNAL_KEY = (process.env.BFF_INTERNAL_API_KEY || '').trim();
-const BFF_INTERNAL_FETCH_TIMEOUT_MS = Math.max(1000, Math.floor(Number(process.env.BFF_INTERNAL_FETCH_TIMEOUT_MS ?? '4500') || 4500));
-const ORACLE_CACHE_TTL_MS = 30_000;
-const ORACLE_TICK_LIMIT_SNAPSHOT = 24 * 8;
-const ORACLE_TICK_LIMIT_POSITION = 24 * 40;
-const ORACLE_TICK_CACHE_LIMIT = ORACLE_TICK_LIMIT_POSITION;
-const ORACLE_TICK_TIMEFRAME_BUFFER_HOURS = 24;
-const ORACLE_NEAR_REALTIME_WINDOW_MS = 60_000;
-const MARKET_GLOBAL_POSITION_LOOKBACK_DAYS = 45;
-const MARKET_GLOBAL_POSITION_CACHE_TTL_MS = 60_000;
-const MARKET_USER_LEDGER_LOOKBACK_DAYS = 180;
-const DRAW_POOL_CACHE_TTL_MS = 60_000;
-const TICKET_LEDGER_REASON_GRANT = 'TICKET_GRANT';
-const TICKET_LEDGER_REASON_USE = 'TICKET_USE';
-const MISSION_CLAIM_REASON = 'MISSION_CLAIM';
-const ACHIEVEMENT_CLAIM_REASON = 'ACHIEVEMENT_CLAIM';
-const MARKET_OPEN_REASON = 'MARKET_POSITION_OPEN';
-const MARKET_OPEN_SPEND_REASON = 'MARKET_POSITION_OPEN_SPEND';
-const MARKET_SETTLE_REASON = 'MARKET_POSITION_SETTLE';
-const TRADE_LISTING_CREATE_REASON = 'TRADE_LISTING_CREATE';
-const TRADE_LISTING_CANCEL_REASON = 'TRADE_LISTING_CANCEL';
-const TRADE_BUY_SPEND_REASON = 'TRADE_BUY_SPEND';
-const TRADE_SELL_EARN_REASON = 'TRADE_SELL_EARN';
-const BUY_REQUEST_CREATE_REASON = 'BUY_REQUEST_CREATE';
-const BUY_REQUEST_CANCEL_REASON = 'BUY_REQUEST_CANCEL';
-const BUY_REQUEST_FULFILL_BUYER_SPEND_REASON = 'BUY_REQUEST_FULFILL_BUYER_SPEND';
-const BUY_REQUEST_FULFILL_SELLER_EARN_REASON = 'BUY_REQUEST_FULFILL_SELLER_EARN';
-const BUY_REQUEST_EXPIRY_SWEEP_BATCH_SIZE = 200;
-const BUY_REQUEST_EXPIRY_SWEEP_MAX_BATCHES = 4;
-const BUY_REQUEST_EXPIRY_SWEEP_INTERVAL_MS = 30_000;
-const PLACEMENT_SLOT_UNLOCK_REASON = 'PLACEMENT_SLOT_UNLOCK';
-const TRADE_EXPIRY_SWEEP_BATCH_SIZE = 400;
-const TRADE_EXPIRY_SWEEP_MAX_BATCHES_PER_RUN = 8;
-const TRADE_EXPIRY_SWEEP_INTERVAL_MS = 20_000;
-
-const DAILY_MISSION_KEY = 'DAILY_SPEND_200';
-const WEEKLY_MISSION_KEY = 'WEEKLY_SPEND_800';
-
-type MarketLockTier = 'T1' | 'T7' | 'T15' | 'T30';
-type MarketPositionStatus = 'OPEN' | 'EXPIRED' | 'SETTLED' | 'LIQUIDATED';
-const MARKET_LOCK_TIERS: MarketLockTier[] = ['T1', 'T7', 'T15', 'T30'];
-
-const MARKET_LOCK_TIER_CONFIG: Record<MarketLockTier, {
-  durationMs: number;
-  minLots: number;
-  openFeeBaseRate: number;
-  settleFeeRate: number;
-  leverageOptions: number[];
-}> = {
-  T1: {
-    durationMs: 24 * 60 * 60 * 1000,
-    minLots: 10,
-    openFeeBaseRate: 0.008,
-    settleFeeRate: 0.08,
-    leverageOptions: [1, 2, 5, 10]
-  },
-  T7: {
-    durationMs: 7 * 24 * 60 * 60 * 1000,
-    minLots: 20,
-    openFeeBaseRate: 0.007,
-    settleFeeRate: 0.08,
-    leverageOptions: [1, 2, 5, 10, 20]
-  },
-  T15: {
-    durationMs: 15 * 24 * 60 * 60 * 1000,
-    minLots: 30,
-    openFeeBaseRate: 0.006,
-    settleFeeRate: 0.08,
-    leverageOptions: [1, 2, 5, 10, 20, 50]
-  },
-  T30: {
-    durationMs: 30 * 24 * 60 * 60 * 1000,
-    minLots: 50,
-    openFeeBaseRate: 0.005,
-    settleFeeRate: 0.08,
-    leverageOptions: [1, 2, 5, 10, 20, 50, 100]
-  }
-};
-
-const MARKET_LEVERAGE_SURCHARGE_RATE: Record<number, number> = {
-  1: 0,
-  2: 0.002,
-  5: 0.008,
-  10: 0.018,
-  20: 0.04,
-  50: 0.10,
-  100: 0.22
-};
-
-type TicketBalance = {
-  drawTicket: number;
-  draw10Ticket: number;
-  affixReforgeTicket: number;
-};
-
-type WalletPityCounters = {
-  purplePityCount: number;
-  goldPityCount: number;
-};
-
-type DrawPaymentMethod = 'TOKEN' | 'DRAW_TICKET' | 'DRAW10_TICKET' | 'AUTO';
-type DismantleKeepScope = 'CARD' | 'VARIANT';
-type TradeSearchMode = 'ALL' | 'CARD' | 'SELLER';
-type TradeSortMode = 'LATEST' | 'PRICE_ASC' | 'PRICE_DESC' | 'TOTAL_ASC' | 'TOTAL_DESC' | 'RARITY_DESC';
-
-const DISMANTLE_KEEP_SCOPE_VALUES = ['CARD', 'VARIANT'] as const;
-const TRADE_SEARCH_MODE_VALUES = ['ALL', 'CARD', 'SELLER'] as const;
-const TRADE_SORT_MODE_VALUES = ['LATEST', 'PRICE_ASC', 'PRICE_DESC', 'TOTAL_ASC', 'TOTAL_DESC', 'RARITY_DESC'] as const;
-const AUTHOR_CARD_SEARCH_LIMIT = 2000;
-const AUTHOR_BFF_PAGE_LOOKUP_LIMIT = 2200;
-const AUTHOR_BFF_USER_LOOKUP_LIMIT = 160;
-const AUTHOR_SEARCH_CACHE_TTL_MS = 3 * 60 * 1000;
-
-type RewardPack = {
-  tokens?: number;
-  tickets?: Partial<TicketBalance>;
-};
-
-type MarketCategory = 'OVERALL' | 'TRANSLATION' | 'SCP' | 'TALE' | 'GOI' | 'WANDERERS';
-
-type MarketContractDefinition = {
-  id: MarketCategory;
-  category: MarketCategory;
-  symbol: MarketCategory;
-  name: string;
-};
-
-type MarketPositionSide = 'LONG' | 'SHORT';
-type MissionPeriodType = 'daily' | 'weekly';
-
-type MissionDefinition = {
-  key: string;
-  title: string;
-  description: string;
-  target: number;
-  periodType: MissionPeriodType;
-  reward: RewardPack;
-};
-
-type AchievementDefinition = {
-  key: string;
-  title: string;
-  description: string;
-  target: number;
-  metric: (stats: UserGachaStats) => number;
-  reward: RewardPack;
-  hidden?: boolean;
-};
-
-type UserGachaStats = {
-  totalDraws: number;
-  uniqueCards: number;
-  goldCardsDrawn: number;
-  purpleCardsDrawn: number;
-  placementClaims: number;
-  placementTokensEarned: number;
-  dailyClaims: number;
-  marketProfit: number;
-  marketLoss: number;
-  tradeSells: number;
-  dismantleCount: number;
-  affixReforgeCount: number;
-  totalTokensSpent: number;
-};
-
-const EMPTY_TICKETS: TicketBalance = {
-  drawTicket: 0,
-  draw10Ticket: 0,
-  affixReforgeTicket: 0
-};
-
-const MARKET_CATEGORIES: MarketCategory[] = [
-  'OVERALL',
-  'TRANSLATION',
-  'SCP',
-  'TALE',
-  'GOI',
-  'WANDERERS'
-];
-
-const MARKET_CONTRACT_ALIASES: Record<string, MarketCategory> = {
-  'SCP-INDEX': 'SCP',
-  'SCPI': 'SCP',
-  'RARE-SURGE': 'OVERALL',
-  'RSGE': 'OVERALL',
-  'ANOMALY-SIGNAL': 'TALE',
-  'ANOM': 'TALE'
-};
-
-const MARKET_CONTRACTS: MarketContractDefinition[] = [
-  { id: 'OVERALL', category: 'OVERALL', symbol: 'OVERALL', name: '全站指数' },
-  { id: 'TRANSLATION', category: 'TRANSLATION', symbol: 'TRANSLATION', name: '译文指数' },
-  { id: 'SCP', category: 'SCP', symbol: 'SCP', name: 'SCP 指数' },
-  { id: 'TALE', category: 'TALE', symbol: 'TALE', name: '故事指数' },
-  { id: 'GOI', category: 'GOI', symbol: 'GOI', name: 'GOI 指数' },
-  { id: 'WANDERERS', category: 'WANDERERS', symbol: 'WANDERERS', name: '图书馆指数' }
-];
-
-type MarketTickTimeframe = '24H' | '7D' | '30D';
-
-type OracleTick = {
-  category: MarketCategory;
-  asOfTs: Date;
-  watermarkTs: Date | null;
-  voteCutoffDate: string;
-  voteRuleVersion: string;
-  indexMark: number;
-};
-
-type OracleCacheEntry = {
-  fetchedAt: number;
-  limit: number;
-  items: OracleTick[];
-};
-
-type OracleInflightEntry = {
-  limit: number;
-  asOfTsMs: number;
-  promise: Promise<OracleTick[]>;
-};
-
-type AuthorCardSearchCacheEntry = {
-  expiresAt: number;
-  cardIds: string[];
-};
-
-type DrawPoolCardSnapshot = {
-  id: string;
-  title: string;
-  rarity: GachaRarity;
-  tags: string[];
-  authors: Array<{ name: string; wikidotId: number | null }> | null;
-  imageUrl: string | null;
-  wikidotId: number | null;
-  pageId: number | null;
-  rewardTokens: number;
-  adjustedWeight: number;
-  variants: Array<{ id: string; imageUrl: string | null }>;
-};
+import {
+  type Tx, type MarketLockTier, type MarketPositionStatus, type TicketBalance,
+  type WalletPityCounters, type DrawPaymentMethod, type DismantleKeepScope,
+  type TradeSearchMode, type TradeSortMode, type RewardPack, type MarketCategory,
+  type MarketContractDefinition, type MarketPositionSide, type MissionPeriodType,
+  type MissionDefinition, type AchievementDefinition, type UserGachaStats,
+  type MarketTickTimeframe, type OracleTick, type OracleCacheEntry,
+  type OracleInflightEntry, type AuthorCardSearchCacheEntry, type DrawPoolCardSnapshot,
+  DAILY_REWARD, UTC8_OFFSET_MINUTES, INITIAL_WALLET_BALANCE,
+  FIXED_DRAW_TOKEN_COST, FIXED_TEN_DRAW_TOKEN_COST,
+  PURPLE_PITY_THRESHOLD, GOLD_PITY_THRESHOLD, MAX_DRAW_COUNT, ALLOWED_DRAW_COUNTS,
+  PLACEMENT_SLOT_COUNT_DEFAULT, PLACEMENT_SLOT_COUNT_MAX, PLACEMENT_SLOT_UNLOCK_COSTS,
+  PLACEMENT_BUFFER_CAP_BASE, PLACEMENT_OPTION_LIMIT, ALBUM_PAGE_QUERY_LIMIT_MAX,
+  PLACEMENT_DECIMAL_SCALE, DEFAULT_PLACEMENT_YIELD_BOOST_PERCENT,
+  IDEMPOTENCY_TTL_HOURS, DEFAULT_DUPLICATE_REWARD, DEFAULT_CARD_WEIGHT,
+  BASE_PLACEMENT_YIELD_BY_RARITY, PERMANENT_POOL_ID, FEATURE_FLAGS,
+  MARKET_POSITION_MAX_OPEN, MARKET_LOT_TOKEN, INDEX_BASE,
+  BFF_BASE_URL, BFF_INTERNAL_KEY, BFF_INTERNAL_FETCH_TIMEOUT_MS,
+  ORACLE_CACHE_TTL_MS, ORACLE_TICK_LIMIT_SNAPSHOT, ORACLE_TICK_LIMIT_POSITION,
+  ORACLE_TICK_CACHE_LIMIT, ORACLE_TICK_TIMEFRAME_BUFFER_HOURS,
+  ORACLE_NEAR_REALTIME_WINDOW_MS, MARKET_GLOBAL_POSITION_LOOKBACK_DAYS,
+  MARKET_GLOBAL_POSITION_CACHE_TTL_MS, MARKET_USER_LEDGER_LOOKBACK_DAYS,
+  DRAW_POOL_CACHE_TTL_MS, TICKET_LEDGER_REASON_GRANT, TICKET_LEDGER_REASON_USE,
+  MISSION_CLAIM_REASON, ACHIEVEMENT_CLAIM_REASON,
+  MARKET_OPEN_REASON, MARKET_OPEN_SPEND_REASON, MARKET_SETTLE_REASON,
+  TRADE_LISTING_CREATE_REASON, TRADE_LISTING_CANCEL_REASON,
+  TRADE_BUY_SPEND_REASON, TRADE_SELL_EARN_REASON,
+  BUY_REQUEST_CREATE_REASON, BUY_REQUEST_CANCEL_REASON,
+  BUY_REQUEST_FULFILL_BUYER_SPEND_REASON, BUY_REQUEST_FULFILL_SELLER_EARN_REASON,
+  BUY_REQUEST_EXPIRY_SWEEP_BATCH_SIZE, BUY_REQUEST_EXPIRY_SWEEP_MAX_BATCHES,
+  BUY_REQUEST_EXPIRY_SWEEP_INTERVAL_MS, PLACEMENT_SLOT_UNLOCK_REASON,
+  TRADE_EXPIRY_SWEEP_BATCH_SIZE, TRADE_EXPIRY_SWEEP_MAX_BATCHES_PER_RUN,
+  TRADE_EXPIRY_SWEEP_INTERVAL_MS, MARKET_SETTLE_SWEEP_USER_BATCH_SIZE,
+  MARKET_SETTLE_SWEEP_MAX_BATCHES_PER_RUN, MARKET_SETTLE_SWEEP_INTERVAL_MS,
+  DAILY_MISSION_KEY, WEEKLY_MISSION_KEY,
+  MARKET_LOCK_TIERS, MARKET_LOCK_TIER_CONFIG, MARKET_LEVERAGE_SURCHARGE_RATE,
+  DISMANTLE_KEEP_SCOPE_VALUES, TRADE_SEARCH_MODE_VALUES, TRADE_SORT_MODE_VALUES,
+  AUTHOR_CARD_SEARCH_LIMIT, AUTHOR_BFF_PAGE_LOOKUP_LIMIT,
+  AUTHOR_BFF_USER_LOOKUP_LIMIT, AUTHOR_SEARCH_CACHE_TTL_MS,
+  EMPTY_TICKETS, MARKET_CATEGORIES, MARKET_CONTRACT_ALIASES, MARKET_CONTRACTS,
+  parseBooleanEnv,
+} from './shared/constants.js';
 
 const oracleTickCache = new Map<MarketCategory, OracleCacheEntry>();
 const oracleTickInflight = new Map<MarketCategory, OracleInflightEntry>();
@@ -320,6 +65,14 @@ let tradeExpirySweepLastRunAt = 0;
 let tradeExpirySweepInFlight: Promise<number> | null = null;
 let buyRequestExpirySweepLastRunAt = 0;
 let buyRequestExpirySweepInFlight: Promise<number> | null = null;
+let marketSettleSweepLastRunAt = 0;
+let marketSettleSweepInFlight: Promise<number> | null = null;
+const TEN_DRAW_REFORGE_REWARD: TicketBalance = {
+  drawTicket: 0,
+  draw10Ticket: 0,
+  affixReforgeTicket: 1
+};
+const TEN_DRAW_REFORGE_SOURCE = 'TEN_DRAW_COMPLETION_BONUS';
 
 function invalidateDrawPoolCache() {
   drawPoolCache = null;
@@ -1125,7 +878,7 @@ const PLACEMENT_COMBO_TAG_EXCLUDE_SET = new Set([
   '图书馆', '流浪者图书馆', 'wanderers',
 ]);
 
-const PLACEMENT_NEXUS_CONVERT_BONUS_PER_COMBO = 0.08;
+const PLACEMENT_NEXUS_CONVERT_BONUS_PER_COMBO = 0.12;
 const PLACEMENT_NEXUS_CONVERT_MAX_COMBO_COUNT = 30;
 
 const PLACEMENT_ANCHOR_FLAT_YIELD_BY_RARITY: Record<GachaRarity, number> = {
@@ -1133,9 +886,9 @@ const PLACEMENT_ANCHOR_FLAT_YIELD_BY_RARITY: Record<GachaRarity, number> = {
 };
 
 const PLACEMENT_FLUX_YIELD_BASE_BY_RARITY: Record<GachaRarity, number> = {
-  WHITE: 0.003, GREEN: 0.005, BLUE: 0.007, PURPLE: 0.009, GOLD: 0.012
+  WHITE: 0.07, GREEN: 0.10, BLUE: 0.15, PURPLE: 0.22, GOLD: 0.30
 };
-const PLACEMENT_FLUX_SCALE_PER_COMBO = 0.06;
+const PLACEMENT_FLUX_SCALE_PER_COMBO = 0.12;
 
 const PLACEMENT_CONTENT_TYPE_LABEL: Record<PlacementContentType, string> = {
   SCP: 'SCP',
@@ -1187,8 +940,27 @@ const SERIALIZABLE_RETRY_BASE_DELAY_MS = 50;
 const SERIALIZABLE_MAX_WAIT_MS = 10_000;
 const SERIALIZABLE_TIMEOUT_MS = 20_000;
 
-function isRetryableTransactionError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
+function getTransactionErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`.toLowerCase();
+  }
+  return String(error).toLowerCase();
+}
+
+function isRetryableTransactionError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+    return true;
+  }
+
+  const message = getTransactionErrorMessage(error);
+  return (
+    message.includes('could not serialize access')
+    || message.includes('serialization failure')
+    || message.includes('write conflict')
+    || message.includes('deadlock')
+    || message.includes('40p01')
+    || message.includes('40001')
+  );
 }
 
 function isUniqueConstraintError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
@@ -1213,7 +985,8 @@ async function runSerializableTransaction<T>(task: (tx: Tx) => Promise<T>): Prom
       if (!isRetryableTransactionError(error) || attempt === SERIALIZABLE_RETRY_ATTEMPTS) {
         throw error;
       }
-      const delayMs = SERIALIZABLE_RETRY_BASE_DELAY_MS * attempt;
+      const jitterMs = Math.floor(Math.random() * SERIALIZABLE_RETRY_BASE_DELAY_MS);
+      const delayMs = SERIALIZABLE_RETRY_BASE_DELAY_MS * attempt + jitterMs;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
@@ -1247,7 +1020,8 @@ const inventoryQuerySchema = z.object({
   limit: z.string().trim().optional(),
   offset: z.string().trim().optional(),
   skipTotal: z.string().trim().optional(),
-  affixFilter: z.string().trim().optional()
+  affixFilter: z.string().trim().optional(),
+  search: z.string().trim().optional()
 });
 
 const progressQuerySchema = z.object({
@@ -1371,6 +1145,11 @@ const buyRequestCreateSchema = z.object({
   expiresHours: z.coerce.number().int().min(1).max(24 * 30).optional()
 });
 
+const buyRequestFulfillSchema = z.object({
+  selectedCardId: z.string().trim().min(1).optional(),
+  selectedAffixSignature: z.string().trim().min(1).optional()
+});
+
 const buyRequestListSchema = z.object({
   status: z.enum(['OPEN', 'ALL']).optional().default('OPEN'),
   targetCardId: z.string().trim().min(1).optional(),
@@ -1378,7 +1157,8 @@ const buyRequestListSchema = z.object({
   rarity: z.enum(['WHITE', 'GREEN', 'BLUE', 'PURPLE', 'GOLD']).optional(),
   sort: z.enum(['LATEST', 'TOKEN_DESC', 'TOKEN_ASC', 'EXPIRY_ASC', 'RARITY_DESC']).optional().default('LATEST'),
   limit: z.coerce.number().int().min(1).max(200).optional().default(60),
-  offset: z.coerce.number().int().min(0).optional().default(0)
+  offset: z.coerce.number().int().min(0).optional().default(0),
+  fulfillableOnly: z.string().trim().optional()
 });
 
 const boostCreateSchema = z.object({
@@ -1416,7 +1196,6 @@ const poolCreateSchema = z.object({
 const poolUpdateSchema = poolCreateSchema.partial();
 
 const cardCreateSchema = z.object({
-  poolId: z.string().trim().min(1),
   title: z.string().trim().min(1).max(200),
   rarity: z.nativeEnum(GachaRarity),
   tags: z.array(z.string().trim().min(1)).max(30).optional().default([]),
@@ -1427,9 +1206,7 @@ const cardCreateSchema = z.object({
   imageUrl: z.string().url().optional()
 });
 
-const cardUpdateSchema = cardCreateSchema.partial().omit({ poolId: true }).extend({
-  poolId: z.string().trim().optional()
-});
+const cardUpdateSchema = cardCreateSchema.partial();
 
 const periodSchema = z.enum(['7d', '30d', 'all']).default('7d');
 
@@ -2227,15 +2004,20 @@ async function findFreeInstances(
 async function autoFreeInstanceForSale(
   tx: Tx,
   userId: string,
-  cardId: string
+  cardId: string,
+  opts?: { affixSignature?: string }
 ): Promise<{ id: string; affixSignature: string } | null> {
+  const where: Prisma.GachaCardInstanceWhereInput = {
+    userId,
+    cardId,
+    tradeListingId: null,
+    buyRequestId: null
+  };
+  if (opts?.affixSignature) {
+    where.affixSignature = affixSignatureFromStyles(parseAffixSignature(opts.affixSignature));
+  }
   const instance = await tx.gachaCardInstance.findFirst({
-    where: {
-      userId,
-      cardId,
-      tradeListingId: null,
-      buyRequestId: null
-    },
+    where,
     include: {
       placementSlot: { select: { id: true } },
       showcaseSlot: { select: { id: true } }
@@ -2323,12 +2105,17 @@ async function lockInstancesForTrade(tx: Tx, instanceIds: string[], tradeListing
     const entry = countsByKey.get(key);
     if (entry) { entry.count += 1; } else { countsByKey.set(key, { userId: inst.userId, cardId: inst.cardId, count: 1 }); }
   }
-  for (const entry of countsByKey.values()) {
-    // eslint-disable-next-line no-await-in-loop
-    await tx.gachaInventory.updateMany({
-      where: { userId: entry.userId, cardId: entry.cardId },
-      data: { count: { decrement: entry.count } }
-    });
+  // Batch decrement inventory counts in a single raw SQL statement
+  const entries = [...countsByKey.values()];
+  if (entries.length > 0) {
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE "GachaInventory" AS inv
+      SET count = inv.count - batch.cnt, "updatedAt" = NOW()
+      FROM (VALUES ${Prisma.join(
+        entries.map(e => Prisma.sql`(${e.userId}, ${e.cardId}, ${e.count}::int)`)
+      )}) AS batch("userId", "cardId", cnt)
+      WHERE inv."userId" = batch."userId" AND inv."cardId" = batch."cardId"
+    `);
   }
 }
 
@@ -2348,13 +2135,17 @@ async function unlockTradeInstances(tx: Tx, tradeListingId: string) {
     const entry = countsByKey.get(key);
     if (entry) { entry.count += 1; } else { countsByKey.set(key, { userId: inst.userId, cardId: inst.cardId, count: 1 }); }
   }
-  for (const entry of countsByKey.values()) {
-    // eslint-disable-next-line no-await-in-loop
-    await tx.gachaInventory.upsert({
-      where: { userId_cardId: { userId: entry.userId, cardId: entry.cardId } },
-      create: { userId: entry.userId, cardId: entry.cardId, count: entry.count },
-      update: { count: { increment: entry.count } }
-    });
+  // Batch upsert inventory counts in a single raw SQL statement
+  const entries = [...countsByKey.values()];
+  if (entries.length > 0) {
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO "GachaInventory" (id, "userId", "cardId", count, "createdAt", "updatedAt")
+      VALUES ${Prisma.join(
+        entries.map(e => Prisma.sql`(gen_random_uuid()::text, ${e.userId}, ${e.cardId}, ${e.count}::int, NOW(), NOW())`)
+      )}
+      ON CONFLICT ("userId", "cardId") DO UPDATE
+      SET count = "GachaInventory".count + EXCLUDED.count, "updatedAt" = NOW()
+    `);
   }
 }
 
@@ -2372,13 +2163,17 @@ async function transferInstances(tx: Tx, instanceIds: string[], fromUserId: stri
   for (const inst of instances) {
     countsByCard.set(inst.cardId, (countsByCard.get(inst.cardId) ?? 0) + 1);
   }
-  for (const [cardId, count] of countsByCard) {
-    // eslint-disable-next-line no-await-in-loop
-    await tx.gachaInventory.upsert({
-      where: { userId_cardId: { userId: toUserId, cardId } },
-      create: { userId: toUserId, cardId, count },
-      update: { count: { increment: count } }
-    });
+  // Batch upsert recipient inventory in a single raw SQL statement
+  const entries = [...countsByCard.entries()];
+  if (entries.length > 0) {
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO "GachaInventory" (id, "userId", "cardId", count, "createdAt", "updatedAt")
+      VALUES ${Prisma.join(
+        entries.map(([cardId, count]) => Prisma.sql`(gen_random_uuid()::text, ${toUserId}, ${cardId}, ${count}::int, NOW(), NOW())`)
+      )}
+      ON CONFLICT ("userId", "cardId") DO UPDATE
+      SET count = "GachaInventory".count + EXCLUDED.count, "updatedAt" = NOW()
+    `);
   }
 }
 
@@ -2491,10 +2286,16 @@ function variantIdPriority(id: string) {
   return 3;
 }
 
-function pickPreferredVariant<T extends { id: string }>(variants: T[]): T {
+function isRetiredCard(card: { poolId?: string | null; weight?: number | null | undefined }) {
+  return card.poolId === PERMANENT_POOL_ID && Number(card.weight ?? DEFAULT_CARD_WEIGHT) <= 0;
+}
+
+function pickPreferredVariant<T extends { id: string; poolId?: string | null; weight?: number | null }>(variants: T[]): T {
   return variants
     .slice()
     .sort((a, b) => {
+      const retiredDiff = Number(isRetiredCard(a)) - Number(isRetiredCard(b));
+      if (retiredDiff !== 0) return retiredDiff;
       const priorityDiff = variantIdPriority(a.id) - variantIdPriority(b.id);
       if (priorityDiff !== 0) return priorityDiff;
       if (a.id.length !== b.id.length) return a.id.length - b.id.length;
@@ -2502,9 +2303,9 @@ function pickPreferredVariant<T extends { id: string }>(variants: T[]): T {
     })[0]!;
 }
 
-function buildImageVariants<T extends { id: string; imageUrl: string | null }>(
+function buildImageVariants<T extends { id: string; imageUrl: string | null; poolId?: string | null; weight?: number | null }>(
   variants: T[]
-): Array<{ id: string; imageUrl: string | null }> {
+): Array<{ id: string; imageUrl: string | null; isRetired?: boolean }> {
   if (variants.length === 0) return [];
   const variantsByImage = new Map<string, T[]>();
   for (const variant of variants) {
@@ -2520,15 +2321,20 @@ function buildImageVariants<T extends { id: string; imageUrl: string | null }>(
 
   if (variantsByImage.size === 0) {
     const fallback = pickPreferredVariant(variants);
-    return [{ id: fallback.id, imageUrl: null }];
+    return [{
+      id: fallback.id,
+      imageUrl: null,
+      isRetired: isRetiredCard(fallback) || undefined
+    }];
   }
 
-  const merged: Array<{ id: string; imageUrl: string | null }> = [];
+  const merged: Array<{ id: string; imageUrl: string | null; isRetired?: boolean }> = [];
   for (const [imageUrl, group] of variantsByImage.entries()) {
     const picked = pickPreferredVariant(group);
     merged.push({
       id: picked.id,
-      imageUrl
+      imageUrl,
+      isRetired: isRetiredCard(picked) || undefined
     });
   }
   return merged;
@@ -2687,6 +2493,16 @@ async function applyWalletDelta(
   return updated;
 }
 
+function isPoolCurrentlyActive(
+  pool: { isActive: boolean; startsAt?: Date | null; endsAt?: Date | null },
+  date = now()
+) {
+  if (!pool.isActive) return false;
+  if (pool.startsAt && pool.startsAt > date) return false;
+  if (pool.endsAt && pool.endsAt < date) return false;
+  return true;
+}
+
 async function executeDrawForUser(
   tx: Tx,
   options: {
@@ -2704,14 +2520,17 @@ async function executeDrawForUser(
   if (targetPoolId !== PERMANENT_POOL_ID) {
     throw Object.assign(new Error('当前仅支持常驻卡池'), { status: 400 });
   }
+  const asOf = now();
   const pool = await tx.gachaPool.findUnique({
     where: { id: PERMANENT_POOL_ID },
     select: {
       id: true,
-      isActive: true
+      isActive: true,
+      startsAt: true,
+      endsAt: true
     }
   });
-  if (!pool || !pool.isActive) {
+  if (!pool || !isPoolCurrentlyActive(pool, asOf)) {
     throw Object.assign(new Error('卡池不存在或未开放'), { status: 404 });
   }
 
@@ -2953,6 +2772,10 @@ async function executeDrawForUser(
     }
   });
 
+  if (options.drawCount === 10) {
+    await grantTicketBalance(tx, wallet, options.userId, TEN_DRAW_REFORGE_REWARD, TEN_DRAW_REFORGE_SOURCE);
+  }
+
   return {
     wallet,
     drawRecord,
@@ -2967,21 +2790,9 @@ async function fetchActivePools(tx: typeof prisma | Tx, date = now()) {
   const permanent = await tx.gachaPool.findUnique({
     where: { id: PERMANENT_POOL_ID }
   });
-  if (permanent) {
+  if (permanent && isPoolCurrentlyActive(permanent, date)) {
     return [permanent];
   }
-
-  const pools = await tx.gachaPool.findMany({
-    where: {
-      isActive: true,
-      AND: [
-        { OR: [{ startsAt: { lte: date } }, { startsAt: null }] },
-        { OR: [{ endsAt: { gte: date } }, { endsAt: null }] }
-      ]
-    },
-    orderBy: [{ startsAt: 'asc' }, { createdAt: 'asc' }]
-  });
-  if (pools.length > 0) return pools;
   return [];
 }
 
@@ -3037,92 +2848,41 @@ function serializeBoost(boost: BoostWithMaybeCreator) {
   };
 }
 
-function serializeCard(card: Prisma.GachaCardDefinitionGetPayload<{}> & { pool?: { id: string; name: string } | null }) {
+function serializeCardSummary(card: {
+  id: string;
+  title: string;
+  rarity: GachaRarity;
+  tags?: string[] | null;
+  authorKeys?: string[] | null;
+  imageUrl?: string | null;
+  wikidotId?: number | null;
+  pageId?: number | null;
+  poolId?: string | null;
+  weight?: number | null;
+}) {
   return {
     id: card.id,
-    poolId: card.poolId,
     title: card.title,
     rarity: card.rarity,
     tags: card.tags ?? [],
-    authors: resolveCardAuthorsFromTags(card.tags, card.authorKeys),
-    weight: card.weight ?? DEFAULT_CARD_WEIGHT,
-    rewardTokens: card.rewardTokens ?? 0,
+    authors: resolveCardAuthorsFromTags(card.tags, card.authorKeys ?? []),
+    imageUrl: card.imageUrl ?? null,
     wikidotId: card.wikidotId ?? null,
     pageId: card.pageId ?? null,
-    imageUrl: card.imageUrl ?? null,
+    isRetired: isRetiredCard(card)
+  };
+}
+
+function serializeCard(card: Prisma.GachaCardDefinitionGetPayload<{}> & { pool?: { id: string; name: string } | null }) {
+  return {
+    ...serializeCardSummary(card),
+    poolId: card.poolId,
+    weight: card.weight ?? DEFAULT_CARD_WEIGHT,
+    rewardTokens: card.rewardTokens ?? 0,
     createdAt: card.createdAt?.toISOString() ?? null,
     updatedAt: card.updatedAt?.toISOString() ?? null,
     poolName: card.pool?.name ?? null
   };
-}
-
-function buildCardCloneKey(card: Prisma.GachaCardDefinitionGetPayload<{}>) {
-  if (card.pageId != null) return `page:${card.pageId}`;
-  if (card.wikidotId != null) return `wikidot:${card.wikidotId}`;
-  return `title:${(card.title ?? '').trim().toLowerCase()}`;
-}
-
-async function cloneCardsIntoPool(
-  tx: typeof prisma | Tx,
-  options: { targetPoolId: string; cloneAllCards?: boolean; sourcePoolId?: string }
-) {
-  const shouldCloneAll = !!options.cloneAllCards;
-  const sourcePoolId = shouldCloneAll ? undefined : options.sourcePoolId;
-  if (!shouldCloneAll && !sourcePoolId) {
-    return { count: 0 };
-  }
-
-  const where: Prisma.GachaCardDefinitionWhereInput = {};
-  if (sourcePoolId) {
-    where.poolId = sourcePoolId;
-  }
-
-  const cards = await tx.gachaCardDefinition.findMany({
-    where,
-    orderBy: [{ createdAt: 'asc' }]
-  });
-  if (cards.length === 0) {
-    return { count: 0 };
-  }
-
-  const shouldDeduplicate = shouldCloneAll && !sourcePoolId;
-  const seen = new Set<string>();
-  const data: Prisma.GachaCardDefinitionCreateManyInput[] = [];
-  for (const card of cards) {
-    const key = buildCardCloneKey(card);
-    if (shouldDeduplicate) {
-      if (seen.has(key)) continue;
-      seen.add(key);
-    }
-    data.push({
-      poolId: options.targetPoolId,
-      title: card.title,
-      rarity: card.rarity,
-      tags: card.tags ?? [],
-      weight: card.weight ?? DEFAULT_CARD_WEIGHT,
-      rewardTokens: card.rewardTokens ?? 0,
-      wikidotId: card.wikidotId ?? undefined,
-      pageId: card.pageId ?? undefined,
-      imageUrl: card.imageUrl ?? undefined
-    });
-  }
-
-  if (data.length === 0) {
-    return { count: 0 };
-  }
-
-  let totalCreated = 0;
-  const batchSize = 200;
-  for (let index = 0; index < data.length; index += batchSize) {
-    const chunk = data.slice(index, index + batchSize);
-    // eslint-disable-next-line no-await-in-loop
-    const result = await tx.gachaCardDefinition.createMany({
-      data: chunk
-    });
-    totalCreated += result.count;
-  }
-
-  return { count: totalCreated };
 }
 
 function buildProgressResponse(
@@ -3690,17 +3450,22 @@ function resolvePlacementComboBonuses(participants: PlacementComboParticipant[])
   const bonuses: PlacementComboBonus[] = [];
   if (participants.length < 3) return bonuses;
 
+  const colorlessNexusLayers = participants.reduce((sum, participant) => {
+    if (!participant.isColorlessAddon) return sum;
+    const counts = participant.affixStyleCounts ?? emptyAffixStyleCountMap();
+    return sum + Math.max(0, Math.floor(counts.NEXUS ?? 0));
+  }, 0);
+
   // NEXUS: filter out excludeFromCombo participants for combo evaluation
   const activeParticipants = participants.filter((p) => !p.excludeFromCombo);
   if (activeParticipants.length < 3) {
     // Check colorless NEXUS convert even if not enough active participants
-    const hasColorlessNexus = participants.some(
-      (p) => p.isColorlessAddon && Math.max(0, Math.floor((p.affixStyleCounts?.NEXUS ?? 0))) > 0
-    );
-    if (hasColorlessNexus) {
+    if (colorlessNexusLayers > 0) {
       bonuses.push({
         key: 'NEXUS_CONVERT',
-        label: '枢纽转化 ×0',
+        label: colorlessNexusLayers > 1
+          ? `枢纽转化 ×0 · 层数 x${colorlessNexusLayers}`
+          : '枢纽转化 ×0',
         yieldBoostPercent: 0
       });
     }
@@ -3709,7 +3474,7 @@ function resolvePlacementComboBonuses(participants: PlacementComboParticipant[])
 
   const wildcardCount = activeParticipants.reduce((sum, participant) => {
     const counts = participant.affixStyleCounts ?? emptyAffixStyleCountMap();
-    return sum + (Math.max(0, Math.floor(counts.WILDCARD ?? 0)) > 0 ? 1 : 0);
+    return sum + Math.max(0, Math.floor(counts.WILDCARD ?? 0));
   }, 0);
   const spectrumCount = activeParticipants.reduce((sum, participant) => {
     const counts = participant.affixStyleCounts ?? emptyAffixStyleCountMap();
@@ -3727,7 +3492,7 @@ function resolvePlacementComboBonuses(participants: PlacementComboParticipant[])
   const participantAffixCountsForCombo = activeParticipants.map((participant) => {
     const baseCounts = participant.affixStyleCounts ?? emptyAffixStyleCountMap();
     const counts = { ...baseCounts };
-    counts.WILDCARD = Math.max(0, Math.floor(baseCounts.WILDCARD ?? 0)) > 0 ? 1 : 0;
+    counts.WILDCARD = Math.max(0, Math.floor(baseCounts.WILDCARD ?? 0));
     counts.SPECTRUM = Math.max(0, Math.floor(baseCounts.SPECTRUM ?? 0)) > 0 ? 1 : 0;
     counts.MIRROR = Math.max(0, Math.floor(baseCounts.MIRROR ?? 0)) > 0 ? 1 : 0;
     counts.ORBIT = Math.max(0, Math.floor(baseCounts.ORBIT ?? 0)) > 0 ? 1 : 0;
@@ -3979,17 +3744,16 @@ function resolvePlacementComboBonuses(participants: PlacementComboParticipant[])
   }
 
   // --- NEXUS colorless convert: replace all combos with a single flat bonus ---
-  const hasColorlessNexus = participants.some(
-    (p) => p.isColorlessAddon && Math.max(0, Math.floor((p.affixStyleCounts?.NEXUS ?? 0))) > 0
-  );
-  if (hasColorlessNexus) {
+  if (colorlessNexusLayers > 0) {
     const comboCount = bonuses.length;
     const effectiveComboCount = Math.min(comboCount, PLACEMENT_NEXUS_CONVERT_MAX_COMBO_COUNT);
     bonuses.length = 0;
     bonuses.push({
       key: 'NEXUS_CONVERT',
-      label: `枢纽转化 ×${effectiveComboCount}`,
-      yieldBoostPercent: effectiveComboCount * PLACEMENT_NEXUS_CONVERT_BONUS_PER_COMBO
+      label: colorlessNexusLayers > 1
+        ? `枢纽转化 ×${effectiveComboCount} · 层数 x${colorlessNexusLayers}`
+        : `枢纽转化 ×${effectiveComboCount}`,
+      yieldBoostPercent: effectiveComboCount * PLACEMENT_NEXUS_CONVERT_BONUS_PER_COMBO * colorlessNexusLayers
     });
   }
 
@@ -4287,8 +4051,20 @@ function marketTierConfig(lockTierInput?: string | null) {
 
 function marketOpenFeeRate(lockTierInput: MarketLockTier, leverage: number) {
   const tier = MARKET_LOCK_TIER_CONFIG[lockTierInput];
-  const surcharge = MARKET_LEVERAGE_SURCHARGE_RATE[leverage] ?? 0;
-  return tier.openFeeBaseRate + surcharge;
+  const baseRateMilli = Math.round(tier.openFeeBaseRate * 1000);
+  const surchargeRateMilli = Math.round((MARKET_LEVERAGE_SURCHARGE_RATE[leverage] ?? 0) * 1000);
+  return (baseRateMilli + surchargeRateMilli) / 1000;
+}
+
+function marketOpenFee(lockTierInput: MarketLockTier, leverage: number, margin: number) {
+  const tier = MARKET_LOCK_TIER_CONFIG[lockTierInput];
+  const baseRateMilli = Math.round(tier.openFeeBaseRate * 1000);
+  const surchargeRateMilli = Math.round((MARKET_LEVERAGE_SURCHARGE_RATE[leverage] ?? 0) * 1000);
+  const totalRateMilli = baseRateMilli + surchargeRateMilli;
+  return {
+    openFeeRate: totalRateMilli / 1000,
+    openFee: Math.floor((Math.max(0, margin) * totalRateMilli) / 1000)
+  };
 }
 
 function marketMarginByLots(lots: number) {
@@ -4839,7 +4615,15 @@ function parseMarketOpenPosition(metadata: Prisma.JsonValue | null | undefined, 
   const expireAtRaw = String(json.expireAt ?? '').trim();
   const expireAtDate = expireAtRaw ? toDate(expireAtRaw) : null;
   const expireAt = (expireAtDate ?? toDate(fallbackExpireAt) ?? new Date(createdAt.getTime() + tier.durationMs)).toISOString();
-  if (!positionId || !contractId || margin <= 0 || entryIndex <= 0) return null;
+  if (!positionId || !contractId || margin <= 0 || entryIndex <= 0) {
+    console.error('[market] parseMarketOpenPosition: invalid or missing critical fields', {
+      positionId: positionId || '(empty)',
+      contractId: contractId || '(empty)',
+      margin,
+      entryIndex
+    });
+    return null;
+  }
   return {
     positionId,
     contractId,
@@ -5225,7 +5009,6 @@ function serializeTradeListing(
   )
     ? 'EXPIRED'
     : listing.status;
-  const cardAuthors = resolveCardAuthorsFromTags(listing.card.tags, listing.card.authorKeys);
   return {
     id: listing.id,
     sellerId: listing.sellerId,
@@ -5241,16 +5024,7 @@ function serializeTradeListing(
     createdAt: listing.createdAt.toISOString(),
     updatedAt: listing.updatedAt.toISOString(),
     affixBreakdown,
-    card: {
-      id: listing.card.id,
-      title: listing.card.title,
-      rarity: listing.card.rarity,
-      imageUrl: listing.card.imageUrl ?? null,
-      tags: listing.card.tags ?? [],
-      authors: cardAuthors,
-      wikidotId: listing.card.wikidotId ?? null,
-      pageId: listing.card.pageId ?? null
-    },
+    card: serializeCardSummary(listing.card),
     seller: {
       id: listing.seller.id,
       displayName: listing.seller.displayName ?? null,
@@ -5553,7 +5327,6 @@ const buyRequestInclude = {
 type BuyRequestWithRelations = Prisma.GachaBuyRequestGetPayload<{ include: typeof buyRequestInclude }>;
 
 function serializeBuyRequest(br: BuyRequestWithRelations) {
-  const targetAuthors = resolveCardAuthorsFromTags(br.targetCard.tags, br.targetCard.authorKeys);
   const effectiveStatus: 'OPEN' | 'FULFILLED' | 'CANCELLED' | 'EXPIRED' = (
     br.status === 'OPEN' && br.expiresAt && br.expiresAt.getTime() <= Date.now()
   ) ? 'EXPIRED' : br.status;
@@ -5570,16 +5343,7 @@ function serializeBuyRequest(br: BuyRequestWithRelations) {
     fulfilledAt: br.fulfilledAt?.toISOString() ?? null,
     createdAt: br.createdAt.toISOString(),
     updatedAt: br.updatedAt.toISOString(),
-    targetCard: {
-      id: br.targetCard.id,
-      title: br.targetCard.title,
-      rarity: br.targetCard.rarity,
-      imageUrl: br.targetCard.imageUrl ?? null,
-      tags: br.targetCard.tags ?? [],
-      authors: targetAuthors,
-      wikidotId: br.targetCard.wikidotId ?? null,
-      pageId: br.targetCard.pageId ?? null
-    },
+    targetCard: serializeCardSummary(br.targetCard),
     buyer: {
       id: br.buyer.id,
       displayName: br.buyer.displayName ?? null,
@@ -5591,21 +5355,11 @@ function serializeBuyRequest(br: BuyRequestWithRelations) {
       linkedWikidotId: br.fulfiller.linkedWikidotId ?? null
     } : null,
     offeredCards: br.offeredCards.map((oc) => {
-      const authors = resolveCardAuthorsFromTags(oc.card.tags, oc.card.authorKeys);
       return {
         id: oc.id,
         cardId: oc.cardId,
         quantity: oc.quantity,
-        card: {
-          id: oc.card.id,
-          title: oc.card.title,
-          rarity: oc.card.rarity,
-          imageUrl: oc.card.imageUrl ?? null,
-          tags: oc.card.tags ?? [],
-          authors,
-          wikidotId: oc.card.wikidotId ?? null,
-          pageId: oc.card.pageId ?? null
-        }
+        card: serializeCardSummary(oc.card)
       };
     })
   };
@@ -5721,6 +5475,88 @@ function triggerBuyRequestExpirySweep() {
     })
     .finally(() => {
       buyRequestExpirySweepInFlight = null;
+    });
+}
+
+async function loadUsersWithDueMarketSettlement(
+  tx: Tx | typeof prisma,
+  asOf = now(),
+  limit = MARKET_SETTLE_SWEEP_USER_BATCH_SIZE
+) {
+  const since = new Date(asOf.getTime() - MARKET_USER_LEDGER_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  return tx.$queryRaw<Array<{ userId: string }>>(Prisma.sql`
+    WITH opens AS (
+      SELECT DISTINCT ON (open_events."positionId")
+        open_events."positionId",
+        open_events."userId",
+        open_events."expireAt"
+      FROM (
+        SELECT
+          "userId",
+          COALESCE(metadata->>'positionId', '') AS "positionId",
+          COALESCE((metadata->>'expireAt')::timestamptz, "createdAt") AS "expireAt",
+          "createdAt"
+        FROM "GachaLedgerEntry"
+        WHERE reason = ${MARKET_OPEN_REASON}
+          AND "createdAt" >= ${since}
+      ) AS open_events
+      WHERE open_events."positionId" <> ''
+      ORDER BY open_events."positionId", open_events."createdAt" ASC
+    ),
+    settles AS (
+      SELECT DISTINCT
+        COALESCE(metadata->>'positionId', '') AS "positionId"
+      FROM "GachaLedgerEntry"
+      WHERE reason = ${MARKET_SETTLE_REASON}
+        AND "createdAt" >= ${since}
+        AND COALESCE(metadata->>'positionId', '') <> ''
+    )
+    SELECT DISTINCT opens."userId"
+    FROM opens
+    LEFT JOIN settles ON settles."positionId" = opens."positionId"
+    WHERE settles."positionId" IS NULL
+      AND opens."expireAt" <= ${asOf}
+    ORDER BY opens."userId" ASC
+    LIMIT ${Math.max(1, Math.floor(limit))}
+  `);
+}
+
+async function runMarketSettleSweep(asOf = now()) {
+  const oracleContext = await loadOracleContext(asOf, ORACLE_TICK_LIMIT_POSITION);
+  let settledPositions = 0;
+  for (let batch = 0; batch < MARKET_SETTLE_SWEEP_MAX_BATCHES_PER_RUN; batch += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const dueUsers = await loadUsersWithDueMarketSettlement(prisma, asOf, MARKET_SETTLE_SWEEP_USER_BATCH_SIZE);
+    if (dueUsers.length <= 0) break;
+    for (const row of dueUsers) {
+      const userId = String(row.userId || '').trim();
+      if (!userId) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const settledForUser = await runSerializableTransaction(async (tx) => {
+        const wallet = await ensureWallet(tx, userId);
+        const settled = await settleDueMarketPositions(tx, userId, wallet, oracleContext, asOf);
+        return settled.settlements.length;
+      });
+      settledPositions += settledForUser;
+    }
+    if (dueUsers.length < MARKET_SETTLE_SWEEP_USER_BATCH_SIZE) break;
+  }
+  return settledPositions;
+}
+
+function triggerMarketSettleSweep() {
+  if (marketSettleSweepInFlight) return;
+  const nowMs = Date.now();
+  if (nowMs - marketSettleSweepLastRunAt < MARKET_SETTLE_SWEEP_INTERVAL_MS) return;
+  marketSettleSweepLastRunAt = nowMs;
+  marketSettleSweepInFlight = runMarketSettleSweep()
+    .catch((error) => {
+      // eslint-disable-next-line no-console
+      console.warn('[gacha] market settle sweep failed', error);
+      return 0;
+    })
+    .finally(() => {
+      marketSettleSweepInFlight = null;
     });
 }
 
@@ -5894,7 +5730,7 @@ async function loadUserGachaStats(tx: Tx, userId: string): Promise<UserGachaStat
   const [
     drawAgg, uniqueCards, goldCardsDrawn, purpleCardsDrawn,
     placementClaims, placementEarnAgg, dailyClaims,
-    marketProfitAgg, marketLossAgg, tradeSells,
+    marketProfitAgg, marketLossRows, tradeSells,
     dismantleCount, affixReforgeCount, totalSpentAgg
   ] = await Promise.all([
     tx.gachaDraw.aggregate({
@@ -5942,14 +5778,23 @@ async function loadUserGachaStats(tx: Tx, userId: string): Promise<UserGachaStat
       },
       _sum: { delta: true }
     }),
-    tx.gachaLedgerEntry.aggregate({
-      where: {
-        userId,
-        reason: MARKET_SETTLE_REASON,
-        delta: { lt: 0 }
-      },
-      _sum: { delta: true }
-    }),
+    tx.$queryRaw<Array<{ marketLoss: number | string | null }>>(Prisma.sql`
+      SELECT COALESCE(
+        SUM(
+          CASE
+            WHEN (metadata->>'pnl') ~ '^-?[0-9]+$' AND (metadata->>'pnl')::bigint < 0
+              THEN ABS((metadata->>'pnl')::bigint)
+            WHEN delta < 0
+              THEN ABS(delta)::bigint
+            ELSE 0::bigint
+          END
+        ),
+        0
+      )::bigint AS "marketLoss"
+      FROM "GachaLedgerEntry"
+      WHERE "userId" = ${userId}
+        AND reason = ${MARKET_SETTLE_REASON}
+    `),
     tx.gachaLedgerEntry.count({
       where: {
         userId,
@@ -5983,7 +5828,7 @@ async function loadUserGachaStats(tx: Tx, userId: string): Promise<UserGachaStat
     placementTokensEarned: Math.max(0, Number(placementEarnAgg._sum.delta ?? 0)),
     dailyClaims,
     marketProfit: Math.max(0, Number(marketProfitAgg._sum.delta ?? 0)),
-    marketLoss: Math.abs(Math.min(0, Number(marketLossAgg._sum.delta ?? 0))),
+    marketLoss: Math.max(0, toSafeInt(marketLossRows[0]?.marketLoss, 0)),
     tradeSells,
     dismantleCount,
     affixReforgeCount,
@@ -6905,15 +6750,8 @@ function serializePlacement(
       assignedAt: addon.assignedAt.toISOString(),
       yieldPerHour: getPlacementAddonYieldPerHour(card, metrics.yieldBoostPercent),
       card: {
-        id: card.id,
+        ...serializeCardSummary(card),
         poolId: card.poolId,
-        title: card.title,
-        rarity: card.rarity,
-        tags: card.tags ?? [],
-        authors: resolveCardAuthorsFromTags(card.tags, card.authorKeys),
-        imageUrl: card.imageUrl ?? null,
-        wikidotId: card.wikidotId ?? null,
-        pageId: card.pageId ?? null,
         isLocked: addon.isLocked,
         affixSignature: affix.affixSignature,
         affixStyles: affix.affixStyles,
@@ -6946,15 +6784,8 @@ function serializePlacement(
               };
             })();
           return {
-            id: slot.card.id,
+            ...serializeCardSummary(slot.card),
             poolId: slot.card.poolId,
-            title: slot.card.title,
-            rarity: slot.card.rarity,
-            tags: slot.card.tags ?? [],
-            authors: resolveCardAuthorsFromTags(slot.card.tags, slot.card.authorKeys),
-            imageUrl: slot.card.imageUrl ?? null,
-            wikidotId: slot.card.wikidotId ?? null,
-            pageId: slot.card.pageId ?? null,
             isLocked: slot.instance?.isLocked ?? false,
             affixSignature: affix.affixSignature,
             affixStyles: affix.affixStyles,
@@ -7311,13 +7142,16 @@ export function gachaRouter() {
           prefetchedCards: drawSnapshot,
           wallet: walletForDraw ?? undefined
         });
+        const ticketsForResponse = drawCount === 10
+          ? await computeTicketBalance(tx, userId)
+          : ticketsAfterPayment;
 
         return {
           statusCode: 200,
           responseJson: {
             ok: true,
             paymentMethod: resolvedPaymentMethod,
-            tickets: ticketsAfterPayment,
+            tickets: ticketsForResponse,
             data: {
                 items: drawResult.responseItems,
                 rewardSummary: {
@@ -7682,6 +7516,7 @@ export function gachaRouter() {
       const rarityFilter = parsed.rarity ? parsed.rarity.toUpperCase() : null;
       const poolId = parsed.poolId ?? null;
       const affixFilter = parsed.affixFilter ? parsed.affixFilter.toUpperCase().trim() : null;
+      const searchTerm = parsed.search?.trim() || null;
       if (poolId && poolId !== PERMANENT_POOL_ID) {
         res.status(400).json({ error: '当前仅支持常驻卡池' });
         return;
@@ -7707,6 +7542,19 @@ export function gachaRouter() {
             AND ci2."affixSignature" = ${affixFilter}
         )`;
       }
+      // Search by card title + tags + author (tag-based and page-based author matching)
+      if (searchTerm) {
+        const searchTermLower = searchTerm.toLowerCase();
+        const authorCardIds = await findCardIdsByAuthorKeyword(searchTerm);
+        const orClauses: Prisma.Sql[] = [
+          Prisma.sql`c.title ILIKE '%' || ${searchTerm} || '%'`,
+          Prisma.sql`${searchTermLower} = ANY(SELECT LOWER(t) FROM unnest(c.tags) AS t)`
+        ];
+        if (authorCardIds.length > 0) {
+          orClauses.push(Prisma.sql`c.id IN (${Prisma.join(authorCardIds)})`);
+        }
+        invWhere = Prisma.sql`${invWhere} AND (${Prisma.join(orClauses, ' OR ')})`;
+      }
 
       // Instance-level filter for the variant aggregation
       const instAffixWhere = affixFilter
@@ -7723,6 +7571,7 @@ export function gachaRouter() {
         wikidotId: string | null;
         pageId: string | null;
         poolId: string;
+        weight: number | null;
         variants: Array<{ s: string | null; style: string | null; c: number; lc: number }> | null;
       };
 
@@ -7733,7 +7582,7 @@ export function gachaRouter() {
           WITH inv_page AS (
             SELECT i.id AS inv_id, i."cardId", i.count AS inv_count,
                    c.title, c.rarity::text AS rarity, c.tags, c."imageUrl",
-                   c."wikidotId", c."pageId", c."poolId",
+                   c."wikidotId", c."pageId", c."poolId", c.weight,
                    i."createdAt",
                    CASE c.rarity::text
                      WHEN 'GOLD' THEN 0
@@ -7762,7 +7611,7 @@ export function gachaRouter() {
           )
           SELECT
             p."cardId", p.inv_count, p.title, p.rarity,
-            p.tags, p."imageUrl", p."wikidotId", p."pageId", p."poolId",
+            p.tags, p."imageUrl", p."wikidotId", p."pageId", p."poolId", p.weight,
             COALESCE(
               (SELECT json_agg(json_build_object('s', ia."affixSignature", 'style', ia."affixVisualStyle", 'c', ia.cnt, 'lc', ia.locked_cnt))
                FROM inst_agg ia WHERE ia."cardId" = p."cardId"),
@@ -7817,7 +7666,8 @@ export function gachaRouter() {
               count: row.inv_count,
               lockedCount: 0,
               rewardTokens: DEFAULT_DISMANTLE_REWARD_BY_RARITY[row.rarity as GachaRarity] ?? 0,
-              poolId: row.poolId
+              poolId: row.poolId,
+              isRetired: isRetiredCard({ poolId: row.poolId, weight: row.weight })
             }];
           }
           return variantList
@@ -7838,7 +7688,8 @@ export function gachaRouter() {
                 count: v.c,
                 lockedCount: v.lc,
                 rewardTokens: DEFAULT_DISMANTLE_REWARD_BY_RARITY[row.rarity as GachaRarity] ?? 0,
-                poolId: row.poolId
+                poolId: row.poolId,
+                isRetired: isRetiredCard({ poolId: row.poolId, weight: row.weight })
               };
             });
         }),
@@ -7925,52 +7776,54 @@ export function gachaRouter() {
       const limit = Math.min(Math.max(Number(parsed.limit ?? '80'), 1), ALBUM_PAGE_QUERY_LIMIT_MAX);
       const offset = Math.max(Number(parsed.offset ?? '0'), 0);
       const search = parsed.search?.trim() ?? '';
-      const rows = await prisma.$queryRaw<Array<{
+      const userId = req.authUser.id;
+
+      // Build search condition — match title, tags, or author
+      let searchCondition: Prisma.Sql;
+      if (search) {
+        const searchLower = search.toLowerCase();
+        const authorCardIds = await findCardIdsByAuthorKeyword(search);
+        const orClauses: Prisma.Sql[] = [
+          Prisma.sql`LOWER(pb."title") LIKE '%' || LOWER(${search}) || '%'`,
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "GachaCardDefinition" cd
+            CROSS JOIN LATERAL unnest(cd."tags") AS t(tag)
+            WHERE cd."pageId" = pb."pageId" AND LOWER(t.tag) = ${searchLower}
+          )`
+        ];
+        if (authorCardIds.length > 0) {
+          orClauses.push(Prisma.sql`EXISTS (
+            SELECT 1 FROM "GachaCardDefinition" cd
+            WHERE cd."pageId" = pb."pageId" AND cd.id IN (${Prisma.join(authorCardIds)})
+          )`);
+        }
+        searchCondition = Prisma.sql`AND (${Prisma.join(orClauses, ' OR ')})`;
+      } else {
+        searchCondition = Prisma.empty;
+      }
+
+      type AlbumPageRow = {
         pageId: number | string;
         wikidotId: number | string | null;
         title: string | null;
-        highestRarity: string | null;
+        highestRarityRank: number | string;
         coverImageUrl: string | null;
         totalCount: number | string | null;
         variantCount: number | string | null;
         imageVariantCount: number | string | null;
-        imageVariantTotal: number | string | null;
         coatingCount: number | string | null;
-        tags: string[] | null;
-        totalRows: number | string | null;
-      }>>(Prisma.sql`
-        WITH page_inventory AS (
+      };
+
+      // Optimized: split into data query + count query (parallel), no COUNT(*) OVER()
+      // Also removed page_tags CTE from main query — tags are fetched post-pagination
+      const baseCTE = Prisma.sql`
+        WITH page_base AS (
           SELECT
             c."pageId" AS "pageId",
-            c."wikidotId" AS "wikidotId",
-            c."title" AS "title",
-            c."rarity" AS "rarity",
-            c."imageUrl" AS "imageUrl",
-            c."tags" AS "tags",
-            ci."affixSignature" AS "affixSignature",
-            ci."cardId" AS "cardId",
-            ci."affixVisualStyle" AS "affixVisualStyle"
-          FROM "GachaCardInstance" ci
-          JOIN "GachaCardDefinition" c ON c.id = ci."cardId"
-          WHERE ci."userId" = ${req.authUser.id}
-            AND ci."tradeListingId" IS NULL
-            AND c."pageId" IS NOT NULL
-        ),
-        page_card_totals AS (
-          SELECT
-            "pageId",
-            COUNT(DISTINCT COALESCE(NULLIF(BTRIM("imageUrl"), ''), '__NOIMG__'))::int AS total
-          FROM "GachaCardDefinition"
-          WHERE "poolId" = ${PERMANENT_POOL_ID} AND "pageId" IS NOT NULL
-          GROUP BY "pageId"
-        ),
-        page_base AS (
-          SELECT
-            pi."pageId" AS "pageId",
-            MIN(pi."wikidotId") FILTER (WHERE pi."wikidotId" IS NOT NULL) AS "wikidotId",
-            MIN(pi."title") AS "title",
+            MIN(c."wikidotId") FILTER (WHERE c."wikidotId" IS NOT NULL) AS "wikidotId",
+            MIN(c."title") AS "title",
             MIN(
-              CASE pi."rarity"
+              CASE c."rarity"
                 WHEN 'GOLD' THEN 0
                 WHEN 'PURPLE' THEN 1
                 WHEN 'BLUE' THEN 2
@@ -7978,86 +7831,82 @@ export function gachaRouter() {
                 ELSE 4
               END
             ) AS "highestRarityRank",
-            MAX(pi."imageUrl") FILTER (WHERE pi."imageUrl" IS NOT NULL) AS "coverImageUrl",
+            MAX(c."imageUrl") FILTER (WHERE c."imageUrl" IS NOT NULL) AS "coverImageUrl",
             COUNT(*)::int AS "totalCount",
-            COUNT(DISTINCT pi."affixSignature")::int AS "variantCount",
-            COUNT(DISTINCT COALESCE(NULLIF(BTRIM(pi."imageUrl"), ''), '__NOIMG__'))::int AS "imageVariantCount",
-            COUNT(DISTINCT pi."affixVisualStyle") FILTER (WHERE pi."affixVisualStyle" != 'NONE')::int AS "coatingCount"
-          FROM page_inventory pi
-          GROUP BY pi."pageId"
-        ),
-        page_tags AS (
+            COUNT(DISTINCT ci."affixSignature")::int AS "variantCount",
+            COUNT(DISTINCT COALESCE(NULLIF(BTRIM(c."imageUrl"), ''), '__NOIMG__'))::int AS "imageVariantCount",
+            COUNT(DISTINCT ci."affixVisualStyle") FILTER (WHERE ci."affixVisualStyle" != 'NONE')::int AS "coatingCount"
+          FROM "GachaCardInstance" ci
+          JOIN "GachaCardDefinition" c ON c.id = ci."cardId"
+          WHERE ci."userId" = ${userId}
+            AND ci."tradeListingId" IS NULL
+            AND c."pageId" IS NOT NULL
+          GROUP BY c."pageId"
+        )
+      `;
+
+      const [rows, totalResult, poolTotals] = await Promise.all([
+        prisma.$queryRaw<AlbumPageRow[]>(Prisma.sql`
+          ${baseCTE}
           SELECT
-            src."pageId" AS "pageId",
+            pb."pageId",
+            pb."wikidotId",
+            pb."title",
+            pb."highestRarityRank",
+            pb."coverImageUrl",
+            pb."totalCount",
+            pb."variantCount",
+            pb."imageVariantCount",
+            pb."coatingCount"
+          FROM page_base pb
+          WHERE TRUE ${searchCondition}
+          ORDER BY pb."totalCount" DESC, pb."variantCount" DESC, pb."highestRarityRank" ASC, pb."pageId" ASC
+          OFFSET ${offset}
+          LIMIT ${limit}
+        `),
+        prisma.$queryRaw<[{ count: number | string }]>(Prisma.sql`
+          ${baseCTE}
+          SELECT COUNT(*)::int AS count
+          FROM page_base pb
+          WHERE TRUE ${searchCondition}
+        `),
+        // Pool image variant totals — only for the paged results (joined after)
+        prisma.$queryRaw<Array<{ pageId: number | string; total: number | string }>>(Prisma.sql`
+          SELECT "pageId", COUNT(DISTINCT COALESCE(NULLIF(BTRIM("imageUrl"), ''), '__NOIMG__'))::int AS total
+          FROM "GachaCardDefinition"
+          WHERE "poolId" = ${PERMANENT_POOL_ID} AND "pageId" IS NOT NULL
+          GROUP BY "pageId"
+        `)
+      ]);
+
+      const total = Math.max(0, Number(totalResult[0]?.count ?? 0));
+      const poolTotalMap = new Map(poolTotals.map(r => [Number(r.pageId), Number(r.total)]));
+
+      // Post-pagination: fetch tags only for returned page IDs
+      const pageIds = rows.map(r => Number(r.pageId));
+      let tagsByPage = new Map<number, string[]>();
+      if (pageIds.length > 0) {
+        const tagRows = await prisma.$queryRaw<Array<{ pageId: number | string; tags: string[] }>>(Prisma.sql`
+          SELECT c."pageId"::int AS "pageId",
             ARRAY(
-              SELECT tag_item.tag
-              FROM (
-                SELECT DISTINCT NULLIF(BTRIM(tag_raw.tag), '') AS tag
-                FROM page_inventory src2
-                CROSS JOIN LATERAL unnest(src2."tags") AS tag_raw(tag)
-                WHERE src2."pageId" = src."pageId"
-              ) AS tag_item
-              WHERE tag_item.tag IS NOT NULL
-              ORDER BY tag_item.tag
+              SELECT DISTINCT NULLIF(BTRIM(t.tag), '')
+              FROM "GachaCardDefinition" c2
+              CROSS JOIN LATERAL unnest(c2."tags") AS t(tag)
+              WHERE c2."pageId" = c."pageId" AND NULLIF(BTRIM(t.tag), '') IS NOT NULL
+              ORDER BY 1
               LIMIT 8
             ) AS tags
-          FROM page_inventory src
-          GROUP BY src."pageId"
-        ),
-        merged AS (
-          SELECT
-            pb."pageId" AS "pageId",
-            pb."wikidotId" AS "wikidotId",
-            pb."title" AS "title",
-            CASE pb."highestRarityRank"
-              WHEN 0 THEN 'GOLD'
-              WHEN 1 THEN 'PURPLE'
-              WHEN 2 THEN 'BLUE'
-              WHEN 3 THEN 'GREEN'
-              ELSE 'WHITE'
-            END::text AS "highestRarity",
-            pb."coverImageUrl" AS "coverImageUrl",
-            pb."totalCount" AS "totalCount",
-            pb."variantCount" AS "variantCount",
-            pb."imageVariantCount" AS "imageVariantCount",
-            COALESCE(pct.total, 0)::int AS "imageVariantTotal",
-            pb."coatingCount" AS "coatingCount",
-            COALESCE(pt.tags, ARRAY[]::text[]) AS tags,
-            pb."highestRarityRank" AS "highestRarityRank"
-          FROM page_base pb
-          LEFT JOIN page_tags pt ON pt."pageId" = pb."pageId"
-          LEFT JOIN page_card_totals pct ON pct."pageId" = pb."pageId"
-        ),
-        filtered AS (
-          SELECT *
-          FROM merged
-          WHERE ${search} = ''
-            OR LOWER(("pageId")::text || ' ' || COALESCE("title", '') || ' ' || array_to_string(tags, ' ')) LIKE '%' || LOWER(${search}) || '%'
-        )
-        SELECT
-          "pageId",
-          "wikidotId",
-          "title",
-          "highestRarity",
-          "coverImageUrl",
-          "totalCount",
-          "variantCount",
-          "imageVariantCount",
-          "imageVariantTotal",
-          "coatingCount",
-          tags,
-          COUNT(*) OVER()::int AS "totalRows"
-        FROM filtered
-        ORDER BY "totalCount" DESC, "variantCount" DESC, "highestRarityRank" ASC, "pageId" ASC
-        OFFSET ${offset}
-        LIMIT ${limit}
-      `);
+          FROM "GachaCardDefinition" c
+          WHERE c."pageId" = ANY(${pageIds}::int[])
+          GROUP BY c."pageId"
+        `);
+        tagsByPage = new Map(tagRows.map(r => [Number(r.pageId), r.tags ?? []]));
+      }
 
       const items = rows.map((row) => {
-        const highestRarityRaw = String(row.highestRarity || 'WHITE').toUpperCase();
-        const highestRarity = (RARITY_ORDER as readonly string[]).includes(highestRarityRaw)
-          ? highestRarityRaw as GachaRarity
-          : 'WHITE';
+        const rarityRank = Number(row.highestRarityRank ?? 4);
+        const highestRarity = (['GOLD', 'PURPLE', 'BLUE', 'GREEN', 'WHITE'] as const)[rarityRank] ?? 'WHITE';
+        const pid = Number(row.pageId);
         return {
           pageId: Math.max(1, toSafeInt(row.pageId, 1)),
           wikidotId: row.wikidotId == null ? null : toSafeInt(row.wikidotId, 0),
@@ -8067,17 +7916,14 @@ export function gachaRouter() {
           totalCount: Math.max(0, toSafeInt(row.totalCount, 0)),
           variantCount: Math.max(0, toSafeInt(row.variantCount, 0)),
           imageVariantCount: Math.max(0, toSafeInt(row.imageVariantCount, 0)),
-          imageVariantTotal: Math.max(0, toSafeInt(row.imageVariantTotal, 0)),
+          imageVariantTotal: poolTotalMap.get(pid) ?? 0,
           coatingCount: Math.max(0, toSafeInt(row.coatingCount, 0)),
-          tags: Array.isArray(row.tags)
-            ? row.tags
-              .map((tag) => String(tag || '').trim())
-              .filter((tag) => tag.length > 0)
-              .slice(0, 8)
-            : []
+          tags: (tagsByPage.get(pid) ?? [])
+            .map((tag) => String(tag || '').trim())
+            .filter((tag) => tag.length > 0)
+            .slice(0, 8)
         };
       });
-      const total = rows.length > 0 ? Math.max(0, toSafeInt(rows[0]?.totalRows, 0)) : 0;
       res.json({
         ok: true,
         items,
@@ -8097,68 +7943,73 @@ export function gachaRouter() {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
       const params = albumVariantsParamSchema.parse(req.params ?? {});
       const pageId = params.pageId;
-      const cards = await prisma.gachaCardDefinition.findMany({
-        where: { pageId },
-        select: { id: true, title: true, rarity: true, tags: true, authorKeys: true, imageUrl: true, wikidotId: true, pageId: true }
-      });
-      if (cards.length === 0) {
+      const userId = req.authUser.id;
+
+      // Single query: JOIN cards + instances, GROUP BY cardId + affixSignature
+      type VariantRow = {
+        cardId: string;
+        title: string;
+        rarity: string;
+        tags: string[] | null;
+        authorKeys: string[] | null;
+        imageUrl: string | null;
+        wikidotId: number | string | null;
+        rowPageId: number | string | null;
+        poolId: string;
+        weight: number | null;
+        affixSignature: string;
+        cnt: number | string;
+      };
+      const variantRows = await prisma.$queryRaw<VariantRow[]>(Prisma.sql`
+        SELECT
+          c.id AS "cardId",
+          c.title,
+          c.rarity::text AS rarity,
+          c.tags,
+          c."authorKeys",
+          c."imageUrl",
+          c."wikidotId",
+          c."pageId" AS "rowPageId",
+          c."poolId",
+          c.weight,
+          ci."affixSignature",
+          COUNT(*)::int AS cnt
+        FROM "GachaCardInstance" ci
+        JOIN "GachaCardDefinition" c ON c.id = ci."cardId"
+        WHERE ci."userId" = ${userId}
+          AND ci."tradeListingId" IS NULL
+          AND c."pageId" = ${pageId}
+        GROUP BY c.id, c.title, c.rarity, c.tags, c."authorKeys", c."imageUrl", c."wikidotId", c."pageId", c."poolId", c.weight, ci."affixSignature"
+      `);
+
+      if (variantRows.length === 0) {
         res.status(404).json({ error: '未找到该页面的已拥有变体' });
         return;
       }
-      const cardIds = cards.map((card) => card.id);
-      const instances = await prisma.gachaCardInstance.findMany({
-        where: {
-          userId: req.authUser.id,
-          cardId: { in: cardIds },
-          tradeListingId: null
-        },
-        select: { cardId: true, affixSignature: true, affixVisualStyle: true }
-      });
-      if (instances.length === 0) {
-        res.status(404).json({ error: '未找到该页面的已拥有变体' });
-        return;
-      }
-      const cardMap = new Map(cards.map((card) => [card.id, card]));
-      const variantGroups = new Map<string, { cardId: string; affixSignature: string; count: number }>();
-      for (const inst of instances) {
-        const normalizedSignature = affixSignatureFromStyles(parseAffixSignature(
-          inst.affixSignature || inst.affixVisualStyle || 'NONE'
-        ));
-        const key = `${inst.cardId}:${normalizedSignature}`;
-        const existing = variantGroups.get(key);
-        if (existing) {
-          existing.count += 1;
-        } else {
-          variantGroups.set(key, {
-            cardId: inst.cardId,
-            affixSignature: normalizedSignature,
-            count: 1
-          });
-        }
-      }
-      const variants = [...variantGroups.values()]
-        .map((group) => {
-          const card = cardMap.get(group.cardId)!;
+
+      const variants = variantRows
+        .map((row) => {
+          const card = { id: row.cardId, title: row.title, rarity: row.rarity as GachaRarity, tags: row.tags ?? [] };
+          const normalizedSignature = affixSignatureFromStyles(parseAffixSignature(
+            row.affixSignature || 'NONE'
+          ));
           const affix = resolveCardAffixWithBonus(card, {
-            affixSignature: group.affixSignature
+            affixSignature: normalizedSignature
           });
-          // Determine image index from card ID convention:
-          // base card: "prefix-{pageId}" → index 0
-          // alternate art: "prefix-{pageId}-img-{N}" → index N-1
-          const imgMatch = group.cardId.match(/-img-(\d+)$/);
+          const imgMatch = row.cardId.match(/-img-(\d+)$/);
           const imageIndex = imgMatch ? parseInt(imgMatch[1], 10) - 1 : 0;
           const isAlternateArt = imageIndex > 0;
           return {
-            cardId: group.cardId,
-            title: card.title,
-            rarity: card.rarity,
-            count: group.count,
-            tags: card.tags ?? [],
-            authors: resolveCardAuthorsFromTags(card.tags, card.authorKeys),
-            imageUrl: card.imageUrl ?? null,
-            wikidotId: card.wikidotId ?? null,
-            pageId: card.pageId ?? null,
-            rewardTokens: DEFAULT_DISMANTLE_REWARD_BY_RARITY[card.rarity] ?? 0,
+            cardId: row.cardId,
+            title: row.title,
+            rarity: row.rarity as GachaRarity,
+            count: Number(row.cnt),
+            tags: row.tags ?? [],
+            authors: resolveCardAuthorsFromTags(row.tags ?? [], row.authorKeys ?? []),
+            imageUrl: row.imageUrl ?? null,
+            wikidotId: row.wikidotId != null ? Number(row.wikidotId) : null,
+            pageId: row.rowPageId != null ? Number(row.rowPageId) : null,
+            rewardTokens: DEFAULT_DISMANTLE_REWARD_BY_RARITY[row.rarity as GachaRarity] ?? 0,
             affixSignature: affix.affixSignature,
             affixStyles: affix.affixStyles,
             affixStyleCounts: affix.affixStyleCounts,
@@ -8167,6 +8018,7 @@ export function gachaRouter() {
             affixYieldBoostPercent: affix.affixYieldBoostPercent,
             affixOfflineBufferBonus: affix.affixOfflineBufferBonus,
             affixDismantleBonusPercent: affix.affixDismantleBonusPercent,
+            isRetired: isRetiredCard({ poolId: row.poolId, weight: row.weight }),
             isAlternateArt,
             imageIndex
           };
@@ -8792,6 +8644,10 @@ export function gachaRouter() {
       });
       res.status(outcome.statusCode).json(outcome.responseJson);
     } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.issues[0]?.message ?? '参数错误' });
+        return;
+      }
       if (error?.status === 404) {
         res.status(404).json({ error: error.message });
         return;
@@ -8851,6 +8707,10 @@ export function gachaRouter() {
       });
       res.status(outcome.statusCode).json(outcome.responseJson);
     } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.issues[0]?.message ?? '参数错误' });
+        return;
+      }
       if (error?.status === 404) {
         res.status(404).json({ error: error.message });
         return;
@@ -9597,8 +9457,7 @@ export function gachaRouter() {
           throw Object.assign(new Error(`${lockTier} 最低手数为 ${tier.minLots}`), { status: 400 });
         }
         const margin = marketMarginByLots(lots);
-        const openFeeRate = marketOpenFeeRate(lockTier, leverage);
-        const openFee = Math.floor(margin * openFeeRate);
+        const { openFeeRate, openFee } = marketOpenFee(lockTier, leverage, margin);
         const totalCost = margin + openFee;
 
         let wallet = await ensureWallet(tx, userId);
@@ -9798,6 +9657,23 @@ export function gachaRouter() {
     }
   });
 
+  // Lightweight endpoint: return only cardIds the user owns (count > 0)
+  router.get('/trade/owned-card-ids', async (req, res, next) => {
+    try {
+      if (!req.authUser) return res.status(401).json({ error: '未登录' });
+      const rows = await prisma.gachaInventory.findMany({
+        where: { userId: req.authUser.id, count: { gt: 0 } },
+        select: { cardId: true }
+      });
+      res.json({
+        ok: true,
+        cardIds: rows.map((r) => r.cardId)
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/trade/listings', async (req, res, next) => {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
@@ -9902,31 +9778,46 @@ export function gachaRouter() {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
       triggerTradeExpirySweep();
-      const result = await prisma.gachaTradeListing.findMany({
-        where: { sellerId: req.authUser!.id },
-        orderBy: [{ createdAt: 'desc' }],
-        include: {
-          card: true,
-          seller: {
-            select: {
-              id: true,
-              displayName: true,
-              linkedWikidotId: true
-            }
-          },
-          buyer: {
-            select: {
-              id: true,
-              displayName: true,
-              linkedWikidotId: true
+      const statusRaw = (typeof req.query?.status === 'string' ? req.query.status.toUpperCase() : '') as string;
+      const validStatuses = ['OPEN', 'SOLD', 'CANCELLED', 'EXPIRED'] as const;
+      const statusFilter = validStatuses.includes(statusRaw as any) ? statusRaw as typeof validStatuses[number] : null;
+      const limit = Math.min(Math.max(Number(req.query?.limit ?? '40'), 1), 200);
+      const offset = Math.max(Number(req.query?.offset ?? '0'), 0);
+      const where = {
+        sellerId: req.authUser!.id,
+        ...(statusFilter ? { status: statusFilter } : {})
+      };
+      const [result, total] = await Promise.all([
+        prisma.gachaTradeListing.findMany({
+          where,
+          orderBy: [{ createdAt: 'desc' }],
+          take: limit,
+          skip: offset,
+          include: {
+            card: true,
+            seller: {
+              select: {
+                id: true,
+                displayName: true,
+                linkedWikidotId: true
+              }
+            },
+            buyer: {
+              select: {
+                id: true,
+                displayName: true,
+                linkedWikidotId: true
+              }
             }
           }
-        }
-      });
+        }),
+        prisma.gachaTradeListing.count({ where })
+      ]);
       res.json({
         ok: true,
         enabled: FEATURE_FLAGS.trade,
         items: result.map(serializeTradeListing),
+        pagination: { total, limit, offset },
         ...featureStatusPayload()
       });
     } catch (error) {
@@ -10347,7 +10238,7 @@ export function gachaRouter() {
       }
       const cards = await prisma.gachaCardDefinition.findMany({
         where: { poolId: { in: pools.map((p) => p.id) } },
-        select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, wikidotId: true, pageId: true },
+        select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, wikidotId: true, pageId: true, poolId: true, weight: true },
         orderBy: [{ rarity: 'asc' }, { title: 'asc' }]
       });
       // Group cards by pageId; null-pageId cards each become their own entry
@@ -10371,7 +10262,13 @@ export function gachaRouter() {
           tags: first.tags ?? [],
           authors: resolveCardAuthorsFromTags(first.tags),
           wikidotId: first.wikidotId ?? null,
-          variants: buildImageVariants(group.map((c) => ({ id: c.id, imageUrl: c.imageUrl ?? null })))
+          isRetired: group.every((card) => isRetiredCard(card)),
+          variants: buildImageVariants(group.map((c) => ({
+            id: c.id,
+            imageUrl: c.imageUrl ?? null,
+            poolId: c.poolId,
+            weight: c.weight
+          })))
         };
       });
       res.json({
@@ -10411,6 +10308,71 @@ export function gachaRouter() {
             ...(authorMatchedCardIds.length > 0 ? [{ targetCardId: { in: authorMatchedCardIds } }] : [])
           ];
         }
+      }
+
+      // ─── fulfillableOnly: server-side check ──────────────
+      // Uses raw SQL subqueries to avoid bind-variable explosion (PostgreSQL limit: 32,767).
+      // Previous approach expanded coating instances into individual OR conditions, which
+      // could exceed 40,000+ bind variables for users with large inventories.
+      if (parsed.fulfillableOnly === '1') {
+        const userId = req.authUser.id;
+        where.buyerId = { not: userId };
+
+        // Single raw SQL query using EXISTS subqueries — O(1) bind variables (just userId)
+        const fulfillableIds = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+          SELECT br.id
+          FROM "GachaBuyRequest" br
+          WHERE br.status = 'OPEN'
+            AND br."buyerId" != ${userId}
+            AND (
+              -- IMAGE_VARIANT: user has at least one eligible instance of exact target card
+              (br."matchLevel"::text = 'IMAGE_VARIANT' AND EXISTS (
+                SELECT 1
+                FROM "GachaCardInstance" ci
+                WHERE ci."userId" = ${userId}
+                  AND ci."cardId" = br."targetCardId"
+                  AND ci."tradeListingId" IS NULL
+                  AND ci."buyRequestId" IS NULL
+              ))
+              OR
+              -- PAGE: user has at least one eligible instance from the same page
+              (br."matchLevel"::text = 'PAGE' AND EXISTS (
+                SELECT 1
+                FROM "GachaCardDefinition" target
+                JOIN "GachaCardDefinition" ownCard
+                  ON ownCard."pageId" = target."pageId"
+                JOIN "GachaCardInstance" ci
+                  ON ci."cardId" = ownCard.id
+                WHERE target.id = br."targetCardId"
+                  AND target."pageId" IS NOT NULL
+                  AND ci."userId" = ${userId}
+                  AND ci."tradeListingId" IS NULL
+                  AND ci."buyRequestId" IS NULL
+              ))
+              OR
+              -- COATING: user has at least one eligible instance with required coating
+              (br."matchLevel"::text = 'COATING' AND EXISTS (
+                SELECT 1 FROM "GachaCardInstance" ci
+                WHERE ci."userId" = ${userId}
+                  AND ci."cardId" = br."targetCardId"
+                  AND ci."affixVisualStyle"::text = br."requiredCoating"::text
+                  AND ci."tradeListingId" IS NULL
+                  AND ci."buyRequestId" IS NULL
+              ))
+            )
+        `);
+
+        const ids = fulfillableIds.map(r => r.id);
+        if (ids.length === 0) {
+          res.json({
+            ok: true, enabled: FEATURE_FLAGS.buyRequest,
+            items: [], pagination: { total: 0, limit, offset },
+            ...featureStatusPayload()
+          });
+          return;
+        }
+
+        where.id = { in: ids };
       }
 
       const [items, total] = await Promise.all([
@@ -10590,6 +10552,11 @@ export function gachaRouter() {
       if (!buyRequestId) {
         return res.status(400).json({ error: 'buyRequestId 不能为空' });
       }
+      const fulfillPayload = buyRequestFulfillSchema.parse(req.body ?? {});
+      const selectedCardId = fulfillPayload.selectedCardId?.trim() || undefined;
+      const selectedAffixSignature = fulfillPayload.selectedAffixSignature
+        ? affixSignatureFromStyles(parseAffixSignature(fulfillPayload.selectedAffixSignature))
+        : undefined;
       const scope = buildIdempotencyScope(req, req.authUser.id);
       const outcome = await executeIdempotent(scope, async (tx) => {
         const fulfillerId = req.authUser!.id;
@@ -10621,6 +10588,9 @@ export function gachaRouter() {
         let sellerInstanceId: string;
         let matchedCardId: string;
         const matchLevel = br.matchLevel ?? 'IMAGE_VARIANT';
+        if (selectedCardId && matchLevel !== 'PAGE' && selectedCardId !== br.targetCardId) {
+          throw Object.assign(new Error('所选卡片与求购目标不匹配'), { status: 400 });
+        }
 
         if (matchLevel === 'PAGE') {
           // PAGE level: find any instance whose card has the same pageId as the target card
@@ -10637,18 +10607,26 @@ export function gachaRouter() {
             select: { id: true }
           });
           const pageCardIds = pageCards.map((c) => c.id);
+          if (selectedCardId && !pageCardIds.includes(selectedCardId)) {
+            throw Object.assign(new Error('所选卡片不在该页面求购范围内'), { status: 400 });
+          }
+          const selectedPageCardIds = selectedCardId ? [selectedCardId] : pageCardIds;
 
           // Try to find a free instance among any of these cards
+          const pageWhere: Prisma.GachaCardInstanceWhereInput = {
+            userId: fulfillerId,
+            cardId: { in: selectedPageCardIds },
+            tradeListingId: null,
+            buyRequestId: null,
+            isLocked: false,
+            placementSlot: { is: null },
+            showcaseSlot: { is: null }
+          };
+          if (selectedAffixSignature) {
+            pageWhere.affixSignature = selectedAffixSignature;
+          }
           const freeInstance = await tx.gachaCardInstance.findFirst({
-            where: {
-              userId: fulfillerId,
-              cardId: { in: pageCardIds },
-              tradeListingId: null,
-              buyRequestId: null,
-              isLocked: false,
-              placementSlot: { is: null },
-              showcaseSlot: { is: null }
-            },
+            where: pageWhere,
             orderBy: { obtainedAt: 'asc' }
           });
           if (freeInstance) {
@@ -10657,16 +10635,18 @@ export function gachaRouter() {
           } else {
             // Try auto-free from placed/locked/showcased for any of these cards
             let freed: { id: string; cardId: string } | null = null;
-            for (const cid of pageCardIds) {
+            for (const cid of selectedPageCardIds) {
               // eslint-disable-next-line no-await-in-loop
-              const autoFreed = await autoFreeInstanceForSale(tx, fulfillerId, cid);
+              const autoFreed = await autoFreeInstanceForSale(tx, fulfillerId, cid, { affixSignature: selectedAffixSignature });
               if (autoFreed) {
                 freed = { id: autoFreed.id, cardId: cid };
                 break;
               }
             }
             if (!freed) {
-              throw Object.assign(new Error('你没有该页面的可用库存'), { status: 400 });
+              throw Object.assign(new Error(
+                selectedAffixSignature ? '你没有该页面该词条的可用库存' : '你没有该页面的可用库存'
+              ), { status: 400 });
             }
             sellerInstanceId = freed.id;
             matchedCardId = freed.cardId;
@@ -10677,17 +10657,24 @@ export function gachaRouter() {
           if (!requiredCoating || requiredCoating === 'NONE') {
             throw Object.assign(new Error('镀层级别求购缺少有效镀层要求'), { status: 400 });
           }
+          if (selectedCardId && selectedCardId !== br.targetCardId) {
+            throw Object.assign(new Error('所选卡片与求购目标不匹配'), { status: 400 });
+          }
+          const coatingWhere: Prisma.GachaCardInstanceWhereInput = {
+            userId: fulfillerId,
+            cardId: br.targetCardId,
+            affixVisualStyle: requiredCoating,
+            tradeListingId: null,
+            buyRequestId: null,
+            isLocked: false,
+            placementSlot: { is: null },
+            showcaseSlot: { is: null }
+          };
+          if (selectedAffixSignature) {
+            coatingWhere.affixSignature = selectedAffixSignature;
+          }
           const freeInstance = await tx.gachaCardInstance.findFirst({
-            where: {
-              userId: fulfillerId,
-              cardId: br.targetCardId,
-              affixVisualStyle: requiredCoating,
-              tradeListingId: null,
-              buyRequestId: null,
-              isLocked: false,
-              placementSlot: { is: null },
-              showcaseSlot: { is: null }
-            },
+            where: coatingWhere,
             orderBy: { obtainedAt: 'asc' }
           });
           if (freeInstance) {
@@ -10695,14 +10682,18 @@ export function gachaRouter() {
             matchedCardId = freeInstance.cardId;
           } else {
             // Try auto-free: find instance with matching coating
+            const candidateWhere: Prisma.GachaCardInstanceWhereInput = {
+              userId: fulfillerId,
+              cardId: br.targetCardId,
+              affixVisualStyle: requiredCoating,
+              tradeListingId: null,
+              buyRequestId: null
+            };
+            if (selectedAffixSignature) {
+              candidateWhere.affixSignature = selectedAffixSignature;
+            }
             const candidate = await tx.gachaCardInstance.findFirst({
-              where: {
-                userId: fulfillerId,
-                cardId: br.targetCardId,
-                affixVisualStyle: requiredCoating,
-                tradeListingId: null,
-                buyRequestId: null
-              },
+              where: candidateWhere,
               include: {
                 placementSlot: { select: { id: true } },
                 showcaseSlot: { select: { id: true } }
@@ -10710,7 +10701,9 @@ export function gachaRouter() {
               orderBy: { obtainedAt: 'asc' }
             });
             if (!candidate) {
-              throw Object.assign(new Error('你没有该镀层的可用库存'), { status: 400 });
+              throw Object.assign(new Error(
+                selectedAffixSignature ? '你没有该镀层该词条的可用库存' : '你没有该镀层的可用库存'
+              ), { status: 400 });
             }
             if (candidate.isLocked) {
               await tx.gachaCardInstance.update({
@@ -10733,13 +10726,20 @@ export function gachaRouter() {
         } else {
           // IMAGE_VARIANT level (default): exact cardId match (original behavior)
           matchedCardId = br.targetCardId;
-          const sellerFreeInstances = await findFreeInstances(tx, fulfillerId, br.targetCardId, { limit: 1 });
+          const sellerFreeInstances = await findFreeInstances(tx, fulfillerId, br.targetCardId, {
+            limit: 1,
+            affixSignature: selectedAffixSignature
+          });
           if (sellerFreeInstances.length >= 1) {
             sellerInstanceId = sellerFreeInstances[0]!.id;
           } else {
-            const autoFreed = await autoFreeInstanceForSale(tx, fulfillerId, br.targetCardId);
+            const autoFreed = await autoFreeInstanceForSale(tx, fulfillerId, br.targetCardId, {
+              affixSignature: selectedAffixSignature
+            });
             if (!autoFreed) {
-              throw Object.assign(new Error('你没有该卡片的可用库存'), { status: 400 });
+              throw Object.assign(new Error(
+                selectedAffixSignature ? '你没有该词条的可用库存' : '你没有该卡片的可用库存'
+              ), { status: 400 });
             }
             sellerInstanceId = autoFreed.id;
           }
@@ -10807,6 +10807,10 @@ export function gachaRouter() {
       });
       res.status(outcome.statusCode).json(outcome.responseJson);
     } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: error.issues[0]?.message ?? '参数错误' });
+        return;
+      }
       if (error?.status === 404) {
         res.status(404).json({ error: error.message });
         return;
@@ -11089,7 +11093,8 @@ export function gachaRouter() {
             title: item.card?.title ?? '',
             rarity: item.card?.rarity ?? item.rarity,
             rewardTokens: item.rewardTokens,
-            imageUrl: item.card?.imageUrl ?? null
+            imageUrl: item.card?.imageUrl ?? null,
+            isRetired: item.card ? isRetiredCard(item.card) : false
           }))
         }))
       });
@@ -11206,6 +11211,10 @@ export function gachaRouter() {
       res.json({ ok: true, locked: toLock.length, alreadyLocked: instances.length - toLock.length });
     } catch (error: any) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message ?? '参数错误' });
+      if (error?.status === 400) return res.status(400).json({ error: error.message });
+      if (error?.status === 409 || error?.code === 'IDEMPOTENCY_KEY_CONFLICT') {
+        return res.status(409).json({ error: 'idempotency_key_conflict' });
+      }
       next(error);
     }
   });
@@ -11254,6 +11263,10 @@ export function gachaRouter() {
       res.json({ ok: true, unlocked: toUnlock.length, alreadyUnlocked: instances.length - toUnlock.length });
     } catch (error: any) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message ?? '参数错误' });
+      if (error?.status === 400) return res.status(400).json({ error: error.message });
+      if (error?.status === 409 || error?.code === 'IDEMPOTENCY_KEY_CONFLICT') {
+        return res.status(409).json({ error: 'idempotency_key_conflict' });
+      }
       next(error);
     }
   });
@@ -11266,7 +11279,7 @@ export function gachaRouter() {
         where: { userId, isLocked: true },
         include: {
           card: {
-            select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true }
+            select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true, poolId: true, weight: true }
           }
         },
         orderBy: { lockedAt: 'desc' }
@@ -11283,6 +11296,7 @@ export function gachaRouter() {
           authors: resolveCardAuthorsFromTags(inst.card.tags, inst.card.authorKeys),
           wikidotId: inst.card.wikidotId,
           pageId: inst.card.pageId,
+          isRetired: isRetiredCard(inst.card),
           affixVisualStyle: inst.affixVisualStyle,
           affixSignature: inst.affixSignature,
           affixLabel: inst.affixLabel,
@@ -11299,13 +11313,31 @@ export function gachaRouter() {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
       const userId = req.authUser.id;
-      const limitRaw = Math.min(Math.max(Number(req.query.limit ?? '500'), 1), 2000);
+      const limitParam = String(req.query.limit ?? '').trim().toLowerCase();
+      const parsedLimit = Number(limitParam || '500');
+      const take = limitParam === 'all'
+        ? undefined
+        : (Number.isFinite(parsedLimit)
+            ? Math.min(Math.max(Math.trunc(parsedLimit), 1), 2000)
+            : 500);
+      const parsedOffset = Number(req.query.offset ?? '0');
+      const skip = Number.isFinite(parsedOffset) ? Math.max(0, Math.trunc(parsedOffset)) : 0;
+      const search = String(req.query.search ?? '').trim();
+      const searchLower = search.toLowerCase();
+      const rarityRaw = String(req.query.rarity ?? '').trim().toUpperCase();
+      const rarity = RARITY_ORDER.includes(rarityRaw as GachaRarity)
+        ? rarityRaw as GachaRarity
+        : null;
+      const sortMode = String(req.query.sort ?? '').trim().toUpperCase() === 'PICKER'
+        ? 'PICKER'
+        : 'LATEST';
       const includePlaced = ['1', 'true', 'yes', 'on'].includes(
         String(req.query.includePlaced ?? '').trim().toLowerCase()
       );
       const includeLocked = ['1', 'true', 'yes', 'on'].includes(
         String(req.query.includeLocked ?? '').trim().toLowerCase()
       );
+      const andConditions: Prisma.GachaCardInstanceWhereInput[] = [];
       const where: Prisma.GachaCardInstanceWhereInput = {
         userId,
         tradeListingId: null,
@@ -11318,18 +11350,55 @@ export function gachaRouter() {
       if (!includePlaced) {
         where.placementSlot = { is: null };
       }
-      const instances = await prisma.gachaCardInstance.findMany({
-        where,
-        include: {
-          card: {
-            select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true }
+      if (rarity) {
+        andConditions.push({ card: { is: { rarity } } });
+      }
+      if (search) {
+        const authorCardIds = await findCardIdsByAuthorKeyword(search);
+        andConditions.push({
+          OR: [
+            { cardId: { contains: search, mode: 'insensitive' } },
+            { card: { is: { title: { contains: search, mode: 'insensitive' } } } },
+            { card: { is: { tags: { hasSome: [searchLower] } } } },
+            ...(authorCardIds.length > 0 ? [{ cardId: { in: authorCardIds } }] : [])
+          ]
+        });
+      }
+
+      const orderBy: Prisma.GachaCardInstanceOrderByWithRelationInput[] = sortMode === 'PICKER'
+        ? [
+            { card: { rarity: 'asc' } },
+            { card: { title: 'asc' } },
+            { obtainedAt: 'desc' }
+          ]
+        : [{ obtainedAt: 'desc' }];
+
+      const [instances, total] = await Promise.all([
+        prisma.gachaCardInstance.findMany({
+          where: {
+            ...where,
+            AND: andConditions.length > 0 ? andConditions : undefined
+          },
+          include: {
+            card: {
+              select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true, poolId: true, weight: true }
+            }
+          },
+          orderBy,
+          skip,
+          take
+        }),
+        prisma.gachaCardInstance.count({
+          where: {
+            ...where,
+            AND: andConditions.length > 0 ? andConditions : undefined
           }
-        },
-        orderBy: { obtainedAt: 'desc' },
-        take: limitRaw
-      });
+        })
+      ]);
       res.json({
         ok: true,
+        total,
+        pageRows: instances.length,
         items: instances.map((inst) => ({
           instanceId: inst.id,
           cardId: inst.cardId,
@@ -11340,6 +11409,7 @@ export function gachaRouter() {
           authors: resolveCardAuthorsFromTags(inst.card.tags, inst.card.authorKeys),
           wikidotId: inst.card.wikidotId,
           pageId: inst.card.pageId,
+          isRetired: isRetiredCard(inst.card),
           affixVisualStyle: inst.affixVisualStyle,
           affixSignature: inst.affixSignature,
           affixLabel: inst.affixLabel,
@@ -11371,7 +11441,7 @@ export function gachaRouter() {
               instance: {
                 include: {
                   card: {
-                    select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true }
+                    select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true, poolId: true, weight: true }
                   }
                 }
               }
@@ -11406,6 +11476,7 @@ export function gachaRouter() {
                 authors: resolveCardAuthorsFromTags(inst.card.tags, inst.card.authorKeys),
                 wikidotId: inst.card.wikidotId,
                 pageId: inst.card.pageId,
+                isRetired: isRetiredCard(inst.card),
                 affixVisualStyle: inst.affixVisualStyle,
                 affixSignature: inst.affixSignature,
                 affixLabel: inst.affixLabel
@@ -11518,7 +11589,7 @@ export function gachaRouter() {
 
         const instance = await tx.gachaCardInstance.findFirst({
           where: { id: instanceId, userId },
-          include: { card: { select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true } } }
+          include: { card: { select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, authorKeys: true, wikidotId: true, pageId: true, poolId: true, weight: true } } }
         });
         if (!instance) throw Object.assign(new Error('卡片实例不存在'), { status: 404 });
         if (instance.tradeListingId || instance.buyRequestId) {
@@ -11557,6 +11628,7 @@ export function gachaRouter() {
             authors: resolveCardAuthorsFromTags(instance.card.tags, instance.card.authorKeys),
             wikidotId: instance.card.wikidotId,
             pageId: instance.card.pageId,
+            isRetired: isRetiredCard(instance.card),
             affixVisualStyle: instance.affixVisualStyle,
             affixSignature: instance.affixSignature,
             affixLabel: instance.affixLabel
@@ -11730,6 +11802,7 @@ export function gachaRouter() {
   // ─── Batch Dismantle: Selective ────────────────────────
 
   const dismantleBatchSelectiveSchema = z.object({
+    keepAtLeast: z.number().int().min(0).max(999).optional().default(1),
     items: z.array(z.object({
       cardId: z.string().trim(),
       affixSignature: z.string().trim().optional(),
@@ -11747,18 +11820,46 @@ export function gachaRouter() {
         const userId = req.authUser!.id;
         const wallet = await ensureWallet(tx, userId);
 
+        let cardsAffected = 0;
         let totalCount = 0;
         let totalReward = 0;
         const byRarityCount: Record<GachaRarity, number> = { WHITE: 0, GREEN: 0, BLUE: 0, PURPLE: 0, GOLD: 0 };
         const byRarityReward: Record<GachaRarity, number> = { WHITE: 0, GREEN: 0, BLUE: 0, PURPLE: 0, GOLD: 0 };
 
         for (const item of payload.items) {
+          const normalizedSignature = item.affixSignature
+            ? affixSignatureFromStyles(parseAffixSignature(item.affixSignature))
+            : undefined;
+          const instanceWhere: Prisma.GachaCardInstanceWhereInput = {
+            userId,
+            cardId: item.cardId,
+            tradeListingId: null,
+            buyRequestId: null
+          };
+          if (normalizedSignature) {
+            instanceWhere.affixSignature = normalizedSignature;
+          }
+
+          // Server-side retention guard: destructive count must always respect keepAtLeast
+          // against the current instance set, not just the stale client snapshot.
+          // We must preserve at least `keepAtLeast` instances OR all locked instances,
+          // whichever is greater. Locked instances are never deletable anyway, so the
+          // effective minimum to keep = max(lockedOwnedCount, keepAtLeast).
+          const [totalOwnedCount, lockedOwnedCount] = await Promise.all([
+            tx.gachaCardInstance.count({ where: instanceWhere }),
+            tx.gachaCardInstance.count({ where: { ...instanceWhere, isLocked: true } })
+          ]);
+          const minKeep = Math.max(lockedOwnedCount, payload.keepAtLeast);
+          const maxDeletableCount = Math.max(0, totalOwnedCount - minKeep);
+          const targetDeleteCount = Math.min(item.count, maxDeletableCount);
+          if (targetDeleteCount <= 0) continue;
+
           // eslint-disable-next-line no-await-in-loop
           const freeInstances = await findFreeInstances(tx, userId, item.cardId, {
-            affixSignature: item.affixSignature,
-            limit: item.count
+            affixSignature: normalizedSignature,
+            limit: targetDeleteCount
           });
-          const dismantleCount = Math.min(freeInstances.length, item.count);
+          const dismantleCount = Math.min(freeInstances.length, targetDeleteCount);
           if (dismantleCount <= 0) continue;
 
           const toDelete = freeInstances.slice(0, dismantleCount);
@@ -11781,6 +11882,7 @@ export function gachaRouter() {
           await deleteCardInstances(tx, toDelete.map((inst) => inst.id));
 
           const rewardDetail = computeDismantleRewardByAffix(card, consumed);
+          cardsAffected += 1;
           totalCount += dismantleCount;
           totalReward += rewardDetail.totalReward;
           byRarityCount[card.rarity] += dismantleCount;
@@ -11799,6 +11901,8 @@ export function gachaRouter() {
             data: { balance: { increment: totalReward }, totalEarned: { increment: totalReward } }
           });
           await recordLedger(tx, wallet.id, userId, totalReward, 'DISMANTLE_BATCH_SELECTIVE_REWARD', {
+            keepAtLeast: payload.keepAtLeast,
+            cardsAffected,
             itemCount: payload.items.length,
             totalCount,
             totalReward,
@@ -11812,7 +11916,8 @@ export function gachaRouter() {
             ok: true,
             wallet: await serializeWalletWithPity(tx, updatedWallet),
             summary: {
-              cardsAffected: payload.items.length,
+              keepAtLeast: payload.keepAtLeast,
+              cardsAffected,
               totalCount,
               totalReward,
               byRarity: RARITY_ORDER.map((rarity) => ({ rarity, count: byRarityCount[rarity], reward: byRarityReward[rarity] }))
@@ -11823,6 +11928,10 @@ export function gachaRouter() {
       res.status(outcome.statusCode).json(outcome.responseJson);
     } catch (error: any) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message ?? '参数错误' });
+      if (error?.status === 400) return res.status(400).json({ error: error.message });
+      if (error?.status === 409 || error?.code === 'IDEMPOTENCY_KEY_CONFLICT') {
+        return res.status(409).json({ error: 'idempotency_key_conflict' });
+      }
       next(error);
     }
   });
@@ -12073,6 +12182,10 @@ export function gachaAdminRouter() {
   router.get('/cards', async (req, res, next) => {
     try {
       const parsed = cardListQuerySchema.parse(req.query ?? {});
+      if (parsed.poolId && parsed.poolId !== PERMANENT_POOL_ID) {
+        res.status(400).json({ error: '当前仅允许维护常驻卡池' });
+        return;
+      }
       const limit = Math.min(Math.max(Number(parsed.limit ?? '50'), 1), 200);
       const offset = Math.max(Number(parsed.offset ?? '0'), 0);
       const includeTags = (parsed.includeTags ?? '')
@@ -12085,8 +12198,7 @@ export function gachaAdminRouter() {
         .filter((tag) => tag.length > 0);
       const search = parsed.search?.trim();
 
-      const where: Prisma.GachaCardDefinitionWhereInput = {};
-      if (parsed.poolId) where.poolId = parsed.poolId;
+      const where: Prisma.GachaCardDefinitionWhereInput = { poolId: PERMANENT_POOL_ID };
       if (parsed.rarity) where.rarity = parsed.rarity;
 
       const andConditions: Prisma.GachaCardDefinitionWhereInput[] = [];
@@ -12343,7 +12455,7 @@ export function gachaAdminRouter() {
       const { drawRewards } = await loadRarityRewards(prisma);
       const card = await prisma.gachaCardDefinition.create({
         data: {
-          poolId: payload.poolId,
+          poolId: PERMANENT_POOL_ID,
           title: payload.title,
           rarity: payload.rarity,
           tags: payload.tags,
@@ -12372,7 +12484,6 @@ export function gachaAdminRouter() {
       const card = await prisma.gachaCardDefinition.update({
         where: { id },
         data: {
-          poolId: payload.poolId ?? undefined,
           title: payload.title,
           rarity: payload.rarity,
           tags: payload.tags,
@@ -12450,10 +12561,13 @@ export function gachaAdminRouter() {
   router.post('/cards/batch-adjust', async (req, res, next) => {
     try {
       const payload = cardBatchAdjustSchema.parse(req.body ?? {});
+      if (payload.poolId && payload.poolId !== PERMANENT_POOL_ID) {
+        res.status(400).json({ error: '当前仅允许维护常驻卡池' });
+        return;
+      }
       const includeTags = payload.includeTags?.map((tag) => tag.trim().toLowerCase()).filter(Boolean) ?? [];
       const excludeTags = payload.excludeTags?.map((tag) => tag.trim().toLowerCase()).filter(Boolean) ?? [];
-      const where: Prisma.GachaCardDefinitionWhereInput = {};
-      if (payload.poolId) where.poolId = payload.poolId;
+      const where: Prisma.GachaCardDefinitionWhereInput = { poolId: PERMANENT_POOL_ID };
       if (payload.rarity) where.rarity = payload.rarity;
       const andConditions: Prisma.GachaCardDefinitionWhereInput[] = [];
       if (includeTags.length) {
@@ -12675,7 +12789,10 @@ export {
   loadUserGachaStats,
   loadOracleContext,
   settleDueMarketPositions,
+  runMarketSettleSweep,
   triggerTradeExpirySweep,
+  triggerBuyRequestExpirySweep,
+  triggerMarketSettleSweep,
   respondFeatureNotReady,
   ensureFeatureEnabled,
   resolveFeatureByPath

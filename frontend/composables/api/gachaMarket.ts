@@ -8,7 +8,7 @@ import type {
 } from '~/types/gacha'
 
 export function useGachaMarketApi(core: GachaCoreContext) {
-  const { $bff, state, createIdempotencyKey } = core
+  const { $bff, state, createIdempotencyKey, captureWalletSeq, setWalletIfFresh } = core
 
   async function getMarketContracts(params: { timeframe?: '24H' | '7D' | '30D' } = {}) {
     try {
@@ -27,7 +27,7 @@ export function useGachaMarketApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '加载市场合约失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载市场合约失败') }
     }
   }
@@ -62,7 +62,7 @@ export function useGachaMarketApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '加载市场价格失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载市场价格失败') }
     }
   }
@@ -81,7 +81,7 @@ export function useGachaMarketApi(core: GachaCoreContext) {
         return { ok: true as const, data: res.snapshot ?? null }
       }
       return { ok: false as const, error: res?.error || '加载市场对手失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载市场对手失败') }
     }
   }
@@ -96,6 +96,7 @@ export function useGachaMarketApi(core: GachaCoreContext) {
   }) {
     try {
       const idemKey = createIdempotencyKey('market-open')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ position: MarketPosition; wallet?: Wallet }>>('/gacha/market/positions/open', {
         method: 'POST',
         headers: {
@@ -105,24 +106,23 @@ export function useGachaMarketApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, position: res.position, wallet: res.wallet ?? null }
       }
       return { ok: false as const, error: res?.error || '开仓失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '开仓失败') }
     }
   }
 
   async function getMarketPositions() {
     try {
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ items: MarketPosition[]; wallet?: Wallet; autoSettled?: MarketSettlement[] }>>('/gacha/market/positions', { method: 'GET' })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return {
           ok: true as const,
@@ -132,7 +132,7 @@ export function useGachaMarketApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '加载持仓失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载持仓失败') }
     }
   }
@@ -149,7 +149,7 @@ export function useGachaMarketApi(core: GachaCoreContext) {
         return { ok: true as const, data: res.items ?? [] }
       }
       return { ok: false as const, error: res?.error || '加载持仓历史失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载持仓历史失败') }
     }
   }
@@ -166,7 +166,7 @@ export function useGachaMarketApi(core: GachaCoreContext) {
         return { ok: true as const, data: res.items ?? [], summary: res.summary ?? null }
       }
       return { ok: false as const, error: res?.error || '加载结算记录失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载结算记录失败') }
     }
   }

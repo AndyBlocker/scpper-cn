@@ -3,7 +3,7 @@
     <div class="flex items-center justify-between border-b border-[rgba(var(--panel-border),0.45)] px-3 py-2">
       <NuxtLink
         :to="`/tag/${encodeURIComponent(tag)}`"
-        class="text-sm font-semibold text-[rgb(var(--fg))] hover:text-[rgb(var(--accent))]"
+        class="text-sm font-semibold text-[rgb(var(--fg))] hover:text-[var(--g-accent)]"
       >
         #{{ tag }}
       </NuxtLink>
@@ -19,7 +19,7 @@
             <li v-for="(u, idx) in (lovers?.rows || [])" :key="`${tag}-lov-${idx}-${u.wikidotId}`" class="flex items-center justify-between gap-3 py-2">
               <div class="flex items-center gap-2 min-w-0">
                 <UserAvatar :wikidot-id="u.wikidotId" :name="u.displayName || String(u.wikidotId)" :size="24" class="ring-1 ring-[rgba(var(--panel-border),0.55)]" />
-                <NuxtLink :to="`/user/${u.wikidotId}`" class="truncate text-sm font-medium text-[rgb(var(--fg))] hover:text-[rgb(var(--accent))]">
+                <NuxtLink :to="`/user/${u.wikidotId}`" class="truncate text-sm font-medium text-[rgb(var(--fg))] hover:text-[var(--g-accent)]">
                   {{ u.displayName || '未知用户' }}
                 </NuxtLink>
               </div>
@@ -31,12 +31,12 @@
           </ul>
           <div class="flex items-center justify-between mt-2" v-if="lovers">
             <button
-              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[rgba(var(--accent),0.35)] disabled:opacity-50"
+              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[var(--g-accent-border)] disabled:opacity-50"
               :disabled="(lovers.offset || 0) <= 0"
               @click="emit('update:offset-lovers', Math.max(0, (lovers.offset || 0) - limit))"
             >上一页</button>
             <button
-              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[rgba(var(--accent),0.35)] disabled:opacity-50"
+              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[var(--g-accent-border)] disabled:opacity-50"
               :disabled="(lovers.offset || 0) + (lovers.limit || 0) >= (lovers.total || 0)"
               @click="emit('update:offset-lovers', (lovers.offset || 0) + limit)"
             >下一页</button>
@@ -49,7 +49,7 @@
             <li v-for="(u, idx) in (haters?.rows || [])" :key="`${tag}-hat-${idx}-${u.wikidotId}`" class="flex items-center justify-between gap-3 py-2">
               <div class="flex items-center gap-2 min-w-0">
                 <UserAvatar :wikidot-id="u.wikidotId" :name="u.displayName || String(u.wikidotId)" :size="24" class="ring-1 ring-[rgba(var(--panel-border),0.55)]" />
-                <NuxtLink :to="`/user/${u.wikidotId}`" class="truncate text-sm font-medium text-[rgb(var(--fg))] hover:text-[rgb(var(--accent))]">
+                <NuxtLink :to="`/user/${u.wikidotId}`" class="truncate text-sm font-medium text-[rgb(var(--fg))] hover:text-[var(--g-accent)]">
                   {{ u.displayName || '未知用户' }}
                 </NuxtLink>
               </div>
@@ -61,12 +61,12 @@
           </ul>
           <div class="flex items-center justify-between mt-2" v-if="haters">
             <button
-              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[rgba(var(--accent),0.35)] disabled:opacity-50"
+              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[var(--g-accent-border)] disabled:opacity-50"
               :disabled="(haters.offset || 0) <= 0"
               @click="emit('update:offset-haters', Math.max(0, (haters.offset || 0) - limit))"
             >上一页</button>
             <button
-              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[rgba(var(--accent),0.35)] disabled:opacity-50"
+              class="px-2 py-1 text-xs rounded border border-[rgba(var(--input-border),0.55)] bg-[rgba(var(--input-bg),0.96)] text-[rgb(var(--muted-strong))] transition hover:border-[var(--g-accent-border)] disabled:opacity-50"
               :disabled="(haters.offset || 0) + (haters.limit || 0) >= (haters.total || 0)"
               @click="emit('update:offset-haters', (haters.offset || 0) + limit)"
             >下一页</button>

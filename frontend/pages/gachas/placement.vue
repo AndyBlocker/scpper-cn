@@ -84,6 +84,7 @@ import { useGachaPage } from '~/composables/useGachaPage'
 import { useGachaPlacement } from '~/composables/useGachaPlacement'
 import { useGachaPageLifecycle } from '~/composables/useGachaPageLifecycle'
 import { formatPlacementPercent, formatTokenDecimal } from '~/utils/gachaFormatters'
+import { onBeforeUnmount } from 'vue'
 
 const page = useGachaPage({ pageName: 'placement' })
 const {
@@ -107,8 +108,13 @@ const {
   openPlacementPicker, closePlacementPicker,
   openPlacementAddonPicker, closePlacementAddonPicker,
   selectPlacementCard, clearPlacementFromPicker, selectPlacementAddonCard,
-  loadInitial, displayCardTitle
+  loadInitial, displayCardTitle,
+  cleanup: cleanupPlacement
 } = idx
+
+onBeforeUnmount(() => {
+  cleanupPlacement()
+})
 
 const slotCount = computed(() => Math.max(0, Number(placement.value?.slotCount ?? 0)))
 const filledSlotCount = computed(() =>

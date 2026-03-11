@@ -469,7 +469,7 @@ export class VotingTimeSeriesService {
       return null;
     }
     
-    return page.votingTimeSeriesCache as VotingTimeSeriesData;
+    return page.votingTimeSeriesCache as unknown as VotingTimeSeriesData;
   }
 
   /**
@@ -490,7 +490,7 @@ export class VotingTimeSeriesService {
       return null;
     }
     
-    return user.attributionVotingTimeSeriesCache as VotingTimeSeriesData;
+    return user.attributionVotingTimeSeriesCache as unknown as VotingTimeSeriesData;
   }
 
   /**

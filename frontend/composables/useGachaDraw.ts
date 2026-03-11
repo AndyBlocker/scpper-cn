@@ -23,6 +23,7 @@ import {
 } from '~/utils/gachaConstants'
 import { raritySortWeight } from '~/utils/gachaRarity'
 import { displayCardTitle } from '~/utils/gachaTitle'
+import { normalizeError } from '~/composables/api/gachaCore'
 import GachaWalletBar from '~/components/gacha/GachaWalletBar.vue'
 import { usePageAuthors } from '~/composables/usePageAuthors'
 
@@ -32,6 +33,7 @@ export interface ReforgeCardOption {
   title: string
   rarity: Rarity
   imageUrl: string | null
+  isRetired?: boolean
   wikidotId?: number | null
   tags: string[]
   authors?: Array<{ name: string; wikidotId: number | null }> | null
@@ -278,8 +280,8 @@ export function useGachaDraw(page: GachaPageContext) {
         return
       }
       tickets.value = normalizeTickets(res.tickets)
-    } catch (error: any) {
-      emitError(error?.message || '加载票券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '加载票券失败'))
     } finally {
       ticketsLoading.value = false
     }
@@ -369,6 +371,7 @@ export function useGachaDraw(page: GachaPageContext) {
               title: displayCardTitle(item.title),
               rarity: item.rarity,
               imageUrl: item.imageUrl ?? null,
+              isRetired: !!item.isRetired,
               wikidotId: item.wikidotId ?? null,
               tags: item.tags ?? [],
               authors: item.authors ?? null,
@@ -386,6 +389,9 @@ export function useGachaDraw(page: GachaPageContext) {
           }
           if (!existing.imageUrl && item.imageUrl) {
             existing.imageUrl = item.imageUrl
+          }
+          if (!existing.isRetired && item.isRetired) {
+            existing.isRetired = true
           }
           if (existing.wikidotId == null && item.wikidotId != null) {
             existing.wikidotId = item.wikidotId
@@ -432,8 +438,8 @@ export function useGachaDraw(page: GachaPageContext) {
       }
       reforgeLoadedAt = Date.now()
       reforgeLoadedFilter = requestedAffixFilter
-    } catch (error: any) {
-      emitError(error?.message || '加载改造候选卡片失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '加载改造候选卡片失败'))
     } finally {
       reforgeOptionsLoading.value = false
       reforgeOptionsFullyLoaded.value = true
@@ -501,8 +507,8 @@ export function useGachaDraw(page: GachaPageContext) {
         refreshHistory(),
         refreshTicketsPanel()
       ])
-    } catch (error: any) {
-      page.activationError.value = error?.message || '激活失败'
+    } catch (error: unknown) {
+      page.activationError.value = normalizeError(error, '激活失败')
     } finally {
       page.activating.value = false
     }
@@ -565,8 +571,8 @@ export function useGachaDraw(page: GachaPageContext) {
       ]).catch((error) => {
         console.warn('[gacha] draw refresh failed', error)
       })
-    } catch (error: any) {
-      emitError(error?.message || '抽卡失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '抽卡失败'))
     } finally {
       drawing.value = false
     }
@@ -640,8 +646,8 @@ export function useGachaDraw(page: GachaPageContext) {
       ]).catch((error) => {
         console.warn('[gacha] ticket draw refresh failed', error)
       })
-    } catch (error: any) {
-      emitError(error?.message || '使用票券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '使用票券失败'))
     } finally {
       ticketAction.value = null
     }
@@ -663,8 +669,8 @@ export function useGachaDraw(page: GachaPageContext) {
       tickets.value = normalizeTickets(res.tickets)
       lastReforgeResult.value = res.result ?? null
       await refreshReforgeCardOptions(true)
-    } catch (error: any) {
-      emitError(error?.message || '使用改造券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '使用改造券失败'))
     } finally {
       ticketAction.value = null
     }
@@ -680,6 +686,10 @@ export function useGachaDraw(page: GachaPageContext) {
 
   function closeReforgeModal() {
     reforgeModalOpen.value = false
+  }
+
+  async function reforgeAgain() {
+    await confirmReforge()
   }
 
   async function confirmReforge() {
@@ -699,9 +709,16 @@ export function useGachaDraw(page: GachaPageContext) {
       tickets.value = normalizeTickets(res.tickets)
       lastReforgeResult.value = res.result ?? null
       reforgeModalPhase.value = 'result'
+      // Update reforgeCardId to track the new affix so selection survives refresh.
+      // Must use resolveAffixSignatureFromSource to normalise/sort the signature
+      // the same way reforgeStackKey does, otherwise the key won't match.
+      if (res.result?.cardId) {
+        const normSig = resolveAffixSignatureFromSource({ affixSignature: res.result.after.affixSignature })
+        reforgeCardId.value = `${res.result.cardId}::${normSig}`
+      }
       await refreshReforgeCardOptions(true)
-    } catch (error: any) {
-      emitError(error?.message || '使用改造券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '使用改造券失败'))
       reforgeModalOpen.value = false
     } finally {
       reforgeConfirming.value = false
@@ -797,10 +814,20 @@ export function useGachaDraw(page: GachaPageContext) {
     selectedReforgeCardOption,
     openReforgeModal,
     closeReforgeModal,
+    reforgeAgain,
     confirmReforge,
 
     // Lifecycle
     loadInitial,
+
+    // Cleanup (call from onBeforeUnmount)
+    cleanup: () => {
+      if (drawAuthorQueueTimer) {
+        clearTimeout(drawAuthorQueueTimer)
+        drawAuthorQueueTimer = null
+      }
+      drawAuthorQueue.clear()
+    },
 
     // Wallet utility
     handleWalletUpdated

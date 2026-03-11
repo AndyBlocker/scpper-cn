@@ -12,7 +12,7 @@
       <section class="search-hero">
         <div class="search-hero-content">
           <div class="brand-mark">
-            <BrandIcon class="w-12 h-12 text-[rgb(var(--accent))]" />
+            <BrandIcon class="w-12 h-12 text-[var(--g-accent)]" />
           </div>
           <p class="hero-kicker">SCPper CN 数据主页</p>
           <h1 class="hero-title">SCPPER <span class="hero-accent">CN</span></h1>
@@ -165,7 +165,7 @@
           <!-- Site Overview -->
           <section class="side-widget">
             <div class="widget-header">
-              <LucideIcon name="Activity" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Activity" class="w-4 h-4 text-[var(--g-accent)]" />
               <span class="widget-title">站点状态</span>
             </div>
             <div class="stats-matrix">
@@ -194,7 +194,7 @@
           <!-- Top Authors -->
           <section class="side-widget">
             <div class="widget-header">
-              <LucideIcon name="Crown" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Crown" class="w-4 h-4 text-[var(--g-accent)]" />
               <span class="widget-title">作者排行速览</span>
             </div>
             <div class="author-list">
@@ -220,7 +220,7 @@
           <!-- Hot Tags -->
           <section class="side-widget">
             <div class="widget-header">
-              <LucideIcon name="Hash" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Hash" class="w-4 h-4 text-[var(--g-accent)]" />
               <span class="widget-title">热门标签</span>
             </div>
             <div class="tag-cloud">
@@ -238,7 +238,7 @@
           <!-- Quick Tools -->
           <section class="side-widget">
             <div class="widget-header">
-              <LucideIcon name="Wrench" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Wrench" class="w-4 h-4 text-[var(--g-accent)]" />
               <span class="widget-title">常用工具</span>
             </div>
             <div class="tools-list">
@@ -255,7 +255,7 @@
           <!-- Community Activity -->
           <section class="side-widget">
             <div class="widget-header">
-              <LucideIcon name="MessageSquare" class="w-4 h-4 text-[rgb(var(--accent))]" />
+              <LucideIcon name="MessageSquare" class="w-4 h-4 text-[var(--g-accent)]" />
               <span class="widget-title">社区动态</span>
             </div>
             <div class="activity-feed">
@@ -596,7 +596,7 @@ definePageMeta({ layout: 'default' })
   font-family: 'Times New Roman', 'Songti SC', serif;
 }
 .hero-accent {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 .search-box-wrapper {
   @apply w-full max-w-2xl relative z-20;
@@ -607,8 +607,8 @@ definePageMeta({ layout: 'default' })
   box-shadow: 0 8px 30px -4px rgb(var(--fg) / 0.08);
 }
 .search-box:focus-within {
-  border-color: rgb(var(--accent));
-  box-shadow: 0 12px 40px -4px rgb(var(--accent) / 0.15);
+  border-color: var(--g-accent);
+  box-shadow: 0 12px 40px -4px var(--g-accent-medium);
   transform: translateY(-2px);
 }
 .search-icon {
@@ -657,7 +657,7 @@ definePageMeta({ layout: 'default' })
 }
 .banner-bg {
   @apply absolute inset-0 opacity-40 transition-transform duration-700;
-  background: linear-gradient(120deg, transparent 40%, rgb(var(--accent) / 0.1) 100%);
+  background: linear-gradient(120deg, transparent 40%, var(--g-accent-soft) 100%);
 }
 .banner-link:hover .banner-bg {
   transform: scale(1.05);
@@ -666,7 +666,7 @@ definePageMeta({ layout: 'default' })
   @apply relative z-10 flex flex-col items-end gap-4;
 }
 .banner-badge {
-  @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-[rgb(var(--accent))] text-white shadow-sm;
+  @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-[var(--g-accent)] text-white shadow-sm;
 }
 .banner-title {
   @apply text-3xl sm:text-4xl font-bold text-[rgb(var(--fg))];
@@ -698,14 +698,14 @@ definePageMeta({ layout: 'default' })
   @apply flex items-center gap-3;
 }
 .section-icon {
-  @apply w-5 h-5 text-[rgb(var(--accent))];
+  @apply w-5 h-5 text-[var(--g-accent)];
 }
 .section-title {
   @apply text-xl font-bold tracking-tight text-[rgb(var(--fg))];
   font-family: 'Times New Roman', serif;
 }
 .more-link {
-  @apply text-xs font-bold uppercase tracking-wider text-[rgb(var(--muted))] hover:text-[rgb(var(--accent))] transition-colors;
+  @apply text-xs font-bold uppercase tracking-wider text-[rgb(var(--muted))] hover:text-[var(--g-accent)] transition-colors;
 }
 .card-list {
   @apply flex flex-col gap-4;
@@ -874,7 +874,7 @@ definePageMeta({ layout: 'default' })
   @apply flex flex-wrap gap-2;
 }
 .cloud-tag {
-  @apply px-2 py-1 text-xs rounded border border-[rgb(var(--tag-border))] bg-[rgb(var(--tag-bg))] text-[rgb(var(--tag-text))] hover:border-[rgb(var(--accent))] hover:text-[rgb(var(--accent))] transition-colors;
+  @apply px-2 py-1 text-xs rounded border border-[rgb(var(--tag-border))] bg-[rgb(var(--tag-bg))] text-[rgb(var(--tag-text))] hover:border-[var(--g-accent)] hover:text-[var(--g-accent)] transition-colors;
 }
 
 /* Tools */
@@ -885,7 +885,7 @@ definePageMeta({ layout: 'default' })
   @apply flex items-start gap-3 p-2 rounded hover:bg-[rgb(var(--bg))] transition-colors;
 }
 .tool-icon {
-  @apply w-8 h-8 flex items-center justify-center rounded bg-[rgb(var(--accent)/0.1)] text-[rgb(var(--accent))];
+  @apply w-8 h-8 flex items-center justify-center rounded bg-[var(--g-accent-soft)] text-[var(--g-accent)];
 }
 .tool-text {
   @apply flex flex-col;

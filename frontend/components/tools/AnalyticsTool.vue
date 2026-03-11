@@ -10,7 +10,7 @@
         </select>
         <input type="date" v-model="startDate" class="px-3 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 w-full sm:w-auto text-sm" />
         <input type="date" v-model="endDate" class="px-3 py-1.5 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 w-full sm:w-auto text-sm" />
-        <button @click="refreshAll" class="px-3 py-1.5 rounded bg-[rgb(var(--accent))] text-white w-full sm:w-auto">应用</button>
+        <button @click="refreshAll" class="px-3 py-1.5 rounded bg-[var(--g-accent)] text-white w-full sm:w-auto">应用</button>
       </div>
     </div>
 
@@ -22,13 +22,13 @@
           <div
             v-for="c in categories"
             :key="c.key"
-            class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 cursor-pointer hover:border-[rgb(var(--accent))]/60 transition"
+            class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 cursor-pointer hover:border-[var(--g-accent)]/60 transition"
             @click="selectCategory(c.key)"
             :aria-pressed="selectedCategory === c.key"
           >
             <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1 flex items-center justify-between">
               <span>{{ c.label }}</span>
-              <span v-if="selectedCategory === c.key" class="text-[10px] text-[rgb(var(--accent))]">已选择</span>
+              <span v-if="selectedCategory === c.key" class="text-[10px] text-[var(--g-accent)]">已选择</span>
             </div>
             <div class="text-xl sm:text-2xl font-bold" :style="{ color: c.color }">{{ summary[c.key] ?? '—' }}</div>
           </div>

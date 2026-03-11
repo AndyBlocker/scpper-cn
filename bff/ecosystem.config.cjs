@@ -12,6 +12,8 @@ module.exports = {
         ENABLE_CACHE: process.env.ENABLE_CACHE || 'true',
         USER_BACKEND_BASE_URL: process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455',
         REDIS_URL: process.env.REDIS_URL,
+        HTML_SNIPPET_PUBLIC_BASE: process.env.HTML_SNIPPET_PUBLIC_BASE || 'https://scpper.mer.run',
+        CSS_PROXY_CACHE_CONTROL: process.env.CSS_PROXY_CACHE_CONTROL || 'public, max-age=3600, s-maxage=7200',
         ENABLE_TRACKING_DEBUG: process.env.ENABLE_TRACKING_DEBUG || 'true',
         TRACKING_DEBUG_SAMPLE_RATE: process.env.TRACKING_DEBUG_SAMPLE_RATE || '1'
       }

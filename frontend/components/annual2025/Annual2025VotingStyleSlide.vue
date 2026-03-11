@@ -2,7 +2,7 @@
   <section class="slide" :class="{ 'slide-active': isActive }">
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
-        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl p-8 md:p-12">
+        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
           <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="Vote" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
@@ -19,12 +19,12 @@
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-2xl p-4 md:p-6 relative overflow-hidden">
+          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-lg p-4 md:p-6 relative overflow-hidden">
             <div class="absolute top-0 right-0 p-8 md:p-16 opacity-5">
               <LucideIcon name="ThumbsUp" class="w-24 md:w-48 h-24 md:h-48 text-[rgb(var(--fg))]" />
             </div>
             <div class="relative z-10">
-              <div class="text-[rgb(var(--accent))] font-bold text-base md:text-lg mb-2">{{ userData.preferences.votingStyle.label }}</div>
+              <div class="text-[var(--g-accent)] font-bold text-base md:text-lg mb-2">{{ userData.preferences.votingStyle.label }}</div>
               <p class="text-[rgb(var(--muted))] text-xs md:text-sm mb-4 md:mb-6 leading-relaxed">{{ userData.preferences.votingStyle.desc }}</p>
 
               <div class="space-y-3 md:space-y-4">
@@ -67,9 +67,9 @@
             </div>
           </div>
 
-          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-2xl p-4 md:p-6">
+          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-lg p-4 md:p-6">
             <div class="flex items-center gap-2 mb-4 md:mb-6">
-              <LucideIcon name="Hash" class="w-4 h-4 md:w-5 md:h-5 text-[rgb(var(--accent))]" />
+              <LucideIcon name="Hash" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
               <span class="font-bold text-sm md:text-base text-[rgb(var(--fg))]">最常投票的标签</span>
             </div>
             <div class="space-y-2 md:space-y-3">
@@ -96,7 +96,7 @@
             </div>
           </div>
 
-          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-2xl p-4 md:p-6 md:col-span-2">
+          <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-lg p-4 md:p-6 md:col-span-2">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">投票数量分布</span>
               <span class="text-[10px] md:text-xs text-[rgb(var(--muted))]">共 {{ siteData.distributions.votesCast.total }} 位读者</span>

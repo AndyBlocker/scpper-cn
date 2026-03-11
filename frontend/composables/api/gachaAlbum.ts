@@ -7,7 +7,7 @@ import type {
 } from '~/types/gacha'
 
 export function useGachaAlbumApi(core: GachaCoreContext) {
-  const { $bff, state, normalizeImageUrl, normalizeCardTitle, withCardVariant, createIdempotencyKey } = core
+  const { $bff, state, normalizeImageUrl, normalizeCardTitle, withCardVariant, createIdempotencyKey, captureWalletSeq, setWalletIfFresh } = core
 
   async function listAlbumPages(params: { search?: string; limit?: number; offset?: number } = {}) {
     try {
@@ -29,7 +29,7 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载页面图鉴失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载页面图鉴失败')
       return { ok: false as const, error: message }
     }
@@ -45,13 +45,14 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
           totalPages: Math.max(0, Number(res.summary.totalPages || 0)),
           totalImageVariants: Math.max(0, Number(res.summary.totalImageVariants || 0)),
           totalImageVariantsInPool: Math.max(0, Number(res.summary.totalImageVariantsInPool || 0)),
+          totalPagesInPool: Math.max(0, Number(res.summary.totalPagesInPool || 0)),
           coatingStyles: Math.max(0, Number(res.summary.coatingStyles || 0)),
           totalOwnedCount: Math.max(0, Number(res.summary.totalOwnedCount || 0))
         } }
       }
       const message = res?.error || '加载图鉴汇总失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载图鉴汇总失败')
       return { ok: false as const, error: message }
     }
@@ -73,7 +74,7 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
       }
       const message = res?.error || '加载页面变体失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '加载页面变体失败')
       return { ok: false as const, error: message }
     }
@@ -82,6 +83,7 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
   async function dismantle(cardId: string, count: number, affixVisualStyle?: AffixVisualStyle, affixSignature?: string) {
     try {
       const idemKey = createIdempotencyKey('dismantle')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ wallet: Wallet; remaining: number; reward: number }>>('/gacha/dismantle', {
         method: 'POST',
         headers: {
@@ -96,14 +98,13 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, remaining: res.remaining, reward: res.reward }
       }
       const message = res?.error || '分解失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '分解失败')
       return { ok: false as const, error: message }
     }
@@ -112,6 +113,7 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
   async function dismantleBatchByRarity(maxRarity: Rarity, keepAtLeast = 1, keepScope: DismantleKeepScope = 'CARD') {
     try {
       const idemKey = createIdempotencyKey('dismantle-batch')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ wallet: Wallet; summary: DismantleBatchSummary }>>('/gacha/dismantle/batch', {
         method: 'POST',
         headers: {
@@ -121,14 +123,13 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, summary: res.summary }
       }
       const message = res?.error || '批量分解失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '批量分解失败')
       return { ok: false as const, error: message }
     }
@@ -145,32 +146,38 @@ export function useGachaAlbumApi(core: GachaCoreContext) {
       }
       const message = res?.error || '预览失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '预览失败')
       return { ok: false as const, error: message }
     }
   }
 
-  async function dismantleBatchSelective(items: Array<{ cardId: string; affixSignature?: string; affixVisualStyle?: string; count: number }>) {
+  async function dismantleBatchSelective(
+    items: Array<{ cardId: string; affixSignature?: string; affixVisualStyle?: string; count: number }>,
+    options?: { keepAtLeast?: number; idempotencyKey?: string }
+  ) {
     try {
-      const idemKey = createIdempotencyKey('dismantle-batch-selective')
+      const idemKey = options?.idempotencyKey || createIdempotencyKey('dismantle-batch-selective')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ wallet: Wallet; summary: DismantleBatchSummary }>>('/gacha/dismantle/batch-selective', {
         method: 'POST',
         headers: {
           'x-idempotency-key': idemKey
         },
-        body: { items }
+        body: {
+          items,
+          keepAtLeast: Math.max(0, Math.floor(Number(options?.keepAtLeast ?? 1) || 0))
+        }
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, summary: res.summary }
       }
       const message = res?.error || '批量分解失败'
       return { ok: false as const, error: message }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const message = normalizeError(error, '批量分解失败')
       return { ok: false as const, error: message }
     }

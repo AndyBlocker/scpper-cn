@@ -40,6 +40,7 @@ export const cfg = {
   host: str("HOST", "0.0.0.0"),
   port: num("PORT", 3200),
   logLevel: str("LOG_LEVEL", "info"),
+  upstreamProxyUrl: str("UPSTREAM_PROXY_URL", "").trim(),
 
   avatarRoot: resolve(str("AVATAR_ROOT", "/var/lib/avatar-agent/avatars")),
   defaultAvatar: resolve(str("DEFAULT_AVATAR", "./default-avatar.png")),

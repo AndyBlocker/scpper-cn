@@ -50,6 +50,12 @@ enum CollectionVisibility {
   PUBLIC
 }
 
+enum ForumInteractionAlertType {
+  PAGE_REPLY
+  DIRECT_REPLY
+  MENTION
+}
+
 model Attribution {
   id          Int         @id @default(autoincrement())
   pageVerId   Int
@@ -85,6 +91,18 @@ model DirtyPage {
   @@index([wikidotId])
   @@index([needPhaseB, donePhaseB])
   @@index([needPhaseC, donePhaseC])
+}
+
+model SyncExecutionLock {
+  key         String   @id
+  owner       String
+  acquiredAt  DateTime @default(now())
+  heartbeatAt DateTime @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([expiresAt])
 }
 
 model DirtyPageBackup {
@@ -125,6 +143,8 @@ model Page {
   userCollectionItems   UserCollectionItem[]
   metricWatches         PageMetricWatch[]
   metricAlerts          PageMetricAlert[]
+  forumThreads          ForumThread[]
+  forumInteractionAlerts ForumInteractionAlert[]
 
   @@index([currentUrl])
   @@index([isDeleted])
@@ -433,6 +453,8 @@ model User {
   metricPreferences                UserMetricPreference[]
   collections                      UserCollection[]
   collectionAccountOwner           CollectionAccountOwner?
+  forumAlertsReceived              ForumInteractionAlert[] @relation("ForumInteractionAlertRecipient")
+  forumAlertsTriggered             ForumInteractionAlert[] @relation("ForumInteractionAlertActor")
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
@@ -903,4 +925,109 @@ model TagGuideSync {
   errorMessage    String?              // 失败原因
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+}
+
+// ─── Forum Models ────────────────────────────────────────────
+
+model ForumCategory {
+  id           Int           @id              // wikidot 原始 ID
+  title        String
+  description  String?       @db.Text
+  threadsCount Int           @default(0)
+  postsCount   Int           @default(0)
+  lastSyncedAt DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  threads      ForumThread[]
+}
+
+model ForumThread {
+  id                 Int            @id           // wikidot 原始 ID
+  categoryId         Int
+  title              String
+  description        String?        @db.Text
+  createdByName      String?
+  createdByWikidotId Int?
+  createdAt          DateTime?
+  postCount          Int            @default(0)
+  postCountAtSync    Int            @default(0)   // 增量检测：上次同步时的 postCount
+  isDeleted          Boolean        @default(false)
+  lastSyncedAt       DateTime?
+  pageId             Int?                         // 页面讨论帖关联
+  category           ForumCategory  @relation(fields: [categoryId], references: [id])
+  page               Page?          @relation(fields: [pageId], references: [id])
+  posts              ForumPost[]
+  interactionAlerts  ForumInteractionAlert[]
+  syncedAt           DateTime       @default(now())
+  updatedFieldAt     DateTime       @updatedAt
+
+  @@index([categoryId])
+  @@index([pageId])
+  @@index([createdAt])
+  @@index([isDeleted])
+}
+
+model ForumPost {
+  id                 Int          @id           // wikidot 原始 ID
+  threadId           Int
+  parentId           Int?                       // 楼中楼嵌套
+  title              String?
+  textHtml           String?      @db.Text
+  createdByName      String?
+  createdByWikidotId Int?
+  createdByType      String?                    // user/deleted/anonymous/guest
+  createdAt          DateTime?
+  editedAt           DateTime?
+  isDeleted          Boolean      @default(false)
+  syncedAt           DateTime     @default(now())
+  thread             ForumThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  interactionAlerts  ForumInteractionAlert[] @relation("ForumInteractionAlertPost")
+  parentInteractionAlerts ForumInteractionAlert[] @relation("ForumInteractionAlertParentPost")
+
+  @@index([threadId])
+  @@index([parentId])
+  @@index([createdAt])
+  @@index([createdByWikidotId])
+}
+
+model ForumInteractionAlert {
+  id               Int                       @id @default(autoincrement())
+  recipientUserId  Int
+  actorUserId      Int?
+  actorWikidotId   Int?
+  actorName        String?
+  type             ForumInteractionAlertType
+  postId           Int
+  parentPostId     Int?
+  threadId         Int
+  pageId           Int?
+  postTitle        String?
+  postExcerpt      String?                   @db.Text
+  detectedAt       DateTime                  @default(now())
+  acknowledgedAt   DateTime?
+  createdAt        DateTime                  @default(now())
+  recipientUser    User                      @relation("ForumInteractionAlertRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  actorUser        User?                     @relation("ForumInteractionAlertActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  post             ForumPost                 @relation("ForumInteractionAlertPost", fields: [postId], references: [id], onDelete: Cascade)
+  parentPost       ForumPost?                @relation("ForumInteractionAlertParentPost", fields: [parentPostId], references: [id], onDelete: SetNull)
+  thread           ForumThread               @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  page             Page?                     @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@unique([recipientUserId, type, postId], map: "uniq_forum_interaction_alert_recipient_type_post")
+  @@index([recipientUserId, acknowledgedAt, detectedAt], map: "idx_forum_interaction_alert_recipient_ack_detected")
+  @@index([threadId, detectedAt], map: "idx_forum_interaction_alert_thread_detected")
+  @@index([pageId, detectedAt], map: "idx_forum_interaction_alert_page_detected")
+  @@index([postId], map: "idx_forum_interaction_alert_post")
+}
+
+model ForumSyncState {
+  id               Int       @id @default(autoincrement())
+  task             String    @unique    // 'full' | 'incremental'
+  lastRunAt        DateTime?
+  lastSuccessAt    DateTime?
+  categoriesSynced Int       @default(0)
+  threadsSynced    Int       @default(0)
+  postsSynced      Int       @default(0)
+  errorMessage     String?
+  updatedAt        DateTime  @updatedAt
 }

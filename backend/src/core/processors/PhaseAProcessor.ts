@@ -90,7 +90,7 @@ export class PhaseAProcessor {
     this.attrService = new AttributionService(this.store.prisma);
   }
 
-  async runComplete(): Promise<PhaseAResult> {
+  async runComplete(onProgress?: () => void): Promise<PhaseAResult> {
     Logger.info('=== Phase A: Complete Page Scanning (New Architecture) ===');
 
     // Get total page count
@@ -260,6 +260,7 @@ export class PhaseAProcessor {
       const firstUrl = edges.length > 0 ? edges[0].node.url : 'N/A';
       Logger.info(`Batch ${batchCount}: processed ${edges.length} pages (${processedCount}/${total}), avg cost: ${avgCostInBatch} pts`);
       Logger.info(`  First URL: ${firstUrl}`);
+      onProgress?.();
 
       if (!res.pages.pageInfo.hasNextPage) break;
       after = res.pages.pageInfo.endCursor;

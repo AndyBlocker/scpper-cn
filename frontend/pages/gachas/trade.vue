@@ -56,13 +56,17 @@
             @buy="requestBuyTradeListing"
             @cancel="handleCancelTradeListingById"
             @load-more="loadMorePublicTradeListings"
+            @trade-page-change="loadPublicTradePage"
             @query-change="setPublicTradeQuery"
             @create-buy-request="requestCreateBuyRequest"
             @fulfill-buy-request="requestFulfillBuyRequest"
             @cancel-buy-request="handleCancelBuyRequest"
             @buy-request-load-more="loadMorePublicBuyRequests"
+            @buy-request-page-change="loadPublicBuyRequestPage"
             @buy-request-query-change="setBuyRequestQuery"
             @refresh-buy-requests="refreshBuyRequestPanel"
+            @request-inventory="handleRequestInventory"
+            @request-catalog="handleRequestCatalog"
           />
         </div>
       </Transition>
@@ -107,14 +111,14 @@
 
   <!-- Fulfill Buy Request Confirmation Dialog -->
   <GachaConfirmDialog
-    :open="!!pendingFulfillBuyRequestId"
+    :open="!!pendingFulfillBuyRequest"
     title="确认接受求购"
     description="你将出售目标卡片并获得买方的出价。"
     confirm-text="确认接受"
     :busy="!!buyRequestFulfillingId"
     :details="fulfillBuyRequestConfirmDetails"
     @confirm="confirmFulfillBuyRequest"
-    @cancel="pendingFulfillBuyRequestId = null"
+    @cancel="pendingFulfillBuyRequest = null"
   />
 </template>
 
@@ -151,6 +155,12 @@ interface BuyRequestCreatePayload {
   expiresHours: number
 }
 
+interface BuyRequestFulfillPayload {
+  buyRequestId: string
+  selectedCardId?: string
+  selectedAffixSignature?: string
+}
+
 const page = useGachaPage({ pageName: 'trade' })
 const {
   authPending, showBindingBlock,
@@ -173,6 +183,7 @@ const {
   setPublicTradeQuery,
   refreshPlacementOptions,
   loadMorePublicTradeListings,
+  loadPublicTradePage,
   loadInitial,
   // Buy Request
   publicBuyRequests, myBuyRequests, cardCatalog,
@@ -181,8 +192,11 @@ const {
   buyRequestPublicTotal, buyRequestPublicHasMore, buyRequestPublicLoadingMore,
   myOpenBuyRequestCount,
   refreshBuyRequestPanel, loadMorePublicBuyRequests,
+  loadPublicBuyRequestPage,
   setBuyRequestQuery,
   handleCreateBuyRequest, handleFulfillBuyRequest, handleCancelBuyRequest,
+  // Lazy-load helpers
+  refreshOwnedCardIds, refreshCardCatalog,
   cleanup: cleanupTrade
 } = idx
 
@@ -210,7 +224,7 @@ const activeSellerCount = computed(() => {
 const pendingBuyListing = ref<TradeListing | null>(null)
 const pendingCreatePayload = ref<TradeCreatePayload | null>(null)
 const pendingBuyRequestPayloads = ref<BuyRequestCreatePayload[]>([])
-const pendingFulfillBuyRequestId = ref<string | null>(null)
+const pendingFulfillBuyRequest = ref<BuyRequestFulfillPayload | null>(null)
 
 const buyConfirmDetails = computed(() => {
   if (!pendingBuyListing.value) return []
@@ -320,15 +334,18 @@ async function confirmCreateBuyRequest() {
   }
 }
 
-function requestFulfillBuyRequest(buyRequestId: string) {
-  pendingFulfillBuyRequestId.value = buyRequestId
+function requestFulfillBuyRequest(payload: BuyRequestFulfillPayload) {
+  pendingFulfillBuyRequest.value = payload
 }
 
 async function confirmFulfillBuyRequest() {
-  if (!pendingFulfillBuyRequestId.value) return
-  const id = pendingFulfillBuyRequestId.value
-  pendingFulfillBuyRequestId.value = null
-  await handleFulfillBuyRequest(id)
+  if (!pendingFulfillBuyRequest.value) return
+  const payload = pendingFulfillBuyRequest.value
+  pendingFulfillBuyRequest.value = null
+  await handleFulfillBuyRequest(payload.buyRequestId, {
+    selectedCardId: payload.selectedCardId,
+    selectedAffixSignature: payload.selectedAffixSignature
+  })
 }
 
 const buyRequestCreateConfirmDetails = computed(() => {
@@ -354,8 +371,8 @@ const buyRequestCreateConfirmDetails = computed(() => {
 })
 
 const fulfillBuyRequestConfirmDetails = computed(() => {
-  if (!pendingFulfillBuyRequestId.value) return []
-  const br = [...publicBuyRequests.value, ...myBuyRequests.value].find((b) => b.id === pendingFulfillBuyRequestId.value)
+  if (!pendingFulfillBuyRequest.value) return []
+  const br = [...publicBuyRequests.value, ...myBuyRequests.value].find((b) => b.id === pendingFulfillBuyRequest.value?.buyRequestId)
   if (!br) return []
   const matchLabel = buyRequestMatchLevelLabelMap[br.matchLevel] ?? br.matchLevel
   const rows: Array<{ label: string; value: string | number }> = [
@@ -365,6 +382,12 @@ const fulfillBuyRequestConfirmDetails = computed(() => {
     { label: 'Token 报酬', value: br.tokenOffer > 0 ? `${formatTokens(br.tokenOffer)} T` : '无' },
     { label: '获得卡牌', value: br.offeredCards.length > 0 ? `${br.offeredCards.length} 种` : '无' }
   ]
+  if (pendingFulfillBuyRequest.value.selectedCardId) {
+    rows.push({ label: '出售卡牌ID', value: pendingFulfillBuyRequest.value.selectedCardId })
+  }
+  if (pendingFulfillBuyRequest.value.selectedAffixSignature) {
+    rows.push({ label: '出售词条', value: pendingFulfillBuyRequest.value.selectedAffixSignature })
+  }
   return rows
 })
 
@@ -377,11 +400,26 @@ const { walletBalance, onActivate } = useGachaPageLifecycle({
   tag: 'gacha-trade',
   loadInitial,
   afterLoad: async () => {
+    // Lightweight initial load: skip full inventory and catalog, use ownedCardIds endpoint instead
     await Promise.allSettled([
       refreshTradePanel({ syncInventory: false, resetPublic: true }),
-      refreshPlacementOptions(),
-      refreshBuyRequestPanel({ resetPublic: true })
+      refreshOwnedCardIds(),
+      refreshBuyRequestPanel({ resetPublic: true, loadCatalog: false })
     ])
   }
 })
+
+// Lazy-load full inventory when the create-listing form opens
+function handleRequestInventory() {
+  if (placementOptions.value.length === 0 && !placementOptionsLoading.value) {
+    void refreshPlacementOptions()
+  }
+}
+
+// Lazy-load card catalog when the buy-request form opens
+function handleRequestCatalog() {
+  if (cardCatalog.value.length === 0) {
+    void refreshCardCatalog()
+  }
+}
 </script>

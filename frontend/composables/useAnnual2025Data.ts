@@ -315,15 +315,18 @@ export function useAnnual2025Data(rawSiteData: Ref<SiteData | null>, rawUserData
     }))
 
     const rawDistributions = raw.distributions || {}
-    const mapDistribution = (dist: any) => {
+    const mapDistribution = (dist: {
+      total?: number
+      buckets?: Array<{ label?: string; min?: number | null; max?: number | null; count?: number }>
+    } | null | undefined) => {
       const buckets = Array.isArray(dist?.buckets) ? dist.buckets : []
-      const maxCount = Math.max(...buckets.map(b => Number(b.count) || 0), 1)
-      const mappedBuckets = buckets.map((b: any) => ({
-        label: b.label,
-        count: Number(b.count) || 0,
-        min: typeof b.min === 'number' ? b.min : null,
-        max: typeof b.max === 'number' ? b.max : null,
-        heightPercent: maxCount > 0 ? Math.round((Number(b.count) || 0) / maxCount * 100) : 0
+      const maxCount = Math.max(...buckets.map((bucket) => Number(bucket.count) || 0), 1)
+      const mappedBuckets = buckets.map((bucket) => ({
+        label: bucket.label || '',
+        count: Number(bucket.count) || 0,
+        min: typeof bucket.min === 'number' ? bucket.min : null,
+        max: typeof bucket.max === 'number' ? bucket.max : null,
+        heightPercent: maxCount > 0 ? Math.round((Number(bucket.count) || 0) / maxCount * 100) : 0
       }))
       return {
         total: typeof dist?.total === 'number' ? dist.total : mappedBuckets.reduce((sum, item) => sum + item.count, 0),
@@ -979,7 +982,8 @@ export function useAnnual2025Data(rawSiteData: Ref<SiteData | null>, rawUserData
             rarityLabel: '',
             tag: '',
             earnedAt: '',
-            qualifierLength: 0
+            qualifierLength: 0,
+            metric: hasWorks ? 'pageCount' : hasVotes ? 'voteCount' : 'activity'
           })
         }
         return mapped

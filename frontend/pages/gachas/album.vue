@@ -9,9 +9,12 @@
     <div class="gacha-page-flow">
       <GachaErrorBanner :error="errorBanner" :success="successBanner" />
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2" role="tablist" @keydown="handleTabKeydown">
         <button
           type="button"
+          role="tab"
+          :aria-selected="activeTab === 'album'"
+          :tabindex="activeTab === 'album' ? 0 : -1"
           class="gacha-tab-btn"
           :class="{ 'is-active': activeTab === 'album' }"
           @click="setTab('album')"
@@ -20,6 +23,9 @@
         </button>
         <button
           type="button"
+          role="tab"
+          :aria-selected="activeTab === 'showcase'"
+          :tabindex="activeTab === 'showcase' ? 0 : -1"
           class="gacha-tab-btn"
           :class="{ 'is-active': activeTab === 'showcase' }"
           @click="handleShowcaseTab"
@@ -28,6 +34,9 @@
         </button>
         <button
           type="button"
+          role="tab"
+          :aria-selected="activeTab === 'progress'"
+          :tabindex="activeTab === 'progress' ? 0 : -1"
           class="gacha-tab-btn"
           :class="{ 'is-active': activeTab === 'progress' }"
           @click="setTab('progress')"
@@ -125,14 +134,18 @@
               :busy="showcase.showcaseBusy.value"
               :picker-options="showcasePickerOptions"
               :picker-loading="loadingShowcasePicker"
-              :wallet-balance="walletBalance"
+              :picker-total="showcasePickerTotal"
+              :picker-has-more="showcasePickerHasMore"
+              :wallet-balance="walletBalance ?? 0"
               @create="showcase.createShowcase"
               @rename="showcase.renameShowcase"
               @delete="showcase.deleteShowcase"
-              @set-slot="showcase.setSlot"
-              @clear-slot="showcase.clearSlot"
+              @set-slot="handleShowcaseSetSlot"
+              @clear-slot="handleShowcaseClearSlot"
               @refresh="refreshShowcaseTabManually"
-              @load-picker="loadShowcasePickerOptions"
+              @load-picker="() => loadShowcasePickerOptions(true)"
+              @picker-query-change="handleShowcasePickerQueryChange"
+              @picker-load-more="handleShowcasePickerLoadMore"
             />
           </div>
         </section>
@@ -188,18 +201,18 @@
             </div>
           </section>
 
-          <section ref="cardGridRef" class="surface-card p-4">
-            <div v-if="loadingPages" :class="albumCardVariant === 'mini' ? 'gacha-card-grid--mini' : 'gacha-card-grid--large'">
+          <section class="surface-card p-4">
+            <div v-if="loadingPages || albumLoading" :class="albumCardVariant === 'mini' ? 'gacha-card-grid--mini' : 'gacha-card-grid--large'">
               <GachaSkeleton v-for="i in 12" :key="i" :variant="albumCardVariant === 'mini' ? 'card-mini' : 'card-large'" />
             </div>
             <div
-              v-else-if="filteredVariants.length"
+              v-else-if="albumItems.length"
               :class="albumCardVariant === 'mini' ? 'gacha-card-grid--mini' : 'gacha-card-grid--large'"
             >
               <GachaCard
-                v-for="card in visibleVariants"
+                v-for="card in albumItems"
                 :key="`${card.cardId}::${card.affixSignature || 'std'}`"
-                class="gacha-card-reveal-target album-card-trigger"
+                class="album-card-trigger"
                 :tabindex="albumCardVariant === 'mini' ? 0 : undefined"
                 :role="albumCardVariant === 'mini' ? 'button' : undefined"
                 :aria-label="albumCardVariant === 'mini' ? `查看${card.title}详情` : undefined"
@@ -212,6 +225,7 @@
                 :image-url="card.imageUrl || undefined"
                 :page-url="albumCardVariant === 'large' ? albumCardPageUrl(card) : null"
                 :variant="albumCardVariant"
+                :retired="card.isRetired"
                 :affix-visual-style="card.affixVisualStyle"
                 :affix-signature="card.affixSignature"
                 :affix-styles="card.affixStyles"
@@ -225,18 +239,13 @@
             </div>
             <GachaEmptyState v-else icon="🔍" title="无匹配结果" description="尝试调整搜索条件或稀有度筛选" />
 
-            <button
-              v-if="albumHasMore"
-              type="button"
-              class="mt-3 w-full rounded-xl bg-neutral-100 px-3 py-2.5 text-center text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-              @click="albumLoadMore"
-            >
-              加载更多 (剩余 {{ filteredVariants.length - ALBUM_RENDER_LIMIT }} 张)
-            </button>
-
-            <p v-if="loadingRemainder" class="mt-3 text-center text-[11px] text-neutral-400 dark:text-neutral-500">
-              正在加载其余卡片...
-            </p>
+            <GachaPagination
+              :current="albumPage"
+              :total="albumTotal"
+              :page-size="80"
+              :loading="albumLoading"
+              @change="loadAlbumPage"
+            />
           </section>
         </div>
       </Transition>
@@ -273,7 +282,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import GachaPageShell from '~/components/gacha/GachaPageShell.vue'
 import GachaErrorBanner from '~/components/gacha/GachaErrorBanner.vue'
 import GachaSkeleton from '~/components/gacha/GachaSkeleton.vue'
@@ -284,6 +293,7 @@ import GachaQuickDismantleDialog from '~/components/gacha/GachaQuickDismantleDia
 import GachaShowcasePanel from '~/components/gacha/GachaShowcasePanel.vue'
 import GachaRarityFilter from '~/components/gacha/GachaRarityFilter.vue'
 import GachaCard from '~/components/gacha/GachaCard.vue'
+import GachaPagination from '~/components/gacha/GachaPagination.vue'
 import { UiButton } from '~/components/ui/button'
 import { UiInput } from '~/components/ui/input'
 import { UiProgress } from '~/components/ui/progress'
@@ -293,11 +303,12 @@ import { useGachaLock } from '~/composables/useGachaLock'
 import { useGachaShowcase } from '~/composables/useGachaShowcase'
 import { useGachaPageLifecycle } from '~/composables/useGachaPageLifecycle'
 import { useQueryTab } from '~/composables/useQueryTab'
-import { useScrollReveal } from '~/composables/useScrollReveal'
 import { rarityLabel, raritySortWeight } from '~/utils/gachaRarity'
 import { progressPercent, formatTokens } from '~/utils/gachaFormatters'
 import type { Progress, Rarity, AlbumPageVariant, DismantleKeepScope } from '~/types/gacha'
 import type { ShowcasePickerOption } from '~/components/gacha/GachaShowcaseSlotPicker.vue'
+import type { ShowcaseSlotCard } from '~/composables/api/gachaShowcase'
+import type { LockedInstance } from '~/composables/api/gachaLock'
 
 const pageRarityFilterOptions: Array<Rarity | 'ALL'> = ['ALL', 'GOLD', 'PURPLE', 'BLUE', 'GREEN', 'WHITE']
 
@@ -312,9 +323,9 @@ const album = useGachaAlbum(page)
 const lock = useGachaLock(page)
 const showcase = useGachaShowcase(page)
 const {
-  loadingPages, loadingRemainder, searchKeyword, pageRarityFilter,
-  filteredVariants,
-  refreshPages, updateVariantLockStatus,
+  loadingPages, albumLoading, albumItems, albumPage, albumTotal,
+  searchKeyword, pageRarityFilter,
+  loadAlbumPage, refreshPages, updateVariantLockStatus,
   batchDismantleDialogOpen, batchDismantleCandidates,
   batchDismantleLoading, batchDismantling, batchDismantleError,
   openBatchDismantleDialog, closeBatchDismantleDialog, confirmBatchDismantle,
@@ -328,61 +339,27 @@ const quickDismantleRef = ref<InstanceType<typeof GachaQuickDismantleDialog> | n
 
 const { activeTab, setTab } = useQueryTab<'album' | 'showcase' | 'progress'>({ defaultTab: 'album' })
 
+const albumTabs: Array<'album' | 'showcase' | 'progress'> = ['album', 'showcase', 'progress']
+function handleTabKeydown(e: KeyboardEvent) {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  e.preventDefault()
+  const idx = albumTabs.indexOf(activeTab.value)
+  const next = e.key === 'ArrowRight'
+    ? albumTabs[(idx + 1) % albumTabs.length]
+    : albumTabs[(idx - 1 + albumTabs.length) % albumTabs.length]
+  if (next === 'showcase') handleShowcaseTab()
+  else setTab(next)
+  nextTick(() => {
+    const tablist = (e.currentTarget as HTMLElement)
+    const nextBtn = tablist?.querySelector<HTMLElement>('[aria-selected="true"]')
+    nextBtn?.focus()
+  })
+}
+
 const albumCardVariant = ref<'mini' | 'large'>('mini')
 const cardDetailDialogOpen = ref(false)
 const selectedCardForDetail = ref<AlbumPageVariant | null>(null)
 const detailDismantleBusy = ref(false)
-
-// ─── Album grid progressive render ─────────────────────
-const ALBUM_RENDER_LIMIT = 60
-const ALBUM_RENDER_BATCH = 20
-const albumShowAll = ref(false)
-const albumRenderBudget = ref(ALBUM_RENDER_BATCH)
-let albumRafId: number | null = null
-
-const visibleVariants = computed(() => {
-  const limit = albumShowAll.value ? albumRenderBudget.value : Math.min(albumRenderBudget.value, ALBUM_RENDER_LIMIT)
-  return filteredVariants.value.slice(0, limit)
-})
-const albumHasMore = computed(() => !albumShowAll.value && filteredVariants.value.length > ALBUM_RENDER_LIMIT)
-
-function startAlbumProgressiveRender() {
-  albumRenderBudget.value = ALBUM_RENDER_BATCH
-  if (albumRafId != null) cancelAnimationFrame(albumRafId)
-  function step() {
-    const target = albumShowAll.value ? filteredVariants.value.length : ALBUM_RENDER_LIMIT
-    if (albumRenderBudget.value < target) {
-      albumRenderBudget.value = Math.min(albumRenderBudget.value + ALBUM_RENDER_BATCH, target)
-      albumRafId = requestAnimationFrame(step)
-    } else {
-      albumRafId = null
-    }
-  }
-  albumRafId = requestAnimationFrame(step)
-}
-
-function albumLoadMore() {
-  albumShowAll.value = true
-  startAlbumProgressiveRender()
-}
-
-// Scroll-reveal for card grid
-const cardGridRef = ref<HTMLElement | null>(null)
-const { refresh: refreshReveal, debouncedRefresh: debouncedReveal } = useScrollReveal(cardGridRef, {
-  selector: '.gacha-card-reveal-target',
-  rootMargin: '0px 0px -30px 0px'
-})
-
-// Re-trigger reveal and progressive render when cards or variant change
-watch([filteredVariants, albumCardVariant], () => {
-  albumShowAll.value = false
-  startAlbumProgressiveRender()
-  nextTick(() => refreshReveal())
-})
-
-watch(albumRenderBudget, () => {
-  nextTick(() => debouncedReveal())
-})
 
 const progressData = ref<Progress | null>(null)
 const loadingProgress = ref(false)
@@ -477,23 +454,23 @@ async function handleDetailDismantleOne() {
 
     emitSuccess(`已分解 1 张卡片，返还 ${formatTokens(res.reward || 0)} Token`)
     const signature = card.affixSignature || 'NONE'
-    const index = album.inventoryVariants.value.findIndex((item) =>
+    const index = album.albumItems.value.findIndex((item) =>
       item.cardId === card.cardId && (item.affixSignature || 'NONE') === signature
     )
 
     if (index >= 0) {
-      const target = album.inventoryVariants.value[index]
+      const target = album.albumItems.value[index]
       const nextCount = Math.max(0, Number(target.count || 0) - 1)
       target.count = nextCount
       if (typeof target.lockedCount === 'number') {
         target.lockedCount = Math.min(Math.max(0, Number(target.lockedCount || 0)), nextCount)
       }
       if (nextCount <= 0) {
-        album.inventoryVariants.value.splice(index, 1)
+        album.albumItems.value.splice(index, 1)
       }
     }
 
-    const nextCard = album.inventoryVariants.value.find((item) =>
+    const nextCard = album.albumItems.value.find((item) =>
       item.cardId === card.cardId && (item.affixSignature || 'NONE') === signature
     ) || null
     if (nextCard) {
@@ -529,8 +506,90 @@ async function handleQuickDismantleConfirm(maxRarity: Rarity, keepAtLeast: numbe
 
 // ─── Showcase helpers ──────────────────────────────────
 const showcasePickerOptions = ref<ShowcasePickerOption[]>([])
+const showcasePickerFallbackByInstanceId = ref<Record<string, ShowcasePickerOption>>({})
+const showcasePickerSearch = ref('')
+const showcasePickerRarity = ref<Rarity | 'ALL'>('ALL')
+const showcasePickerTotal = ref(0)
+const showcasePickerLoadedCount = ref(0)
 const loadingShowcasePicker = ref(false)
 const showcaseTabLoaded = ref(false)
+const SHOWCASE_PICKER_PAGE_SIZE = 60
+let showcasePickerRequestSeq = 0
+
+const showcasedInstanceIdSet = computed(() => {
+  const set = new Set<string>()
+  for (const sc of showcase.showcases.value) {
+    for (const slot of sc.slots ?? []) {
+      const instanceId = slot.card?.instanceId
+      if (instanceId) set.add(instanceId)
+    }
+  }
+  return set
+})
+
+function toShowcasePickerOptionFromFreeInstance(inst: LockedInstance): ShowcasePickerOption {
+  return {
+    cardId: inst.cardId,
+    instanceId: inst.instanceId,
+    title: inst.title,
+    rarity: inst.rarity,
+    tags: inst.tags ?? [],
+    imageUrl: inst.imageUrl,
+    authors: inst.authors ?? null,
+    wikidotId: inst.wikidotId ?? null,
+    affixVisualStyle: inst.affixVisualStyle ?? 'NONE',
+    affixSignature: inst.affixSignature ?? 'NONE',
+    affixLabel: inst.affixLabel ?? null,
+    isLocked: inst.isLocked ?? false
+  }
+}
+
+function toShowcasePickerOptionFromShowcaseCard(card: ShowcaseSlotCard): ShowcasePickerOption {
+  return {
+    cardId: card.cardId,
+    instanceId: card.instanceId,
+    title: card.title,
+    rarity: card.rarity,
+    tags: card.tags ?? [],
+    imageUrl: card.imageUrl,
+    authors: card.authors ?? null,
+    wikidotId: card.wikidotId ?? null,
+    affixVisualStyle: card.affixVisualStyle ?? 'NONE',
+    affixSignature: card.affixSignature ?? 'NONE',
+    affixLabel: card.affixLabel ?? null,
+    // 展示柜卡片下架后可再次入柜，前端不应因“曾被锁定”而禁用。
+    isLocked: false
+  }
+}
+
+function mergeShowcasePickerOptions(baseItems: ShowcasePickerOption[]) {
+  const showcasedIds = showcasedInstanceIdSet.value
+  const merged = new Map<string, ShowcasePickerOption>()
+  for (const item of baseItems) {
+    if (!item.instanceId || showcasedIds.has(item.instanceId)) continue
+    merged.set(item.instanceId, item)
+  }
+  for (const [instanceId, option] of Object.entries(showcasePickerFallbackByInstanceId.value)) {
+    if (!instanceId || showcasedIds.has(instanceId)) continue
+    if (!merged.has(instanceId)) merged.set(instanceId, option)
+  }
+  showcasePickerOptions.value = Array.from(merged.values())
+}
+
+function appendShowcasePickerOptions(baseItems: ShowcasePickerOption[], incomingItems: ShowcasePickerOption[]) {
+  const merged = new Map<string, ShowcasePickerOption>()
+  for (const item of baseItems) {
+    if (!item.instanceId) continue
+    merged.set(item.instanceId, item)
+  }
+  for (const item of incomingItems) {
+    if (!item.instanceId) continue
+    merged.set(item.instanceId, item)
+  }
+  return Array.from(merged.values())
+}
+
+const showcasePickerHasMore = computed(() => showcasePickerLoadedCount.value < showcasePickerTotal.value)
 
 async function refreshShowcaseTab(force = false) {
   if (!force && showcaseTabLoaded.value) return
@@ -547,33 +606,87 @@ async function refreshShowcaseTabManually() {
   await refreshShowcaseTab(true)
 }
 
-async function loadShowcasePickerOptions() {
+async function loadShowcasePickerOptions(reset = true) {
+  const requestSeq = ++showcasePickerRequestSeq
+  if (reset) {
+    showcasePickerLoadedCount.value = 0
+    showcasePickerTotal.value = 0
+  }
   loadingShowcasePicker.value = true
   try {
-    const res = await gacha.getFreeInstances(2000, { includePlaced: true, includeLocked: true })
+    const res = await gacha.getFreeInstances({
+      limit: SHOWCASE_PICKER_PAGE_SIZE,
+      offset: reset ? 0 : showcasePickerLoadedCount.value,
+      search: showcasePickerSearch.value,
+      rarity: showcasePickerRarity.value,
+      includePlaced: true,
+      includeLocked: true,
+      sort: 'PICKER'
+    })
+    if (requestSeq !== showcasePickerRequestSeq) return
     if (!res.ok) {
-      showcasePickerOptions.value = []
+      if (reset) {
+        mergeShowcasePickerOptions([])
+      }
       return
     }
-    showcasePickerOptions.value = (res.items ?? []).map((inst) => ({
-      cardId: inst.cardId,
-      instanceId: inst.instanceId,
-      title: inst.title,
-      rarity: inst.rarity,
-      tags: inst.tags ?? [],
-      imageUrl: inst.imageUrl,
-      authors: inst.authors ?? null,
-      wikidotId: inst.wikidotId ?? null,
-      affixVisualStyle: inst.affixVisualStyle || 'NONE',
-      affixSignature: inst.affixSignature || 'NONE',
-      affixLabel: inst.affixLabel || null,
-      isLocked: inst.isLocked ?? false
-    }))
+    const mapped = (res.items ?? []).map(toShowcasePickerOptionFromFreeInstance)
+    const nextBaseItems = reset
+      ? mapped
+      : appendShowcasePickerOptions(showcasePickerOptions.value, mapped)
+    showcasePickerLoadedCount.value = reset
+      ? mapped.length
+      : showcasePickerLoadedCount.value + mapped.length
+    showcasePickerTotal.value = Math.max(0, Number(res.total ?? nextBaseItems.length))
+    mergeShowcasePickerOptions(nextBaseItems)
   } catch {
-    showcasePickerOptions.value = []
+    if (requestSeq !== showcasePickerRequestSeq) return
+    if (reset) {
+      mergeShowcasePickerOptions([])
+      showcasePickerLoadedCount.value = 0
+      showcasePickerTotal.value = 0
+    }
   } finally {
-    loadingShowcasePicker.value = false
+    if (requestSeq === showcasePickerRequestSeq) {
+      loadingShowcasePicker.value = false
+    }
   }
+}
+
+function handleShowcasePickerQueryChange(payload: { search: string; rarity: Rarity | 'ALL' }) {
+  showcasePickerSearch.value = payload.search
+  showcasePickerRarity.value = payload.rarity
+  void loadShowcasePickerOptions(true)
+}
+
+function handleShowcasePickerLoadMore() {
+  if (loadingShowcasePicker.value || !showcasePickerHasMore.value) return
+  void loadShowcasePickerOptions(false)
+}
+
+async function handleShowcaseSetSlot(showcaseId: string, slotIndex: number, instanceId: string) {
+  const ok = await showcase.setSlot(showcaseId, slotIndex, instanceId)
+  if (!ok) return
+  if (instanceId in showcasePickerFallbackByInstanceId.value) {
+    const { [instanceId]: _removed, ...rest } = showcasePickerFallbackByInstanceId.value
+    showcasePickerFallbackByInstanceId.value = rest
+  }
+  showcasePickerOptions.value = showcasePickerOptions.value.filter((item) => item.instanceId !== instanceId)
+}
+
+async function handleShowcaseClearSlot(showcaseId: string, slotIndex: number) {
+  const beforeSlotCard = showcase.showcases.value
+    .find((sc) => sc.id === showcaseId)
+    ?.slots?.find((slot) => slot.slotIndex === slotIndex)
+    ?.card ?? null
+  const ok = await showcase.clearSlot(showcaseId, slotIndex)
+  if (!ok || !beforeSlotCard?.instanceId) return
+  const option = toShowcasePickerOptionFromShowcaseCard(beforeSlotCard)
+  showcasePickerFallbackByInstanceId.value = {
+    ...showcasePickerFallbackByInstanceId.value,
+    [option.instanceId]: option
+  }
+  mergeShowcasePickerOptions(showcasePickerOptions.value)
 }
 
 watch(() => activeTab.value, (tab) => {
@@ -581,6 +694,25 @@ watch(() => activeTab.value, (tab) => {
     void refreshShowcaseTab()
   }
 }, { immediate: true })
+
+watch(showcasedInstanceIdSet, (showcasedIds) => {
+  const nextFallback: Record<string, ShowcasePickerOption> = {}
+  let fallbackChanged = false
+  for (const [instanceId, option] of Object.entries(showcasePickerFallbackByInstanceId.value)) {
+    if (showcasedIds.has(instanceId)) {
+      fallbackChanged = true
+      continue
+    }
+    nextFallback[instanceId] = option
+  }
+  if (fallbackChanged) {
+    showcasePickerFallbackByInstanceId.value = nextFallback
+  }
+  const filtered = showcasePickerOptions.value.filter((item) => !showcasedIds.has(item.instanceId))
+  if (filtered.length !== showcasePickerOptions.value.length) {
+    showcasePickerOptions.value = filtered
+  }
+})
 
 async function refreshProgress() {
   loadingProgress.value = true
@@ -606,8 +738,7 @@ const { walletBalance } = useGachaPageLifecycle({
 <style scoped>
 .album-card-trigger {
   cursor: pointer;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 180px;
+  contain: layout paint;
 }
 
 .album-card-trigger:focus-visible {

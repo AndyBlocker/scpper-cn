@@ -111,6 +111,10 @@ function previewColorlessBaseYield(rarity: Rarity) {
   return formatTokenDecimal(base * 0.5, 2)
 }
 
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
+
 watch(() => props.open, (val) => {
   if (val) {
     search.value = ''
@@ -121,7 +125,7 @@ watch(() => props.open, (val) => {
 </script>
 
 <template>
-  <UiDialogRoot :open="open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="addon-picker-dialog p-0">
@@ -163,7 +167,7 @@ watch(() => props.open, (val) => {
 
         <!-- 卡片网格 -->
         <div class="addon-picker-scroll">
-          <div v-if="!filteredOptions.length" class="mt-4 rounded-2xl border border-dashed border-neutral-300/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-300">
+          <div v-if="!filteredOptions.length" class="mt-4 rounded-lg border border-dashed border-neutral-300/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-700/70 dark:text-neutral-300">
             没有可挂载的无色词条卡片。
           </div>
 
@@ -182,6 +186,7 @@ watch(() => props.open, (val) => {
                 :image-url="item.imageUrl || undefined"
                 :affix-visual-style="item.primaryAffixStyle"
                 :affix-label="item.affixLabel"
+                :retired="item.isRetired"
                 :count="item.count"
               >
                 <template #meta>

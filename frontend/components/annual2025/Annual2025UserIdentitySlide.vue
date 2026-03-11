@@ -2,7 +2,7 @@
   <section class="slide" :class="{ 'slide-active': isActive }">
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
-        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl p-8 md:p-12">
+        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
           <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="User" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
@@ -12,7 +12,7 @@
         </div>
       </div>
       <div v-else class="max-w-4xl w-full mx-auto px-2">
-        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl md:rounded-3xl p-5 md:p-12 relative overflow-hidden shadow-2xl">
+        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg md:rounded-lg p-5 md:p-12 relative overflow-hidden shadow-2xl">
           <div class="absolute top-0 right-0 p-8 md:p-12 opacity-5">
             <LucideIcon name="Star" class="w-32 md:w-64 h-32 md:h-64 text-[rgb(var(--fg))]" />
           </div>
