@@ -10,6 +10,14 @@ export class AttributionService {
 
   async importAttributions(pageVersionId: number, attributions: any[]): Promise<{ inserted: number; updated: number; errors: number }> {
     const stats = { inserted: 0, updated: 0, errors: 0 };
+    const normalizedEntries: Array<{
+      userId: number | null;
+      anonKey: string | null;
+      type: string;
+      order: number;
+      date: Date | null;
+    }> = [];
+
     for (const attr of attributions) {
       try {
         let userId: number | null = null;
@@ -33,46 +41,22 @@ export class AttributionService {
         const date = attr.date ? new Date(attr.date) : null;
 
         if (userId != null) {
-          await this.prisma.attribution.upsert({
-            where: {
-              Attribution_unique_constraint: {
-                pageVerId: pageVersionId,
-                type,
-                order,
-                userId
-              }
-            },
-            update: { date },
-            create: {
-              pageVerId: pageVersionId,
-              userId,
-              type,
-              order,
-              date
-            }
+          normalizedEntries.push({
+            userId,
+            anonKey: null,
+            type,
+            order,
+            date
           });
-          stats.inserted++;
         } else if (anonKey || attr.anonKey) {
           const finalAnonKey = anonKey || attr.anonKey;
-          await this.prisma.attribution.upsert({
-            where: {
-              Attribution_anon_unique_constraint: {
-                pageVerId: pageVersionId,
-                type,
-                order,
-                anonKey: finalAnonKey
-              }
-            },
-            update: { date },
-            create: {
-              pageVerId: pageVersionId,
-              anonKey: finalAnonKey,
-              type,
-              order,
-              date
-            }
+          normalizedEntries.push({
+            userId: null,
+            anonKey: finalAnonKey,
+            type,
+            order,
+            date
           });
-          stats.inserted++;
         } else {
           // Neither userId nor anonKey - ignore silently
           stats.updated++;
@@ -82,6 +66,99 @@ export class AttributionService {
         Logger.error('Attribution import error:', error);
       }
     }
+
+    if (normalizedEntries.length === 0) {
+      if (attributions.length === 0) {
+        await this.prisma.attribution.deleteMany({
+          where: { pageVerId: pageVersionId }
+        });
+      }
+      return stats;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const keepUserKeys = normalizedEntries
+        .filter((entry) => entry.userId != null)
+        .map((entry) => ({
+          type: entry.type,
+          order: entry.order,
+          userId: entry.userId!
+        }));
+      const keepAnonKeys = normalizedEntries
+        .filter((entry) => entry.anonKey)
+        .map((entry) => ({
+          type: entry.type,
+          order: entry.order,
+          anonKey: entry.anonKey!
+        }));
+
+      await tx.attribution.deleteMany({
+        where: {
+          pageVerId: pageVersionId,
+          NOT: {
+            OR: [
+              ...keepUserKeys.map((entry) => ({
+                type: entry.type,
+                order: entry.order,
+                userId: entry.userId
+              })),
+              ...keepAnonKeys.map((entry) => ({
+                type: entry.type,
+                order: entry.order,
+                anonKey: entry.anonKey
+              }))
+            ]
+          }
+        }
+      });
+
+      for (const entry of normalizedEntries) {
+        if (entry.userId != null) {
+          await tx.attribution.upsert({
+            where: {
+              Attribution_unique_constraint: {
+                pageVerId: pageVersionId,
+                type: entry.type,
+                order: entry.order,
+                userId: entry.userId
+              }
+            },
+            update: { date: entry.date },
+            create: {
+              pageVerId: pageVersionId,
+              userId: entry.userId,
+              type: entry.type,
+              order: entry.order,
+              date: entry.date
+            }
+          });
+          stats.inserted++;
+          continue;
+        }
+
+        if (!entry.anonKey) continue;
+
+        await tx.attribution.upsert({
+          where: {
+            Attribution_anon_unique_constraint: {
+              pageVerId: pageVersionId,
+              type: entry.type,
+              order: entry.order,
+              anonKey: entry.anonKey
+            }
+          },
+          update: { date: entry.date },
+          create: {
+            pageVerId: pageVersionId,
+            anonKey: entry.anonKey,
+            type: entry.type,
+            order: entry.order,
+            date: entry.date
+          }
+        });
+        stats.inserted++;
+      }
+    });
 
     return stats;
   }
@@ -110,5 +187,3 @@ export class AttributionService {
     }
   }
 }
-
-
