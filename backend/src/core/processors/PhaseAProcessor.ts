@@ -3,7 +3,11 @@ import { GraphQLClient } from '../client/GraphQLClient.js';
 import { CoreQueries } from '../graphql/CoreQueries.js';
 import { PointEstimator } from '../graphql/PointEstimator.js';
 import { DatabaseStore } from '../store/DatabaseStore.js';
-import { AttributionService } from '../store/AttributionService.js';
+import {
+  AttributionService,
+  buildDisplayNameAnonKey,
+  normalizeAttributionAnonKey
+} from '../store/AttributionService.js';
 import { Logger } from '../../utils/Logger.js';
 import { Progress } from '../../utils/Progress.js';
 import type { PageVersion } from '@prisma/client';
@@ -57,6 +61,20 @@ interface PhaseAResult {
   queueStats: QueueStats;
 }
 
+interface CurrentVersionAttributionSnapshot {
+  type: string;
+  order: number;
+  date: Date | null;
+  anonKey: string | null;
+  user: {
+    wikidotId: number | null;
+  } | null;
+}
+
+type CurrentVersionSnapshot = PageVersion & {
+  attributions: CurrentVersionAttributionSnapshot[];
+};
+
 const cq = new CoreQueries();
 
 const extractAlternateTitle = (node: PageNode): string | null => {
@@ -66,6 +84,91 @@ const extractAlternateTitle = (node: PageNode): string | null => {
       typeof entry?.title === 'string' && entry.title.trim().length > 0
   );
   return first ? first.title.trim() : null;
+};
+
+const normalizeAttributionDate = (value: unknown): string | null => {
+  if (value == null) return null;
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+};
+
+const normalizeIncomingAttributionSignature = (rawAttributions: unknown[]): string[] => {
+  const normalized = rawAttributions.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object') return [];
+
+    const attr = raw as Record<string, unknown>;
+    const type = typeof attr.type === 'string' && attr.type.trim()
+      ? attr.type.trim()
+      : 'unknown';
+    const order = typeof attr.order === 'number'
+      ? attr.order
+      : Number.parseInt(String(attr.order ?? 0), 10) || 0;
+
+    let userData = attr.user;
+    if (userData && typeof userData === 'object' && 'wikidotUser' in userData) {
+      userData = (userData as Record<string, unknown>).wikidotUser;
+    }
+
+    let actorKey: string | null = null;
+    if (userData && typeof userData === 'object') {
+      const userRecord = userData as Record<string, unknown>;
+      const wikidotIdRaw = userRecord.wikidotId;
+      const wikidotId = typeof wikidotIdRaw === 'number'
+        ? wikidotIdRaw
+        : Number.parseInt(String(wikidotIdRaw ?? ''), 10);
+      if (Number.isFinite(wikidotId)) {
+        actorKey = `u:${wikidotId}`;
+      } else {
+        const anonKey = buildDisplayNameAnonKey(userRecord.displayName);
+        if (anonKey) {
+          actorKey = `a:${anonKey}`;
+        }
+      }
+    }
+
+    const normalizedAnonKey = normalizeAttributionAnonKey(attr.anonKey);
+    if (!actorKey && normalizedAnonKey) {
+      actorKey = `a:${normalizedAnonKey}`;
+    }
+
+    // Mirror AttributionService: entries without a stable actor are ignored.
+    if (!actorKey) return [];
+
+    return [`${type}|${order}|${actorKey}|${normalizeAttributionDate(attr.date) ?? ''}`];
+  });
+
+  normalized.sort();
+  return normalized;
+};
+
+const normalizeStoredAttributionSignature = (
+  attributions: CurrentVersionAttributionSnapshot[]
+): string[] => {
+  const normalized = attributions.flatMap((attr) => {
+    const normalizedAnonKey = normalizeAttributionAnonKey(attr.anonKey);
+    const actorKey = attr.user?.wikidotId != null
+      ? `u:${attr.user.wikidotId}`
+      : normalizedAnonKey
+        ? `a:${normalizedAnonKey}`
+        : null;
+    // Mirror incoming side: entries without a stable actor are excluded.
+    if (!actorKey) return [];
+    return [`${attr.type}|${attr.order}|${actorKey}|${normalizeAttributionDate(attr.date) ?? ''}`];
+  });
+  normalized.sort();
+  return normalized;
+};
+
+const attributionSignatureChanged = (
+  currentVersion: CurrentVersionSnapshot,
+  rawAttributions: unknown[]
+): boolean => {
+  const incoming = normalizeIncomingAttributionSignature(rawAttributions);
+  const stored = normalizeStoredAttributionSignature(currentVersion.attributions);
+  if (incoming.length !== stored.length) {
+    return true;
+  }
+  return incoming.some((value, index) => value !== stored[index]);
 };
 
 const PHASE_A_BATCHSIZE = 100;
@@ -125,10 +228,10 @@ export class PhaseAProcessor {
 
       // Process all pages in this batch (no skipping)
       for (const { node } of edges) {
-        let currentVersionCache: PageVersion | null | undefined;
+        let currentVersionCache: CurrentVersionSnapshot | null | undefined;
         let currentVersionLoaded = false;
 
-        const loadCurrentVersion = async (): Promise<PageVersion | null> => {
+        const loadCurrentVersion = async (): Promise<CurrentVersionSnapshot | null> => {
           if (currentVersionLoaded) return currentVersionCache ?? null;
           currentVersionLoaded = true;
 
@@ -147,11 +250,27 @@ export class PhaseAProcessor {
 
           const page = await this.store.prisma.page.findUnique({
             where: { wikidotId },
-            include: { versions: { where: { validTo: null }, take: 1 } }
+            include: {
+              versions: {
+                where: { validTo: null },
+                take: 1,
+                include: {
+                  attributions: {
+                    include: {
+                      user: {
+                        select: {
+                          wikidotId: true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           });
 
           currentVersionCache = page?.versions?.[0] ?? null;
-          return currentVersionCache;
+          return currentVersionCache ?? null;
         };
 
         // Estimate complete collection cost with more accurate parameters
@@ -197,11 +316,17 @@ export class PhaseAProcessor {
             const currentVersion = await loadCurrentVersion();
             if (currentVersion) {
               const nextAttributionCount = node.attributions.length;
+              const changed = attributionSignatureChanged(currentVersion, node.attributions);
               await this.attrService.importAttributions(currentVersion.id, node.attributions);
-              if (currentVersion.attributionCount !== nextAttributionCount) {
+              if (changed || currentVersion.attributionCount !== nextAttributionCount) {
                 await this.store.prisma.pageVersion.update({
                   where: { id: currentVersion.id },
-                  data: { attributionCount: nextAttributionCount }
+                  // Keep updatedAt moving when attribution rows change without a
+                  // count change so incremental analytics can see the delta.
+                  data: {
+                    attributionCount: nextAttributionCount,
+                    updatedAt: new Date()
+                  }
                 });
               }
             }
@@ -327,10 +452,10 @@ export class PhaseAProcessor {
 
     // Process all pages in this test batch
     for (const { node } of edges) {
-      let currentVersionCache: PageVersion | null | undefined;
+      let currentVersionCache: CurrentVersionSnapshot | null | undefined;
       let currentVersionLoaded = false;
 
-      const loadCurrentVersion = async (): Promise<PageVersion | null> => {
+      const loadCurrentVersion = async (): Promise<CurrentVersionSnapshot | null> => {
         if (currentVersionLoaded) return currentVersionCache ?? null;
         currentVersionLoaded = true;
 
@@ -349,11 +474,27 @@ export class PhaseAProcessor {
 
         const page = await this.store.prisma.page.findUnique({
           where: { wikidotId },
-          include: { versions: { where: { validTo: null }, take: 1 } }
+          include: {
+            versions: {
+              where: { validTo: null },
+              take: 1,
+              include: {
+                attributions: {
+                  include: {
+                    user: {
+                      select: {
+                        wikidotId: true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         });
 
         currentVersionCache = page?.versions?.[0] ?? null;
-        return currentVersionCache;
+        return currentVersionCache ?? null;
       };
 
       // Estimate complete collection cost with more accurate parameters
