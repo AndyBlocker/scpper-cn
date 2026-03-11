@@ -4,10 +4,7 @@
  * 从库存中选择一张卡片放入展示柜槽位。
  */
 import type { Rarity, AffixVisualStyle } from '~/types/gacha'
-import { computed, ref, watch } from 'vue'
-import { raritySortWeight } from '~/utils/gachaRarity'
-import { usePageAuthors } from '~/composables/usePageAuthors'
-import { resolveAuthorSearchText } from '~/utils/gachaAuthorSearch'
+import { ref, watch } from 'vue'
 import GachaRarityFilter from '~/components/gacha/GachaRarityFilter.vue'
 import GachaCardMini from '~/components/gacha/GachaCardMini.vue'
 import { UiButton } from '~/components/ui/button'
@@ -27,6 +24,7 @@ export interface ShowcasePickerOption {
   rarity: Rarity
   tags: string[]
   imageUrl: string | null
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   wikidotId?: number | null
   affixVisualStyle: AffixVisualStyle
@@ -38,6 +36,8 @@ export interface ShowcasePickerOption {
 const props = defineProps<{
   open: boolean
   options: ShowcasePickerOption[]
+  total: number
+  hasMore: boolean
   loading?: boolean
   busy: boolean
 }>()
@@ -45,58 +45,48 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   select: [instanceId: string]
+  'query-change': [payload: { search: string; rarity: Rarity | 'ALL' }]
+  'load-more': []
 }>()
 
 const search = ref('')
 const rarityFilter = ref<Rarity | 'ALL'>('ALL')
 const rarityFilters: Array<Rarity | 'ALL'> = ['ALL', 'GOLD', 'PURPLE', 'BLUE', 'GREEN', 'WHITE']
-const pageAuthors = usePageAuthors()
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 
-function authorSearchText(
-  authors: Array<{ name: string; wikidotId: number | null }> | null | undefined,
-  wikidotId: number | null | undefined
-) {
-  const id = Number(wikidotId)
-  const cachedAuthors = Number.isFinite(id) && id > 0 ? pageAuthors.getAuthors(id) : []
-  return resolveAuthorSearchText(authors, cachedAuthors)
+function emitQueryChange() {
+  emit('query-change', {
+    search: search.value.trim(),
+    rarity: rarityFilter.value
+  })
 }
 
-const filteredOptions = computed(() => {
-  const keyword = search.value.trim().toLowerCase()
-  return props.options
-    .filter((item) => {
-      if (rarityFilter.value !== 'ALL' && item.rarity !== rarityFilter.value) return false
-      if (!keyword) return true
-      const target = `${item.title} ${(item.tags ?? []).filter(t => !t.startsWith('_')).join(' ')} ${authorSearchText(item.authors, item.wikidotId)} ${item.cardId}`.toLowerCase()
-      return target.includes(keyword)
-    })
-    .sort((a, b) => {
-      const rarityDiff = (raritySortWeight[a.rarity] ?? 99) - (raritySortWeight[b.rarity] ?? 99)
-      if (rarityDiff !== 0) return rarityDiff
-      return a.title.localeCompare(b.title, 'zh-CN')
-    })
+watch(search, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    emitQueryChange()
+  }, 220)
 })
 
-const PICKER_PAGE_SIZE = 36
-const visibleCount = ref(PICKER_PAGE_SIZE)
-const visibleOptions = computed(() => filteredOptions.value.slice(0, visibleCount.value))
-const hasMore = computed(() => filteredOptions.value.length > visibleCount.value)
-
-watch([search, rarityFilter], () => {
-  visibleCount.value = PICKER_PAGE_SIZE
+watch(rarityFilter, () => {
+  emitQueryChange()
 })
 
 watch(() => props.open, (val) => {
   if (val) {
     search.value = ''
     rarityFilter.value = 'ALL'
-    visibleCount.value = PICKER_PAGE_SIZE
+    emitQueryChange()
   }
 })
+
+function handleOpenChange(nextOpen: boolean) {
+  if (!nextOpen) emit('close')
+}
 </script>
 
 <template>
-  <UiDialogRoot :open="open" @update:open="(nextOpen) => { if (!nextOpen) emit('close') }">
+  <UiDialogRoot :open="open" @update:open="handleOpenChange">
     <UiDialogPortal>
       <UiDialogOverlay />
       <UiDialogContent class="max-w-4xl p-0">
@@ -119,16 +109,16 @@ watch(() => props.open, (val) => {
 
         <div class="max-h-[calc(100vh-14rem)] max-h-[calc(100dvh-14rem)] overflow-y-auto px-5 pb-5">
           <div v-if="loading" class="mt-4 text-center text-sm text-neutral-500 dark:text-neutral-400">加载中...</div>
-          <div v-else-if="!filteredOptions.length" class="mt-4 rounded-2xl border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
+          <div v-else-if="!props.options.length" class="mt-4 rounded-lg border border-dashed border-neutral-200/70 px-4 py-4 text-sm text-neutral-500 dark:border-neutral-800/70 dark:text-neutral-400">
             没有可展示的卡片。锁定、交易中或已在展示柜中的卡片不可选择。
           </div>
           <template v-else>
             <p class="mt-3 text-[11px] text-neutral-500 dark:text-neutral-400">
-              显示 {{ visibleOptions.length }} / {{ filteredOptions.length }} 张
+              显示 {{ props.options.length }} / {{ Math.max(props.total, props.options.length) }} 张
             </p>
             <div class="mt-2 gacha-card-grid--mini">
               <button
-                v-for="item in visibleOptions"
+                v-for="item in props.options"
                 :key="`showcase-pick-${item.instanceId}`"
                 type="button"
                 class="showcase-picker-card"
@@ -140,6 +130,7 @@ watch(() => props.open, (val) => {
                   :rarity="item.rarity"
                   :image-url="item.imageUrl || undefined"
                   :locked="item.isLocked"
+                  :retired="item.isRetired"
                   :affix-visual-style="item.affixVisualStyle"
                   :affix-label="item.affixLabel"
                 >
@@ -149,9 +140,9 @@ watch(() => props.open, (val) => {
                 </GachaCardMini>
               </button>
             </div>
-            <div v-if="hasMore" class="mt-3 flex items-center justify-center">
-              <UiButton variant="outline" size="sm" @click="visibleCount += PICKER_PAGE_SIZE">
-                加载更多（剩余 {{ filteredOptions.length - visibleCount }} 张）
+            <div v-if="props.hasMore" class="mt-3 flex items-center justify-center">
+              <UiButton variant="outline" size="sm" :disabled="loading" @click="emit('load-more')">
+                加载更多（剩余 {{ Math.max(0, props.total - props.options.length) }} 张）
               </UiButton>
             </div>
           </template>

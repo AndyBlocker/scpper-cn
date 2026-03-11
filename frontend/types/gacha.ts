@@ -67,6 +67,7 @@ export interface DrawItem {
   title: string
   rarity: Rarity
   tags: string[]
+  isRetired?: boolean
   imageUrl: string | null
   wikidotId: number | null
   pageId: number | null
@@ -102,6 +103,7 @@ export interface InventoryItem {
   title: string
   rarity: Rarity
   tags: string[]
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   imageUrl: string | null
   wikidotId: number | null
@@ -187,6 +189,7 @@ export interface HistoryItem {
     rarity: Rarity
     rewardTokens: number
     imageUrl: string | null
+    isRetired?: boolean
   }>
 }
 
@@ -198,6 +201,7 @@ export interface PlacementSlotCard {
   title: string
   rarity: Rarity
   tags: string[]
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   imageUrl: string | null
   wikidotId: number | null
@@ -300,6 +304,7 @@ export interface AlbumPageVariant {
   count: number
   lockedCount?: number
   tags: string[]
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   imageUrl: string | null
   wikidotId: number | null
@@ -444,6 +449,7 @@ export interface MarketLockTierMeta {
   minLots: number
   lotToken: number
   leverageOptions: number[]
+  stakePreset?: number[]
   openFeeBaseRate: number
   settleFeeRate: number
 }
@@ -588,9 +594,15 @@ export interface TradeListing {
     rarity: Rarity
     imageUrl: string | null
     tags: string[]
+    isRetired?: boolean
     authors?: Array<{ name: string; wikidotId: number | null }> | null
     wikidotId: number | null
     pageId: number | null
+    affixSignature?: string
+    affixStyles?: AffixVisualStyle[]
+    affixStyleCounts?: Partial<Record<AffixVisualStyle, number>>
+    affixVisualStyle?: AffixVisualStyle
+    affixLabel?: string
   }
   seller: {
     id: string
@@ -619,9 +631,15 @@ export interface BuyRequestOfferedCard {
     rarity: Rarity
     imageUrl: string | null
     tags: string[]
+    isRetired?: boolean
     authors?: Array<{ name: string; wikidotId: number | null }> | null
     wikidotId: number | null
     pageId: number | null
+    affixSignature?: string
+    affixStyles?: AffixVisualStyle[]
+    affixStyleCounts?: Partial<Record<AffixVisualStyle, number>>
+    affixVisualStyle?: AffixVisualStyle
+    affixLabel?: string
   }
 }
 
@@ -644,9 +662,15 @@ export interface BuyRequest {
     rarity: Rarity
     imageUrl: string | null
     tags: string[]
+    isRetired?: boolean
     authors?: Array<{ name: string; wikidotId: number | null }> | null
     wikidotId: number | null
     pageId: number | null
+    affixSignature?: string
+    affixStyles?: AffixVisualStyle[]
+    affixStyleCounts?: Partial<Record<AffixVisualStyle, number>>
+    affixVisualStyle?: AffixVisualStyle
+    affixLabel?: string
   }
   buyer: {
     id: string
@@ -667,6 +691,7 @@ export interface CardCatalogItem {
   rarity: Rarity
   imageUrl: string | null
   tags: string[]
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   wikidotId: number | null
   pageId: number | null
@@ -677,6 +702,7 @@ export interface CardCatalogItem {
 export interface PageCatalogVariant {
   id: string          // cardId
   imageUrl: string | null
+  isRetired?: boolean
 }
 
 export interface PageCatalogEntry {
@@ -684,6 +710,7 @@ export interface PageCatalogEntry {
   title: string
   rarity: Rarity
   tags: string[]
+  isRetired?: boolean
   authors?: Array<{ name: string; wikidotId: number | null }> | null
   wikidotId: number | null
   variants: PageCatalogVariant[]

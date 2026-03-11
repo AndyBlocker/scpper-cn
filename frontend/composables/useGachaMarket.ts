@@ -24,6 +24,7 @@ import {
   fallbackMarketLockTierMeta,
   type MarketLockTierViewMeta
 } from '~/utils/gachaConstants'
+import { normalizeError } from '~/composables/api/gachaCore'
 
 /**
  * market.vue (gacha market page) 的状态管理和业务逻辑。
@@ -243,8 +244,8 @@ export function useGachaMarket(page: GachaPageContext) {
         return
       }
       tickets.value = normalizeTickets(res.tickets)
-    } catch (error: any) {
-      emitError(error?.message || '加载票券失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '加载票券失败'))
     } finally {
       ticketsLoading.value = false
     }
@@ -432,8 +433,8 @@ export function useGachaMarket(page: GachaPageContext) {
         refreshMarketTicksPanel(),
         refreshTicketsPanel()
       ])
-    } catch (error: any) {
-      emitError(error?.message || '开仓失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '开仓失败'))
     } finally {
       marketOpening.value = false
     }
@@ -491,8 +492,8 @@ export function useGachaMarket(page: GachaPageContext) {
         refreshMarketTicksPanel(),
         refreshTicketsPanel()
       ])
-    } catch (error: any) {
-      emitError(error?.message || '开仓失败')
+    } catch (error: unknown) {
+      emitError(normalizeError(error, '开仓失败'))
     } finally {
       marketOpening.value = false
     }

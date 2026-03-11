@@ -268,14 +268,14 @@ export function resolveAffixEffectSummary(style: AffixVisualStyle): string {
     case 'PRISM':
       return '提升放置收益、离线缓冲和分解收益'
     case 'COLORLESS': return '可用于无色词条槽'
-    case 'WILDCARD': return '可同时参与多个组合判定（每卡记 1 层）'
+    case 'WILDCARD': return '可同时参与多个组合判定，并按实际层数提供通配层数'
     case 'SPECTRUM': return '额外计入同稀有度组合层数（每卡记 1 层）'
     case 'MIRROR': return '额外计入同卡片组合层数（每卡记 1 层）'
     case 'ORBIT': return '额外计入同页面组合层数（每卡记 1 层）'
     case 'ECHO': return '复制主词条一次用于组合判定（每卡生效 1 次）'
-    case 'NEXUS': return '普通槽：GOLD 级收益但不参与组合；无色槽：移除所有组合换取巨额固定加成'
+    case 'NEXUS': return '普通槽：收益按层数线性叠加但不参与组合；无色槽：移除所有组合，转化收益按层数放大'
     case 'ANCHOR': return '提供固定每小时产出，不受百分比加成影响'
-    case 'FLUX': return '基础产出随触发的组合数量动态缩放'
+    case 'FLUX': return '基础产出按层数线性叠加，并随触发的组合数量动态缩放'
     default: return '当前无额外词条效果'
   }
 }
@@ -314,7 +314,7 @@ export function affixStyleGlyph(style: AffixVisualStyle): string {
 
 export function formatAffixPartsLabel(source: AffixSourceLike | null | undefined): string {
   const parts = resolveAffixParts(source)
-  if (parts.length === 1 && parts[0].style === 'NONE') return '标准'
+  if (parts.length === 1 && parts[0]?.style === 'NONE') return '标准'
   return parts.map(formatAffixPartLabel).join(' + ')
 }
 
@@ -336,14 +336,14 @@ export function resolveAffixPerkSummary(
     case 'CYAN': return `蓝图回路：收益 +${yieldText} · 缓冲 +${offlineText} · 分解 +${dismantleText}`
     case 'COLORLESS': return `无色词条：收益 +${yieldText} · 缓冲 +${offlineText} · 分解 +${dismantleText}`
     case 'PRISM': return `棱镜折射：收益 +${yieldText} · 缓冲 +${offlineText} · 分解 +${dismantleText}`
-    case 'WILDCARD': return '通配符：可同时参与多个组合判定（每卡记 1 层）'
+    case 'WILDCARD': return '通配符：可同时参与多个组合判定，并按实际层数提供通配层数'
     case 'SPECTRUM': return '谱系共鸣：额外计入同稀有度组合层数（每卡记 1 层）'
     case 'MIRROR': return '镜像：额外计入同卡片组合层数（每卡记 1 层）'
     case 'ORBIT': return '轨道：额外计入同页面组合层数（每卡记 1 层）'
     case 'ECHO': return '回声：复制当前卡片主词条一次用于组合判定（每卡生效 1 次）'
-    case 'NEXUS': return `枢纽核心：收益 +${yieldText} · 缓冲 +${offlineText} · 分解 +${dismantleText}（不参与组合）`
+    case 'NEXUS': return `枢纽核心：收益 +${yieldText} · 缓冲 +${offlineText} · 分解 +${dismantleText}（收益按层数叠加；无色槽转化也按层数放大）`
     case 'ANCHOR': return '锚点固基：提供固定每小时产出，不受百分比加成影响'
-    case 'FLUX': return '流变脉动：基础产出随触发的组合数量动态缩放'
+    case 'FLUX': return '流变脉动：基础产出按层数叠加，并随触发的组合数量动态缩放'
     default: return '标准词条：当前无额外挂机加成'
   }
 }

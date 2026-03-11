@@ -45,8 +45,8 @@ const containerRef = ref<HTMLDivElement | null>(null)
 const chartRef = shallowRef<IChartApi | null>(null)
 const candleSeriesRef = shallowRef<ISeriesApi<'Candlestick'> | null>(null)
 const areaSeriesRef = shallowRef<ISeriesApi<'Area'> | null>(null)
-const markerApiRef = shallowRef<ISeriesMarkersPluginApi<UTCTimestamp> | null>(null)
-const areaMarkerApiRef = shallowRef<ISeriesMarkersPluginApi<UTCTimestamp> | null>(null)
+const markerApiRef = shallowRef<ISeriesMarkersPluginApi<Time> | null>(null)
+const areaMarkerApiRef = shallowRef<ISeriesMarkersPluginApi<Time> | null>(null)
 const resizeObserverRef = shallowRef<ResizeObserver | null>(null)
 const themeObserverRef = shallowRef<MutationObserver | null>(null)
 let lwcModule: LwcModule | null = null
@@ -226,7 +226,7 @@ function buildAreaData(): AreaData<UTCTimestamp>[] {
   return points
 }
 
-function buildMarkers(): SeriesMarker<UTCTimestamp>[] {
+function buildMarkers(): SeriesMarker<Time>[] {
   return (props.markers || [])
     .map((item) => {
       const time = parseUnixSeconds(item.ts)
@@ -239,7 +239,7 @@ function buildMarkers(): SeriesMarker<UTCTimestamp>[] {
           shape: isLong ? 'arrowUp' : 'arrowDown',
           color: isLong ? '#16a34a' : '#e11d48',
           text: isLong ? 'L' : 'S'
-        } satisfies SeriesMarker<UTCTimestamp>
+        } satisfies SeriesMarker<Time>
       }
       return {
         time: asUtcTimestamp(time),
@@ -247,9 +247,9 @@ function buildMarkers(): SeriesMarker<UTCTimestamp>[] {
         shape: 'circle',
         color: isLong ? '#059669' : '#be123c',
         text: item.kind === 'SETTLE' ? 'C' : 'E'
-      } satisfies SeriesMarker<UTCTimestamp>
+      } satisfies SeriesMarker<Time>
     })
-    .filter((item): item is SeriesMarker<UTCTimestamp> => Boolean(item))
+    .filter((item): item is SeriesMarker<Time> => Boolean(item))
 }
 
 async function loadLwc() {
