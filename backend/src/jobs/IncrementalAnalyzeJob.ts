@@ -41,6 +41,10 @@ export class IncrementalAnalyzeJob {
         'user_social_analysis',
         'site_stats',
         'daily_aggregates',
+        // Tick depends on fresh daily aggregates; keep it early so market data is
+        // not blocked behind slower downstream reporting jobs.
+        'category_index_tick',
+        'category_index_forecast',
         'voting_time_series_cache',
         'materialized_views',
         'interesting_facts',
@@ -56,8 +60,6 @@ export class IncrementalAnalyzeJob {
         'page_metric_alerts',
         'user_follow_alerts',
         'user_collection_sanitizer',
-        'category_index_tick',
-        'category_index_forecast',
         // 新增：作者分类基准
         'category_benchmarks',
         // Wikidot 账号绑定验证
