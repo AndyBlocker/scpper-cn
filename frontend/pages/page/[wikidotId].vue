@@ -1340,7 +1340,7 @@ const seoDescription = computed(() => {
       }
     }
   }
-  return `${pageDisplayTitle.value} - SCPPER-CN 页面详情`
+  return `${pageDisplayTitle.value} - 页面详情`
 })
 
 useHead(() => {

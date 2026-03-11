@@ -144,7 +144,7 @@
 import { useHead } from 'nuxt/app'
 
 useHead({
-  title: '关于 - SCPPER-CN',
+  title: '关于',
   meta: [
     { name: 'description', content: '关于 SCPPER-CN 数据分析平台与项目说明。' }
   ]

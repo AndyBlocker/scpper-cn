@@ -52,7 +52,7 @@ function formatLastPost(dateStr: string | null): string {
   return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Shanghai' })
 }
 
-useHead({ title: '讨论 - SCPPER-CN' })
+useHead({ title: '讨论' })
 
 const btnClass = 'px-3 py-1.5 rounded-lg text-sm border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.88)] text-[rgb(var(--fg))] disabled:opacity-40 hover:border-[var(--g-accent-border)] transition'
 </script>
@@ -84,7 +84,9 @@ const btnClass = 'px-3 py-1.5 rounded-lg text-sm border border-[rgb(var(--panel-
           <div class="text-xs text-[rgb(var(--muted))]">帖子</div>
         </div>
         <div v-if="stats.lastPostAt" class="text-center ml-auto">
-          <div class="text-sm font-medium text-[rgb(var(--fg))]">{{ formatLastPost(stats.lastPostAt) }}</div>
+          <ClientOnly>
+            <div class="text-sm font-medium text-[rgb(var(--fg))]">{{ formatLastPost(stats.lastPostAt) }}</div>
+          </ClientOnly>
           <div class="text-xs text-[rgb(var(--muted))]">最新回帖</div>
         </div>
       </div>

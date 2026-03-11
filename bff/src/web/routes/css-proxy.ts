@@ -12,6 +12,31 @@ const ALLOWED_HOST_SUFFIXES = [
 const DEFAULT_CACHE_CONTROL =
   process.env.CSS_PROXY_CACHE_CONTROL || 'public, max-age=3600, s-maxage=7200';
 const MAX_REDIRECTS = 5;
+const MAX_RESPONSE_SIZE = 2 * 1024 * 1024; // 2 MB
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_PER_IP = 60;
+
+// Simple in-memory per-IP rate limiter
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const bucket = rateBuckets.get(ip);
+  if (!bucket || now >= bucket.resetAt) {
+    rateBuckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > RATE_MAX_PER_IP;
+}
+
+// Periodic cleanup to prevent memory leak
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, bucket] of rateBuckets) {
+    if (now >= bucket.resetAt) rateBuckets.delete(ip);
+  }
+}, RATE_WINDOW_MS).unref();
 
 function isAllowedUrl(raw: string): boolean {
   try {
@@ -107,7 +132,7 @@ async function fetchAllowedUpstream(inputUrl: string): Promise<globalThis.Respon
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
     if (!isAllowedUrl(currentUrl)) {
-      throw new Error(`Redirected to disallowed URL: ${currentUrl}`);
+      throw new Error(`Redirected to disallowed URL`);
     }
 
     const upstream = await fetch(currentUrl, {
@@ -124,26 +149,80 @@ async function fetchAllowedUpstream(inputUrl: string): Promise<globalThis.Respon
 
     const location = upstream.headers.get('location');
     if (!location) {
-      throw new Error(`Redirect response missing location header for ${currentUrl}`);
+      throw new Error(`Redirect response missing location header`);
     }
 
     currentUrl = new URL(location, currentUrl).href;
   }
 
-  throw new Error(`Too many redirects while fetching ${inputUrl}`);
+  throw new Error(`Too many redirects`);
+}
+
+async function readLimitedText(response: globalThis.Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new Error('Response too large');
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+  } finally {
+    reader.releaseLock();
+  }
+
+  return chunks.join('');
+}
+
+async function readLimitedBuffer(response: globalThis.Response, maxBytes: number): Promise<Buffer> {
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new Error('Response too large');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks);
 }
 
 export function cssProxyRouter() {
   const router = Router();
 
   router.get(['/css-proxy', '/api/css-proxy'], async (req, res) => {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (isRateLimited(clientIp)) {
+      setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
+      return res.status(429).send('Too many requests');
+    }
+
     const queryValue = Array.isArray(req.query.url) ? req.query.url[0] : req.query.url;
     const url = String(queryValue || '');
     const proxyPath = proxyPathForRequest(req);
     const wantsCss = requestWantsCss(req, url);
 
     if (!url || !isAllowedUrl(url)) {
-      const body = cssErrorComment(`Invalid or disallowed URL: ${url}`);
+      const body = cssErrorComment('Invalid or disallowed URL');
       setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
       return res.status(400).send(body);
     }
@@ -151,25 +230,37 @@ export function cssProxyRouter() {
     try {
       const upstream = await fetchAllowedUpstream(url);
 
-      if (!upstream.ok) {
+      // Check Content-Length early if available
+      const declaredLength = Number(upstream.headers.get('content-length'));
+      if (declaredLength && declaredLength > MAX_RESPONSE_SIZE) {
         if (wantsCss) {
-          const body = cssErrorComment(`Upstream returned ${upstream.status} for ${url}`);
+          const body = cssErrorComment('Upstream response too large');
           setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
           return res.status(200).send(body);
         }
         setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-        return res.status(upstream.status).send(`proxy upstream status ${upstream.status}`);
+        return res.status(502).send('upstream response too large');
+      }
+
+      if (!upstream.ok) {
+        if (wantsCss) {
+          const body = cssErrorComment(`Upstream returned ${upstream.status}`);
+          setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
+          return res.status(200).send(body);
+        }
+        setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
+        return res.status(upstream.status).send(`proxy upstream error`);
       }
 
       const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
       const finalUrl = upstream.url || url;
       if (!isAllowedUrl(finalUrl)) {
-        throw new Error(`Disallowed final URL: ${finalUrl}`);
+        throw new Error('Disallowed final URL');
       }
 
       if (contentType.includes('text/html')) {
         if (wantsCss) {
-          const body = cssErrorComment(`Upstream returned text/html instead of CSS for ${url}`);
+          const body = cssErrorComment('Upstream returned text/html instead of CSS');
           setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
           return res.status(200).send(body);
         }
@@ -178,23 +269,25 @@ export function cssProxyRouter() {
       }
 
       if (contentType.includes('text/css') || contentType.includes('/css')) {
-        let css = await upstream.text();
+        let css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
         css = rewriteCssUrls(css, finalUrl, proxyPath);
         setHeaders(res, 'text/css; charset=utf-8', DEFAULT_CACHE_CONTROL);
         return res.status(200).send(css);
       }
 
-      const buf = Buffer.from(await upstream.arrayBuffer());
+      const buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
       setHeaders(res, contentType || 'application/octet-stream', DEFAULT_CACHE_CONTROL);
       return res.status(200).send(buf);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isOversize = message === 'Response too large';
       if (wantsCss) {
-        const body = cssErrorComment(`Proxy fetch failed: ${error?.message || String(error)}`);
+        const body = cssErrorComment(isOversize ? 'Response too large' : 'Proxy fetch failed');
         setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
         return res.status(200).send(body);
       }
       setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-      return res.status(502).send(`proxy fetch failed: ${error?.message || String(error)}`);
+      return res.status(502).send(isOversize ? 'upstream response too large' : 'proxy fetch failed');
     }
   });
 
