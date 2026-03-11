@@ -51,11 +51,13 @@ function ensureHook(): void {
   if (hookRegistered) return
   hookRegistered = true
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-    if (node.hasAttribute('style')) {
-      let cleaned = sanitizeCss(node.getAttribute('style')!)
+    const element = node as Element
+
+    if (element.hasAttribute('style')) {
+      let cleaned = sanitizeCss(element.getAttribute('style')!)
       cleaned = rewriteRelativeCssUrls(cleaned)
       // 折叠块的 display 由 CSS 类控制，需要移除内联 display
-      if ((node as Element).classList?.contains('collapsible-block-unfolded')) {
+      if (element.classList?.contains('collapsible-block-unfolded')) {
         cleaned = cleaned
           .split(';')
           .filter(d => !d.trim().toLowerCase().startsWith('display'))
@@ -63,11 +65,13 @@ function ensureHook(): void {
           .trim()
       }
       if (cleaned) {
-        node.setAttribute('style', cleaned)
+        element.setAttribute('style', cleaned)
       } else {
-        node.removeAttribute('style')
+        element.removeAttribute('style')
       }
     }
+
+    rewriteRelativeNodeAttrs(element)
   })
 }
 
@@ -124,20 +128,28 @@ function rewriteRelativeSrcset(rawSrcset: string): string {
     .join(', ')
 }
 
-function rewriteRelativeForumUrls(html: string): string {
-  return html
-    .replace(
-      /href="\/([^"]*?)"/g,
-      (_match, path) => `href="${absolutizeWikidotPath(path)}" target="_blank" rel="noopener noreferrer"`,
-    )
-    .replace(
-      /\b(src|poster)="\/([^"]*?)"/g,
-      (_match, attr, path) => `${attr}="${absolutizeWikidotPath(path)}"`,
-    )
-    .replace(
-      /\bsrcset="([^"]*?)"/g,
-      (_match, srcset) => `srcset="${rewriteRelativeSrcset(srcset)}"`,
-    )
+function rewriteRelativeNodeAttrs(node: Element): void {
+  const href = node.getAttribute('href')
+  if (href?.startsWith('/')) {
+    node.setAttribute('href', absolutizeWikidotPath(href))
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+
+  const src = node.getAttribute('src')
+  if (src?.startsWith('/')) {
+    node.setAttribute('src', absolutizeWikidotPath(src))
+  }
+
+  const poster = node.getAttribute('poster')
+  if (poster?.startsWith('/')) {
+    node.setAttribute('poster', absolutizeWikidotPath(poster))
+  }
+
+  const srcset = node.getAttribute('srcset')
+  if (srcset) {
+    node.setAttribute('srcset', rewriteRelativeSrcset(srcset))
+  }
 }
 
 /**
@@ -146,7 +158,7 @@ function rewriteRelativeForumUrls(html: string): string {
  * - 允许 Wikidot 渲染引擎生成的格式化标签（p, strong, a, img, table 等）
  * - 移除危险标签（script, iframe, style, form, object 等）和事件处理属性
  * - 内联 style 属性通过 CSS 属性白名单过滤（允许 color、display 等，禁止 position、z-index 等）
- * - 将 Wikidot 站内相对链接和媒体地址转换为绝对链接（在净化之后执行）
+ * - 将 Wikidot 站内相对链接和媒体地址转换为绝对链接（在净化节点属性时执行）
  * - 保留已转义的 HTML 实体（如 &lt;div&gt;），不会二次渲染为标签
  */
 export function sanitizeForumHtml(html: string | null | undefined): string {
@@ -156,14 +168,9 @@ export function sanitizeForumHtml(html: string | null | undefined): string {
   ensureHook()
 
   // 1. DOMPurify 过滤：只保留安全标签和属性
-  let sanitized = DOMPurify.sanitize(html, {
+  return DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
   })
-
-  // 2. 转换 Wikidot 相对链接和媒体地址为绝对链接（在净化之后执行，更安全）
-  sanitized = rewriteRelativeForumUrls(sanitized)
-
-  return sanitized
 }
