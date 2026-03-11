@@ -1,6 +1,17 @@
 import { PrismaClient } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
 
+export const normalizeAttributionAnonKey = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+export const buildDisplayNameAnonKey = (value: unknown): string | null => {
+  const normalized = normalizeAttributionAnonKey(value);
+  return normalized ? `anon:${normalized}` : null;
+};
+
 export class AttributionService {
   private prisma: PrismaClient;
 
@@ -17,11 +28,13 @@ export class AttributionService {
       order: number;
       date: Date | null;
     }> = [];
+    let canDeleteMissingRows = true;
 
     for (const attr of attributions) {
       try {
         let userId: number | null = null;
         let anonKey: string | null = null;
+        let userResolutionFailed = false;
 
         if (attr.user) {
           let userData = attr.user;
@@ -30,9 +43,14 @@ export class AttributionService {
           }
           if (userData.wikidotId) {
             const user = await this.upsertUser(userData);
-            userId = user?.id || null;
+            if (user?.id != null) {
+              userId = user.id;
+            } else {
+              userResolutionFailed = true;
+              canDeleteMissingRows = false;
+            }
           } else if (userData.displayName) {
-            anonKey = `anon:${userData.displayName}`;
+            anonKey = buildDisplayNameAnonKey(userData.displayName);
           }
         }
 
@@ -48,8 +66,11 @@ export class AttributionService {
             order,
             date
           });
-        } else if (anonKey || attr.anonKey) {
-          const finalAnonKey = anonKey || attr.anonKey;
+        } else if (!userResolutionFailed && (anonKey || attr.anonKey)) {
+          const finalAnonKey = anonKey || normalizeAttributionAnonKey(attr.anonKey);
+          if (!finalAnonKey) {
+            continue;
+          }
           normalizedEntries.push({
             userId: null,
             anonKey: finalAnonKey,
@@ -58,6 +79,14 @@ export class AttributionService {
             date
           });
         } else {
+          if (userResolutionFailed) {
+            Logger.warn('Attribution import skipped a Wikidot user entry; keeping existing rows to avoid destructive sync', {
+              pageVersionId,
+              type,
+              order,
+              wikidotId: attr?.user?.wikidotUser?.wikidotId ?? attr?.user?.wikidotId ?? null
+            });
+          }
           // Neither userId nor anonKey - skip this entry
         }
       } catch (error) {
@@ -91,25 +120,27 @@ export class AttributionService {
           anonKey: entry.anonKey!
         }));
 
-      await tx.attribution.deleteMany({
-        where: {
-          pageVerId: pageVersionId,
-          NOT: {
-            OR: [
-              ...keepUserKeys.map((entry) => ({
-                type: entry.type,
-                order: entry.order,
-                userId: entry.userId
-              })),
-              ...keepAnonKeys.map((entry) => ({
-                type: entry.type,
-                order: entry.order,
-                anonKey: entry.anonKey
-              }))
-            ]
+      if (canDeleteMissingRows) {
+        await tx.attribution.deleteMany({
+          where: {
+            pageVerId: pageVersionId,
+            NOT: {
+              OR: [
+                ...keepUserKeys.map((entry) => ({
+                  type: entry.type,
+                  order: entry.order,
+                  userId: entry.userId
+                })),
+                ...keepAnonKeys.map((entry) => ({
+                  type: entry.type,
+                  order: entry.order,
+                  anonKey: entry.anonKey
+                }))
+              ]
+            }
           }
-        }
-      });
+        });
+      }
 
       for (const entry of normalizedEntries) {
         if (entry.userId != null) {
