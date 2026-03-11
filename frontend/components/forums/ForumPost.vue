@@ -27,6 +27,10 @@ function formatDate(dateStr: string | null | undefined): string {
   })
 }
 
+function isRegularUserType(userType: string | null | undefined): boolean {
+  return String(userType || '').toLowerCase() === 'user'
+}
+
 const sanitizedHtml = computed(() => {
   return sanitizeForumHtml(props.post.textHtml)
 })
@@ -66,7 +70,7 @@ onUnmounted(() => {
       </span>
       <span v-else class="italic">匿名用户</span>
 
-      <span v-if="post.createdByType && post.createdByType !== 'User'" class="text-[10px] rounded bg-[rgb(var(--tag-bg))] px-1 text-[rgb(var(--tag-text))]">
+      <span v-if="post.createdByType && !isRegularUserType(post.createdByType)" class="text-[10px] rounded bg-[rgb(var(--tag-bg))] px-1 text-[rgb(var(--tag-text))]">
         {{ post.createdByType }}
       </span>
 

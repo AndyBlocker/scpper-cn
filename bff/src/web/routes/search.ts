@@ -135,6 +135,13 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     const m = parseInt(month, 10);
     const d = parseInt(day, 10);
     if (y < 1970 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const parsed = new Date(Date.UTC(y, m - 1, d));
+    if (
+      Number.isNaN(parsed.getTime())
+      || parsed.getUTCFullYear() !== y
+      || parsed.getUTCMonth() + 1 !== m
+      || parsed.getUTCDate() !== d
+    ) return null;
     return `${year}-${month}-${day}`;
   };
 

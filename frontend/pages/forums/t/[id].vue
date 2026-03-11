@@ -83,6 +83,10 @@ function formatDate(dateStr: string | null | undefined): string {
   })
 }
 
+function isRegularUserType(userType: string | null | undefined): boolean {
+  return String(userType || '').toLowerCase() === 'user'
+}
+
 // Build post tree from flat list
 interface PostItem {
   id: number
@@ -122,12 +126,22 @@ const flatPosts = computed(() => {
     const node = postMap.get(post.id)!
     if (post.parentId && postMap.has(post.parentId)) {
       const parent = postMap.get(post.parentId)!
-      node.depth = parent.depth + 1
       parent.children.push(node)
     } else {
       roots.push(node)
     }
   }
+
+  const assignDepths = (nodes: TreeNode[], depth = 0) => {
+    for (const node of nodes) {
+      node.depth = depth
+      if (node.children.length > 0) {
+        assignDepths(node.children, depth + 1)
+      }
+    }
+  }
+
+  assignDepths(roots)
 
   if (sortOrder.value === 'desc') {
     // Roots in desc order (newest first) — they already come from DB in desc
@@ -492,7 +506,7 @@ function copyFloorLink(floor: number) {
               </span>
               <span v-else class="italic">匿名用户</span>
 
-              <span v-if="item.post.createdByType && item.post.createdByType !== 'User'" class="text-[10px] rounded bg-[rgb(var(--tag-bg))] px-1 text-[rgb(var(--tag-text))]">
+              <span v-if="item.post.createdByType && !isRegularUserType(item.post.createdByType)" class="text-[10px] rounded bg-[rgb(var(--tag-bg))] px-1 text-[rgb(var(--tag-text))]">
                 {{ item.post.createdByType }}
               </span>
 
