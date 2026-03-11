@@ -146,6 +146,15 @@ function startOfUtc8Day(input: Date) {
   return removeUtc8Offset(shifted);
 }
 
+function utcDateOnlyFromUtc8Day(input: Date) {
+  const shifted = addUtc8Offset(input);
+  return new Date(Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate()
+  ));
+}
+
 function startOfUtc8Week(input: Date) {
   const shifted = addUtc8Offset(input);
   const day = shifted.getUTCDay();
@@ -461,7 +470,7 @@ export class CategoryIndexTickJob {
         const baseIndexMark = indexOpen * Math.exp(INDEX_K * scoreProvisional);
         const noise = this.deterministicNoise(category, asOfTs, NOISE_AMPLITUDE);
         const indexMark = Number((baseIndexMark * (1 + noise)).toFixed(6));
-        const voteCutoffDate = startOfUtc8Day(addUtc8Days(asOfTs, -1));
+        const voteCutoffDate = utcDateOnlyFromUtc8Day(startOfUtc8Day(addUtc8Days(asOfTs, -1)));
 
         try {
           await this.prisma.categoryIndexTick.create({
