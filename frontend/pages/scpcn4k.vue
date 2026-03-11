@@ -1,9 +1,9 @@
 <template>
   <div class="max-w-6xl mx-auto px-4 py-12 space-y-12">
-    <section class="rounded-3xl border border-white/70 bg-white/90 px-6 py-10 shadow-[0_24px_60px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-neutral-900/85 dark:shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
+    <section class="rounded-lg border border-white/70 bg-white/90 px-6 py-10 shadow-sm backdrop-blur dark:border-white/10 dark:bg-neutral-900/85 dark:shadow-lg">
       <div class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div class="space-y-4">
-          <div class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.35)] bg-[rgba(var(--accent),0.1)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[rgb(var(--accent))]">
+          <div class="inline-flex items-center gap-2 rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--g-accent)]">
             <span>SCPCN 4K</span>
           </div>
           <div class="space-y-3">
@@ -13,7 +13,7 @@
             </p>
             <div class="flex flex-wrap items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
               <span class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1 dark:border-neutral-700 dark:bg-neutral-900/70">
-                <span class="h-1.5 w-1.5 rounded-full bg-[rgb(var(--accent))]" />
+                <span class="h-1.5 w-1.5 rounded-full bg-[var(--g-accent)]" />
                 <span>统计标签：cn4000</span>
               </span>
               <span class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1 dark:border-neutral-700 dark:bg-neutral-900/70">
@@ -27,7 +27,7 @@
             </div>
           </div>
         </div>
-        <div class="rounded-2xl border border-[rgba(var(--accent),0.4)] bg-[rgba(var(--accent),0.08)] px-6 py-5 text-sm text-[rgb(var(--accent-strong))]">
+        <div class="rounded-lg border border-[rgba(var(--accent),0.4)] bg-[var(--g-accent-soft)] px-6 py-5 text-sm text-[rgb(var(--accent-strong))]">
           <div class="font-semibold">当前更新时间</div>
           <div class="mt-1 font-mono text-lg tracking-wide">
             {{ nowFormatted }}
@@ -37,7 +37,7 @@
       </div>
       <div
         v-if="heroImageVisible && heroImageSrc"
-        class="mt-6 overflow-hidden rounded-2xl border border-neutral-200/70 bg-gradient-to-r from-[rgba(var(--accent),0.08)] via-white to-white dark:border-neutral-800/70 dark:from-[rgba(var(--accent),0.08)] dark:via-neutral-900/60 dark:to-neutral-900/80"
+        class="mt-6 overflow-hidden rounded-lg border border-neutral-200/70 bg-gradient-to-r from-[var(--g-accent-soft)] via-white to-white dark:border-neutral-800/70 dark:from-[var(--g-accent-soft)] dark:via-neutral-900/60 dark:to-neutral-900/80"
       >
         <img
           :src="heroImageSrc"
@@ -51,7 +51,7 @@
 
     <section class="space-y-4">
       <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-50">竞赛引言</h2>
-      <div class="rounded-2xl border border-neutral-200/80 bg-white/85 p-6 leading-7 text-neutral-700 shadow-sm backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-900/80 dark:text-neutral-300 dark:shadow-none">
+      <div class="rounded-lg border border-neutral-200/80 bg-white/85 p-6 leading-7 text-neutral-700 shadow-sm backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-900/80 dark:text-neutral-300 dark:shadow-none">
         <p>当我们每一天睁开双眼，我们总能听到难题的窃窃私语。</p>
         <p class="mt-3">
           它如同任性的幽灵缓缓盘旋在我们身边，不经意之间显示出庞大如宇宙的幻影，然后悄悄把谜底置换成隐喻，轻而又轻地放在永恒的迷雾中，饶有兴味观察我们焦头烂额寻找雾中的方向，笑着窥视我们找到如黄金般珍贵的答案。然后……又轻轻一点，布下新的迷宫，撒下新的迷雾。
@@ -76,7 +76,7 @@
           <p class="text-sm text-neutral-500 dark:text-neutral-400">主题：难题。以下要点摘自主办方要求，便于查阅。</p>
         </div>
       </div>
-      <div class="rounded-2xl border border-neutral-200/80 bg-white/85 p-6 text-sm leading-6 text-neutral-700 shadow-sm backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-900/80 dark:text-neutral-300 dark:shadow-none">
+      <div class="rounded-lg border border-neutral-200/80 bg-white/85 p-6 text-sm leading-6 text-neutral-700 shadow-sm backdrop-blur dark:border-neutral-800/70 dark:bg-neutral-900/80 dark:text-neutral-300 dark:shadow-none">
         <ul class="list-disc space-y-2 pl-5">
           <li>本次主题：难题。所谓难题，究竟是已经改了20遍仍然不能满足老板的PPT，是失效的收容措施，还是K级末日，又或者，是婴儿的第一声啼哭，是已然困难的呼吸，还是再也睁不开的双眼？以上种种，都由你们来决定。</li>
           <li>参加方式：使用 <code class="rounded bg-neutral-100 px-1 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">cn4000&lt;你的用户名&gt;</code> 作为条目的网址名称（用户名即 Wikidot 头像旁显示的名称），且条目必须由作者本人发布。</li>
@@ -106,7 +106,7 @@
         <div
           v-for="phase in phaseStates"
           :key="phase.key"
-          class="relative rounded-2xl border p-5 transition-colors"
+          class="relative rounded-lg border p-5 transition-colors"
           :class="[
             'border-neutral-200/80 bg-white/80 dark:border-neutral-800/70 dark:bg-neutral-900/80 backdrop-blur',
             phase.key === nextPhaseKey || phase.status === 'ongoing' ? 'ring-2 ring-[rgba(var(--accent),0.65)]' : ''
@@ -119,7 +119,7 @@
             </div>
             <span
               class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-              :class="phase.status === 'ended' ? 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400' : 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]'"
+              :class="phase.status === 'ended' ? 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400' : 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]'"
             >
               {{ phase.status === 'upcoming' ? '未开始' : phase.status === 'ongoing' ? '进行中' : '已结束' }}
             </span>
@@ -140,7 +140,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:text-neutral-300"
+          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
           @click="refreshHighlights"
           :disabled="entriesPending"
         >
@@ -148,13 +148,13 @@
           <span>换一批</span>
         </button>
       </div>
-      <div v-if="entriesPending" class="rounded-2xl border border-dashed border-neutral-200/60 bg-white/60 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/60 dark:text-neutral-400">
+      <div v-if="entriesPending" class="rounded-lg border border-dashed border-neutral-200/60 bg-white/60 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/60 dark:text-neutral-400">
         正在加载参赛作品…
       </div>
-      <div v-else-if="entriesError" class="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+      <div v-else-if="entriesError" class="rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
         加载参赛作品失败：{{ entriesError.message || entriesError }}
       </div>
-      <div v-else-if="highlightCards.length === 0" class="rounded-2xl border border-dashed border-neutral-200/60 bg-white/70 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/70 dark:text-neutral-400">
+      <div v-else-if="highlightCards.length === 0" class="rounded-lg border border-dashed border-neutral-200/60 bg-white/70 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/70 dark:text-neutral-400">
         暂未收录带有“cn4000”标签的作品。
       </div>
       <div v-else class="grid gap-4 md:grid-cols-2">
@@ -175,7 +175,7 @@
             <button
               type="button"
               class="rounded-full px-3 py-1 transition"
-              :class="orderMode === 'created' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-400'"
+              :class="orderMode === 'created' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-500 dark:text-neutral-400'"
               @click="orderMode = 'created'"
             >
               按时间
@@ -183,7 +183,7 @@
             <button
               type="button"
               class="rounded-full px-3 py-1 transition"
-              :class="orderMode === 'random' ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]' : 'text-neutral-500 dark:text-neutral-400'"
+              :class="orderMode === 'random' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-500 dark:text-neutral-400'"
               @click="orderMode = 'random'"
             >
               随机
@@ -192,7 +192,7 @@
           <button
             v-if="orderMode === 'random'"
             type="button"
-            class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:text-neutral-300"
+            class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
             @click="reshuffleAll"
             :disabled="entriesPending"
           >
@@ -201,14 +201,14 @@
           </button>
         </div>
       </div>
-      <div v-if="entriesPending" class="rounded-2xl border border-dashed border-neutral-200/60 bg-white/60 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/60 dark:text-neutral-400">
+      <div v-if="entriesPending" class="rounded-lg border border-dashed border-neutral-200/60 bg-white/60 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/60 dark:text-neutral-400">
         正在加载参赛作品…
       </div>
-      <div v-else-if="entriesError" class="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+      <div v-else-if="entriesError" class="rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
         加载参赛作品失败：{{ entriesError.message || entriesError }}
       </div>
       <div v-else>
-        <div v-if="displayedEntries.length === 0" class="rounded-2xl border border-dashed border-neutral-200/60 bg-white/70 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/70 dark:text-neutral-400">
+        <div v-if="displayedEntries.length === 0" class="rounded-lg border border-dashed border-neutral-200/60 bg-white/70 p-6 text-center text-sm text-neutral-500 dark:border-neutral-800/60 dark:bg-neutral-900/70 dark:text-neutral-400">
           暂未收录带有“cn4000”标签的作品。
         </div>
         <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

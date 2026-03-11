@@ -4,6 +4,12 @@ export function normalizeBffBase(rawBase?: string | null): string {
   return base.replace(/\/+$/u, '');
 }
 
+const HTTP_PREFIX = /^http:\/\//i;
+const HTTPS_PREFIX = /^https?:\/\//i;
+const PROTOCOL_RELATIVE_PREFIX = /^\/\//i;
+const LOCAL_FILES_PREFIX = /^local--files\//i;
+const DOMAIN_WITH_PATH_REGEX = /^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}(?::\d+)?\/.+/;
+
 function appendVariant(url: string, variant?: string | null): string {
   if (!variant) return url;
   const separator = url.includes('?') ? '&' : '?';
@@ -41,4 +47,24 @@ export function resolveWithFallback(
   const first = resolveAssetUrl(primary, base, options);
   if (first) return first;
   return resolveAssetUrl(fallback, base, options);
+}
+
+export function resolveExternalAssetUrl(raw: string | null | undefined): string {
+  const candidate = String(raw ?? '').trim();
+  if (!candidate) return '';
+
+  if (HTTP_PREFIX.test(candidate)) return candidate.replace(HTTP_PREFIX, 'https://');
+  if (HTTPS_PREFIX.test(candidate)) return candidate;
+  if (PROTOCOL_RELATIVE_PREFIX.test(candidate)) return `https:${candidate}`;
+  if (LOCAL_FILES_PREFIX.test(candidate)) return `https://scp-wiki-cn.wdfiles.com/${candidate}`;
+  if (DOMAIN_WITH_PATH_REGEX.test(candidate)) return `https://${candidate}`;
+  return '';
+}
+
+export function pickExternalAssetUrl(...candidates: Array<string | null | undefined>): string {
+  for (const candidate of candidates) {
+    const resolved = resolveExternalAssetUrl(candidate);
+    if (resolved) return resolved;
+  }
+  return '';
 }

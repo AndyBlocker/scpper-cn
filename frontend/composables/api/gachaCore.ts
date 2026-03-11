@@ -53,6 +53,11 @@ let walletInflight: Promise<LoadResult<Wallet>> | null = null
 let featuresInflight: Promise<{ ok: true; data: GachaFeatureStatus } | { ok: false; error: string }> | null = null
 let featuresCachedResult: { data: GachaFeatureStatus; fetchedAt: number } | null = null
 
+// Monotonic sequence counter to prevent stale wallet overwrites.
+// When two concurrent API calls return wallet data, the later-started call
+// should not overwrite a fresher response from the earlier-completed call.
+let walletUpdateSeq = 0
+
 // ─── Helpers ─────────────────────────────────────────────
 
 function createState(): GachaState {
@@ -86,8 +91,12 @@ export function toCacheKey(params?: Record<string, any>) {
   return sorted.join('|') || 'default'
 }
 
-export function normalizeError(error: any, fallback: string) {
-  return error?.data?.error || error?.message || fallback
+export function normalizeError(error: unknown, fallback: string): string {
+  if (error != null && typeof error === 'object') {
+    const e = error as Record<string, any>
+    return e?.data?.error || e?.message || fallback
+  }
+  return fallback
 }
 
 // ─── Core Context ────────────────────────────────────────
@@ -102,6 +111,10 @@ export interface GachaCoreContext {
   withTradeListingCardVariant: (listing: TradeListing) => TradeListing
   withPlacementImageVariant: (placement: PlacementOverview) => PlacementOverview
   createIdempotencyKey: (prefix: string) => string
+  /** Capture current wallet sequence before an API call. Pass the returned value to setWalletIfFresh after the call completes. */
+  captureWalletSeq: () => number
+  /** Safely update wallet only if no newer update has occurred since the captured sequence. */
+  setWalletIfFresh: (wallet: Wallet, capturedSeq: number) => void
 }
 
 // ─── Core Composable ─────────────────────────────────────
@@ -153,6 +166,22 @@ export function useGachaCore() {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
   }
 
+  const captureWalletSeq = () => walletUpdateSeq
+
+  const setWalletIfFresh = (wallet: Wallet, capturedSeq: number) => {
+    if (walletUpdateSeq !== capturedSeq) return // a newer update already occurred
+    walletUpdateSeq++
+    state.value.wallet = wallet
+    state.value.walletFetchedAt = new Date().toISOString()
+  }
+
+  // Direct wallet update (always applies, for primary wallet fetches)
+  const setWalletDirect = (wallet: Wallet) => {
+    walletUpdateSeq++
+    state.value.wallet = wallet
+    state.value.walletFetchedAt = new Date().toISOString()
+  }
+
   const ctx: GachaCoreContext = {
     $bff,
     state,
@@ -162,7 +191,9 @@ export function useGachaCore() {
     withTitleVariant,
     withTradeListingCardVariant,
     withPlacementImageVariant,
-    createIdempotencyKey
+    createIdempotencyKey,
+    captureWalletSeq,
+    setWalletIfFresh
   }
 
   // ─── Core APIs ───────────────────────────────────────
@@ -172,13 +203,12 @@ export function useGachaCore() {
       const res = await $bff<ApiResponse<{ wallet?: Wallet }>>('/gacha/activate', { method: 'POST' })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletDirect(res.wallet)
         }
         return { ok: true as const }
       }
       return { ok: false as const, error: res?.error || '激活失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '激活失败') }
     }
   }
@@ -204,7 +234,7 @@ export function useGachaCore() {
         }
         const message = res?.error || '加载配置失败'
         return { ok: false as const, error: message }
-      } catch (error: any) {
+      } catch (error: unknown) {
         const message = normalizeError(error, '加载配置失败')
         return { ok: false as const, error: message }
       } finally {
@@ -247,7 +277,7 @@ export function useGachaCore() {
           return { ok: true as const, data }
         }
         return { ok: false as const, error: res?.error || '加载玩法能力失败' }
-      } catch (error: any) {
+      } catch (error: unknown) {
         return { ok: false as const, error: normalizeError(error, '加载玩法能力失败') }
       } finally {
         featuresInflight = null
@@ -271,13 +301,12 @@ export function useGachaCore() {
       try {
         const res = await $bff<ApiResponse<{ wallet: Wallet }>>('/gacha/wallet', { method: 'GET' })
         if (res?.ok && res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletDirect(res.wallet)
           return { ok: true as const, data: res.wallet }
         }
         const message = res?.error || '加载钱包失败'
         return { ok: false as const, error: message }
-      } catch (error: any) {
+      } catch (error: unknown) {
         const message = normalizeError(error, '加载钱包失败')
         return { ok: false as const, error: message }
       } finally {
@@ -292,12 +321,11 @@ export function useGachaCore() {
     try {
       const res = await $bff<ApiResponse<{ wallet: Wallet; reward: number }>>('/gacha/claim-daily', { method: 'POST' })
       if (res?.ok && res.wallet) {
-        state.value.wallet = res.wallet
-        state.value.walletFetchedAt = new Date().toISOString()
+        setWalletDirect(res.wallet)
         return { ok: true as const, data: res.wallet, reward: res.reward }
       }
       return { ok: false as const, error: res?.error || '签到失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '签到失败') }
     }
   }
@@ -323,7 +351,7 @@ export function useGachaCore() {
         }
         const message = res?.error || '加载经济配置失败'
         return { ok: false as const, error: message }
-      } catch (error: any) {
+      } catch (error: unknown) {
         const message = normalizeError(error, '加载经济配置失败')
         return { ok: false as const, error: message }
       } finally {
@@ -357,7 +385,7 @@ export function useGachaCore() {
         return { ok: true as const, items: res.items }
       }
       return { ok: false as const, error: res?.error || '加载通知失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载通知失败') }
     }
   }

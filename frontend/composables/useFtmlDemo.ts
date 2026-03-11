@@ -6,7 +6,7 @@
  * 必须在 ClientOnly 组件或 onMounted 中使用。
  */
 
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 
 // ==================== Types ====================
 
@@ -76,8 +76,16 @@ export interface FtmlDemoState {
   workerStatus: WorkerStatus
   workerVersion: string | null
   isRendering: boolean
+  isNavRendering: boolean
   lastResult: RenderResult | null
   includeStats: IncludeStats
+  navPreview: {
+    topBarPage: string
+    sideBarPage: string
+    topBarHtml: string
+    sideBarHtml: string
+    lastError: string | null
+  }
   source: string
   pageMeta: { title: string; tags: string[] }
   preferences: FtmlPreferences
@@ -191,6 +199,7 @@ export function useFtmlDemo() {
   // Worker instance (client-side only)
   let worker: Worker | null = null
   let renderSeq = 0
+  let navRenderSeq = 0
   let autoRenderTimer: ReturnType<typeof setTimeout> | null = null
 
   // Reactive state
@@ -198,8 +207,16 @@ export function useFtmlDemo() {
     workerStatus: 'idle',
     workerVersion: null,
     isRendering: false,
+    isNavRendering: false,
     lastResult: null,
     includeStats: { hits: 0, misses: 0, lastMode: '', lastNote: '' },
+    navPreview: {
+      topBarPage: 'nav:top',
+      sideBarPage: 'nav:side',
+      topBarHtml: '',
+      sideBarHtml: '',
+      lastError: null,
+    },
     source: DEFAULT_SOURCE,
     pageMeta: { title: DEFAULT_PAGE_META.title, tags: [...DEFAULT_PAGE_META.tags] },
     preferences: { ...DEFAULT_PREFERENCES },
@@ -253,9 +270,7 @@ export function useFtmlDemo() {
       mode: (['page', 'draft', 'forum-post', 'direct-message', 'list'].includes(savedPrefs.mode || '')
         ? savedPrefs.mode
         : DEFAULT_PREFERENCES.mode) as FtmlMode,
-      layout: (['wikidot', 'wikijump'].includes(savedPrefs.layout || '')
-        ? savedPrefs.layout
-        : DEFAULT_PREFERENCES.layout) as FtmlLayout,
+      layout: DEFAULT_PREFERENCES.layout,
       uiLayout: (['both', 'editor-only', 'preview-only'].includes(savedPrefs.uiLayout || '')
         ? savedPrefs.uiLayout
         : DEFAULT_PREFERENCES.uiLayout) as UiLayout,
@@ -304,7 +319,7 @@ export function useFtmlDemo() {
     if (worker) return worker
 
     try {
-      worker = new Worker('/ftml-worker.js', { type: 'module' })
+      worker = new Worker('/ftml-worker.js?v=20260301a', { type: 'module' })
       state.workerStatus = 'initializing'
 
       worker.addEventListener('message', (ev) => {
@@ -313,6 +328,7 @@ export function useFtmlDemo() {
         if (msg.type === 'worker-ready') {
           state.workerStatus = 'ready'
           state.workerVersion = msg.version || null
+          requestNavRender('init')
           return
         }
 
@@ -345,6 +361,20 @@ export function useFtmlDemo() {
             state.workerStatus = 'ready'
           } else {
             showToast('渲染失败: ' + (msg.error || '').slice(0, 50), 'error')
+          }
+        }
+
+        if (msg.type === 'render-nav-result') {
+          const seq = msg.seq || 0
+          if (seq !== navRenderSeq) return // stale result
+          state.isNavRendering = false
+
+          if (msg.ok) {
+            state.navPreview.topBarHtml = msg.topBarHtml || ''
+            state.navPreview.sideBarHtml = msg.sideBarHtml || ''
+            state.navPreview.lastError = null
+          } else {
+            state.navPreview.lastError = msg.error || 'nav 渲染失败'
           }
         }
       })
@@ -387,16 +417,48 @@ export function useFtmlDemo() {
       tags: [...state.pageMeta.tags], // Spread to plain array (reactive arrays can't be cloned)
     }
 
+    if (trigger === 'init' || trigger === 'settings') {
+      requestNavRender(trigger)
+    }
+
     w.postMessage({
       type: 'render',
       seq: renderSeq,
       trigger,
       source: state.source,
       mode: state.preferences.mode,
-      layout: state.preferences.layout,
+      layout: DEFAULT_PREFERENCES.layout,
       includeMode: state.preferences.includeMode,
       includeApi: INCLUDE_BFF_API,
       includeBaseUrl: INCLUDE_BASE_URL,
+      pageMeta,
+    })
+  }
+
+  function requestNavRender(trigger: 'manual' | 'settings' | 'init' = 'manual') {
+    const w = worker || initWorker()
+    if (!w) return
+    if (state.workerStatus === 'initializing') return
+
+    navRenderSeq++
+    state.isNavRendering = true
+
+    const pageMeta: PageMeta = {
+      ...DEFAULT_PAGE_META,
+      title: state.pageMeta.title || DEFAULT_PAGE_META.title,
+      tags: [...state.pageMeta.tags],
+    }
+
+    w.postMessage({
+      type: 'render-nav',
+      seq: navRenderSeq,
+      trigger,
+      layout: DEFAULT_PREFERENCES.layout,
+      includeMode: state.preferences.includeMode,
+      includeApi: INCLUDE_BFF_API,
+      includeBaseUrl: INCLUDE_BASE_URL,
+      topPageName: state.navPreview.topBarPage || 'nav:top',
+      sidePageName: state.navPreview.sideBarPage || 'nav:side',
       pageMeta,
     })
   }
@@ -506,6 +568,7 @@ export function useFtmlDemo() {
     initialize,
     cleanup,
     requestRender,
+    requestNavRender,
     clearIncludeCache,
     updateSource,
     updatePageTitle,

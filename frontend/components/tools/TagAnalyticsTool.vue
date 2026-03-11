@@ -43,7 +43,7 @@
           class="self-start inline-flex items-center gap-1 rounded border border-neutral-200 dark:border-neutral-700 px-3 py-1.5 text-sm text-neutral-600 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600"
           @click="reloadTagData"
         >
-          <span class="inline-block w-2 h-2 rounded-full" :class="tagDataLoading ? 'animate-ping bg-[rgb(var(--accent))]' : 'bg-neutral-400 dark:bg-neutral-500'"></span>
+          <span class="inline-block w-2 h-2 rounded-full" :class="tagDataLoading ? 'animate-ping bg-[var(--g-accent)]' : 'bg-neutral-400 dark:bg-neutral-500'"></span>
           刷新数据
         </button>
       </div>
@@ -92,7 +92,7 @@
               class="px-3 py-1.5 text-sm rounded border transition-colors"
               :class="[
                 tableSort === option.key
-                  ? 'border-[rgb(var(--accent))] text-[rgb(var(--accent))]' 
+                  ? 'border-[var(--g-accent)] text-[var(--g-accent)]'
                   : 'border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-neutral-300 dark:hover:border-neutral-600'
               ]"
             >
@@ -185,8 +185,8 @@
         :limit="limit"
         :offset-lovers="offsetLovers[selectedTag] || 0"
         :offset-haters="offsetHaters[selectedTag] || 0"
-        @update:offset-lovers="v => setOffset(selectedTag, 'lovers', v)"
-        @update:offset-haters="v => setOffset(selectedTag, 'haters', v)"
+        @update:offset-lovers="(v: number) => selectedTag && setOffset(selectedTag, 'lovers', v)"
+        @update:offset-haters="(v: number) => selectedTag && setOffset(selectedTag, 'haters', v)"
       />
     </div>
 
@@ -199,8 +199,8 @@
         :limit="limit"
         :offset-lovers="offsetLovers[t] || 0"
         :offset-haters="offsetHaters[t] || 0"
-        @update:offset-lovers="v => setOffset(t, 'lovers', v)"
-        @update:offset-haters="v => setOffset(t, 'haters', v)"
+        @update:offset-lovers="(v: number) => setOffset(t, 'lovers', v)"
+        @update:offset-haters="(v: number) => setOffset(t, 'haters', v)"
       />
     </div>
   </div>

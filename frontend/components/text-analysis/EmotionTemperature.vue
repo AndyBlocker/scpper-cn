@@ -19,9 +19,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { EmotionData } from '~/types/text-analysis'
 
+const emotionTemperatureEndpoint: string = '/api/text-analysis/emotion-temperature'
+
 const { data: emotionData, pending } = useAsyncData<EmotionData>(
   'text-analysis-emotion',
-  () => $fetch('/api/text-analysis/emotion-temperature')
+  () => $fetch<EmotionData>(emotionTemperatureEndpoint)
 )
 
 const scatterEl = ref<HTMLCanvasElement | null>(null)

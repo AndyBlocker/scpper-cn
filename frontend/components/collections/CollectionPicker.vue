@@ -2,7 +2,7 @@
   <div class="relative">
     <button
       type="button"
-      class="inline-flex items-center gap-1 rounded-full border border-[rgba(var(--accent),0.3)] bg-[rgba(var(--accent),0.1)] px-3 py-1.5 text-xs font-semibold text-[rgb(var(--accent))] transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)]"
+      class="inline-flex items-center gap-1 rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--g-accent)] transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
       @click="togglePanel"
     >
       <LucideIcon name="BookmarkPlus" class="h-3.5 w-3.5" />
@@ -14,7 +14,7 @@
         v-if="open"
         ref="panelRef"
         :key="panelStateKey"
-        class="absolute right-0 z-40 mt-2 w-96 rounded-2xl border border-neutral-200 bg-white/95 p-4 shadow-[0_22px_45px_rgba(15,23,42,0.12)] dark:border-neutral-700 dark:bg-neutral-900/95 dark:shadow-[0_30px_60px_rgba(0,0,0,0.6)]"
+        class="absolute right-0 z-40 mt-2 w-96 rounded-lg border border-neutral-200 bg-white/95 p-4 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/95 dark:shadow-lg"
       >
         <div class="flex items-center justify-between border-b border-neutral-200 pb-2 dark:border-neutral-700">
           <h4 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">收藏 “{{ pageTitle }}”</h4>
@@ -32,7 +32,7 @@
           <p>登录后即可将页面加入收藏夹，并在个人中心统一管理。</p>
           <NuxtLink
             to="/auth/login"
-            class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-4 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(37,99,235,0.35)]"
+            class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-4 py-1.5 text-xs font-semibold text-white shadow-sm"
           >
             <LucideIcon name="LogIn" class="h-4 w-4" />
             前往登录
@@ -53,22 +53,22 @@
                 maxlength="80"
                 required
                 placeholder="收藏夹名称"
-                class="w-full rounded-xl border border-neutral-200 bg-white/90 px-3 py-2 text-sm text-neutral-800 focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.25)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
+                class="w-full rounded-xl border border-neutral-200 bg-white/90 px-3 py-2 text-sm text-neutral-800 focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-strong)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
               >
               <div class="flex items-center justify-between">
                 <button
                   type="button"
-                  class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/90 px-3 py-1 text-xs font-semibold text-neutral-500 hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                  class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/90 px-3 py-1 text-xs font-semibold text-neutral-500 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                   @click="open = false"
                 >
                   以后再说
                 </button>
                 <button
                   type="submit"
-                  class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-4 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(37,99,235,0.35)]"
-                  :disabled="saving.value || isApplying"
+                  class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-4 py-1.5 text-xs font-semibold text-white shadow-sm"
+                  :disabled="saving || isApplying"
                 >
-                  <LucideIcon v-if="saving.value" name="Loader2" class="h-4 w-4 animate-spin" />
+                  <LucideIcon v-if="saving" name="Loader2" class="h-4 w-4 animate-spin" />
                   <span>创建收藏夹</span>
                 </button>
               </div>
@@ -80,7 +80,7 @@
               <div class="flex items-center gap-2">
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-neutral-500 hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                  class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-neutral-500 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                   @click="openCreateForm = !openCreateForm"
                 >
                   <LucideIcon name="PlusCircle" class="h-3.5 w-3.5" />
@@ -88,7 +88,7 @@
                 </button>
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-neutral-500 hover:text-[rgb(var(--accent))] dark:text-neutral-300"
+                  class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-neutral-500 hover:text-[var(--g-accent)] dark:text-neutral-300"
                   @click="refresh"
                 >
                   <LucideIcon name="RefreshCw" class="h-3.5 w-3.5" />
@@ -110,15 +110,15 @@
                 maxlength="80"
                 required
                 placeholder="收藏夹名称"
-                class="w-full rounded-xl border border-neutral-200 bg-white/90 px-3 py-2 text-sm text-neutral-800 focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.25)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
+                class="w-full rounded-xl border border-neutral-200 bg-white/90 px-3 py-2 text-sm text-neutral-800 focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-strong)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
               >
               <div class="flex justify-end">
                 <button
                   type="submit"
-                  class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-4 py-1.5 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(37,99,235,0.35)]"
-                  :disabled="saving.value || isApplying"
+                  class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-4 py-1.5 text-xs font-semibold text-white shadow-sm"
+                  :disabled="saving || isApplying"
                 >
-                  <LucideIcon v-if="saving.value" name="Loader2" class="h-4 w-4 animate-spin" />
+                  <LucideIcon v-if="saving" name="Loader2" class="h-4 w-4 animate-spin" />
                   <span>创建</span>
                 </button>
               </div>
@@ -128,13 +128,13 @@
               <li
                 v-for="collection in collectionList"
                 :key="collection.id"
-                class="rounded-2xl border border-neutral-200/70 bg-neutral-50/70 p-3 transition hover:border-[rgba(var(--accent),0.35)] dark:border-neutral-700 dark:bg-neutral-900/60"
+                class="rounded-lg border border-neutral-200/70 bg-neutral-50/70 p-3 transition hover:border-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/60"
               >
                 <label class="flex items-start gap-3">
                   <input
                     :checked="draftSelected.has(collection.id)"
                     type="checkbox"
-                    class="mt-1 h-4 w-4 rounded border-neutral-300 text-[rgb(var(--accent))] focus:ring-[rgb(var(--accent))]"
+                    class="mt-1 h-4 w-4 rounded border-neutral-300 text-[var(--g-accent)] focus:ring-[var(--g-accent)]"
                     @change="toggleDraft(collection)"
                   >
                   <div class="flex-1 space-y-2">
@@ -155,20 +155,20 @@
                       rows="2"
                       maxlength="1200"
                       :placeholder="draftSelected.has(collection.id) ? '为此页面写点批注吧（可选）' : '勾选上方后可保存批注'"
-                      class="w-full rounded-xl border border-neutral-200 bg-white/90 px-3 py-2 text-sm text-neutral-700 focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.25)] disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
+                      class="w-full rounded-xl border border-neutral-200 bg-white/90 px-3 py-2 text-sm text-neutral-700 focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-strong)] disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
                       :disabled="!draftSelected.has(collection.id)"
                     />
                     <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-400 dark:text-neutral-500">
                       <span>
-                        <span v-if="messages[collection.id]" class="text-[rgb(var(--accent))]">{{ messages[collection.id] }}</span>
+                        <span v-if="messages[collection.id]" class="text-[var(--g-accent)]">{{ messages[collection.id] }}</span>
                         <span v-else-if="isRemovalPending(collection.id)">将移除，点击保存后生效</span>
                         <span v-else-if="isNewlySelected(collection.id)">新选择，保存后加入收藏</span>
-                        <span v-else-if="isAnnotationDirty(collection.id)" class="text-[rgb(var(--accent))]">批注已修改，保存后同步</span>
+                        <span v-else-if="isAnnotationDirty(collection.id)" class="text-[var(--g-accent)]">批注已修改，保存后同步</span>
                         <span v-else>已与云端同步</span>
                       </span>
                       <button
                         type="button"
-                        class="inline-flex items-center gap-1 text-[rgb(var(--accent))]"
+                        class="inline-flex items-center gap-1 text-[var(--g-accent)]"
                         @click.stop="openCreateForm = true"
                       >
                         <LucideIcon name="FolderPlus" class="h-3.5 w-3.5" />
@@ -188,7 +188,7 @@
               <div class="flex items-center gap-2">
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-3 py-1 font-semibold text-neutral-500 hover:border-[rgba(var(--accent),0.3)] hover:text-[rgb(var(--accent))] disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                  class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-3 py-1 font-semibold text-neutral-500 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                   :disabled="!hasPendingChanges || disableActions"
                   @click="resetDrafts"
                 >
@@ -196,7 +196,7 @@
                 </button>
                 <button
                   type="button"
-                  class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-4 py-1.5 font-semibold text-white shadow-[0_10px_28px_rgba(37,99,235,0.35)] transition hover:-translate-y-0.5 disabled:opacity-60 disabled:hover:translate-y-0"
+                  class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-4 py-1.5 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:opacity-60 disabled:hover:translate-y-0"
                   :disabled="!hasPendingChanges || disableActions"
                   @click="applyChanges"
                 >
@@ -209,7 +209,7 @@
         </div>
 
         <div class="pt-3 text-right text-[11px] text-neutral-400 dark:text-neutral-500">
-          收藏夹管理位于 <NuxtLink to="/account?tab=collections" class="text-[rgb(var(--accent))]">账号设置 · 收藏夹</NuxtLink>
+          收藏夹管理位于 <NuxtLink to="/account?tab=collections" class="text-[var(--g-accent)]">账号设置 · 收藏夹</NuxtLink>
         </div>
       </div>
     </transition>

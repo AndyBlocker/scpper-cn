@@ -1,6 +1,13 @@
 import { createApp } from './app.js';
 import { config } from './config.js';
 import { prisma } from './db.js';
+import {
+  triggerTradeExpirySweep,
+  triggerBuyRequestExpirySweep,
+  triggerMarketSettleSweep
+} from './routes/gacha/index.js';
+
+const EXPIRY_SWEEP_INTERVAL_MS = 60_000; // 60 seconds
 
 async function main() {
   const app = createApp();
@@ -9,9 +16,18 @@ async function main() {
     console.log(`[user-backend] listening on http://localhost:${config.port}`);
   });
 
+  // Background expiry sweeps — ensure expired trades/buy-requests are cleaned
+  // up even when no user traffic is flowing.
+  const sweepTimer = setInterval(() => {
+    triggerTradeExpirySweep();
+    triggerBuyRequestExpirySweep();
+    triggerMarketSettleSweep();
+  }, EXPIRY_SWEEP_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     // eslint-disable-next-line no-console
     console.log(`Received ${signal}, shutting down...`);
+    clearInterval(sweepTimer);
     server.close(async () => {
       await prisma.$disconnect();
       process.exit(0);

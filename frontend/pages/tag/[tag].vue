@@ -2,8 +2,8 @@
   <div class="space-y-8 py-6">
     <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
       <div class="space-y-1">
-        <div class="inline-flex items-center gap-2 text-[11px] uppercase tracking-widest text-[rgb(var(--accent))]">
-          <span class="h-1 w-1 rounded-full bg-[rgb(var(--accent))]" />
+        <div class="inline-flex items-center gap-2 text-[11px] uppercase tracking-widest text-[var(--g-accent)]">
+          <span class="h-1 w-1 rounded-full bg-[var(--g-accent)]" />
           <span>标签详情</span>
         </div>
         <h1 class="text-2xl font-bold text-neutral-900 dark:text-neutral-100 break-all">
@@ -16,7 +16,7 @@
       <div class="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
+          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
           @click="navigateToSearch"
         >
           <LucideIcon name="Search" class="h-4 w-4" />
@@ -24,7 +24,7 @@
         </button>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[rgb(var(--accent))] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
+          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
           @click="reload"
         >
           <LucideIcon name="RefreshCcw" class="h-4 w-4" />
@@ -64,7 +64,7 @@
       </div>
     </section>
 
-    <section class="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.12)] backdrop-blur-lg dark:border-white/10 dark:bg-neutral-950/60 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+    <section class="rounded-lg border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-lg dark:border-white/10 dark:bg-neutral-950/60 dark:shadow">
       <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
           <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Top 页面</h2>
@@ -98,7 +98,7 @@
       </div>
     </section>
 
-    <section class="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.12)] backdrop-blur-lg dark:border-white/10 dark:bg-neutral-950/60 dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]">
+    <section class="rounded-lg border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-lg dark:border-white/10 dark:bg-neutral-950/60 dark:shadow">
       <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
           <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">活跃窗口</h2>
@@ -115,19 +115,19 @@
         <article
           v-for="page in recentPages.slice(0, 8)"
           :key="`recent-${page.wikidotId || page.title}`"
-          class="rounded-2xl border border-neutral-200/70 bg-white/85 p-4 transition hover:-translate-y-0.5 hover:border-[rgba(var(--accent),0.4)] dark:border-neutral-800/70 dark:bg-neutral-900/80"
+          class="rounded-lg border border-neutral-200/70 bg-white/85 p-4 transition hover:-translate-y-0.5 hover:border-[rgba(var(--accent),0.4)] dark:border-neutral-800/70 dark:bg-neutral-900/80"
         >
           <div class="flex items-start justify-between gap-3">
-            <NuxtLink :to="`/page/${page.wikidotId}`" class="font-medium text-neutral-900 hover:text-[rgb(var(--accent))] dark:text-neutral-100">
+            <NuxtLink :to="`/page/${page.wikidotId}`" class="font-medium text-neutral-900 hover:text-[var(--g-accent)] dark:text-neutral-100">
               {{ page.title || 'Untitled' }}
             </NuxtLink>
-            <span class="rounded-full bg-[rgba(var(--accent),0.16)] px-2 py-0.5 text-[11px] font-semibold text-[rgb(var(--accent))]">
+            <span class="rounded-full bg-[var(--g-accent-medium)] px-2 py-0.5 text-[11px] font-semibold text-[var(--g-accent)]">
               Rating {{ Number(page.rating ?? 0) }}
             </span>
           </div>
           <div class="mt-2 flex flex-wrap gap-2 text-xs text-neutral-500 dark:text-neutral-400">
             <span>发布于 {{ formatDate(page.createdDate) }}</span>
-            <span v-if="page.tags?.length">标签：{{ page.tags.map(t => `#${t}`).join('、') }}</span>
+            <span v-if="page.tags?.length">标签：{{ page.tags.map((t: string) => `#${t}`).join('、') }}</span>
           </div>
         </article>
       </div>
@@ -374,7 +374,7 @@ function navigateToSearch() {
 
 <style scoped>
 .summary-card {
-  @apply rounded-3xl border border-white/60 bg-white/80 p-6 shadow-[0_22px_55px_rgba(15,23,42,0.12)] backdrop-blur-lg transition hover:-translate-y-1 hover:shadow-[0_30px_70px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-neutral-950/60 dark:shadow-[0_32px_80px_rgba(0,0,0,0.55)];
+  @apply rounded-lg border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-lg transition hover:-translate-y-1 hover:shadow-sm dark:border-white/10 dark:bg-neutral-950/60 dark:shadow-lg;
 }
 .summary-label {
   @apply text-xs font-medium uppercase tracking-widest text-neutral-500 dark:text-neutral-400;

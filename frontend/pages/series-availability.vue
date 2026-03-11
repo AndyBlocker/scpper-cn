@@ -1,7 +1,7 @@
 <template>
   <div class="max-w-6xl mx-auto w-full py-10 space-y-8">
     <header class="space-y-3">
-      <div class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--accent),0.35)] bg-[rgba(var(--accent),0.08)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--accent))]">
+      <div class="inline-flex items-center gap-2 rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-4 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--g-accent)]">
         <span>系列占用</span>
       </div>
       <div>
@@ -17,7 +17,7 @@
     <div v-if="pending" class="text-sm text-neutral-600 dark:text-neutral-300">正在加载系列数据...</div>
 
     <div v-else class="grid gap-4 sm:grid-cols-2">
-      <div v-for="s in series" :key="s.seriesNumber" class="rounded-2xl border border-neutral-200 dark:border-neutral-800 p-5 bg-white/80 dark:bg-neutral-900/70">
+      <div v-for="s in series" :key="s.seriesNumber" class="rounded-lg border border-neutral-200 dark:border-neutral-800 p-5 bg-white/80 dark:bg-neutral-900/70">
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-3">
             <div class="flex items-baseline gap-2">
@@ -37,7 +37,7 @@
         <!-- 进度条 -->
         <div class="space-y-2 mb-4">
           <div class="h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden" role="progressbar" :aria-valuenow="Math.round(s.usagePercentage)" aria-valuemin="0" aria-valuemax="100">
-            <div class="h-full rounded-full bg-[rgb(var(--accent))] transition-[width] duration-300" :style="{ width: Math.min(100, Math.max(0, s.usagePercentage)).toFixed(1) + '%' }"></div>
+            <div class="h-full rounded-full bg-[var(--g-accent)] transition-[width] duration-300" :style="{ width: Math.min(100, Math.max(0, s.usagePercentage)).toFixed(1) + '%' }"></div>
           </div>
           <div class="text-xs text-neutral-700 dark:text-neutral-300 tabular-nums">
             已用 {{ s.usedSlots }} / {{ s.totalSlots }}（{{ s.usagePercentage.toFixed(1) }}%），剩余 {{ s.remainingSlots }} 个

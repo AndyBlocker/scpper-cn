@@ -68,7 +68,9 @@ export function useAlerts() {
       if (saved && (['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'] as AlertMetric[]).includes(saved as AlertMetric)) {
         activeMetric.value = saved as AlertMetric;
       }
-    } catch {}
+    } catch {
+      // Ignore localStorage access failures in private mode or restricted contexts.
+    }
   }
 
   function resetState() {
@@ -90,7 +92,9 @@ export function useAlerts() {
     if (metric && activeMetric.value !== metric) {
       activeMetric.value = metric;
       if (typeof window !== 'undefined') {
-        try { window.localStorage.setItem('alerts:lastMetric', metric); } catch {}
+        try { window.localStorage.setItem('alerts:lastMetric', metric); } catch {
+          // Ignore localStorage access failures in private mode or restricted contexts.
+        }
       }
     }
     if (loading.value[targetMetric]) {
@@ -222,7 +226,9 @@ export function useAlerts() {
     if (activeMetric.value !== metric) {
       activeMetric.value = metric;
       if (typeof window !== 'undefined') {
-        try { window.localStorage.setItem('alerts:lastMetric', metric); } catch {}
+        try { window.localStorage.setItem('alerts:lastMetric', metric); } catch {
+          // Ignore localStorage access failures in private mode or restricted contexts.
+        }
       }
     }
   }

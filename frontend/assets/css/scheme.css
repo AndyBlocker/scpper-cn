@@ -24,6 +24,14 @@
     --accent-strong: 0 96 220;  /* #0060DC */
     --accent-weak: 166 200 255; /* #A6C8FF */
 
+    /* accent opacity tokens (shared across all pages) */
+    --g-accent: rgb(var(--accent));
+    --g-accent-hover: rgb(var(--accent) / 0.04);
+    --g-accent-soft: rgb(var(--accent) / 0.08);
+    --g-accent-medium: rgb(var(--accent) / 0.14);
+    --g-accent-strong: rgb(var(--accent) / 0.22);
+    --g-accent-border: rgb(var(--accent) / 0.30);
+
     /* info / primary */
     --primary: var(--accent);
     --primary-strong: var(--accent-strong);

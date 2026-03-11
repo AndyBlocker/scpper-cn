@@ -1,10 +1,22 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.resolve(__dirname, '../../../data/text-analysis');
+const DATA_DIR = (() => {
+  const candidates = [
+    process.env.TEXT_ANALYSIS_DATA_DIR,
+    path.resolve(process.cwd(), 'data/text-analysis'),
+    path.resolve(process.cwd(), 'bff/data/text-analysis')
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0] || path.resolve(process.cwd(), 'data/text-analysis');
+})();
 
 // In-memory cache: { data, loadedAt }
 const cache = new Map<string, { data: any; loadedAt: number }>();

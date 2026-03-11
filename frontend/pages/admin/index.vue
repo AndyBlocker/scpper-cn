@@ -19,7 +19,7 @@
               <h2 class="text-base font-semibold text-neutral-900 dark:text-neutral-100">抽卡管理</h2>
               <p class="text-sm text-neutral-500 dark:text-neutral-400">配置卡池、维护卡片并批量调整抽卡权重。</p>
             </div>
-            <NuxtLink to="/admin/gacha" class="inline-flex items-center justify-center rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))]">前往抽卡管理</NuxtLink>
+            <NuxtLink to="/admin/gacha" class="inline-flex items-center justify-center rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[var(--g-accent)]">前往抽卡管理</NuxtLink>
           </div>
         </div>
         <div class="rounded-xl border border-neutral-200/80 bg-white/80 p-4 dark:border-neutral-800/70 dark:bg-neutral-900/70">
@@ -28,7 +28,7 @@
               <h2 class="text-base font-semibold text-neutral-900 dark:text-neutral-100">活动月历管理</h2>
               <p class="text-sm text-neutral-500 dark:text-neutral-400">新增、删除与管理活动，支持 Markdown 详情。</p>
             </div>
-            <NuxtLink to="/admin/events" class="inline-flex items-center justify-center rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))]">前往活动管理</NuxtLink>
+            <NuxtLink to="/admin/events" class="inline-flex items-center justify-center rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[var(--g-accent)]">前往活动管理</NuxtLink>
           </div>
         </div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -52,12 +52,12 @@
               v-model="q"
               type="text"
               placeholder="搜索邮箱 / 昵称 / wikidotId"
-              class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800"
+              class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800"
               @keyup.enter="refresh()"
             />
             <div class="flex items-center gap-2">
               <button
-                class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[rgb(var(--accent))]"
+                class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[var(--g-accent)]"
                 @click="refresh()"
               >搜索</button>
               <button
@@ -124,7 +124,7 @@
           <div v-if="isLinkOpen" class="fixed inset-0 z-50">
             <div class="absolute inset-0 bg-black/50" @click="closeLinkModal" />
             <div class="absolute inset-0 flex items-center justify-center p-4">
-              <div class="w-full max-w-xl rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-xl dark:border-neutral-800/70 dark:bg-neutral-900">
+              <div class="w-full max-w-xl rounded-lg border border-neutral-200/80 bg-white p-5 shadow-xl dark:border-neutral-800/70 dark:bg-neutral-900">
                 <div class="flex items-start justify-between">
                   <h3 class="text-lg font-semibold">绑定 Wikidot 账户</h3>
                   <button class="p-2 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200" @click="closeLinkModal">
@@ -135,7 +135,7 @@
 
                 <div class="mt-4 space-y-3">
                   <div class="flex items-center gap-2">
-                    <input v-model="wikidotInput" type="text" placeholder="输入 Wikidot ID 或 用户名" class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" @keyup.enter="onSearchWikidot" />
+                    <input v-model="wikidotInput" type="text" placeholder="输入 Wikidot ID 或 用户名" class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" @keyup.enter="onSearchWikidot" />
                     <button class="rounded-lg bg-neutral-900 px-3 py-2 text-sm font-semibold text-white hover:bg-neutral-800 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-white" @click="onSearchWikidot">搜索</button>
                   </div>
                   <div v-if="wikidotError" class="rounded-lg border border-rose-300/50 bg-rose-50/70 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-200">
@@ -148,20 +148,20 @@
                     <ul>
                       <li v-for="u in wikidotResults" :key="u.wikidotId" class="flex items-center justify-between gap-2 border-b border-neutral-200/70 px-3 py-2 last:border-none dark:border-neutral-800/60">
                         <div class="truncate"><span class="font-medium">{{ u.displayName }}</span> <span class="text-neutral-500">#{{ u.wikidotId }}</span></div>
-                        <button class="rounded border border-[rgba(var(--accent),0.5)] px-2 py-1 text-xs font-semibold text-[rgb(var(--accent-strong))] hover:bg-[rgba(var(--accent),0.08)]" @click="selectWikidot(u)">选择</button>
+                        <button class="rounded border border-[rgba(var(--accent),0.5)] px-2 py-1 text-xs font-semibold text-[rgb(var(--accent-strong))] hover:bg-[var(--g-accent-soft)]" @click="selectWikidot(u)">选择</button>
                       </li>
                     </ul>
                   </div>
 
                   <div class="flex items-center gap-4 text-sm">
-                    <label class="inline-flex items-center gap-2"><input type="checkbox" v-model="force" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" /> 强制覆盖</label>
-                    <label class="inline-flex items-center gap-2"><input type="checkbox" v-model="takeover" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" /> 接管转移</label>
+                    <label class="inline-flex items-center gap-2"><input type="checkbox" v-model="force" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[var(--g-accent)]" /> 强制覆盖</label>
+                    <label class="inline-flex items-center gap-2"><input type="checkbox" v-model="takeover" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[var(--g-accent)]" /> 接管转移</label>
                   </div>
                 </div>
 
                 <div class="mt-5 flex items-center justify-end gap-2">
                   <button class="rounded-lg border border-neutral-200 px-4 py-2 text-sm dark:border-neutral-700" @click="closeLinkModal">取消</button>
-                  <button :disabled="!wikidotCandidate || saving" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white hover:bg-[rgb(var(--accent))] disabled:opacity-50" @click="submitLink">确认绑定</button>
+                  <button :disabled="!wikidotCandidate || saving" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--g-accent)] disabled:opacity-50" @click="submitLink">确认绑定</button>
                 </div>
               </div>
             </div>

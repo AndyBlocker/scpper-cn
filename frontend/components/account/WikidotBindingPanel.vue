@@ -120,7 +120,7 @@ function clearSelection() {
 </script>
 
 <template>
-  <div class="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 space-y-4 dark:border-neutral-700 dark:bg-neutral-800">
+  <div class="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-4 dark:border-neutral-700 dark:bg-neutral-800">
     <!-- No task: Show start form -->
     <template v-if="!hasTask">
       <form @submit.prevent="handleStartBinding" class="space-y-3">
@@ -212,7 +212,7 @@ function clearSelection() {
         <button
           type="submit"
           :disabled="(!query.trim() && !selectedUser) || loading || resolving"
-          class="rounded-full bg-[rgb(var(--accent))] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          class="rounded-full bg-[var(--g-accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {{ loading ? '处理中...' : (resolving ? '搜索中...' : '开始绑定') }}
         </button>
@@ -248,7 +248,7 @@ function clearSelection() {
                 href="https://scp-wiki-cn.wikidot.com/andyblocker"
                 target="_blank"
                 rel="noopener"
-                class="text-[rgb(var(--accent))] hover:underline"
+                class="text-[var(--g-accent)] hover:underline"
               >
                 验证页面
               </a>
@@ -288,7 +288,7 @@ function clearSelection() {
         <button
           @click="handleRetry"
           :disabled="loading"
-          class="text-[rgb(var(--accent))] hover:underline text-sm"
+          class="text-[var(--g-accent)] hover:underline text-sm"
         >
           重新发起绑定
         </button>

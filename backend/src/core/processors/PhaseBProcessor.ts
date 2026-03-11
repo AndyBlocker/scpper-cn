@@ -33,7 +33,7 @@ export class PhaseBProcessor {
     this.store = new DatabaseStore();
   }
 
-  async run(fullSync = false, testMode = false): Promise<void> {
+  async run(fullSync = false, testMode = false, onProgress?: () => void): Promise<void> {
     Logger.info('=== Phase B: Targeted Page Content Collection ===');
     
     const BATCH_LIMIT = testMode ? 100 : 5000;
@@ -156,6 +156,7 @@ export class PhaseBProcessor {
           const processedInFlush = await this._flush(bucket, bucketCount, round, totalProcessed + roundProcessedPages, totalPhaseBPages);
           roundProcessedPages += processedInFlush;
           if (bar) bar.increment(processedInFlush);
+          onProgress?.();
           bucket = [];
           bucketCost = 0;
           cnt = 0;
@@ -170,6 +171,7 @@ export class PhaseBProcessor {
         const processedInFlush = await this._flush(bucket, bucketCount, round, totalProcessed + roundProcessedPages, totalPhaseBPages);
         roundProcessedPages += processedInFlush;
         if (bar) bar.increment(processedInFlush);
+        onProgress?.();
       }
 
       const roundElapsedTime = (Date.now() - roundStartTime) / 1000;

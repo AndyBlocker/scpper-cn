@@ -14,9 +14,13 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { VocabScatterPoint } from '~/types/text-analysis'
 
+const vocabularyScatterEndpoint: string = '/api/text-analysis/vocabulary-scatter'
+
 const { data, pending } = useAsyncData<{ items: VocabScatterPoint[]; total: number }>(
   'text-analysis-vocabulary-scatter',
-  () => $fetch('/api/text-analysis/vocabulary-scatter?limit=500')
+  () => $fetch<{ items: VocabScatterPoint[]; total: number }>(vocabularyScatterEndpoint, {
+    params: { limit: 500 }
+  })
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)

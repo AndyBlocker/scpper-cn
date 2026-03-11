@@ -7,7 +7,7 @@
       </p>
     </div>
 
-    <div class="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_22px_55px_rgba(15,23,42,0.12)] backdrop-blur-xl sm:p-8 dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-[0_36px_80px_rgba(0,0,0,0.55)]">
+    <div class="rounded-lg border border-white/60 bg-white/75 p-6 shadow-sm backdrop-blur-xl sm:p-8 dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-lg">
       <form class="space-y-6" @submit.prevent="handleSend">
         <div class="space-y-2">
           <label for="email" class="block text-sm font-medium text-neutral-700 dark:text-neutral-300">绑定邮箱</label>
@@ -16,7 +16,7 @@
             v-model="email"
             type="email"
             autocomplete="email"
-            class="w-full rounded-xl border border-neutral-200 bg-white/90 px-4 py-3 text-neutral-900 shadow-sm transition focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100"
+            class="w-full rounded-xl border border-neutral-200 bg-white/90 px-4 py-3 text-neutral-900 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100"
             placeholder="your@email.com"
             :disabled="isSubmitting"
             required
@@ -33,7 +33,7 @@
         <div class="flex flex-col gap-3 sm:flex-row">
           <button
             type="submit"
-            class="inline-flex items-center justify-center rounded-xl border border-[rgba(var(--accent),0.4)] bg-[rgb(var(--accent))] px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(10,132,255,0.25)] transition hover:-translate-y-0.5 hover:shadow-[0_26px_48px_rgba(10,132,255,0.35)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(var(--accent),0.4)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[rgb(var(--accent-strong))] dark:text-neutral-100 sm:w-auto w-full"
+            class="inline-flex items-center justify-center rounded-xl border border-[var(--g-accent-border)] bg-[var(--g-accent)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[rgb(var(--accent-strong))] dark:text-neutral-100 sm:w-auto w-full"
             :disabled="!isEmailValid || isSubmitting || cooldown > 0"
           >
             <span v-if="isSubmitting">发送中…</span>

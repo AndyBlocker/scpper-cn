@@ -18,7 +18,7 @@
       </div>
 
       <div v-else class="space-y-8">
-        <section class="space-y-5 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-5 rounded-lg border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="space-y-1">
             <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">抽卡返还配置</h2>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">按稀有度设置抽取与分解返还，用于所有卡池的默认值。</p>
@@ -37,47 +37,47 @@
             正在加载配置...
           </div>
           <div class="grid gap-5 md:grid-cols-2">
-            <div class="space-y-3 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
+            <div class="space-y-3 rounded-lg border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
               <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">抽取返还</h3>
               <div class="space-y-2">
                 <div v-for="rarity in rarityOrder" :key="'economy-draw-' + rarity" class="flex items-center justify-between gap-3">
                   <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">{{ rarityLabel(rarity) }}</label>
-                  <input v-model.number="economyForm.drawRewards[rarity]" type="number" min="0" class="w-24 rounded-lg border border-neutral-200 bg-white px-2 py-1 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" :disabled="economyLoading" />
+                  <input v-model.number="economyForm.drawRewards[rarity]" type="number" min="0" class="w-24 rounded-lg border border-neutral-200 bg-white px-2 py-1 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" :disabled="economyLoading" />
                 </div>
               </div>
             </div>
-            <div class="space-y-3 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
+            <div class="space-y-3 rounded-lg border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
               <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">分解返还</h3>
               <div class="space-y-2">
                 <div v-for="rarity in rarityOrder" :key="'economy-dismantle-' + rarity" class="flex items-center justify-between gap-3">
                   <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">{{ rarityLabel(rarity) }}</label>
-                  <input v-model.number="economyForm.dismantleRewards[rarity]" type="number" min="0" class="w-24 rounded-lg border border-neutral-200 bg-white px-2 py-1 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" :disabled="economyLoading" />
+                  <input v-model.number="economyForm.dismantleRewards[rarity]" type="number" min="0" class="w-24 rounded-lg border border-neutral-200 bg-white px-2 py-1 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" :disabled="economyLoading" />
                 </div>
               </div>
             </div>
           </div>
           <div class="flex items-center justify-end gap-2">
             <button type="button" class="rounded-lg border border-neutral-200 px-4 py-2 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" :disabled="economyLoading" @click="resetEconomyForm">重置</button>
-            <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" :disabled="economyLoading" @click="submitEconomy">
+            <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" :disabled="economyLoading" @click="submitEconomy">
               <span v-if="economyLoading">处理中...</span>
               <span v-else>保存配置</span>
             </button>
           </div>
         </section>
-        <section class="space-y-5 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-5 rounded-lg border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="space-y-1">
             <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Token 调整工具</h2>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">调试时可快速增减指定用户或全体用户的钱包余额。</p>
           </header>
           <div class="grid gap-5 md:grid-cols-2">
-            <form class="space-y-3 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60" @submit.prevent="submitWalletAdjust">
+            <form class="space-y-3 rounded-lg border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60" @submit.prevent="submitWalletAdjust">
               <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">单个用户</h3>
               <p class="text-xs text-neutral-500 dark:text-neutral-400">至少填写 userId 或邮箱其一。</p>
-              <input v-model.trim="walletAdjustForm.userId" type="text" placeholder="userId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
-              <input v-model.trim="walletAdjustForm.email" type="email" placeholder="邮箱" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
-              <input v-model.number="walletAdjustForm.delta" type="number" placeholder="调整数额（可为负）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
-              <input v-model.trim="walletAdjustForm.reason" type="text" placeholder="备注（可选）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
-              <textarea v-model.trim="walletAdjustForm.message" placeholder="用户可见消息（可选，用户访问 gacha 页面时弹窗展示）" rows="2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model.trim="walletAdjustForm.userId" type="text" placeholder="userId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model.trim="walletAdjustForm.email" type="email" placeholder="邮箱" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model.number="walletAdjustForm.delta" type="number" placeholder="调整数额（可为负）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model.trim="walletAdjustForm.reason" type="text" placeholder="备注（可选）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <textarea v-model.trim="walletAdjustForm.message" placeholder="用户可见消息（可选，用户访问 gacha 页面时弹窗展示）" rows="2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               <transition name="fade">
                 <p v-if="walletAdjustSingleError" class="rounded-lg border border-rose-200/70 bg-rose-50/70 px-3 py-2 text-xs text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
                   {{ walletAdjustSingleError }}
@@ -90,19 +90,19 @@
               </transition>
               <div class="flex items-center justify-between gap-2">
                 <button type="button" class="rounded-lg border border-neutral-200 px-4 py-2 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" :disabled="walletAdjustSingleLoading" @click="resetWalletAdjustForm">清空</button>
-                <button type="submit" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" :disabled="walletAdjustSingleLoading">
+                <button type="submit" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" :disabled="walletAdjustSingleLoading">
                   <span v-if="walletAdjustSingleLoading">执行中...</span>
                   <span v-else>调整用户</span>
                 </button>
               </div>
             </form>
-            <form class="space-y-3 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60" @submit.prevent="submitWalletAdjustAll">
+            <form class="space-y-3 rounded-lg border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60" @submit.prevent="submitWalletAdjustAll">
               <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">全部钱包</h3>
-              <input v-model.number="walletAdjustAllForm.delta" type="number" placeholder="调整数额（可为负）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
-              <input v-model.trim="walletAdjustAllForm.reason" type="text" placeholder="备注（可选）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
-              <textarea v-model.trim="walletAdjustAllForm.message" placeholder="用户可见消息（可选，用户访问 gacha 页面时弹窗展示）" rows="2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model.number="walletAdjustAllForm.delta" type="number" placeholder="调整数额（可为负）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model.trim="walletAdjustAllForm.reason" type="text" placeholder="备注（可选）" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <textarea v-model.trim="walletAdjustAllForm.message" placeholder="用户可见消息（可选，用户访问 gacha 页面时弹窗展示）" rows="2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               <label class="inline-flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                <input v-model="walletAdjustAllForm.allowNegative" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" />
+                <input v-model="walletAdjustAllForm.allowNegative" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[var(--g-accent)]" />
                 允许余额为负
               </label>
               <transition name="fade">
@@ -117,7 +117,7 @@
               </transition>
               <div class="flex items-center justify-between gap-2">
                 <button type="button" class="rounded-lg border border-neutral-200 px-4 py-2 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" :disabled="walletAdjustAllLoading" @click="resetWalletAdjustAllForm">清空</button>
-                <button type="submit" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" :disabled="walletAdjustAllLoading">
+                <button type="submit" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" :disabled="walletAdjustAllLoading">
                   <span v-if="walletAdjustAllLoading">执行中...</span>
                   <span v-else>调整全部</span>
                 </button>
@@ -125,61 +125,61 @@
             </form>
           </div>
         </section>
-        <section class="space-y-5 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-5 rounded-lg border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="space-y-1">
             <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">卡池与卡片配置</h2>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">当前为单常驻池模式：仅允许维护一个常驻卡池并配置卡片。</p>
           </header>
 
           <div class="grid gap-5 lg:grid-cols-2">
-            <div class="space-y-4 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
+            <div class="space-y-4 rounded-lg border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
               <div class="flex items-center justify-between">
                 <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">{{ editingPoolId ? '编辑常驻卡池' : '初始化常驻卡池' }}</h3>
                 <button type="button" class="text-xs text-[rgb(var(--accent-strong))] hover:underline" @click="resetPoolForm()">{{ editingPoolId ? '重置' : '清空' }}</button>
               </div>
               <div class="space-y-2">
                 <label class="block text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">名称</label>
-                <input v-model="poolForm.name" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                <input v-model="poolForm.name" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               </div>
               <div class="space-y-2">
                 <label class="block text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">简介</label>
-                <textarea v-model="poolForm.description" rows="3" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"></textarea>
+                <textarea v-model="poolForm.description" rows="3" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"></textarea>
               </div>
               <div class="grid gap-3 sm:grid-cols-3">
                 <div class="space-y-1">
                   <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">单抽消耗</label>
-                  <input v-model.number="poolForm.tokenCost" type="number" min="1" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                  <input v-model.number="poolForm.tokenCost" type="number" min="1" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
                 </div>
                 <div class="space-y-1">
                   <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">十连消耗</label>
-                  <input v-model.number="poolForm.tenDrawCost" type="number" min="1" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                  <input v-model.number="poolForm.tenDrawCost" type="number" min="1" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
                 </div>
                 <div class="space-y-1">
                   <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">重复奖励</label>
-                  <input v-model.number="poolForm.rewardPerDuplicate" type="number" min="0" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                  <input v-model.number="poolForm.rewardPerDuplicate" type="number" min="0" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
                 </div>
               </div>
               <div class="grid gap-3 sm:grid-cols-2">
                 <div class="space-y-1">
                   <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">开始时间</label>
-                  <input v-model="poolForm.startsAt" type="datetime-local" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                  <input v-model="poolForm.startsAt" type="datetime-local" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
                 </div>
                 <div class="space-y-1">
                   <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">结束时间</label>
-                  <input v-model="poolForm.endsAt" type="datetime-local" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                  <input v-model="poolForm.endsAt" type="datetime-local" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
                 </div>
               </div>
               <div v-if="!editingPoolId && pools.length === 0" class="space-y-2 rounded-xl border border-neutral-200/70 bg-white/70 p-3 text-xs text-neutral-600 dark:border-neutral-800/60 dark:bg-neutral-900/50 dark:text-neutral-300">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">初始卡片</label>
                 <div class="flex flex-col gap-2">
                   <label class="inline-flex items-center gap-2">
-                    <input v-model="poolForm.copyAllCards" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" :disabled="!!editingPoolId" />
+                    <input v-model="poolForm.copyAllCards" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[var(--g-accent)]" :disabled="!!editingPoolId" />
                     <span>复制全部现有卡片作为起始内容</span>
                   </label>
                   <p class="text-[11px] text-neutral-400 dark:text-neutral-500">仅首次初始化常驻池时生效。</p>
                   <div class="space-y-1" :class="(poolForm.copyAllCards || editingPoolId) ? 'opacity-50 pointer-events-none' : ''">
                     <label class="text-[11px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500">或指定来源卡池</label>
-                    <select v-model="poolForm.copyFromPoolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+                    <select v-model="poolForm.copyFromPoolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                       <option value="">选择卡池</option>
                       <option v-for="pool in pools" :key="pool.id" :value="pool.id">{{ pool.name }}</option>
                     </select>
@@ -187,7 +187,7 @@
                 </div>
               </div>
               <label class="inline-flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                <input v-model="poolForm.isActive" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" />
+                <input v-model="poolForm.isActive" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[var(--g-accent)]" />
                 卡池开放
               </label>
               <transition name="fade">
@@ -204,14 +204,14 @@
                 <button type="button" class="rounded-lg border border-neutral-200 px-4 py-2 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" @click="startCreatePool()">
                   {{ editingPoolId ? '取消编辑' : '清空' }}
                 </button>
-                <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" :disabled="poolLoading" @click="submitPool()">
+                <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" :disabled="poolLoading" @click="submitPool()">
                   <span v-if="poolLoading">处理中...</span>
                   <span v-else>{{ editingPoolId ? '保存修改' : '创建常驻池' }}</span>
                 </button>
               </div>
             </div>
 
-            <div class="space-y-3 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
+            <div class="space-y-3 rounded-lg border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
               <div class="flex items-center justify-between">
                 <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">卡池列表</h3>
                 <button type="button" class="text-xs text-[rgb(var(--accent-strong))] hover:underline" @click="loadPools(true)">刷新</button>
@@ -251,7 +251,7 @@
             </div>
           </div>
 
-          <div class="space-y-3 rounded-2xl border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
+          <div class="space-y-3 rounded-lg border border-neutral-200/70 bg-white/85 p-4 dark:border-neutral-800/60 dark:bg-neutral-900/60">
             <div class="flex items-center justify-between">
               <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">{{ editingCardId ? '编辑卡片' : '新增卡片' }}</h3>
               <button type="button" class="text-xs text-[rgb(var(--accent-strong))] hover:underline" @click="resetCardForm()">重置</button>
@@ -259,46 +259,46 @@
             <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">卡池</label>
-                <select v-model="cardForm.poolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+                <select v-model="cardForm.poolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                   <option value="">选择卡池</option>
                   <option v-for="pool in pools" :key="pool.id" :value="pool.id">{{ pool.name }}</option>
                 </select>
               </div>
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">标题</label>
-                <input v-model="cardForm.title" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                <input v-model="cardForm.title" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               </div>
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">稀有度</label>
-                <select v-model="cardForm.rarity" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+                <select v-model="cardForm.rarity" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                   <option v-for="option in raritySelectOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </div>
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">权重</label>
-                <input v-model.number="cardForm.weight" type="number" min="1" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                <input v-model.number="cardForm.weight" type="number" min="1" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               </div>
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">抽取返还</label>
-                <input v-model.number="cardForm.rewardTokens" type="number" min="0" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                <input v-model.number="cardForm.rewardTokens" type="number" min="0" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               </div>
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">图片地址</label>
-                <input v-model="cardForm.imageUrl" type="url" placeholder="https://..." class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                <input v-model="cardForm.imageUrl" type="url" placeholder="https://..." class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               </div>
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Wikidot ID</label>
-                <input v-model="cardForm.wikidotId" type="number" min="0" placeholder="可选" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                <input v-model="cardForm.wikidotId" type="number" min="0" placeholder="可选" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               </div>
               <div class="space-y-1">
                 <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">Page ID</label>
-                <input v-model="cardForm.pageId" type="number" min="0" placeholder="可选" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+                <input v-model="cardForm.pageId" type="number" min="0" placeholder="可选" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
               </div>
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">标签（逐个添加）</label>
               <div class="flex flex-wrap items-center gap-2">
-                <input v-model="cardForm.tagsInput" type="text" placeholder="输入标签后回车" class="flex-1 min-w-[180px] rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" @keyup.enter.prevent="addCardTag" />
+                <input v-model="cardForm.tagsInput" type="text" placeholder="输入标签后回车" class="flex-1 min-w-[180px] rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" @keyup.enter.prevent="addCardTag" />
                 <button type="button" class="rounded border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" @click="addCardTag">添加</button>
               </div>
               <div v-if="cardForm.tags.length" class="flex flex-wrap gap-2">
@@ -320,7 +320,7 @@
             </transition>
             <div class="flex items-center justify-end gap-2">
               <button type="button" class="rounded-lg border border-neutral-200 px-4 py-2 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" @click="resetCardForm()">清空</button>
-              <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" :disabled="cardSubmitting" @click="submitCard()">
+              <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" :disabled="cardSubmitting" @click="submitCard()">
                 <span v-if="cardSubmitting">处理中...</span>
                 <span v-else>{{ editingCardId ? '保存卡片' : '新增卡片' }}</span>
               </button>
@@ -328,7 +328,7 @@
           </div>
         </section>
 
-        <section class="space-y-4 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-4 rounded-lg border border-neutral-200/70 bg-white/80 p-5 dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="flex items-center justify-between">
             <div>
               <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">卡片列表</h2>
@@ -336,7 +336,7 @@
             </div>
             <div class="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
               <span>每页</span>
-              <select v-model.number="cardLimit" class="rounded border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+              <select v-model.number="cardLimit" class="rounded border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                 <option v-for="size in cardLimitOptions" :key="size" :value="size">{{ size }}</option>
               </select>
             </div>
@@ -345,31 +345,31 @@
           <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">卡池</label>
-              <select v-model="cardFilters.poolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+              <select v-model="cardFilters.poolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                 <option value="">选择卡池</option>
                 <option v-for="pool in pools" :key="pool.id" :value="pool.id">{{ pool.name }}</option>
               </select>
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">稀有度</label>
-              <select v-model="cardFilters.rarity" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+              <select v-model="cardFilters.rarity" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                 <option value="ALL">全部</option>
                 <option v-for="option in raritySelectOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">包含标签</label>
-              <input v-model="cardFilters.includeTags" type="text" placeholder="tag-a, tag-b" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model="cardFilters.includeTags" type="text" placeholder="tag-a, tag-b" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">排除标签</label>
-              <input v-model="cardFilters.excludeTags" type="text" placeholder="tag-c" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model="cardFilters.excludeTags" type="text" placeholder="tag-c" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
             </div>
           </div>
 
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex-1 min-w-[220px]">
-              <input v-model="cardFilters.search" type="text" placeholder="搜索标题或标签" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" @keyup.enter="applyCardFilters" />
+              <input v-model="cardFilters.search" type="text" placeholder="搜索标题或标签" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" @keyup.enter="applyCardFilters" />
             </div>
             <div class="flex items-center gap-2">
               <button type="button" class="rounded border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:text-neutral-50" @click="applyCardFilters">应用筛选</button>
@@ -434,7 +434,7 @@
           </div>
         </section>
 
-        <section class="space-y-4 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-4 rounded-lg border border-neutral-200/70 bg-white/80 p-5 dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">批量调整权重</h2>
@@ -455,40 +455,40 @@
           <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">卡池</label>
-              <select v-model="batchForm.poolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+              <select v-model="batchForm.poolId" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                 <option value="">全部卡池</option>
                 <option v-for="pool in pools" :key="pool.id" :value="pool.id">{{ pool.name }}</option>
               </select>
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">稀有度</label>
-              <select v-model="batchForm.rarity" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+              <select v-model="batchForm.rarity" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                 <option value="ALL">全部</option>
                 <option v-for="option in raritySelectOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">包含标签</label>
-              <input v-model="batchForm.includeTags" type="text" placeholder="tag-a, tag-b" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model="batchForm.includeTags" type="text" placeholder="tag-a, tag-b" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">排除标签</label>
-              <input v-model="batchForm.excludeTags" type="text" placeholder="tag-c" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model="batchForm.excludeTags" type="text" placeholder="tag-c" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">匹配方式</label>
-              <select v-model="batchForm.match" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
+              <select v-model="batchForm.match" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
                 <option value="any">任意匹配</option>
                 <option value="all">全部匹配</option>
               </select>
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">权重倍率</label>
-              <input v-model.number="batchForm.multiplier" type="number" min="0" step="0.1" placeholder="1.2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model.number="batchForm.multiplier" type="number" min="0" step="0.1" placeholder="1.2" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
             </div>
             <div class="space-y-1">
               <label class="text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">目标权重</label>
-              <input v-model="batchForm.setWeight" type="number" min="1" placeholder="例如 80" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
+              <input v-model="batchForm.setWeight" type="number" min="1" placeholder="例如 80" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100" />
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2 text-[11px] text-neutral-500 dark:text-neutral-400">
@@ -508,13 +508,13 @@
             </p>
           </transition>
           <div class="flex items-center justify-end">
-            <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" :disabled="batchProcessing" @click="submitBatchAdjust()">
+            <button type="button" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" :disabled="batchProcessing" @click="submitBatchAdjust()">
               <span v-if="batchProcessing">执行中...</span>
               <span v-else>批量调整</span>
             </button>
           </div>
         </section>
-        <section class="space-y-4 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-4 rounded-lg border border-neutral-200/70 bg-white/80 p-5 dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">批量移除卡片</h2>

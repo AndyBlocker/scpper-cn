@@ -13,7 +13,7 @@
       @click="emit('scroll-to-slide', idx)"
       class="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full transition-all hover:scale-125"
       :class="currentSlideIndex === idx
-        ? 'bg-[rgb(var(--accent))] scale-125'
+        ? 'bg-[var(--g-accent)] scale-125'
         : 'bg-[rgb(var(--muted))] opacity-40 hover:opacity-70'"
       :title="slide"
     />
@@ -21,7 +21,7 @@
 
   <div class="sm:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[rgba(var(--bg),0.9)] backdrop-blur-md px-3 py-1.5 rounded-full border border-[rgb(var(--panel-border))]">
     <span class="text-xs text-[rgb(var(--muted))]">{{ currentSlideIndex + 1 }}/{{ totalSlides }}</span>
-    <span class="text-[10px] text-[rgb(var(--accent))]">{{ slideLabels[currentSlideIndex] }}</span>
+    <span class="text-[10px] text-[var(--g-accent)]">{{ slideLabels[currentSlideIndex] }}</span>
   </div>
 </template>
 

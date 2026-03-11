@@ -2,6 +2,14 @@ import { PrismaClient } from '@prisma/client';
 
 const USER_BACKEND_URL = process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455';
 const TARGET_PAGE_URL = '/andyblocker'; // The page where users add verification code (must end with /andyblocker)
+const USER_BACKEND_FETCH_TIMEOUT_MS = Math.max(
+  1000,
+  Math.floor(Number(process.env.USER_BACKEND_FETCH_TIMEOUT_MS ?? '5000') || 5000)
+);
+const NO_MATCH_LOG_EVERY_N_CHECKS = Math.max(
+  1,
+  Math.floor(Number(process.env.WIKIDOT_BINDING_NO_MATCH_LOG_EVERY ?? '12') || 12)
+);
 
 interface PendingTask {
   id: string;
@@ -10,6 +18,8 @@ interface PendingTask {
   verificationCode: string;
   createdAt: string;
   expiresAt: string;
+  checkCount?: number;
+  lastCheckedAt?: string | null;
 }
 
 interface PendingTasksResponse {
@@ -58,17 +68,35 @@ export class WikidotBindingVerifyJob {
   }
 
   private async fetchPendingTasks(): Promise<PendingTask[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), USER_BACKEND_FETCH_TIMEOUT_MS);
     try {
-      const response = await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/pending`);
+      const response = await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/pending`, {
+        method: 'GET',
+        signal: controller.signal
+      });
+
       if (!response.ok) {
-        console.warn(`⚠️ Failed to fetch pending tasks: ${response.status}`);
-        return [];
+        let bodyPreview = '';
+        try {
+          const raw = await response.text();
+          bodyPreview = raw ? ` ${raw.slice(0, 180)}` : '';
+        } catch {
+          bodyPreview = '';
+        }
+        throw new Error(`pending API returned ${response.status}.${bodyPreview}`.trim());
       }
+
       const data = await response.json() as PendingTasksResponse;
-      return data.ok ? data.tasks : [];
+      if (!data.ok || !Array.isArray(data.tasks)) {
+        throw new Error('pending API returned invalid payload');
+      }
+
+      return data.tasks;
     } catch (error) {
-      console.warn('⚠️ Failed to connect to user-backend:', error);
-      return [];
+      throw new Error('Failed to fetch pending tasks from user-backend', { cause: error });
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -129,7 +157,17 @@ export class WikidotBindingVerifyJob {
         console.log(`✅ Verification code found in revision ${matchingRevision.id} for task ${task.id}`);
         await this.completeTask(task.id, matchingRevision.id, matchingRevision.timestamp);
       } else {
-        console.log(`❌ No matching revision found for task ${task.id} (checked ${revisions.length} revisions)`);
+        const checkCount = Number.isInteger(task.checkCount) ? Number(task.checkCount) : 0;
+        const shouldLogNoMatch = (
+          revisions.length > 0
+          || checkCount <= 1
+          || checkCount % NO_MATCH_LOG_EVERY_N_CHECKS === 0
+        );
+        if (shouldLogNoMatch) {
+          console.log(
+            `ℹ️ No matching revision for task ${task.id} (checked ${revisions.length} revisions, checkCount=${checkCount}).`
+          );
+        }
         await this.updateTaskCheck(task.id);
       }
     } catch (error) {

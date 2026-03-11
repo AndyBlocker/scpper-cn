@@ -41,6 +41,16 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+__pycache__/
+*.pyc
+backend/=
+docs/__pycache__/
+docs/plots/
+docs/gacha-reset-top-card-holders.csv
+docs/gacha-reset-top-combined.csv
+docs/gacha-reset-top-token-holders.csv
+user-backend/2026-02-13-202329-local-command-caveatcaveat-the-messages-below-w.txt
+Kimi_Agent_灰白终端风格改版.zip
 
 # Cache directories
 .cache/

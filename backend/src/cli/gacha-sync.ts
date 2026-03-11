@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import { Pool, type PoolClient } from 'pg';
 import path from 'path';
 import fs from 'fs';
@@ -18,6 +17,10 @@ type GachaRarity = 'WHITE' | 'GREEN' | 'BLUE' | 'PURPLE' | 'GOLD';
 type MatchMode = 'any' | 'all';
 
 type PgClient = Pool | PoolClient;
+const PERMANENT_POOL_ID = 'permanent-main-pool';
+const DEFAULT_CARD_ID_PREFIX = 'permanent';
+const NULL_IMAGE_KEY = '__NO_IMAGE__';
+const NULL_VARIANT_KEY = '__NO_VARIANT__';
 
 interface TagWeightRule {
   tags: string[];
@@ -79,14 +82,6 @@ const RARITY_WEIGHTS: Record<GachaRarity, number> = {
   WHITE: 100
 };
 
-const RARITY_RANK: Record<GachaRarity, number> = {
-  WHITE: 0,
-  GREEN: 1,
-  BLUE: 2,
-  PURPLE: 3,
-  GOLD: 4
-};
-
 interface SyncOptions {
   poolId?: string;
   poolName?: string;
@@ -112,7 +107,13 @@ interface PageRow {
   tags: string[] | null;
   category: string | null;
   currentUrl: string;
-  images: Array<{ assetId: number; url: string | null }>;
+  imageRefCount: number;
+  images: Array<{
+    assetId: number;
+    url: string | null;
+    normalizedUrl: string | null;
+    hashSha256: string | null;
+  }>;
 }
 
 interface CardPayload {
@@ -127,6 +128,46 @@ interface CardPayload {
   wikidotId: number | null;
   pageId: number;
   imageUrl: string | null;
+  variantKey: string | null;
+}
+
+function normalizeCardImageUrl(raw: string | null | undefined): string | null {
+  const trimmed = String(raw ?? '').trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeVariantKey(raw: string | null | undefined): string | null {
+  const trimmed = String(raw ?? '').trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildVariantKey(image: {
+  normalizedUrl?: string | null;
+  hashSha256?: string | null;
+  assetId?: number | null;
+}) {
+  const hashSha256 = normalizeCardImageUrl(image.hashSha256);
+  if (hashSha256) {
+    return `hash:${hashSha256.toLowerCase()}`;
+  }
+  const normalizedUrl = normalizeCardImageUrl(image.normalizedUrl);
+  if (normalizedUrl) {
+    return `url:${normalizedUrl}`;
+  }
+  const assetId = Number.isFinite(image.assetId) ? Math.floor(Number(image.assetId)) : 0;
+  if (assetId > 0) {
+    return `asset:${assetId}`;
+  }
+  return null;
+}
+
+function parseVariantIndex(cardId: string, baseId: string): number | null {
+  if (cardId === baseId) return 1;
+  const prefix = `${baseId}-img-`;
+  if (!cardId.startsWith(prefix)) return null;
+  const parsed = Number.parseInt(cardId.slice(prefix.length), 10);
+  if (!Number.isInteger(parsed) || parsed < 2) return null;
+  return parsed;
 }
 
 function normalizeAuthorKey(raw: string): string {
@@ -192,7 +233,28 @@ async function loadAttributionsByPageIds(
   return result;
 }
 
-function buildImageVariants(row: PageRow, poolId: string, cardIdPrefix: string, authorKeys?: string[]): CardPayload[] {
+function compareExistingVariantRows(a: ExistingCardRow, b: ExistingCardRow, baseId: string) {
+  const idxA = parseVariantIndex(a.id, baseId);
+  const idxB = parseVariantIndex(b.id, baseId);
+  if (idxA != null && idxB != null && idxA !== idxB) return idxA - idxB;
+  if (idxA != null && idxB == null) return -1;
+  if (idxA == null && idxB != null) return 1;
+  return a.id.localeCompare(b.id);
+}
+
+function normalizeExistingVariantIdentity(card: Pick<ExistingCardRow, 'variantKey' | 'imageUrl'>) {
+  return normalizeVariantKey(card.variantKey)
+    ?? normalizeCardImageUrl(card.imageUrl)
+    ?? NULL_VARIANT_KEY;
+}
+
+function buildImageVariants(
+  row: PageRow,
+  poolId: string,
+  cardIdPrefix: string,
+  existingPageCards: ExistingCardRow[],
+  authorKeys?: string[]
+): CardPayload[] {
   const rarity = determineRarity(row.voteCount);
   const title = fallbackTitle(row.title, row.currentUrl);
   const tags = normalizeTags(row.tags, row.category);
@@ -202,20 +264,102 @@ function buildImageVariants(row: PageRow, poolId: string, cardIdPrefix: string, 
   const baseId = `${cardIdPrefix}-${row.pageId}`;
   const images = row.images ?? [];
 
-  if (images.length === 0) {
+  const existingIds = new Set(existingPageCards.map((card) => card.id));
+  const assignedIds = new Set<string>();
+  const existingByIdentity = new Map<string, ExistingCardRow[]>();
+
+  for (const card of existingPageCards) {
+    const key = normalizeExistingVariantIdentity(card);
+    const list = existingByIdentity.get(key);
+    if (list) {
+      list.push(card);
+    } else {
+      existingByIdentity.set(key, [card]);
+    }
+  }
+
+  for (const list of existingByIdentity.values()) {
+    list.sort((a, b) => compareExistingVariantRows(a, b, baseId));
+  }
+
+  const takeExistingId = (identityKey: string) => {
+    const list = existingByIdentity.get(identityKey);
+    if (!list || list.length === 0) return null;
+    while (list.length > 0) {
+      const candidate = list.shift()!;
+      if (!assignedIds.has(candidate.id)) {
+        assignedIds.add(candidate.id);
+        return candidate.id;
+      }
+    }
+    return null;
+  };
+
+  const allocateNewId = () => {
+    if (!existingIds.has(baseId) && !assignedIds.has(baseId)) {
+      assignedIds.add(baseId);
+      return baseId;
+    }
+    let suffix = 2;
+    while (true) {
+      const candidate = `${baseId}-img-${suffix}`;
+      if (!existingIds.has(candidate) && !assignedIds.has(candidate)) {
+        assignedIds.add(candidate);
+        return candidate;
+      }
+      suffix += 1;
+    }
+  };
+
+  const normalizedImages: Array<{ imageUrl: string | null; variantKey: string | null; identityKey: string }> = [];
+  const seenImages = new Set<string>();
+  for (const img of images) {
+    const imageUrl = normalizeCardImageUrl(buildPageImagePath(img.assetId) ?? img.url);
+    const variantKey = buildVariantKey(img);
+    const identityKey = variantKey ?? imageUrl ?? NULL_VARIANT_KEY;
+    if (seenImages.has(identityKey)) continue;
+    seenImages.add(identityKey);
+    normalizedImages.push({
+      imageUrl,
+      variantKey,
+      identityKey
+    });
+  }
+
+  if (normalizedImages.length === 0) {
+    if (row.imageRefCount > 0) {
+      return [];
+    }
+    const id = takeExistingId(NULL_VARIANT_KEY) ?? takeExistingId(NULL_IMAGE_KEY) ?? allocateNewId();
     return [{
-      id: baseId, poolId, title, rarity, tags, authorKeys: resolvedAuthorKeys, weight,
-      rewardTokens, wikidotId: row.wikidotId,
-      pageId: row.pageId, imageUrl: null
+      id,
+      poolId,
+      title,
+      rarity,
+      tags,
+      authorKeys: resolvedAuthorKeys,
+      weight,
+      rewardTokens,
+      wikidotId: row.wikidotId,
+      pageId: row.pageId,
+      imageUrl: null,
+      variantKey: null
     }];
   }
 
-  return images.map((img, index) => ({
-    id: index === 0 ? baseId : `${baseId}-img-${index + 1}`,
-    poolId, title, rarity, tags, authorKeys: resolvedAuthorKeys, weight,
-    rewardTokens, wikidotId: row.wikidotId,
+  return normalizedImages.map(({ imageUrl, variantKey, identityKey }) => ({
+    id: takeExistingId(identityKey) ?? allocateNewId(),
+    poolId,
+    title,
+    rarity,
+    tags,
+    authorKeys: resolvedAuthorKeys,
+    weight,
+    rewardTokens,
+    wikidotId: row.wikidotId,
     pageId: row.pageId,
-    imageUrl: buildPageImagePath(img.assetId) ?? img.url
+    imageUrl,
+    variantKey
   }));
 }
 
@@ -370,9 +514,6 @@ async function upsertPool(client: PgClient, options: Required<SyncOptions> & { c
         "tokenCost" = EXCLUDED."tokenCost",
         "tenDrawCost" = EXCLUDED."tenDrawCost",
         "rewardPerDuplicate" = EXCLUDED."rewardPerDuplicate",
-        "startsAt" = COALESCE(LEAST("GachaPool"."startsAt", EXCLUDED."startsAt"), EXCLUDED."startsAt"),
-        "endsAt" = EXCLUDED."endsAt",
-        "isActive" = EXCLUDED."isActive",
         "updatedAt" = timezone('UTC', now())
     `,
     [
@@ -389,11 +530,21 @@ async function upsertPool(client: PgClient, options: Required<SyncOptions> & { c
   );
 }
 
+async function deleteNonPermanentPools(client: PgClient) {
+  await client.query(
+    `
+      DELETE FROM "GachaPool"
+      WHERE "id" <> $1
+    `,
+    [PERMANENT_POOL_ID]
+  );
+}
+
 async function insertCards(client: PgClient, cards: CardPayload[]) {
   if (cards.length === 0) return;
   // PostgreSQL prepared statements max at 65535 parameters.
-  // We bind 11 params per card, so keep each chunk comfortably below the cap.
-  const INSERT_BATCH_SIZE = 2500;
+  // We bind 12 params per card, so keep each chunk comfortably below the cap.
+  const INSERT_BATCH_SIZE = 2400;
   const chunks = chunkArray(cards, INSERT_BATCH_SIZE);
 
   for (const chunk of chunks) {
@@ -403,7 +554,7 @@ async function insertCards(client: PgClient, cards: CardPayload[]) {
 
     for (const card of chunk) {
       values.push(
-        `($${index},$${index + 1},$${index + 2},$${index + 3},$${index + 4},$${index + 5},$${index + 6},$${index + 7},$${index + 8},$${index + 9},$${index + 10},timezone('UTC', now()),timezone('UTC', now()))`
+        `($${index},$${index + 1},$${index + 2},$${index + 3},$${index + 4},$${index + 5},$${index + 6},$${index + 7},$${index + 8},$${index + 9},$${index + 10},$${index + 11},timezone('UTC', now()),timezone('UTC', now()))`
       );
       params.push(
         card.id,
@@ -416,15 +567,16 @@ async function insertCards(client: PgClient, cards: CardPayload[]) {
         card.rewardTokens,
         card.wikidotId,
         card.pageId,
-        card.imageUrl
+        card.imageUrl,
+        card.variantKey
       );
-      index += 11;
+      index += 12;
     }
 
     await client.query(
       `
         INSERT INTO "GachaCardDefinition"
-          ("id","poolId","title","rarity","tags","authorKeys","weight","rewardTokens","wikidotId","pageId","imageUrl","createdAt","updatedAt")
+          ("id","poolId","title","rarity","tags","authorKeys","weight","rewardTokens","wikidotId","pageId","imageUrl","variantKey","createdAt","updatedAt")
         VALUES ${values.join(',')}
         ON CONFLICT ("id") DO UPDATE SET
           "poolId" = EXCLUDED."poolId",
@@ -437,6 +589,7 @@ async function insertCards(client: PgClient, cards: CardPayload[]) {
           "wikidotId" = EXCLUDED."wikidotId",
           "pageId" = EXCLUDED."pageId",
           "imageUrl" = EXCLUDED."imageUrl",
+          "variantKey" = EXCLUDED."variantKey",
           "updatedAt" = timezone('UTC', now())
       `,
       params
@@ -446,17 +599,10 @@ async function insertCards(client: PgClient, cards: CardPayload[]) {
 
 type ExistingCardRow = {
   id: string;
-  rarity: GachaRarity;
-  rewardTokens: number;
   weight: number | null;
   pageId: number | null;
-};
-
-type CardRarityUpgrade = {
-  cardId: string;
-  oldRarity: GachaRarity;
-  newRarity: GachaRarity;
-  deltaPerCopy: number;
+  imageUrl: string | null;
+  variantKey: string | null;
 };
 
 function chunkArray<T>(items: T[], chunkSize: number): T[][] {
@@ -466,25 +612,6 @@ function chunkArray<T>(items: T[], chunkSize: number): T[][] {
     chunks.push(items.slice(i, i + chunkSize));
   }
   return chunks;
-}
-
-function buildValuesClause<T>(rows: T[], mapper: (row: T) => unknown[]): { clause: string; params: unknown[] } {
-  const params: unknown[] = [];
-  const values: string[] = [];
-  for (const row of rows) {
-    const mapped = mapper(row);
-    const placeholders = mapped.map((_value, index) => `$${params.length + index + 1}`);
-    params.push(...mapped);
-    values.push(`(${placeholders.join(',')})`);
-  }
-  return { clause: values.join(','), params };
-}
-
-function parsePgBigInt(value: unknown): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number') return BigInt(value);
-  if (typeof value === 'string' && value.trim().length > 0) return BigInt(value);
-  return 0n;
 }
 
 async function disableRemovedPageCards(client: PgClient, poolId: string, removedIds: string[]) {
@@ -501,99 +628,6 @@ async function disableRemovedPageCards(client: PgClient, poolId: string, removed
   );
 }
 
-async function applyRarityUpgradeRewards(
-  client: PgClient,
-  poolId: string,
-  upgrades: CardRarityUpgrade[],
-  dryRun: boolean
-): Promise<{ affectedUsers: number; totalReward: bigint }> {
-  if (upgrades.length === 0) return { affectedUsers: 0, totalReward: 0n };
-
-  const userRewardMap = new Map<string, bigint>();
-  const batches = chunkArray(upgrades, 1500);
-  for (const batch of batches) {
-    const { clause, params } = buildValuesClause(batch, (upgrade) => [upgrade.cardId, upgrade.deltaPerCopy]);
-    const rows = await client.query<{ userId: string; delta: string }>(
-      `
-        SELECT inv."userId" AS "userId",
-          SUM(inv."count"::bigint * v."deltaPerCopy"::bigint)::bigint AS "delta"
-        FROM "GachaInventory" inv
-        JOIN (VALUES ${clause}) AS v("cardId","deltaPerCopy")
-          ON inv."cardId" = v."cardId"
-        GROUP BY inv."userId"
-        HAVING SUM(inv."count"::bigint * v."deltaPerCopy"::bigint) > 0
-      `,
-      params as any[]
-    );
-    for (const row of rows.rows ?? []) {
-      const current = userRewardMap.get(row.userId) ?? 0n;
-      userRewardMap.set(row.userId, current + parsePgBigInt(row.delta));
-    }
-  }
-
-  const rewards = Array.from(userRewardMap.entries())
-    .filter(([, delta]) => delta > 0n)
-    .map(([userId, delta]) => ({ userId, delta }));
-
-  const totalReward = rewards.reduce((acc, entry) => acc + entry.delta, 0n);
-  if (rewards.length === 0) return { affectedUsers: 0, totalReward: 0n };
-
-  if (dryRun) {
-    return { affectedUsers: rewards.length, totalReward };
-  }
-
-  const MAX_INT = 2147483647n;
-  const walletUpdates = rewards.map((entry) => {
-    if (entry.delta > MAX_INT) {
-      throw new Error(`用户 ${entry.userId} 的补偿 Token 超出 int 上限：${entry.delta.toString()}`);
-    }
-    const asNumber = Number(entry.delta);
-    if (!Number.isSafeInteger(asNumber) || asNumber <= 0) {
-      throw new Error(`用户 ${entry.userId} 的补偿 Token 非法：${entry.delta.toString()}`);
-    }
-    return { userId: entry.userId, delta: asNumber };
-  });
-
-  const walletUpdateValues = buildValuesClause(walletUpdates, (entry) => [entry.userId, entry.delta]);
-  await client.query(
-    `
-      UPDATE "GachaWallet" AS w
-      SET "balance" = w."balance" + v."delta",
-        "totalEarned" = w."totalEarned" + v."delta",
-        "updatedAt" = timezone('UTC', now())
-      FROM (VALUES ${walletUpdateValues.clause}) AS v("userId","delta")
-      WHERE w."userId" = v."userId"
-    `,
-    walletUpdateValues.params as any[]
-  );
-
-  const ledgerEntries = walletUpdates.map((entry) => ({
-    id: randomUUID(),
-    userId: entry.userId,
-    delta: entry.delta
-  }));
-
-  const ledgerValues = buildValuesClause(ledgerEntries, (entry) => [entry.id, entry.userId, entry.delta]);
-  const metadata = JSON.stringify({
-    poolId,
-    upgradedCards: upgrades.length
-  });
-  const ledgerParams = [...ledgerValues.params, metadata];
-  const metadataIndex = ledgerParams.length;
-
-  await client.query(
-    `
-      INSERT INTO "GachaLedgerEntry" ("id","walletId","userId","delta","reason","metadata","createdAt")
-      SELECT v."id", w."id", v."userId", v."delta", 'CARD_RARITY_UPGRADE_BONUS', $${metadataIndex}::jsonb, timezone('UTC', now())
-      FROM (VALUES ${ledgerValues.clause}) AS v("id","userId","delta")
-      JOIN "GachaWallet" w ON w."userId" = v."userId"
-    `,
-    ledgerParams as any[]
-  );
-
-  return { affectedUsers: rewards.length, totalReward };
-}
-
 export async function syncGachaPool(rawOptions: SyncOptions = {}) {
   const prisma = getPrismaClient();
   const userDatabaseUrl = process.env.USER_DATABASE_URL ?? process.env.USER_BACKEND_DATABASE_URL;
@@ -602,36 +636,31 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
     throw new Error('缺少 USER_DATABASE_URL（或 USER_BACKEND_DATABASE_URL）环境变量，无法连接用户数据库。');
   }
 
-  const poolId = String(rawOptions.poolId ?? 'permanent-main-pool').trim() || 'permanent-main-pool';
+  const requestedPoolId = String(rawOptions.poolId ?? PERMANENT_POOL_ID).trim() || PERMANENT_POOL_ID;
+  if (requestedPoolId !== PERMANENT_POOL_ID) {
+    throw new Error(`当前仅允许同步 ${PERMANENT_POOL_ID}（收到 poolId=${requestedPoolId}）。`);
+  }
+  if ((rawOptions.includeTags?.length ?? 0) > 0 || (rawOptions.excludeTags?.length ?? 0) > 0) {
+    throw new Error('当前仅允许全量常驻主池，同步不再支持 include/exclude 标签过滤。');
+  }
+  if (rawOptions.cardIdPrefix && normalizeTagValue(rawOptions.cardIdPrefix) !== DEFAULT_CARD_ID_PREFIX) {
+    throw new Error(`当前固定使用 ${DEFAULT_CARD_ID_PREFIX} 作为卡片 ID 前缀。`);
+  }
   const options: Required<SyncOptions> = {
-    poolId,
+    poolId: PERMANENT_POOL_ID,
     poolName: rawOptions.poolName ?? '常驻卡池',
     description: rawOptions.description ?? '涵盖当前站内已收录文档的常驻卡池。',
-    tokenCost: rawOptions.tokenCost ?? 10,
-    tenDrawCost: rawOptions.tenDrawCost ?? (rawOptions.tokenCost ?? 10) * 10,
-    duplicateReward: rawOptions.duplicateReward ?? 5,
-    isActive: rawOptions.isActive ?? true,
-    includeTags: normalizeTagList(rawOptions.includeTags),
-    includeMatch: rawOptions.includeMatch === 'all' ? 'all' : 'any',
-    excludeTags: normalizeTagList(rawOptions.excludeTags),
-    cardIdPrefix: normalizeTagValue(rawOptions.cardIdPrefix) || (poolId === 'permanent-main-pool' ? 'permanent' : poolId),
+    tokenCost: 10,
+    tenDrawCost: 100,
+    duplicateReward: 0,
+    isActive: true,
+    includeTags: [],
+    includeMatch: 'any',
+    excludeTags: [],
+    cardIdPrefix: DEFAULT_CARD_ID_PREFIX,
     dryRun: rawOptions.dryRun ?? false,
     limit: rawOptions.limit ?? 0
   };
-
-  if (options.poolId === 'permanent-main-pool') {
-    options.tokenCost = 10;
-    options.tenDrawCost = 100;
-    options.duplicateReward = 0;
-  }
-
-  if (options.includeTags.length > 0 || options.excludeTags.length > 0) {
-    console.log('[gacha-sync] Filters:', {
-      includeTags: options.includeTags,
-      includeMatch: options.includeMatch,
-      excludeTags: options.excludeTags
-    });
-  }
 
   if (!options.cardIdPrefix) {
     throw new Error('无效的 cardIdPrefix，无法生成卡片 ID。');
@@ -651,7 +680,7 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
   let total = 0;
   let skippedByFilter = 0;
   let disabledCount = 0;
-  let bonusPreview: { affectedUsers: number; totalReward: bigint } | null = null;
+  let deferredPendingImagePages = 0;
 
   try {
     const createdById = await resolvePoolCreator(userDbClient);
@@ -659,28 +688,33 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
 
     const existingCardsResult = await userDbClient.query<ExistingCardRow>(
       `
-        SELECT "id", "rarity", "rewardTokens", "weight", "pageId"
+        SELECT "id", "weight", "pageId", "imageUrl", "variantKey"
         FROM "GachaCardDefinition"
         WHERE "poolId" = $1
       `,
       [options.poolId]
     );
     const existingCards = existingCardsResult.rows ?? [];
-    const existingCardsById = new Map<string, ExistingCardRow>();
+    const existingCardsByPage = new Map<number, ExistingCardRow[]>();
     const existingPageCardIds = new Set<string>();
     for (const card of existingCards) {
-      existingCardsById.set(card.id, card);
       if (card.pageId != null) {
         existingPageCardIds.add(card.id);
+        const list = existingCardsByPage.get(card.pageId);
+        if (list) {
+          list.push(card);
+        } else {
+          existingCardsByPage.set(card.pageId, [card]);
+        }
       }
     }
 
     const newCardIds = new Set<string>();
-    const rarityUpgrades: CardRarityUpgrade[] = [];
 
     if (!options.dryRun) {
       await userDbClient.query('BEGIN');
       await upsertPool(userDbClient, { ...options, createdById });
+      await deleteNonPermanentPools(userDbClient);
     }
 
     const batchSize = 2000;
@@ -699,16 +733,110 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
           pv.tags,
           pv.category,
           p."currentUrl",
+          (
+            SELECT COUNT(*)::int
+            FROM "PageVersionImage" pvi
+            WHERE pvi."pageVersionId" = pv.id
+          ) AS "imageRefCount",
           COALESCE(
-            (SELECT json_agg(json_build_object(
-              'assetId', img."imageAssetId",
-              'url', COALESCE(img."displayUrl", img."normalizedUrl")
-            ) ORDER BY img.id)
-            FROM "PageVersionImage" img
-            WHERE img."pageVersionId" = pv.id
-              AND img.status = 'RESOLVED'
-              AND img."imageAssetId" IS NOT NULL
-            ), '[]'::json
+            (
+              WITH current_rows AS (
+                SELECT
+                  pvi.id,
+                  pvi."normalizedUrl",
+                  pvi."displayUrl",
+                  pvi."originUrl",
+                  pvi.status,
+                  pvi."imageAssetId"
+                FROM "PageVersionImage" pvi
+                WHERE pvi."pageVersionId" = pv.id
+              ),
+              resolved_current AS (
+                SELECT DISTINCT ON (cr."normalizedUrl")
+                  cr.id,
+                  cr."normalizedUrl",
+                  cr."displayUrl",
+                  cr."originUrl",
+                  cr."imageAssetId",
+                  ia."hashSha256"
+                FROM current_rows cr
+                JOIN "ImageAsset" ia ON ia.id = cr."imageAssetId"
+                WHERE cr.status = 'RESOLVED'
+                  AND cr."imageAssetId" IS NOT NULL
+                  AND ia.status = 'READY'
+                  AND ia."storagePath" IS NOT NULL
+                ORDER BY cr."normalizedUrl", cr.id DESC
+              ),
+              unresolved AS (
+                SELECT
+                  cr.id AS "pageVersionImageId",
+                  cr."normalizedUrl",
+                  cr."displayUrl",
+                  cr."originUrl"
+                FROM current_rows cr
+                WHERE cr."normalizedUrl" IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM resolved_current rc
+                    WHERE rc."normalizedUrl" = cr."normalizedUrl"
+                  )
+              ),
+              fallback AS (
+                SELECT DISTINCT ON (u."normalizedUrl")
+                  u."normalizedUrl",
+                  fpvi.id AS "fallbackPviId",
+                  fpvi."imageAssetId" AS "fallbackAssetId",
+                  fpvi."displayUrl" AS "fallbackDisplayUrl",
+                  fpvi."originUrl" AS "fallbackOriginUrl",
+                  ia."hashSha256"
+                FROM unresolved u
+                JOIN "PageVersionImage" fpvi ON fpvi."normalizedUrl" = u."normalizedUrl"
+                JOIN "PageVersion" fpv ON fpv.id = fpvi."pageVersionId"
+                JOIN "ImageAsset" ia ON ia.id = fpvi."imageAssetId"
+                WHERE fpv."pageId" = pv."pageId"
+                  AND fpvi.status = 'RESOLVED'
+                  AND fpvi."imageAssetId" IS NOT NULL
+                  AND ia.status = 'READY'
+                  AND ia."storagePath" IS NOT NULL
+                ORDER BY u."normalizedUrl", fpvi."lastFetchedAt" DESC NULLS LAST, fpvi.id DESC
+              ),
+              merged AS (
+                SELECT
+                  rc.id AS sort_id,
+                  rc."imageAssetId" AS "imageAssetId",
+                  COALESCE(rc."displayUrl", rc."normalizedUrl", rc."originUrl") AS url,
+                  rc."normalizedUrl" AS "normalizedUrl",
+                  rc."hashSha256" AS "hashSha256"
+                FROM resolved_current rc
+                UNION ALL
+                SELECT
+                  u."pageVersionImageId" AS sort_id,
+                  f."fallbackAssetId" AS "imageAssetId",
+                  COALESCE(
+                    u."displayUrl",
+                    f."fallbackDisplayUrl",
+                    u."normalizedUrl",
+                    u."originUrl",
+                    f."fallbackOriginUrl"
+                  ) AS url,
+                  u."normalizedUrl" AS "normalizedUrl",
+                  f."hashSha256" AS "hashSha256"
+                FROM unresolved u
+                JOIN fallback f ON f."normalizedUrl" = u."normalizedUrl"
+              )
+              SELECT json_agg(
+                json_build_object(
+                  'assetId', m."imageAssetId",
+                  'url', m.url,
+                  'normalizedUrl', m."normalizedUrl",
+                  'hashSha256', m."hashSha256"
+                )
+                ORDER BY m.sort_id
+              )
+              FROM merged m
+              WHERE m."imageAssetId" IS NOT NULL
+            ),
+            '[]'::json
           ) AS "images"
         FROM "PageVersion" pv
         JOIN "Page" p ON p.id = pv."pageId"
@@ -733,7 +861,21 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
         if (!matchesIncludeTags(tagSet, options.includeTags, options.includeMatch)) return [];
         if (matchesExcludeTags(tagSet, options.excludeTags)) return [];
         matchedPageCount += 1;
-        return buildImageVariants(row, options.poolId, options.cardIdPrefix!, authorKeysByPage.get(row.pageId));
+        const existingPageCards = existingCardsByPage.get(row.pageId) ?? [];
+        const pageCards = buildImageVariants(
+          row,
+          options.poolId,
+          options.cardIdPrefix!,
+          existingPageCards,
+          authorKeysByPage.get(row.pageId)
+        );
+        if (pageCards.length === 0 && row.imageRefCount > 0 && existingPageCards.length > 0) {
+          deferredPendingImagePages += 1;
+          for (const card of existingPageCards) {
+            newCardIds.add(card.id);
+          }
+        }
+        return pageCards;
       });
 
       skippedByFilter += rows.length - matchedPageCount;
@@ -743,18 +885,6 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
       }
       for (const card of cards) {
         newCardIds.add(card.id);
-        const existing = existingCardsById.get(card.id);
-        if (existing && RARITY_RANK[card.rarity] > RARITY_RANK[existing.rarity]) {
-          const deltaPerCopy = (card.rewardTokens ?? 0) - (existing.rewardTokens ?? 0);
-          if (deltaPerCopy > 0) {
-            rarityUpgrades.push({
-              cardId: card.id,
-              oldRarity: existing.rarity,
-              newRarity: card.rarity,
-              deltaPerCopy
-            });
-          }
-        }
         rarityCounts[card.rarity] += 1;
         if (card.imageUrl) withImage += 1;
       }
@@ -773,10 +903,6 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
       : [];
     disabledCount = removedIds.length;
 
-    if (rarityUpgrades.length > 0 && fullSync) {
-      bonusPreview = await applyRarityUpgradeRewards(userDbClient, options.poolId, rarityUpgrades, options.dryRun);
-    }
-
     if (!options.dryRun) {
       if (removedIds.length > 0) {
         await disableRemovedPageCards(userDbClient, options.poolId, removedIds);
@@ -792,13 +918,8 @@ export async function syncGachaPool(rawOptions: SyncOptions = {}) {
     if (disabledCount > 0) {
       console.log(`已禁用：${disabledCount} 张不再匹配的旧卡片（weight=0，保留用户库存）。`);
     }
-    if (!fullSync && rarityUpgrades.length > 0) {
-      console.log(`注意：当前 limit=${options.limit}，已跳过稀有度升级补偿发放（避免部分同步误发）。`);
-    } else if (bonusPreview && rarityUpgrades.length > 0) {
-      const prefix = options.dryRun ? 'DRY RUN：预计' : '稀有度升级补偿：已';
-      console.log(
-        `${prefix}升级 ${rarityUpgrades.length} 张卡片，影响 ${bonusPreview.affectedUsers} 名用户，共发放 ${bonusPreview.totalReward.toString()} Token。`
-      );
+    if (deferredPendingImagePages > 0) {
+      console.log(`已跳过：${deferredPendingImagePages} 个页面当前存在图片引用但暂无可用封面，保留既有卡片等待后续同步。`);
     }
     if (options.dryRun) {
       console.log('DRY RUN：未写入用户数据库；仅输出计划结果。');

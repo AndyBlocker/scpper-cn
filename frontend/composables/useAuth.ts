@@ -1,5 +1,6 @@
 import { useNuxtApp } from 'nuxt/app'
 import { computed } from 'vue'
+import { getErrorMessage, getErrorStatus } from '~/utils/httpError'
 
 type AuthStatus = 'unknown' | 'authenticated' | 'unauthenticated'
 
@@ -77,8 +78,8 @@ export function useAuth() {
         status.value = 'unauthenticated'
         console.warn('[auth] fetchCurrentUser unexpected response', res)
       }
-    } catch (error: any) {
-      if (error?.status === 401) {
+    } catch (error: unknown) {
+      if (getErrorStatus(error) === 401) {
         user.value = null
         status.value = 'unauthenticated'
         console.debug('[auth] fetchCurrentUser 401 (unauthenticated)')
@@ -109,8 +110,8 @@ export function useAuth() {
       user.value = null
       status.value = 'unauthenticated'
       return { ok: false as const, error: message }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '登录失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '登录失败')
       user.value = null
       status.value = 'unauthenticated'
       return { ok: false as const, error: message }
@@ -146,8 +147,8 @@ export function useAuth() {
         return { ok: true as const }
       }
       return { ok: false as const, error: res?.error || '更新失败' }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '更新失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '更新失败')
       return { ok: false as const, error: message }
     }
   }
@@ -161,8 +162,8 @@ export function useAuth() {
       user.value = null
       status.value = 'unauthenticated'
       return { ok: true as const }
-    } catch (error: any) {
-      const message = error?.data?.error || error?.message || '修改密码失败'
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '修改密码失败')
       return { ok: false as const, error: message }
     }
   }

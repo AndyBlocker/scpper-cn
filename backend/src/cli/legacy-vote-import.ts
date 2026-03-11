@@ -17,9 +17,22 @@ type LegacyVoteImportOptions = {
   maxDate?: string;
   verbose?: boolean;
   source?: 'dump' | 'mysql';
+  dumpLineLimit?: number;
 };
 
-type PreparedOptions = ReturnType<typeof prepareOptions>;
+type PreparedOptions = {
+  legacySchema: string;
+  siteWhitelist: string[];
+  maxDate: string;
+  verbose: boolean;
+  source?: 'dump' | 'mysql';
+  dumpLineLimit?: number;
+  cutoffIso: string;
+  legacySchemaQuoted: string;
+  dumpPath: string;
+  sourceMode: 'dump' | 'mysql';
+  isVerbose: boolean;
+};
 
 type SummaryRow = {
   label: string;
@@ -139,13 +152,7 @@ export async function refreshLegacyVotes(options: LegacyVoteImportOptions = {}):
   }
 }
 
-function prepareOptions(raw: LegacyVoteImportOptions): Required<LegacyVoteImportOptions> & {
-  cutoffIso: string;
-  legacySchemaQuoted: string;
-  dumpPath: string;
-  sourceMode: 'dump' | 'mysql';
-  isVerbose: boolean;
-} {
+function prepareOptions(raw: LegacyVoteImportOptions): PreparedOptions {
   const legacySchema = (raw.legacySchema ?? DEFAULT_LEGACY_SCHEMA).trim();
   if (!legacySchema) {
     throw new Error('legacy schema 不能为空');
@@ -166,7 +173,8 @@ function prepareOptions(raw: LegacyVoteImportOptions): Required<LegacyVoteImport
     throw new Error(`未知的 source 模式：${raw.source ?? ''}（仅支持 dump 或 mysql）`);
   }
   const isVerbose = Boolean(raw.verbose);
-  const maxLinesRaw = raw.verbose && process.env.LEGACY_DUMP_MAX_LINES ? Number(process.env.LEGACY_DUMP_MAX_LINES) : undefined;
+  const maxLinesRaw = raw.dumpLineLimit
+    ?? (raw.verbose && process.env.LEGACY_DUMP_MAX_LINES ? Number(process.env.LEGACY_DUMP_MAX_LINES) : undefined);
   return {
     legacySchema,
     siteWhitelist,
@@ -1109,8 +1117,9 @@ async function processDumpFile(
   const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
   let processedBytes = 0;
   if (progress) {
-    stream.on('data', (chunk: string) => {
-      processedBytes += Buffer.byteLength(chunk, 'utf8');
+    stream.on('data', (chunk: string | Buffer) => {
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      processedBytes += Buffer.byteLength(text, 'utf8');
       progress(processedBytes);
     });
   }

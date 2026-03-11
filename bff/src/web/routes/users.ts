@@ -10,12 +10,58 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
   const cache = createCache(redis);
 
   // 读写分离：users 全部是读操作，使用从库
-  const readPool = getReadPoolSync();
+  const readPool = getReadPoolSync(pool);
 
-  // GET /users/by-rank?category=overall|scp|story|goi|translation|wanderers|art
+  // GET /users/by-rank?category=overall|scp|story|goi|translation|wanderers|art|forum
   router.get('/by-rank', async (req, res, next) => {
     try {
       const { limit = '20', offset = '0', category = 'overall', sortBy = 'rank', sortDir } = req.query as Record<string, string>;
+
+      // Forum ranking: separate query path
+      if (category === 'forum') {
+        const limitInt = Math.max(1, Math.min(parseInt(limit, 10) || 20, 100));
+        const offsetInt = Math.max(0, parseInt(offset, 10) || 0);
+        const sort = (sortBy || 'count').toLowerCase();
+        const dir = (sortDir && sortDir.toLowerCase() === 'asc') ? 'ASC' : 'DESC';
+        const orderExpr = sort === 'name' ? 'u."displayName"' : '"postCount"';
+
+        const listSql = `
+          SELECT
+            u.id,
+            u."displayName",
+            u."wikidotId",
+            COUNT(fp.id)::int AS "postCount",
+            COUNT(fp.id)::int AS "catCount",
+            COUNT(fp.id)::int AS rating
+          FROM "ForumPost" fp
+          JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+          WHERE fp."isDeleted" = false
+            AND fp."createdByWikidotId" IS NOT NULL
+            AND fp."createdByType" = 'user'
+          GROUP BY u.id, u."displayName", u."wikidotId"
+          HAVING COUNT(fp.id) > 0
+          ORDER BY ${orderExpr} ${dir}
+          LIMIT $1::int OFFSET $2::int
+        `;
+        const countSql = `
+          SELECT COUNT(*)::int AS total FROM (
+            SELECT fp."createdByWikidotId"
+            FROM "ForumPost" fp
+            WHERE fp."isDeleted" = false
+              AND fp."createdByWikidotId" IS NOT NULL
+              AND fp."createdByType" = 'user'
+            GROUP BY fp."createdByWikidotId"
+            HAVING COUNT(fp.id) > 0
+          ) t
+        `;
+        const [{ rows: list }, { rows: countRows }] = await Promise.all([
+          readPool.query(listSql, [limitInt, offsetInt]),
+          readPool.query(countSql)
+        ]);
+        const total = (countRows[0]?.total as number) || 0;
+        return res.json({ total, items: list });
+      }
+
       const categoryMap: Record<string, { rank: string; rating: string }> = {
         // 注意：overall.rating 此处不再作为“总分”，真实返回列会在 SQL 中覆盖为 totalRating
         // 保持为 overallRating 仅用于其它派生表达式的占位，避免破坏既有分支
@@ -139,7 +185,12 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               pv."alternateTitle" AS "pageAlternateTitle",
               v.direction AS direction,
               NULL::text AS "revisionType",
-              NULL::text AS comment
+              NULL::text AS comment,
+              NULL::int AS "forumThreadId",
+              NULL::int AS "forumPostId",
+              NULL::text AS "forumThreadTitle",
+              NULL::text AS "forumPostTitle",
+              NULL::text AS "forumPostExcerpt"
             FROM "Vote" v
             JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
             JOIN "User" u ON v."userId" = u.id
@@ -156,18 +207,68 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               pv."alternateTitle" AS "pageAlternateTitle",
               NULL::int AS direction,
               r.type::text AS "revisionType",
-              r.comment::text AS comment
+              r.comment::text AS comment,
+              NULL::int AS "forumThreadId",
+              NULL::int AS "forumPostId",
+              NULL::text AS "forumThreadTitle",
+              NULL::text AS "forumPostTitle",
+              NULL::text AS "forumPostExcerpt"
             FROM "Revision" r
             JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
             JOIN "User" u ON r."userId" = u.id
             WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
             ORDER BY r.timestamp DESC
             LIMIT 1
+          ),
+          last_forum AS (
+            SELECT
+              fp."createdAt" AS timestamp,
+              'FORUM_POST'::text AS type,
+              NULL::int AS "pageWikidotId",
+              NULL::text AS "pageTitle",
+              NULL::text AS "pageAlternateTitle",
+              NULL::int AS direction,
+              NULL::text AS "revisionType",
+              NULL::text AS comment,
+              fp."threadId" AS "forumThreadId",
+              fp.id AS "forumPostId",
+              t.title::text AS "forumThreadTitle",
+              fp.title::text AS "forumPostTitle",
+              LEFT(
+                NULLIF(
+                  TRIM(
+                    regexp_replace(
+                      regexp_replace(
+                        regexp_replace(COALESCE(fp."textHtml", ''), '<[^>]+>', ' ', 'g'),
+                        '&nbsp;',
+                        ' ',
+                        'gi'
+                      ),
+                      '\\s+',
+                      ' ',
+                      'g'
+                    )
+                  ),
+                  ''
+                ),
+                200
+              )::text AS "forumPostExcerpt"
+            FROM "ForumPost" fp
+            JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+            JOIN "ForumThread" t ON t.id = fp."threadId"
+            WHERE u."wikidotId" = $1
+              AND fp."createdAt" IS NOT NULL
+              AND fp."isDeleted" = false
+              AND fp."createdByType" = 'user'
+            ORDER BY fp."createdAt" DESC
+            LIMIT 1
           )
           SELECT * FROM (
             SELECT * FROM last_vote
             UNION ALL
             SELECT * FROM last_rev
+            UNION ALL
+            SELECT * FROM last_forum
           ) t
           ORDER BY timestamp DESC
           LIMIT 1
@@ -183,7 +284,12 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               pv."alternateTitle" AS "pageAlternateTitle",
               v.direction AS direction,
               NULL::text AS "revisionType",
-              NULL::text AS comment
+              NULL::text AS comment,
+              NULL::int AS "forumThreadId",
+              NULL::int AS "forumPostId",
+              NULL::text AS "forumThreadTitle",
+              NULL::text AS "forumPostTitle",
+              NULL::text AS "forumPostExcerpt"
             FROM "Vote" v
             JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
             JOIN "User" u ON v."userId" = u.id
@@ -200,18 +306,68 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               pv."alternateTitle" AS "pageAlternateTitle",
               NULL::int AS direction,
               r.type::text AS "revisionType",
-              r.comment::text AS comment
+              r.comment::text AS comment,
+              NULL::int AS "forumThreadId",
+              NULL::int AS "forumPostId",
+              NULL::text AS "forumThreadTitle",
+              NULL::text AS "forumPostTitle",
+              NULL::text AS "forumPostExcerpt"
             FROM "Revision" r
             JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
             JOIN "User" u ON r."userId" = u.id
             WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
             ORDER BY r.timestamp ASC
             LIMIT 1
+          ),
+          first_forum AS (
+            SELECT
+              fp."createdAt" AS timestamp,
+              'FORUM_POST'::text AS type,
+              NULL::int AS "pageWikidotId",
+              NULL::text AS "pageTitle",
+              NULL::text AS "pageAlternateTitle",
+              NULL::int AS direction,
+              NULL::text AS "revisionType",
+              NULL::text AS comment,
+              fp."threadId" AS "forumThreadId",
+              fp.id AS "forumPostId",
+              t.title::text AS "forumThreadTitle",
+              fp.title::text AS "forumPostTitle",
+              LEFT(
+                NULLIF(
+                  TRIM(
+                    regexp_replace(
+                      regexp_replace(
+                        regexp_replace(COALESCE(fp."textHtml", ''), '<[^>]+>', ' ', 'g'),
+                        '&nbsp;',
+                        ' ',
+                        'gi'
+                      ),
+                      '\\s+',
+                      ' ',
+                      'g'
+                    )
+                  ),
+                  ''
+                ),
+                200
+              )::text AS "forumPostExcerpt"
+            FROM "ForumPost" fp
+            JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
+            JOIN "ForumThread" t ON t.id = fp."threadId"
+            WHERE u."wikidotId" = $1
+              AND fp."createdAt" IS NOT NULL
+              AND fp."isDeleted" = false
+              AND fp."createdByType" = 'user'
+            ORDER BY fp."createdAt" ASC
+            LIMIT 1
           )
           SELECT * FROM (
             SELECT * FROM first_vote
             UNION ALL
             SELECT * FROM first_rev
+            UNION ALL
+            SELECT * FROM first_forum
           ) t
           ORDER BY timestamp ASC
           LIMIT 1
@@ -235,6 +391,11 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               lastActivityDirection: la.direction,
               lastActivityRevisionType: la.revisionType,
               lastActivityComment: la.comment,
+              lastActivityForumThreadId: la.forumThreadId,
+              lastActivityForumPostId: la.forumPostId,
+              lastActivityForumThreadTitle: la.forumThreadTitle,
+              lastActivityForumPostTitle: la.forumPostTitle,
+              lastActivityForumExcerpt: la.forumPostExcerpt,
             };
           }
           if (fa) {
@@ -247,6 +408,11 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               firstActivityDirection: fa.direction,
               firstActivityRevisionType: fa.revisionType,
               firstActivityComment: fa.comment,
+              firstActivityForumThreadId: fa.forumThreadId,
+              firstActivityForumPostId: fa.forumPostId,
+              firstActivityForumThreadTitle: fa.forumThreadTitle,
+              firstActivityForumPostTitle: fa.forumPostTitle,
+              firstActivityForumExcerpt: fa.forumPostExcerpt,
             };
           }
         } catch {

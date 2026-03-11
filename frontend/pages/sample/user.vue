@@ -24,7 +24,7 @@
                 <!-- Activity Timeline inline -->
                 <div class="timeline-inline">
                   <span class="timeline-item-inline">
-                    <LucideIcon name="Sparkles" class="w-3.5 h-3.5 text-[rgb(var(--accent))]" />
+                    <LucideIcon name="Sparkles" class="w-3.5 h-3.5 text-[var(--g-accent)]" />
                     首次 2022-06-15
                   </span>
                   <span class="timeline-sep">·</span>
@@ -468,7 +468,7 @@ definePageMeta({ layout: 'default' })
 
   .rank-value {
     @apply block text-4xl lg:text-5xl font-bold;
-    color: rgb(var(--accent));
+    color: var(--g-accent);
     font-family: 'Times New Roman', 'Songti SC', serif;
   }
 
@@ -514,7 +514,7 @@ definePageMeta({ layout: 'default' })
 
 
 .section-title svg {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 /* Category List */
@@ -553,7 +553,7 @@ definePageMeta({ layout: 'default' })
 
 .category-rank {
   @apply text-sm font-bold;
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .category-rating {
@@ -686,7 +686,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .sidebar-title svg {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 /* Favorite Lists */
@@ -725,7 +725,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .vote-page:hover {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .vote-dir {

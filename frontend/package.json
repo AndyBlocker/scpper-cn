@@ -4,11 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "nuxt dev --port 9876 --host 0.0.0.0",
-    "build": "nuxt build",
-    "start": "nuxt start --port 9876 --host 0.0.0.0",
-    "lint": "eslint . --ext .js,.ts,.vue --cache --cache-location .eslintcache",
-    "lint:fix": "eslint . --ext .js,.ts,.vue --fix --cache --cache-location .eslintcache",
+    "dev": "node ../scripts/service-runner.mjs frontend dev",
+    "build": "node ../scripts/service-runner.mjs frontend build",
+    "start": "node ../scripts/service-runner.mjs frontend start",
+    "lint": "eslint app.vue components composables layouts pages plugins server types utils nuxt.config.ts --ext .js,.ts,.vue --cache --cache-location .eslintcache",
+    "lint:fix": "eslint app.vue components composables layouts pages plugins server types utils nuxt.config.ts --ext .js,.ts,.vue --fix --cache --cache-location .eslintcache",
     "typecheck": "nuxt typecheck"
   },
   "dependencies": {
@@ -32,6 +32,7 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "highlight.js": "^11.11.1",
     "html-to-image": "^1.11.13",
+    "isomorphic-dompurify": "^3.0.0",
     "lightweight-charts": "^5.1.0",
     "lucide-vue-next": "^0.546.0",
     "markdown-it": "^14.1.0",

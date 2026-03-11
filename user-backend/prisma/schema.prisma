@@ -177,6 +177,7 @@ model GachaCardDefinition {
   wikidotId      Int?
   pageId         Int?
   imageUrl       String?
+  variantKey     String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   pool           GachaPool     @relation(fields: [poolId], references: [id], onDelete: Cascade)
@@ -192,6 +193,7 @@ model GachaCardDefinition {
 
   @@index([poolId])
   @@index([rarity])
+  @@index([poolId, pageId, variantKey])
 }
 
 model GachaGlobalBoost {
@@ -256,6 +258,7 @@ model GachaInventory {
 
   @@unique([userId, cardId])
   @@index([cardId])
+  @@index([userId, count])
 }
 
 model GachaCardUnlock {
@@ -283,6 +286,7 @@ model GachaDismantleLog {
   card         GachaCardDefinition @relation(fields: [cardId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([cardId])
 }
 
 model GachaLedgerEntry {

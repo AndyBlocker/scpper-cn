@@ -27,9 +27,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { DialectGroup } from '~/types/text-analysis'
 
+const dialectComparisonEndpoint: string = '/api/text-analysis/dialect-comparison'
+
 const { data: groups, pending } = useAsyncData<DialectGroup[]>(
   'text-analysis-dialect',
-  () => $fetch('/api/text-analysis/dialect-comparison')
+  () => $fetch<DialectGroup[]>(dialectComparisonEndpoint)
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)

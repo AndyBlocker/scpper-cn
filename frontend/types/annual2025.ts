@@ -86,9 +86,9 @@ export interface SiteData {
     translation?: { title: string; rating: number; authorDisplayName?: string; authorName?: string }
   }>
   extremeStats?: {
-    mostVotesTotal?: { title: string; author: string; count: number }
-    mostVotesOneDay?: { title: string; date: string; count: number }
-    mostUpvotesOneDay?: { title: string; date: string; count: number }
+    mostVotesTotal?: { title: string; author: string; count: number; wikidotId?: number | null }
+    mostVotesOneDay?: { title: string; date: string; count: number; wikidotId?: number | null }
+    mostUpvotesOneDay?: { title: string; date: string; count: number; wikidotId?: number | null }
     mostProlificDay?: { date: string; count: number }
   }
   categoryDetails?: Record<string, any>
@@ -112,7 +112,34 @@ export interface SiteData {
     mostCollaborativePage?: { title: string; authors: string; authorCount: number; wikidotId: number }
     longestPage?: { title: string; author: string; wordCount: number; wikidotId: number }
     mostControversialPage?: { title: string; author: string; totalVotes: number; downVotes: number; downRate: number; wikidotId: number }
+    longestTitlePage?: { title: string; author: string; titleLength: number; wikidotId?: number | null }
+    mostTagsPage?: { title: string; author: string; tagCount: number; wikidotId?: number | null }
     weekdayVsWeekend?: { weekday: { votes: number; pages: number }; weekend: { votes: number; pages: number } }
+    firstRevision?: { timestamp: string; type: string; title: string; author: string; wikidotId: number; label: string }
+  }
+  deletedPageStats?: {
+    total: number
+    byCategory: {
+      scp: number
+      tale: number
+      goi: number
+      wanderers: number
+      art: number
+      article: number
+    }
+    originalCount: number
+    translationCount: number
+    topAuthors: {
+      rank: number
+      userId: number
+      wikidotId: number | null
+      displayName: string
+      deletedCount: number
+    }[]
+    monthlyTrend: {
+      month: string
+      count: number
+    }[]
   }
 }
 
@@ -221,6 +248,7 @@ export interface CategorySplit {
 
 export interface CategoryTopPage {
   title: string
+  wikidotId?: number | null
   rating?: number
   wordCount?: number
   authorDisplayName?: string
@@ -266,17 +294,17 @@ export interface AnnualSiteData {
     translation: { title: string; author: string; rating: number; wikidotId: number | null } | null
   }[]
   records: {
-    longest: { title: string; author: string; count: number; label: string }
-    shortest: { title: string; author: string; count: number; label: string }
-    topTranslation: { title: string; author: string; rating: number } | null
+    longest: { title: string; author: string; count: number; label: string; wikidotId: number | null }
+    shortest: { title: string; author: string; count: number; label: string; wikidotId: number | null }
+    topTranslation: { title: string; author: string; rating: number; wikidotId: number | null } | null
     mostProlificAuthor: { name: string; count: number; wikidotId?: number | null } | null
     mostActiveVoter: { name: string; count: number; wikidotId?: number | null } | null
     mostProlificWriter: { name: string; count: number; wikidotId?: number | null } | null
   }
   extremeStats: {
-    mostVotesTotal: { title: string; author: string; count: number } | null
-    mostVotesOneDay: { title: string; date: string; count: number } | null
-    mostUpvotesOneDay: { title: string; date: string; count: number } | null
+    mostVotesTotal: { title: string; author: string; count: number; wikidotId?: number | null } | null
+    mostVotesOneDay: { title: string; date: string; count: number; wikidotId?: number | null } | null
+    mostUpvotesOneDay: { title: string; date: string; count: number; wikidotId?: number | null } | null
     mostProlificDay: { date: string; count: number } | null
   }
   breakdown: {
@@ -321,8 +349,8 @@ export interface AnnualSiteData {
     mostCollaborativePage: { title: string; authors?: string; author?: string; authorCount: number; wikidotId: number } | null
     longestPage: { title: string; author: string; wordCount: number; wikidotId: number } | null
     mostControversialPage: { title: string; author: string; totalVotes: number; downVotes: number; downRate: number; wikidotId: number } | null
-    longestTitlePage: { title: string; author: string; titleLength: number; wikidotId?: number } | null
-    mostTagsPage: { title: string; author: string; tagCount: number; wikidotId?: number } | null
+    longestTitlePage: { title: string; author: string; titleLength: number; wikidotId?: number | null } | null
+    mostTagsPage: { title: string; author: string; tagCount: number; wikidotId?: number | null } | null
     weekdayVsWeekend: { weekday: { votes: number; pages: number }; weekend: { votes: number; pages: number }; weekdayPercent: number; weekendPercent: number }
     firstRevision?: { timestamp: string; type: string; title: string; author: string; wikidotId: number; label: string } | null
   }

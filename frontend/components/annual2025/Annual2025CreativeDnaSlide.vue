@@ -2,7 +2,7 @@
   <section class="slide" :class="{ 'slide-active': isActive }">
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
-        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl p-8 md:p-12">
+        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
           <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="PenTool" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
@@ -110,13 +110,13 @@
           <div class="bento-card" v-if="userData.revisionTimeDistribution && userData.revisionTimeDistribution.totalRevisions > 0">
             <div class="bento-header">
               <span class="text-xs md:text-sm font-medium text-[rgb(var(--muted))]">24小时编辑分布</span>
-              <span class="text-xs text-[rgb(var(--accent))]">共{{ userData.revisionTimeDistribution.totalRevisions }}次</span>
+              <span class="text-xs text-[var(--g-accent)]">共{{ userData.revisionTimeDistribution.totalRevisions }}次</span>
             </div>
             <div class="flex items-center justify-center mt-4">
               <Annual2025ClockPlot class="w-48 h-48 md:w-60 md:h-60" :hours="userData.revisionTimeDistribution.hourly" />
             </div>
             <div v-if="userData.revisionTimeDistribution.peakHour" class="mt-2 text-center text-[10px] text-[rgb(var(--muted))]">
-              高峰时段: <span class="text-[rgb(var(--accent))] font-bold">{{ userData.revisionTimeDistribution.peakHour.label }}</span>
+              高峰时段: <span class="text-[var(--g-accent)] font-bold">{{ userData.revisionTimeDistribution.peakHour.label }}</span>
             </div>
             <div class="mt-3">
               <div

@@ -285,9 +285,20 @@ export interface PendingTask {
   verificationCode: string;
   createdAt: Date;
   expiresAt: Date;
+  checkCount: number;
+  lastCheckedAt: Date | null;
 }
 
 export async function getPendingTasks(): Promise<PendingTask[]> {
+  // Keep task states consistent: pending tasks past expiry should be marked EXPIRED.
+  await prisma.wikidotBindingTask.updateMany({
+    where: {
+      status: WikidotBindingStatus.PENDING,
+      expiresAt: { lte: new Date() }
+    },
+    data: { status: WikidotBindingStatus.EXPIRED }
+  });
+
   const tasks = await prisma.wikidotBindingTask.findMany({
     where: {
       status: WikidotBindingStatus.PENDING,
@@ -301,7 +312,9 @@ export async function getPendingTasks(): Promise<PendingTask[]> {
     wikidotUserId: t.wikidotUserId,
     verificationCode: t.verificationCode,
     createdAt: t.createdAt,
-    expiresAt: t.expiresAt
+    expiresAt: t.expiresAt,
+    checkCount: t.checkCount,
+    lastCheckedAt: t.lastCheckedAt
   }));
 }
 

@@ -36,27 +36,30 @@
 
   /* Accent (from global theme) */
   --g-accent: rgb(var(--accent));
+  --g-accent-hover: rgb(var(--accent) / 0.04);
   --g-accent-soft: rgb(var(--accent) / 0.08);
-  --g-accent-medium: rgb(var(--accent) / 0.16);
+  --g-accent-medium: rgb(var(--accent) / 0.14);
+  --g-accent-strong: rgb(var(--accent) / 0.22);
+  --g-accent-border: rgb(var(--accent) / 0.30);
 
   /* Glass */
   --g-glass: rgba(255, 255, 255, 0.72);
   --g-glass-border: rgba(255, 255, 255, 0.2);
 
-  /* Shadows — Apple-style multi-layer soft */
-  --g-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
-  --g-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
-  --g-shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.03);
-  --g-shadow-lg: 0 8px 28px -4px rgba(0, 0, 0, 0.1), 0 2px 8px -2px rgba(0, 0, 0, 0.04);
-  --g-shadow-xl: 0 20px 56px -8px rgba(0, 0, 0, 0.14), 0 4px 16px -4px rgba(0, 0, 0, 0.05);
+  /* Shadows — Vercel/Linear-style single-layer flat */
+  --g-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --g-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --g-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --g-shadow-lg: var(--g-shadow-md);
+  --g-shadow-xl: var(--g-shadow-md);
 
-  /* Border Radius — 6 levels */
-  --g-radius-xs: 6px;
-  --g-radius-sm: 8px;
-  --g-radius-md: 12px;
-  --g-radius-lg: 16px;
-  --g-radius-xl: 20px;
-  --g-radius-2xl: 24px;
+  /* Border Radius — max 8px */
+  --g-radius-xs: 4px;
+  --g-radius-sm: 6px;
+  --g-radius-md: 8px;
+  --g-radius-lg: 8px;
+  --g-radius-xl: 8px;
+  --g-radius-2xl: 8px;
 
   /* Transition timing */
   --g-ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -102,11 +105,11 @@ html.dark {
   --g-glass: rgba(28, 28, 30, 0.72);
   --g-glass-border: rgba(255, 255, 255, 0.06);
 
-  --g-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.12);
-  --g-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.12);
-  --g-shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.15);
-  --g-shadow-lg: 0 8px 28px -4px rgba(0, 0, 0, 0.4), 0 2px 8px -2px rgba(0, 0, 0, 0.2);
-  --g-shadow-xl: 0 20px 56px -8px rgba(0, 0, 0, 0.5), 0 4px 16px -4px rgba(0, 0, 0, 0.25);
+  --g-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.15);
+  --g-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --g-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --g-shadow-lg: var(--g-shadow-md);
+  --g-shadow-xl: var(--g-shadow-md);
 
   --g-rarity-gold: #f59e0b;
   --g-rarity-gold-soft: rgba(245, 158, 11, 0.12);
@@ -148,10 +151,7 @@ html.dark {
   z-index: 0;
   border-radius: var(--g-radius-2xl);
   pointer-events: none;
-  background:
-    radial-gradient(ellipse 60% 50% at 10% 5%, rgb(var(--accent) / 0.07), transparent 60%),
-    radial-gradient(ellipse 50% 40% at 90% 10%, rgb(var(--accent-strong) / 0.06), transparent 60%),
-    var(--g-surface-base);
+  background: var(--g-surface-base);
 }
 
 .gacha-layout {
@@ -201,10 +201,15 @@ html.dark {
   z-index: 50;
   height: 56px;
   padding-bottom: env(safe-area-inset-bottom, 0);
-  background: var(--g-glass);
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  background: var(--g-surface-card);
   border-top: 1px solid var(--g-border);
+}
+@media (min-width: 768px) and (prefers-reduced-motion: no-preference) {
+  .gacha-bottom-tabs {
+    background: var(--g-glass);
+    backdrop-filter: blur(24px) saturate(1.5);
+    -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  }
 }
 
 .gacha-bottom-tabs__item {
@@ -264,9 +269,7 @@ html.dark {
   scrollbar-width: none;
   border: 1px solid var(--g-border);
   border-radius: var(--g-radius-lg);
-  background: var(--g-glass);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--g-surface-card);
   position: sticky;
   top: 8px;
   z-index: 25;
@@ -516,9 +519,9 @@ html.dark .surface-card {
 .gacha-tab-btn.is-active {
   color: var(--g-text-primary);
   font-weight: 600;
-  border-color: rgb(var(--accent) / 0.3);
-  background: rgb(var(--accent) / 0.08);
-  box-shadow: 0 0 0 1px rgb(var(--accent) / 0.1);
+  border-color: var(--g-accent-border);
+  background: var(--g-accent-soft);
+  box-shadow: none;
 }
 
 html.dark .gacha-tab-btn {
@@ -526,8 +529,8 @@ html.dark .gacha-tab-btn {
 }
 
 html.dark .gacha-tab-btn.is-active {
-  border-color: rgb(var(--accent) / 0.4);
-  background: rgb(var(--accent) / 0.15);
+  border-color: var(--g-accent-border);
+  background: var(--g-accent-medium);
   color: var(--g-text-primary);
 }
 
@@ -557,13 +560,13 @@ html.dark .gacha-tab-btn.is-active {
 .gacha-toggle-btn.is-active {
   color: var(--g-text-primary);
   font-weight: 600;
-  border-color: rgb(var(--accent) / 0.3);
-  background: rgb(var(--accent) / 0.08);
+  border-color: var(--g-accent-border);
+  background: var(--g-accent-soft);
 }
 
 html.dark .gacha-toggle-btn.is-active {
-  border-color: rgb(var(--accent) / 0.4);
-  background: rgb(var(--accent) / 0.15);
+  border-color: var(--g-accent-border);
+  background: var(--g-accent-medium);
   color: var(--g-text-primary);
 }
 
@@ -833,10 +836,12 @@ html.dark .gacha-toggle-btn.is-active {
 
 @media (min-width: 1024px) {
   .gacha-app-shell {
-    max-width: none;
+    max-width: 100%;
     margin: 0;
     padding-left: 0;
     padding-right: 16px;
+    overflow-x: hidden;
+    box-sizing: border-box;
   }
 
   .gacha-app-shell__bg {
@@ -860,7 +865,7 @@ html.dark .gacha-toggle-btn.is-active {
 
   .gacha-main {
     margin: 0;
-    max-width: 1000px;
+    max-width: min(1000px, calc(100vw - 260px - 32px));
     flex: 1;
     min-width: 0;
     padding-bottom: 0;
@@ -883,9 +888,7 @@ html.dark .gacha-toggle-btn.is-active {
     border: 1px solid var(--g-border);
     border-left: 0;
     border-radius: 0 var(--g-radius-lg) var(--g-radius-lg) 0;
-    background: var(--g-glass);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: var(--g-surface-card);
     max-height: calc(100dvh - 24px);
     overflow-y: auto;
     scrollbar-width: thin;
@@ -975,7 +978,7 @@ html.dark .gacha-toggle-btn.is-active {
   .gacha-sidebar__link.is-active {
     color: var(--g-text-primary);
     font-weight: 600;
-    background: rgb(var(--accent) / 0.08);
+    background: var(--g-accent-soft);
   }
 
   .gacha-sidebar__link.is-active::before {
@@ -990,7 +993,7 @@ html.dark .gacha-toggle-btn.is-active {
   }
 
   html.dark .gacha-sidebar__link.is-active {
-    background: rgb(var(--accent) / 0.14);
+    background: var(--g-accent-medium);
     color: var(--g-text-primary);
   }
 
@@ -1028,9 +1031,7 @@ html.dark .gacha-toggle-btn.is-active {
     border: 1px solid var(--g-border);
     border-left: 0;
     border-radius: 0 var(--g-radius-lg) var(--g-radius-lg) 0;
-    background: var(--g-glass);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: var(--g-surface-card);
   }
 
   .gacha-rail__title {
@@ -1074,7 +1075,7 @@ html.dark .gacha-toggle-btn.is-active {
   .gacha-rail__link.is-active {
     color: var(--g-text-primary);
     font-weight: 600;
-    background: rgb(var(--accent) / 0.08);
+    background: var(--g-accent-soft);
     border-color: transparent;
     box-shadow: none;
   }
@@ -1091,7 +1092,7 @@ html.dark .gacha-toggle-btn.is-active {
   }
 
   html.dark .gacha-rail__link.is-active {
-    background: rgb(var(--accent) / 0.14);
+    background: var(--g-accent-medium);
     color: var(--g-text-primary);
     box-shadow: none;
   }

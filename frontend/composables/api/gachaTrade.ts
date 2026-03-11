@@ -4,7 +4,7 @@ import type { TradeListing, Wallet, Rarity } from '~/types/gacha'
 import type { TradeSortMode } from '~/utils/gachaConstants'
 
 export function useGachaTradeApi(core: GachaCoreContext) {
-  const { $bff, state, withTradeListingCardVariant, createIdempotencyKey } = core
+  const { $bff, state, withTradeListingCardVariant, createIdempotencyKey, captureWalletSeq, setWalletIfFresh } = core
 
   async function getTradeListings(params: {
     status?: 'OPEN' | 'SOLD' | 'CANCELLED' | 'EXPIRED' | 'ALL'
@@ -44,21 +44,30 @@ export function useGachaTradeApi(core: GachaCoreContext) {
         }
       }
       return { ok: false as const, error: res?.error || '加载集换市场失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载集换市场失败') }
     }
   }
 
-  async function getMyTradeListings() {
+  async function getMyTradeListings(params: { status?: string; limit?: number; offset?: number } = {}) {
     try {
-      const res = await $bff<ApiResponse<{ items: TradeListing[] }>>('/gacha/trade/my-listings', {
-        method: 'GET'
+      const res = await $bff<ApiResponse<{ items: TradeListing[]; pagination?: { total: number; limit: number; offset: number } }>>('/gacha/trade/my-listings', {
+        method: 'GET',
+        params: {
+          status: params.status || undefined,
+          limit: params.limit != null ? String(params.limit) : undefined,
+          offset: params.offset != null ? String(params.offset) : undefined
+        }
       })
       if (res?.ok) {
-        return { ok: true as const, data: (res.items ?? []).map(withTradeListingCardVariant) }
+        return {
+          ok: true as const,
+          data: (res.items ?? []).map(withTradeListingCardVariant),
+          pagination: res.pagination ?? null
+        }
       }
       return { ok: false as const, error: res?.error || '加载我的挂牌失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '加载我的挂牌失败') }
     }
   }
@@ -72,6 +81,7 @@ export function useGachaTradeApi(core: GachaCoreContext) {
   }) {
     try {
       const idemKey = createIdempotencyKey('trade-create')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ listing: TradeListing; wallet?: Wallet }>>('/gacha/trade/listings', {
         method: 'POST',
         headers: {
@@ -81,13 +91,12 @@ export function useGachaTradeApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, listing: withTradeListingCardVariant(res.listing), wallet: res.wallet ?? null }
       }
       return { ok: false as const, error: res?.error || '上架失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '上架失败') }
     }
   }
@@ -95,6 +104,7 @@ export function useGachaTradeApi(core: GachaCoreContext) {
   async function buyTradeListing(listingId: string, payload: { quantity?: number } = {}) {
     try {
       const idemKey = createIdempotencyKey('trade-buy')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ listing: TradeListing; wallet?: Wallet }>>(`/gacha/trade/listings/${encodeURIComponent(listingId)}/buy`, {
         method: 'POST',
         headers: {
@@ -104,13 +114,12 @@ export function useGachaTradeApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, listing: withTradeListingCardVariant(res.listing), wallet: res.wallet ?? null }
       }
       return { ok: false as const, error: res?.error || '购买失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '购买失败') }
     }
   }
@@ -118,6 +127,7 @@ export function useGachaTradeApi(core: GachaCoreContext) {
   async function cancelTradeListing(listingId: string) {
     try {
       const idemKey = createIdempotencyKey('trade-cancel')
+      const walletSeq = captureWalletSeq()
       const res = await $bff<ApiResponse<{ listing: TradeListing; wallet?: Wallet }>>(`/gacha/trade/listings/${encodeURIComponent(listingId)}/cancel`, {
         method: 'POST',
         headers: {
@@ -127,14 +137,27 @@ export function useGachaTradeApi(core: GachaCoreContext) {
       })
       if (res?.ok) {
         if (res.wallet) {
-          state.value.wallet = res.wallet
-          state.value.walletFetchedAt = new Date().toISOString()
+          setWalletIfFresh(res.wallet, walletSeq)
         }
         return { ok: true as const, listing: withTradeListingCardVariant(res.listing), wallet: res.wallet ?? null }
       }
       return { ok: false as const, error: res?.error || '撤单失败' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { ok: false as const, error: normalizeError(error, '撤单失败') }
+    }
+  }
+
+  async function getOwnedCardIds() {
+    try {
+      const res = await $bff<ApiResponse<{ cardIds: string[] }>>('/gacha/trade/owned-card-ids', {
+        method: 'GET'
+      })
+      if (res?.ok) {
+        return { ok: true as const, data: res.cardIds ?? [] }
+      }
+      return { ok: false as const, error: res?.error || '加载持有卡片失败' }
+    } catch (error: unknown) {
+      return { ok: false as const, error: normalizeError(error, '加载持有卡片失败') }
     }
   }
 
@@ -143,6 +166,7 @@ export function useGachaTradeApi(core: GachaCoreContext) {
     getMyTradeListings,
     createTradeListing,
     buyTradeListing,
-    cancelTradeListing
+    cancelTradeListing,
+    getOwnedCardIds
   }
 }

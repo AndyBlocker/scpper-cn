@@ -1,8 +1,8 @@
 <template>
   <article
     :class="[
-      'group relative overflow-hidden rounded-3xl border border-transparent shadow-[0_20px_60px_rgba(15,23,42,0.12)] transition hover:-translate-y-1 hover:shadow-[0_32px_80px_rgba(15,23,42,0.18)] dark:shadow-[0_32px_70px_rgba(0,0,0,0.55)]',
-      clickable ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.35)]' : ''
+      'group relative overflow-hidden rounded-lg border border-transparent shadow-sm transition hover:-translate-y-1 hover:shadow-lg dark:shadow',
+      clickable ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]' : ''
     ]"
     @click="$emit('select', collection)"
   >

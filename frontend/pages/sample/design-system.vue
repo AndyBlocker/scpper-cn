@@ -1147,7 +1147,7 @@ definePageMeta({ layout: 'default' })
 
   .glow {
     @apply absolute rounded-full blur-[140px] opacity-20;
-    background: radial-gradient(circle, rgb(var(--accent) / 0.12), transparent 70%);
+    background: radial-gradient(circle, var(--g-accent-soft), transparent 70%);
     mix-blend-mode: multiply;
   }
 
@@ -1218,8 +1218,8 @@ definePageMeta({ layout: 'default' })
 
 .brand-tag {
   @apply text-xs font-semibold px-1.5 py-0.5 rounded;
-  background: rgb(var(--accent) / 0.1);
-  color: rgb(var(--accent));
+  background: var(--g-accent-soft);
+  color: var(--g-accent);
 }
 
 .nav-center {
@@ -1329,9 +1329,9 @@ definePageMeta({ layout: 'default' })
 }
 
 .sidebar-link.active {
-  color: rgb(var(--accent));
-  background: rgb(var(--accent) / 0.08);
-  border-left-color: rgb(var(--accent));
+  color: var(--g-accent);
+  background: var(--g-accent-soft);
+  border-left-color: var(--g-accent);
 }
 
 .link-num {
@@ -1361,7 +1361,7 @@ definePageMeta({ layout: 'default' })
 
 .mini-stat-value {
   @apply block text-lg font-bold;
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .mini-stat-label {
@@ -1693,7 +1693,7 @@ definePageMeta({ layout: 'default' })
 .btn-primary {
   background: linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-strong)));
   color: white;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.35), 0 12px 22px rgb(var(--accent) / 0.3);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.35), 0 12px 22px var(--g-accent-border);
 }
 
 .btn-primary:hover {
@@ -1710,12 +1710,12 @@ definePageMeta({ layout: 'default' })
 
 .btn-secondary:hover {
   background: rgb(var(--tag-bg));
-  border-color: rgb(var(--accent) / 0.3);
+  border-color: var(--g-accent-border);
 }
 
 .btn-ghost {
   background: transparent;
-  color: rgb(var(--accent));
+  color: var(--g-accent);
   border: 1px solid rgb(var(--panel-border));
 }
 
@@ -1747,9 +1747,9 @@ definePageMeta({ layout: 'default' })
 }
 
 .btn-icon:hover {
-  color: rgb(var(--accent));
-  border-color: rgb(var(--accent) / 0.3);
-  background: rgb(var(--accent) / 0.1);
+  color: var(--g-accent);
+  border-color: var(--g-accent-border);
+  background: var(--g-accent-soft);
 }
 
 /* === Forms === */
@@ -1784,8 +1784,8 @@ definePageMeta({ layout: 'default' })
 }
 
 .input-text:focus {
-  border-color: rgb(var(--accent));
-  box-shadow: 0 0 0 2px rgb(var(--accent) / 0.12);
+  border-color: var(--g-accent);
+  box-shadow: 0 0 0 2px var(--g-accent-soft);
 }
 
 .input-text::placeholder {
@@ -1801,8 +1801,8 @@ definePageMeta({ layout: 'default' })
 }
 
 .input-select:focus {
-  border-color: rgb(var(--accent));
-  box-shadow: 0 0 0 2px rgb(var(--accent) / 0.12);
+  border-color: var(--g-accent);
+  box-shadow: 0 0 0 2px var(--g-accent-soft);
 }
 
 .chip-group {
@@ -1821,14 +1821,14 @@ definePageMeta({ layout: 'default' })
 }
 
 .chip.active {
-  background: rgb(var(--accent) / 0.15);
-  color: rgb(var(--accent));
-  border-color: rgb(var(--accent) / 0.3);
+  background: var(--g-accent-medium);
+  color: var(--g-accent);
+  border-color: var(--g-accent-border);
 }
 
 /* === Page Cards === */
 .page-card {
-  @apply rounded-2xl transition-all cursor-pointer;
+  @apply rounded-lg transition-all cursor-pointer;
   background: rgb(var(--panel));
   border: 1px solid rgb(var(--panel-border));
   box-shadow: 0 1px 2px rgb(var(--fg) / 0.04), 0 10px 20px rgb(var(--fg) / 0.04);
@@ -1837,7 +1837,7 @@ definePageMeta({ layout: 'default' })
 .page-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 18px 36px rgb(var(--fg) / 0.08);
-  border-color: rgb(var(--accent) / 0.3);
+  border-color: var(--g-accent-border);
 }
 
 .page-card-featured {
@@ -1872,7 +1872,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .page-card:hover .card-title {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .card-title.deleted {
@@ -1918,14 +1918,14 @@ definePageMeta({ layout: 'default' })
 }
 
 .tag:hover {
-  background: rgb(var(--accent) / 0.1);
-  color: rgb(var(--accent));
+  background: var(--g-accent-soft);
+  color: var(--g-accent);
 }
 
 .tag-active {
-  background: rgb(var(--accent) / 0.15);
-  color: rgb(var(--accent));
-  border-color: rgb(var(--accent) / 0.3);
+  background: var(--g-accent-medium);
+  color: var(--g-accent);
+  border-color: var(--g-accent-border);
 }
 
 .card-stats {
@@ -2039,8 +2039,8 @@ definePageMeta({ layout: 'default' })
 }
 
 .badge-tracking {
-  background: rgb(var(--accent) / 0.1);
-  color: rgb(var(--accent));
+  background: var(--g-accent-soft);
+  color: var(--g-accent);
   border: 1px solid rgb(var(--accent) / 0.2);
 }
 
@@ -2091,8 +2091,8 @@ definePageMeta({ layout: 'default' })
 }
 
 .status-processing {
-  background: rgb(var(--accent) / 0.1);
-  color: rgb(var(--accent));
+  background: var(--g-accent-soft);
+  color: var(--g-accent);
 }
 
 .status-processing .status-dot {
@@ -2109,14 +2109,14 @@ definePageMeta({ layout: 'default' })
 }
 
 .user-card {
-  @apply rounded-2xl transition-all;
+  @apply rounded-lg transition-all;
   background: rgb(var(--panel));
   border: 1px solid rgb(var(--panel-border));
   box-shadow: 0 1px 2px rgb(var(--fg) / 0.04), 0 12px 24px rgb(var(--fg) / 0.05);
 }
 
 .user-card:hover {
-  border-color: rgb(var(--accent) / 0.3);
+  border-color: var(--g-accent-border);
   box-shadow: 0 16px 32px rgb(var(--fg) / 0.08);
 }
 
@@ -2126,7 +2126,7 @@ definePageMeta({ layout: 'default' })
 
 .user-rank {
   @apply absolute top-4 right-4 text-2xl font-bold;
-  color: rgb(var(--accent) / 0.3);
+  color: var(--g-accent-border);
 }
 
 .user-avatar-wrapper {
@@ -2152,7 +2152,7 @@ definePageMeta({ layout: 'default' })
 
 .user-title {
   @apply text-sm mb-4;
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .user-stats {
@@ -2165,7 +2165,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .user-stat.highlight {
-  background: rgb(var(--accent) / 0.1);
+  background: var(--g-accent-soft);
 }
 
 .user-stat .stat-value {
@@ -2174,7 +2174,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .user-stat.highlight .stat-value {
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .user-stat .stat-label {
@@ -2231,7 +2231,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .user-chip:hover {
-  border-color: rgb(var(--accent) / 0.3);
+  border-color: var(--g-accent-border);
   background: rgb(var(--accent) / 0.05);
 }
 
@@ -2247,7 +2247,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .kpi-card {
-  @apply rounded-2xl p-5 transition-all;
+  @apply rounded-lg p-5 transition-all;
   background: rgb(var(--panel));
   border: 1px solid rgb(var(--panel-border));
   box-shadow: 0 2px 6px rgb(var(--fg) / 0.05);
@@ -2362,7 +2362,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .notification-panel, .search-panel {
-  @apply rounded-2xl overflow-hidden;
+  @apply rounded-lg overflow-hidden;
   background: rgb(var(--panel));
   border: 1px solid rgb(var(--panel-border));
   box-shadow: 0 8px 22px rgb(var(--fg) / 0.08);
@@ -2379,7 +2379,7 @@ definePageMeta({ layout: 'default' })
 
 .link-btn {
   @apply text-xs font-medium;
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .link-btn:hover {
@@ -2405,7 +2405,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .notification-item.unread {
-  background: rgb(var(--accent) / 0.03);
+  background: var(--g-accent-hover);
 }
 
 .notif-icon {
@@ -2418,8 +2418,8 @@ definePageMeta({ layout: 'default' })
 }
 
 .notif-icon.info {
-  background: rgb(var(--accent) / 0.1);
-  color: rgb(var(--accent));
+  background: var(--g-accent-soft);
+  color: var(--g-accent);
 }
 
 .notif-icon.warning {
@@ -2449,7 +2449,7 @@ definePageMeta({ layout: 'default' })
 .panel-footer {
   @apply block text-center py-3 text-sm font-medium border-t transition-colors;
   border-color: rgb(var(--panel-border) / 0.5);
-  color: rgb(var(--accent));
+  color: var(--g-accent);
 }
 
 .panel-footer:hover {
@@ -2511,8 +2511,8 @@ definePageMeta({ layout: 'default' })
 
 .result-type {
   @apply text-xs px-2 py-0.5 rounded;
-  background: rgb(var(--accent) / 0.1);
-  color: rgb(var(--accent));
+  background: var(--g-accent-soft);
+  color: var(--g-accent);
 }
 
 /* Alerts */
@@ -2573,7 +2573,7 @@ definePageMeta({ layout: 'default' })
 }
 
 .effect-card {
-  @apply rounded-2xl p-4;
+  @apply rounded-lg p-4;
   background: rgb(var(--panel));
   border: 1px solid rgb(var(--panel-border));
   box-shadow: 0 1px 4px rgb(var(--fg) / 0.05);
@@ -2606,7 +2606,7 @@ definePageMeta({ layout: 'default' })
 
   .glow-demo {
     @apply relative overflow-hidden;
-    background: repeating-linear-gradient(90deg, rgb(var(--accent) / 0.08), rgb(var(--accent) / 0.08) 8px, transparent 8px, transparent 16px);
+    background: repeating-linear-gradient(90deg, var(--g-accent-soft), var(--g-accent-soft) 8px, transparent 8px, transparent 16px);
     border-radius: 2px;
   }
 
@@ -2767,7 +2767,7 @@ definePageMeta({ layout: 'default' })
 .spinner {
   @apply w-8 h-8 rounded-full border-2;
   border-color: rgb(var(--panel-border));
-  border-top-color: rgb(var(--accent));
+  border-top-color: var(--g-accent);
   animation: spin 0.8s linear infinite;
 }
 

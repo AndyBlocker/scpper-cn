@@ -11,7 +11,35 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
   const cache = createCache(redis);
 
   // 读写分离：pages 全部是读操作，使用从库
-  const readPool = getReadPoolSync();
+  const readPool = getReadPoolSync(pool);
+  const parsePositiveInt = (value: unknown): number | null => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      return null;
+    }
+    return parsed;
+  };
+
+  router.param('wikidotId', (req, res, next, value) => {
+    if (parsePositiveInt(value) === null) {
+      return res.status(400).json({ error: 'invalid_wikidotId' });
+    }
+    return next();
+  });
+
+  router.param('versionId', (req, res, next, value) => {
+    if (parsePositiveInt(value) === null) {
+      return res.status(400).json({ error: 'invalid_versionId' });
+    }
+    return next();
+  });
+
+  router.param('revisionId', (req, res, next, value) => {
+    if (parsePositiveInt(value) === null) {
+      return res.status(400).json({ error: 'invalid_revisionId' });
+    }
+    return next();
+  });
 
   router.get('/vote-status', async (req, res, next) => {
     try {
@@ -102,6 +130,50 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     ORDER BY pvi."pageVersionId", pvi.id
   `;
 
+  interface ImageSelectionRow {
+    pageVersionId: number;
+    pageVersionImageId: number;
+    originUrl: string | null;
+    displayUrl: string | null;
+    normalizedUrl: string;
+    assetId: number;
+    mimeType: string | null;
+    width: number | null;
+    height: number | null;
+    bytes: number | null;
+    canonicalUrl: string | null;
+  }
+
+  interface PageImageEntry {
+    pageVersionImageId: number;
+    assetId: number;
+    originUrl: string | null;
+    displayUrl: string | null;
+    normalizedUrl: string;
+    mimeType: string | null;
+    width: number | null;
+    height: number | null;
+    bytes: number | null;
+    canonicalUrl: string | null;
+    imageUrl: string;
+    isFallback?: boolean;
+    fallbackSourcePageVersionId?: number;
+  }
+
+  const toPageImageEntry = (row: ImageSelectionRow): PageImageEntry => ({
+    pageVersionImageId: row.pageVersionImageId,
+    assetId: row.assetId,
+    originUrl: row.originUrl,
+    displayUrl: row.displayUrl,
+    normalizedUrl: row.normalizedUrl,
+    mimeType: row.mimeType,
+    width: row.width,
+    height: row.height,
+    bytes: row.bytes,
+    canonicalUrl: row.canonicalUrl,
+    imageUrl: buildPageImagePath(row.assetId)
+  });
+
   const extractPageVersionId = (row: any): number | null => {
     if (!row) return null;
     const raw = row.pageVersionId ?? row.id ?? null;
@@ -110,26 +182,14 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     return Number.isFinite(value) ? value : null;
   };
 
-  const groupImagesByPageVersion = async (ids: number[]): Promise<Map<number, any[]>> => {
+  const groupImagesByPageVersion = async (ids: number[]): Promise<Map<number, PageImageEntry[]>> => {
     if (ids.length === 0) {
       return new Map();
     }
-    const { rows } = await readPool.query(imageSelectionSql, [ids]);
-    const grouped = new Map<number, any[]>();
+    const { rows } = await readPool.query<ImageSelectionRow>(imageSelectionSql, [ids]);
+    const grouped = new Map<number, PageImageEntry[]>();
     for (const row of rows) {
-      const entry = {
-        pageVersionImageId: row.pageVersionImageId,
-        assetId: row.assetId,
-        originUrl: row.originUrl,
-        displayUrl: row.displayUrl,
-        normalizedUrl: row.normalizedUrl,
-        mimeType: row.mimeType,
-        width: row.width,
-        height: row.height,
-        bytes: row.bytes,
-        canonicalUrl: row.canonicalUrl,
-        imageUrl: buildPageImagePath(row.assetId)
-      };
+      const entry = toPageImageEntry(row);
       const list = grouped.get(row.pageVersionId);
       if (list) {
         list.push(entry);
@@ -138,6 +198,128 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       }
     }
     return grouped;
+  };
+
+  interface TargetVersionImageRow {
+    pageVersionImageId: number;
+    pageVersionId: number;
+    originUrl: string | null;
+    displayUrl: string | null;
+    normalizedUrl: string;
+  }
+
+  interface FallbackImageRow extends ImageSelectionRow {
+    sourcePageVersionId: number;
+  }
+
+  const loadPageVersionImagesWithFallback = async (pageVersionId: number): Promise<PageImageEntry[]> => {
+    const baseGrouped = await groupImagesByPageVersion([pageVersionId]);
+    const baseResolved = baseGrouped.get(pageVersionId) ?? [];
+
+    const { rows: targetRows } = await readPool.query<TargetVersionImageRow>(
+      `SELECT
+         pvi.id AS "pageVersionImageId",
+         pvi."pageVersionId" AS "pageVersionId",
+         pvi."originUrl" AS "originUrl",
+         pvi."displayUrl" AS "displayUrl",
+         pvi."normalizedUrl" AS "normalizedUrl"
+       FROM "PageVersionImage" pvi
+       WHERE pvi."pageVersionId" = $1
+       ORDER BY pvi.id`,
+      [pageVersionId]
+    );
+    if (targetRows.length === 0) {
+      return baseResolved;
+    }
+
+    const resolvedByNormalized = new Map(baseResolved.map((item) => [item.normalizedUrl, item] as const));
+    const unresolvedUrls = Array.from(new Set(
+      targetRows
+        .map((row) => row.normalizedUrl)
+        .filter((url) => url && !resolvedByNormalized.has(url))
+    ));
+
+    if (unresolvedUrls.length === 0) {
+      return baseResolved;
+    }
+
+    const { rows: pageRows } = await readPool.query<{ pageId: number }>(
+      'SELECT "pageId" AS "pageId" FROM "PageVersion" WHERE id = $1 LIMIT 1',
+      [pageVersionId]
+    );
+    if (pageRows.length === 0) {
+      return baseResolved;
+    }
+    const pageId = pageRows[0].pageId;
+
+    const { rows: fallbackRows } = await readPool.query<FallbackImageRow>(
+      `SELECT DISTINCT ON (pvi."normalizedUrl")
+         pvi.id AS "pageVersionImageId",
+         pvi."pageVersionId" AS "pageVersionId",
+         pvi."pageVersionId" AS "sourcePageVersionId",
+         pvi."originUrl" AS "originUrl",
+         pvi."displayUrl" AS "displayUrl",
+         pvi."normalizedUrl" AS "normalizedUrl",
+         ia.id AS "assetId",
+         ia."mimeType" AS "mimeType",
+         ia.width AS width,
+         ia.height AS height,
+         ia.bytes AS bytes,
+         ia."canonicalUrl" AS "canonicalUrl"
+       FROM "PageVersionImage" pvi
+       JOIN "PageVersion" pv ON pv.id = pvi."pageVersionId"
+       JOIN "ImageAsset" ia ON ia.id = pvi."imageAssetId"
+       WHERE pv."pageId" = $1
+         AND pvi."normalizedUrl" = ANY($2::text[])
+         AND pvi.status = 'RESOLVED'
+         AND pvi."imageAssetId" IS NOT NULL
+         AND ia."storagePath" IS NOT NULL
+         AND ia."status" = 'READY'
+       ORDER BY pvi."normalizedUrl", pvi."lastFetchedAt" DESC NULLS LAST, pvi.id DESC`,
+      [pageId, unresolvedUrls]
+    );
+
+    const fallbackByNormalized = new Map<string, PageImageEntry>();
+    for (const row of fallbackRows) {
+      const entry = toPageImageEntry(row);
+      entry.isFallback = true;
+      entry.fallbackSourcePageVersionId = row.sourcePageVersionId;
+      fallbackByNormalized.set(row.normalizedUrl, entry);
+    }
+
+    const merged: PageImageEntry[] = [];
+    const seen = new Set<string>();
+    for (const row of targetRows) {
+      const normalizedUrl = row.normalizedUrl;
+      if (!normalizedUrl || seen.has(normalizedUrl)) continue;
+
+      const resolved = resolvedByNormalized.get(normalizedUrl);
+      if (resolved) {
+        merged.push(resolved);
+        seen.add(normalizedUrl);
+        continue;
+      }
+
+      const fallback = fallbackByNormalized.get(normalizedUrl);
+      if (fallback) {
+        merged.push({
+          ...fallback,
+          pageVersionImageId: row.pageVersionImageId,
+          originUrl: row.originUrl ?? fallback.originUrl,
+          displayUrl: row.displayUrl ?? fallback.displayUrl,
+          normalizedUrl
+        });
+        seen.add(normalizedUrl);
+      }
+    }
+
+    // Keep any current resolved rows that were not mapped via target rows.
+    for (const row of baseResolved) {
+      if (seen.has(row.normalizedUrl)) continue;
+      merged.push(row);
+    }
+
+    return merged;
   };
 
   const hydrateRowsWithImages = async (rows: any[]): Promise<void> => {
@@ -295,8 +477,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
   }
 
   async function resolvePageContextByWikidotId(input: string | number): Promise<PageContext | null> {
-    const wikidotId = Number(input);
-    if (!Number.isFinite(wikidotId)) return null;
+    const wikidotId = parsePositiveInt(input);
+    if (wikidotId === null) return null;
 
     const { rows: pageRows } = await readPool.query(
       'SELECT id FROM "Page" WHERE "wikidotId" = $1 LIMIT 1',
@@ -313,8 +495,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     const rawValues = Array.isArray(input) ? input : [input];
     const ids = rawValues
       .flatMap((value) => String(value).split(','))
-      .map((value) => Number(String(value).trim()))
-      .filter((value) => Number.isInteger(value) && value > 0);
+      .map((value) => parsePositiveInt(String(value).trim()))
+      .filter((value): value is number => value !== null);
     return Array.from(new Set(ids));
   }
 
@@ -612,10 +794,14 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     try {
       const { wikidotId } = req.query as Record<string, string>;
       if (!wikidotId) return res.status(400).json({ error: 'wikidotId is required' });
+      const wikidotIdInt = parsePositiveInt(wikidotId);
+      if (wikidotIdInt === null) {
+        return res.status(400).json({ error: 'invalid_wikidotId' });
+      }
 
-      const cacheKey = `pages:by-id:${wikidotId}`;
+      const cacheKey = `pages:by-id:${wikidotIdInt}`;
       const result = await cache.remember(cacheKey, 120, async () => {
-        const row = await selectLatestPageVersion('p."wikidotId" = $1', [wikidotId]);
+        const row = await selectLatestPageVersion('p."wikidotId" = $1', [wikidotIdInt]);
         if (!row) return null;
         const merged = await mergeDeletedWithLatestLiveVersion(row);
         if (!merged.wikidotId && row.pageWikidotId) {
@@ -1576,41 +1762,53 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const context = await resolvePageContextByWikidotId(wikidotId);
       if (!context || !context.effectiveVersionId) return res.json([]);
 
-      const sql = `
-        WITH target AS (
-          SELECT 
-            pv.id,
-            pv."pageId",
-            pv.tags,
-            pv."createdAt",
-            pv.category,
-            (
-              SELECT COALESCE(ARRAY_AGG(DISTINCT a."userId") FILTER (WHERE a."userId" IS NOT NULL), ARRAY[]::int[])
-              FROM "Attribution" a
-              WHERE a."pageVerId" = pv.id
-                AND NOT (
-                  a.type = 'SUBMITTER'
-                  AND EXISTS (
-                    SELECT 1 FROM "Attribution" ax
-                    WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
-                  )
-                )
-            ) AS authors
-          FROM "PageVersion" pv
-          WHERE pv.id = $1
-          LIMIT 1
-        ),
-        tag_freq AS (
-          -- 仅统计目标页相关标签的全站出现次数，避免全表扫描
-          SELECT tt.tag, COUNT(*)::int AS cnt
-          FROM target t
-          CROSS JOIN LATERAL UNNEST(t.tags) AS tt(tag)
-          JOIN "PageVersion" pv2 
-            ON pv2."validTo" IS NULL 
-           AND pv2.tags @> ARRAY[tt.tag]::text[]
-          GROUP BY tt.tag
-        )
-        SELECT 
+      // Step 1: Fetch target page tags + authors
+      const targetSql = `
+        SELECT pv.tags,
+               pv.category,
+               (
+                 SELECT COALESCE(ARRAY_AGG(DISTINCT a."userId") FILTER (WHERE a."userId" IS NOT NULL), ARRAY[]::int[])
+                 FROM "Attribution" a
+                 WHERE a."pageVerId" = pv.id
+                   AND NOT (
+                     a.type = 'SUBMITTER'
+                     AND EXISTS (
+                       SELECT 1 FROM "Attribution" ax
+                       WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                     )
+                   )
+               ) AS authors
+        FROM "PageVersion" pv
+        WHERE pv.id = $1
+        LIMIT 1
+      `;
+      const targetResult = await readPool.query(targetSql, [context.effectiveVersionId]);
+      if (targetResult.rowCount === 0) return res.json([]);
+      const target = targetResult.rows[0];
+      const targetTags: string[] = Array.isArray(target.tags) ? target.tags : [];
+      const targetAuthors: number[] = Array.isArray(target.authors) ? target.authors : [];
+      const excludedSet = new Set(excludedTags);
+      const relevantTargetTags = targetTags.filter(t => !excludedSet.has(t));
+      if (relevantTargetTags.length === 0 && targetAuthors.length === 0) return res.json([]);
+
+      // Step 2: Compute tag IDF from tag_freq (only for relevant target tags)
+      const tagIdf = new Map<string, number>();
+      if (relevantTargetTags.length > 0) {
+        const tagFreqSql = `
+          SELECT t.tag, COUNT(*)::int AS cnt
+          FROM UNNEST($1::text[]) AS t(tag)
+          JOIN "PageVersion" pv ON pv."validTo" IS NULL AND pv.tags @> ARRAY[t.tag]::text[]
+          GROUP BY t.tag
+        `;
+        const tagFreqResult = await readPool.query(tagFreqSql, [relevantTargetTags]);
+        for (const row of tagFreqResult.rows) {
+          tagIdf.set(row.tag, 1.0 / Math.log(Math.max(Number(row.cnt), 1) + 1));
+        }
+      }
+
+      // Step 3: Fetch candidates — simple query, NO correlated subqueries
+      const candidateSql = `
+        SELECT
           pv."wikidotId",
           p."currentUrl" AS url,
           pv.title,
@@ -1628,146 +1826,91 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           SUBSTRING(pv."textContent" FOR 2000) AS "textSnippet",
           ps."wilson95",
           ps."controversy",
-          -- 标签重合
-          (
-            SELECT COUNT(*) FROM (
-              SELECT UNNEST(pv.tags) AS x
-              INTERSECT
-              SELECT UNNEST(t.tags) AS x
-            ) s
-            WHERE ($5::text[] IS NULL OR NOT (s.x = ANY($5::text[])))
-          ) AS tag_overlap,
-          -- 基于 IDF 的加权标签重合
-          (
-            SELECT COALESCE(SUM(1.0 / LN(GREATEST(tf.cnt, 1) + 1)), 0.0)
-            FROM (
-              SELECT UNNEST(pv.tags) AS x
-              INTERSECT
-              SELECT UNNEST(t.tags) AS x
-            ) m
-            JOIN tag_freq tf ON tf.tag = m.x
-            WHERE ($5::text[] IS NULL OR NOT (m.x = ANY($5::text[])))
-          ) AS tag_overlap_weighted,
-          -- 匹配的标签列表
-          (
-            SELECT COALESCE(ARRAY(
-              SELECT x FROM (
-                SELECT UNNEST(pv.tags) AS x
-                INTERSECT
-                SELECT UNNEST(t.tags) AS x
-              ) q
-              WHERE ($5::text[] IS NULL OR NOT (q.x = ANY($5::text[])))
-            ), ARRAY[]::text[])
-          ) AS matched_tags,
-          -- 作者重合
-          (
-            SELECT COUNT(DISTINCT a2."userId")
-            FROM "Attribution" a2
-            WHERE a2."pageVerId" = pv.id
-              AND a2."userId" = ANY(t.authors)
-              AND NOT (
-                a2.type = 'SUBMITTER'
-                AND EXISTS (
-                  SELECT 1 FROM "Attribution" ax
-                  WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
-                )
-              )
-          ) AS author_overlap,
-          -- 匹配作者详情
-          (
-            SELECT COALESCE(jsonb_agg(DISTINCT jsonb_build_object('userId', u2.id, 'displayName', u2."displayName", 'wikidotId', u2."wikidotId")) FILTER (WHERE u2.id IS NOT NULL), '[]'::jsonb)
-            FROM "Attribution" a2
-            JOIN "User" u2 ON u2.id = a2."userId"
-            WHERE a2."pageVerId" = pv.id
-              AND a2."userId" = ANY(t.authors)
-              AND NOT (
-                a2.type = 'SUBMITTER'
-                AND EXISTS (
-                  SELECT 1 FROM "Attribution" ax
-                  WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
-                )
-              )
-          ) AS matched_authors,
-          -- 候选页的作者完整列表（用于展示）
           (
             SELECT COALESCE(jsonb_agg(j) FILTER (WHERE j IS NOT NULL), '[]'::jsonb)
             FROM (
-              SELECT DISTINCT ON (COALESCE(u3.id::text, a3."anonKey"))
+              SELECT DISTINCT ON (COALESCE(u."wikidotId"::text, a."anonKey"))
                 jsonb_build_object(
-                  'userId', u3.id,
+                  'userId', u.id,
                   'displayName',
                     CASE
-                      WHEN u3."displayName" IS NOT NULL THEN u3."displayName"
-                      WHEN a3."anonKey" IS NOT NULL THEN regexp_replace(a3."anonKey", '^anon:', '')
+                      WHEN u."displayName" IS NOT NULL THEN u."displayName"
+                      WHEN a."anonKey" IS NOT NULL THEN regexp_replace(a."anonKey", '^anon:', '')
                       ELSE NULL
                     END,
-                  'wikidotId', u3."wikidotId"
+                  'wikidotId', u."wikidotId"
                 ) AS j
-              FROM "Attribution" a3
-              LEFT JOIN "User" u3 ON u3.id = a3."userId"
-              WHERE a3."pageVerId" = pv.id
+              FROM "Attribution" a
+              LEFT JOIN "User" u ON u.id = a."userId"
+              WHERE a."pageVerId" = pv.id
                 AND NOT (
-                  a3.type = 'SUBMITTER'
+                  a.type = 'SUBMITTER'
                   AND EXISTS (
                     SELECT 1 FROM "Attribution" ax
                     WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
                   )
                 )
-              ORDER BY COALESCE(u3.id::text, a3."anonKey"), a3.type ASC, a3."order" ASC
+              ORDER BY COALESCE(u."wikidotId"::text, a."anonKey"), a.type ASC, a."order" ASC
             ) s
           ) AS authors_full
         FROM "PageVersion" pv
         JOIN "Page" p ON p.id = pv."pageId"
         LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
-        CROSS JOIN target t
         WHERE pv."validTo" IS NULL
-          AND pv."pageId" <> t."pageId"
+          AND pv."pageId" <> $2
           AND (
-            -- 必须存在至少一个未被排除的标签重合，或作者重合
-            EXISTS (
-              SELECT 1 FROM (
-                SELECT UNNEST(pv.tags) AS x
-                INTERSECT
-                SELECT UNNEST(t.tags) AS x
-              ) s
-              WHERE ($5::text[] IS NULL OR NOT (s.x = ANY($5::text[])))
-            )
+            pv.tags && $3::text[]
             OR EXISTS (
               SELECT 1 FROM "Attribution" a3
               WHERE a3."pageVerId" = pv.id
-                AND a3."userId" = ANY(t.authors)
-                AND NOT (
-                  a3.type = 'SUBMITTER'
-                  AND EXISTS (
-                    SELECT 1 FROM "Attribution" ax
-                    WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
-                  )
-                )
+                AND a3."userId" = ANY($4::int[])
+                AND NOT (a3.type = 'SUBMITTER' AND EXISTS (
+                  SELECT 1 FROM "Attribution" ax WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                ))
             )
           )
-          AND ($3::boolean = false OR pv.category = t.category)
-          AND ($4::boolean = false OR NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[]))
-        ORDER BY 
-          tag_overlap_weighted DESC NULLS LAST,
-          author_overlap DESC NULLS LAST,
-          pv.rating DESC NULLS LAST, 
-          pv."createdAt" DESC
-        LIMIT $2::int
+          AND ($5::boolean = false OR pv.category = $6)
+          AND ($7::boolean = false OR NOT (pv.tags && ARRAY['作者','段落','补充材料']::text[]))
+        ORDER BY pv.rating DESC NULLS LAST, pv."createdAt" DESC
+        LIMIT $1::int
       `;
+      const { rows } = await readPool.query(candidateSql, [
+        candidateLimit,
+        context.pageId,
+        relevantTargetTags.length > 0 ? relevantTargetTags : [],
+        targetAuthors,
+        sameCategoryOnly,
+        target.category,
+        excludeUserPages
+      ]);
 
-      const excludedTagsParam = (Array.isArray(excludedTags) && excludedTags.length > 0) ? excludedTags : null;
-      const { rows } = await readPool.query(sql, [context.effectiveVersionId, candidateLimit, sameCategoryOnly, excludeUserPages, excludedTagsParam]);
+      // Step 4: Node-layer scoring — compute overlaps in memory
+      const targetTagSet = new Set(relevantTargetTags);
+      const targetAuthorSet = new Set(targetAuthors);
 
-      // Node 层打分 + 过滤 + 多样性重排
       type Rec = any & { tag_overlap: number; tag_overlap_weighted?: number; author_overlap: number; matched_tags: string[]; matched_authors: Array<{userId:number;displayName:string|null;wikidotId:number|null}> };
-      const candidates: Rec[] = rows.map((r: any) => ({
-        ...r,
-        tag_overlap: Number(r.tag_overlap || 0),
-        tag_overlap_weighted: typeof r.tag_overlap_weighted === 'number' ? Number(r.tag_overlap_weighted) : undefined,
-        author_overlap: Number(r.author_overlap || 0),
-        matched_tags: Array.isArray(r.matched_tags) ? r.matched_tags : [],
-        matched_authors: Array.isArray(r.matched_authors) ? r.matched_authors : []
-      }));
+      const candidates: Rec[] = rows.map((r: any) => {
+        const pageTags: string[] = Array.isArray(r.tags) ? r.tags : [];
+        const matched_tags = pageTags.filter(t => targetTagSet.has(t));
+        const tag_overlap = matched_tags.length;
+        let tag_overlap_weighted = 0;
+        for (const t of matched_tags) {
+          tag_overlap_weighted += tagIdf.get(t) ?? 0;
+        }
+
+        const authorsFull: Array<{userId: number; displayName: string|null; wikidotId: number|null}> = Array.isArray(r.authors_full) ? r.authors_full : [];
+        const matched_authors = authorsFull.filter((a: any) => targetAuthorSet.has(Number(a.userId)));
+        const author_overlap = matched_authors.length;
+
+        return {
+          ...r,
+          tag_overlap,
+          tag_overlap_weighted,
+          author_overlap,
+          matched_tags,
+          matched_authors
+        };
+      });
 
       function passesStrategy(rec: Rec): boolean {
         if (strat === 'tags') return rec.tag_overlap >= minTagOverlap;
@@ -1940,8 +2083,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const targetId = context.effectiveVersionId ?? context.currentVersionId;
       if (!targetId) return res.json([]);
 
-      const grouped = await groupImagesByPageVersion([targetId]);
-      res.json(grouped.get(targetId) ?? []);
+      const images = await loadPageVersionImagesWithFallback(targetId);
+      res.json(images);
     } catch (err) {
       next(err);
     }

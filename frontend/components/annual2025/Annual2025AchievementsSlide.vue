@@ -2,7 +2,7 @@
   <section class="slide" :class="{ 'slide-active': isActive }">
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
-        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-2xl p-8 md:p-12">
+        <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
           <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="Award" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
@@ -43,7 +43,7 @@
           <div
             v-for="ach in visibleAchievements"
             :key="ach.id"
-            class="relative overflow-hidden rounded-xl md:rounded-2xl p-4 md:p-5 border transition-all duration-300 hover:scale-[1.01] hover:shadow-lg bg-[rgb(var(--panel))] border-[rgb(var(--panel-border))]"
+            class="relative overflow-hidden rounded-xl md:rounded-lg p-4 md:p-5 border transition-all duration-300 hover:scale-[1.01] hover:shadow-lg bg-[rgb(var(--panel))] border-[rgb(var(--panel-border))]"
           >
             <div class="flex items-start justify-between gap-3 md:gap-4">
               <div class="flex items-start gap-3 md:gap-4">
@@ -78,7 +78,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[linear-gradient(rgba(var(--accent),0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(var(--accent),0.03)_1px,transparent_1px)] bg-[length:50px_50px]" />
+      <div class="w-full h-full bg-[linear-gradient(var(--g-accent-hover)_1px,transparent_1px),linear-gradient(90deg,var(--g-accent-hover)_1px,transparent_1px)] bg-[length:50px_50px]" />
     </div>
   </section>
 </template>

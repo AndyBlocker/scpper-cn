@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>FTML 预览</title>
+  <meta http-equiv="content-language" content="zh,zh-cn" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="shortcut icon" href="https://scp-wiki-cn.wikidot.com/local--favicon/favicon.gif" />
+  <link rel="icon" type="image/gif" href="https://scp-wiki-cn.wikidot.com/local--favicon/favicon.gif" />
+
+  <!-- Wikidot base styles -->
+  <link rel="stylesheet" href="https://d3g0gp89917ko0.cloudfront.net/v--edac79f846ba/common--theme/base/css/style.css" />
+  <link rel="stylesheet" href="https://d3g0gp89917ko0.cloudfront.net/v--edac79f846ba/common--modules/css/pagerate/PageRateWidgetModule.css" />
+
+  <!-- SCP-CN Sigma 9 theme (component-theme.css includes font imports and colstyle) -->
+  <link rel="stylesheet" href="/ftml-preview-assets/component-theme.css" />
+
+  <style>
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      overflow-y: auto !important;
+      overflow-x: hidden;
+    }
+    #container-wrap { max-width: none; min-height: 100vh; overflow: visible; }
+    #content-wrap { max-width: none; min-height: calc(100vh - 140px); overflow: visible; }
+    #content {
+      position: relative;
+      max-width: none;
+      width: 100%;
+      margin: 0;
+      min-height: inherit;
+      overflow: visible;
+    }
+
+    /* Sidebar: match Sigma 9 theme dimensions */
+    /* Use !important to override component-theme.css responsive breakpoints
+       that would collapse the sidebar in narrow iframe widths */
+    #side-bar {
+      position: absolute !important;
+      top: 0.5em !important;
+      left: 2em !important;
+      display: block !important;
+      width: 17em !important;
+      min-height: 100%;
+      box-sizing: border-box;
+      overflow: auto;
+      padding: 0;
+      border: none;
+      overscroll-behavior: contain;
+      float: none !important;
+      z-index: 1;
+    }
+
+    /* Main content: match Sigma 9 theme margin */
+    #main-content {
+      margin: 0 2em 0 22em !important;
+      padding: 1em;
+      min-height: 100vh;
+      box-sizing: border-box;
+      position: relative;
+      overflow: visible;
+    }
+
+    #page-title { margin-top: 0.5em; }
+    #page-options-container { margin-top: 1rem; }
+    #page-options-bottom { margin-top: 0.4rem; }
+    #page-info-container { margin-top: 0.7rem; }
+    #footer { margin-top: 1.25rem; }
+    #main-content .page-tags { margin-top: 0.9rem; }
+    #main-content .page-tags span { margin-right: 0.35rem; }
+
+    .ftml-error {
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 13px;
+      color: #b91c1c;
+      background: #fee2e2;
+      padding: 0.55rem 0.7rem;
+      border-radius: 5px;
+      border: 1px solid #fecaca;
+      white-space: pre-wrap;
+    }
+
+    .ftml-preview-note {
+      display: inline-block;
+      margin-left: .5em;
+      padding: 0 .4em;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #4b5563;
+      background: #e5e7eb;
+      vertical-align: baseline;
+    }
+
+    .ftml-preview-disabled { opacity: 0.7; pointer-events: none; }
+
+    .ftml-preview-embed-note {
+      margin-top: .35rem;
+      color: #6b7280;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    /* Hide unsupported module placeholders */
+    .ftml-module-placeholder {
+      display: none;
+    }
+
+    /* Keep nav desktop-like even in split preview widths */
+    #top-bar .mobile-top-bar { display: none !important; }
+    #top-bar .top-bar { display: block !important; }
+    #top-bar .top-bar > ul,
+    #top-bar > ul {
+      float: right;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    #top-bar .top-bar > ul > li,
+    #top-bar > ul > li {
+      position: relative;
+      float: left;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    #top-bar ul li > ul {
+      position: absolute;
+      left: 0;
+      top: 100%;
+      display: none;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 200;
+      min-width: 12rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      background: #fff;
+      transition: opacity .12s ease;
+    }
+    #top-bar ul li:hover > ul,
+    #top-bar ul li.sfhover > ul {
+      display: block;
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #top-bar ul li ul li {
+      float: none;
+      white-space: nowrap;
+    }
+
+    /* Wikijump-style collapsible (for wikijump layout mode) */
+    .wj-collapsible summary { list-style: none; cursor: pointer; user-select: none; }
+    .wj-collapsible .wj-collapsible-hide-text { display: none; }
+    .wj-collapsible[open] .wj-collapsible-show-text { display: none; }
+    .wj-collapsible[open] .wj-collapsible-hide-text { display: inline; }
+
+    /* Wikidot-style collapsible: ensure proper display */
+    .collapsible-block { margin: 0.5em 0; }
+    .collapsible-block-link { cursor: pointer; }
+
+    /* ftml link styles */
+    a.wj-link-internal { color: #b01; text-decoration: none; }
+    a.wj-link-internal:hover { text-decoration: underline; }
+    a.wj-link-external { color: #b01; text-decoration: none; }
+    a.wj-link-external:hover { text-decoration: underline; }
+    a.wj-link-page-nonexistent { color: #d61; }
+
+    /* ftml image container styles (Wikidot mode) */
+    .image-container { display: inline-block; }
+    .image-container.floatleft { float: left; margin: 0 1em 1em 0; }
+    .image-container.floatright { float: right; margin: 0 0 1em 1em; }
+    .image-container.aligncenter { display: block; text-align: center; margin: 0 auto; }
+
+    /* Sidebar specific: ensure images in menu items are properly sized */
+    #side-bar .menu-item img.image {
+      width: 13px;
+      height: 13px;
+      border: 0;
+      margin-right: 2px;
+      position: relative;
+      bottom: -2px;
+    }
+
+    /* Sidebar: fix paragraph margins inside nav divs */
+    #side-bar p { margin: 0; }
+    #side-bar .side-block p { margin: 0; }
+
+    /* Ensure blockquotes render correctly */
+    blockquote {
+      border: 1px dashed #999;
+      background-color: #f4f4f4;
+      padding: 0 1em;
+      margin: 1em 3em;
+    }
+
+    /* wiki-note block (from [[note]]) */
+    .wiki-note {
+      background-color: #ffd;
+      border: 1px solid #dda;
+      padding: 0.5em 1em;
+      margin: 1em 3em;
+      border-radius: 3px;
+    }
+
+    /* Footnote styling */
+    .footnotes-footer {
+      border-top: 1px solid #999;
+      margin-top: 1em;
+      padding-top: 0.5em;
+    }
+    .footnotes-footer .title {
+      font-weight: bold;
+      margin-bottom: 0.3em;
+    }
+    sup.footnoteref a.footnoteref {
+      text-decoration: none;
+      font-weight: bold;
+    }
+
+    /* Code block styling */
+    .code {
+      border: 1px dashed #999;
+      background-color: #f8f8f8;
+      padding: 1em;
+      margin: 1em 0;
+    }
+    .code pre {
+      margin: 0;
+      overflow-x: auto;
+    }
+
+    /* TOC styling for Wikidot mode */
+    #toc {
+      border: 1px solid #aaa;
+      background-color: #f9f9f9;
+      padding: 5px 10px;
+      display: inline-block;
+    }
+    #toc .title {
+      text-align: center;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    @media (max-width: 767px) {
+      #side-bar { display: none !important; }
+      #main-content { margin: 0 5% !important; }
+    }
+
+    /* Prevent component-theme.css off-canvas menu from activating in iframe */
+    #side-bar::after { content: none !important; }
+    #side-bar:target { left: 2em !important; width: 17em !important; }
+    .close-menu { display: none !important; }
+  </style>
+</head>
+<body class="yui-skin-sam">
+  <div id="container-wrap">
+    <div id="header">
+      <h1 id="header-title"><a href="#">SCP 基金会</a></h1>
+      <h2 id="header-subtitle"><span>Secure, Contain, Protect</span></h2>
+      <div id="search-top-box">
+        <form id="search-top-box-form" action="javascript:;">
+          <input id="search-top-box-input" type="text" value="搜索本站" aria-label="搜索" />
+          <input type="submit" value="搜索" />
+        </form>
+      </div>
+      <div id="login-status"><a href="javascript:;">匿名用户</a></div>
+    </div>
+
+    <div id="top-bar">
+      <ul>
+        <li><a href="javascript:;">首页</a></li>
+        <li><a href="javascript:;">系列</a></li>
+        <li><a href="javascript:;">设定</a></li>
+        <li><a href="javascript:;">论坛</a></li>
+      </ul>
+    </div>
+
+    <div id="content-wrap">
+      <div id="content">
+        <div id="side-bar">
+          <div class="side-block">
+            <div class="heading">导航</div>
+            <div class="menu-item"><a href="javascript:;">主页</a></div>
+            <div class="menu-item"><a href="javascript:;">最近更新</a></div>
+            <div class="menu-item"><a href="javascript:;">随机页面</a></div>
+          </div>
+          <div class="side-block">
+            <div class="heading">工具</div>
+            <div class="menu-item"><a href="javascript:;">页面历史</a></div>
+            <div class="menu-item"><a href="javascript:;">编辑</a></div>
+          </div>
+        </div>
+
+        <div id="main-content">
+          <div id="breadcrumbs"><a href="javascript:;">SCP 基金会</a> &raquo; <a href="javascript:;">沙盒</a></div>
+          <div id="page-title">FTML 预览</div>
+          <div id="page-content"></div>
+
+          <div id="page-info-container">
+            <div id="page-info">页面版本: 0，最后更新于 2026-02-28，由 <span class="printuser"><a href="javascript:;">FTML Preview</a></span> 创建。</div>
+          </div>
+
+          <div id="page-options-container">
+            <div id="page-options-bottom">
+              <a href="javascript:;">编辑</a> |
+              <a href="javascript:;">讨论</a> |
+              <a href="javascript:;">历史</a> |
+              <a href="javascript:;">打印</a> |
+              <a href="javascript:;">站点工具</a>
+            </div>
+          </div>
+
+          <div class="page-tags"><span><a href="/system:page-tags/tag/_ftml-preview">_ftml-preview</a></span></div>
+
+          <div id="footer">
+            <div class="options"><a href="javascript:;">帮助</a> | <a href="javascript:;">反馈</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      var WIKI_ORIGIN = "https://scp-wiki-cn.wikidot.com";
+      var currentPreviewDevice = "desktop";
+      var resourceErrorSeen = new Set();
+
+      // Provide stub WIKIDOT object for TOC fold/unfold and footnote scroll
+      if (!window.WIKIDOT) {
+        window.WIKIDOT = {
+          page: {
+            listeners: {
+              foldToc: function(event) {
+                var toc = document.getElementById("toc");
+                if (!toc) return;
+                var list = toc.querySelector("#toc-list");
+                var foldLink = toc.querySelector("#toc-action-bar a:first-child");
+                var unfoldLink = toc.querySelector("#toc-action-bar a:last-child");
+                if (list) list.style.display = "none";
+                if (foldLink) foldLink.style.display = "none";
+                if (unfoldLink) unfoldLink.style.display = "";
+              },
+              unfoldToc: function(event) {
+                var toc = document.getElementById("toc");
+                if (!toc) return;
+                var list = toc.querySelector("#toc-list");
+                var foldLink = toc.querySelector("#toc-action-bar a:first-child");
+                var unfoldLink = toc.querySelector("#toc-action-bar a:last-child");
+                if (list) list.style.display = "";
+                if (foldLink) foldLink.style.display = "";
+                if (unfoldLink) unfoldLink.style.display = "none";
+              }
+            },
+            utils: {
+              scrollToReference: function(refId) {
+                var el = document.getElementById(refId);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+            }
+          }
+        };
+      }
+
+      // Initialize tabview tab-switching (ftml injects <script> tags that
+      // don't execute when set via innerHTML; re-implement the logic here).
+      function initTabviews(container) {
+        if (!container) return;
+        var navsets = container.querySelectorAll(".yui-navset");
+        navsets.forEach(function(tv) {
+          if (tv.dataset.ftmlTabviewInit) return;
+          tv.dataset.ftmlTabviewInit = "1";
+          var lis = tv.querySelectorAll(".yui-nav > li");
+          var panels = tv.querySelectorAll(".yui-content > div");
+          lis.forEach(function(li, i) {
+            var link = li.querySelector("a");
+            if (!link) return;
+            link.addEventListener("click", function(e) {
+              e.preventDefault();
+              lis.forEach(function(l) { l.className = ""; });
+              li.className = "selected";
+              panels.forEach(function(d) { d.style.display = "none"; });
+              if (panels[i]) panels[i].style.display = "";
+            });
+          });
+        });
+        // Remove injected <script> tags from ftml tabview (they can't run via innerHTML anyway)
+        var scripts = container.querySelectorAll("script");
+        scripts.forEach(function(s) { s.remove(); });
+      }
+
+      function parseIncoming(data) {
+        if (!data) return null;
+        if (typeof data === "string") {
+          try {
+            var parsed = JSON.parse(data);
+            return parsed && typeof parsed === "object" ? parsed : null;
+          } catch {
+            return null;
+          }
+        }
+        if (typeof data === "object") return data;
+        return null;
+      }
+
+      function shouldBlockUrl(value) {
+        return /\/files--static\/media\/ui\.svg(?:$|[?#])/i.test(String(value || ""));
+      }
+
+      function isLocalCssProxyPath(value) {
+        return /^\/api\/css-proxy(?:[/?#]|$)/i.test(String(value || "").trim());
+      }
+
+      function isCssProxyUrl(value) {
+        var raw = String(value || "").trim();
+        if (!raw) return false;
+        if (isLocalCssProxyPath(raw)) return true;
+        try {
+          var parsed = new URL(raw, window.location.origin);
+          return /\/api\/css-proxy$/i.test(parsed.pathname);
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function normalizeSnippetUrl(value) {
+        var raw = String(value || "").trim();
+        if (!raw) return raw;
+        try {
+          var parsed = new URL(raw, window.location.origin);
+          if (parsed.origin !== window.location.origin) return raw;
+          var m = parsed.pathname.match(/^\/(?:api\/)?(html-snippets?)(\/.*)?$/i);
+          if (!m) return raw;
+          var route = String(m[1] || "").toLowerCase();
+          var rest = m[2] || "";
+          parsed.pathname = "/api/" + route + rest;
+          return parsed.toString();
+        } catch (e) {
+          return raw;
+        }
+      }
+
+      function absolutizeUrl(raw) {
+        if (raw == null) return "";
+        var value = String(raw).trim();
+        if (!value) return "";
+        if (/^(?:data:|blob:|mailto:|tel:|javascript:|#)/i.test(value)) return value;
+        if (isCssProxyUrl(value)) return value;
+        if (/^\/(?:api\/)?(?:html-snippets?|css-proxy)(?:[/?#]|$)/i.test(value)) {
+          return normalizeSnippetUrl(value);
+        }
+        if (/^\/(?:https?|wss?):\/\//i.test(value)) return "";
+        if (shouldBlockUrl(value)) return "";
+
+        var normalized = "";
+        if (/^https?:\/\//i.test(value)) normalized = value.replace(/^http:\/\//i, "https://");
+        else if (/^\/\//.test(value)) normalized = "https:" + value;
+        else if (value.startsWith("/")) normalized = WIKI_ORIGIN + value;
+        else normalized = WIKI_ORIGIN + "/" + value.replace(/^\.\//, "");
+
+        if (shouldBlockUrl(normalized)) return "";
+
+        // Fix ftml wjfiles -> Wikidot wdfiles
+        normalized = normalized.replace(
+          /^(https?:\/\/[^./]+)\.wjfiles\.com\b/i,
+          "$1.wdfiles.com"
+        );
+        // Also fix wikijump.com links -> wikidot.com
+        normalized = normalized.replace(
+          /^(https?:\/\/[^./]+)\.wikijump\.com\b/i,
+          "$1.wikidot.com"
+        );
+
+        return normalizeSnippetUrl(normalized);
+      }
+
+      function normalizeSrcset(value) {
+        if (!value) return value;
+        return String(value)
+          .split(",")
+          .map(function(part) {
+            var segment = part.trim();
+            if (!segment) return "";
+            var split = segment.split(/\s+/);
+            if (!split.length) return "";
+            var url = absolutizeUrl(split[0]);
+            url = proxyAssetUrl(url);
+            return [url].concat(split.slice(1)).join(" ");
+          })
+          .filter(Boolean)
+          .join(", ");
+      }
+
+      // Wikidot CDN domains that block cross-origin CSS requests
+      var WIKIDOT_PROXY_HOSTS = ["wikidot.com", "wdfiles.com"];
+
+      function needsAssetProxy(url) {
+        try {
+          var host = new URL(url).hostname;
+          return WIKIDOT_PROXY_HOSTS.some(function(h) {
+            return host === h || host.endsWith("." + h);
+          });
+        } catch (e) { return false; }
+      }
+
+      function proxyAssetUrl(url) {
+        if (!url) return url;
+        if (isCssProxyUrl(url)) return url;
+        if (!needsAssetProxy(url)) return url;
+        return "/api/css-proxy?url=" + encodeURIComponent(url);
+      }
+
+      function proxyCssUrl(url) {
+        return proxyAssetUrl(url);
+      }
+
+      function sanitizeMalformedPercentEncoding(value) {
+        return String(value || "").replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
+      }
+
+      function normalizeInterwikiStyleFrameSrc(rawSrc) {
+        var src = String(rawSrc || "").trim();
+        if (!src) return src;
+        if (!/interwiki\.scpwikicn\.com\/styleframe\.html/i.test(src)) return src;
+        var qIndex = src.indexOf("?");
+        if (qIndex === -1) return src;
+
+        var hIndex = src.indexOf("#", qIndex + 1);
+        var base = src.slice(0, qIndex);
+        var query = hIndex === -1
+          ? src.slice(qIndex + 1)
+          : src.slice(qIndex + 1, hIndex);
+        var hash = hIndex === -1 ? "" : src.slice(hIndex);
+
+        var rebuilt = query
+          .split("&")
+          .filter(Boolean)
+          .map(function(part) {
+            var eq = part.indexOf("=");
+            if (eq === -1) return sanitizeMalformedPercentEncoding(part);
+            var key = part.slice(0, eq);
+            var rawVal = part.slice(eq + 1).replace(/\+/g, "%20");
+            var safeRawVal = sanitizeMalformedPercentEncoding(rawVal);
+            var decoded = safeDecodeURIComponent(safeRawVal);
+            return key + "=" + encodeURIComponent(decoded);
+          })
+          .join("&");
+
+        return base + (rebuilt ? ("?" + rebuilt) : "") + hash;
+      }
+
+      function normalizeCssText(value) {
+        if (!value) return value;
+        return String(value)
+          .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, function(all, quote, rawUrl) {
+            var normalized = absolutizeUrl(rawUrl || "");
+            normalized = proxyCssUrl(normalized);
+            var q = quote || "";
+            return "url(" + q + normalized + q + ")";
+          })
+          .replace(/@import\s+(url\()?\s*["']([^"']+)["']\s*\)?/gi, function(all, hasUrl, rawUrl) {
+            var normalized = absolutizeUrl(rawUrl || "");
+            normalized = proxyCssUrl(normalized);
+            if (hasUrl) return "@import url(\"" + normalized + "\")";
+            return "@import \"" + normalized + "\"";
+          });
+      }
+
+      function normalizeResourceUrls(container) {
+        if (!container) return;
+
+        var nodes = container.querySelectorAll("[src], [href], [srcset], [data], [poster]");
+        nodes.forEach(function(node) {
+          // Skip anchor links and javascript: links
+          if (node.tagName === "A") {
+            var href = node.getAttribute("href") || "";
+            if (href.charAt(0) === "#" || href.toLowerCase().startsWith("javascript:")) return;
+          }
+
+          if (node.hasAttribute("src")) {
+            var rawSrc = node.getAttribute("src") || "";
+            if (node.tagName === "IFRAME") {
+              rawSrc = normalizeInterwikiStyleFrameSrc(rawSrc);
+            }
+            var srcVal = absolutizeUrl(rawSrc);
+            srcVal = proxyAssetUrl(srcVal);
+            if (srcVal) node.setAttribute("src", srcVal);
+            else if (node.tagName !== "IMG") node.removeAttribute("src");
+          }
+          if (node.hasAttribute("href") && node.tagName !== "A") {
+            // Skip interwiki theme links — their href is already a proxied URL
+            if (!node.hasAttribute("data-ftml-interwiki-theme")) {
+              var hrefVal = absolutizeUrl(node.getAttribute("href") || "");
+              if (node.tagName === "LINK") hrefVal = proxyCssUrl(hrefVal);
+              if (hrefVal) node.setAttribute("href", hrefVal);
+            }
+          }
+          if (node.tagName === "A" && node.hasAttribute("href")) {
+            var aHref = node.getAttribute("href") || "";
+            if (aHref.charAt(0) !== "#" && !aHref.toLowerCase().startsWith("javascript:")) {
+              var normalized = absolutizeUrl(aHref);
+              if (normalized) node.setAttribute("href", normalized);
+            }
+          }
+          if (node.hasAttribute("srcset")) {
+            var srcsetVal = normalizeSrcset(node.getAttribute("srcset") || "");
+            if (srcsetVal) node.setAttribute("srcset", srcsetVal);
+            else node.removeAttribute("srcset");
+          }
+          if (node.hasAttribute("data")) {
+            var dataVal = absolutizeUrl(node.getAttribute("data") || "");
+            dataVal = proxyAssetUrl(dataVal);
+            if (dataVal) node.setAttribute("data", dataVal);
+            else node.removeAttribute("data");
+          }
+          if (node.hasAttribute("poster")) {
+            var posterVal = absolutizeUrl(node.getAttribute("poster") || "");
+            posterVal = proxyAssetUrl(posterVal);
+            if (posterVal) node.setAttribute("poster", posterVal);
+            else node.removeAttribute("poster");
+          }
+        });
+
+        var useNodes = container.querySelectorAll("use");
+        useNodes.forEach(function(useNode) {
+          var href = useNode.getAttribute("href") || useNode.getAttribute("xlink:href") || "";
+          if (/\/files--static\/media\/ui\.svg(?:#|$)/i.test(href)) {
+            useNode.removeAttribute("href");
+            useNode.removeAttribute("xlink:href");
+            return;
+          }
+          if (useNode.hasAttribute("href")) {
+            var useHref = absolutizeUrl(useNode.getAttribute("href") || "");
+            if (useHref) useNode.setAttribute("href", useHref);
+            else useNode.removeAttribute("href");
+          }
+          if (useNode.hasAttribute("xlink:href")) {
+            var xlinkHref = absolutizeUrl(useNode.getAttribute("xlink:href") || "");
+            if (xlinkHref) useNode.setAttribute("xlink:href", xlinkHref);
+            else useNode.removeAttribute("xlink:href");
+          }
+        });
+
+        var styleNodes = container.querySelectorAll("style");
+        styleNodes.forEach(function(styleNode) {
+          var rawText = styleNode.textContent || "";
+          var nextText = normalizeCssText(rawText);
+          if (nextText !== rawText) styleNode.textContent = nextText;
+        });
+
+        var inlineStyleNodes = container.querySelectorAll("[style]");
+        inlineStyleNodes.forEach(function(node) {
+          var rawStyle = node.getAttribute("style") || "";
+          var nextStyle = normalizeCssText(rawStyle);
+          if (nextStyle !== rawStyle) node.setAttribute("style", nextStyle);
+        });
+      }
+
+      function safeDecodeURIComponent(value) {
+        var text = String(value || "");
+        var current = text;
+        for (var i = 0; i < 3; i += 1) {
+          try {
+            var next = decodeURIComponent(current);
+            if (next === current) break;
+            current = next;
+          } catch (e) {
+            break;
+          }
+        }
+        return current;
+      }
+
+      function ensureInterwikiThemeLink(href) {
+        var normalizedHref = String(href || "").trim();
+        if (!normalizedHref) return;
+        var exists = false;
+        document.querySelectorAll("link[data-ftml-interwiki-theme]").forEach(function(link) {
+          if ((link.getAttribute("href") || "") === normalizedHref) exists = true;
+        });
+        if (exists) return;
+        var link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = normalizedHref;
+        link.setAttribute("data-ftml-interwiki-theme", "1");
+        document.head.appendChild(link);
+      }
+
+      function resolveInterwikiThemeToCssUrl(rawTheme) {
+        var decodedTheme = safeDecodeURIComponent(rawTheme || "");
+        var absoluteTheme = absolutizeUrl(decodedTheme);
+        if (!absoluteTheme) return "";
+
+        try {
+          var parsed = new URL(absoluteTheme, window.location.origin);
+          var match = (parsed.pathname || "").match(/^\/(theme:[^/?#]+)$/i);
+          if (!match) return absoluteTheme;
+
+          parsed.pathname = "/local--code/" + encodeURIComponent(match[1]) + "/1";
+          parsed.search = "";
+          parsed.hash = "";
+          return parsed.toString();
+        } catch (e) {
+          return absoluteTheme;
+        }
+      }
+
+      function extractInterwikiThemeHref(rawSrc) {
+        var src = String(rawSrc || "").trim();
+        if (!src) return "";
+        try {
+          var fullSrc = src.startsWith("//") ? ("https:" + src) : src;
+          var parsed = new URL(fullSrc, window.location.origin);
+          var looksLikeStyleFrame =
+            /styleframe\.html/i.test(parsed.pathname) ||
+            /(?:^|\.)interwiki\.scpwikicn\.com$/i.test(parsed.hostname);
+          if (!looksLikeStyleFrame) return "";
+          var rawTheme = parsed.searchParams.get("theme") || "";
+          if (!rawTheme) return "";
+          var cssThemeUrl = resolveInterwikiThemeToCssUrl(rawTheme);
+          if (!cssThemeUrl) return "";
+          return proxyCssUrl(cssThemeUrl);
+        } catch (e) {
+          return "";
+        }
+      }
+
+      function processInterwikiHelperIframes(root) {
+        var scope = root || document;
+        var frames = scope.querySelectorAll("iframe[src]");
+        frames.forEach(function(frame) {
+          if (frame.dataset.ftmlInterwikiProcessed) return;
+          frame.dataset.ftmlInterwikiProcessed = "1";
+
+          var directThemeHref = extractInterwikiThemeHref(frame.getAttribute("src") || "");
+          if (directThemeHref) {
+            ensureInterwikiThemeLink(directThemeHref);
+            // styleFrame is a helper-only iframe; remove it after extracting theme.
+            frame.remove();
+            return;
+          }
+
+          var frameSrc = absolutizeUrl(frame.getAttribute("src") || "");
+          if (!/\/(?:api\/)?html-snippets?\//i.test(frameSrc)) return;
+
+          frame.addEventListener("load", function() {
+            try {
+              var doc = frame.contentDocument;
+              if (!doc) return;
+
+              var helperFrames = doc.querySelectorAll("iframe[src]");
+              var helperThemeHref = "";
+              helperFrames.forEach(function(helperFrame) {
+                if (helperThemeHref) return;
+                helperThemeHref = extractInterwikiThemeHref(
+                  helperFrame.getAttribute("src") || ""
+                );
+              });
+
+              if (!helperThemeHref) return;
+              ensureInterwikiThemeLink(helperThemeHref);
+              // Remove snippet wrapper when it only serves as interwiki style injector.
+              frame.remove();
+            } catch (e) {
+              // Ignore cross-origin/sandbox access errors and keep iframe as-is.
+            }
+          }, { once: true });
+        });
+      }
+
+      function setupPreviewInteractions() {
+        var root = document.getElementById("main-content") || document;
+
+        // Make external links open in new tabs
+        var links = root.querySelectorAll("a[href]");
+        links.forEach(function(a) {
+          var href = a.getAttribute("href") || "";
+          if (href.charAt(0) === "#") return;
+          if (href.toLowerCase().startsWith("javascript:")) return;
+          if (a.getAttribute("target")) return;
+          // Don't set target on collapsible-block-link (they use onclick)
+          if (a.classList.contains("collapsible-block-link")) return;
+          a.setAttribute("target", "_blank");
+          a.setAttribute("rel", "noreferrer noopener");
+        });
+
+        // Annotate rate widgets
+        var rateBoxes = root.querySelectorAll(".page-rate-widget-box, #page-rating");
+        rateBoxes.forEach(function(box) {
+          if (box.classList.contains("ftml-preview-annotated")) return;
+          box.classList.add("ftml-preview-disabled", "ftml-preview-annotated");
+          var note = document.createElement("span");
+          note.className = "ftml-preview-note";
+          note.textContent = "预览中不可投票";
+          box.appendChild(note);
+        });
+
+        // Also handle sidebar links
+        var sideBarRoot = document.getElementById("side-bar");
+        if (sideBarRoot) {
+          var sideLinks = sideBarRoot.querySelectorAll("a[href]");
+          sideLinks.forEach(function(a) {
+            var href = a.getAttribute("href") || "";
+            if (href.charAt(0) === "#") return;
+            if (href.toLowerCase().startsWith("javascript:")) return;
+            if (a.getAttribute("target")) return;
+            if (a.classList.contains("collapsible-block-link")) return;
+            a.setAttribute("target", "_blank");
+            a.setAttribute("rel", "noreferrer noopener");
+          });
+        }
+
+        processInterwikiHelperIframes(document);
+      }
+
+      function createRateWidgetPlaceholder() {
+        var box = document.createElement("div");
+        box.className = "page-rate-widget-box";
+        box.innerHTML =
+          '<span class="rate-points">评分:&nbsp;<span class="number">+0</span></span>' +
+          '<span class="rateup btn btn-default"><a href="javascript:;">+</a></span>' +
+          '<span class="ratedown btn btn-default"><a href="javascript:;">−</a></span>' +
+          '<span class="cancel btn btn-default"><a href="javascript:;">x</a></span>';
+        return box;
+      }
+
+      function patchModulePlaceholders(container) {
+        if (!container) return;
+        var paragraphs = container.querySelectorAll("p");
+        paragraphs.forEach(function(p) {
+          var text = String(p.textContent || "").trim();
+          // Patch Rate module
+          if (text === "TODO: module Rate") {
+            p.replaceWith(createRateWidgetPlaceholder());
+            return;
+          }
+          // Hide other unsupported module placeholders
+          if (/^TODO:\s*module\s+/i.test(text)) {
+            p.style.display = "none";
+            return;
+          }
+        });
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function updatePageTags(rawTags) {
+        var tagsEl = document.querySelector("#main-content .page-tags");
+        if (!tagsEl) return;
+
+        var tags = [];
+        if (Array.isArray(rawTags)) {
+          tags = rawTags;
+        } else if (typeof rawTags === "string") {
+          tags = rawTags.replace(/,/g, " ").split(/\s+/);
+        }
+
+        tags = tags
+          .map(function(tag) { return String(tag || "").trim(); })
+          .filter(function(tag) { return tag.length > 0; });
+
+        if (tags.length === 0) {
+          tagsEl.innerHTML = '<span><a href="/system:page-tags/tag/_ftml-preview">_ftml-preview</a></span>';
+          return;
+        }
+
+        tagsEl.innerHTML = tags.map(function(tag) {
+          var safeTag = escapeHtml(tag);
+          var tagLink = "/system:page-tags/tag/" + encodeURIComponent(tag);
+          return '<span><a href="' + tagLink + '">' + safeTag + "</a></span>";
+        }).join("");
+      }
+
+      function extractInnerHtml(rawHtml, expectedId) {
+        if (typeof rawHtml !== "string" || !rawHtml.trim()) return "";
+        var template = document.createElement("template");
+        template.innerHTML = rawHtml;
+        var wrapped = template.content.querySelector("#" + expectedId);
+        if (wrapped) return wrapped.innerHTML;
+        return rawHtml;
+      }
+
+      function extractPageContentHtml(rawHtml) {
+        if (typeof rawHtml !== "string" || !rawHtml.trim()) return "";
+        var template = document.createElement("template");
+        template.innerHTML = rawHtml;
+
+        var pageContent = template.content.querySelector("#page-content");
+        if (pageContent) return pageContent.innerHTML;
+
+        var mainContent = template.content.querySelector("#main-content");
+        if (mainContent) return mainContent.innerHTML;
+
+        var body = template.content.querySelector("body");
+        if (body) return body.innerHTML;
+
+        return rawHtml;
+      }
+
+      function sanitizeHtmlBeforeInsert(rawHtml, noteText) {
+        if (typeof rawHtml !== "string" || !rawHtml.trim()) return "";
+        var template = document.createElement("template");
+        template.innerHTML = rawHtml;
+
+        var wrap = document.createElement("div");
+        wrap.appendChild(template.content.cloneNode(true));
+        return wrap.innerHTML;
+      }
+
+      function normalizeTopBarStructure(topBarEl) {
+        if (!topBarEl) return;
+        var groups = topBarEl.querySelectorAll(".top-bar > ul > li");
+        groups.forEach(function(li) {
+          var directUl = null;
+          Array.from(li.children).forEach(function(ch) {
+            if (!directUl && ch.tagName === "UL") directUl = ch;
+          });
+          if (!directUl) return;
+
+          var hasAnchor = false;
+          Array.from(li.children).forEach(function(ch) {
+            if (!hasAnchor && ch.tagName === "A") hasAnchor = true;
+          });
+          if (hasAnchor) return;
+
+          // Collect text content from non-UL children
+          var text = "";
+          Array.from(li.childNodes).forEach(function(node) {
+            if (node === directUl) return;
+            if (node.nodeType === Node.TEXT_NODE) text += node.textContent || "";
+            else if (node.nodeType === Node.ELEMENT_NODE && node.tagName !== "UL") {
+              text += node.textContent || "";
+            }
+          });
+
+          var label = String(text || "").trim();
+          if (!label) return;
+
+          // Remove text nodes and non-anchor elements (keep the UL)
+          var toRemove = [];
+          Array.from(li.childNodes).forEach(function(node) {
+            if (node === directUl) return;
+            toRemove.push(node);
+          });
+          toRemove.forEach(function(node) { li.removeChild(node); });
+
+          var a = document.createElement("a");
+          a.href = "javascript:;";
+          a.textContent = label;
+          li.insertBefore(a, directUl);
+        });
+      }
+
+      function applyPreviewDeviceLayout(device) {
+        var mode = (device === "mobile" || device === "tablet" || device === "desktop")
+          ? device
+          : "desktop";
+        currentPreviewDevice = mode;
+
+        document.body.setAttribute("data-preview-device", mode);
+
+        var sideBar = document.getElementById("side-bar");
+        var mainContent = document.getElementById("main-content");
+        var shouldCompact = mode === "mobile" || mode === "tablet" || window.innerWidth <= 767;
+
+        if (shouldCompact) {
+          if (sideBar) sideBar.style.display = "none";
+          if (mainContent) mainContent.style.marginLeft = "0";
+        } else {
+          if (sideBar) sideBar.style.display = "";
+          if (mainContent) mainContent.style.marginLeft = "";
+        }
+      }
+
+      function extractTopBarDesktopHtml(rawHtml) {
+        if (typeof rawHtml !== "string" || !rawHtml.trim()) return "";
+        var template = document.createElement("template");
+        template.innerHTML = rawHtml;
+
+        // Check for #top-bar wrapper
+        var byId = template.content.querySelector("#top-bar");
+        if (byId) {
+          var byIdDesktop = byId.querySelector(".top-bar");
+          if (byIdDesktop) return byIdDesktop.outerHTML;
+
+          var byIdUl = byId.querySelector("ul");
+          if (byIdUl) {
+            var byIdWrap = document.createElement("div");
+            byIdWrap.className = "top-bar";
+            byIdWrap.appendChild(byIdUl.cloneNode(true));
+            return byIdWrap.outerHTML;
+          }
+
+          var byIdInner = (byId.innerHTML || "").trim();
+          if (byIdInner) return '<div class="top-bar">' + byIdInner + "</div>";
+          return "";
+        }
+
+        // Check for .top-bar div (ftml renders [[div class="top-bar"]] as <div class="top-bar">)
+        var desktop = template.content.querySelector(".top-bar");
+        if (desktop) return desktop.outerHTML;
+
+        // Fallback: wrap first <ul> in .top-bar
+        var firstUl = template.content.querySelector("ul");
+        if (firstUl) {
+          var wrap = document.createElement("div");
+          wrap.className = "top-bar";
+          wrap.appendChild(firstUl.cloneNode(true));
+          return wrap.outerHTML;
+        }
+
+        return '<div class="top-bar">' + rawHtml + "</div>";
+      }
+
+      function updateNav(topBarHtml, sideBarHtml) {
+        var topBarEl = document.getElementById("top-bar");
+        var sideBarEl = document.getElementById("side-bar");
+
+        if (topBarEl && typeof topBarHtml === "string" && topBarHtml.trim()) {
+          topBarEl.innerHTML = sanitizeHtmlBeforeInsert(
+            extractTopBarDesktopHtml(topBarHtml),
+            "预览中已禁用顶栏内嵌内容。"
+          );
+          normalizeResourceUrls(topBarEl);
+          normalizeTopBarStructure(topBarEl);
+        }
+
+        if (sideBarEl && typeof sideBarHtml === "string" && sideBarHtml.trim()) {
+          sideBarEl.innerHTML = sanitizeHtmlBeforeInsert(
+            extractInnerHtml(sideBarHtml, "side-bar"),
+            "预览中已禁用侧栏内嵌内容。"
+          );
+          normalizeResourceUrls(sideBarEl);
+          patchModulePlaceholders(sideBarEl);
+        }
+      }
+
+      // Extract <style> tags from rendered HTML and inject into <head> so that
+      // @import rules and CSS custom properties work correctly.  innerHTML-injected
+      // <style> elements have limited @import support in many browsers.
+      function injectStyles(container) {
+        if (!container) return;
+        // Remove any previously injected ftml styles and theme links
+        document.querySelectorAll("style[data-ftml-injected]").forEach(function(s) { s.remove(); });
+        document.querySelectorAll("link[data-ftml-interwiki-theme]").forEach(function(l) { l.remove(); });
+
+        var styles = container.querySelectorAll("style");
+        styles.forEach(function(styleEl) {
+          var clone = document.createElement("style");
+          clone.setAttribute("data-ftml-injected", "1");
+          var cssText = styleEl.textContent || "";
+          // Normalize CSS url() references
+          clone.textContent = normalizeCssText(cssText);
+          document.head.appendChild(clone);
+          styleEl.remove();
+        });
+
+        // Move interwiki theme <link> tags to <head>
+        // The href is already proxied by sanitizeHtmlBeforeInsert(), no need to re-proxy
+        var themeLinks = container.querySelectorAll("link[data-ftml-interwiki-theme]");
+        themeLinks.forEach(function(link) {
+          document.head.appendChild(link);
+        });
+      }
+
+      function applyUpdate(msg) {
+        var title = (msg && msg.title) ? String(msg.title) : "FTML 预览";
+        var html = (msg && msg.html) ? String(msg.html) : "";
+        var pageTags = (msg && msg.pageTags) ? msg.pageTags : [];
+        var topBarHtml = (msg && typeof msg.topBarHtml === "string") ? msg.topBarHtml : "";
+        var sideBarHtml = (msg && typeof msg.sideBarHtml === "string") ? msg.sideBarHtml : "";
+        var previewDevice = (msg && typeof msg.previewDevice === "string") ? msg.previewDevice : "desktop";
+
+        var pageTitleEl = document.getElementById("page-title");
+        var pageContentEl = document.getElementById("page-content");
+        var docTitleEl = document.querySelector("title");
+
+        if (docTitleEl) docTitleEl.textContent = title;
+        if (pageTitleEl) pageTitleEl.textContent = title;
+
+        if (pageContentEl) {
+          pageContentEl.innerHTML = sanitizeHtmlBeforeInsert(
+            extractPageContentHtml(html),
+            "预览中已禁用页面内嵌内容。"
+          );
+          patchModulePlaceholders(pageContentEl);
+          normalizeResourceUrls(pageContentEl);
+          injectStyles(pageContentEl);
+          initTabviews(pageContentEl);
+        }
+
+        updateNav(topBarHtml, sideBarHtml);
+        applyPreviewDeviceLayout(previewDevice);
+        updatePageTags(pageTags);
+        setupPreviewInteractions();
+        // Also init tabviews in sidebar (unlikely but possible)
+        initTabviews(document.getElementById("side-bar"));
+      }
+
+      window.addEventListener("message", function(ev) {
+        var msg = parseIncoming(ev && ev.data);
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "ftml-update") {
+          applyUpdate(msg);
+        }
+      });
+      window.addEventListener("error", function(ev) {
+        var target = ev && ev.target;
+        if (!target || target === window || target === document) return;
+        var tag = String(target.tagName || "").toLowerCase();
+        if (!tag) return;
+        var url = target.currentSrc || target.src || target.href || target.data || "";
+        if (!url) return;
+        var key = tag + "|" + url;
+        if (resourceErrorSeen.has(key)) return;
+        resourceErrorSeen.add(key);
+        console.warn("[FtmlPreview] resource failed:", tag, url);
+      }, true);
+      window.addEventListener("resize", function() {
+        applyPreviewDeviceLayout(currentPreviewDevice);
+      });
+
+      window.__ftmlApplyUpdate = applyUpdate;
+      setupPreviewInteractions();
+    })();
+  </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-8">
-    <section class="rounded-3xl border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-[0_18px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl dark:shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
+    <section class="rounded-lg border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-sm backdrop-blur-xl dark:shadow-lg">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 class="text-lg font-semibold text-[rgb(var(--fg))]">主题模式</h2>
@@ -13,20 +13,20 @@
             type="button"
             class="flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold transition"
             :class="themeMode === modeOption.key
-              ? 'bg-[rgba(var(--accent),0.16)] text-[rgb(var(--accent))] shadow-sm'
-              : 'text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))]'"
+              ? 'bg-[var(--g-accent-medium)] text-[var(--g-accent)] shadow-sm'
+              : 'text-neutral-600 dark:text-neutral-300 hover:text-[var(--g-accent)]'"
             @click="handleModeChange(modeOption.key)"
           >
             <span>{{ modeOption.label }}</span>
           </button>
         </div>
       </header>
-      <p class="mt-4 rounded-2xl border border-dashed border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.55)] px-4 py-3 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-        当前正在编辑 <span class="font-semibold text-[rgb(var(--accent))]">{{ editingModeLabel }}</span> 配置。切换模式将立即应用新主题，方便对比效果。
+      <p class="mt-4 rounded-lg border border-dashed border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.55)] px-4 py-3 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+        当前正在编辑 <span class="font-semibold text-[var(--g-accent)]">{{ editingModeLabel }}</span> 配置。切换模式将立即应用新主题，方便对比效果。
       </p>
     </section>
 
-    <section class="rounded-3xl border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-[0_18px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl dark:shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
+    <section class="rounded-lg border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-sm backdrop-blur-xl dark:shadow-lg">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 class="text-lg font-semibold text-[rgb(var(--fg))]">快速配色</h2>
@@ -34,7 +34,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--panel-border),0.55)] px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[rgb(var(--accent))] dark:text-neutral-300"
+          class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--panel-border),0.55)] px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300"
           @click="handleResetPresets"
         >
           <LucideIcon name="RotateCcw" class="h-4 w-4" stroke-width="2" />
@@ -47,10 +47,10 @@
           :key="preset.key"
           type="button"
           :aria-pressed="colorScheme === preset.key"
-          class="group flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition"
+          class="group flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-left transition"
           :class="colorScheme === preset.key
-            ? 'border-[rgba(var(--accent),0.45)] bg-[rgba(var(--panel),0.85)] shadow-sm text-[rgb(var(--accent))]'
-            : 'border-[rgba(var(--panel-border),0.4)] bg-[rgba(var(--panel),0.6)] text-neutral-600 hover:border-[rgba(var(--accent),0.35)] hover:text-[rgb(var(--accent))] dark:text-neutral-300'"
+            ? 'border-[var(--g-accent-border)] bg-[rgba(var(--panel),0.85)] shadow-sm text-[var(--g-accent)]'
+            : 'border-[rgba(var(--panel-border),0.4)] bg-[rgba(var(--panel),0.6)] text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:text-neutral-300'"
           @click="handlePresetSelect(preset.key)"
         >
           <div class="flex flex-col gap-1">
@@ -58,14 +58,14 @@
             <span class="text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">Key: {{ preset.key }}</span>
           </div>
           <span
-            class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/70 shadow-inner"
+            class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/70 shadow-inner"
             :style="{ background: preset.gradient }"
           ></span>
         </button>
       </div>
     </section>
 
-    <section class="rounded-3xl border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-[0_18px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl dark:shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
+    <section class="rounded-lg border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-sm backdrop-blur-xl dark:shadow-lg">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 class="text-lg font-semibold text-[rgb(var(--fg))]">自定义颜色</h2>
@@ -80,8 +80,8 @@
               type="button"
               class="rounded-full px-2.5 py-1 font-semibold transition"
               :class="editingMode === modeOption.key
-                ? 'bg-[rgba(var(--accent),0.18)] text-[rgb(var(--accent))]'
-                : 'text-neutral-600 dark:text-neutral-300 hover:text-[rgb(var(--accent))]'"
+                ? 'bg-[var(--g-accent-medium)] text-[var(--g-accent)]'
+                : 'text-neutral-600 dark:text-neutral-300 hover:text-[var(--g-accent)]'"
               @click="handleModeChange(modeOption.key)"
             >
               {{ modeOption.label }}
@@ -94,7 +94,7 @@
         <div
           v-for="group in tokenGroups"
           :key="group.key"
-          class="rounded-2xl border border-[rgba(var(--panel-border),0.35)] bg-[rgba(var(--panel),0.55)] p-4"
+          class="rounded-lg border border-[rgba(var(--panel-border),0.35)] bg-[rgba(var(--panel),0.55)] p-4"
         >
           <header class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -104,7 +104,7 @@
             <button
               v-if="group.tokens.some(token => isOverridden(editingMode, token.key))"
               type="button"
-              class="mt-2 inline-flex items-center gap-1 rounded-full bg-[rgba(var(--accent),0.12)] px-3 py-1 text-[11px] font-semibold text-[rgb(var(--accent))] sm:mt-0"
+              class="mt-2 inline-flex items-center gap-1 rounded-full bg-[var(--g-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--g-accent)] sm:mt-0"
               @click="clearGroupOverrides(group.tokens)"
             >
               <LucideIcon name="Minus" class="h-3.5 w-3.5" stroke-width="2" />
@@ -121,7 +121,7 @@
                 <div class="text-sm font-medium text-[rgb(var(--fg))]">{{ token.label }}</div>
                 <div class="text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
                   {{ displayHex(editingMode, token.key) }}
-                  <span v-if="isOverridden(editingMode, token.key)" class="ml-1 inline-flex items-center rounded-full bg-[rgba(var(--accent),0.18)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(var(--accent))]">已覆盖</span>
+                  <span v-if="isOverridden(editingMode, token.key)" class="ml-1 inline-flex items-center rounded-full bg-[var(--g-accent-medium)] px-2 py-0.5 text-[10px] font-semibold text-[var(--g-accent)]">已覆盖</span>
                 </div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
@@ -135,7 +135,7 @@
                 <button
                   v-if="isOverridden(editingMode, token.key)"
                   type="button"
-                  class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[rgba(var(--panel-border),0.5)] text-neutral-500 hover:text-[rgb(var(--accent))]"
+                  class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[rgba(var(--panel-border),0.5)] text-neutral-500 hover:text-[var(--g-accent)]"
                   @click="clearOverride(editingMode, token.key)"
                   aria-label="清除该颜色的覆盖"
                 >
@@ -148,7 +148,7 @@
       </div>
     </section>
 
-    <section class="rounded-3xl border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-[0_18px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl dark:shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
+    <section class="rounded-lg border border-[rgba(var(--panel-border),0.45)] bg-[rgba(var(--panel),0.78)] p-6 shadow-sm backdrop-blur-xl dark:shadow-lg">
       <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 class="text-lg font-semibold text-[rgb(var(--fg))]">导入与导出</h2>
@@ -174,7 +174,7 @@
         <div class="inline-flex items-center gap-2">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full bg-[rgb(var(--accent))] px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_40px_rgba(10,132,255,0.28)] hover:-translate-y-0.5 transition"
+            class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:-translate-y-0.5 transition"
             @click="handleExport"
           >
             <LucideIcon name="Upload" class="h-4 w-4" stroke-width="2" />
@@ -182,7 +182,7 @@
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--panel-border),0.55)] bg-[rgba(var(--panel),0.7)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[rgb(var(--accent))] dark:text-neutral-300"
+            class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--panel-border),0.55)] bg-[rgba(var(--panel),0.7)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300"
             @click="triggerImport"
           >
             <LucideIcon name="Download" class="h-4 w-4" stroke-width="2" />
@@ -191,7 +191,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--panel-border),0.55)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[rgb(var(--accent))] dark:text-neutral-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="inline-flex items-center gap-2 rounded-full border border-[rgba(var(--panel-border),0.55)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300 disabled:opacity-40 disabled:cursor-not-allowed"
           :disabled="!hasOverrides"
           @click="handleResetOverrides"
         >

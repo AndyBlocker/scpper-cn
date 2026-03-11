@@ -216,6 +216,18 @@ function closeBuyRequestDetail() {
   selectedBuyRequest.value = null
 }
 
+function handleMyListingDialogChange(nextOpen: boolean) {
+  if (!nextOpen) closeMyListingDetail()
+}
+
+function handlePublicListingDialogChange(nextOpen: boolean) {
+  if (!nextOpen) closeListingDetail()
+}
+
+function handleBuyRequestDialogChange(nextOpen: boolean) {
+  if (!nextOpen) closeBuyRequestDetail()
+}
+
 const buyRequestFulfillCandidates = computed(() => {
   const br = selectedBuyRequest.value
   if (!br || br.status !== 'OPEN' || br.buyerId === props.userId) return []
@@ -303,22 +315,24 @@ const brFilteredCatalog = computed(() => {
 const brDerivedPayloads = computed<BuyRequestDraft[]>(() => {
   if (!brSelectedPage.value) return []
   const page = brSelectedPage.value
+  const firstVariantId = page.variants[0]?.id
+  if (!firstVariantId) return []
   // No specific variants → PAGE level (single request)
   if (brSelectedVariantIds.value.length === 0) {
-    return [{ targetCardId: page.variants[0]?.id ?? '', matchLevel: 'PAGE' as BuyRequestMatchLevel }]
+    return [{ targetCardId: firstVariantId, matchLevel: 'PAGE' }]
   }
   // Specific variants, no coatings → IMAGE_VARIANT for each
   if (brSelectedCoatings.value.length === 0) {
-    return brSelectedVariantIds.value.map(vid => ({
+    return brSelectedVariantIds.value.map((vid) => ({
       targetCardId: vid,
-      matchLevel: 'IMAGE_VARIANT' as BuyRequestMatchLevel
+      matchLevel: 'IMAGE_VARIANT'
     }))
   }
   // Specific variants + specific coatings → COATING for each combo
-  return brSelectedVariantIds.value.flatMap(vid =>
-    brSelectedCoatings.value.map(coating => ({
+  return brSelectedVariantIds.value.flatMap((vid) =>
+    brSelectedCoatings.value.map((coating) => ({
       targetCardId: vid,
-      matchLevel: 'COATING' as BuyRequestMatchLevel,
+      matchLevel: 'COATING',
       requiredCoating: coating
     }))
   )
@@ -1419,7 +1433,7 @@ watch([brSortMode, brRarityFilter], () => {
     </div>
 
     <!-- 挂牌详情弹窗 -->
-    <UiDialogRoot :open="!!selectedMyListing" @update:open="(v) => { if (!v) closeMyListingDetail() }">
+    <UiDialogRoot :open="!!selectedMyListing" @update:open="handleMyListingDialogChange">
       <UiDialogPortal>
         <UiDialogOverlay />
         <UiDialogContent class="max-w-lg p-0">
@@ -1541,7 +1555,7 @@ watch([brSortMode, brRarityFilter], () => {
       </UiDialogPortal>
     </UiDialogRoot>
 
-    <UiDialogRoot :open="!!selectedPublicListing" @update:open="(v) => { if (!v) closeListingDetail() }">
+    <UiDialogRoot :open="!!selectedPublicListing" @update:open="handlePublicListingDialogChange">
       <UiDialogPortal>
         <UiDialogOverlay />
         <UiDialogContent class="max-w-lg p-0">
@@ -1652,7 +1666,7 @@ watch([brSortMode, brRarityFilter], () => {
     </UiDialogRoot>
 
     <!-- 求购详情弹窗 -->
-    <UiDialogRoot :open="!!selectedBuyRequest" @update:open="(v) => { if (!v) closeBuyRequestDetail() }">
+    <UiDialogRoot :open="!!selectedBuyRequest" @update:open="handleBuyRequestDialogChange">
       <UiDialogPortal>
         <UiDialogOverlay />
         <UiDialogContent class="max-w-lg p-0">

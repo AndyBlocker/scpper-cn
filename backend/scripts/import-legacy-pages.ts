@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import type { RowDataPacket } from 'mysql2';
 import mysql from 'mysql2/promise';
 import { DatabaseStore } from '../src/core/store/DatabaseStore.js';
 import { AttributionService } from '../src/core/store/AttributionService.js';
@@ -41,6 +42,8 @@ type MysqlConfig = {
   password: string;
   database?: string;
 };
+
+type MysqlRow<T extends object> = RowDataPacket & T;
 
 const program = new Command();
 
@@ -102,7 +105,7 @@ async function connectLegacyMysql(config: MysqlConfig): Promise<{ connection: my
 
   const discovery = await tryConnect();
   try {
-    const [rows] = await discovery.execute<Array<{ db: string }>>(
+    const [rows] = await discovery.execute<Array<MysqlRow<{ db: string }>>>(
       `SELECT table_schema AS db
          FROM information_schema.tables
         WHERE table_name IN ('pages', 'votes', 'vote_history', 'users', 'revisions')
@@ -122,7 +125,7 @@ async function connectLegacyMysql(config: MysqlConfig): Promise<{ connection: my
 }
 
 async function fetchLegacyPageData(mysqlConn: mysql.Connection, wikidotId: number): Promise<LegacyPageData | null> {
-  const [pageRows] = await mysqlConn.query<Array<{
+  const [pageRows] = await mysqlConn.query<Array<MysqlRow<{
     __Id: number;
     Name: string;
     Title: string | null;
@@ -131,7 +134,7 @@ async function fetchLegacyPageData(mysqlConn: mysql.Connection, wikidotId: numbe
     Deleted: number | null;
     LastUpdate: string | null;
     CategoryId: number | null;
-  }>>(
+  }>>>(
     `SELECT __Id, Name, Title, Source, AltTitle, Deleted, LastUpdate, CategoryId
        FROM pages
       WHERE WikidotId = ?`,
@@ -167,7 +170,7 @@ async function fetchLegacyPageData(mysqlConn: mysql.Connection, wikidotId: numbe
 }
 
 async function fetchLegacyTags(mysqlConn: mysql.Connection, pageInternalId: number): Promise<string[]> {
-  const [rows] = await mysqlConn.query<Array<{ Tag: string | null }>>(
+  const [rows] = await mysqlConn.query<Array<MysqlRow<{ Tag: string | null }>>>(
     `SELECT Tag
        FROM tags
       WHERE PageId = ?`,
@@ -180,7 +183,7 @@ async function fetchLegacyTags(mysqlConn: mysql.Connection, pageInternalId: numb
 
 async function fetchLegacyCategory(mysqlConn: mysql.Connection, categoryWikidotId: number | null): Promise<string | null> {
   if (!categoryWikidotId) return null;
-  const [rows] = await mysqlConn.query<Array<{ Name: string | null }>>(
+  const [rows] = await mysqlConn.query<Array<MysqlRow<{ Name: string | null }>>>(
     `SELECT Name
        FROM categories
       WHERE WikidotId = ?
@@ -201,13 +204,13 @@ function deriveAlternateTitles(raw: string | null): Array<{ title: string }> {
 }
 
 async function fetchLegacyAttributions(mysqlConn: mysql.Connection, wikidotId: number): Promise<LegacyPageData['attributions']> {
-  const [rows] = await mysqlConn.query<Array<{
+  const [rows] = await mysqlConn.query<Array<MysqlRow<{
     RoleId: number | null;
     UserId: number | null;
     WikidotId: number | null;
     DisplayName: string | null;
     WikidotName: string | null;
-  }>>(
+  }>>>(
     `SELECT a.RoleId,
             a.UserId,
             u.WikidotId,
@@ -268,15 +271,15 @@ function mapLegacyRoleToAttribution(roleId: number | null): string {
 }
 
 async function fetchLegacyRevisions(mysqlConn: mysql.Connection, wikidotId: number): Promise<LegacyPageData['revisions']> {
-  const [rows] = await mysqlConn.query<Array<{
+  const [rows] = await mysqlConn.query<Array<MysqlRow<{
     WikidotId: number | null;
     RevisionIndex: number | null;
     DateTime: string;
     Comments: string | null;
-    UserId: number | null;
+    UserLegacyId: number | null;
     DisplayName: string | null;
     WikidotName: string | null;
-  }>>(
+  }>>>(
     `SELECT r.WikidotId,
             r.RevisionIndex,
             r.DateTime,
@@ -293,7 +296,7 @@ async function fetchLegacyRevisions(mysqlConn: mysql.Connection, wikidotId: numb
   );
 
   return rows.map((row) => {
-    const wikidotUserId = row.UserLegacyId ?? row.UserId ?? undefined;
+    const wikidotUserId = row.UserLegacyId ?? undefined;
     const displayName = row.DisplayName ?? row.WikidotName ?? undefined;
     const revision: LegacyPageData['revisions'][number] = {
       wikidotId: row.WikidotId ?? row.RevisionIndex ?? null,
@@ -313,13 +316,13 @@ async function fetchLegacyRevisions(mysqlConn: mysql.Connection, wikidotId: numb
 }
 
 async function fetchLegacyVotes(mysqlConn: mysql.Connection, wikidotId: number): Promise<LegacyPageData['votes']> {
-  const [rows] = await mysqlConn.query<Array<{
+  const [rows] = await mysqlConn.query<Array<MysqlRow<{
     Value: number;
     DateTime: string;
-    UserId: number | null;
+    UserLegacyId: number | null;
     DisplayName: string | null;
     WikidotName: string | null;
-  }>>(
+  }>>>(
     `SELECT v.Value,
             v.DateTime,
             u.WikidotId AS UserLegacyId,
@@ -334,7 +337,7 @@ async function fetchLegacyVotes(mysqlConn: mysql.Connection, wikidotId: number):
 
   return rows.map((row) => {
     const direction = Number(row.Value ?? 0);
-    const wikidotUserId = row.UserLegacyId ?? row.UserId ?? undefined;
+    const wikidotUserId = row.UserLegacyId ?? undefined;
     const displayName = row.DisplayName ?? row.WikidotName ?? undefined;
     const vote: LegacyPageData['votes'][number] = {
       direction,
@@ -380,7 +383,7 @@ async function main(): Promise<void> {
     if (wikidotIds.length > 0) {
       candidates = wikidotIds;
     } else if (sinceDate) {
-      const [rows] = await legacy.query<Array<{ WikidotId: number }>>(
+      const [rows] = await legacy.query<Array<MysqlRow<{ WikidotId: number }>>>(
         `SELECT WikidotId
            FROM pages
           WHERE LastUpdate >= ?

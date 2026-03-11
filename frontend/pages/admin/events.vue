@@ -18,7 +18,7 @@
 
       <div v-else class="space-y-8">
         <!-- Create -->
-        <section class="space-y-4 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-4 rounded-lg border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="space-y-1">
             <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">新增活动</h2>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">填写活动信息后保存，即可在工具中心的“活动月历”展示。</p>
@@ -26,42 +26,42 @@
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="space-y-2">
               <label class="text-xs text-neutral-500 dark:text-neutral-400">标题</label>
-              <input v-model="form.title" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+              <input v-model="form.title" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
             </div>
             <div class="space-y-2">
               <label class="text-xs text-neutral-500 dark:text-neutral-400">摘要</label>
-              <input v-model="form.summary" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" placeholder="显示在条带上（可选）" />
+              <input v-model="form.summary" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" placeholder="显示在条带上（可选）" />
             </div>
             <div class="space-y-2">
               <label class="text-xs text-neutral-500 dark:text-neutral-400">开始日期</label>
-              <input v-model="form.startsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+              <input v-model="form.startsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
             </div>
             <div class="space-y-2">
               <label class="text-xs text-neutral-500 dark:text-neutral-400">结束日期</label>
-              <input v-model="form.endsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+              <input v-model="form.endsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
             </div>
             <div class="space-y-2">
               <label class="text-xs text-neutral-500 dark:text-neutral-400">颜色</label>
               <div class="flex items-center gap-2">
                 <input v-model="form.color" type="color" class="h-9 w-12 rounded border border-neutral-300 dark:border-neutral-700" />
-                <input v-model="form.color" type="text" placeholder="#22c55e" class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+                <input v-model="form.color" type="text" placeholder="#22c55e" class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
               </div>
             </div>
             <div class="space-y-2">
               <label class="text-xs text-neutral-500 dark:text-neutral-400">发布</label>
               <label class="inline-flex items-center gap-2">
-                <input v-model="form.isPublished" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" />
+                <input v-model="form.isPublished" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[var(--g-accent)]" />
                 <span class="text-sm">公开展示</span>
               </label>
             </div>
             <div class="sm:col-span-2 space-y-2">
               <label class="text-xs text-neutral-500 dark:text-neutral-400">详细说明（Markdown）</label>
-              <textarea v-model="form.detailsMd" class="w-full min-h-[140px] rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" placeholder="支持 Markdown 格式"></textarea>
+              <textarea v-model="form.detailsMd" class="w-full min-h-[140px] rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" placeholder="支持 Markdown 格式"></textarea>
             </div>
           </div>
           <div class="flex items-center justify-end gap-2">
             <button class="rounded-lg border border-neutral-200 px-4 py-2 text-sm dark:border-neutral-700" @click="resetForm">重置</button>
-            <button :disabled="saving" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" @click="createEvent">保存</button>
+            <button :disabled="saving" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" @click="createEvent">保存</button>
           </div>
           <transition name="fade">
             <p v-if="message" class="text-xs text-emerald-700 dark:text-emerald-300">{{ message }}</p>
@@ -72,7 +72,7 @@
         </section>
 
         <!-- List -->
-        <section class="space-y-4 rounded-2xl border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
+        <section class="space-y-4 rounded-lg border border-neutral-200/70 bg-white/80 p-5 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-900/70">
           <header class="flex items-center justify-between">
             <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">活动列表</h2>
             <button class="text-xs text-[rgb(var(--accent-strong))] hover:underline" @click="refresh">刷新</button>
@@ -117,42 +117,42 @@
                       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div class="space-y-2">
                           <label class="text-xs text-neutral-500 dark:text-neutral-400">标题</label>
-                          <input v-model="edit.title" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+                          <input v-model="edit.title" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
                         </div>
                         <div class="space-y-2">
                           <label class="text-xs text-neutral-500 dark:text-neutral-400">摘要</label>
-                          <input v-model="edit.summary" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+                          <input v-model="edit.summary" type="text" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
                         </div>
                         <div class="space-y-2">
                           <label class="text-xs text-neutral-500 dark:text-neutral-400">开始日期</label>
-                          <input v-model="edit.startsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+                          <input v-model="edit.startsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
                         </div>
                         <div class="space-y-2">
                           <label class="text-xs text-neutral-500 dark:text-neutral-400">结束日期</label>
-                          <input v-model="edit.endsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+                          <input v-model="edit.endsAt" type="date" class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
                         </div>
                         <div class="space-y-2">
                           <label class="text-xs text-neutral-500 dark:text-neutral-400">颜色</label>
                           <div class="flex items-center gap-2">
                             <input v-model="edit.color" type="color" class="h-9 w-12 rounded border border-neutral-300 dark:border-neutral-700" />
-                            <input v-model="edit.color" type="text" placeholder="#22c55e" class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800" />
+                            <input v-model="edit.color" type="text" placeholder="#22c55e" class="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800" />
                           </div>
                         </div>
                         <div class="space-y-2">
                           <label class="text-xs text-neutral-500 dark:text-neutral-400">发布</label>
                           <label class="inline-flex items-center gap-2">
-                            <input v-model="edit.isPublished" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[rgb(var(--accent))]" />
+                            <input v-model="edit.isPublished" type="checkbox" class="rounded border-neutral-300 text-[rgb(var(--accent-strong))] focus:ring-[var(--g-accent)]" />
                             <span class="text-sm">公开展示</span>
                           </label>
                         </div>
                         <div class="sm:col-span-2 space-y-2">
                           <label class="text-xs text-neutral-500 dark:text-neutral-400">详细说明（Markdown）</label>
-                          <textarea v-model="edit.detailsMd" class="w-full min-h-[120px] rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[rgb(var(--accent))] dark:border-neutral-700 dark:bg-neutral-800"></textarea>
+                          <textarea v-model="edit.detailsMd" class="w-full min-h-[120px] rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800"></textarea>
                         </div>
                       </div>
                       <div class="mt-3 flex items-center justify-end gap-2">
                         <button class="rounded-lg border border-neutral-200 px-3 py-1.5 text-sm dark:border-neutral-700" @click="cancelEdit">取消</button>
-                        <button :disabled="savingEdit" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-1.5 text-sm font-semibold text-white shadow transition hover:bg-[rgb(var(--accent))] disabled:opacity-60" @click="saveEdit">保存修改</button>
+                        <button :disabled="savingEdit" class="rounded-lg bg-[rgb(var(--accent-strong))] px-4 py-1.5 text-sm font-semibold text-white shadow transition hover:bg-[var(--g-accent)] disabled:opacity-60" @click="saveEdit">保存修改</button>
                       </div>
                       <transition name="fade"><p v-if="editMessage" class="text-xs text-emerald-700 dark:text-emerald-300 mt-1">{{ editMessage }}</p></transition>
                       <transition name="fade"><p v-if="editError" class="text-xs text-rose-600 dark:text-rose-300 mt-1">{{ editError }}</p></transition>

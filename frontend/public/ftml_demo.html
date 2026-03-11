@@ -1747,10 +1747,66 @@
       vertical-align: baseline;
     }
     .ftml-preview-disabled { opacity: 0.7; pointer-events: none; }
+
+    /* Wikijump-style collapsible (details/summary) */
     .wj-collapsible summary { list-style: none; cursor: pointer; user-select: none; }
     .wj-collapsible .wj-collapsible-hide-text { display: none; }
     .wj-collapsible[open] .wj-collapsible-show-text { display: none; }
     .wj-collapsible[open] .wj-collapsible-hide-text { display: inline; }
+
+    /* Wikidot-style collapsible (div + JS onclick) */
+    .collapsible-block { margin: 0.5em 0; }
+    .collapsible-block-link { cursor: pointer; color: #b01; }
+
+    /* Blockquote */
+    blockquote {
+      border: 1px dashed #999;
+      background-color: #f4f4f4;
+      padding: 0 1em;
+      margin: 1em 3em;
+    }
+
+    /* wiki-note block */
+    .wiki-note {
+      background-color: #ffd;
+      border: 1px solid #dda;
+      padding: 0.5em 1em;
+      margin: 1em 3em;
+      border-radius: 3px;
+    }
+
+    /* Code blocks */
+    .code {
+      border: 1px dashed #999;
+      background-color: #f8f8f8;
+      padding: 1em;
+      margin: 1em 0;
+    }
+    .code pre { margin: 0; overflow-x: auto; }
+
+    /* Footnotes */
+    .footnotes-footer {
+      border-top: 1px solid #999;
+      margin-top: 1em;
+      padding-top: 0.5em;
+    }
+    .footnotes-footer .title { font-weight: bold; margin-bottom: 0.3em; }
+    sup.footnoteref a.footnoteref { text-decoration: none; font-weight: bold; }
+
+    /* TOC */
+    #toc {
+      border: 1px solid #aaa;
+      background-color: #f9f9f9;
+      padding: 5px 10px;
+      display: inline-block;
+    }
+    #toc .title { text-align: center; font-weight: bold; margin-bottom: 5px; }
+
+    /* Image containers */
+    .image-container { display: inline-block; }
+    .image-container.floatleft { float: left; margin: 0 1em 1em 0; }
+    .image-container.floatright { float: right; margin: 0 0 1em 1em; }
+    .image-container.aligncenter { display: block; text-align: center; margin: 0 auto; }
   </style>
 </head>
 <body>
@@ -1770,6 +1826,42 @@
   </div>
 
   <script>
+    // WIKIDOT stubs for collapsible, TOC, and footnote interactions
+    if (!window.WIKIDOT) {
+      window.WIKIDOT = {
+        page: {
+          listeners: {
+            userInfo: function() { return false; },
+            foldToc: function(event) {
+              var toc = document.getElementById("toc");
+              if (!toc) return;
+              var list = toc.querySelector("#toc-list");
+              var foldLink = toc.querySelector("#toc-action-bar a:first-child");
+              var unfoldLink = toc.querySelector("#toc-action-bar a:last-child");
+              if (list) list.style.display = "none";
+              if (foldLink) foldLink.style.display = "none";
+              if (unfoldLink) unfoldLink.style.display = "";
+            },
+            unfoldToc: function(event) {
+              var toc = document.getElementById("toc");
+              if (!toc) return;
+              var list = toc.querySelector("#toc-list");
+              var foldLink = toc.querySelector("#toc-action-bar a:first-child");
+              var unfoldLink = toc.querySelector("#toc-action-bar a:last-child");
+              if (list) list.style.display = "";
+              if (foldLink) foldLink.style.display = "";
+              if (unfoldLink) unfoldLink.style.display = "none";
+            }
+          },
+          utils: {
+            scrollToReference: function(refId) {
+              var el = document.getElementById(refId);
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }
+        }
+      };
+    }
     (function() {
       function forEachNode(list, cb) {
         if (!list) return;
@@ -1816,7 +1908,7 @@
           box.appendChild(note);
         });
 
-        // minimal tabview binding
+        // minimal tabview binding (Wikijump layout)
         var tabviews = document.querySelectorAll(".wj-tabview");
         forEachNode(tabviews, function(tv) {
           if (tv.__ftmlPreviewBound) return;
@@ -1846,6 +1938,26 @@
           });
 
           if (tabs.length && panels.length) activate(0);
+        });
+
+        // Wikidot-style tabview binding (yui-navset)
+        var yuiNavsets = document.querySelectorAll(".yui-navset");
+        forEachNode(yuiNavsets, function(tv) {
+          if (tv.__ftmlPreviewBound) return;
+          tv.__ftmlPreviewBound = true;
+          var lis = tv.querySelectorAll(".yui-nav > li");
+          var panels = tv.querySelectorAll(".yui-content > div");
+          forEachNode(lis, function(li, i) {
+            var link = li.querySelector("a");
+            if (!link) return;
+            link.addEventListener("click", function(e) {
+              e.preventDefault();
+              forEachNode(lis, function(l) { l.className = ""; });
+              li.className = "selected";
+              forEachNode(panels, function(d) { d.style.display = "none"; });
+              if (panels[i]) panels[i].style.display = "";
+            });
+          });
         });
 
         // simple toggle buttons: data-ftml-toggle-target="id"
@@ -1880,6 +1992,17 @@
         if (pageTitleEl) pageTitleEl.textContent = title;
         if (pageContentEl) {
           pageContentEl.innerHTML = html;
+          // Extract <style> tags and inject into <head> so @import rules work
+          var styles = pageContentEl.querySelectorAll("style");
+          var oldInjected = document.querySelectorAll("style[data-ftml-injected]");
+          forEachNode(oldInjected, function(s) { s.remove(); });
+          forEachNode(styles, function(styleEl) {
+            var clone = document.createElement("style");
+            clone.setAttribute("data-ftml-injected", "1");
+            clone.textContent = styleEl.textContent || "";
+            document.head.appendChild(clone);
+            styleEl.remove();
+          });
           runScripts(pageContentEl);
         }
         setupPreviewInteractions();

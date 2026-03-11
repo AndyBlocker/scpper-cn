@@ -22,9 +22,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { AuthorSimilarityData, AuthorSimilarityNode } from '~/types/text-analysis'
 
+const authorSimilarityEndpoint: string = '/api/text-analysis/author-similarity'
+
 const { data: netData, pending } = useAsyncData<AuthorSimilarityData>(
   'text-analysis-author-similarity',
-  () => $fetch('/api/text-analysis/author-similarity')
+  () => $fetch<AuthorSimilarityData>(authorSimilarityEndpoint)
 )
 
 const sigmaEl = ref<HTMLElement | null>(null)
@@ -51,7 +53,7 @@ async function render() {
       import('graphology-layout-forceatlas2')
     ])
 
-    const Graph = graphologyMod.default || graphologyMod.Graph
+    const Graph = graphologyMod.default
     const Sigma = sigmaMod.default || sigmaMod.Sigma
     const fa2 = fa2Mod.default || fa2Mod
 
