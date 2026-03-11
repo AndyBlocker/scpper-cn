@@ -136,13 +136,15 @@ const normalizeIncomingAttributionSignature = (rawAttributions: unknown[]): stri
 const normalizeStoredAttributionSignature = (
   attributions: CurrentVersionAttributionSnapshot[]
 ): string[] => {
-  const normalized = attributions.map((attr) => {
+  const normalized = attributions.flatMap((attr) => {
     const actorKey = attr.user?.wikidotId != null
       ? `u:${attr.user.wikidotId}`
       : attr.anonKey
         ? `a:${attr.anonKey}`
-        : 'a:';
-    return `${attr.type}|${attr.order}|${actorKey}|${normalizeAttributionDate(attr.date) ?? ''}`;
+        : null;
+    // Mirror incoming side: entries without a stable actor are excluded.
+    if (!actorKey) return [];
+    return [`${attr.type}|${attr.order}|${actorKey}|${normalizeAttributionDate(attr.date) ?? ''}`];
   });
   normalized.sort();
   return normalized;
@@ -441,10 +443,10 @@ export class PhaseAProcessor {
 
     // Process all pages in this test batch
     for (const { node } of edges) {
-      let currentVersionCache: PageVersion | null | undefined;
+      let currentVersionCache: CurrentVersionSnapshot | null | undefined;
       let currentVersionLoaded = false;
 
-      const loadCurrentVersion = async (): Promise<PageVersion | null> => {
+      const loadCurrentVersion = async (): Promise<CurrentVersionSnapshot | null> => {
         if (currentVersionLoaded) return currentVersionCache ?? null;
         currentVersionLoaded = true;
 
@@ -463,11 +465,27 @@ export class PhaseAProcessor {
 
         const page = await this.store.prisma.page.findUnique({
           where: { wikidotId },
-          include: { versions: { where: { validTo: null }, take: 1 } }
+          include: {
+            versions: {
+              where: { validTo: null },
+              take: 1,
+              include: {
+                attributions: {
+                  include: {
+                    user: {
+                      select: {
+                        wikidotId: true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         });
 
         currentVersionCache = page?.versions?.[0] ?? null;
-        return currentVersionCache;
+        return currentVersionCache ?? null;
       };
 
       // Estimate complete collection cost with more accurate parameters

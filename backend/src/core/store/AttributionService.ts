@@ -58,8 +58,7 @@ export class AttributionService {
             date
           });
         } else {
-          // Neither userId nor anonKey - ignore silently
-          stats.updated++;
+          // Neither userId nor anonKey - skip this entry
         }
       } catch (error) {
         stats.errors++;
