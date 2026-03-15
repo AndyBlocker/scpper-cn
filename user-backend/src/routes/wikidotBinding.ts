@@ -181,10 +181,23 @@ export function wikidotBindingRouter() {
 }
 
 /**
- * Internal routes for backend verification job (no auth, internal network only)
+ * Internal routes for backend verification job (require internal API key)
  */
 export function wikidotBindingInternalRouter() {
   const router = Router();
+
+  // Validate internal API key on all internal routes
+  router.use((req, res, next) => {
+    const expectedKey = (process.env.INTERNAL_API_KEY || '').trim();
+    if (!expectedKey) {
+      return res.status(503).json({ error: 'Internal API key not configured' });
+    }
+    const provided = (req.headers['x-internal-key'] as string || '').trim();
+    if (!provided || provided !== expectedKey) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    next();
+  });
 
   // Get all pending tasks
   router.get('/pending', async (_req, res) => {

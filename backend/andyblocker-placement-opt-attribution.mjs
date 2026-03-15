@@ -4,10 +4,7 @@ import { computePlacementMetrics } from '../user-backend/src/routes/gacha/runtim
 const { Pool } = pg;
 
 const DB_CFG = {
-  host: '127.0.0.1',
-  port: 5434,
-  user: '***REMOVED***',
-  password: '***REMOVED***'
+  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5434/scpper-cn'
 };
 
 const USER_ID = 'cmgefehmh0003epu3atyfn35z';

@@ -26,6 +26,10 @@ export function useGachaPageLifecycle(options: GachaPageLifecycleOptions) {
   async function runLoad(reason: string): Promise<void> {
     if (loadInFlight) {
       await loadInFlight
+      // After waiting, re-check if conditions still warrant a load
+      if (canLoad() && !loadInFlight) {
+        return runLoad(`${reason}:retry`)
+      }
       return
     }
 

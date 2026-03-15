@@ -7,7 +7,7 @@
     "dev": "node ../scripts/service-runner.mjs user-backend dev",
     "build": "node ../scripts/service-runner.mjs user-backend build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "node ../backend/node_modules/eslint/bin/eslint.js \"src/**/*.{ts,js}\"",
+    "lint": "node ../scripts/service-bin-runner.mjs user-backend eslint \"src/**/*.{ts,js}\"",
     "start": "node ../scripts/service-runner.mjs user-backend start",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",

@@ -5,6 +5,15 @@ function ensureString(value, fallback = '') {
   return String(value);
 }
 
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function normalizeRecipient(recipient) {
   if (!recipient || typeof recipient !== 'object') {
     return {};
@@ -40,10 +49,10 @@ function buildVerificationTemplate(payload, context) {
   </head>
   <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; padding: 24px; color: #111827;">
     <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);">
-      <h1 style="font-size: 20px; margin: 0 0 16px 0; color: #0f172a;">${reason}</h1>
+      <h1 style="font-size: 20px; margin: 0 0 16px 0; color: #0f172a;">${escapeHtml(reason)}</h1>
       <p style="margin: 0 0 12px 0;">您的验证码：</p>
-      <p style="font-size: 28px; font-weight: 700; letter-spacing: 6px; color: #2563eb; margin: 0 0 16px 0;">${code}</p>
-      <p style="margin: 0 0 16px 0; color: #334155;">请在<strong>${ttlText}</strong>内使用该验证码。</p>
+      <p style="font-size: 28px; font-weight: 700; letter-spacing: 6px; color: #2563eb; margin: 0 0 16px 0;">${escapeHtml(code)}</p>
+      <p style="margin: 0 0 16px 0; color: #334155;">请在<strong>${escapeHtml(ttlText)}</strong>内使用该验证码。</p>
       <p style="margin: 0; color: #94a3b8; font-size: 12px;">如果不是您本人操作，请忽略此邮件。</p>
     </div>
   </body>

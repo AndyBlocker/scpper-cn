@@ -186,6 +186,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && path === '/send') {
+    // Validate internal API key
+    const expectedKey = (process.env.MAIL_AGENT_API_KEY || '').trim();
+    if (expectedKey) {
+      const provided = (req.headers['x-internal-key'] || '').trim();
+      if (provided !== expectedKey) {
+        sendJson(res, 403, { error: 'Forbidden' });
+        return;
+      }
+    }
     try {
       await handleSend(req, res);
     } catch (error) {

@@ -13,7 +13,16 @@ export async function createServer() {
   // Trust the first proxy (Nginx) so req.ip maps to real client IP.
   app.set('trust proxy', 1);
   app.use(helmet());
-  app.use(cors({ origin: true, credentials: true }));
+  const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  app.use(cors({
+    origin: allowedOrigins.length > 0
+      ? (origin, cb) => {
+          if (!origin || allowedOrigins.includes(origin)) cb(null, true);
+          else cb(new Error('Not allowed by CORS'));
+        }
+      : true,
+    credentials: true
+  }));
   app.use(express.json({ limit: '1mb' }));
   app.use(pinoHttp({
     autoLogging: {

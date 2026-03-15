@@ -72,6 +72,18 @@ export function initPools(): { primary: Pool; replica: Pool | null } {
         replicaAvailable = false;
       });
 
+    // Periodically attempt to recover replica availability
+    const REPLICA_HEALTH_CHECK_INTERVAL_MS = 30_000;
+    setInterval(() => {
+      if (replicaAvailable || !replicaPool) return;
+      replicaPool.query('SELECT 1')
+        .then(() => {
+          replicaAvailable = true;
+          console.log('[dbPool] Replica pool recovered');
+        })
+        .catch(() => { /* still unavailable, will retry next interval */ });
+    }, REPLICA_HEALTH_CHECK_INTERVAL_MS).unref();
+
     console.log('[dbPool] Dual pool mode: primary + replica');
   } else {
     console.log('[dbPool] Single pool mode: primary only (set DATABASE_REPLICA_URL to enable read-write separation)');

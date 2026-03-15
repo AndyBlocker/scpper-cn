@@ -1,6 +1,16 @@
 import { fetch } from 'undici';
 import { config } from '../config.js';
 
+const MAIL_AGENT_API_KEY = (process.env.MAIL_AGENT_API_KEY || '').trim();
+
+function mailHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (MAIL_AGENT_API_KEY) {
+    h['x-internal-key'] = MAIL_AGENT_API_KEY;
+  }
+  return h;
+}
+
 interface VerificationEmailPayload {
   email: string;
   code: string;
@@ -12,7 +22,7 @@ export async function sendVerificationEmail({ email, code, ttlMinutes, displayNa
   const url = new URL('/send', config.mailAgent.baseUrl);
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mailHeaders(),
     body: JSON.stringify({
       type: 'verification',
       recipient: {
@@ -42,7 +52,7 @@ export async function sendPasswordResetEmail({ email, code, ttlMinutes, displayN
   const url = new URL('/send', config.mailAgent.baseUrl);
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mailHeaders(),
     body: JSON.stringify({
       type: 'verification',
       recipient: {

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { prisma } from '../db.js';
 import { WikidotBindingStatus } from '@prisma/client';
 
@@ -30,7 +31,7 @@ export function generateVerificationCode(): string {
   let code = 'SCPPER-';
   for (let i = 0; i < VERIFICATION_CODE_LENGTH; i++) {
     code += VERIFICATION_CODE_CHARS.charAt(
-      Math.floor(Math.random() * VERIFICATION_CODE_CHARS.length)
+      crypto.randomInt(VERIFICATION_CODE_CHARS.length)
     );
   }
   return code;
@@ -322,45 +323,46 @@ export async function completeBindingTask(
   taskId: string,
   revisionInfo?: { revisionId: number; timestamp: Date }
 ): Promise<boolean> {
-  const task = await prisma.wikidotBindingTask.findUnique({
-    where: { id: taskId }
-  });
-
-  if (!task || task.status !== WikidotBindingStatus.PENDING) {
-    return false;
-  }
-
-  // Check if wikidotId is still available
-  const existingLink = await prisma.userAccount.findFirst({
-    where: { linkedWikidotId: task.wikidotUserId }
-  });
-  if (existingLink) {
-    await prisma.wikidotBindingTask.update({
-      where: { id: taskId },
-      data: {
-        status: WikidotBindingStatus.CANCELLED,
-        failureReason: '该 Wikidot 账号已被其他用户绑定'
-      }
+  // Use interactive transaction to ensure atomicity of check + update
+  return await prisma.$transaction(async (tx) => {
+    const task = await tx.wikidotBindingTask.findUnique({
+      where: { id: taskId }
     });
-    return false;
-  }
 
-  // Complete the binding in a transaction
-  await prisma.$transaction([
-    prisma.userAccount.update({
+    if (!task || task.status !== WikidotBindingStatus.PENDING) {
+      return false;
+    }
+
+    // Check if wikidotId is still available (inside transaction)
+    const existingLink = await tx.userAccount.findFirst({
+      where: { linkedWikidotId: task.wikidotUserId }
+    });
+    if (existingLink) {
+      await tx.wikidotBindingTask.update({
+        where: { id: taskId },
+        data: {
+          status: WikidotBindingStatus.CANCELLED,
+          failureReason: '该 Wikidot 账号已被其他用户绑定'
+        }
+      });
+      return false;
+    }
+
+    // Complete the binding atomically
+    await tx.userAccount.update({
       where: { id: task.userId },
       data: { linkedWikidotId: task.wikidotUserId }
-    }),
-    prisma.wikidotBindingTask.update({
+    });
+    await tx.wikidotBindingTask.update({
       where: { id: taskId },
       data: {
         status: WikidotBindingStatus.VERIFIED,
         verifiedAt: new Date()
       }
-    })
-  ]);
+    });
 
-  return true;
+    return true;
+  });
 }
 
 export async function updateTaskCheckStatus(
