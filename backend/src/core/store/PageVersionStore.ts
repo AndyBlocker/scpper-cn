@@ -123,35 +123,26 @@ export class PageVersionStore {
       }
     }
 
-    // When running inside an outer transaction, create service instances bound to
-    // that tx so they can see uncommitted rows (e.g. a just-created PageVersion).
-    const srcSvc = outerTx ? new SourceVersionService(db as PrismaClient) : this.sourceVersionService;
-    const refSvc = outerTx ? new PageReferenceService(db as PrismaClient) : this.pageReferenceService;
-    const imgSvc = outerTx ? new PageVersionImageService(db as PrismaClient) : this.pageVersionImageService;
-    const attrSvc = outerTx ? new AttributionService(db as PrismaClient) : this.attributionService;
-
     // 处理source版本管理
     if (data.source) {
-      await srcSvc.manageSourceVersion(
+      await this.sourceVersionService.manageSourceVersion(
         targetVersionId,
-        {
-          source: data.source,
-          textContent: data.textContent
-        }
+        { source: data.source, textContent: data.textContent },
+        outerTx
       );
     }
 
     const pageSource = typeof data.source === 'string' ? data.source : null;
 
-    await refSvc.syncPageReferences(targetVersionId, pageSource);
+    await this.pageReferenceService.syncPageReferences(targetVersionId, pageSource, outerTx);
 
     if (pageSource) {
-      await imgSvc.syncPageVersionImages(targetVersionId, pageSource);
+      await this.pageVersionImageService.syncPageVersionImages(targetVersionId, pageSource, outerTx);
     }
 
     // 处理归属
     if (data.attributions) {
-      await attrSvc.importAttributions(targetVersionId, data.attributions);
+      await this.attributionService.importAttributions(targetVersionId, data.attributions, outerTx);
     }
 
     // 处理投票和修订数据 (Phase B 也要保存获取到的数据)

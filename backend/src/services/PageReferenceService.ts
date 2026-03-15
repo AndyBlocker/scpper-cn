@@ -1,5 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../utils/Logger.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 export type LinkType = 'TRIPLE' | 'SHORT' | 'DIRECT';
 
@@ -246,10 +248,10 @@ export class PageReferenceService {
     }));
   }
 
-  async syncPageReferences(pageVersionId: number, source: string | null | undefined): Promise<void> {
+  async syncPageReferences(pageVersionId: number, source: string | null | undefined, outerTx?: DbClient): Promise<void> {
     const references = this.extractInternalReferences(source);
 
-    await this.prisma.$transaction(async (tx) => {
+    const doWork = async (tx: DbClient) => {
       const delegate = (tx as unknown as { pageReference: any }).pageReference;
       await delegate.deleteMany({ where: { pageVersionId } });
       if (references.length === 0) {
@@ -269,7 +271,13 @@ export class PageReferenceService {
           }
         });
       }
-    });
+    };
+
+    if (outerTx) {
+      await doWork(outerTx);
+    } else {
+      await this.prisma.$transaction(async (tx) => doWork(tx));
+    }
 
     Logger.debug(`📚 Synced ${references.length} page references for PageVersion ${pageVersionId}`);
   }

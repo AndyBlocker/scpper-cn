@@ -1,5 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 export const normalizeAttributionAnonKey = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
@@ -23,7 +25,7 @@ export class AttributionService {
    * Batch-upsert all unique users from attribution entries, returning wikidotId → userId Map.
    */
   private async batchUpsertUsers(attributions: any[]): Promise<Map<number, number>> {
-    const userDataMap = new Map<number, { wikidotId: number; displayName: string | null; username: string | null; isGuest: boolean }>();
+    const userDataMap = new Map<number, { wikidotId: number; displayName: string | null; username: string | null; isGuest: boolean | null }>();
     for (const attr of attributions) {
       let userData = attr.user;
       if (!userData) continue;
@@ -35,7 +37,7 @@ export class AttributionService {
         wikidotId: wid,
         displayName: userData.displayName || userData.username,
         username: userData.username ?? null,
-        isGuest: userData.isGuest || false
+        isGuest: userData.isGuest ?? null
       });
     }
 
@@ -83,7 +85,7 @@ export class AttributionService {
     return result;
   }
 
-  async importAttributions(pageVersionId: number, attributions: any[]): Promise<{ inserted: number; updated: number; errors: number }> {
+  async importAttributions(pageVersionId: number, attributions: any[], outerTx?: DbClient): Promise<{ inserted: number; updated: number; errors: number }> {
     const stats = { inserted: 0, updated: 0, errors: 0 };
     const normalizedEntries: Array<{
       userId: number | null;
@@ -163,16 +165,18 @@ export class AttributionService {
       }
     }
 
+    const db = outerTx ?? this.prisma;
+
     if (normalizedEntries.length === 0) {
       if (attributions.length === 0) {
-        await this.prisma.attribution.deleteMany({
+        await db.attribution.deleteMany({
           where: { pageVerId: pageVersionId }
         });
       }
       return stats;
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    const doWork = async (tx: DbClient) => {
       const keepUserKeys = normalizedEntries
         .filter((entry) => entry.userId != null)
         .map((entry) => ({
@@ -256,7 +260,13 @@ export class AttributionService {
         });
         stats.inserted++;
       }
-    });
+    };
+
+    if (outerTx) {
+      await doWork(outerTx);
+    } else {
+      await this.prisma.$transaction(async (tx) => doWork(tx));
+    }
 
     return stats;
   }

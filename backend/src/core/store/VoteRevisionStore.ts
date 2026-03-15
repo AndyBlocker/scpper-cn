@@ -12,18 +12,18 @@ export class VoteRevisionStore {
    * Batch-upsert all unique users from vote + revision edges, returning a wikidotId → userId Map.
    */
   private async batchUpsertUsers(voteEdges: any[], revisionEdges: any[]): Promise<Map<number, number>> {
-    const userDataMap = new Map<number, { wikidotId: number; displayName: string | null; username: string | null; isGuest: boolean }>();
+    const userDataMap = new Map<number, { wikidotId: number; displayName: string | null; username: string | null; isGuest: boolean | null }>();
     for (const edge of voteEdges) {
       const v = edge.node;
       if (v.user?.wikidotId) {
         const wid = parseInt(v.user.wikidotId, 10);
         if (!Number.isNaN(wid)) {
-          userDataMap.set(wid, { wikidotId: wid, displayName: v.user.displayName || v.user.username, username: v.user.username, isGuest: v.user.isGuest || false });
+          userDataMap.set(wid, { wikidotId: wid, displayName: v.user.displayName || v.user.username, username: v.user.username, isGuest: v.user.isGuest ?? null });
         }
       } else if (v.userWikidotId) {
         const wid = parseInt(v.userWikidotId, 10);
         if (!Number.isNaN(wid) && !userDataMap.has(wid)) {
-          userDataMap.set(wid, { wikidotId: wid, displayName: `wd:${v.userWikidotId}`, username: null, isGuest: false });
+          userDataMap.set(wid, { wikidotId: wid, displayName: `wd:${v.userWikidotId}`, username: null, isGuest: null });
         }
       }
     }
@@ -32,7 +32,7 @@ export class VoteRevisionStore {
       if (r.user?.wikidotId) {
         const wid = parseInt(r.user.wikidotId, 10);
         if (!Number.isNaN(wid)) {
-          userDataMap.set(wid, { wikidotId: wid, displayName: r.user.displayName || r.user.username, username: r.user.username, isGuest: r.user.isGuest || false });
+          userDataMap.set(wid, { wikidotId: wid, displayName: r.user.displayName || r.user.username, username: r.user.username, isGuest: r.user.isGuest ?? null });
         }
       }
     }
