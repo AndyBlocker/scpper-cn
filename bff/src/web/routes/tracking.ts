@@ -31,7 +31,11 @@ const DEBUG_HEADERS = [
 ];
 const DEBUG_ENABLED = String(process.env.ENABLE_TRACKING_DEBUG || '').toLowerCase() === 'true';
 const DEBUG_SAMPLE_RATE = Math.max(0, Math.min(1, Number(process.env.TRACKING_DEBUG_SAMPLE_RATE ?? '0')));
-const DEBUG_TABLE_NAME = 'tracking_debug_event';
+const DEBUG_TABLE_NAME = 'tracking_debug_event' as const;
+// Safety assertion: table name must be a valid SQL identifier
+if (!/^[a-z_][a-z0-9_]*$/i.test(DEBUG_TABLE_NAME)) {
+  throw new Error(`Invalid debug table name: ${DEBUG_TABLE_NAME}`);
+}
 let debugTableEnsured = false;
 const WIKIDOT_HTTP_BASE = 'http://scp-wiki-cn.wikidot.com';
 

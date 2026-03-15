@@ -39,17 +39,19 @@ export function useAuth() {
   const { $bff } = useNuxtApp()
   const { user, status, loading } = useAuthState()
 
+  let fetchInflight: Promise<AuthUser | null> | null = null
+
   async function fetchCurrentUser(force = false) {
     if (status.value === 'authenticated' && !force) {
       console.debug('[auth] fetchCurrentUser skip (already authenticated)')
       return user.value
     }
-    if (loading.value) {
-      console.debug('[auth] fetchCurrentUser skip (already loading)')
-      return user.value
+    if (fetchInflight) {
+      console.debug('[auth] fetchCurrentUser dedup (already in-flight)')
+      return fetchInflight
     }
     loading.value = true
-    try {
+    fetchInflight = (async () => { try {
       const requestOptions: Record<string, any> = {
         method: 'GET',
         headers: {
@@ -90,8 +92,11 @@ export function useAuth() {
       }
     } finally {
       loading.value = false
+      fetchInflight = null
     }
     return user.value
+    })()
+    return fetchInflight
   }
 
   async function login(email: string, password: string) {

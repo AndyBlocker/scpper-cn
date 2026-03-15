@@ -262,7 +262,7 @@ async function handleGetSnippet(req: Request, res: Response, next: NextFunction)
     res.setHeader('Cache-Control', `public, max-age=${cacheSeconds}`);
     // Explicitly allow embedding from same origin; avoid upstream defaults like DENY.
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src *; frame-ancestors 'self'");
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     return res.status(200).send(snippet.html);

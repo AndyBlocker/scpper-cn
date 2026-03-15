@@ -985,6 +985,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateHeaderOffset)
   if (typeof stopFocus === 'function') stopFocus();
   if (typeof stopOnline === 'function') stopOnline();
+  // Restore body overflow in case sidebar/search is open during unmount
+  document.body.style.overflow = '';
 });
 
 watch([

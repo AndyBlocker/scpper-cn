@@ -24,6 +24,12 @@ export const config = {
     ttlHours: toNumber(process.env.USER_SESSION_TTL_HOURS, 24 * 7),
     sameSite: (process.env.USER_SESSION_SAMESITE as 'lax' | 'strict' | 'none' | undefined) || 'lax',
     secure: process.env.USER_SESSION_SECURE === 'true',
-    secret: process.env.USER_SESSION_SECRET || 'scpper-dev-secret'
+    secret: (() => {
+      const secret = process.env.USER_SESSION_SECRET;
+      if (!secret && process.env.NODE_ENV === 'production') {
+        throw new Error('USER_SESSION_SECRET must be set in production');
+      }
+      return secret || 'scpper-dev-secret';
+    })()
   }
 };

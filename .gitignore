@@ -43,7 +43,6 @@ tmp/
 temp/
 __pycache__/
 *.pyc
-backend/=
 docs/__pycache__/
 docs/plots/
 docs/gacha-reset-top-card-holders.csv

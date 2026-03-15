@@ -57,6 +57,8 @@ export async function refresh(userid: string, forceResolve = false): Promise<Ava
       const lenStr = head.headers["content-length"] as string | undefined;
       const len = lenStr ? Number(lenStr) : undefined;
       if (!ct.startsWith("image/")) throw new Error(`bad content-type ${ct}`);
+      // Reject SVG to prevent script execution when served directly
+      if (ct.includes("svg")) throw new Error(`svg not allowed: ${ct}`);
       if (len && len > cfg.maxBytes) throw new Error(`too large ${len}`);
 
       const get = await getCloudfront(meta.source_url);

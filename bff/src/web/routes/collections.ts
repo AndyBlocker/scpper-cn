@@ -858,19 +858,18 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
 
       await client.query('BEGIN');
       began = true;
-      let position = 1;
-      for (const itemId of orderList) {
-        await client.query(
-          `
-            UPDATE "UserCollectionItem"
-            SET "order" = $1,
-                "updatedAt" = NOW()
-            WHERE id = $2 AND "collectionId" = $3
-          `,
-          [position, itemId, id]
-        );
-        position += 1;
-      }
+      // Batch update using unnest instead of N individual UPDATE statements
+      const positions = orderList.map((_: number, i: number) => i + 1);
+      await client.query(
+        `
+          UPDATE "UserCollectionItem" AS t
+          SET "order" = v.position,
+              "updatedAt" = NOW()
+          FROM unnest($1::int[], $2::int[]) AS v(item_id, position)
+          WHERE t.id = v.item_id AND t."collectionId" = $3
+        `,
+        [orderList, positions, id]
+      );
       await client.query('COMMIT');
 
       const items = await fetchCollectionItems(pool, id);

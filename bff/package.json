@@ -7,7 +7,7 @@
     "dev": "node ../scripts/service-runner.mjs bff dev",
     "build": "node ../scripts/service-runner.mjs bff build",
     "typecheck": "node ../scripts/service-bin-runner.mjs bff tsc -p tsconfig.json --noEmit",
-    "lint": "node ../scripts/service-bin-runner.mjs backend eslint \"src/**/*.{ts,js}\"",
+    "lint": "node ../scripts/service-bin-runner.mjs bff eslint \"src/**/*.{ts,js}\"",
     "start": "node ../scripts/service-runner.mjs bff start",
     "test": "node ../scripts/service-bin-runner.mjs bff jest",
     "profile:search": "node scripts/profile-search.mjs",

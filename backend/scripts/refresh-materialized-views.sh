@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../.env" 2>/dev/null || true
 
 # 如果 DATABASE_URL 未设置，使用默认值
-DB_URL="${DATABASE_URL:-postgresql://***REMOVED***:***REMOVED***@localhost:5434/scpper-cn}"
+DB_URL="${DATABASE_URL:?DATABASE_URL must be set}"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Refreshing materialized views..."
 

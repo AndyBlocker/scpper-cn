@@ -230,9 +230,6 @@ export class PageVersionStore {
     if (data.commentCount !== undefined) {
       updateData.commentCount = data.commentCount ?? null;
     }
-    if (data.commentCount !== undefined) {
-      updateData.commentCount = data.commentCount ?? null;
-    }
 
     await this.prisma.pageVersion.update({
       where: { id: versionId },

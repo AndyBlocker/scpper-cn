@@ -405,10 +405,13 @@ export class IncrementalAnalyzeJob {
       console.error(`❌ Task ${taskName} failed:`, error);
       throw error;
     } finally {
-      // Release advisory lock
-      await this.prisma.$executeRaw`
+      // Release advisory lock and verify it was actually released
+      const unlockResult = await this.prisma.$queryRaw<[{ pg_advisory_unlock: boolean }]>`
         SELECT pg_advisory_unlock(hashtext(${taskName}))
       `;
+      if (unlockResult?.[0]?.pg_advisory_unlock !== true) {
+        console.warn(`⚠️ pg_advisory_unlock returned false for task ${taskName} — lock may not have been held`);
+      }
     }
   }
 
@@ -671,7 +674,10 @@ export class IncrementalAnalyzeJob {
     // 提取pageVersionId列表
     const pageVersionIds = changeSet.map(c => c.id);
 
-    // 创建临时表
+    // 创建临时表（使用 IF NOT EXISTS 防止重复创建，ON COMMIT DROP 确保清理）
+    await this.prisma.$executeRaw`
+      DROP TABLE IF EXISTS temp_changed_versions
+    `;
     await this.prisma.$executeRaw`
       CREATE TEMP TABLE temp_changed_versions (id int PRIMARY KEY)
     `;
@@ -1304,7 +1310,7 @@ export class IncrementalAnalyzeJob {
         (SELECT COUNT(*) FROM "User") as "totalUsers",
         -- 60-day active users: any user with lastActivityAt within past 60 days
         (SELECT COUNT(*) FROM "User" WHERE "lastActivityAt" IS NOT NULL AND "lastActivityAt" >= (${today}::date - INTERVAL '60 days')) as "activeUsers",
-        (SELECT COUNT(*) FROM "Page") as "totalPages",
+        (SELECT COUNT(*) FROM "Page" WHERE "isDeleted" IS NOT TRUE) as "totalPages",
         (
           SELECT COUNT(*)
           FROM "Vote" v

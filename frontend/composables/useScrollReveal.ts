@@ -68,6 +68,10 @@ export function useScrollReveal(containerRef: Ref<HTMLElement | null>, options?:
   })
 
   onBeforeUnmount(() => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
     cleanup()
   })
 

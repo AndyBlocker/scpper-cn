@@ -1,41 +1,8 @@
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { getReadPoolSync } from '../utils/dbPool.js';
-
-const USER_BACKEND_DEFAULT = 'http://127.0.0.1:4455';
-
-interface AuthUserPayload {
-  id: string;
-  email: string;
-  displayName: string | null;
-  linkedWikidotId: number | null;
-  lastLoginAt: string | null;
-}
-
-async function fetchAuthUser(req: Request): Promise<AuthUserPayload | null> {
-  const base = process.env.USER_BACKEND_BASE_URL || USER_BACKEND_DEFAULT;
-  if (!base || base === 'disable') return null;
-  const target = base.replace(/\/$/, '') + '/auth/me';
-  try {
-    const response = await fetch(target, {
-      method: 'GET',
-      headers: { accept: 'application/json', cookie: req.headers.cookie ?? '' }
-    });
-    if (response.status === 401 || !response.ok) return null;
-    const data = await response.json();
-    if (!data?.ok || !data.user) return null;
-    return {
-      id: String(data.user.id),
-      email: String(data.user.email || ''),
-      displayName: data.user.displayName ?? null,
-      linkedWikidotId: data.user.linkedWikidotId != null ? Number(data.user.linkedWikidotId) : null,
-      lastLoginAt: data.user.lastLoginAt ?? null
-    };
-  } catch {
-    return null;
-  }
-}
+import { fetchAuthUser } from '../utils/auth.js';
 
 async function resolveFollowerId(readPool: Pool, wikidotId: number): Promise<number | null> {
   const row = await readPool.query<{ id: number }>('SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1', [wikidotId]);
@@ -61,6 +28,17 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
 
       const whereType = type && (type === 'REVISION' || type === 'ATTRIBUTION' || type === 'ATTRIBUTION_REMOVED') ? type : null;
 
+      const alertsParams: (number | string)[] = [followerId];
+      let alertsTypeClause = '';
+      if (whereType) {
+        alertsParams.push(whereType);
+        alertsTypeClause = `AND a.type = $${alertsParams.length}`;
+      }
+      alertsParams.push(limit);
+      const limitIdx = alertsParams.length;
+      alertsParams.push(offset);
+      const offsetIdx = alertsParams.length;
+
       const alertsQuery = `
         SELECT a.id, a.type, a."detectedAt", a."acknowledgedAt", a."pageId",
                p."wikidotId" AS "pageWikidotId", p."currentUrl" AS "pageUrl",
@@ -70,19 +48,26 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         JOIN "Page" p ON p.id = a."pageId"
         LEFT JOIN "PageVersion" pv ON pv."pageId" = a."pageId" AND pv."validTo" IS NULL
         WHERE a."followerId" = $1
-          ${whereType ? `AND a.type = '${whereType}'` : ''}
+          ${alertsTypeClause}
         ORDER BY a."detectedAt" DESC
-        LIMIT $2 OFFSET $3
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `;
+
+      const unreadParams: (number | string)[] = [followerId];
+      let unreadTypeClause = '';
+      if (whereType) {
+        unreadParams.push(whereType);
+        unreadTypeClause = `AND type = $${unreadParams.length}`;
+      }
       const unreadQuery = `
         SELECT COUNT(*)::int AS count
         FROM "UserActivityAlert"
         WHERE "followerId" = $1 AND "acknowledgedAt" IS NULL
-          ${whereType ? `AND type = '${whereType}'` : ''}
+          ${unreadTypeClause}
       `;
       const [alertsRes, unreadRes] = await Promise.all([
-        readPool.query(alertsQuery, [followerId, limit, offset]),
-        readPool.query<{ count: number }>(unreadQuery, [followerId])
+        readPool.query(alertsQuery, alertsParams),
+        readPool.query<{ count: number }>(unreadQuery, unreadParams)
       ]);
       res.json({ ok: true, alerts: alertsRes.rows, unreadCount: unreadRes.rows[0]?.count ?? 0 });
     } catch (e) {

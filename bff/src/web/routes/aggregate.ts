@@ -28,7 +28,7 @@ export function aggregateRouter(pool: Pool, _redis: RedisClientType | null) {
 				FROM "PageVersion" pv
 				JOIN "Page" p ON pv."pageId" = p.id
 				WHERE pv."validTo" IS NULL
-				  AND ($1::text IS NULL OR p."currentUrl" LIKE ($1::text || '%'))
+				  AND ($1::text IS NULL OR p."currentUrl" LIKE ($1::text || '%') ESCAPE '\')
 				  AND ($2::text IS NULL OR lower(pv.title) = $2::text)
 				  AND ($3::text IS NULL OR pv.category = $3::text)
 				  AND ($4::text IS NULL OR pv.tags @> ARRAY[$4::text]::text[])
@@ -38,8 +38,13 @@ export function aggregateRouter(pool: Pool, _redis: RedisClientType | null) {
 				  AND ($8::timestamptz IS NULL OR pv."createdAt" <= $8::timestamptz)
 			`;
 
+			// Escape LIKE wildcards in urlStartsWith to prevent pattern injection
+			const safeUrlStartsWith = urlStartsWith
+				? urlStartsWith.replace(/[%_\\]/g, '\\$&')
+				: null;
+
 			const params = [
-				urlStartsWith || null,
+				safeUrlStartsWith || null,
 				titleEqLower || null,
 				categoryEq || null,
 				tagEq || null,

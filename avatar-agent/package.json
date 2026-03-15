@@ -9,7 +9,7 @@
     "start": "node ../scripts/service-runner.mjs avatar-agent start",
     "dev": "node ../scripts/service-runner.mjs avatar-agent dev",
     "predev": "npm run build",
-    "lint": "node ../backend/node_modules/eslint/bin/eslint.js \"src/**/*.ts\" \"scripts/**/*.ts\"",
+    "lint": "node ../scripts/service-bin-runner.mjs avatar-agent eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "prune": "node ../scripts/service-runner.mjs avatar-agent prune",
     "stat": "AVATAR_ROOT=/home/andyblocker/scpper-cn/.data/avatar-agent/avatars node dist/scripts/stat.js",
     "stat:pretty": "AVATAR_ROOT=/home/andyblocker/scpper-cn/.data/avatar-agent/avatars node dist/scripts/stat.js --pretty",

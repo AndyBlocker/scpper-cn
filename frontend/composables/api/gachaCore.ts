@@ -45,18 +45,36 @@ const POOLS_CACHE_MS = 30_000
 const ECONOMY_CACHE_MS = 60_000
 const FEATURES_CACHE_MS = 120_000
 
-// ─── Inflight Dedup ──────────────────────────────────────
+// ─── Per-request Inflight Dedup (SSR-safe) ───────────────
+// These must NOT be module-level in SSR — they would be shared across
+// concurrent requests and leak data between users.
+// We store inflight state on the NuxtApp instance, which is per-request in SSR.
 
-let configInflight: Promise<LoadResult<GachaConfig>> | null = null
-let economyInflight: Promise<LoadResult<EconomyConfig>> | null = null
-let walletInflight: Promise<LoadResult<Wallet>> | null = null
-let featuresInflight: Promise<{ ok: true; data: GachaFeatureStatus } | { ok: false; error: string }> | null = null
-let featuresCachedResult: { data: GachaFeatureStatus; fetchedAt: number } | null = null
+interface GachaInflightState {
+  configInflight: Promise<LoadResult<GachaConfig>> | null
+  economyInflight: Promise<LoadResult<EconomyConfig>> | null
+  walletInflight: Promise<LoadResult<Wallet>> | null
+  featuresInflight: Promise<{ ok: true; data: GachaFeatureStatus } | { ok: false; error: string }> | null
+  featuresCachedResult: { data: GachaFeatureStatus; fetchedAt: number } | null
+  walletUpdateSeq: number
+}
 
-// Monotonic sequence counter to prevent stale wallet overwrites.
-// When two concurrent API calls return wallet data, the later-started call
-// should not overwrite a fresher response from the earlier-completed call.
-let walletUpdateSeq = 0
+const INFLIGHT_KEY = '__gachaInflight'
+
+function getInflightState(): GachaInflightState {
+  const nuxtApp = useNuxtApp() as any
+  if (!nuxtApp[INFLIGHT_KEY]) {
+    nuxtApp[INFLIGHT_KEY] = {
+      configInflight: null,
+      economyInflight: null,
+      walletInflight: null,
+      featuresInflight: null,
+      featuresCachedResult: null,
+      walletUpdateSeq: 0
+    }
+  }
+  return nuxtApp[INFLIGHT_KEY]
+}
 
 // ─── Helpers ─────────────────────────────────────────────
 
@@ -124,6 +142,7 @@ export function useGachaCore() {
   const runtimeConfig = useRuntimeConfig()
   const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase)
   const state = useState<GachaState>('gacha/state', createState)
+  const _ifl = getInflightState()
 
   const normalizeImageUrl = (url?: string | null): string | null => {
     const full = resolveAssetUrl(url ?? '', bffBase, { variant: 'low' })
@@ -166,18 +185,18 @@ export function useGachaCore() {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
   }
 
-  const captureWalletSeq = () => walletUpdateSeq
+  const captureWalletSeq = () => _ifl.walletUpdateSeq
 
   const setWalletIfFresh = (wallet: Wallet, capturedSeq: number) => {
-    if (walletUpdateSeq !== capturedSeq) return // a newer update already occurred
-    walletUpdateSeq++
+    if (_ifl.walletUpdateSeq !== capturedSeq) return // a newer update already occurred
+    _ifl.walletUpdateSeq++
     state.value.wallet = wallet
     state.value.walletFetchedAt = new Date().toISOString()
   }
 
   // Direct wallet update (always applies, for primary wallet fetches)
   const setWalletDirect = (wallet: Wallet) => {
-    walletUpdateSeq++
+    _ifl.walletUpdateSeq++
     state.value.wallet = wallet
     state.value.walletFetchedAt = new Date().toISOString()
   }
@@ -220,10 +239,10 @@ export function useGachaCore() {
         return { ok: true as const, data: state.value.config }
       }
     }
-    if (configInflight) {
-      return configInflight
+    if (_ifl.configInflight) {
+      return _ifl.configInflight
     }
-    configInflight = (async () => {
+    _ifl.configInflight = (async () => {
       state.value.configLoading = true
       try {
         const res = await $bff<ApiResponse<{ config: GachaConfig }>>('/gacha/config', { method: 'GET' })
@@ -239,20 +258,20 @@ export function useGachaCore() {
         return { ok: false as const, error: message }
       } finally {
         state.value.configLoading = false
-        configInflight = null
+        _ifl.configInflight = null
       }
     })()
-    return configInflight
+    return _ifl.configInflight
   }
 
   async function getFeatures() {
     // Return cached result if fresh
-    if (featuresCachedResult && Date.now() - featuresCachedResult.fetchedAt <= FEATURES_CACHE_MS) {
-      return { ok: true as const, data: featuresCachedResult.data }
+    if (_ifl.featuresCachedResult && Date.now() - _ifl.featuresCachedResult.fetchedAt <= FEATURES_CACHE_MS) {
+      return { ok: true as const, data: _ifl.featuresCachedResult.data }
     }
-    if (featuresInflight) return featuresInflight
+    if (_ifl.featuresInflight) return _ifl.featuresInflight
 
-    featuresInflight = (async () => {
+    _ifl.featuresInflight = (async () => {
       try {
         const res = await $bff<ApiResponse<GachaFeatureStatus>>('/gacha/features', { method: 'GET' })
         if (res?.ok) {
@@ -273,17 +292,17 @@ export function useGachaCore() {
             },
             notes: res.notes || {}
           }
-          featuresCachedResult = { data, fetchedAt: Date.now() }
+          _ifl.featuresCachedResult = { data, fetchedAt: Date.now() }
           return { ok: true as const, data }
         }
         return { ok: false as const, error: res?.error || '加载玩法能力失败' }
       } catch (error: unknown) {
         return { ok: false as const, error: normalizeError(error, '加载玩法能力失败') }
       } finally {
-        featuresInflight = null
+        _ifl.featuresInflight = null
       }
     })()
-    return featuresInflight
+    return _ifl.featuresInflight
   }
 
   async function getWallet(force = false) {
@@ -293,10 +312,10 @@ export function useGachaCore() {
         return { ok: true as const, data: state.value.wallet }
       }
     }
-    if (walletInflight) {
-      return walletInflight
+    if (_ifl.walletInflight) {
+      return _ifl.walletInflight
     }
-    walletInflight = (async () => {
+    _ifl.walletInflight = (async () => {
       state.value.walletLoading = true
       try {
         const res = await $bff<ApiResponse<{ wallet: Wallet }>>('/gacha/wallet', { method: 'GET' })
@@ -311,10 +330,10 @@ export function useGachaCore() {
         return { ok: false as const, error: message }
       } finally {
         state.value.walletLoading = false
-        walletInflight = null
+        _ifl.walletInflight = null
       }
     })()
-    return walletInflight
+    return _ifl.walletInflight
   }
 
   async function claimDaily() {
@@ -337,10 +356,10 @@ export function useGachaCore() {
         return { ok: true as const, data: state.value.economy }
       }
     }
-    if (economyInflight) {
-      return economyInflight
+    if (_ifl.economyInflight) {
+      return _ifl.economyInflight
     }
-    economyInflight = (async () => {
+    _ifl.economyInflight = (async () => {
       state.value.economyLoading = true
       try {
         const res = await $bff<ApiResponse<{ rewards: EconomyConfig }>>('/gacha/admin/economy', { method: 'GET' })
@@ -356,10 +375,10 @@ export function useGachaCore() {
         return { ok: false as const, error: message }
       } finally {
         state.value.economyLoading = false
-        economyInflight = null
+        _ifl.economyInflight = null
       }
     })()
-    return economyInflight
+    return _ifl.economyInflight
   }
 
   function resetCache() {

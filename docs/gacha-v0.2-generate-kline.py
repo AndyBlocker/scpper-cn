@@ -12,7 +12,7 @@ import pandas as pd
 PSQL_BIN = '/usr/lib/postgresql/17/bin/psql'
 DB_URL = os.environ.get(
     'DATABASE_URL',
-    'postgresql://***REMOVED***:***REMOVED***@localhost:5434/scpper-cn'
+    'postgresql://localhost:5434/scpper-cn'
 )
 
 INDEX_BASE = 100.0

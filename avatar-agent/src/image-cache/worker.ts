@@ -71,7 +71,10 @@ function resolveHost(url: string): string | null {
 
 function isAllowedImageHost(url: string): boolean {
   const allowed = cfg.imageCache.allowedHosts;
-  if (!allowed || allowed.length === 0) return true;
+  if (!allowed || allowed.length === 0) {
+    log.warn({ url }, 'PAGE_IMAGE_ALLOWED_HOSTS not configured, rejecting all image URLs');
+    return false;
+  }
   const host = resolveHost(url);
   if (!host) return false;
   return allowed.includes(host);
