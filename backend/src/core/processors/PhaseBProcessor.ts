@@ -226,6 +226,10 @@ export class PhaseBProcessor {
       const chunk = bucket.slice(i, i + CHUNK_SIZE);
       
       // Process pages and collect PhaseC candidates
+      // Use chunk-level counters to avoid double-counting if tx fails and fallback runs
+      let chunkSaved = 0;
+      let chunkDeleted = 0;
+      let chunkSkipped = 0;
       try {
         await this.store.prisma.$transaction(async (tx) => {
           for (const page of chunk) {
@@ -237,16 +241,16 @@ export class PhaseBProcessor {
 
             if (!pageData) {
               if (flaggedByStaging || flaggedByReason || flaggedByLocalDelete) {
-                await this.store.markDeletedByWikidotId(page.wikidotId);
-                deletedCount++;
+                await this.store.markDeletedByWikidotId(page.wikidotId, tx);
+                chunkDeleted++;
               } else {
                 Logger.warn('Phase B: Skipping deletion for missing remote page data', {
                   url: page.url,
                   wikidotId: page.wikidotId,
                   reasons: page.reasons,
                 });
-                await this.store.clearDirtyFlag(page.wikidotId, 'B');
-                skippedCount++;
+                await this.store.clearDirtyFlag(page.wikidotId, 'B', tx);
+                chunkSkipped++;
               }
               continue;
             }
@@ -254,30 +258,34 @@ export class PhaseBProcessor {
             if (pageData) {
               const revisionsCount = pageData.revisions?.edges?.length || 0;
               const votesCount = pageData.fuzzyVoteRecords?.edges?.length || 0;
-              const needsPhaseC = 
-                (pageData.revisions?.pageInfo?.hasNextPage && revisionsCount >= MAX_FIRST) || 
+              const needsPhaseC =
+                (pageData.revisions?.pageInfo?.hasNextPage && revisionsCount >= MAX_FIRST) ||
                 (pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage && votesCount >= MAX_FIRST);
-              
+
               await this.store.upsertPageContent({
                 ...pageData,
                 wikidotId: page.wikidotId
-              });
-              await this.store.clearDirtyFlag(page.wikidotId, 'B');
-              
+              }, tx);
+              await this.store.clearDirtyFlag(page.wikidotId, 'B', tx);
+
               if (needsPhaseC) {
                 const additionalReasons = [
                   pageData.revisions?.pageInfo?.hasNextPage ? 'incomplete_revisions' : '',
                   pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage ? 'incomplete_votes' : ''
                 ].filter(Boolean);
-                await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons);
+                await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons, tx);
               }
-              savedCount++;
+              chunkSaved++;
             }
           }
-        }, { 
+        }, {
           isolationLevel: 'Serializable',
           timeout: 30000
         });
+        // Commit chunk counters only after tx succeeds
+        savedCount += chunkSaved;
+        deletedCount += chunkDeleted;
+        skippedCount += chunkSkipped;
       } catch (error) {
         Logger.error(`❌ Failed to process chunk ${i}-${i + chunk.length}:`, error);
         for (const page of chunk) {

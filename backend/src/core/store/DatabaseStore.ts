@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
 import { getPrismaClient, disconnectPrisma } from '../../utils/db-connection.js';
 import { PageStore } from './PageStore.js';
@@ -8,6 +8,8 @@ import { DirtyQueueStore } from './DirtyQueueStore.js';
 import { SourceVersionService } from '../../services/SourceVersionService.js';
 import { AttributionService } from './AttributionService.js';
 import { shouldCreateNewVersion } from './versionRules.js';
+
+export type DbClient = PrismaClient | Prisma.TransactionClient;
 
 /**
  * 数据库存储主类
@@ -186,9 +188,9 @@ export class DatabaseStore {
   /**
    * Phase B: 更新页面内容
    */
-  async upsertPageContent(data: any) {
+  async upsertPageContent(data: any, tx?: DbClient) {
     // Delegate to PageVersionStore which handles version management properly
-    await this.pageVersionStore.upsertPageContent(data);
+    await this.pageVersionStore.upsertPageContent(data, tx);
   }
 
   /**
@@ -505,8 +507,8 @@ export class DatabaseStore {
     return await this.dirtyQueueStore.fetchDirtyPages(phase, limit);
   }
 
-  async clearDirtyFlag(wikidotId: number, phase: 'B' | 'C') {
-    return await this.dirtyQueueStore.clearDirtyFlag(wikidotId, phase);
+  async clearDirtyFlag(wikidotId: number, phase: 'B' | 'C', tx?: DbClient) {
+    return await this.dirtyQueueStore.clearDirtyFlag(wikidotId, phase, tx);
   }
 
   async cleanupStagingData(olderThanHours = 24) {
@@ -517,29 +519,29 @@ export class DatabaseStore {
     return await this.pageStore.findPageByIdentifier(identifier);
   }
 
-  async markPageDeleted(pageId: number) {
-    return await this.pageStore.markPageDeleted(pageId);
+  async markPageDeleted(pageId: number, tx?: DbClient) {
+    return await this.pageStore.markPageDeleted(pageId, tx);
   }
 
   /**
    * 通过 wikidotId 标记页面删除（若找到 page 则调用 PageStore 以生成删除版本），并清理脏标记
    */
-  async markDeletedByWikidotId(wikidotId: number): Promise<void> {
-    const existingPage = await this.prisma.page.findUnique({
+  async markDeletedByWikidotId(wikidotId: number, tx?: DbClient): Promise<void> {
+    const db = tx ?? this.prisma;
+    const existingPage = await db.page.findUnique({
       where: { wikidotId }
     });
 
     if (existingPage) {
-      await this.markPageDeleted(existingPage.id);
+      await this.markPageDeleted(existingPage.id, tx);
     } else {
-      // 没有找到页面，尽量清理标记避免循环
       Logger.warn(`No page entity for wikidotId ${wikidotId}, marking flags cleared only`);
     }
     try {
-      await this.clearDirtyFlag(wikidotId, 'B');
+      await this.clearDirtyFlag(wikidotId, 'B', tx);
     } catch {}
     try {
-      await this.clearDirtyFlag(wikidotId, 'C');
+      await this.clearDirtyFlag(wikidotId, 'C', tx);
     } catch {}
   }
 
@@ -615,15 +617,16 @@ export class DatabaseStore {
   /**
    * 标记页面需要 Phase C（合并 reasons），若不存在则创建 dirtyPage
    */
-  async markForPhaseC(wikidotId: number, pageId: number | null, reasons: string[]): Promise<void> {
-    const existingDirtyPage = await this.prisma.dirtyPage.findFirst({
+  async markForPhaseC(wikidotId: number, pageId: number | null, reasons: string[], tx?: DbClient): Promise<void> {
+    const db = tx ?? this.prisma;
+    const existingDirtyPage = await db.dirtyPage.findFirst({
       where: { wikidotId }
     });
 
     const mergedReasons = Array.from(new Set([...(existingDirtyPage?.reasons || []), ...reasons]));
 
     if (existingDirtyPage) {
-      await this.prisma.dirtyPage.update({
+      await db.dirtyPage.update({
         where: { id: existingDirtyPage.id },
         data: {
           needPhaseC: true,
@@ -632,7 +635,7 @@ export class DatabaseStore {
         }
       });
     } else {
-      await this.prisma.dirtyPage.create({
+      await db.dirtyPage.create({
         data: {
           wikidotId,
           pageId: pageId ?? undefined,

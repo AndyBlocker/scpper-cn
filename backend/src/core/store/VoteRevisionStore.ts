@@ -1,12 +1,73 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 /**
  * 投票和修订记录存储类
  * 负责Vote和Revision表的操作
  */
 export class VoteRevisionStore {
-  constructor(private prisma: PrismaClient) {}
+  constructor(private prisma: DbClient) {}
+
+  /**
+   * Batch-upsert all unique users from vote + revision edges, returning a wikidotId → userId Map.
+   */
+  private async batchUpsertUsers(voteEdges: any[], revisionEdges: any[]): Promise<Map<number, number>> {
+    const userDataMap = new Map<number, { wikidotId: number; displayName: string | null; username: string | null; isGuest: boolean | null }>();
+    for (const edge of voteEdges) {
+      const v = edge.node;
+      if (v.user?.wikidotId) {
+        const wid = parseInt(v.user.wikidotId, 10);
+        if (!Number.isNaN(wid)) {
+          userDataMap.set(wid, { wikidotId: wid, displayName: v.user.displayName || v.user.username, username: v.user.username, isGuest: v.user.isGuest ?? null });
+        }
+      } else if (v.userWikidotId) {
+        const wid = parseInt(v.userWikidotId, 10);
+        if (!Number.isNaN(wid) && !userDataMap.has(wid)) {
+          userDataMap.set(wid, { wikidotId: wid, displayName: `wd:${v.userWikidotId}`, username: null, isGuest: null });
+        }
+      }
+    }
+    for (const edge of revisionEdges) {
+      const r = edge.node;
+      if (r.user?.wikidotId) {
+        const wid = parseInt(r.user.wikidotId, 10);
+        if (!Number.isNaN(wid)) {
+          userDataMap.set(wid, { wikidotId: wid, displayName: r.user.displayName || r.user.username, username: r.user.username, isGuest: r.user.isGuest ?? null });
+        }
+      }
+    }
+
+    const result = new Map<number, number>();
+    if (userDataMap.size === 0) return result;
+
+    const entries = [...userDataMap.values()];
+    const wids = entries.map(e => e.wikidotId);
+    const names = entries.map(e => e.displayName ?? e.username ?? `wd:${e.wikidotId}`);
+    const usernames = entries.map(e => e.username ?? null);
+    const guests = entries.map(e => e.isGuest);
+
+    // Use COALESCE to avoid overwriting richer existing data with placeholder values.
+    // EXCLUDED has the incoming row; "User" refers to the existing row.
+    const rows: Array<{ id: number; wikidotId: number }> = await this.prisma.$queryRawUnsafe(
+      `INSERT INTO "User" ("wikidotId", "displayName", "username", "isGuest", "createdAt", "updatedAt")
+       SELECT wid, dn, un, ig, NOW(), NOW()
+       FROM unnest($1::int[], $2::text[], $3::text[], $4::bool[]) AS t(wid, dn, un, ig)
+       ON CONFLICT ("wikidotId") DO UPDATE SET
+         "displayName" = COALESCE(NULLIF(EXCLUDED."displayName", 'wd:' || "User"."wikidotId"::text), "User"."displayName", EXCLUDED."displayName"),
+         "username" = COALESCE(EXCLUDED."username", "User"."username"),
+         "isGuest" = COALESCE(EXCLUDED."isGuest", "User"."isGuest"),
+         "updatedAt" = NOW()
+       RETURNING id, "wikidotId"`,
+      wids, names, usernames, guests
+    );
+
+    for (const row of rows) {
+      result.set(row.wikidotId, row.id);
+    }
+    return result;
+  }
 
   /**
    * 导入投票和修订记录
@@ -17,14 +78,20 @@ export class VoteRevisionStore {
       revisions: { inserted: 0, updated: 0, errors: 0 }
     };
 
+    const voteEdges = data.votes?.edges ?? [];
+    const revisionEdges = data.revisions?.edges ?? [];
+
+    // Batch-upsert all users first (1 query instead of N)
+    const userMap = await this.batchUpsertUsers(voteEdges, revisionEdges);
+
     // 处理投票
-    if (data.votes?.edges) {
-      stats.votes = await this.importVotes(pageVersionId, data.votes.edges);
+    if (voteEdges.length > 0) {
+      stats.votes = await this.importVotes(pageVersionId, voteEdges, userMap);
     }
 
     // 处理修订
-    if (data.revisions?.edges) {
-      stats.revisions = await this.importRevisions(pageVersionId, data.revisions.edges);
+    if (revisionEdges.length > 0) {
+      stats.revisions = await this.importRevisions(pageVersionId, revisionEdges, userMap);
     }
 
     Logger.info(`📊 Import stats for pageVersion ${pageVersionId}:
@@ -37,7 +104,7 @@ export class VoteRevisionStore {
   /**
    * 导入投票记录
    */
-  private async importVotes(pageVersionId: number, voteEdges: any[]) {
+  private async importVotes(pageVersionId: number, voteEdges: any[], userMap: Map<number, number>) {
     const stats = { inserted: 0, updated: 0, skipped: 0, errors: 0 };
     const batchSize = 100;
     const votes = voteEdges.map(edge => edge.node);
@@ -74,20 +141,11 @@ export class VoteRevisionStore {
         const voteData: Array<{ pageVersionId: number; userId: number | null; anonKey: string | null; direction: number; timestamp: Date; key: string | null }> = [];
         for (const vote of batch) {
           let userId: number | null = null;
-          if (vote.user) {
-            const user = await this.upsertUser(vote.user);
-            userId = user?.id ?? null;
-          } else if (vote.userWikidotId) {
-            // 兜底：只有 wikidotId 也建一个占位用户，避免丢票
-            const user = await this.prisma.user.upsert({
-              where: { wikidotId: parseInt(vote.userWikidotId, 10) },
-              update: {},
-              create: {
-                wikidotId: parseInt(vote.userWikidotId, 10),
-                displayName: `wd:${vote.userWikidotId}`
-              }
-            });
-            userId = user.id;
+          const wid = vote.user?.wikidotId
+            ? parseInt(vote.user.wikidotId, 10)
+            : (vote.userWikidotId ? parseInt(vote.userWikidotId, 10) : NaN);
+          if (!Number.isNaN(wid)) {
+            userId = userMap.get(wid) ?? null;
           }
 
           const direction = typeof vote.direction === 'number' ? vote.direction : Number.parseInt(String(vote.direction ?? '0'), 10);
@@ -224,16 +282,16 @@ export class VoteRevisionStore {
   /**
    * 导入修订记录
    */
-  private async importRevisions(pageVersionId: number, revisionEdges: any[]) {
+  private async importRevisions(pageVersionId: number, revisionEdges: any[], userMap: Map<number, number>) {
     const stats = { inserted: 0, updated: 0, errors: 0 };
     const revisions = revisionEdges.map(edge => edge.node);
 
     for (const revision of revisions) {
       try {
-        let userId = null;
-        if (revision.user) {
-          const user = await this.upsertUser(revision.user);
-          userId = user?.id || null;
+        let userId: number | null = null;
+        if (revision.user?.wikidotId) {
+          const wid = parseInt(revision.user.wikidotId, 10);
+          userId = !Number.isNaN(wid) ? (userMap.get(wid) ?? null) : null;
         }
 
         await this.prisma.revision.upsert({
@@ -268,33 +326,4 @@ export class VoteRevisionStore {
     return stats;
   }
 
-  /**
-   * 创建或更新用户
-   */
-  private async upsertUser(userData: any): Promise<any | null> {
-    if (!userData || !userData.wikidotId) {
-      return null;
-    }
-
-    try {
-      const user = await this.prisma.user.upsert({
-        where: { wikidotId: parseInt(userData.wikidotId, 10) },
-        update: {
-          displayName: userData.displayName || userData.username,
-          username: userData.username,
-          isGuest: userData.isGuest || false
-        },
-        create: {
-          wikidotId: parseInt(userData.wikidotId, 10),
-          displayName: userData.displayName || userData.username,
-          username: userData.username,
-          isGuest: userData.isGuest || false
-        }
-      });
-      return user;
-    } catch (error) {
-      Logger.error(`Failed to upsert user ${userData.wikidotId}: ${error}`);
-      return null;
-    }
-  }
 }

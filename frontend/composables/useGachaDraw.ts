@@ -492,26 +492,11 @@ export function useGachaDraw(page: GachaPageContext) {
   // ─── Activation ───────────────────────────────────────
 
   async function handleActivate() {
-    if (page.activating.value) return
-    page.activating.value = true
-    page.activationError.value = null
-    try {
-      const res = await gacha.activate()
-      if (!res.ok) {
-        page.activationError.value = res.error || '激活失败'
-        return
-      }
-      await Promise.allSettled([gacha.getWallet(true), refreshConfig(true)])
+    const result = await page.handleActivate()
+    if (result.ok) {
       activated.value = true
-      await Promise.allSettled([
-        refreshHistory(),
-        refreshTicketsPanel()
-      ])
-    } catch (error: unknown) {
-      page.activationError.value = normalizeError(error, '激活失败')
-    } finally {
-      page.activating.value = false
     }
+    return result
   }
 
   // ─── Draw ─────────────────────────────────────────────

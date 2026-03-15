@@ -1,5 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../utils/Logger.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 export class SourceVersionService {
   private prisma: PrismaClient;
@@ -15,12 +17,13 @@ export class SourceVersionService {
   async manageSourceVersion(pageVersionId: number, data: {
     source?: string;
     textContent?: string;
-  }) {
+  }, outerTx?: DbClient) {
     Logger.debug(`📋 Managing source version for PageVersion ${pageVersionId}`);
+    const db = outerTx ?? this.prisma;
 
     try {
       // 1. 获取当前最新的SourceVersion
-      const currentSourceVersion = await this.prisma.sourceVersion.findFirst({
+      const currentSourceVersion = await db.sourceVersion.findFirst({
         where: {
           pageVersionId,
           isLatest: true,
@@ -29,7 +32,7 @@ export class SourceVersionService {
       });
 
       // 2. 查找最新的SOURCE_CHANGED revision
-      const latestSourceRevision = await this.prisma.revision.findFirst({
+      const latestSourceRevision = await db.revision.findFirst({
         where: {
           pageVersionId,
           type: 'SOURCE_CHANGED',
@@ -50,7 +53,8 @@ export class SourceVersionService {
           pageVersionId,
           latestSourceRevision,
           data,
-          currentSourceVersion
+          currentSourceVersion,
+          outerTx
         );
       } else {
         // 不需要创建新版本，但可能需要更新现有版本的内容
@@ -61,7 +65,7 @@ export class SourceVersionService {
             
           if (hasContentChanges) {
             Logger.debug(`📝 Updating existing source version for PageVersion ${pageVersionId}`);
-            await this.updateExistingSourceVersion(currentSourceVersion.id, data);
+            await this.updateExistingSourceVersion(currentSourceVersion.id, data, outerTx);
           } else {
             Logger.debug(`⏭️ No changes needed for PageVersion ${pageVersionId}`);
           }
@@ -118,9 +122,10 @@ export class SourceVersionService {
     pageVersionId: number,
     latestSourceRevision: any,
     data: any,
-    currentSourceVersion: any
+    currentSourceVersion: any,
+    outerTx?: DbClient
   ) {
-    await this.prisma.$transaction(async (tx) => {
+    const doWork = async (tx: DbClient) => {
       // 1. 将现有版本标记为非最新
       if (currentSourceVersion) {
         await tx.sourceVersion.update({
@@ -143,25 +148,32 @@ export class SourceVersionService {
       });
 
       Logger.info(`✅ Created new SourceVersion ${newSourceVersion.id} (revision: ${newSourceVersion.revisionNumber || 'initial'})`);
-    }, { timeout: 30000 });
+    };
+
+    if (outerTx) {
+      await doWork(outerTx);
+    } else {
+      await this.prisma.$transaction(async (tx) => doWork(tx), { timeout: 30000 });
+    }
   }
 
   /**
    * 更新现有的SourceVersion
    */
-  private async updateExistingSourceVersion(sourceVersionId: number, data: any) {
+  private async updateExistingSourceVersion(sourceVersionId: number, data: any, outerTx?: DbClient) {
     const updateData: any = {};
-    
+
     if (data.source !== undefined) {
       updateData.source = data.source;
     }
-    
+
     if (data.textContent !== undefined) {
       updateData.textContent = data.textContent;
     }
 
     if (Object.keys(updateData).length > 0) {
-      await this.prisma.sourceVersion.update({
+      const db = outerTx ?? this.prisma;
+      await db.sourceVersion.update({
         where: { id: sourceVersionId },
         data: updateData,
       });

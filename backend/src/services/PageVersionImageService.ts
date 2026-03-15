@@ -157,13 +157,13 @@ export class PageVersionImageService {
     return Array.from(map.values());
   }
 
-  async syncPageVersionImages(pageVersionId: number, source: string | null | undefined) {
+  async syncPageVersionImages(pageVersionId: number, source: string | null | undefined, outerTx?: Prisma.TransactionClient) {
     const candidates = this.extractImageCandidates(source);
     if (candidates.length === 0) {
       Logger.debug(`🖼️ No image candidates detected for PageVersion ${pageVersionId}`);
     }
 
-    await this.prisma.$transaction(async tx => {
+    const doWork = async (tx: Prisma.TransactionClient) => {
       const existing = await (tx as any).pageVersionImage.findMany({
         where: { pageVersionId },
         include: { ingestJob: true }
@@ -243,7 +243,13 @@ export class PageVersionImageService {
           });
         }
       }
-    });
+    };
+
+    if (outerTx) {
+      await doWork(outerTx);
+    } else {
+      await this.prisma.$transaction(async (tx) => doWork(tx));
+    }
   }
 
   private async ensureJob(tx: Prisma.TransactionClient, pageVersionImageId: number, now: Date, isNew: boolean) {

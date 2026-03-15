@@ -1,10 +1,12 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
 import { SourceVersionService } from '../../services/SourceVersionService.js';
 import { shouldCreateNewVersion } from './versionRules.js';
 import { AttributionService } from './AttributionService.js';
 import { PageVersionImageService } from '../../services/PageVersionImageService.js';
 import { PageReferenceService } from '../../services/PageReferenceService.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 /**
  * 页面版本操作存储类
@@ -26,13 +28,14 @@ export class PageVersionStore {
   /**
    * 更新页面内容（Phase B）
    */
-  async upsertPageContent(data: any) {
+  async upsertPageContent(data: any, outerTx?: DbClient) {
     if (!data.wikidotId) {
       Logger.error('wikidotId is required for Phase B');
       return;
     }
+    const db = outerTx ?? this.prisma;
 
-    let page = await this.prisma.page.findUnique({
+    let page = await db.page.findUnique({
       where: { wikidotId: parseInt(data.wikidotId) },
       include: {
         versions: {
@@ -47,7 +50,7 @@ export class PageVersionStore {
       // Auto-create page entity if missing (new page flow)
       Logger.warn(`Page with wikidotId ${data.wikidotId} not found. Creating a new page entity.`);
       try {
-        page = await this.prisma.page.create({
+        page = await db.page.create({
           data: {
             wikidotId: parseInt(data.wikidotId),
             url: data.url,
@@ -77,7 +80,7 @@ export class PageVersionStore {
         const newHistory = Array.isArray(page.urlHistory)
           ? Array.from(new Set([...(page.urlHistory as string[]), page.currentUrl, incomingUrl]))
           : [page.currentUrl, incomingUrl].filter(Boolean);
-        await this.prisma.page.update({
+        await db.page.update({
           where: { id: page.id },
           data: {
             currentUrl: incomingUrl,
@@ -87,7 +90,7 @@ export class PageVersionStore {
         });
         Logger.info(`✅ Synchronized page URL for wikidotId ${data.wikidotId}: ${page.currentUrl} -> ${incomingUrl}`);
         // Refresh the page object to reflect the new currentUrl in memory
-        page = await this.prisma.page.findUnique({
+        const refreshed = await db.page.findUnique({
           where: { id: page.id },
           include: {
             versions: {
@@ -96,7 +99,8 @@ export class PageVersionStore {
               take: 1
             }
           }
-        }) as typeof page;
+        });
+        if (refreshed) page = refreshed;
       }
     } catch (e) {
       Logger.warn(`Failed to sync URL for wikidotId ${data.wikidotId}: ${(e as any)?.message ?? e}`);
@@ -106,16 +110,16 @@ export class PageVersionStore {
     let targetVersionId: number;
     if (!currentVersion) {
       // No current version exists yet (brand new page)
-      const newVersion = await this.createNewVersion(page.id, null, data);
+      const newVersion = await this.createNewVersion(page.id, null, data, outerTx);
       targetVersionId = newVersion.id;
     } else {
       const needsNewVersion = shouldCreateNewVersion(currentVersion, data);
       if (needsNewVersion) {
-        const newVersion = await this.createNewVersion(page.id, currentVersion, data);
+        const newVersion = await this.createNewVersion(page.id, currentVersion, data, outerTx);
         targetVersionId = newVersion.id;
       } else {
         // Always update rating and revisionCount regardless of whether they changed
-        await this.updateExistingVersion(currentVersion.id, data, true);
+        await this.updateExistingVersion(currentVersion.id, data, true, outerTx);
         targetVersionId = currentVersion.id;
       }
     }
@@ -124,30 +128,28 @@ export class PageVersionStore {
     if (data.source) {
       await this.sourceVersionService.manageSourceVersion(
         targetVersionId,
-        {
-          source: data.source,
-          textContent: data.textContent
-        }
+        { source: data.source, textContent: data.textContent },
+        outerTx
       );
     }
 
     const pageSource = typeof data.source === 'string' ? data.source : null;
 
-    await this.pageReferenceService.syncPageReferences(targetVersionId, pageSource);
+    await this.pageReferenceService.syncPageReferences(targetVersionId, pageSource, outerTx);
 
     if (pageSource) {
-      await this.pageVersionImageService.syncPageVersionImages(targetVersionId, pageSource);
+      await this.pageVersionImageService.syncPageVersionImages(targetVersionId, pageSource, outerTx);
     }
 
     // 处理归属
     if (data.attributions) {
-      await this.attributionService.importAttributions(targetVersionId, data.attributions);
+      await this.attributionService.importAttributions(targetVersionId, data.attributions, outerTx);
     }
-    
+
     // 处理投票和修订数据 (Phase B 也要保存获取到的数据)
     if (data.fuzzyVoteRecords || data.revisions) {
       const VoteRevisionStore = await import('./VoteRevisionStore.js');
-      const voteRevisionStore = new VoteRevisionStore.VoteRevisionStore(this.prisma);
+      const voteRevisionStore = new VoteRevisionStore.VoteRevisionStore(db);
       await voteRevisionStore.importVotesAndRevisions(targetVersionId, {
         votes: data.fuzzyVoteRecords,
         revisions: data.revisions
@@ -163,8 +165,8 @@ export class PageVersionStore {
   /**
    * 创建新版本
    */
-  private async createNewVersion(pageId: number, currentVersion: any, data: any) {
-    return await this.prisma.$transaction(async (tx) => {
+  private async createNewVersion(pageId: number, currentVersion: any, data: any, outerTx?: DbClient) {
+    const doWork = async (tx: DbClient) => {
       // 结束当前版本
       if (currentVersion) {
         await tx.pageVersion.update({
@@ -198,13 +200,18 @@ export class PageVersionStore {
 
       Logger.info(`✅ Created new version for page ${pageId}`);
       return newVersion;
-    }, { timeout: 30000 });
+    };
+
+    if (outerTx) {
+      return await doWork(outerTx);
+    }
+    return await this.prisma.$transaction(async (tx) => doWork(tx), { timeout: 30000 });
   }
 
   /**
    * 更新现有版本
    */
-  private async updateExistingVersion(versionId: number, data: any, forceUpdateStats: boolean = false) {
+  private async updateExistingVersion(versionId: number, data: any, forceUpdateStats: boolean = false, outerTx?: DbClient) {
     const updateData: any = {
       // 元数据字段
       title: data.title ?? undefined,
@@ -231,7 +238,8 @@ export class PageVersionStore {
       updateData.commentCount = data.commentCount ?? null;
     }
 
-    await this.prisma.pageVersion.update({
+    const db = outerTx ?? this.prisma;
+    await db.pageVersion.update({
       where: { id: versionId },
       data: updateData
     });
