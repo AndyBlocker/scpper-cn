@@ -96,7 +96,12 @@ export class DirtyQueueStore {
     }
 
     const currentVersions = await this.prisma.pageVersion.findMany({
-      where: { pageId: { in: pageIds }, validTo: null }
+      where: { pageId: { in: pageIds }, validTo: null },
+      select: {
+        pageId: true, isDeleted: true, title: true, rating: true,
+        tags: true, category: true, attributionCount: true,
+        voteCount: true, revisionCount: true
+      }
     });
     const versionMap = new Map<number, typeof currentVersions[number]>();
     for (const v of currentVersions) {

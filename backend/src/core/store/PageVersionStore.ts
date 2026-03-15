@@ -90,7 +90,7 @@ export class PageVersionStore {
         });
         Logger.info(`✅ Synchronized page URL for wikidotId ${data.wikidotId}: ${page.currentUrl} -> ${incomingUrl}`);
         // Refresh the page object to reflect the new currentUrl in memory
-        page = await db.page.findUnique({
+        const refreshed = await db.page.findUnique({
           where: { id: page.id },
           include: {
             versions: {
@@ -99,7 +99,8 @@ export class PageVersionStore {
               take: 1
             }
           }
-        }) as typeof page;
+        });
+        if (refreshed) page = refreshed;
       }
     } catch (e) {
       Logger.warn(`Failed to sync URL for wikidotId ${data.wikidotId}: ${(e as any)?.message ?? e}`);
@@ -148,7 +149,7 @@ export class PageVersionStore {
     // 处理投票和修订数据 (Phase B 也要保存获取到的数据)
     if (data.fuzzyVoteRecords || data.revisions) {
       const VoteRevisionStore = await import('./VoteRevisionStore.js');
-      const voteRevisionStore = new VoteRevisionStore.VoteRevisionStore(db as PrismaClient);
+      const voteRevisionStore = new VoteRevisionStore.VoteRevisionStore(db);
       await voteRevisionStore.importVotesAndRevisions(targetVersionId, {
         votes: data.fuzzyVoteRecords,
         revisions: data.revisions

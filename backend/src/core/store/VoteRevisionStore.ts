@@ -1,12 +1,14 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 /**
  * 投票和修订记录存储类
  * 负责Vote和Revision表的操作
  */
 export class VoteRevisionStore {
-  constructor(private prisma: PrismaClient) {}
+  constructor(private prisma: DbClient) {}
 
   /**
    * Batch-upsert all unique users from vote + revision edges, returning a wikidotId → userId Map.
