@@ -24,7 +24,7 @@ export class AttributionService {
   /**
    * Batch-upsert all unique users from attribution entries, returning wikidotId → userId Map.
    */
-  private async batchUpsertUsers(attributions: any[]): Promise<Map<number, number>> {
+  private async batchUpsertUsers(attributions: any[], outerTx?: DbClient): Promise<Map<number, number>> {
     const userDataMap = new Map<number, { wikidotId: number; displayName: string | null; username: string | null; isGuest: boolean | null }>();
     for (const attr of attributions) {
       let userData = attr.user;
@@ -52,7 +52,8 @@ export class AttributionService {
 
     try {
       // Use COALESCE to avoid overwriting richer existing data with placeholder values.
-      const rows: Array<{ id: number; wikidotId: number }> = await this.prisma.$queryRawUnsafe(
+      const db = outerTx ?? this.prisma;
+      const rows: Array<{ id: number; wikidotId: number }> = await db.$queryRawUnsafe(
         `INSERT INTO "User" ("wikidotId", "displayName", "username", "isGuest", "createdAt", "updatedAt")
          SELECT wid, dn, un, ig, NOW(), NOW()
          FROM unnest($1::int[], $2::text[], $3::text[], $4::bool[]) AS t(wid, dn, un, ig)
@@ -73,7 +74,8 @@ export class AttributionService {
       for (const entry of entries) {
         try {
           // Fallback: only create if missing; do not overwrite existing data
-          const user = await this.prisma.user.upsert({
+          const fallbackDb = outerTx ?? this.prisma;
+          const user = await fallbackDb.user.upsert({
             where: { wikidotId: entry.wikidotId },
             update: {},
             create: { wikidotId: entry.wikidotId, displayName: entry.displayName, username: entry.username, isGuest: entry.isGuest }
@@ -97,7 +99,7 @@ export class AttributionService {
     let canDeleteMissingRows = true;
 
     // Batch-upsert all users first (1 query instead of N)
-    const userMap = await this.batchUpsertUsers(attributions);
+    const userMap = await this.batchUpsertUsers(attributions, outerTx);
 
     for (const attr of attributions) {
       try {
