@@ -123,9 +123,16 @@ export class PageVersionStore {
       }
     }
 
+    // When running inside an outer transaction, create service instances bound to
+    // that tx so they can see uncommitted rows (e.g. a just-created PageVersion).
+    const srcSvc = outerTx ? new SourceVersionService(db as PrismaClient) : this.sourceVersionService;
+    const refSvc = outerTx ? new PageReferenceService(db as PrismaClient) : this.pageReferenceService;
+    const imgSvc = outerTx ? new PageVersionImageService(db as PrismaClient) : this.pageVersionImageService;
+    const attrSvc = outerTx ? new AttributionService(db as PrismaClient) : this.attributionService;
+
     // 处理source版本管理
     if (data.source) {
-      await this.sourceVersionService.manageSourceVersion(
+      await srcSvc.manageSourceVersion(
         targetVersionId,
         {
           source: data.source,
@@ -136,17 +143,17 @@ export class PageVersionStore {
 
     const pageSource = typeof data.source === 'string' ? data.source : null;
 
-    await this.pageReferenceService.syncPageReferences(targetVersionId, pageSource);
+    await refSvc.syncPageReferences(targetVersionId, pageSource);
 
     if (pageSource) {
-      await this.pageVersionImageService.syncPageVersionImages(targetVersionId, pageSource);
+      await imgSvc.syncPageVersionImages(targetVersionId, pageSource);
     }
 
     // 处理归属
     if (data.attributions) {
-      await this.attributionService.importAttributions(targetVersionId, data.attributions);
+      await attrSvc.importAttributions(targetVersionId, data.attributions);
     }
-    
+
     // 处理投票和修订数据 (Phase B 也要保存获取到的数据)
     if (data.fuzzyVoteRecords || data.revisions) {
       const VoteRevisionStore = await import('./VoteRevisionStore.js');

@@ -46,14 +46,16 @@ export class VoteRevisionStore {
     const usernames = entries.map(e => e.username ?? null);
     const guests = entries.map(e => e.isGuest);
 
+    // Use COALESCE to avoid overwriting richer existing data with placeholder values.
+    // EXCLUDED has the incoming row; "User" refers to the existing row.
     const rows: Array<{ id: number; wikidotId: number }> = await this.prisma.$queryRawUnsafe(
       `INSERT INTO "User" ("wikidotId", "displayName", "username", "isGuest", "createdAt", "updatedAt")
        SELECT wid, dn, un, ig, NOW(), NOW()
        FROM unnest($1::int[], $2::text[], $3::text[], $4::bool[]) AS t(wid, dn, un, ig)
        ON CONFLICT ("wikidotId") DO UPDATE SET
-         "displayName" = EXCLUDED."displayName",
-         "username" = EXCLUDED."username",
-         "isGuest" = EXCLUDED."isGuest",
+         "displayName" = COALESCE(NULLIF(EXCLUDED."displayName", 'wd:' || "User"."wikidotId"::text), "User"."displayName", EXCLUDED."displayName"),
+         "username" = COALESCE(EXCLUDED."username", "User"."username"),
+         "isGuest" = COALESCE(EXCLUDED."isGuest", "User"."isGuest"),
          "updatedAt" = NOW()
        RETURNING id, "wikidotId"`,
       wids, names, usernames, guests

@@ -49,14 +49,15 @@ export class AttributionService {
     const guests = entries.map(e => e.isGuest);
 
     try {
+      // Use COALESCE to avoid overwriting richer existing data with placeholder values.
       const rows: Array<{ id: number; wikidotId: number }> = await this.prisma.$queryRawUnsafe(
         `INSERT INTO "User" ("wikidotId", "displayName", "username", "isGuest", "createdAt", "updatedAt")
          SELECT wid, dn, un, ig, NOW(), NOW()
          FROM unnest($1::int[], $2::text[], $3::text[], $4::bool[]) AS t(wid, dn, un, ig)
          ON CONFLICT ("wikidotId") DO UPDATE SET
-           "displayName" = EXCLUDED."displayName",
-           "username" = EXCLUDED."username",
-           "isGuest" = EXCLUDED."isGuest",
+           "displayName" = COALESCE(NULLIF(EXCLUDED."displayName", 'wd:' || "User"."wikidotId"::text), "User"."displayName", EXCLUDED."displayName"),
+           "username" = COALESCE(EXCLUDED."username", "User"."username"),
+           "isGuest" = COALESCE(EXCLUDED."isGuest", "User"."isGuest"),
            "updatedAt" = NOW()
          RETURNING id, "wikidotId"`,
         wids, names, usernames, guests
@@ -69,9 +70,10 @@ export class AttributionService {
       // Fallback: individual upserts
       for (const entry of entries) {
         try {
+          // Fallback: only create if missing; do not overwrite existing data
           const user = await this.prisma.user.upsert({
             where: { wikidotId: entry.wikidotId },
-            update: { displayName: entry.displayName, username: entry.username, isGuest: entry.isGuest },
+            update: {},
             create: { wikidotId: entry.wikidotId, displayName: entry.displayName, username: entry.username, isGuest: entry.isGuest }
           });
           result.set(entry.wikidotId, user.id);
