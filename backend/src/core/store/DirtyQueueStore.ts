@@ -1,6 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
 import { SIMPLE_PAGE_THRESHOLD } from '../../config/RateLimitConfig.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 /**
  * Dirty Queue存储类
@@ -79,14 +81,40 @@ export class DirtyQueueStore {
   }
 
   /**
+   * Pre-load lookup maps for pages and current versions to avoid N+1 queries.
+   * Returns { pageMap: wikidotId → Page, versionMap: pageId → PageVersion }.
+   */
+  private async preloadLookups() {
+    const allPages = await this.prisma.page.findMany({
+      select: { id: true, wikidotId: true, currentUrl: true }
+    });
+    const pageMap = new Map<number, { id: number; wikidotId: number; currentUrl: string }>();
+    const pageIds: number[] = [];
+    for (const p of allPages) {
+      pageMap.set(p.wikidotId, p);
+      pageIds.push(p.id);
+    }
+
+    const currentVersions = await this.prisma.pageVersion.findMany({
+      where: { pageId: { in: pageIds }, validTo: null }
+    });
+    const versionMap = new Map<number, typeof currentVersions[number]>();
+    for (const v of currentVersions) {
+      versionMap.set(v.pageId, v);
+    }
+
+    return { pageMap, versionMap };
+  }
+
+  /**
    * 构建Dirty Queue - 完整模式
    */
   async buildDirtyQueue() {
     Logger.info('🔍 Building dirty page queue...');
-    
+
     // 清理旧的dirty记录
     await this.prisma.dirtyPage.deleteMany({});
-    
+
     const stats = {
       total: 0,
       phaseB: 0,
@@ -98,12 +126,16 @@ export class DirtyQueueStore {
       votesRevChanges: 0
     };
 
+    const { pageMap, versionMap } = await this.preloadLookups();
+
     // 获取所有staging记录
     const stagingPages = await this.prisma.pageMetaStaging.findMany();
-    
+
     for (const staging of stagingPages) {
-      const result = await this.processStagingPage(staging);
-      
+      const page = staging.wikidotId ? pageMap.get(staging.wikidotId) ?? null : null;
+      const currentVersion = page ? versionMap.get(page.id) ?? null : null;
+      const result = this.processStagingPage(staging, page, currentVersion);
+
       stats.total++;
       if (result.needPhaseB) stats.phaseB++;
       if (result.needPhaseC) stats.phaseC++;
@@ -112,6 +144,22 @@ export class DirtyQueueStore {
       else stats.existingPages++;
       if (result.hasMetadataChanges) stats.metadataChanges++;
       if (result.hasVotesRevChanges) stats.votesRevChanges++;
+
+      if (result.needPhaseB || result.needPhaseC) {
+        await this.prisma.dirtyPage.create({
+          data: {
+            page: page?.id ? { connect: { id: page.id } } : undefined,
+            stagingUrl: staging.url,
+            wikidotId: staging.wikidotId,
+            needPhaseB: result.needPhaseB,
+            needPhaseC: result.needPhaseC,
+            donePhaseB: false,
+            donePhaseC: false,
+            reasons: result.reasons,
+            detectedAt: new Date()
+          }
+        });
+      }
     }
 
     Logger.info(`✅ Dirty queue built: ${stats.total} pages processed`);
@@ -120,7 +168,7 @@ export class DirtyQueueStore {
     Logger.info(`   - Deleted pages: ${stats.deleted}`);
     Logger.info(`   - Metadata changes: ${stats.metadataChanges}`);
     Logger.info(`   - Votes/Rev changes: ${stats.votesRevChanges}`);
-    
+
     return stats;
   }
 
@@ -129,10 +177,10 @@ export class DirtyQueueStore {
    */
   async buildDirtyQueueTestMode() {
     Logger.info('🔍 Building dirty page queue (TEST MODE)...');
-    
+
     // 清理旧的dirty记录
     await this.prisma.dirtyPage.deleteMany({});
-    
+
     const stats = {
       total: 0,
       phaseB: 0,
@@ -140,40 +188,63 @@ export class DirtyQueueStore {
       deleted: 0
     };
 
+    const { pageMap, versionMap } = await this.preloadLookups();
+
     // 获取所有staging记录（测试模式）
     const stagingPages = await this.prisma.pageMetaStaging.findMany();
-    
+
     for (const staging of stagingPages) {
-      const result = await this.processStagingPage(staging);
-      
+      const page = staging.wikidotId ? pageMap.get(staging.wikidotId) ?? null : null;
+      const currentVersion = page ? versionMap.get(page.id) ?? null : null;
+      const result = this.processStagingPage(staging, page, currentVersion);
+
       stats.total++;
       if (result.needPhaseB) stats.phaseB++;
       if (result.needPhaseC) stats.phaseC++;
       if (result.isDeleted) stats.deleted++;
+
+      if (result.needPhaseB || result.needPhaseC) {
+        await this.prisma.dirtyPage.create({
+          data: {
+            page: page?.id ? { connect: { id: page.id } } : undefined,
+            stagingUrl: staging.url,
+            wikidotId: staging.wikidotId,
+            needPhaseB: result.needPhaseB,
+            needPhaseC: result.needPhaseC,
+            donePhaseB: false,
+            donePhaseC: false,
+            reasons: result.reasons,
+            detectedAt: new Date()
+          }
+        });
+      }
     }
 
     Logger.info(`✅ Dirty queue built (TEST): ${stats.total} pages`);
-    
+
     return stats;
   }
 
   /**
-   * 处理单个staging页面
+   * 处理单个staging页面（纯同步逻辑，使用预加载的 lookup maps）
    */
-  private async processStagingPage(staging: any) {
-    const page = await this.findPageByWikidotId(staging.wikidotId);
-    
+  private processStagingPage(
+    staging: any,
+    page: { id: number; wikidotId: number; currentUrl: string } | null,
+    currentVersion: any | null
+  ) {
     let needPhaseB = false;
     let needPhaseC = false;
     const reasons: string[] = [];
-    
+
     const result = {
       isNew: false,
       isDeleted: staging.isDeleted,
       hasMetadataChanges: false,
       hasVotesRevChanges: false,
       needPhaseB: false,
-      needPhaseC: false
+      needPhaseC: false,
+      reasons
     };
 
     if (!page) {
@@ -182,12 +253,8 @@ export class DirtyQueueStore {
         needPhaseB = true;
         reasons.push('new_page');
         result.isNew = true;
-        // 不预先设置needPhaseC，让PhaseB决定
       }
     } else {
-      // 现有页面 - 检查变化
-      const currentVersion = await this.getCurrentVersion(page.id);
-
       // URL 变更：当wikidotId相同但URL不同，标记进入 Phase B 以同步 Page.currentUrl
       if (staging.url && page.currentUrl && staging.url !== page.currentUrl) {
         needPhaseB = true;
@@ -197,7 +264,6 @@ export class DirtyQueueStore {
       if (!currentVersion && !staging.isDeleted) {
         needPhaseB = true;
         reasons.push('no_current_version');
-        // 不预先设置needPhaseC，让PhaseB决定
       } else if (staging.isDeleted && currentVersion && !currentVersion.isDeleted) {
         needPhaseB = true;
         reasons.push('page_deleted');
@@ -210,11 +276,10 @@ export class DirtyQueueStore {
           reasons.push(...metadataChanges);
           result.hasMetadataChanges = true;
         }
-        
+
         // 检查投票/修订变化
         const votesRevChanges = this.checkVotesRevChanges(currentVersion, staging);
         if (votesRevChanges.length > 0) {
-          // 投票/修订变化应该进入PhaseB，让PhaseB决定是否需要PhaseC
           needPhaseB = true;
           reasons.push(...votesRevChanges);
           result.hasVotesRevChanges = true;
@@ -222,26 +287,9 @@ export class DirtyQueueStore {
       }
     }
 
-    // 创建dirty记录
-    if (needPhaseB || needPhaseC) {
-      await this.prisma.dirtyPage.create({
-        data: {
-          page: page?.id ? { connect: { id: page.id } } : undefined,
-          stagingUrl: staging.url,
-          wikidotId: staging.wikidotId,
-          needPhaseB,
-          needPhaseC,
-          donePhaseB: false,
-          donePhaseC: false,
-          reasons,
-          detectedAt: new Date()
-        }
-      });
-    }
-
     result.needPhaseB = needPhaseB;
     result.needPhaseC = needPhaseC;
-    
+
     return result;
   }
 
@@ -332,17 +380,18 @@ export class DirtyQueueStore {
   /**
    * 清除dirty标记 - 使用 wikidotId
    */
-  async clearDirtyFlag(wikidotId: number, phase: 'B' | 'C') {
+  async clearDirtyFlag(wikidotId: number, phase: 'B' | 'C', tx?: DbClient) {
     // 验证参数
     if (!wikidotId || typeof wikidotId !== 'number') {
       Logger.error(`Invalid wikidotId provided to clearDirtyFlag: ${wikidotId} (type: ${typeof wikidotId})`);
       return;
     }
-    
+
     const updateField = phase === 'B' ? 'donePhaseB' : 'donePhaseC';
-    
+    const db = tx ?? this.prisma;
+
     try {
-      const result = await this.prisma.dirtyPage.updateMany({
+      const result = await db.dirtyPage.updateMany({
         where: { wikidotId },
         data: { [updateField]: true }
       });
@@ -379,23 +428,6 @@ export class DirtyQueueStore {
   /**
    * 辅助方法
    */
-  private async findPageByWikidotId(wikidotId: number | null) {
-    if (!wikidotId) return null;
-    
-    return await this.prisma.page.findUnique({
-      where: { wikidotId }
-    });
-  }
-
-  private async getCurrentVersion(pageId: number) {
-    return await this.prisma.pageVersion.findFirst({
-      where: {
-        pageId,
-        validTo: null
-      }
-    });
-  }
-
   private arraysEqual(a: any[], b: any[]): boolean {
     if (!a || !b) return !a && !b;
     if (a.length !== b.length) return false;

@@ -1,5 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { Logger } from '../../utils/Logger.js';
+
+type DbClient = PrismaClient | Prisma.TransactionClient;
 
 /**
  * 页面基础操作存储类
@@ -128,8 +130,8 @@ export class PageStore {
   /**
    * 标记页面为已删除
    */
-  async markPageDeleted(pageId: number): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+  async markPageDeleted(pageId: number, outerTx?: DbClient): Promise<void> {
+    const doWork = async (tx: DbClient) => {
       // 标记 Page 为已删除
       try {
         await tx.page.update({
@@ -175,7 +177,13 @@ export class PageStore {
       });
 
       Logger.info(`✅ Marked page ${pageId} as deleted`);
-    }, { timeout: 20000 });
+    };
+
+    if (outerTx) {
+      await doWork(outerTx);
+    } else {
+      await this.prisma.$transaction(async (tx) => doWork(tx), { timeout: 20000 });
+    }
   }
 
   /**

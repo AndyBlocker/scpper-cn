@@ -19,6 +19,68 @@ export class AttributionService {
     this.prisma = prisma;
   }
 
+  /**
+   * Batch-upsert all unique users from attribution entries, returning wikidotId → userId Map.
+   */
+  private async batchUpsertUsers(attributions: any[]): Promise<Map<number, number>> {
+    const userDataMap = new Map<number, { wikidotId: number; displayName: string | null; username: string | null; isGuest: boolean }>();
+    for (const attr of attributions) {
+      let userData = attr.user;
+      if (!userData) continue;
+      if (userData.wikidotUser) userData = userData.wikidotUser;
+      if (!userData.wikidotId) continue;
+      const wid = parseInt(userData.wikidotId, 10);
+      if (Number.isNaN(wid)) continue;
+      userDataMap.set(wid, {
+        wikidotId: wid,
+        displayName: userData.displayName || userData.username,
+        username: userData.username ?? null,
+        isGuest: userData.isGuest || false
+      });
+    }
+
+    const result = new Map<number, number>();
+    if (userDataMap.size === 0) return result;
+
+    const entries = [...userDataMap.values()];
+    const wids = entries.map(e => e.wikidotId);
+    const names = entries.map(e => e.displayName ?? e.username ?? `wd:${e.wikidotId}`);
+    const usernames = entries.map(e => e.username);
+    const guests = entries.map(e => e.isGuest);
+
+    try {
+      const rows: Array<{ id: number; wikidotId: number }> = await this.prisma.$queryRawUnsafe(
+        `INSERT INTO "User" ("wikidotId", "displayName", "username", "isGuest", "createdAt", "updatedAt")
+         SELECT wid, dn, un, ig, NOW(), NOW()
+         FROM unnest($1::int[], $2::text[], $3::text[], $4::bool[]) AS t(wid, dn, un, ig)
+         ON CONFLICT ("wikidotId") DO UPDATE SET
+           "displayName" = EXCLUDED."displayName",
+           "username" = EXCLUDED."username",
+           "isGuest" = EXCLUDED."isGuest",
+           "updatedAt" = NOW()
+         RETURNING id, "wikidotId"`,
+        wids, names, usernames, guests
+      );
+      for (const row of rows) {
+        result.set(row.wikidotId, row.id);
+      }
+    } catch (error) {
+      Logger.error('Batch user upsert failed, falling back to individual:', error);
+      // Fallback: individual upserts
+      for (const entry of entries) {
+        try {
+          const user = await this.prisma.user.upsert({
+            where: { wikidotId: entry.wikidotId },
+            update: { displayName: entry.displayName, username: entry.username, isGuest: entry.isGuest },
+            create: { wikidotId: entry.wikidotId, displayName: entry.displayName, username: entry.username, isGuest: entry.isGuest }
+          });
+          result.set(entry.wikidotId, user.id);
+        } catch { /* skip */ }
+      }
+    }
+    return result;
+  }
+
   async importAttributions(pageVersionId: number, attributions: any[]): Promise<{ inserted: number; updated: number; errors: number }> {
     const stats = { inserted: 0, updated: 0, errors: 0 };
     const normalizedEntries: Array<{
@@ -29,6 +91,9 @@ export class AttributionService {
       date: Date | null;
     }> = [];
     let canDeleteMissingRows = true;
+
+    // Batch-upsert all users first (1 query instead of N)
+    const userMap = await this.batchUpsertUsers(attributions);
 
     for (const attr of attributions) {
       try {
@@ -42,9 +107,10 @@ export class AttributionService {
             userData = userData.wikidotUser;
           }
           if (userData.wikidotId) {
-            const user = await this.upsertUser(userData);
-            if (user?.id != null) {
-              userId = user.id;
+            const wid = parseInt(userData.wikidotId, 10);
+            const resolved = !Number.isNaN(wid) ? userMap.get(wid) : undefined;
+            if (resolved != null) {
+              userId = resolved;
             } else {
               userResolutionFailed = true;
               canDeleteMissingRows = false;
@@ -193,27 +259,4 @@ export class AttributionService {
     return stats;
   }
 
-  private async upsertUser(userData: any): Promise<any | null> {
-    if (!userData || !userData.wikidotId) return null;
-    try {
-      const user = await this.prisma.user.upsert({
-        where: { wikidotId: parseInt(userData.wikidotId, 10) },
-        update: {
-          displayName: userData.displayName || userData.username,
-          username: userData.username,
-          isGuest: userData.isGuest || false
-        },
-        create: {
-          wikidotId: parseInt(userData.wikidotId, 10),
-          displayName: userData.displayName || userData.username,
-          username: userData.username,
-          isGuest: userData.isGuest || false
-        }
-      });
-      return user;
-    } catch (error) {
-      Logger.error(`Failed to upsert user ${userData.wikidotId}:`, error);
-      return null;
-    }
-  }
 }

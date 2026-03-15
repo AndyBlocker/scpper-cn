@@ -237,7 +237,7 @@ export class PhaseBProcessor {
 
             if (!pageData) {
               if (flaggedByStaging || flaggedByReason || flaggedByLocalDelete) {
-                await this.store.markDeletedByWikidotId(page.wikidotId);
+                await this.store.markDeletedByWikidotId(page.wikidotId, tx);
                 deletedCount++;
               } else {
                 Logger.warn('Phase B: Skipping deletion for missing remote page data', {
@@ -245,7 +245,7 @@ export class PhaseBProcessor {
                   wikidotId: page.wikidotId,
                   reasons: page.reasons,
                 });
-                await this.store.clearDirtyFlag(page.wikidotId, 'B');
+                await this.store.clearDirtyFlag(page.wikidotId, 'B', tx);
                 skippedCount++;
               }
               continue;
@@ -254,27 +254,27 @@ export class PhaseBProcessor {
             if (pageData) {
               const revisionsCount = pageData.revisions?.edges?.length || 0;
               const votesCount = pageData.fuzzyVoteRecords?.edges?.length || 0;
-              const needsPhaseC = 
-                (pageData.revisions?.pageInfo?.hasNextPage && revisionsCount >= MAX_FIRST) || 
+              const needsPhaseC =
+                (pageData.revisions?.pageInfo?.hasNextPage && revisionsCount >= MAX_FIRST) ||
                 (pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage && votesCount >= MAX_FIRST);
-              
+
               await this.store.upsertPageContent({
                 ...pageData,
                 wikidotId: page.wikidotId
-              });
-              await this.store.clearDirtyFlag(page.wikidotId, 'B');
-              
+              }, tx);
+              await this.store.clearDirtyFlag(page.wikidotId, 'B', tx);
+
               if (needsPhaseC) {
                 const additionalReasons = [
                   pageData.revisions?.pageInfo?.hasNextPage ? 'incomplete_revisions' : '',
                   pageData.fuzzyVoteRecords?.pageInfo?.hasNextPage ? 'incomplete_votes' : ''
                 ].filter(Boolean);
-                await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons);
+                await this.store.markForPhaseC(page.wikidotId, page.pageId, additionalReasons, tx);
               }
               savedCount++;
             }
           }
-        }, { 
+        }, {
           isolationLevel: 'Serializable',
           timeout: 30000
         });
