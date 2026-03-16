@@ -5484,9 +5484,13 @@ function triggerBuyRequestExpirySweep() {
 async function loadUsersWithDueMarketSettlement(
   tx: Tx | typeof prisma,
   asOf = now(),
-  limit = MARKET_SETTLE_SWEEP_USER_BATCH_SIZE
+  limit = MARKET_SETTLE_SWEEP_USER_BATCH_SIZE,
+  afterUserId: string | null = null
 ) {
   const since = new Date(asOf.getTime() - MARKET_USER_LEDGER_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  const cursorCondition = afterUserId
+    ? Prisma.sql`AND opens."userId" > ${afterUserId}`
+    : Prisma.empty;
   return tx.$queryRaw<Array<{ userId: string }>>(Prisma.sql`
     WITH opens AS (
       SELECT DISTINCT ON (open_events."positionId")
@@ -5519,6 +5523,7 @@ async function loadUsersWithDueMarketSettlement(
     LEFT JOIN settles ON settles."positionId" = opens."positionId"
     WHERE settles."positionId" IS NULL
       AND opens."expireAt" <= ${asOf}
+      ${cursorCondition}
     ORDER BY opens."userId" ASC
     LIMIT ${Math.max(1, Math.floor(limit))}
   `);
@@ -5527,13 +5532,15 @@ async function loadUsersWithDueMarketSettlement(
 async function runMarketSettleSweep(asOf = now()) {
   const oracleContext = await loadOracleContext(asOf, ORACLE_TICK_LIMIT_POSITION);
   let settledPositions = 0;
+  let cursor: string | null = null;
   for (let batch = 0; batch < MARKET_SETTLE_SWEEP_MAX_BATCHES_PER_RUN; batch += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const dueUsers = await loadUsersWithDueMarketSettlement(prisma, asOf, MARKET_SETTLE_SWEEP_USER_BATCH_SIZE);
+    const dueUsers = await loadUsersWithDueMarketSettlement(prisma, asOf, MARKET_SETTLE_SWEEP_USER_BATCH_SIZE, cursor);
     if (dueUsers.length <= 0) break;
     for (const row of dueUsers) {
       const userId = String(row.userId || '').trim();
       if (!userId) continue;
+      cursor = userId;
       // eslint-disable-next-line no-await-in-loop
       const settledForUser = await runSerializableTransaction(async (tx) => {
         const wallet = await ensureWallet(tx, userId);
