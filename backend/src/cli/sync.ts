@@ -231,14 +231,22 @@ export async function sync({
     }
 
     // 只有在运行所有阶段或者明确指定 analyze 时才运行分析
+    // Analysis failures are non-fatal: Phase A/B/C data sync already succeeded,
+    // so we log the error but let sync() return normally to unblock downstream
+    // tasks (forum sync, gacha sync) in the hourly scheduler.
     if (phase === 'all' || phase === 'analyze') {
       const spinnerAnalyze = ora(full ? 'Analysis: full incremental...' : 'Analysis: incremental...').start();
-      if (full) {
-        await analyzeIncremental({ forceFullAnalysis: true });
-      } else {
-        await analyzeIncremental();
+      try {
+        if (full) {
+          await analyzeIncremental({ forceFullAnalysis: true });
+        } else {
+          await analyzeIncremental();
+        }
+        spinnerAnalyze.succeed('Analysis completed');
+      } catch (analyzeError) {
+        spinnerAnalyze.fail('Analysis completed with errors');
+        console.error('⚠️ Incremental analysis had failures (non-fatal for sync):', analyzeError instanceof Error ? analyzeError.message : analyzeError);
       }
-      spinnerAnalyze.succeed('Analysis completed');
     }
 
     const totalTime = (Date.now() - startTime) / 1000;
