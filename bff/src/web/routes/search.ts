@@ -1602,11 +1602,11 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
 
       const trimmedQuery = normalizedQuery.trim();
       const normalizedOrderBy = String(Array.isArray(orderBy) ? orderBy[0] : (orderBy || 'relevance'));
-      const totalLimit = Math.max(0, Number(limit) | 0);
+      const totalLimit = Math.min(Math.max(0, Number(limit) | 0), 200);
       const totalOffset = Math.max(0, Number(offset) | 0);
       const defaultPageCap = Math.max(0, Math.min(totalLimit || 20, Math.ceil((totalLimit || 20) * 0.6)));
       const pageCap = Math.min(Math.max(0, Number(pageLimit ?? defaultPageCap) | 0), 100);
-      const userCap = Math.max(0, Number(userLimit ?? ((totalLimit || 20) - pageCap)) | 0);
+      const userCap = Math.min(Math.max(0, Number(userLimit ?? ((totalLimit || 20) - pageCap)) | 0), 100);
       const wantSnippet = String(includeSnippet).toLowerCase() === 'true';
       const wantDate = String(includeDate).toLowerCase() === 'true';
 
