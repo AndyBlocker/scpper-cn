@@ -54,14 +54,13 @@ export class AttributionService {
       // Use COALESCE to avoid overwriting richer existing data with placeholder values.
       const db = outerTx ?? this.prisma;
       const rows: Array<{ id: number; wikidotId: number }> = await db.$queryRawUnsafe(
-        `INSERT INTO "User" ("wikidotId", "displayName", "username", "isGuest", "createdAt", "updatedAt")
-         SELECT wid, dn, un, ig, NOW(), NOW()
+        `INSERT INTO "User" ("wikidotId", "displayName", "username", "isGuest")
+         SELECT wid, dn, un, ig
          FROM unnest($1::int[], $2::text[], $3::text[], $4::bool[]) AS t(wid, dn, un, ig)
          ON CONFLICT ("wikidotId") DO UPDATE SET
            "displayName" = COALESCE(NULLIF(EXCLUDED."displayName", 'wd:' || "User"."wikidotId"::text), "User"."displayName", EXCLUDED."displayName"),
            "username" = COALESCE(EXCLUDED."username", "User"."username"),
-           "isGuest" = COALESCE(EXCLUDED."isGuest", "User"."isGuest"),
-           "updatedAt" = NOW()
+           "isGuest" = COALESCE(EXCLUDED."isGuest", "User"."isGuest")
          RETURNING id, "wikidotId"`,
         wids, names, usernames, guests
       );
