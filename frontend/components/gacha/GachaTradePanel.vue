@@ -1669,7 +1669,7 @@ watch([brSortMode, brRarityFilter], () => {
     <UiDialogRoot :open="!!selectedBuyRequest" @update:open="handleBuyRequestDialogChange">
       <UiDialogPortal>
         <UiDialogOverlay />
-        <UiDialogContent class="max-w-lg p-0">
+        <UiDialogContent class="max-w-xl p-0">
           <template v-if="selectedBuyRequest">
             <header class="flex items-start justify-between gap-3 border-b border-neutral-200/60 px-5 py-4 dark:border-neutral-800/70">
               <div class="min-w-0">
@@ -1684,9 +1684,9 @@ watch([brSortMode, brRarityFilter], () => {
               </UiDialogClose>
             </header>
 
-            <div class="max-h-[calc(100vh-7rem)] max-h-[calc(100dvh-7rem)] overflow-y-auto px-5 pb-5 pt-4">
-              <div class="grid gap-4 sm:grid-cols-[150px_minmax(0,1fr)] sm:items-start">
-                <div class="trade-detail-mini-card">
+            <div class="br-detail-body">
+              <div class="br-detail-layout">
+                <div class="br-detail-card">
                   <GachaCard
                     :title="selectedBuyRequest.targetCard.title"
                     :rarity="selectedBuyRequest.targetCard.rarity"
@@ -1701,7 +1701,7 @@ watch([brSortMode, brRarityFilter], () => {
                 </div>
 
                 <div class="space-y-3">
-                  <dl class="grid grid-cols-2 gap-2 text-xs">
+                  <dl class="br-detail-stats">
                     <div class="rounded-xl border border-neutral-200/70 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-700/70 dark:bg-neutral-800/70">
                       <dt class="text-neutral-500 dark:text-neutral-400">Token 出价</dt>
                       <dd class="mt-0.5 font-semibold text-neutral-800 dark:text-neutral-100">
@@ -1768,59 +1768,68 @@ watch([brSortMode, brRarityFilter], () => {
                     >
                       正在加载你的可交付库存...
                     </p>
-                    <div v-else-if="buyRequestFulfillCandidates.length > 0" class="br-fulfill-grid">
-                      <button
-                        v-for="item in buyRequestFulfillCandidates"
-                        :key="`br-fulfill-candidate-${item.stackKey}`"
-                        type="button"
-                        class="trade-create-card"
-                        :class="{ 'trade-create-card--selected': selectedFulfillStackKey === item.stackKey }"
-                        @click="selectedFulfillStackKey = item.stackKey"
-                      >
-                        <GachaCardMini
-                          :title="item.title"
-                          :rarity="item.rarity"
-                          :image-url="item.imageUrl || undefined"
-                          :retired="item.isRetired"
-                          :affix-visual-style="item.affixVisualStyle"
-                          :affix-label="item.affixLabel"
+                    <div v-else-if="buyRequestFulfillCandidates.length > 0" class="br-fulfill-scroll">
+                      <div class="br-fulfill-grid">
+                        <button
+                          v-for="item in buyRequestFulfillCandidates"
+                          :key="`br-fulfill-candidate-${item.stackKey}`"
+                          type="button"
+                          class="trade-create-card"
+                          :class="{ 'trade-create-card--selected': selectedFulfillStackKey === item.stackKey }"
+                          @click="selectedFulfillStackKey = item.stackKey"
                         >
-                          <template #meta>
-                            <span class="trade-remaining-chip">可交付 {{ item.availableCount }}</span>
-                          </template>
-                        </GachaCardMini>
-                      </button>
+                          <GachaCardMini
+                            :title="item.title"
+                            :rarity="item.rarity"
+                            :image-url="item.imageUrl || undefined"
+                            :retired="item.isRetired"
+                            :affix-visual-style="item.affixVisualStyle"
+                            :affix-label="item.affixLabel"
+                          >
+                            <template #meta>
+                              <span class="trade-remaining-chip">可交付 {{ item.availableCount }}</span>
+                            </template>
+                          </GachaCardMini>
+                        </button>
+                      </div>
                     </div>
                     <p v-else class="text-[11px] text-neutral-500 dark:text-neutral-400">
                       暂无可直接交付库存，将由系统自动尝试释放符合条件的卡牌。
                     </p>
                   </div>
 
-                  <UiButton
-                    v-if="selectedBuyRequest.status === 'OPEN' && selectedBuyRequest.buyerId !== userId"
-                    class="w-full"
-                    :disabled="buyRequestFulfillingId === selectedBuyRequest.id"
-                    @click="handleFulfillBuyRequestFromDetail"
-                  >
-                    {{
-                      buyRequestFulfillingId === selectedBuyRequest.id
-                        ? '接受中...'
-                        : buyRequestFulfillCandidates.length > 1
-                          ? '选择并接受求购'
-                          : '接受求购（出售目标卡）'
-                    }}
-                  </UiButton>
-
-                  <UiButton
-                    v-if="selectedBuyRequest.status === 'OPEN' && selectedBuyRequest.buyerId === userId"
-                    class="w-full"
-                    variant="outline"
-                    :disabled="buyRequestCancelId === selectedBuyRequest.id"
-                    @click="emit('cancel-buy-request', selectedBuyRequest.id); closeBuyRequestDetail()"
-                  >
-                    {{ buyRequestCancelId === selectedBuyRequest.id ? '取消中...' : '取消求购' }}
-                  </UiButton>
                 </div>
+              </div>
+
+              <!-- Sticky action buttons -->
+              <div
+                v-if="selectedBuyRequest.status === 'OPEN'"
+                class="br-detail-actions"
+              >
+                <UiButton
+                  v-if="selectedBuyRequest.buyerId !== userId"
+                  class="w-full"
+                  :disabled="buyRequestFulfillingId === selectedBuyRequest.id"
+                  @click="handleFulfillBuyRequestFromDetail"
+                >
+                  {{
+                    buyRequestFulfillingId === selectedBuyRequest.id
+                      ? '接受中...'
+                      : buyRequestFulfillCandidates.length > 1
+                        ? '选择并接受求购'
+                        : '接受求购（出售目标卡）'
+                  }}
+                </UiButton>
+
+                <UiButton
+                  v-if="selectedBuyRequest.buyerId === userId"
+                  class="w-full"
+                  variant="outline"
+                  :disabled="buyRequestCancelId === selectedBuyRequest.id"
+                  @click="emit('cancel-buy-request', selectedBuyRequest.id); closeBuyRequestDetail()"
+                >
+                  {{ buyRequestCancelId === selectedBuyRequest.id ? '取消中...' : '取消求购' }}
+                </UiButton>
               </div>
             </div>
           </template>
@@ -2545,7 +2554,68 @@ html.dark .br-match-chip {
   }
 }
 
-/* ── Buy-request fulfill candidates (inside narrow dialog) ── */
+/* ── Buy-request detail dialog ── */
+
+.br-detail-body {
+  max-height: calc(100vh - 7rem);
+  max-height: calc(100dvh - 7rem);
+  overflow-y: auto;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.br-detail-layout {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 100px minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 640px) {
+  .br-detail-layout {
+    gap: 16px;
+    grid-template-columns: 160px minmax(0, 1fr);
+  }
+}
+
+.br-detail-card {
+  width: 100%;
+}
+
+.br-detail-card > * {
+  width: 100%;
+}
+
+.br-detail-stats {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr;
+  font-size: 12px;
+}
+
+@media (min-width: 640px) {
+  .br-detail-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+}
+
+.br-detail-actions {
+  position: sticky;
+  bottom: 0;
+  padding-top: 12px;
+  background: linear-gradient(to bottom, transparent, var(--g-surface-card) 6px);
+}
+
+html.dark .br-detail-actions {
+  background: linear-gradient(to bottom, transparent, rgba(23, 23, 23, 0.97) 6px);
+}
+
+.br-fulfill-scroll {
+  max-height: 14rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
 
 .br-fulfill-grid {
   display: grid;
