@@ -48,11 +48,10 @@ export async function startRegistration(email: string, displayName?: string | nu
     where: { email: normalizedEmail }
   });
 
-  if (existingAccount?.status === ACCOUNT_STATUS.ACTIVE) {
-    throw new Error('该邮箱已注册');
-  }
-  if (existingAccount?.status === ACCOUNT_STATUS.DISABLED) {
-    throw new Error('该账号已被禁用');
+  // Silently return success to prevent email enumeration (same pattern as password reset)
+  if (existingAccount?.status === ACCOUNT_STATUS.ACTIVE ||
+      existingAccount?.status === ACCOUNT_STATUS.DISABLED) {
+    return { expiresAt: new Date(now.getTime() + config.verification.ttlMinutes * 60 * 1000) };
   }
 
   const account = existingAccount

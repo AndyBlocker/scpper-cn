@@ -200,6 +200,15 @@ export const htmlSnippetsRouter = Router();
 function createPostHandler(routeBase: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // Require internal API key for write operations
+      const expectedKey = (process.env.BFF_INTERNAL_API_KEY || '').trim();
+      if (expectedKey) {
+        const providedKey = String(req.get('x-internal-key') || '').trim();
+        if (providedKey !== expectedKey) {
+          return res.status(403).json({ error: 'forbidden' });
+        }
+      }
+
       const rawHtml = typeof req.body?.html === 'string' ? req.body.html : req.body?.content;
       if (typeof rawHtml !== 'string' || rawHtml.trim().length === 0) {
         return res.status(400).json({ error: 'invalid_html' });

@@ -20,7 +20,7 @@ export async function createServer() {
           if (!origin || allowedOrigins.includes(origin)) cb(null, true);
           else cb(new Error('Not allowed by CORS'));
         }
-      : true,
+      : false,
     credentials: true
   }));
   app.use(express.json({ limit: '1mb' }));
