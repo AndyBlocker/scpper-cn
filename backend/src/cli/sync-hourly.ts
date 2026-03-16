@@ -155,7 +155,8 @@ export async function runSyncHourlyScheduler(options: SyncHourlySchedulerOptions
         concurrency: options.concurrency,
         full: false,
         testMode: false,
-        onProgress
+        onProgress,
+        analysisFatal: false
       }));
 
       const watchdogPromise = new Promise<never>((_, reject) => {
