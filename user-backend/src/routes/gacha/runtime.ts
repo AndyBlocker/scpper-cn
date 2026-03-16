@@ -4331,6 +4331,9 @@ function marketPriceAt(
   context: MarketOracleContext
 ) {
   const tick = marketTickAt(contract, date, context);
+  if (!tick) {
+    console.warn(`[market] ⚠️ No tick found for ${contract.category} at ${date.toISOString()}, falling back to INDEX_BASE=${INDEX_BASE}. Oracle context has ${context.byCategory[contract.category]?.length ?? 0} ticks.`);
+  }
   return Number(tick?.indexMark ?? INDEX_BASE);
 }
 
@@ -6289,8 +6292,13 @@ async function settleDueMarketPositions(
     // and should not be overridden by current-time equity checks.
     if (expireAt && expireAt.getTime() <= asOf.getTime()) {
       const expireTick = marketTickAt(contract, expireAt, context);
-      settleTickTs = expireTick?.asOfTs ?? expireAt;
-      settleIndex = Number(expireTick?.indexMark ?? INDEX_BASE);
+      if (!expireTick) {
+        console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, skipping position ${position.positionId}`);
+        remainingActive.push(position);
+        continue;
+      }
+      settleTickTs = expireTick.asOfTs;
+      settleIndex = Number(expireTick.indexMark);
       const expireEquity = marketCalcEquity(
         position.margin,
         position.side,
@@ -6306,8 +6314,14 @@ async function settleDueMarketPositions(
       }
     } else {
       const currentTick = marketTickAt(contract, asOf, context);
-      settleTickTs = currentTick?.asOfTs ?? asOf;
-      settleIndex = Number(currentTick?.indexMark ?? INDEX_BASE);
+      if (!currentTick) {
+        // No tick available — do NOT settle/liquidate with INDEX_BASE fallback.
+        // Keep position active and let next cycle retry with fresh ticks.
+        remainingActive.push(position);
+        continue;
+      }
+      settleTickTs = currentTick.asOfTs;
+      settleIndex = Number(currentTick.indexMark);
       const currentEquity = marketCalcEquity(
         position.margin,
         position.side,
