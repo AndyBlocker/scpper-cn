@@ -6291,11 +6291,19 @@ async function settleDueMarketPositions(
     // Expired positions must settle at IndexPriceAtOrBefore(expireAt),
     // and should not be overridden by current-time equity checks.
     if (expireAt && expireAt.getTime() <= asOf.getTime()) {
-      const expireTick = marketTickAt(contract, expireAt, context);
+      let expireTick = marketTickAt(contract, expireAt, context);
       if (!expireTick) {
-        console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, skipping position ${position.positionId}`);
-        remainingActive.push(position);
-        continue;
+        // expireAt may be older than the oracle tick window — use earliest available tick
+        // to avoid the position being stuck forever. This is an approximation but far
+        // better than INDEX_BASE or permanent limbo.
+        const categoryTicks = context.byCategory[contract.category] ?? [];
+        expireTick = categoryTicks.length > 0 ? categoryTicks[0]! : null;
+        if (!expireTick) {
+          console.warn(`[market-settle] ⚠️ No ticks at all for ${contract.category}, skipping position ${position.positionId}`);
+          remainingActive.push(position);
+          continue;
+        }
+        console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, using earliest available tick at ${expireTick.asOfTs.toISOString()}`);
       }
       settleTickTs = expireTick.asOfTs;
       settleIndex = Number(expireTick.indexMark);
