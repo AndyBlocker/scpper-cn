@@ -186,8 +186,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && path === '/send') {
-    // Validate internal API key
+    // Validate internal API key — always required unless NODE_ENV=development
     const expectedKey = (process.env.MAIL_AGENT_API_KEY || '').trim();
+    if (!expectedKey && process.env.NODE_ENV !== 'development') {
+      logger.error('MAIL_AGENT_API_KEY is not set — rejecting /send request');
+      sendJson(res, 503, { error: 'Service misconfigured' });
+      return;
+    }
     if (expectedKey) {
       const provided = (req.headers['x-internal-key'] || '').trim();
       if (provided !== expectedKey) {

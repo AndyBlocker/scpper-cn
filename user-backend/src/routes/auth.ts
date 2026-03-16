@@ -1,4 +1,4 @@
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { config } from '../config.js';
@@ -7,6 +7,15 @@ import { issueAuthToken } from '../utils/auth-token.js';
 import { prisma } from '../db.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { startPasswordReset, completePasswordReset } from '../services/passwordReset.js';
+import { SlidingWindowRateLimiter } from '../utils/rateLimiter.js';
+
+const loginLimiter = new SlidingWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxHits: 20 });
+const registerStartLimiter = new SlidingWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxHits: 5 });
+const resetStartLimiter = new SlidingWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxHits: 5 });
+
+function getClientIp(req: Request): string {
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
 
 const startSchema = z.object({
   email: z.string().email('电子邮箱格式不正确'),
@@ -61,12 +70,37 @@ const resetCompleteSchema = z.object({
     .max(128, '密码长度过长')
 });
 
+// Known business error messages that are safe to expose to the client
+const SAFE_ERROR_MESSAGES = new Set([
+  '验证码请求过于频繁，请稍后再试',
+  '该邮箱已注册',
+  '该账号已被禁用',
+  '账号不存在，请先请求验证码',
+  '请先请求验证码',
+  '验证码已过期',
+  '验证码尝试次数过多，请重新请求',
+  '验证码不正确',
+  '验证码不正确或已过期',
+  '邮箱或密码错误',
+  '账号异常',
+  '当前密码不正确',
+  '未提供需要更新的内容',
+  '登录尝试过于频繁，请 15 分钟后再试',
+  '请求过于频繁，请稍后再试'
+]);
+
 function createErrorResponse(error: unknown) {
   if (error instanceof z.ZodError) {
     return { status: 400, body: { error: error.issues[0]?.message || '参数错误' } };
   }
-  if (error instanceof Error) {
+  if (error instanceof Error && SAFE_ERROR_MESSAGES.has(error.message)) {
     return { status: 400, body: { error: error.message } };
+  }
+  if (error instanceof Error) {
+    // Do not leak internal error messages (e.g. database errors)
+    // eslint-disable-next-line no-console
+    console.error('[auth] unexpected error:', error);
+    return { status: 500, body: { error: '服务器内部错误' } };
   }
   return { status: 500, body: { error: '未知错误' } };
 }
@@ -101,6 +135,10 @@ export function authRouter() {
 
   router.post('/register/start', async (req, res) => {
     try {
+      const ip = getClientIp(req);
+      if (!registerStartLimiter.hit(ip)) {
+        return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+      }
       const payload = startSchema.parse(req.body ?? {});
       const result = await startRegistration(payload.email, payload.displayName);
       res.json({ ok: true, expiresAt: result.expiresAt.toISOString() });
@@ -128,6 +166,10 @@ export function authRouter() {
 
   router.post('/login', async (req, res) => {
     try {
+      const ip = getClientIp(req);
+      if (!loginLimiter.hit(ip)) {
+        return res.status(429).json({ error: '登录尝试过于频繁，请 15 分钟后再试' });
+      }
       const payload = loginSchema.parse(req.body ?? {});
       const email = payload.email.trim().toLowerCase();
       const account = await prisma.userAccount.findUnique({ where: { email } });
@@ -177,6 +219,10 @@ export function authRouter() {
   // Request password reset code (always returns ok)
   router.post('/password/reset/start', async (req, res) => {
     try {
+      const ip = getClientIp(req);
+      if (!resetStartLimiter.hit(ip)) {
+        return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+      }
       const payload = resetStartSchema.parse(req.body ?? {});
       await startPasswordReset(payload.email);
       res.json({ ok: true });

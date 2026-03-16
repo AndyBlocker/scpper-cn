@@ -12,6 +12,7 @@ import { wikidotBindingRouter, wikidotBindingInternalRouter } from './routes/wik
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', 1);
   app.use(helmet());
   const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   app.use(cors({

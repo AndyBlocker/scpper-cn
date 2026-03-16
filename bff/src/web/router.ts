@@ -43,12 +43,10 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
     if (expectedKey && providedKey && providedKey === expectedKey) {
       return next();
     }
-
-    // Only trust the actual socket address for unauthenticated internal access.
-    // `x-forwarded-for` can be spoofed when requests hit this service directly.
-    if (isLoopbackIp(req.socket.remoteAddress)) {
-      return next();
-    }
+    // Loopback IP alone is no longer sufficient — the Nuxt frontend proxy also
+    // originates from localhost, so a public user hitting /api/internal/** would
+    // pass a pure-loopback check.  Require a valid x-internal-key for all
+    // internal route access.
     return res.status(403).json({ error: 'internal_access_denied' });
   };
   router.use('/pages', pagesRouter(pool, redis));

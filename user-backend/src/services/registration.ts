@@ -67,6 +67,16 @@ export async function startRegistration(email: string, displayName?: string | nu
         }
       });
 
+  // Invalidate all previous unconsumed REGISTER tokens for this user
+  await prisma.verificationToken.updateMany({
+    where: {
+      userId: account.id,
+      purpose: VERIFICATION_PURPOSE.REGISTER,
+      consumedAt: null
+    },
+    data: { consumedAt: now }
+  });
+
   const code = generateNumericCode(config.verification.codeLength);
   const codeHash = hashVerificationCode(code);
   const expiresAt = new Date(now.getTime() + config.verification.ttlMinutes * 60 * 1000);
@@ -148,12 +158,22 @@ export async function completeRegistration(email: string, code: string, password
       }
     });
 
+    // Consume the matched token and invalidate all remaining unconsumed tokens
     await tx.verificationToken.update({
       where: { id: token.id },
       data: {
         consumedAt: now,
         attemptCount: token.attemptCount + 1
       }
+    });
+
+    await tx.verificationToken.updateMany({
+      where: {
+        userId: account.id,
+        purpose: VERIFICATION_PURPOSE.REGISTER,
+        consumedAt: null
+      },
+      data: { consumedAt: now }
     });
 
     return updatedAccount;
