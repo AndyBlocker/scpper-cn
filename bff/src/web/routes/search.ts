@@ -1343,7 +1343,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           return res.status(400).json({ error: 'invalid_regex', message: validation.error });
         }
       }
-      const limitInt = Math.max(0, Number(limit) | 0) || 20;
+      const limitInt = Math.min(Math.max(0, Number(limit) | 0) || 20, 100);
       const offsetInt = Math.max(0, Number(offset) | 0);
       const includeTagsArray = tags
         ? (Array.isArray(tags) ? (tags as string[]) : [tags as string])
@@ -1605,7 +1605,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       const totalLimit = Math.max(0, Number(limit) | 0);
       const totalOffset = Math.max(0, Number(offset) | 0);
       const defaultPageCap = Math.max(0, Math.min(totalLimit || 20, Math.ceil((totalLimit || 20) * 0.6)));
-      const pageCap = Math.max(0, Number(pageLimit ?? defaultPageCap) | 0);
+      const pageCap = Math.min(Math.max(0, Number(pageLimit ?? defaultPageCap) | 0), 100);
       const userCap = Math.max(0, Number(userLimit ?? ((totalLimit || 20) - pageCap)) | 0);
       const wantSnippet = String(includeSnippet).toLowerCase() === 'true';
       const wantDate = String(includeDate).toLowerCase() === 'true';

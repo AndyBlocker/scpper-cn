@@ -46,6 +46,16 @@ export async function startPasswordReset(email: string) {
     return { ok: true } as const;
   }
 
+  // Invalidate all previous unconsumed PASSWORD_RESET tokens for this user
+  await prisma.verificationToken.updateMany({
+    where: {
+      userId: account.id,
+      purpose: VERIFICATION_PURPOSE.PASSWORD_RESET,
+      consumedAt: null
+    },
+    data: { consumedAt: now }
+  });
+
   const code = generateNumericCode(config.verification.codeLength);
   const codeHash = hashVerificationCode(code);
   const expiresAt = new Date(now.getTime() + config.verification.ttlMinutes * 60 * 1000);
@@ -85,15 +95,13 @@ export async function completePasswordReset(email: string, code: string, passwor
       where: {
         userId: account.id,
         purpose: VERIFICATION_PURPOSE.PASSWORD_RESET,
-        consumedAt: null
+        consumedAt: null,
+        expiresAt: { gte: now }
       },
       orderBy: { createdAt: 'desc' }
     });
 
-    if (!token || token.expiresAt < now) {
-      if (token) {
-        await tx.verificationToken.update({ where: { id: token.id }, data: { attemptCount: token.attemptCount + 1 } });
-      }
+    if (!token) {
       throw new Error('验证码不正确或已过期');
     }
 
@@ -113,9 +121,19 @@ export async function completePasswordReset(email: string, code: string, passwor
       data: { passwordHash }
     });
 
+    // Consume the matched token and invalidate all remaining unconsumed tokens
     await tx.verificationToken.update({
       where: { id: token.id },
       data: { consumedAt: now, attemptCount: token.attemptCount + 1 }
+    });
+
+    await tx.verificationToken.updateMany({
+      where: {
+        userId: account.id,
+        purpose: VERIFICATION_PURPOSE.PASSWORD_RESET,
+        consumedAt: null
+      },
+      data: { consumedAt: now }
     });
   });
 
