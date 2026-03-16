@@ -83,14 +83,14 @@
             />
 
             <GachaHistoryPanel
-              v-if="activeTab === 'history'"
+              v-else-if="activeTab === 'history'"
               key="index-history-tab"
               :history="history"
               @refresh="refreshHistory"
             />
 
             <GachaMissionTicketPanel
-              v-if="activeTab === 'tickets'"
+              v-else-if="activeTab === 'tickets'"
               key="index-tickets-tab"
               :tickets="tickets"
               :loading="ticketsLoading"

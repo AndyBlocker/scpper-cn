@@ -1768,30 +1768,28 @@ watch([brSortMode, brRarityFilter], () => {
                     >
                       正在加载你的可交付库存...
                     </p>
-                    <div v-else-if="buyRequestFulfillCandidates.length > 0" class="br-fulfill-scroll">
-                      <div class="br-fulfill-grid">
-                        <button
-                          v-for="item in buyRequestFulfillCandidates"
-                          :key="`br-fulfill-candidate-${item.stackKey}`"
-                          type="button"
-                          class="trade-create-card"
-                          :class="{ 'trade-create-card--selected': selectedFulfillStackKey === item.stackKey }"
-                          @click="selectedFulfillStackKey = item.stackKey"
+                    <div v-else-if="buyRequestFulfillCandidates.length > 0" class="br-fulfill-grid">
+                      <button
+                        v-for="item in buyRequestFulfillCandidates"
+                        :key="`br-fulfill-candidate-${item.stackKey}`"
+                        type="button"
+                        class="trade-create-card"
+                        :class="{ 'trade-create-card--selected': selectedFulfillStackKey === item.stackKey }"
+                        @click="selectedFulfillStackKey = item.stackKey"
+                      >
+                        <GachaCardMini
+                          :title="item.title"
+                          :rarity="item.rarity"
+                          :image-url="item.imageUrl || undefined"
+                          :retired="item.isRetired"
+                          :affix-visual-style="item.affixVisualStyle"
+                          :affix-label="item.affixLabel"
                         >
-                          <GachaCardMini
-                            :title="item.title"
-                            :rarity="item.rarity"
-                            :image-url="item.imageUrl || undefined"
-                            :retired="item.isRetired"
-                            :affix-visual-style="item.affixVisualStyle"
-                            :affix-label="item.affixLabel"
-                          >
-                            <template #meta>
-                              <span class="trade-remaining-chip">可交付 {{ item.availableCount }}</span>
-                            </template>
-                          </GachaCardMini>
-                        </button>
-                      </div>
+                          <template #meta>
+                            <span class="trade-remaining-chip">可交付 {{ item.availableCount }}</span>
+                          </template>
+                        </GachaCardMini>
+                      </button>
                     </div>
                     <p v-else class="text-[11px] text-neutral-500 dark:text-neutral-400">
                       暂无可直接交付库存，将由系统自动尝试释放符合条件的卡牌。
@@ -2566,8 +2564,17 @@ html.dark .br-match-chip {
 .br-detail-layout {
   display: grid;
   gap: 12px;
-  grid-template-columns: 100px minmax(0, 1fr);
   align-items: start;
+}
+
+.br-detail-card {
+  width: 100%;
+  max-width: 140px;
+  margin-inline: auto;
+}
+
+.br-detail-card > * {
+  width: 100%;
 }
 
 @media (min-width: 640px) {
@@ -2575,14 +2582,11 @@ html.dark .br-match-chip {
     gap: 16px;
     grid-template-columns: 160px minmax(0, 1fr);
   }
-}
 
-.br-detail-card {
-  width: 100%;
-}
-
-.br-detail-card > * {
-  width: 100%;
+  .br-detail-card {
+    max-width: none;
+    margin-inline: 0;
+  }
 }
 
 .br-detail-stats {
@@ -2604,17 +2608,6 @@ html.dark .br-match-chip {
   bottom: 0;
   padding-top: 12px;
   background: linear-gradient(to bottom, transparent, var(--g-surface-card) 6px);
-}
-
-html.dark .br-detail-actions {
-  background: linear-gradient(to bottom, transparent, rgba(23, 23, 23, 0.97) 6px);
-}
-
-.br-fulfill-scroll {
-  max-height: 14rem;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
 }
 
 .br-fulfill-grid {
