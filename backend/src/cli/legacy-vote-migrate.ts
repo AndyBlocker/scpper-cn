@@ -734,7 +734,7 @@ async function purgePreCutoffVotes(
       Prisma.sql`update "Page" set "votingTimeSeriesCache" = null, "votingCacheUpdatedAt" = null where "firstPublishedAt" < ${cutoffIso}::timestamptz`
     );
     await prisma.$executeRaw(
-      Prisma.sql`update "User" set "attributionVotingTimeSeriesCache" = null, "attributionVotingCacheUpdatedAt" = null where coalesce("firstActivityAt", "createdAt") < ${cutoffIso}::timestamptz`
+      Prisma.sql`update "User" set "attributionVotingTimeSeriesCache" = null, "attributionVotingCacheUpdatedAt" = null where "firstActivityAt" < ${cutoffIso}::timestamptz`
     );
     return;
   }
