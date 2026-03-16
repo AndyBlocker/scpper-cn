@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../db.js';
 import { WikidotBindingStatus } from '@prisma/client';
+import { invalidateAuthCache } from '../middleware/requireAuth.js';
 
 const VERIFICATION_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // Excluding 0/O, 1/I/L
 const VERIFICATION_CODE_LENGTH = 6;
@@ -347,13 +348,13 @@ export async function completeBindingTask(
   revisionInfo?: { revisionId: number; timestamp: Date }
 ): Promise<boolean> {
   // Use interactive transaction to ensure atomicity of check + update
-  return await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const task = await tx.wikidotBindingTask.findUnique({
       where: { id: taskId }
     });
 
     if (!task || task.status !== WikidotBindingStatus.PENDING) {
-      return false;
+      return null;
     }
 
     // Check if wikidotId is still available (inside transaction)
@@ -368,7 +369,7 @@ export async function completeBindingTask(
           failureReason: '该 Wikidot 账号已被其他用户绑定'
         }
       });
-      return false;
+      return null;
     }
 
     // Complete the binding atomically
@@ -384,8 +385,14 @@ export async function completeBindingTask(
       }
     });
 
-    return true;
+    return task.userId;
   });
+
+  if (result) {
+    invalidateAuthCache(result);
+    return true;
+  }
+  return false;
 }
 
 export async function updateTaskCheckStatus(
