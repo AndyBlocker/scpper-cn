@@ -91,9 +91,22 @@ export class IncrementalAnalyzeJob {
         await this.cleanAnalysisData(tasksToRun);
       }
 
+      const failedTasks: Array<{ name: string; error: unknown }> = [];
+
       for (const taskName of tasksToRun) {
         console.log(`📊 Running task: ${taskName}`);
-        await this.runTask(taskName, options.forceFullAnalysis, { forceFullHistory });
+        try {
+          await this.runTask(taskName, options.forceFullAnalysis, { forceFullHistory });
+        } catch (taskError) {
+          console.error(`❌ Task ${taskName} failed:`, taskError);
+          failedTasks.push({ name: taskName, error: taskError });
+        }
+      }
+
+      if (failedTasks.length > 0) {
+        const names = failedTasks.map(t => t.name).join(', ');
+        console.error(`⚠️ Incremental analysis completed with ${failedTasks.length} failed task(s): ${names}`);
+        throw new Error(`${failedTasks.length} task(s) failed: ${names}`, { cause: failedTasks[0]!.error });
       }
 
       console.log('✅ Incremental analysis completed successfully!');

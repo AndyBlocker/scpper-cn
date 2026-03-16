@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 
 const USER_BACKEND_URL = process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455';
+const INTERNAL_API_KEY = (process.env.INTERNAL_API_KEY || '').trim();
 const TARGET_PAGE_URL = '/andyblocker'; // The page where users add verification code (must end with /andyblocker)
 const USER_BACKEND_FETCH_TIMEOUT_MS = Math.max(
   1000,
@@ -67,12 +68,19 @@ export class WikidotBindingVerifyJob {
     }
   }
 
+  private internalHeaders(extra?: Record<string, string>): Record<string, string> {
+    const headers: Record<string, string> = { ...extra };
+    if (INTERNAL_API_KEY) headers['x-internal-key'] = INTERNAL_API_KEY;
+    return headers;
+  }
+
   private async fetchPendingTasks(): Promise<PendingTask[]> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), USER_BACKEND_FETCH_TIMEOUT_MS);
     try {
       const response = await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/pending`, {
         method: 'GET',
+        headers: this.internalHeaders(),
         signal: controller.signal
       });
 
@@ -180,7 +188,7 @@ export class WikidotBindingVerifyJob {
     try {
       await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/complete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           taskId,
           revisionId,
@@ -196,7 +204,7 @@ export class WikidotBindingVerifyJob {
     try {
       await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/update-check`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ taskId })
       });
     } catch (error) {
@@ -208,7 +216,7 @@ export class WikidotBindingVerifyJob {
     try {
       await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/expire`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ taskId })
       });
     } catch (error) {
