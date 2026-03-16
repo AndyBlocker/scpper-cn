@@ -129,8 +129,9 @@ export async function sync({
   phase,
   concurrency,
   testMode,
-  onProgress
-}: SyncOptions) {
+  onProgress,
+  analysisFatal = true
+}: SyncOptions & { analysisFatal?: boolean }) {
   const startTime = Date.now();
   const results: { phaseA?: { totalScanned: number; elapsedTime: number; speed: string; queueStats: any } } = {};
   const prisma = getPrismaClient();
@@ -231,9 +232,6 @@ export async function sync({
     }
 
     // 只有在运行所有阶段或者明确指定 analyze 时才运行分析
-    // Analysis failures are non-fatal: Phase A/B/C data sync already succeeded,
-    // so we log the error but let sync() return normally to unblock downstream
-    // tasks (forum sync, gacha sync) in the hourly scheduler.
     if (phase === 'all' || phase === 'analyze') {
       const spinnerAnalyze = ora(full ? 'Analysis: full incremental...' : 'Analysis: incremental...').start();
       try {
@@ -245,7 +243,12 @@ export async function sync({
         spinnerAnalyze.succeed('Analysis completed');
       } catch (analyzeError) {
         spinnerAnalyze.fail('Analysis completed with errors');
-        console.error('⚠️ Incremental analysis had failures (non-fatal for sync):', analyzeError instanceof Error ? analyzeError.message : analyzeError);
+        console.error('⚠️ Incremental analysis had failures:', analyzeError instanceof Error ? analyzeError.message : analyzeError);
+        // When called from sync-hourly, analysis failures are non-fatal so
+        // forum sync and gacha sync can still proceed. For direct CLI usage
+        // (npm run sync / sync --full), propagate the error so operators see
+        // a non-zero exit code.
+        if (analysisFatal) throw analyzeError;
       }
     }
 

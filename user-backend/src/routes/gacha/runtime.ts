@@ -67,6 +67,7 @@ let buyRequestExpirySweepLastRunAt = 0;
 let buyRequestExpirySweepInFlight: Promise<number> | null = null;
 let marketSettleSweepLastRunAt = 0;
 let marketSettleSweepInFlight: Promise<number> | null = null;
+let marketSettleSweepCursor: string | null = null;
 const TEN_DRAW_REFORGE_REWARD: TicketBalance = {
   drawTicket: 0,
   draw10Ticket: 0,
@@ -4329,12 +4330,10 @@ function marketPriceAt(
   contract: MarketContractDefinition,
   date: Date,
   context: MarketOracleContext
-) {
+): number | null {
   const tick = marketTickAt(contract, date, context);
-  if (!tick) {
-    console.warn(`[market] ⚠️ No tick found for ${contract.category} at ${date.toISOString()}, falling back to INDEX_BASE=${INDEX_BASE}. Oracle context has ${context.byCategory[contract.category]?.length ?? 0} ticks.`);
-  }
-  return Number(tick?.indexMark ?? INDEX_BASE);
+  if (!tick) return null;
+  return Number(tick.indexMark);
 }
 
 function sliceTicksByTimeframe(ticks: OracleTick[], asOfTs: Date, timeframe: MarketTickTimeframe) {
@@ -4374,13 +4373,13 @@ function buildMarketContractSnapshot(
   timeframe: MarketTickTimeframe = '24H'
 ) {
   const asOf = context.asOfTs;
-  const latestPrice = marketPriceAt(contract, asOf, context);
+  const latestPrice = marketPriceAt(contract, asOf, context) ?? INDEX_BASE;
   const dayStart = floorToUtc8DayStart(asOf);
-  const dayOpen = marketPriceAt(contract, dayStart, context);
-  const weekOpen = marketPriceAt(contract, floorToUtc8NDaysAgo(asOf, 7), context);
-  const monthOpen = marketPriceAt(contract, floorToUtc8NDaysAgo(asOf, 30), context);
+  const dayOpen = marketPriceAt(contract, dayStart, context) ?? latestPrice;
+  const weekOpen = marketPriceAt(contract, floorToUtc8NDaysAgo(asOf, 7), context) ?? latestPrice;
+  const monthOpen = marketPriceAt(contract, floorToUtc8NDaysAgo(asOf, 30), context) ?? latestPrice;
   const rangeStart = timeframeRangeStart(asOf, timeframe);
-  const openPrice = marketPriceAt(contract, rangeStart, context);
+  const openPrice = marketPriceAt(contract, rangeStart, context) ?? latestPrice;
   const recentTicks = sliceTicksByTimeframe(context.byCategory[contract.category] ?? [], asOf, timeframe);
   let rangeHigh = Math.max(latestPrice, openPrice);
   let rangeLow = Math.min(latestPrice, openPrice);
@@ -5532,11 +5531,19 @@ async function loadUsersWithDueMarketSettlement(
 async function runMarketSettleSweep(asOf = now()) {
   const oracleContext = await loadOracleContext(asOf, ORACLE_TICK_LIMIT_POSITION);
   let settledPositions = 0;
-  let cursor: string | null = null;
+  // Use persistent cursor so that stuck users at the front of the sort don't
+  // block later users across sweep invocations. Resets to null when a full
+  // pass completes (batch returned fewer than BATCH_SIZE), ensuring every
+  // user is eventually visited.
+  let cursor = marketSettleSweepCursor;
   for (let batch = 0; batch < MARKET_SETTLE_SWEEP_MAX_BATCHES_PER_RUN; batch += 1) {
     // eslint-disable-next-line no-await-in-loop
     const dueUsers = await loadUsersWithDueMarketSettlement(prisma, asOf, MARKET_SETTLE_SWEEP_USER_BATCH_SIZE, cursor);
-    if (dueUsers.length <= 0) break;
+    if (dueUsers.length <= 0) {
+      // Wrapped around — reset cursor so next invocation starts from the top
+      cursor = null;
+      break;
+    }
     for (const row of dueUsers) {
       const userId = String(row.userId || '').trim();
       if (!userId) continue;
@@ -5549,8 +5556,13 @@ async function runMarketSettleSweep(asOf = now()) {
       });
       settledPositions += settledForUser;
     }
-    if (dueUsers.length < MARKET_SETTLE_SWEEP_USER_BATCH_SIZE) break;
+    if (dueUsers.length < MARKET_SETTLE_SWEEP_USER_BATCH_SIZE) {
+      // Reached the end of due users — reset cursor for next invocation
+      cursor = null;
+      break;
+    }
   }
+  marketSettleSweepCursor = cursor;
   return settledPositions;
 }
 
@@ -6246,7 +6258,7 @@ async function computeMarketState(tx: Tx, userId: string, context: MarketOracleC
     .filter((position) => !settlementMap.has(position.positionId))
     .map((position) => {
       const contract = resolveMarketContract(position.contractId);
-      const currentIndex = contract ? marketPriceAt(contract, asOf, context) : position.entryIndex;
+      const currentIndex = contract ? (marketPriceAt(contract, asOf, context) ?? position.entryIndex) : position.entryIndex;
       const currentEquity = marketCalcEquity(
         position.margin,
         position.side,
@@ -6300,17 +6312,20 @@ async function settleDueMarketPositions(
     if (expireAt && expireAt.getTime() <= asOf.getTime()) {
       let expireTick = marketTickAt(contract, expireAt, context);
       if (!expireTick) {
-        // expireAt may be older than the oracle tick window — use earliest available tick
-        // to avoid the position being stuck forever. This is an approximation but far
-        // better than INDEX_BASE or permanent limbo.
+        // expireAt may be older than the oracle tick window.
+        // Only use the earliest available tick if it is BEFORE expireAt (i.e. the
+        // oracle window overlaps the expiry). If the earliest tick is AFTER expireAt,
+        // using it would violate the "price at or before expiry" rule, so skip instead.
         const categoryTicks = context.byCategory[contract.category] ?? [];
-        expireTick = categoryTicks.length > 0 ? categoryTicks[0]! : null;
-        if (!expireTick) {
-          console.warn(`[market-settle] ⚠️ No ticks at all for ${contract.category}, skipping position ${position.positionId}`);
+        const earliest = categoryTicks.length > 0 ? categoryTicks[0]! : null;
+        if (earliest && earliest.asOfTs.getTime() <= expireAt.getTime()) {
+          expireTick = earliest;
+          console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, using earliest available tick at ${expireTick.asOfTs.toISOString()}`);
+        } else {
+          console.warn(`[market-settle] ⚠️ No valid tick for ${contract.category} at or before expireAt=${expireAt.toISOString()}, skipping position ${position.positionId}`);
           remainingActive.push(position);
           continue;
         }
-        console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, using earliest available tick at ${expireTick.asOfTs.toISOString()}`);
       }
       settleTickTs = expireTick.asOfTs;
       settleIndex = Number(expireTick.indexMark);
