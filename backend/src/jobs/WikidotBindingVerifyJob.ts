@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 
 const USER_BACKEND_URL = process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455';
+const INTERNAL_API_KEY = (process.env.INTERNAL_API_KEY || '').trim();
 const TARGET_PAGE_URL = '/andyblocker'; // The page where users add verification code (must end with /andyblocker)
 const USER_BACKEND_FETCH_TIMEOUT_MS = Math.max(
   1000,
@@ -67,12 +68,19 @@ export class WikidotBindingVerifyJob {
     }
   }
 
+  private internalHeaders(extra?: Record<string, string>): Record<string, string> {
+    const headers: Record<string, string> = { ...extra };
+    if (INTERNAL_API_KEY) headers['x-internal-key'] = INTERNAL_API_KEY;
+    return headers;
+  }
+
   private async fetchPendingTasks(): Promise<PendingTask[]> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), USER_BACKEND_FETCH_TIMEOUT_MS);
     try {
       const response = await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/pending`, {
         method: 'GET',
+        headers: this.internalHeaders(),
         signal: controller.signal
       });
 
@@ -176,43 +184,32 @@ export class WikidotBindingVerifyJob {
     }
   }
 
-  private async completeTask(taskId: string, revisionId: number, timestamp: Date): Promise<void> {
+  private async postInternal(path: string, body: Record<string, unknown>, label: string): Promise<void> {
     try {
-      await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/complete`, {
+      const response = await fetch(`${USER_BACKEND_URL}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId,
-          revisionId,
-          timestamp: timestamp.toISOString()
-        })
+        headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body)
       });
+      if (!response.ok) {
+        console.warn(`⚠️ ${label}: HTTP ${response.status}`);
+      }
     } catch (error) {
-      console.warn(`⚠️ Failed to complete task ${taskId}:`, error);
+      console.warn(`⚠️ ${label}:`, error);
     }
+  }
+
+  private async completeTask(taskId: string, revisionId: number, timestamp: Date): Promise<void> {
+    await this.postInternal('/internal/wikidot-binding/complete', {
+      taskId, revisionId, timestamp: timestamp.toISOString()
+    }, `Failed to complete task ${taskId}`);
   }
 
   private async updateTaskCheck(taskId: string): Promise<void> {
-    try {
-      await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/update-check`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId })
-      });
-    } catch (error) {
-      console.warn(`⚠️ Failed to update task check for ${taskId}:`, error);
-    }
+    await this.postInternal('/internal/wikidot-binding/update-check', { taskId }, `Failed to update task check for ${taskId}`);
   }
 
   private async expireTask(taskId: string): Promise<void> {
-    try {
-      await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/expire`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId })
-      });
-    } catch (error) {
-      console.warn(`⚠️ Failed to expire task ${taskId}:`, error);
-    }
+    await this.postInternal('/internal/wikidot-binding/expire', { taskId }, `Failed to expire task ${taskId}`);
   }
 }

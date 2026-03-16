@@ -439,11 +439,15 @@ function updateChart() {
     areaMarkerApiRef.value?.setMarkers([])
   }
 
+  // lightweight-charts throws "Value is null" when setVisibleRange is called
+  // on a chart with no data points — guard against empty series
+  if (candleData.length === 0) return
+
   const asOf = parseUnixSeconds(props.asOfTs) ?? Math.floor(Date.now() / 1000)
   const windowFrom = asOf - timeframeHours(props.timeframe) * 60 * 60
   const bucketSeconds = timeframeBucketSeconds(props.timeframe)
-  const firstCandleTime = candleData.length > 0 ? Number(candleData[0]!.time) : windowFrom
-  const lastCandleTime = candleData.length > 0 ? Number(candleData[candleData.length - 1]!.time) : asOf
+  const firstCandleTime = Number(candleData[0]!.time)
+  const lastCandleTime = Number(candleData[candleData.length - 1]!.time)
   const from = Math.max(windowFrom, firstCandleTime - bucketSeconds)
   const to = Math.max(asOf, lastCandleTime)
 
