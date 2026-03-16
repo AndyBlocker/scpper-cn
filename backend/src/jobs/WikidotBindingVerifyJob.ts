@@ -184,43 +184,32 @@ export class WikidotBindingVerifyJob {
     }
   }
 
-  private async completeTask(taskId: string, revisionId: number, timestamp: Date): Promise<void> {
+  private async postInternal(path: string, body: Record<string, unknown>, label: string): Promise<void> {
     try {
-      await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/complete`, {
+      const response = await fetch(`${USER_BACKEND_URL}${path}`, {
         method: 'POST',
         headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          taskId,
-          revisionId,
-          timestamp: timestamp.toISOString()
-        })
+        body: JSON.stringify(body)
       });
+      if (!response.ok) {
+        console.warn(`⚠️ ${label}: HTTP ${response.status}`);
+      }
     } catch (error) {
-      console.warn(`⚠️ Failed to complete task ${taskId}:`, error);
+      console.warn(`⚠️ ${label}:`, error);
     }
+  }
+
+  private async completeTask(taskId: string, revisionId: number, timestamp: Date): Promise<void> {
+    await this.postInternal('/internal/wikidot-binding/complete', {
+      taskId, revisionId, timestamp: timestamp.toISOString()
+    }, `Failed to complete task ${taskId}`);
   }
 
   private async updateTaskCheck(taskId: string): Promise<void> {
-    try {
-      await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/update-check`, {
-        method: 'POST',
-        headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ taskId })
-      });
-    } catch (error) {
-      console.warn(`⚠️ Failed to update task check for ${taskId}:`, error);
-    }
+    await this.postInternal('/internal/wikidot-binding/update-check', { taskId }, `Failed to update task check for ${taskId}`);
   }
 
   private async expireTask(taskId: string): Promise<void> {
-    try {
-      await fetch(`${USER_BACKEND_URL}/internal/wikidot-binding/expire`, {
-        method: 'POST',
-        headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ taskId })
-      });
-    } catch (error) {
-      console.warn(`⚠️ Failed to expire task ${taskId}:`, error);
-    }
+    await this.postInternal('/internal/wikidot-binding/expire', { taskId }, `Failed to expire task ${taskId}`);
   }
 }
