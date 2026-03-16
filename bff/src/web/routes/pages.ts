@@ -706,8 +706,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ratingLte,
         createdAtGte,
         createdAtLte,
-        isHidden,
-        isUserPage,
+        // isHidden and isUserPage are accepted but not used in the query
         sortKey,
         sortOrder,
         limit = '20',
@@ -760,8 +759,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         ratingLte || null,
         createdAtGte || null,
         createdAtLte || null,
-        limit,
-        offset
+        Math.min(Math.max(0, Number(limit) | 0) || 20, 200),
+        Math.max(0, Number(offset) | 0)
       ];
 
       const { rows } = await readPool.query(sql, params);

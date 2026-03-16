@@ -47,6 +47,9 @@ function memorySet(key: string, value: unknown, ttlSeconds: number): void {
 }
 
 export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREFIX): CacheHandle {
+  // In-flight loader deduplication (singleflight) to prevent thundering herd
+  const inflight = new Map<string, Promise<unknown>>();
+
   if (!redis) {
     // Use in-memory cache as fallback when Redis is unavailable
     return {
@@ -56,12 +59,23 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
         const cached = memoryGet<T>(fullKey);
         if (cached !== null) return cached;
 
-        const result = await loader();
-        if (result === undefined) return result;
-        if (result === null && options?.cacheNull !== true) return result;
+        // Deduplicate concurrent loads for the same key
+        const existing = inflight.get(fullKey);
+        if (existing) return existing as Promise<T>;
 
-        memorySet(fullKey, result, ttl);
-        return result;
+        const promise = (async () => {
+          try {
+            const result = await loader();
+            if (result === undefined) return result;
+            if (result === null && options?.cacheNull !== true) return result;
+            memorySet(fullKey, result, ttl);
+            return result;
+          } finally {
+            inflight.delete(fullKey);
+          }
+        })();
+        inflight.set(fullKey, promise);
+        return promise as Promise<T>;
       },
       async getJSON<T>(key: string): Promise<T | null> {
         return memoryGet<T>(`${prefix}${key}`);
@@ -113,16 +127,23 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
       return cached;
     }
 
-    const result = await loader();
-    if (result === undefined) {
-      return result;
-    }
-    if ((result === null) && options?.cacheNull !== true) {
-      return result;
-    }
+    const fullKey = namespaced(key);
+    const existing = inflight.get(fullKey);
+    if (existing) return existing as Promise<T>;
 
-    await setJSON(key, result, ttlSeconds);
-    return result;
+    const promise = (async () => {
+      try {
+        const result = await loader();
+        if (result === undefined) return result;
+        if (result === null && options?.cacheNull !== true) return result;
+        await setJSON(key, result, ttlSeconds);
+        return result;
+      } finally {
+        inflight.delete(fullKey);
+      }
+    })();
+    inflight.set(fullKey, promise);
+    return promise as Promise<T>;
   }
 
   return {

@@ -73,8 +73,9 @@ d('Live DB integration (requires DATABASE_URL)', () => {
 
 	test('Users endpoints using /users/by-rank for discovery', async () => {
 		const ranked = await request(app).get('/users/by-rank?limit=1').expect(200);
-		if (!ranked.body.length) return; // dataset may be empty
-		const user = ranked.body[0];
+		const items = ranked.body.items ?? ranked.body;
+		if (!items.length) return; // dataset may be empty
+		const user = items[0];
 		expect(user).toHaveProperty('id');
 		const id = String(user.id);
 
