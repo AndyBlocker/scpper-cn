@@ -168,14 +168,17 @@ export class PhaseCProcessor {
         }
       };
 
-      for (const page of pagesToProcess) {
-        await this.queue.add(() => this._processOne(
-          page.url, 
+      // Enqueue all pages without awaiting each — let the queue handle concurrency.
+      // Previously each `await queue.add()` serialized what should be concurrent work.
+      const tasks = pagesToProcess.map(page =>
+        this.queue.add(() => this._processOne(
+          page.url,
           page.wikidotId,
-          page.reasons, 
+          page.reasons,
           trackProgress
-        ));
-      }
+        ))
+      );
+      await Promise.all(tasks);
       
       await this.queue.drain();
       

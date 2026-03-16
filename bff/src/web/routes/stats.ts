@@ -154,6 +154,14 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	router.get('/site/overview/series', async (req, res, next) => {
 		try {
 			const { startDate, endDate, limit = '365', offset = '0' } = req.query as Record<string, string>;
+			// Validate date format to return 400 instead of letting PostgreSQL ::date cast fail with 500
+			const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+			if (startDate && !dateRe.test(startDate.trim())) {
+				return res.status(400).json({ error: 'invalid startDate format, expected YYYY-MM-DD' });
+			}
+			if (endDate && !dateRe.test(endDate.trim())) {
+				return res.status(400).json({ error: 'invalid endDate format, expected YYYY-MM-DD' });
+			}
 			const defaultStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 			const effectiveStart = (startDate && startDate.trim()) ? startDate : defaultStart;
 			const cacheKey = `stats:site:overview:series:${effectiveStart || 'auto'}:${endDate || 'null'}:${limit}:${offset}`;

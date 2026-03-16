@@ -507,37 +507,49 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
 
       const supportsTransforms = await ensureCoverTransformColumns(pool);
 
-      const result = await pool.query<any>(
-        supportsTransforms
-          ? `
-            INSERT INTO "UserCollection"
-            ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "coverImageOffsetX", "coverImageOffsetY", "coverImageScale", "isDefault", "publishedAt")
-            VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, $8, $9, $10, NULL)
-            RETURNING *
-          `
-          : `
-            INSERT INTO "UserCollection"
-            ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "isDefault", "publishedAt")
-            VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, NULL)
-            RETURNING *
-          `,
-        supportsTransforms
-          ? [ownerId, title, slug, description, notes, coverImageUrl, coverImageOffsetX, coverImageOffsetY, coverImageScale, isDefault]
-          : [ownerId, title, slug, description, notes, coverImageUrl, isDefault]
-      );
+      // Use a transaction to atomically insert + clear other defaults
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      if (isDefault) {
-        await pool.query(
-          `
-            UPDATE "UserCollection"
-            SET "isDefault" = FALSE
-            WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
-          `,
-          [ownerId, result.rows[0].id]
+        const result = await client.query<any>(
+          supportsTransforms
+            ? `
+              INSERT INTO "UserCollection"
+              ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "coverImageOffsetX", "coverImageOffsetY", "coverImageScale", "isDefault", "publishedAt")
+              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, $8, $9, $10, NULL)
+              RETURNING *
+            `
+            : `
+              INSERT INTO "UserCollection"
+              ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "isDefault", "publishedAt")
+              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, NULL)
+              RETURNING *
+            `,
+          supportsTransforms
+            ? [ownerId, title, slug, description, notes, coverImageUrl, coverImageOffsetX, coverImageOffsetY, coverImageScale, isDefault]
+            : [ownerId, title, slug, description, notes, coverImageUrl, isDefault]
         );
-      }
 
-      res.status(201).json({ ok: true, collection: mapCollectionRow(result.rows[0]) });
+        if (isDefault) {
+          await client.query(
+            `
+              UPDATE "UserCollection"
+              SET "isDefault" = FALSE
+              WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
+            `,
+            [ownerId, result.rows[0].id]
+          );
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json({ ok: true, collection: mapCollectionRow(result.rows[0]) });
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
     } catch (error) {
       next(error);
     }
