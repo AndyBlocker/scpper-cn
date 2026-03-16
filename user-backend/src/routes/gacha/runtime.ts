@@ -6312,20 +6312,20 @@ async function settleDueMarketPositions(
     if (expireAt && expireAt.getTime() <= asOf.getTime()) {
       let expireTick = marketTickAt(contract, expireAt, context);
       if (!expireTick) {
-        // expireAt may be older than the oracle tick window.
-        // Only use the earliest available tick if it is BEFORE expireAt (i.e. the
-        // oracle window overlaps the expiry). If the earliest tick is AFTER expireAt,
-        // using it would violate the "price at or before expiry" rule, so skip instead.
+        // expireAt may be older than the oracle tick window. Use the earliest
+        // available tick as an approximation to avoid permanent limbo. The tick
+        // may be after expireAt if the oracle window has rolled past, but locking
+        // a user's margin forever is worse than settling on a nearby price.
         const categoryTicks = context.byCategory[contract.category] ?? [];
         const earliest = categoryTicks.length > 0 ? categoryTicks[0]! : null;
-        if (earliest && earliest.asOfTs.getTime() <= expireAt.getTime()) {
-          expireTick = earliest;
-          console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, using earliest available tick at ${expireTick.asOfTs.toISOString()}`);
-        } else {
-          console.warn(`[market-settle] ⚠️ No valid tick for ${contract.category} at or before expireAt=${expireAt.toISOString()}, skipping position ${position.positionId}`);
+        if (!earliest) {
+          console.warn(`[market-settle] ⚠️ No ticks at all for ${contract.category}, skipping position ${position.positionId}`);
           remainingActive.push(position);
           continue;
         }
+        expireTick = earliest;
+        const isApproximate = earliest.asOfTs.getTime() > expireAt.getTime();
+        console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, using ${isApproximate ? 'approximate post-expiry' : 'earliest'} tick at ${expireTick.asOfTs.toISOString()}`);
       }
       settleTickTs = expireTick.asOfTs;
       settleIndex = Number(expireTick.indexMark);
