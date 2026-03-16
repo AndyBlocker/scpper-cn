@@ -20,7 +20,12 @@ export async function fetchAuthUser(req: Request): Promise<AuthUserPayload | nul
       method: 'GET',
       headers: { accept: 'application/json', cookie: req.headers.cookie ?? '' }
     });
-    if (response.status === 401 || !response.ok) return null;
+    if (response.status === 401) return null;
+    if (!response.ok) {
+      // eslint-disable-next-line no-console
+      console.warn(`[fetchAuthUser] user-backend returned ${response.status}`);
+      return null;
+    }
     const data = await response.json();
     if (!data?.ok || !data.user) return null;
     return {
@@ -30,7 +35,9 @@ export async function fetchAuthUser(req: Request): Promise<AuthUserPayload | nul
       linkedWikidotId: data.user.linkedWikidotId != null ? Number(data.user.linkedWikidotId) : null,
       lastLoginAt: data.user.lastLoginAt ?? null
     };
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[fetchAuthUser] user-backend unreachable:', err instanceof Error ? err.message : err);
     return null;
   }
 }

@@ -203,9 +203,15 @@ export class PhaseCProcessor {
     const collected: CollectedData = { url, wikidotId, revisions: [], votes: [] };
     let success = false;
 
+    const MAX_REQUESTS_PER_PAGE = 200;
+
     try {
       while (afterRev !== undefined || afterVote !== undefined) {
         requestCount++;
+        if (requestCount > MAX_REQUESTS_PER_PAGE) {
+          Logger.error('Phase C: Exceeded max request limit, aborting page', { url, wikidotId, requestCount });
+          break;
+        }
         
         const { query, variables } = this._buildQuery(url, afterRev, afterVote);
         const res = await this.client.request(query, variables);

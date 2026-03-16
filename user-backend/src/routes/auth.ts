@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { startRegistration, completeRegistration } from '../services/registration.js';
 import { issueAuthToken } from '../utils/auth-token.js';
 import { prisma } from '../db.js';
-import { requireAuth } from '../middleware/requireAuth.js';
+import { requireAuth, invalidateAuthCache } from '../middleware/requireAuth.js';
 import { startPasswordReset, completePasswordReset } from '../services/passwordReset.js';
 import { SlidingWindowRateLimiter } from '../utils/rateLimiter.js';
 
@@ -237,7 +237,8 @@ export function authRouter() {
   router.post('/password/reset/complete', async (req, res) => {
     try {
       const payload = resetCompleteSchema.parse(req.body ?? {});
-      await completePasswordReset(payload.email, payload.code, payload.password);
+      const result = await completePasswordReset(payload.email, payload.code, payload.password);
+      invalidateAuthCache(result.userId);
       res.json({ ok: true });
     } catch (error) {
       const { status, body } = createErrorResponse(error);
@@ -297,6 +298,7 @@ export function authRouter() {
         where: { id: account.id },
         data: { passwordHash: newHash }
       });
+      invalidateAuthCache(account.id);
       res.clearCookie(config.session.cookieName, {
         httpOnly: true,
         sameSite: config.session.sameSite,

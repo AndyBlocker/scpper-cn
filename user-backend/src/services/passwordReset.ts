@@ -80,12 +80,12 @@ export async function startPasswordReset(email: string) {
   return { ok: true } as const;
 }
 
-export async function completePasswordReset(email: string, code: string, password: string) {
+export async function completePasswordReset(email: string, code: string, password: string): Promise<{ ok: true; userId: string }> {
   const normalizedEmail = normalizeEmail(email);
   const now = new Date();
   const hashedInput = hashVerificationCode(code);
 
-  await prisma.$transaction(async (tx) => {
+  const userId = await prisma.$transaction(async (tx) => {
     const account = await tx.userAccount.findUnique({ where: { email: normalizedEmail } });
     if (!account || account.status !== ACCOUNT_STATUS.ACTIVE) {
       throw new Error('验证码不正确或已过期');
@@ -135,8 +135,10 @@ export async function completePasswordReset(email: string, code: string, passwor
       },
       data: { consumedAt: now }
     });
+
+    return account.id;
   });
 
-  return { ok: true } as const;
+  return { ok: true, userId };
 }
 

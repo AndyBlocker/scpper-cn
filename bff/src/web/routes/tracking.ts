@@ -67,15 +67,9 @@ function buildClientFingerprint(ip: string, userAgent: string): string {
 }
 
 function resolveClientIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim()) {
-    const [first] = forwarded.split(',');
-    if (first && first.trim()) return first.trim();
-  }
-  if (Array.isArray(forwarded) && forwarded.length > 0) {
-    const first = forwarded[0];
-    if (first && first.trim()) return first.trim();
-  }
+  // Use req.ip which honours Express trust-proxy setting,
+  // instead of directly trusting the spoofable x-forwarded-for header.
+  if (req.ip) return req.ip;
   const socketIp = req.socket?.remoteAddress;
   return typeof socketIp === 'string' ? socketIp : '';
 }

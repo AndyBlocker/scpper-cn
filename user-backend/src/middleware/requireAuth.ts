@@ -85,6 +85,15 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
   }
 }
 
+/**
+ * Immediately evict a user from the auth cache.
+ * Call after any operation that changes passwordHash, status, or linkedWikidotId.
+ */
+export function invalidateAuthCache(userId: string) {
+  userCache.delete(userId);
+  inflightLookups.delete(userId);
+}
+
 // Periodic cleanup to prevent memory leaks (every 60 seconds)
 setInterval(() => {
   const now = Date.now();

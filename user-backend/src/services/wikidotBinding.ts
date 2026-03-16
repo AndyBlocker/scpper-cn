@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../db.js';
 import { WikidotBindingStatus } from '@prisma/client';
+import { invalidateAuthCache } from '../middleware/requireAuth.js';
 
 const VERIFICATION_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // Excluding 0/O, 1/I/L
 const VERIFICATION_CODE_LENGTH = 6;
@@ -47,8 +48,10 @@ export async function resolveWikidotUser(username: string): Promise<ResolvedWiki
   let response: Response;
   try {
     response = await fetchBffInternal(`/internal/wikidot-user?username=${encodeURIComponent(username)}`);
-  } catch {
-    return null;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[wikidotBinding] BFF unreachable:', err instanceof Error ? err.message : err);
+    throw new Error('内部服务暂时不可用，请稍后再试');
   }
 
   const data = await response.json().catch(() => null) as unknown;
@@ -57,6 +60,11 @@ export async function resolveWikidotUser(username: string): Promise<ResolvedWiki
     const errorType = data && typeof data === 'object' ? (data as { error?: string }).error : undefined;
     if (response.status === 409 && errorType === 'ambiguous') {
       throw new Error('该用户名匹配多个 Wikidot 用户，请使用更精确的用户名或联系管理员处理');
+    }
+    if (response.status >= 500) {
+      // eslint-disable-next-line no-console
+      console.error(`[wikidotBinding] BFF returned ${response.status} for wikidot-user lookup`);
+      throw new Error('内部服务暂时不可用，请稍后再试');
     }
     return null;
   }
@@ -69,12 +77,19 @@ export async function resolveWikidotUserById(wikidotId: number): Promise<Resolve
   let response: Response;
   try {
     response = await fetchBffInternal(`/internal/wikidot-user?wikidotId=${encodeURIComponent(String(wikidotId))}`);
-  } catch {
-    return null;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[wikidotBinding] BFF unreachable:', err instanceof Error ? err.message : err);
+    throw new Error('内部服务暂时不可用，请稍后再试');
   }
 
   const data = await response.json().catch(() => null) as unknown;
   if (!response.ok) {
+    if (response.status >= 500) {
+      // eslint-disable-next-line no-console
+      console.error(`[wikidotBinding] BFF returned ${response.status} for wikidot-user-by-id lookup`);
+      throw new Error('内部服务暂时不可用，请稍后再试');
+    }
     return null;
   }
 
@@ -90,12 +105,21 @@ export async function searchWikidotUsers(query: string, limit: number = 8): Prom
     response = await fetchBffInternal(
       `/internal/wikidot-user-search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(normalizedLimit))}`
     );
-  } catch {
-    return [];
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[wikidotBinding] BFF unreachable:', err instanceof Error ? err.message : err);
+    throw new Error('内部服务暂时不可用，请稍后再试');
   }
 
   const data = await response.json().catch(() => null) as unknown;
-  if (!response.ok) return [];
+  if (!response.ok) {
+    if (response.status >= 500) {
+      // eslint-disable-next-line no-console
+      console.error(`[wikidotBinding] BFF returned ${response.status} for wikidot-user-search`);
+      throw new Error('内部服务暂时不可用，请稍后再试');
+    }
+    return [];
+  }
 
   const parsed = data as { ok?: boolean; users?: ResolvedWikidotUser[] };
   if (!parsed.ok || !Array.isArray(parsed.users)) return [];
@@ -324,13 +348,13 @@ export async function completeBindingTask(
   revisionInfo?: { revisionId: number; timestamp: Date }
 ): Promise<boolean> {
   // Use interactive transaction to ensure atomicity of check + update
-  return await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const task = await tx.wikidotBindingTask.findUnique({
       where: { id: taskId }
     });
 
     if (!task || task.status !== WikidotBindingStatus.PENDING) {
-      return false;
+      return null;
     }
 
     // Check if wikidotId is still available (inside transaction)
@@ -345,7 +369,7 @@ export async function completeBindingTask(
           failureReason: '该 Wikidot 账号已被其他用户绑定'
         }
       });
-      return false;
+      return null;
     }
 
     // Complete the binding atomically
@@ -361,8 +385,14 @@ export async function completeBindingTask(
       }
     });
 
-    return true;
+    return task.userId;
   });
+
+  if (result) {
+    invalidateAuthCache(result);
+    return true;
+  }
+  return false;
 }
 
 export async function updateTaskCheckStatus(
