@@ -1768,7 +1768,7 @@ watch([brSortMode, brRarityFilter], () => {
                     >
                       正在加载你的可交付库存...
                     </p>
-                    <div v-else-if="buyRequestFulfillCandidates.length > 0" class="gacha-card-grid--mini">
+                    <div v-else-if="buyRequestFulfillCandidates.length > 0" class="br-fulfill-grid">
                       <button
                         v-for="item in buyRequestFulfillCandidates"
                         :key="`br-fulfill-candidate-${item.stackKey}`"
@@ -2542,6 +2542,33 @@ html.dark .br-match-chip {
 @media (min-width: 1440px) {
   .gacha-trade-item-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+/* ── Buy-request fulfill candidates (inside narrow dialog) ── */
+
+.br-fulfill-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.br-fulfill-grid > * {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+}
+
+.br-fulfill-grid > * > * {
+  width: 100%;
+  height: 100%;
+}
+
+@media (min-width: 640px) {
+  .br-fulfill-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 </style>
