@@ -51,6 +51,7 @@
     "tags:sync": "node --import tsx/esm src/cli/index.ts tags --sync --force",
     "tags:check": "node --import tsx/esm src/cli/index.ts tags --check",
     "tags:stats": "node --import tsx/esm src/cli/index.ts tags --stats",
+    "tags:refresh-cache": "node --import tsx/esm src/cli/index.ts tags --refresh-cache",
     "analyze:text": "node --import tsx/esm scripts/text-analysis-pipeline.ts",
     "analyze:page": "node --import tsx/esm scripts/analyze-single-page.ts",
     "check:ranking": "node --import tsx/esm scripts/check-ranking-totals.ts",

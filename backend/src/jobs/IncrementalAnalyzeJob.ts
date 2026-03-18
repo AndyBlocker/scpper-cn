@@ -8,6 +8,7 @@ import { PageMetricMonitorJob } from './PageMetricMonitorJob';
 import { UserFollowActivityJob } from './UserFollowActivityJob';
 import { UserCollectionService } from '../services/UserCollectionService.js';
 import { WikidotBindingVerifyJob } from './WikidotBindingVerifyJob.js';
+import { TagDefinitionService } from '../services/TagDefinitionService.js';
 import { runCategoryIndexTickJob } from './CategoryIndexTickJob.js';
 import { runCategoryIndexForecastJob } from './CategoryIndexForecastJob.js';
 // @ts-ignore - importing from scripts folder
@@ -62,6 +63,8 @@ export class IncrementalAnalyzeJob {
         'user_collection_sanitizer',
         // 新增：作者分类基准
         'category_benchmarks',
+        // 标签验证缓存刷新
+        'tag_validation_cache',
         // Wikidot 账号绑定验证
         'wikidot_binding_verify'
       ];
@@ -223,6 +226,14 @@ export class IncrementalAnalyzeJob {
           case 'category_index_forecast':
             await (this.prisma as any).categoryIndexForecastTick?.deleteMany?.({});
             console.log('  ✓ Category index forecast ticks cleared');
+            break;
+          case 'tag_validation_cache':
+            try {
+              await this.prisma.$executeRaw`DELETE FROM "TagValidationCache"`;
+              console.log('  ✓ TagValidationCache cleared');
+            } catch {
+              console.log('  ⚠️ TagValidationCache table not found, skipping');
+            }
             break;
           case 'materialized_views':
             // 物化视图需要先DROP再重建，这里只记录日志
@@ -398,6 +409,10 @@ export class IncrementalAnalyzeJob {
         case 'user_collection_sanitizer': {
           const service = new UserCollectionService(this.prisma);
           await service.pruneInvalidItems();
+          break;
+        }
+        case 'tag_validation_cache': {
+          await this.refreshTagValidationCache();
           break;
         }
         case 'wikidot_binding_verify': {
@@ -2105,6 +2120,37 @@ export class IncrementalAnalyzeJob {
     ]);
     
     console.log('✅ Tag records updated');
+  }
+
+  /**
+   * 刷新 TagValidationCache（all + invalid + untranslated）
+   */
+  private async refreshTagValidationCache() {
+    console.log('🏷️ Refreshing TagValidationCache...');
+
+    // 检查 TagDefinition 表是否有数据，避免空定义表导致所有标签被误判为 invalid
+    const defCount = await this.prisma.tagDefinition.count();
+    if (defCount === 0) {
+      console.log('⏭️ TagDefinition table is empty — clearing stale invalid/untranslated cache. Run "npm run tags -- --sync" first.');
+      await this.prisma.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" IN ('invalid', 'untranslated')`;
+    }
+
+    const service = new TagDefinitionService(this.prisma);
+
+    // all 标签缓存不依赖 TagDefinition，始终可以安全刷新
+    const allCount = await service.computeAndCacheAllTags();
+    console.log(`  ✅ all: ${allCount} tags`);
+
+    // invalid 和 untranslated 依赖 TagDefinition，仅在有定义数据时刷新
+    if (defCount > 0) {
+      const invalidCount = await service.computeAndCacheInvalidTags();
+      console.log(`  ✅ invalid: ${invalidCount} tags`);
+
+      const untranslatedCount = await service.computeAndCacheUntranslatedTags();
+      console.log(`  ✅ untranslated: ${untranslatedCount} tags`);
+    }
+
+    console.log('✅ TagValidationCache refreshed');
   }
 
   /**
