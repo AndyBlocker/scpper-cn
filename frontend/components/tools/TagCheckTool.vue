@@ -29,7 +29,7 @@
         <div class="stat-label">全部标签</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">{{ stats ? stats.total - invalidTotal : '—' }}</div>
+        <div class="stat-value">{{ stats?.total ?? '—' }}</div>
         <div class="stat-label">官方定义</div>
       </div>
       <div class="stat-card">
@@ -243,33 +243,61 @@ const sortOptions = [
 
 // ─── Data Loading ───
 
+async function fetchAllPages<T>(
+  url: string,
+  key: string,
+  pageSize: number,
+  params: Record<string, string | number> = {}
+): Promise<{ items: T[]; total: number }> {
+  const firstResp = await bff<Record<string, any>>(url, { params: { ...params, limit: pageSize, offset: 0 } })
+  const total: number = firstResp.total ?? 0
+  const items: T[] = firstResp[key] ?? []
+
+  // Fetch remaining pages if needed
+  const remaining = total - items.length
+  if (remaining > 0) {
+    const pageCount = Math.ceil(remaining / pageSize)
+    const pages = await Promise.all(
+      Array.from({ length: pageCount }, (_, i) =>
+        bff<Record<string, any>>(url, { params: { ...params, limit: pageSize, offset: (i + 1) * pageSize } })
+      )
+    )
+    for (const p of pages) {
+      const batch = p[key] ?? []
+      items.push(...batch)
+    }
+  }
+
+  return { items, total }
+}
+
 async function loadData() {
   loading.value = true
   error.value = null
   try {
-    const [invalidResp, statsResp, defsResp] = await Promise.all([
-      bff<{ invalidTags: Array<{ tag: string; pageCount: number; samplePages: string[]; latestPageDate: string | null }>; total: number }>(
-        '/tags/definitions/invalid', { params: { limit: 500, offset: 0, sort: 'count' } }
+    const [invalidResult, statsResp, defsResult] = await Promise.all([
+      fetchAllPages<{ tag: string; pageCount: number; samplePages: string[]; latestPageDate: string | null }>(
+        '/tags/definitions/invalid', 'invalidTags', 200, { sort: 'count' }
       ),
       bff<Stats>('/tags/definitions/stats'),
-      bff<{ definitions: Array<{ tagChinese: string; tagEnglish: string | null }>; total: number }>(
-        '/tags/definitions', { params: { limit: 2000 } }
+      fetchAllPages<{ tagChinese: string; tagEnglish: string | null }>(
+        '/tags/definitions', 'definitions', 1000
       ),
     ])
 
     stats.value = statsResp
-    invalidTotal.value = invalidResp.total
+    invalidTotal.value = invalidResult.total
 
     // Build official tag set for similarity matching
     const officials: string[] = []
-    for (const d of defsResp.definitions) {
+    for (const d of defsResult.items) {
       officials.push(d.tagChinese)
       if (d.tagEnglish) officials.push(d.tagEnglish)
     }
     officialTags.value = officials
 
     // Compute similarity for each invalid tag
-    invalidTags.value = computeTypoMatches(invalidResp.invalidTags, officials)
+    invalidTags.value = computeTypoMatches(invalidResult.items, officials)
   } catch (err: any) {
     error.value = err?.message || '未知错误'
   } finally {
