@@ -66,6 +66,13 @@ const sections = [
         icon: 'Tags'
       },
       {
+        to: '/tag-check',
+        title: '标签健康检查',
+        description: '审查非官方指导标签，自动检测疑似拼写错误，帮助维护标签质量。',
+        badge: 'Tag Check',
+        icon: 'ShieldAlert'
+      },
+      {
         to: '/gallery',
         title: '图片画廊',
         description: '浏览缓存插图并回到原始页面，发现站点创作的视觉亮点。',
