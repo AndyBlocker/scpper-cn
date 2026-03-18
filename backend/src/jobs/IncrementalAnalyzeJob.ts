@@ -8,6 +8,7 @@ import { PageMetricMonitorJob } from './PageMetricMonitorJob';
 import { UserFollowActivityJob } from './UserFollowActivityJob';
 import { UserCollectionService } from '../services/UserCollectionService.js';
 import { WikidotBindingVerifyJob } from './WikidotBindingVerifyJob.js';
+import { TagDefinitionService } from '../services/TagDefinitionService.js';
 import { runCategoryIndexTickJob } from './CategoryIndexTickJob.js';
 import { runCategoryIndexForecastJob } from './CategoryIndexForecastJob.js';
 // @ts-ignore - importing from scripts folder
@@ -62,6 +63,8 @@ export class IncrementalAnalyzeJob {
         'user_collection_sanitizer',
         // 新增：作者分类基准
         'category_benchmarks',
+        // 标签验证缓存刷新
+        'tag_validation_cache',
         // Wikidot 账号绑定验证
         'wikidot_binding_verify'
       ];
@@ -224,6 +227,10 @@ export class IncrementalAnalyzeJob {
             await (this.prisma as any).categoryIndexForecastTick?.deleteMany?.({});
             console.log('  ✓ Category index forecast ticks cleared');
             break;
+          case 'tag_validation_cache':
+            await this.prisma.$executeRaw`DELETE FROM "TagValidationCache"`;
+            console.log('  ✓ TagValidationCache cleared');
+            break;
           case 'materialized_views':
             // 物化视图需要先DROP再重建，这里只记录日志
             console.log('  ⚠️ Materialized views will be refreshed (not dropped)');
@@ -271,7 +278,8 @@ export class IncrementalAnalyzeJob {
           'series_stats',
           'trending_stats',
           'page_metric_alerts',
-          'wikidot_binding_verify'
+          'wikidot_binding_verify',
+          'tag_validation_cache'
         ]);
         if (taskName === 'site_stats') {
           await this.refreshSiteStatsTimestamp();
@@ -398,6 +406,10 @@ export class IncrementalAnalyzeJob {
         case 'user_collection_sanitizer': {
           const service = new UserCollectionService(this.prisma);
           await service.pruneInvalidItems();
+          break;
+        }
+        case 'tag_validation_cache': {
+          await this.refreshTagValidationCache();
           break;
         }
         case 'wikidot_binding_verify': {
@@ -2105,6 +2117,25 @@ export class IncrementalAnalyzeJob {
     ]);
     
     console.log('✅ Tag records updated');
+  }
+
+  /**
+   * 刷新 TagValidationCache（all + invalid + untranslated）
+   */
+  private async refreshTagValidationCache() {
+    console.log('🏷️ Refreshing TagValidationCache...');
+    const service = new TagDefinitionService(this.prisma);
+
+    const allCount = await service.computeAndCacheAllTags();
+    console.log(`  ✅ all: ${allCount} tags`);
+
+    const invalidCount = await service.computeAndCacheInvalidTags();
+    console.log(`  ✅ invalid: ${invalidCount} tags`);
+
+    const untranslatedCount = await service.computeAndCacheUntranslatedTags();
+    console.log(`  ✅ untranslated: ${untranslatedCount} tags`);
+
+    console.log('✅ TagValidationCache refreshed');
   }
 
   /**
