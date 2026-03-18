@@ -1035,13 +1035,19 @@ program
         const allTagsCount = await service.computeAndCacheAllTags();
         Logger.info(`  ✅ 已缓存 ${allTagsCount} 个标签`);
 
-        Logger.info('  计算无效标签...');
-        const invalidCount = await service.computeAndCacheInvalidTags();
-        Logger.info(`  ✅ 已缓存 ${invalidCount} 个无效标签`);
+        // invalid 和 untranslated 依赖 TagDefinition，空表时跳过避免误判
+        const defCount = await prisma.tagDefinition.count();
+        if (defCount === 0) {
+          Logger.warn('⚠️ TagDefinition 表为空，跳过 invalid/untranslated 缓存。请先运行 --sync');
+        } else {
+          Logger.info('  计算无效标签...');
+          const invalidCount = await service.computeAndCacheInvalidTags();
+          Logger.info(`  ✅ 已缓存 ${invalidCount} 个无效标签`);
 
-        Logger.info('  计算未翻译标签...');
-        const untranslatedCount = await service.computeAndCacheUntranslatedTags();
-        Logger.info(`  ✅ 已缓存 ${untranslatedCount} 个未翻译标签`);
+          Logger.info('  计算未翻译标签...');
+          const untranslatedCount = await service.computeAndCacheUntranslatedTags();
+          Logger.info(`  ✅ 已缓存 ${untranslatedCount} 个未翻译标签`);
+        }
 
         Logger.info('✅ 缓存刷新完成');
       }

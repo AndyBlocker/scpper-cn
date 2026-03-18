@@ -234,76 +234,86 @@ export class TagDefinitionService {
           continue;
         }
 
-        // 记录本次从该页面提取到的标签集合，用于清理已删除的标签
+        // 在事务内完成 upsert + 旧标签清理 + 同步状态更新，避免中途失败导致半更新
         const extractedTagSet = new Set(definitions.map(d => d.tagChinese));
+        let added = 0;
+        let updated = 0;
+        let deleted = 0;
 
-        // 批量upsert
-        for (const def of definitions) {
-          const existing = await this.prisma.tagDefinition.findUnique({
-            where: { tagChinese: def.tagChinese },
-          });
-
-          if (existing) {
-            await this.prisma.tagDefinition.update({
+        await this.prisma.$transaction(async (tx) => {
+          // 批量upsert
+          for (const def of definitions) {
+            const existing = await tx.tagDefinition.findUnique({
               where: { tagChinese: def.tagChinese },
-              data: {
-                tagEnglish: def.tagEnglish,
-                sourcePageUrl: def.sourcePageUrl,
-                category: def.category,
-                updatedAt: new Date(),
-              },
             });
-            result.tagsUpdated++;
-          } else {
-            await this.prisma.tagDefinition.create({
-              data: {
-                tagChinese: def.tagChinese,
-                tagEnglish: def.tagEnglish,
-                description: def.description,
-                sourcePageUrl: def.sourcePageUrl,
-                category: def.category,
-                isOfficial: true,
-              },
-            });
-            result.tagsAdded++;
-          }
-        }
 
-        // P2: 清理该页面来源下已不存在的旧标签
-        const staleTags = await this.prisma.tagDefinition.findMany({
-          where: { sourcePageUrl: page.url },
-          select: { tagChinese: true },
-        });
-        const tagsToDelete = staleTags.filter(t => !extractedTagSet.has(t.tagChinese));
-        if (tagsToDelete.length > 0) {
-          await this.prisma.tagDefinition.deleteMany({
-            where: {
-              tagChinese: { in: tagsToDelete.map(t => t.tagChinese) },
-              sourcePageUrl: page.url,
+            if (existing) {
+              await tx.tagDefinition.update({
+                where: { tagChinese: def.tagChinese },
+                data: {
+                  tagEnglish: def.tagEnglish,
+                  sourcePageUrl: def.sourcePageUrl,
+                  category: def.category,
+                  updatedAt: new Date(),
+                },
+              });
+              updated++;
+            } else {
+              await tx.tagDefinition.create({
+                data: {
+                  tagChinese: def.tagChinese,
+                  tagEnglish: def.tagEnglish,
+                  description: def.description,
+                  sourcePageUrl: def.sourcePageUrl,
+                  category: def.category,
+                  isOfficial: true,
+                },
+              });
+              added++;
+            }
+          }
+
+          // 清理该页面来源下已不存在的旧标签
+          const staleTags = await tx.tagDefinition.findMany({
+            where: { sourcePageUrl: page.url },
+            select: { tagChinese: true },
+          });
+          const tagsToDelete = staleTags.filter(t => !extractedTagSet.has(t.tagChinese));
+          if (tagsToDelete.length > 0) {
+            await tx.tagDefinition.deleteMany({
+              where: {
+                tagChinese: { in: tagsToDelete.map(t => t.tagChinese) },
+                sourcePageUrl: page.url,
+              },
+            });
+            deleted = tagsToDelete.length;
+          }
+
+          // 更新同步状态
+          await tx.tagGuideSync.upsert({
+            where: { pageUrl: page.url },
+            create: {
+              pageUrl: page.url,
+              pageVersionId: version.id,
+              tagsExtracted: definitions.length,
+              lastSyncedAt: new Date(),
+              syncStatus: 'synced',
+            },
+            update: {
+              pageVersionId: version.id,
+              tagsExtracted: definitions.length,
+              lastSyncedAt: new Date(),
+              syncStatus: 'synced',
+              errorMessage: null,
             },
           });
-          logger.info(`  清理了 ${tagsToDelete.length} 个已从 ${page.url} 移除的旧标签`);
-        }
-
-        // 更新同步状态
-        await this.prisma.tagGuideSync.upsert({
-          where: { pageUrl: page.url },
-          create: {
-            pageUrl: page.url,
-            pageVersionId: version.id,
-            tagsExtracted: definitions.length,
-            lastSyncedAt: new Date(),
-            syncStatus: 'synced',
-          },
-          update: {
-            pageVersionId: version.id,
-            tagsExtracted: definitions.length,
-            lastSyncedAt: new Date(),
-            syncStatus: 'synced',
-            errorMessage: null,
-          },
         });
 
+        result.tagsAdded += added;
+        result.tagsUpdated += updated;
+        if (deleted > 0) {
+          logger.info(`  清理了 ${deleted} 个已从 ${page.url} 移除的旧标签`);
+        }
         result.pagesProcessed++;
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
