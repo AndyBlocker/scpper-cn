@@ -278,8 +278,7 @@ export class IncrementalAnalyzeJob {
           'series_stats',
           'trending_stats',
           'page_metric_alerts',
-          'wikidot_binding_verify',
-          'tag_validation_cache'
+          'wikidot_binding_verify'
         ]);
         if (taskName === 'site_stats') {
           await this.refreshSiteStatsTimestamp();
@@ -2128,7 +2127,8 @@ export class IncrementalAnalyzeJob {
     // 检查 TagDefinition 表是否有数据，避免空定义表导致所有标签被误判为 invalid
     const defCount = await this.prisma.tagDefinition.count();
     if (defCount === 0) {
-      console.log('⏭️ TagDefinition table is empty — skipping invalid/untranslated cache to avoid false positives. Run "npm run tags -- --sync" first.');
+      console.log('⏭️ TagDefinition table is empty — clearing stale invalid/untranslated cache. Run "npm run tags -- --sync" first.');
+      await this.prisma.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" IN ('invalid', 'untranslated')`;
     }
 
     const service = new TagDefinitionService(this.prisma);

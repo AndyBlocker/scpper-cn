@@ -1038,7 +1038,8 @@ program
         // invalid 和 untranslated 依赖 TagDefinition，空表时跳过避免误判
         const defCount = await prisma.tagDefinition.count();
         if (defCount === 0) {
-          Logger.warn('⚠️ TagDefinition 表为空，跳过 invalid/untranslated 缓存。请先运行 --sync');
+          Logger.warn('⚠️ TagDefinition 表为空，清除旧的 invalid/untranslated 缓存。请先运行 --sync');
+          await prisma.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" IN ('invalid', 'untranslated')`;
         } else {
           Logger.info('  计算无效标签...');
           const invalidCount = await service.computeAndCacheInvalidTags();
