@@ -185,13 +185,17 @@ export class TagDefinitionService {
         });
 
         if (!page) {
-          logger.warn(`未找到标签指导页面: ${guide.urlPattern}`);
+          const errMsg = `未找到标签指导页面: ${guide.urlPattern}`;
+          logger.warn(errMsg);
+          result.errors.push(errMsg);
           continue;
         }
 
         const version = page.versions[0];
         if (!version?.source) {
-          logger.warn(`页面无source内容: ${page.url}`);
+          const errMsg = `页面无source内容: ${page.url}`;
+          logger.warn(errMsg);
+          result.errors.push(errMsg);
           continue;
         }
 

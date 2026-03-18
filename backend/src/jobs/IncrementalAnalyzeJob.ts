@@ -2124,16 +2124,27 @@ export class IncrementalAnalyzeJob {
    */
   private async refreshTagValidationCache() {
     console.log('🏷️ Refreshing TagValidationCache...');
+
+    // 检查 TagDefinition 表是否有数据，避免空定义表导致所有标签被误判为 invalid
+    const defCount = await this.prisma.tagDefinition.count();
+    if (defCount === 0) {
+      console.log('⏭️ TagDefinition table is empty — skipping invalid/untranslated cache to avoid false positives. Run "npm run tags -- --sync" first.');
+    }
+
     const service = new TagDefinitionService(this.prisma);
 
+    // all 标签缓存不依赖 TagDefinition，始终可以安全刷新
     const allCount = await service.computeAndCacheAllTags();
     console.log(`  ✅ all: ${allCount} tags`);
 
-    const invalidCount = await service.computeAndCacheInvalidTags();
-    console.log(`  ✅ invalid: ${invalidCount} tags`);
+    // invalid 和 untranslated 依赖 TagDefinition，仅在有定义数据时刷新
+    if (defCount > 0) {
+      const invalidCount = await service.computeAndCacheInvalidTags();
+      console.log(`  ✅ invalid: ${invalidCount} tags`);
 
-    const untranslatedCount = await service.computeAndCacheUntranslatedTags();
-    console.log(`  ✅ untranslated: ${untranslatedCount} tags`);
+      const untranslatedCount = await service.computeAndCacheUntranslatedTags();
+      console.log(`  ✅ untranslated: ${untranslatedCount} tags`);
+    }
 
     console.log('✅ TagValidationCache refreshed');
   }
