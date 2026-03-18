@@ -409,6 +409,7 @@ export class TagDefinitionService {
         CROSS JOIN LATERAL unnest(pv.tags) AS t(tag)
         JOIN "Page" p ON pv."pageId" = p.id
         WHERE pv."validTo" IS NULL AND NOT pv."isDeleted" AND p."wikidotId" IS NOT NULL
+          AND t.tag IS NOT NULL AND btrim(t.tag) <> ''
       )
       SELECT
         tag,

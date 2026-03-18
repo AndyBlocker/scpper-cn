@@ -1055,11 +1055,20 @@ program
 
       if (options.check) {
         const limit = Number.parseInt(String(options.limit ?? '100'), 10) || 100;
+
+        // 检查缓存是否存在
+        const cacheCount = await prisma.$queryRaw<[{ count: number }]>`
+          SELECT COUNT(*)::int as count FROM "TagValidationCache" WHERE "validationType" = 'invalid'
+        `;
+        if (cacheCount[0].count === 0) {
+          Logger.warn('⚠️ 无效标签缓存为空，请先运行 --sync 或 --refresh-cache 生成缓存');
+        }
+
         Logger.info(`🔍 获取无效标签（从缓存，限制 ${limit} 条）...`);
         const invalidTags = await service.getInvalidTags(limit);
 
         if (jsonOutput) {
-          console.log(JSON.stringify({ invalidTags }, null, 2));
+          console.log(JSON.stringify({ invalidTags, cached: cacheCount[0].count > 0 }, null, 2));
         } else if (invalidTags.length === 0) {
           Logger.info('✅ 未发现无效标签');
         } else {
