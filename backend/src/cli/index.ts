@@ -1010,18 +1010,22 @@ program
           }
         }
 
-        // 同步后自动刷新缓存
-        Logger.info('📦 计算并缓存所有标签...');
-        const allTagsCount = await service.computeAndCacheAllTags();
-        Logger.info(`✅ 已缓存 ${allTagsCount} 个标签`);
+        // 同步后自动刷新缓存（仅在无错误时）
+        if (result.errors.length > 0) {
+          Logger.warn('⚠️ 同步存在错误，跳过缓存刷新以避免产生误判');
+        } else {
+          Logger.info('📦 计算并缓存所有标签...');
+          const allTagsCount = await service.computeAndCacheAllTags();
+          Logger.info(`✅ 已缓存 ${allTagsCount} 个标签`);
 
-        Logger.info('📦 计算并缓存无效标签...');
-        const invalidCount = await service.computeAndCacheInvalidTags();
-        Logger.info(`✅ 已缓存 ${invalidCount} 个无效标签`);
+          Logger.info('📦 计算并缓存无效标签...');
+          const invalidCount = await service.computeAndCacheInvalidTags();
+          Logger.info(`✅ 已缓存 ${invalidCount} 个无效标签`);
 
-        Logger.info('📦 计算并缓存未翻译标签...');
-        const untranslatedCount = await service.computeAndCacheUntranslatedTags();
-        Logger.info(`✅ 已缓存 ${untranslatedCount} 个未翻译标签`);
+          Logger.info('📦 计算并缓存未翻译标签...');
+          const untranslatedCount = await service.computeAndCacheUntranslatedTags();
+          Logger.info(`✅ 已缓存 ${untranslatedCount} 个未翻译标签`);
+        }
       }
 
       if (options.refreshCache) {

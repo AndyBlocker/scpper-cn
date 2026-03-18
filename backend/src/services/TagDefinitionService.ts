@@ -362,19 +362,19 @@ export class TagDefinitionService {
       t => !isSystemTag(t.tag) && !officialSet.has(t.tag)
     );
 
-    // 清空旧缓存
-    await this.prisma.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" = 'invalid'`;
-
-    // 批量插入新缓存
-    if (invalidTags.length > 0) {
-      const now = new Date();
-      for (const t of invalidTags) {
-        await this.prisma.$executeRaw`
-          INSERT INTO "TagValidationCache" (tag, "pageCount", "samplePages", "validationType", "computedAt", "latestPageDate")
-          VALUES (${t.tag}, ${t.page_count}, ${t.sample_pages || []}, 'invalid', ${now}, ${t.latest_page_date})
-        `;
+    // 在事务内原子替换，避免 BFF 读到中间状态
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" = 'invalid'`;
+      if (invalidTags.length > 0) {
+        const now = new Date();
+        for (const t of invalidTags) {
+          await tx.$executeRaw`
+            INSERT INTO "TagValidationCache" (tag, "pageCount", "samplePages", "validationType", "computedAt", "latestPageDate")
+            VALUES (${t.tag}, ${t.page_count}, ${t.sample_pages || []}, 'invalid', ${now}, ${t.latest_page_date})
+          `;
+        }
       }
-    }
+    });
 
     logger.info(`缓存了 ${invalidTags.length} 个无效标签`);
     return invalidTags.length;
@@ -399,19 +399,19 @@ export class TagDefinitionService {
       ORDER BY page_count DESC
     `;
 
-    // 清空旧缓存
-    await this.prisma.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" = 'all'`;
-
-    // 批量插入新缓存
-    if (allTagsWithStats.length > 0) {
-      const now = new Date();
-      for (const t of allTagsWithStats) {
-        await this.prisma.$executeRaw`
-          INSERT INTO "TagValidationCache" (tag, "pageCount", "samplePages", "validationType", "computedAt", "latestPageDate")
-          VALUES (${t.tag}, ${t.page_count}, '{}', 'all', ${now}, ${t.latest_page_date})
-        `;
+    // 在事务内原子替换，避免 BFF 读到中间状态
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" = 'all'`;
+      if (allTagsWithStats.length > 0) {
+        const now = new Date();
+        for (const t of allTagsWithStats) {
+          await tx.$executeRaw`
+            INSERT INTO "TagValidationCache" (tag, "pageCount", "samplePages", "validationType", "computedAt", "latestPageDate")
+            VALUES (${t.tag}, ${t.page_count}, '{}', 'all', ${now}, ${t.latest_page_date})
+          `;
+        }
       }
-    }
+    });
 
     logger.info(`缓存了 ${allTagsWithStats.length} 个标签`);
     return allTagsWithStats.length;
@@ -439,21 +439,21 @@ export class TagDefinitionService {
       ORDER BY usage_count DESC
     `;
 
-    // 清空旧缓存
-    await this.prisma.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" = 'untranslated'`;
-
-    // 批量插入新缓存
-    if (untranslatedWithUsage.length > 0) {
-      const now = new Date();
-      for (const t of untranslatedWithUsage) {
-        // 使用 samplePages 存储 category 和 sourcePageUrl
-        const metadata = [t.source_page_url || '', t.category || ''];
-        await this.prisma.$executeRaw`
-          INSERT INTO "TagValidationCache" (tag, "pageCount", "samplePages", "validationType", "computedAt")
-          VALUES (${t.tag_chinese}, ${t.usage_count}, ${metadata}, 'untranslated', ${now})
-        `;
+    // 在事务内原子替换，避免 BFF 读到中间状态
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`DELETE FROM "TagValidationCache" WHERE "validationType" = 'untranslated'`;
+      if (untranslatedWithUsage.length > 0) {
+        const now = new Date();
+        for (const t of untranslatedWithUsage) {
+          // 使用 samplePages 存储 category 和 sourcePageUrl
+          const metadata = [t.source_page_url || '', t.category || ''];
+          await tx.$executeRaw`
+            INSERT INTO "TagValidationCache" (tag, "pageCount", "samplePages", "validationType", "computedAt")
+            VALUES (${t.tag_chinese}, ${t.usage_count}, ${metadata}, 'untranslated', ${now})
+          `;
+        }
       }
-    }
+    });
 
     logger.info(`缓存了 ${untranslatedWithUsage.length} 个未翻译标签`);
     return untranslatedWithUsage.length;
