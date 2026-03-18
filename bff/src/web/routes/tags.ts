@@ -177,8 +177,8 @@ export function tagsRouter(pool: Pool, _redis: RedisClientType | null) {
         sql += ` AND category = $${params.length}`;
       }
 
-      // Count total
-      const countSql = sql.replace(/SELECT .* FROM/, 'SELECT COUNT(*)::int as total FROM');
+      // Count total — use [\s\S] instead of . to match across newlines in the SQL string
+      const countSql = sql.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*)::int as total FROM');
       const { rows: countRows } = await readPool.query(countSql, params);
       const total = countRows[0]?.total || 0;
 

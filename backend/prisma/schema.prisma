@@ -914,6 +914,22 @@ model TagDefinition {
   @@index([category])
 }
 
+/// 标签验证缓存表 - 存储预计算的标签统计数据
+model TagValidationCache {
+  id             Int       @id @default(autoincrement())
+  tag            String
+  pageCount      Int       @default(0)
+  samplePages    String[]  @default([])
+  validationType String    @default("invalid") // 'all', 'invalid', 'untranslated'
+  computedAt     DateTime  @default(now())
+  latestPageDate DateTime?
+
+  @@unique([tag, validationType])
+  @@index([validationType], map: "idx_tag_validation_type")
+  @@index([computedAt], map: "idx_tag_validation_computed")
+  @@index([latestPageDate(sort: Desc)], map: "idx_tag_validation_latest")
+}
+
 /// 标签指导页面同步状态跟踪
 model TagGuideSync {
   id              Int       @id @default(autoincrement())
