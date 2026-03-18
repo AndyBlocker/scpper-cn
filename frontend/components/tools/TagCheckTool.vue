@@ -25,16 +25,16 @@
     <!-- Stats Cards -->
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
       <div class="stat-card">
-        <div class="stat-value">{{ stats?.total ?? '—' }}</div>
-        <div class="stat-label">全部标签</div>
+        <div class="stat-value text-amber-600 dark:text-amber-400">{{ invalidTotal ?? '—' }}</div>
+        <div class="stat-label">非指导标签</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" :class="typoSuspects.length > 0 ? 'text-red-600 dark:text-red-400' : ''">{{ loading ? '—' : typoSuspects.length }}</div>
+        <div class="stat-label">疑似拼写错误</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">{{ stats?.total ?? '—' }}</div>
         <div class="stat-label">官方定义</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value text-amber-600 dark:text-amber-400">{{ invalidTotal ?? '—' }}</div>
-        <div class="stat-label">非指导标签</div>
       </div>
       <div class="stat-card">
         <div class="stat-value text-blue-600 dark:text-blue-400">{{ stats?.withoutTranslation ?? '—' }}</div>
@@ -61,7 +61,7 @@
               @click="scrollToTag(t.tag)"
             >
               {{ t.tag }}
-              <span class="opacity-60">→ {{ t.closestOfficial }}</span>
+              <span class="opacity-60">→ {{ t.typoMatch }}</span>
             </button>
           </div>
         </div>
@@ -457,16 +457,21 @@ function setTagRef(tag: string, el: any) {
   if (el) tagRefs.set(tag, el as Element)
 }
 
+let scrollRetried = false
+
 function scrollToTag(tag: string) {
   // Find which page the tag is on
   const idx = filteredTags.value.findIndex(t => t.tag === tag)
   if (idx < 0) {
-    // Tag might be filtered out — clear filters
+    if (scrollRetried) { scrollRetried = false; return }
+    // Tag might be filtered out — clear filters and retry once
+    scrollRetried = true
     search.value = ''
     onlyTypos.value = false
     nextTick(() => scrollToTag(tag))
     return
   }
+  scrollRetried = false
   page.value = Math.floor(idx / pageSize) + 1
   highlightTag.value = tag
   nextTick(() => {
