@@ -4,12 +4,13 @@ import { Logger } from '../utils/Logger.js';
 const logger = Logger;
 
 // 标签指导页面配置
+// optional: true 表示该页面可能尚未被同步到数据库，缺失时不视为错误
 const TAG_GUIDE_PAGES = [
   { urlPattern: '/tag-guide', category: '通用标签' },
   { urlPattern: '/tale-tagging-guide', category: '体裁标签' },
   { urlPattern: '/art-tagging-guide', category: '艺作标签' },
-  { urlPattern: 'wanderers:tagging-guide', category: '流浪者图书馆标签' },
-];
+  { urlPattern: 'wanderers:tagging-guide', category: '流浪者图书馆标签', optional: true },
+] as const;
 
 interface TagDef {
   tagChinese: string;
@@ -185,17 +186,25 @@ export class TagDefinitionService {
         });
 
         if (!page) {
-          const errMsg = `未找到标签指导页面: ${guide.urlPattern}`;
-          logger.warn(errMsg);
-          result.errors.push(errMsg);
+          const msg = `未找到标签指导页面: ${guide.urlPattern}`;
+          if ('optional' in guide && guide.optional) {
+            logger.info(`${msg}（可选页面，跳过）`);
+          } else {
+            logger.warn(msg);
+            result.errors.push(msg);
+          }
           continue;
         }
 
         const version = page.versions[0];
         if (!version?.source) {
-          const errMsg = `页面无source内容: ${page.url}`;
-          logger.warn(errMsg);
-          result.errors.push(errMsg);
+          const msg = `页面无source内容: ${page.url}`;
+          if ('optional' in guide && guide.optional) {
+            logger.info(`${msg}（可选页面，跳过）`);
+          } else {
+            logger.warn(msg);
+            result.errors.push(msg);
+          }
           continue;
         }
 

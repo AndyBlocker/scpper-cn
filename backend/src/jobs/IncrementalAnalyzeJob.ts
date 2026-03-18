@@ -228,8 +228,12 @@ export class IncrementalAnalyzeJob {
             console.log('  ✓ Category index forecast ticks cleared');
             break;
           case 'tag_validation_cache':
-            await this.prisma.$executeRaw`DELETE FROM "TagValidationCache"`;
-            console.log('  ✓ TagValidationCache cleared');
+            try {
+              await this.prisma.$executeRaw`DELETE FROM "TagValidationCache"`;
+              console.log('  ✓ TagValidationCache cleared');
+            } catch {
+              console.log('  ⚠️ TagValidationCache table not found, skipping');
+            }
             break;
           case 'materialized_views':
             // 物化视图需要先DROP再重建，这里只记录日志
