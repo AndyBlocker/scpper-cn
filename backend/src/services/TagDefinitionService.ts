@@ -209,6 +209,30 @@ export class TagDefinitionService {
         const definitions = this.extractTagDefinitions(version.source, page.url, guide.category);
         logger.info(`从 ${page.url} 提取到 ${definitions.length} 个标签定义`);
 
+        // P1: 零标签提取保护 — markup 格式变化可能导致正则全部失配
+        if (definitions.length === 0) {
+          const errMsg = `从 ${page.url} 提取到 0 个标签，疑似 markup 格式变化导致正则失配`;
+          result.errors.push(errMsg);
+          logger.error(errMsg);
+
+          await this.prisma.tagGuideSync.upsert({
+            where: { pageUrl: page.url },
+            create: {
+              pageUrl: page.url,
+              syncStatus: 'failed',
+              errorMessage: errMsg,
+            },
+            update: {
+              syncStatus: 'failed',
+              errorMessage: errMsg,
+            },
+          });
+          continue;
+        }
+
+        // 记录本次从该页面提取到的标签集合，用于清理已删除的标签
+        const extractedTagSet = new Set(definitions.map(d => d.tagChinese));
+
         // 批量upsert
         for (const def of definitions) {
           const existing = await this.prisma.tagDefinition.findUnique({
@@ -239,6 +263,22 @@ export class TagDefinitionService {
             });
             result.tagsAdded++;
           }
+        }
+
+        // P2: 清理该页面来源下已不存在的旧标签
+        const staleTags = await this.prisma.tagDefinition.findMany({
+          where: { sourcePageUrl: page.url },
+          select: { tagChinese: true },
+        });
+        const tagsToDelete = staleTags.filter(t => !extractedTagSet.has(t.tagChinese));
+        if (tagsToDelete.length > 0) {
+          await this.prisma.tagDefinition.deleteMany({
+            where: {
+              tagChinese: { in: tagsToDelete.map(t => t.tagChinese) },
+              sourcePageUrl: page.url,
+            },
+          });
+          logger.info(`  清理了 ${tagsToDelete.length} 个已从 ${page.url} 移除的旧标签`);
         }
 
         // 更新同步状态
