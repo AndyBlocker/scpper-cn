@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/syncer-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("SYNCER_DATABASE_URL")
+}
+
+// ─── Vote Sentinel ─────────────────────────────────────────
+
+/// 投票哨兵：每页投票者快照缓存（可变，非追加）
+model VoteSentinelCache {
+  fullname   String
+  userId     Int      /// wikidot user ID
+  userName   String?
+  direction  Int      /// +1 or -1
+  lastSeenAt DateTime @default(now())
+
+  @@id([fullname, userId])
+  @@index([fullname])
+}
+
+/// 投票哨兵：检测到的投票变化事件（追加写入）
+model VoteChangeEvent {
+  id           Int      @id @default(autoincrement())
+  fullname     String
+  userId       Int?
+  userName     String?
+  changeType   String   /// 'added', 'removed', 'changed'
+  oldDirection Int?
+  newDirection Int?
+  detectedAt   DateTime @default(now())
+
+  @@index([fullname, detectedAt])
+  @@index([detectedAt])
+  @@index([userId, detectedAt])
+}
+
+// ─── Page Snapshot（Tier 1 全字段快照）──────────────────────
+
+/// 每页最新观测状态（可变，每轮 Tier 1 更新）
+model PageSnapshot {
+  fullname       String   @id
+  wikidotId      Int?
+  title          String?
+  rating         Int      @default(0)
+  votesCount     Int      @default(0)
+  commentsCount  Int      @default(0)
+  size           Int      @default(0)
+  revisionsCount Int      @default(0)
+  parentFullname String?
+  tags           String[] @default([])
+  createdBy      String?
+  createdAt      BigInt?  /// unix timestamp
+  updatedAt      BigInt?  /// unix timestamp
+  scannedAt      DateTime @default(now())
+
+  @@index([wikidotId])
+  @@index([scannedAt])
+}
+
+// ─── Page Content Cache（内容缓存）─────────────────────────
+
+/// 页面最新内容缓存（source + HTML）
+model PageContentCache {
+  fullname     String   @id
+  wikidotId    Int?
+  source       String?  @db.Text
+  html         String?  @db.Text    /// revision API 片段
+  fullPageHtml String?  @db.Text    /// 完整渲染页面（浏览器看到的）
+  sourceLength Int?
+  fetchedAt    DateTime @default(now())
+  fetchReason  String   /// 'content_changed' | 'new_page' | 'initial'
+
+  @@index([fetchedAt])
+}
+
+// ─── Revision Record（修订记录）────────────────────────────
+
+/// 从 Wikidot 直接抓取的修订记录
+model RevisionRecord {
+  id                 Int       @id @default(autoincrement())
+  fullname           String
+  wikidotRevisionId  Int?
+  revNo              Int
+  createdByName      String?
+  createdByWikidotId Int?
+  createdAt          DateTime?
+  comment            String?
+  detectedAt         DateTime  @default(now())
+
+  @@unique([fullname, revNo])
+  @@index([fullname])
+  @@index([detectedAt])
+}
+
+// ─── File Record（附件记录）────────────────────────────────
+
+/// 页面附件
+model FileRecord {
+  id         Int      @id @default(autoincrement())
+  fullname   String
+  fileName   String
+  fileUrl    String
+  mimeType   String?
+  fileSize   Int?
+  detectedAt DateTime @default(now())
+
+  @@unique([fullname, fileName])
+  @@index([fullname])
+}
+
+// ─── Syncer State（运行状态）───────────────────────────────
+
+model SyncerState {
+  task          String    @id
+  lastRunAt     DateTime?
+  lastSuccessAt DateTime?
+  pagesScanned  Int       @default(0)
+  pagesChanged  Int       @default(0)
+  eventsWritten Int       @default(0)
+  errorMessage  String?
+  updatedAt     DateTime  @updatedAt
+}

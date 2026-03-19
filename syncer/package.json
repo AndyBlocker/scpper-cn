@@ -1,0 +1,27 @@
+{
+  "name": "scpper-cn-syncer",
+  "version": "1.0.0",
+  "description": "SCPper CN vote sentinel and sync-v2 service",
+  "type": "module",
+  "scripts": {
+    "dev": "node --import tsx/esm src/index.ts",
+    "sentinel": "node --import tsx/esm src/index.ts sentinel --run-immediately",
+    "scan:tier1": "node --import tsx/esm src/index.ts scan:tier1",
+    "scan:tier2": "node --import tsx/esm src/index.ts scan:tier2"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "@ukwhatn/wikidot": "^4.3.1",
+    "commander": "^14.0.0",
+    "dotenv": "^17.2.1",
+    "pg": "^8.16.3",
+    "tsx": "^4.19.1",
+    "undici": "^7.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.4",
+    "@types/pg": "^8.16.0",
+    "prisma": "^5.20.0",
+    "typescript": "^5.6.2"
+  }
+}

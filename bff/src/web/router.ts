@@ -25,6 +25,7 @@ import { internalRouter } from './routes/internal.js';
 import { textAnalysisRouter } from './routes/text-analysis.js';
 import { forumsRouter } from './routes/forums.js';
 import { cssProxyRouter } from './routes/css-proxy.js';
+import { pagePreviewRouter } from './routes/page-preview.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -67,6 +68,7 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/collections', collectionsRouter(pool, redis));
   router.use('/text-analysis', textAnalysisRouter());
   router.use('/forums', forumsRouter(pool, redis));
+  router.use('/pages', pagePreviewRouter(pool));
   router.use(cssProxyRouter());
   router.use('/internal', guardInternalRoutes, internalRouter());
   router.use('/', htmlSnippetsRouter);
