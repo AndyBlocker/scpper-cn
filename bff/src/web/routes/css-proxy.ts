@@ -8,6 +8,7 @@ const ALLOWED_EXACT_HOSTS = [
 const ALLOWED_HOST_SUFFIXES = [
   'wikidot.com',
   'wdfiles.com',
+  'scpwikicn.com',
 ];
 const DEFAULT_CACHE_CONTROL =
   process.env.CSS_PROXY_CACHE_CONTROL || 'public, max-age=3600, s-maxage=7200';
