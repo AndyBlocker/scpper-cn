@@ -282,6 +282,7 @@ export class IncrementalAnalyzeJob {
           'series_stats',
           'trending_stats',
           'page_metric_alerts',
+          'tag_validation_cache',
           'wikidot_binding_verify'
         ]);
         if (taskName === 'site_stats') {
