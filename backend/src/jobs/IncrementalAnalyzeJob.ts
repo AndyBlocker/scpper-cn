@@ -283,7 +283,7 @@ export class IncrementalAnalyzeJob {
           'trending_stats',
           'page_metric_alerts',
           'tag_validation_cache',
-          'wikidot_binding_verify'
+          'wikidot_binding_verify',
         ]);
         if (taskName === 'site_stats') {
           await this.refreshSiteStatsTimestamp();
@@ -2127,6 +2127,17 @@ export class IncrementalAnalyzeJob {
    * 刷新 TagValidationCache（all + invalid + untranslated）
    */
   private async refreshTagValidationCache() {
+    // Throttle: skip if cache was refreshed within the last 6 hours
+    const STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000;
+    const latest = await this.prisma.$queryRaw<Array<{ latest: Date | null }>>`
+      SELECT MAX("computedAt") as latest FROM "TagValidationCache"
+    `;
+    const lastComputedAt = latest[0]?.latest;
+    if (lastComputedAt && (Date.now() - new Date(lastComputedAt).getTime()) < STALE_THRESHOLD_MS) {
+      console.log(`⏭️ TagValidationCache still fresh (computed ${lastComputedAt.toISOString()}), skipping`);
+      return;
+    }
+
     console.log('🏷️ Refreshing TagValidationCache...');
 
     // 检查 TagDefinition 表是否有数据，避免空定义表导致所有标签被误判为 invalid
