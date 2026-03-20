@@ -282,7 +282,8 @@ export class IncrementalAnalyzeJob {
           'series_stats',
           'trending_stats',
           'page_metric_alerts',
-          'wikidot_binding_verify'
+          'tag_validation_cache',
+          'wikidot_binding_verify',
         ]);
         if (taskName === 'site_stats') {
           await this.refreshSiteStatsTimestamp();
@@ -412,7 +413,7 @@ export class IncrementalAnalyzeJob {
           break;
         }
         case 'tag_validation_cache': {
-          await this.refreshTagValidationCache();
+          await this.refreshTagValidationCache(changeSet.length > 0);
           break;
         }
         case 'wikidot_binding_verify': {
@@ -2125,7 +2126,21 @@ export class IncrementalAnalyzeJob {
   /**
    * 刷新 TagValidationCache（all + invalid + untranslated）
    */
-  private async refreshTagValidationCache() {
+  private async refreshTagValidationCache(hasChanges = false) {
+    // Throttle: on idle cycles (no changeSet), skip if cache was refreshed
+    // within the last 6 hours. When real changes exist, always rebuild.
+    if (!hasChanges) {
+      const STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000;
+      const latest = await this.prisma.$queryRaw<Array<{ latest: Date | null }>>`
+        SELECT MAX("computedAt") as latest FROM "TagValidationCache"
+      `;
+      const lastComputedAt = latest[0]?.latest;
+      if (lastComputedAt && (Date.now() - new Date(lastComputedAt).getTime()) < STALE_THRESHOLD_MS) {
+        console.log(`⏭️ TagValidationCache still fresh (computed ${lastComputedAt.toISOString()}), skipping`);
+        return;
+      }
+    }
+
     console.log('🏷️ Refreshing TagValidationCache...');
 
     // 检查 TagDefinition 表是否有数据，避免空定义表导致所有标签被误判为 invalid
