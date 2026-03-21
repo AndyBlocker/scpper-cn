@@ -8,6 +8,7 @@ module.exports = {
       exec_mode: 'fork',
       watch: false,
       autorestart: true,
+      max_memory_restart: '1200M',
       env: {
         NODE_ENV: 'production',
         USER_BACKEND_PORT: process.env.USER_BACKEND_PORT || '4455',

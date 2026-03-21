@@ -80,6 +80,7 @@ export const cfg = {
     requestTimeoutMs: num("PAGE_IMAGE_REQUEST_TIMEOUT_MS", 10000),
     retryBaseMs: num("PAGE_IMAGE_RETRY_BASE_MS", 60000),
     retryMaxMs: num("PAGE_IMAGE_RETRY_MAX_MS", 3600000),
+    maxRetries: num("PAGE_IMAGE_MAX_RETRIES", 20),
     maxBytes: num("PAGE_IMAGE_MAX_BYTES", 5 * 1024 * 1024),
     userAgent: str("PAGE_IMAGE_USER_AGENT", "scpper-image-cache/1.0"),
     storageMode: str("PAGE_IMAGE_STORAGE_MODE", "hash"),
