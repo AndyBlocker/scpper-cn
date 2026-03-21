@@ -9716,8 +9716,7 @@ export function gachaRouter() {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
       const rows = await prisma.gachaInventory.findMany({
         where: { userId: req.authUser.id, count: { gt: 0 } },
-        select: { cardId: true },
-        take: 5000
+        select: { cardId: true }
       });
       res.json({
         ok: true,
