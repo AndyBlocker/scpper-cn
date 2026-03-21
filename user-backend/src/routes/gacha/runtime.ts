@@ -987,7 +987,7 @@ async function runSerializableTransaction<T>(task: (tx: Tx) => Promise<T>): Prom
         throw error;
       }
       const jitterMs = Math.floor(Math.random() * SERIALIZABLE_RETRY_BASE_DELAY_MS);
-      const delayMs = SERIALIZABLE_RETRY_BASE_DELAY_MS * attempt + jitterMs;
+      const delayMs = SERIALIZABLE_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1) + jitterMs;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
@@ -5582,6 +5582,14 @@ function triggerMarketSettleSweep() {
     });
 }
 
+async function awaitInflightSweeps(): Promise<void> {
+  await Promise.allSettled([
+    tradeExpirySweepInFlight,
+    buyRequestExpirySweepInFlight,
+    marketSettleSweepInFlight
+  ].filter(Boolean));
+}
+
 function buildBuyRequestOrderBy(sortMode: string): Prisma.GachaBuyRequestOrderByWithRelationInput[] {
   if (sortMode === 'TOKEN_DESC') return [{ tokenOffer: 'desc' }, { createdAt: 'desc' }];
   if (sortMode === 'TOKEN_ASC') return [{ tokenOffer: 'asc' }, { createdAt: 'desc' }];
@@ -6163,7 +6171,8 @@ async function listMarketLedgerEntries(tx: Tx | typeof prisma, userId: string, a
       createdAt: true,
       reason: true,
       metadata: true
-    }
+    },
+    take: 10000
   });
 }
 
@@ -9707,7 +9716,8 @@ export function gachaRouter() {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
       const rows = await prisma.gachaInventory.findMany({
         where: { userId: req.authUser.id, count: { gt: 0 } },
-        select: { cardId: true }
+        select: { cardId: true },
+        take: 5000
       });
       res.json({
         ok: true,
@@ -12837,6 +12847,7 @@ export {
   triggerTradeExpirySweep,
   triggerBuyRequestExpirySweep,
   triggerMarketSettleSweep,
+  awaitInflightSweeps,
   respondFeatureNotReady,
   ensureFeatureEnabled,
   resolveFeatureByPath

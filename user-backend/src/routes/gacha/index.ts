@@ -3,5 +3,6 @@ export {
   gachaAdminRouter,
   triggerTradeExpirySweep,
   triggerBuyRequestExpirySweep,
-  triggerMarketSettleSweep
+  triggerMarketSettleSweep,
+  awaitInflightSweeps
 } from './runtime.js';
