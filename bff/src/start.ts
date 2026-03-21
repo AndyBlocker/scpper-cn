@@ -86,6 +86,9 @@ export async function createServer() {
   // Global error handler – never leak internal details in production
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: any, _req: any, res: any, _next: any) => {
+    if (err?.message === 'Not allowed by CORS') {
+      return res.status(403).json({ error: 'cors_rejected' });
+    }
     // eslint-disable-next-line no-console
     console.error(err);
     const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';

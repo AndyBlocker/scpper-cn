@@ -4,10 +4,27 @@ import { prisma } from './db.js';
 import {
   triggerTradeExpirySweep,
   triggerBuyRequestExpirySweep,
-  triggerMarketSettleSweep
+  triggerMarketSettleSweep,
+  awaitInflightSweeps
 } from './routes/gacha/index.js';
 
 const EXPIRY_SWEEP_INTERVAL_MS = 60_000; // 60 seconds
+const IDEMPOTENCY_CLEANUP_INTERVAL_MS = 600_000; // 10 minutes
+
+async function cleanupExpiredIdempotencyRecords() {
+  try {
+    const { count } = await prisma.apiIdempotencyRecord.deleteMany({
+      where: { expireAt: { lte: new Date() } }
+    });
+    if (count > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[user-backend] cleaned up ${count} expired idempotency records`);
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[user-backend] idempotency cleanup failed', error);
+  }
+}
 
 async function main() {
   const app = createApp();
@@ -24,10 +41,14 @@ async function main() {
     triggerMarketSettleSweep();
   }, EXPIRY_SWEEP_INTERVAL_MS);
 
+  const idempotencyCleanupTimer = setInterval(cleanupExpiredIdempotencyRecords, IDEMPOTENCY_CLEANUP_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     // eslint-disable-next-line no-console
     console.log(`Received ${signal}, shutting down...`);
     clearInterval(sweepTimer);
+    clearInterval(idempotencyCleanupTimer);
+    await awaitInflightSweeps();
     server.close(async () => {
       await prisma.$disconnect();
       process.exit(0);

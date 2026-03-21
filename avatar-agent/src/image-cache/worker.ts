@@ -267,6 +267,23 @@ function fatalError(message: string, status?: number): TaggedError {
   return err;
 }
 
+const FATAL_NETWORK_ERROR_PATTERNS = [
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'CERT_HAS_EXPIRED',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'ERR_TLS_HANDSHAKE',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+];
+
+function isNetworkErrorFatal(err: Error): boolean {
+  const msg = err.message || '';
+  const cause = (err as any).cause;
+  const causeCode = cause instanceof Error ? (cause as any).code || '' : '';
+  const combined = `${msg} ${causeCode}`;
+  return FATAL_NETWORK_ERROR_PATTERNS.some(p => combined.includes(p));
+}
+
 async function downloadImage(url: string): Promise<DownloadResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), cfg.imageCache.requestTimeoutMs);
@@ -320,6 +337,12 @@ async function downloadImage(url: string): Promise<DownloadResult> {
       finalUrl: resp.url || url,
       status: resp.status
     };
+  } catch (err) {
+    if (err instanceof Error && (err as TaggedError).halt) throw err;
+    if (err instanceof Error && isNetworkErrorFatal(err)) {
+      throw fatalError(`Permanent network error: ${err.message}`);
+    }
+    throw err;
   } finally {
     clearTimeout(timeout);
   }
@@ -493,6 +516,19 @@ async function storeFailure(
                  "updatedAt" = NOW()
            WHERE id = $1`,
           [job.id, error.message]
+        );
+      } else if (job.attempts >= cfg.imageCache.maxRetries) {
+        log.warn({ jobId: job.id, attempts: job.attempts }, 'max retries exceeded, marking as failed');
+        await client.query(
+          `UPDATE "ImageIngestJob"
+             SET status = 'FAILED',
+                 "lockedAt" = NULL,
+                 "lockedBy" = NULL,
+                 "nextRunAt" = NOW(),
+                 "lastError" = $2,
+                 "updatedAt" = NOW()
+           WHERE id = $1`,
+          [job.id, `Max retries (${cfg.imageCache.maxRetries}) exceeded: ${error.message}`]
         );
       } else {
         const delay = backoffDelay(job.attempts);
