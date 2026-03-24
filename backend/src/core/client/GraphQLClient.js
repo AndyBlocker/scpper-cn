@@ -112,10 +112,19 @@ export class GraphQLClient {
            (h && (h['retry-after'] || (typeof h.get === 'function' && h.get('retry-after'))));
   }
 
+  /**
+   * 释放底层 HTTP 连接资源，防止 keep-alive 连接池泄漏。
+   * 调用后此实例不应再发起请求。
+   */
+  destroy() {
+    this.client = null;
+    this.backoff = null;
+  }
+
   _getRetryAfter(err) {
     const h = err?.response?.headers;
     if (!h) return 60;
-    
+
     // Handle different header object types
     if (typeof h.get === 'function') {
       return Number(h.get('retry-after') ?? 60);
@@ -123,7 +132,7 @@ export class GraphQLClient {
     if (typeof h['retry-after'] !== 'undefined') {
       return Number(h['retry-after']);
     }
-    
+
     return 60;
   }
 }

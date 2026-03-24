@@ -33,6 +33,11 @@ export class PhaseBProcessor {
     this.store = new DatabaseStore();
   }
 
+  /** 释放 GraphQL 连接等资源，防止 keep-alive 泄漏 */
+  destroy(): void {
+    (this.client as any).destroy?.();
+  }
+
   async run(fullSync = false, testMode = false, onProgress?: () => void): Promise<void> {
     Logger.info('=== Phase B: Targeted Page Content Collection ===');
     

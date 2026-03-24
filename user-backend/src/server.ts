@@ -28,8 +28,17 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log(`Received ${signal}, shutting down...`);
     clearInterval(sweepTimer);
+
+    const forceTimer = setTimeout(() => {
+      // eslint-disable-next-line no-console
+      console.error('Graceful shutdown timed out after 10s, forcing exit');
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
+
     server.close(async () => {
       await prisma.$disconnect();
+      clearTimeout(forceTimer);
       process.exit(0);
     });
   };
