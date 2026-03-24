@@ -516,12 +516,9 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       try {
         await client.query('BEGIN');
 
-        // Lock owner's collections to serialize concurrent isDefault changes
+        // Advisory lock on ownerId to serialize concurrent isDefault changes
         if (isDefault) {
-          await client.query(
-            'SELECT id FROM "UserCollection" WHERE "ownerId" = $1 FOR UPDATE',
-            [ownerId]
-          );
+          await client.query('SELECT pg_advisory_xact_lock($1)', [ownerId]);
         }
 
         const result = await client.query<any>(
@@ -633,12 +630,9 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       try {
         await client.query('BEGIN');
 
-        // Lock owner's collections to serialize concurrent isDefault changes
+        // Advisory lock on ownerId to serialize concurrent isDefault changes
         if (isDefault) {
-          await client.query(
-            'SELECT id FROM "UserCollection" WHERE "ownerId" = $1 FOR UPDATE',
-            [ownerId]
-          );
+          await client.query('SELECT pg_advisory_xact_lock($1)', [ownerId]);
         }
 
         const updated = await client.query<any>(

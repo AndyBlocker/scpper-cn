@@ -96,6 +96,7 @@ describe('Collections routes', () => {
           { column_name: 'coverImageScale' }
         ]
       })
+      .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({
         rows: [{
           id: 2,
@@ -115,7 +116,8 @@ describe('Collections routes', () => {
           updatedAt: '2024-01-01T00:00:00.000Z',
           itemCount: 0
         }]
-      });
+      })
+      .mockResolvedValueOnce({}); // COMMIT
 
     const app = await createServer();
     const res = await request(app)
@@ -125,7 +127,7 @@ describe('Collections routes', () => {
 
     expect(res.body.ok).toBe(true);
     expect(res.body.collection.slug).toBe('xin-shoucangjia');
-    expect(queryMock).toHaveBeenCalledTimes(5);
+    expect(queryMock).toHaveBeenCalledTimes(7);
   });
 
   test('GET /collections/:id returns detail with items', async () => {
