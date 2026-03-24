@@ -209,7 +209,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       } else if (ch === ')') {
         const current = stack.pop();
         const next = skeleton[i + 1];
-        const isQuantified = next === '+' || next === '*' || next === '{';
+        // All quantifiers on groups are treated as repetition — including `?`,
+        // because an optional sub-group inside a quantified outer group creates
+        // empty-or-match ambiguity that causes exponential backtracking.
+        const isQuantified = next === '+' || next === '*' || next === '{' || next === '?';
         if (isQuantified && (current?.hasRepetition || current?.hasAlternation)) {
           return true;
         }
