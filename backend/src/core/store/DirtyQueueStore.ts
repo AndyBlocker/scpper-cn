@@ -88,6 +88,8 @@ export class DirtyQueueStore {
     const allPages = await this.prisma.page.findMany({
       select: { id: true, wikidotId: true, currentUrl: true }
     });
+    Logger.info(`preloadLookups: loaded ${allPages.length} pages`);
+
     const pageMap = new Map<number, { id: number; wikidotId: number; currentUrl: string }>();
     const pageIds: number[] = [];
     for (const p of allPages) {
@@ -103,6 +105,8 @@ export class DirtyQueueStore {
         voteCount: true, revisionCount: true
       }
     });
+    Logger.info(`preloadLookups: loaded ${currentVersions.length} current versions`);
+
     const versionMap = new Map<number, typeof currentVersions[number]>();
     for (const v of currentVersions) {
       versionMap.set(v.pageId, v);

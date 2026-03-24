@@ -36,11 +36,17 @@ export class DatabaseStore {
 
   /**
    * 加载进度（用于恢复）
+   * @deprecated 已被 DirtyPage 队列替代，保留供回退使用。每批限制 1000 条防止 OOM。
    */
-  async loadProgress(phase = 'phase1') {
+  async loadProgress(phase = 'phase1', cursor?: number) {
+    const BATCH_SIZE = 1000;
+    const cursorOpt = cursor ? { skip: 1, cursor: { id: cursor } } : {};
     switch (phase) {
       case 'phase1':
         return await this.prisma.page.findMany({
+          ...cursorOpt,
+          take: BATCH_SIZE,
+          orderBy: { id: 'asc' },
           include: {
             versions: {
               orderBy: { validFrom: 'desc' },
@@ -50,6 +56,9 @@ export class DatabaseStore {
         });
       case 'phase2':
         return await this.prisma.pageVersion.findMany({
+          ...cursorOpt,
+          take: BATCH_SIZE,
+          orderBy: { id: 'asc' },
           where: {
             validTo: null,
             textContent: { not: null },
@@ -57,6 +66,9 @@ export class DatabaseStore {
         });
       case 'phase3':
         return await this.prisma.pageVersion.findMany({
+          ...cursorOpt,
+          take: BATCH_SIZE,
+          orderBy: { id: 'asc' },
           where: {
             validTo: null,
           },
