@@ -5,7 +5,7 @@ import { getReadPoolSync } from '../utils/dbPool.js';
 import { createCache } from '../utils/cache.js';
 import { extractExcerpt, escapeHtml } from '../utils/helpers.js';
 
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 
 type DeletedFilterMode = 'any' | 'only' | 'exclude';
 
@@ -400,6 +400,34 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         )
       )
     `;
+
+    // ── CTE 内联过滤器：将不需要额外 JOIN 的过滤条件下推到候选 CTE 内部 ──
+    // 解决 "先限制后过滤" 问题：确保 CTE 的 LIMIT 在过滤后生效，
+    // 避免候选池被不符合过滤条件的行占满而遗漏真正匹配的结果
+    const buildCteInlineFilters = (includeDate: boolean): string => {
+      const directFilters = `
+            ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($4::int IS NULL OR pv.rating >= $4)
+            AND ($5::int IS NULL OR pv.rating <= $5)
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+            AND ($15::int IS NULL OR pv."commentCount" >= $15)
+            AND ($16::int IS NULL OR pv."commentCount" <= $16)
+            AND ($17::int IS NULL OR pv."voteCount" >= $17)
+            AND ($18::int IS NULL OR pv."voteCount" <= $18)`;
+      const dateFilters = includeDate ? `
+            AND ($19::date IS NULL OR p."firstPublishedAt" >= $19::date)
+            AND ($20::date IS NULL OR p."firstPublishedAt" <= $20::date)` : '';
+
+      if (deletedFilter === 'exclude') {
+        return `AND pv."isDeleted" = false ${directFilters} ${dateFilters}`;
+      }
+      if (deletedFilter === 'only') {
+        return 'AND pv."isDeleted" = true';
+      }
+      // 'any': 非删除页面在 CTE 内过滤；已删除页面放行，由 enriched CTE 用 LATERAL 过滤
+      return `AND (pv."isDeleted" = true OR (pv."isDeleted" = false ${directFilters} ${dateFilters}))`;
+    };
 
     if (!hasQuery) {
       // 无查询模式：纯过滤
@@ -903,8 +931,11 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     const altTitleMatchSql = 'pv."alternateTitle" &@~ pgroonga_query_escape($1)';
     const textMatchSql = 'pv."search_text" &@~ pgroonga_query_escape($1)';
     const scoreExprSql = 'pgroonga_score(pv.tableoid, pv.ctid) AS score';
-    const aTitleMatchSql = 'a.title &@~ pgroonga_query_escape($1)';
-    const aAltMatchSql = 'a."alternateTitle" &@~ pgroonga_query_escape($1)';
+    const eTitleMatchSql = 'e.title &@~ pgroonga_query_escape($1)';
+    const eAltMatchSql = 'e."alternateTitle" &@~ pgroonga_query_escape($1)';
+
+    const cteFilters = buildCteInlineFilters(false);
+    const cteFiltersWithDate = buildCteInlineFilters(true);
 
     const baseSql = `
         WITH url_hits AS (
@@ -916,6 +947,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
           WHERE $1::text IS NOT NULL
             AND ${urlMatchSql}
+            ${cteFiltersWithDate}
           LIMIT $10::int
         ),
         title_hits AS (
@@ -926,6 +958,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "PageVersion" pv
           WHERE pv."validTo" IS NULL
             AND ${titleMatchSql}
+            ${cteFilters}
           ORDER BY score DESC
           LIMIT $10::int
         ),
@@ -938,6 +971,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           WHERE pv."validTo" IS NULL
             AND pv."alternateTitle" IS NOT NULL
             AND ${altTitleMatchSql}
+            ${cteFilters}
           ORDER BY score DESC
           LIMIT $10::int
         ),
@@ -950,6 +984,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           WHERE pv."validTo" IS NULL
             AND pv."search_text" <> ''
             AND ${textMatchSql}
+            ${cteFilters}
           ORDER BY score DESC
           LIMIT $10::int
         ),
@@ -962,7 +997,58 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           UNION ALL
           SELECT * FROM text_hits
         ),
-        enriched AS (
+        -- 轻量级聚合：仅按 int ID 分组，避免 GROUP BY 大列（tags/text）
+        scored AS (
+          SELECT
+            pv_id,
+            MAX(weight) AS weight,
+            MAX(score) AS score,
+            MAX(CASE WHEN source = 'url' THEN 1 ELSE 0 END) AS has_url,
+            MAX(CASE WHEN source = 'title' THEN 1 ELSE 0 END) AS has_title,
+            MAX(CASE WHEN source = 'alternate' THEN 1 ELSE 0 END) AS has_alt,
+            MAX(CASE WHEN source = 'text' THEN 1 ELSE 0 END) AS has_text
+          FROM candidates
+          GROUP BY pv_id
+        ),
+        ${deletedFilter === 'exclude'
+          // ── exclude 模式：无 LATERAL、无 CASE WHEN ──
+          // CTE 已保证所有候选为非删除页面，tags/rating/count 也已过滤
+          ? `enriched AS (
+          SELECT
+            pv.id,
+            COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
+            pv."pageId",
+            pv.title,
+            pv."alternateTitle",
+            p."currentUrl" AS url,
+            p."firstPublishedAt" AS "firstRevisionAt",
+            pv.rating,
+            pv."voteCount",
+            pv."revisionCount",
+            pv."commentCount",
+            COALESCE(pv.tags, ARRAY[]::text[]) AS tags,
+            false AS "isDeleted",
+            NULL::timestamp AS "deletedAt",
+            pv."validFrom",
+            ps."wilson95",
+            ps."controversy",
+            LEFT(COALESCE(pv."search_text", ''), 2048) AS search_preview,
+            sc.weight, sc.score, sc.has_url, sc.has_title, sc.has_alt, sc.has_text
+          FROM "PageVersion" pv
+          JOIN scored sc ON sc.pv_id = pv.id
+          JOIN "Page" p ON pv."pageId" = p.id
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          WHERE pv."validTo" IS NULL
+            AND ($11::float IS NULL OR ps."wilson95" >= $11)
+            AND ($12::float IS NULL OR ps."wilson95" <= $12)
+            AND ($13::float IS NULL OR ps."controversy" >= $13)
+            AND ($14::float IS NULL OR ps."controversy" <= $14)
+            AND ($19::date IS NULL OR p."firstPublishedAt" >= $19::date)
+            AND ($20::date IS NULL OR p."firstPublishedAt" <= $20::date)
+            ${buildAuthorFilterClause('pv.id', 21, 22, 23)}
+        )`
+          // ── any/only 模式：需要 LATERAL 获取已删除页面的前一版本数据 ──
+          : `enriched AS (
           SELECT
             pv.id,
             COALESCE(pv."wikidotId", p."wikidotId") AS "wikidotId",
@@ -981,9 +1067,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             pv."validFrom",
             ps."wilson95",
             ps."controversy",
-            LEFT(COALESCE(pv."search_text", ''), 2048) AS search_preview
+            LEFT(COALESCE(pv."search_text", ''), 2048) AS search_preview,
+            sc.weight, sc.score, sc.has_url, sc.has_title, sc.has_alt, sc.has_text
           FROM "PageVersion" pv
-          JOIN candidates c ON c.pv_id = pv.id
+          JOIN scored sc ON sc.pv_id = pv.id
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           LEFT JOIN LATERAL (
@@ -993,7 +1080,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
               AND pv_prev."isDeleted" = false
             ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
             LIMIT 1
-          ) prev ON TRUE
+          ) prev ON pv."isDeleted" = true
           WHERE pv."validTo" IS NULL
             AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
             AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
@@ -1012,55 +1099,39 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
             AND ($20::date IS NULL OR p."firstPublishedAt" <= $20::date)
             ${buildAuthorFilterClause('COALESCE(CASE WHEN pv."isDeleted" THEN prev.id ELSE pv.id END, pv.id)', 21, 22, 23)}
             ${deletedFilterClause}
-        ),
-        aggregated AS (
-          SELECT
-            e.*,
-            MAX(c.weight) AS weight,
-            MAX(c.score) AS score,
-            MAX(CASE WHEN c.source = 'url' THEN 1 ELSE 0 END) AS has_url,
-            MAX(CASE WHEN c.source = 'title' THEN 1 ELSE 0 END) AS has_title,
-            MAX(CASE WHEN c.source = 'alternate' THEN 1 ELSE 0 END) AS has_alt,
-            MAX(CASE WHEN c.source = 'text' THEN 1 ELSE 0 END) AS has_text
-          FROM candidates c
-          JOIN enriched e ON e.id = c.pv_id
-          GROUP BY
-            e.id, e."wikidotId", e."pageId", e.title, e."alternateTitle", e.url,
-            e."firstRevisionAt", e.rating, e."voteCount", e."revisionCount", e."commentCount",
-            e.tags, e."isDeleted", e."deletedAt", e."validFrom", e."wilson95", e."controversy",
-            e.search_preview
-        )
+        )`
+        }
         SELECT
-          a.id,
-          a."wikidotId",
-          a."pageId",
-          a.title,
-          a."alternateTitle",
-          a.url,
-          a."firstRevisionAt",
-          a.rating,
-          a."voteCount",
-          a."revisionCount",
-          a."commentCount",
-          a.tags,
-          a."isDeleted",
-          a."deletedAt",
-          a."validFrom",
-          a."wilson95",
-          a."controversy",
-          a.search_preview,
-          a.weight,
-          a.score,
-          a.has_url,
-          a.has_title,
-          a.has_alt,
-          a.has_text,
-          CASE WHEN lower(split_part(a.url, '/', 4)) = lower($1) THEN 1 ELSE 0 END AS host_match,
-          CASE WHEN lower(a.url) = lower($1) THEN 1 ELSE 0 END AS exact_url,
-          CASE WHEN a.title IS NOT NULL AND lower(a.title) = lower($1) THEN 1 ELSE 0 END AS exact_title,
-          CASE WHEN a.title IS NOT NULL AND ${aTitleMatchSql} THEN 1 ELSE 0 END AS title_hit,
-          CASE WHEN a."alternateTitle" IS NOT NULL AND ${aAltMatchSql} THEN 1 ELSE 0 END AS alt_hit
-        FROM aggregated a
+          e.id,
+          e."wikidotId",
+          e."pageId",
+          e.title,
+          e."alternateTitle",
+          e.url,
+          e."firstRevisionAt",
+          e.rating,
+          e."voteCount",
+          e."revisionCount",
+          e."commentCount",
+          e.tags,
+          e."isDeleted",
+          e."deletedAt",
+          e."validFrom",
+          e."wilson95",
+          e."controversy",
+          e.search_preview,
+          e.weight,
+          e.score,
+          e.has_url,
+          e.has_title,
+          e.has_alt,
+          e.has_text,
+          CASE WHEN lower(split_part(e.url, '/', 4)) = lower($1) THEN 1 ELSE 0 END AS host_match,
+          CASE WHEN lower(e.url) = lower($1) THEN 1 ELSE 0 END AS exact_url,
+          CASE WHEN e.title IS NOT NULL AND lower(e.title) = lower($1) THEN 1 ELSE 0 END AS exact_title,
+          CASE WHEN e.title IS NOT NULL AND ${eTitleMatchSql} THEN 1 ELSE 0 END AS title_hit,
+          CASE WHEN e."alternateTitle" IS NOT NULL AND ${eAltMatchSql} THEN 1 ELSE 0 END AS alt_hit
+        FROM enriched e
         ORDER BY
           CASE WHEN $9 IN ('rating', 'rating_asc', 'wilson95', 'wilson95_asc', 'controversy', 'controversy_asc', 'comment_count', 'comment_count_asc', 'vote_count', 'vote_count_asc') THEN NULL END,
           CASE WHEN $9 IN ('recent', 'recent_asc') THEN NULL END,
@@ -1091,52 +1162,76 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         LIMIT $7::int OFFSET $8::int
       `;
 
-    const totalSql = wantTotal
-      ? `
-        WITH url_hits AS (
-          SELECT pv.id AS pv_id
-          FROM "Page" p
+    // ── 总数查询：无 LIMIT 的 CTE UNION + 全量过滤 ──────────────
+    // 每个 CTE 独立使用 PGroonga 索引（无 LIMIT），UNION 去重后再过滤计数。
+    // exclude 模式下跳过 LATERAL 子查询（所有候选均为非删除页面）。
+    const totalMatchesCte = `
+        WITH url_matches AS (
+          SELECT pv.id AS pv_id FROM "Page" p
           JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
-          WHERE $1::text IS NOT NULL
-            AND ${urlMatchSql}
-          LIMIT $7::int
+          WHERE ${urlMatchSql}
         ),
-        title_hits AS (
-          SELECT pv.id AS pv_id
-          FROM "PageVersion" pv
-          WHERE pv."validTo" IS NULL
-            AND ${titleMatchSql}
-          LIMIT $7::int
+        title_matches AS (
+          SELECT pv.id AS pv_id FROM "PageVersion" pv
+          WHERE pv."validTo" IS NULL AND ${titleMatchSql}
         ),
-        alternate_hits AS (
-          SELECT pv.id AS pv_id
-          FROM "PageVersion" pv
-          WHERE pv."validTo" IS NULL
-            AND pv."alternateTitle" IS NOT NULL
+        alternate_matches AS (
+          SELECT pv.id AS pv_id FROM "PageVersion" pv
+          WHERE pv."validTo" IS NULL AND pv."alternateTitle" IS NOT NULL
             AND ${altTitleMatchSql}
-          LIMIT $7::int
         ),
-        text_hits AS (
-          SELECT pv.id AS pv_id
-          FROM "PageVersion" pv
-          WHERE pv."validTo" IS NULL
-            AND pv."search_text" <> ''
+        text_matches AS (
+          SELECT pv.id AS pv_id FROM "PageVersion" pv
+          WHERE pv."validTo" IS NULL AND pv."search_text" <> ''
             AND ${textMatchSql}
-          LIMIT $7::int
         ),
-        candidates AS (
-          SELECT * FROM url_hits
+        all_matches AS (
+          SELECT pv_id FROM url_matches
           UNION
-          SELECT * FROM title_hits
+          SELECT pv_id FROM title_matches
           UNION
-          SELECT * FROM alternate_hits
+          SELECT pv_id FROM alternate_matches
           UNION
-          SELECT * FROM text_hits
-        ),
+          SELECT pv_id FROM text_matches
+        )`;
+
+    const totalSql = wantTotal
+      ? deletedFilter === 'exclude'
+        // ── exclude 模式：无 LATERAL，直接过滤 ──
+        ? `${totalMatchesCte},
         filtered AS (
-          SELECT DISTINCT pv.id
+          SELECT pv.id
           FROM "PageVersion" pv
-          JOIN candidates c ON c.pv_id = pv.id
+          JOIN all_matches m ON m.pv_id = pv.id
+          JOIN "Page" p ON pv."pageId" = p.id
+          LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
+          WHERE pv."validTo" IS NULL
+            AND pv."isDeleted" = false
+            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
+            AND ($4::int IS NULL OR pv.rating >= $4)
+            AND ($5::int IS NULL OR pv.rating <= $5)
+            AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) <@ $2::text[])
+            AND ($7::float IS NULL OR ps."wilson95" >= $7)
+            AND ($8::float IS NULL OR ps."wilson95" <= $8)
+            AND ($9::float IS NULL OR ps."controversy" >= $9)
+            AND ($10::float IS NULL OR ps."controversy" <= $10)
+            AND ($11::int IS NULL OR pv."commentCount" >= $11)
+            AND ($12::int IS NULL OR pv."commentCount" <= $12)
+            AND ($13::int IS NULL OR pv."voteCount" >= $13)
+            AND ($14::int IS NULL OR pv."voteCount" <= $14)
+            AND ($15::date IS NULL OR p."firstPublishedAt" >= $15::date)
+            AND ($16::date IS NULL OR p."firstPublishedAt" <= $16::date)
+            ${buildAuthorFilterClause('pv.id', 17, 18, 19)}
+        )
+        SELECT COUNT(*) AS total FROM filtered
+      `
+        // ── any/only 模式：需要 LATERAL ──
+        : `${totalMatchesCte},
+        filtered AS (
+          SELECT pv.id
+          FROM "PageVersion" pv
+          JOIN all_matches m ON m.pv_id = pv.id
           JOIN "Page" p ON pv."pageId" = p.id
           LEFT JOIN "PageStats" ps ON ps."pageVersionId" = pv.id
           LEFT JOIN LATERAL (
@@ -1146,24 +1241,24 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
               AND pv_prev."isDeleted" = false
             ORDER BY pv_prev."validTo" DESC NULLS LAST, pv_prev.id DESC
             LIMIT 1
-          ) prev ON TRUE
+          ) prev ON pv."isDeleted" = true
           WHERE pv."validTo" IS NULL
             AND ($2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) @> $2::text[])
             AND ($3::text[] IS NULL OR NOT (COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) >= $4)
             AND ($5::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev.rating ELSE pv.rating END) <= $5)
             AND (($6)::boolean IS NOT TRUE OR $2::text[] IS NULL OR COALESCE(CASE WHEN pv."isDeleted" THEN prev.tags ELSE pv.tags END, ARRAY[]::text[]) <@ $2::text[])
-            AND ($8::float IS NULL OR ps."wilson95" >= $8)
-            AND ($9::float IS NULL OR ps."wilson95" <= $9)
-            AND ($10::float IS NULL OR ps."controversy" >= $10)
-            AND ($11::float IS NULL OR ps."controversy" <= $11)
-            AND ($12::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) >= $12)
-            AND ($13::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) <= $13)
-            AND ($14::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) >= $14)
-            AND ($15::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $15)
-            AND ($16::date IS NULL OR p."firstPublishedAt" >= $16::date)
-            AND ($17::date IS NULL OR p."firstPublishedAt" <= $17::date)
-            ${buildAuthorFilterClause('COALESCE(CASE WHEN pv."isDeleted" THEN prev.id ELSE pv.id END, pv.id)', 18, 19, 20)}
+            AND ($7::float IS NULL OR ps."wilson95" >= $7)
+            AND ($8::float IS NULL OR ps."wilson95" <= $8)
+            AND ($9::float IS NULL OR ps."controversy" >= $9)
+            AND ($10::float IS NULL OR ps."controversy" <= $10)
+            AND ($11::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) >= $11)
+            AND ($12::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."commentCount" ELSE pv."commentCount" END) <= $12)
+            AND ($13::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) >= $13)
+            AND ($14::int IS NULL OR (CASE WHEN pv."isDeleted" THEN prev."voteCount" ELSE pv."voteCount" END) <= $14)
+            AND ($15::date IS NULL OR p."firstPublishedAt" >= $15::date)
+            AND ($16::date IS NULL OR p."firstPublishedAt" <= $16::date)
+            ${buildAuthorFilterClause('COALESCE(CASE WHEN pv."isDeleted" THEN prev.id ELSE pv.id END, pv.id)', 17, 18, 19)}
             ${deletedFilterClause}
         )
         SELECT COUNT(*) AS total FROM filtered
@@ -1204,20 +1299,19 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           ratingMinParam,         // $4
           ratingMaxParam,         // $5
           enforceExactTags,       // $6
-          candidateLimit,         // $7
-          wilson95MinParam,       // $8
-          wilson95MaxParam,       // $9
-          controversyMinParam,    // $10
-          controversyMaxParam,    // $11
-          commentCountMinParam,   // $12
-          commentCountMaxParam,   // $13
-          voteCountMinParam,      // $14
-          voteCountMaxParam,      // $15
-          dateMinParam,           // $16
-          dateMaxParam,           // $17
-          authorIdsParam,         // $18
-          authorMatchParam,       // $19
-          authorIdsCountParam     // $20
+          wilson95MinParam,       // $7
+          wilson95MaxParam,       // $8
+          controversyMinParam,    // $9
+          controversyMaxParam,    // $10
+          commentCountMinParam,   // $11
+          commentCountMaxParam,   // $12
+          voteCountMinParam,      // $13
+          voteCountMaxParam,      // $14
+          dateMinParam,           // $15
+          dateMaxParam,           // $16
+          authorIdsParam,         // $17
+          authorMatchParam,       // $18
+          authorIdsCountParam     // $19
         ]
       : null;
 
@@ -1401,7 +1495,23 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       const voteCountMaxNumber = parseNullableInt(voteCountMax);
       const dateMinParsed = parseNullableDate(dateMin);
       const dateMaxParsed = parseNullableDate(dateMax);
-      const candidateLimit = Math.max(limitInt * 4, 120);
+      // 当过滤条件已下推到 CTE 内部时，候选池中的行已经通过了基础过滤，
+      // 因此可以安全地使用更大的 LIMIT 而不会引入大量无关候选。
+      // 无过滤时保持低 LIMIT（性能优先）；有过滤时提高 LIMIT（准确性优先）。
+      const hasAnyFilters = !!(
+        includeTagsArray || excludeTagsArray ||
+        ratingMinNumber !== null || ratingMaxNumber !== null ||
+        commentCountMinNumber !== null || commentCountMaxNumber !== null ||
+        voteCountMinNumber !== null || voteCountMaxNumber !== null ||
+        normalizedDeletedFilter !== 'any' ||
+        authorIdsArray ||
+        wilson95MinNumber !== null || wilson95MaxNumber !== null ||
+        controversyMinNumber !== null || controversyMaxNumber !== null ||
+        dateMinParsed || dateMaxParsed
+      );
+      const candidateLimit = hasAnyFilters
+        ? Math.max(limitInt * 100, 10000)
+        : Math.max(limitInt * 4, 120);
       const snippetTop = wantSnippet ? Math.min(defaultSnippetTopK, Math.max(1, limitInt)) : 0;
 
       const cacheParamsBase = {

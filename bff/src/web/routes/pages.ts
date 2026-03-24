@@ -207,21 +207,24 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
   }
 
   const loadPageVersionImagesWithFallback = async (pageVersionId: number): Promise<PageImageEntry[]> => {
-    const baseGrouped = await groupImagesByPageVersion([pageVersionId]);
+    // 并行执行：resolved 图像查询 + 全部图像 URL 查询（原为 4 步串行，现为 2 步）
+    const [baseGrouped, { rows: targetRows }] = await Promise.all([
+      groupImagesByPageVersion([pageVersionId]),
+      readPool.query<TargetVersionImageRow>(
+        `SELECT
+           pvi.id AS "pageVersionImageId",
+           pvi."pageVersionId" AS "pageVersionId",
+           pvi."originUrl" AS "originUrl",
+           pvi."displayUrl" AS "displayUrl",
+           pvi."normalizedUrl" AS "normalizedUrl"
+         FROM "PageVersionImage" pvi
+         WHERE pvi."pageVersionId" = $1
+         ORDER BY pvi.id`,
+        [pageVersionId]
+      )
+    ]);
     const baseResolved = baseGrouped.get(pageVersionId) ?? [];
 
-    const { rows: targetRows } = await readPool.query<TargetVersionImageRow>(
-      `SELECT
-         pvi.id AS "pageVersionImageId",
-         pvi."pageVersionId" AS "pageVersionId",
-         pvi."originUrl" AS "originUrl",
-         pvi."displayUrl" AS "displayUrl",
-         pvi."normalizedUrl" AS "normalizedUrl"
-       FROM "PageVersionImage" pvi
-       WHERE pvi."pageVersionId" = $1
-       ORDER BY pvi.id`,
-      [pageVersionId]
-    );
     if (targetRows.length === 0) {
       return baseResolved;
     }
@@ -237,15 +240,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       return baseResolved;
     }
 
-    const { rows: pageRows } = await readPool.query<{ pageId: number }>(
-      'SELECT "pageId" AS "pageId" FROM "PageVersion" WHERE id = $1 LIMIT 1',
-      [pageVersionId]
-    );
-    if (pageRows.length === 0) {
-      return baseResolved;
-    }
-    const pageId = pageRows[0].pageId;
-
+    // pageId 查询折叠进 fallback 查询的子查询中（原为 2 步串行，现为 1 步）
     const { rows: fallbackRows } = await readPool.query<FallbackImageRow>(
       `SELECT DISTINCT ON (pvi."normalizedUrl")
          pvi.id AS "pageVersionImageId",
@@ -263,14 +258,14 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
        FROM "PageVersionImage" pvi
        JOIN "PageVersion" pv ON pv.id = pvi."pageVersionId"
        JOIN "ImageAsset" ia ON ia.id = pvi."imageAssetId"
-       WHERE pv."pageId" = $1
+       WHERE pv."pageId" = (SELECT "pageId" FROM "PageVersion" WHERE id = $1 LIMIT 1)
          AND pvi."normalizedUrl" = ANY($2::text[])
          AND pvi.status = 'RESOLVED'
          AND pvi."imageAssetId" IS NOT NULL
          AND ia."storagePath" IS NOT NULL
          AND ia."status" = 'READY'
        ORDER BY pvi."normalizedUrl", pvi."lastFetchedAt" DESC NULLS LAST, pvi.id DESC`,
-      [pageId, unresolvedUrls]
+      [pageVersionId, unresolvedUrls]
     );
 
     const fallbackByNormalized = new Map<string, PageImageEntry>();

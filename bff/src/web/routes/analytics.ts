@@ -450,6 +450,12 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
       if (!tags || tags.length === 0) {
         return res.status(400).json({ error: 'tags are required' });
       }
+      // 限制最大 tag 数量，避免 N*3 查询耗尽连接池
+      const MAX_BATCH_TAGS = 20;
+      const CONCURRENCY = 5;
+      if (tags.length > MAX_BATCH_TAGS) {
+        return res.status(400).json({ error: `too many tags (max ${MAX_BATCH_TAGS})` });
+      }
 
       const parsedLimit = Math.min(Math.max(parseInt(String(limit), 10) || 10, 1), 100);
       const parsedMinVotes = Math.max(parseInt(String(minVotes), 10) || 3, 0);
@@ -480,7 +486,8 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
         WHERE utp.tag = $1 AND utp."totalVotes" >= $2
       `;
 
-      const results = await Promise.all(tags.map(async (t) => {
+      // 分批执行，每批最多 CONCURRENCY 个 tag（每个 tag 3 个查询），避免连接池耗尽
+      const queryTag = async (t: string) => {
         const [lovers, haters, total] = await Promise.all([
           readPool.query(loversSql, [t, parsedMinVotes, parsedLimit, parsedOffsetLovers]),
           readPool.query(hatersSql, [t, parsedMinVotes, parsedLimit, parsedOffsetHaters]),
@@ -501,7 +508,13 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
             offset: parsedOffsetHaters
           }
         };
-      }));
+      };
+      const results: Awaited<ReturnType<typeof queryTag>>[] = [];
+      for (let i = 0; i < tags.length; i += CONCURRENCY) {
+        const batch = tags.slice(i, i + CONCURRENCY);
+        const batchResults = await Promise.all(batch.map(queryTag));
+        results.push(...batchResults);
+      }
 
       res.json({ tags: results });
     } catch (err) {
