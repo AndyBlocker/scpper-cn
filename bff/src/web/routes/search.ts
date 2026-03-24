@@ -182,50 +182,39 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
    * Detect ReDoS-prone patterns (nested quantifiers) and reject them before
    * they reach the JS or PostgreSQL regex engine.
    *
-   * Strategy: strip escaped shorthand classes (\d, \w, etc.) and character
-   * classes ([...]) to single-char placeholders, then walk the structure
-   * tracking groups.  A group is flagged if it contains a quantifier on a
-   * "wide" token (literal char, dot, or a sub-group) AND the group itself
-   * is also quantified.  Escaped shorthand classes (\d, \w, \s, etc.) are
-   * narrow enough to not cause overlapping-length ambiguity in practice.
+   * Rule: a group that contains any repetition quantifier (+, *, {n,}) on
+   * any token AND is itself followed by a repetition quantifier is rejected.
+   * This is conservative — it will reject some technically-safe patterns like
+   * `(foo|bar\d+)+` — but it eliminates all catastrophic-backtracking cases
+   * including `(a+)+`, `(\d+)+`, `([a-z]+)+`, `(.+)*`, `((x)+)+`, etc.
    *
-   * Catches: (a+)+, (a*)+, (.+)+, ((x)+)+, (a+|b+)*
-   * Allows: (foo|bar\d+)+, (abc)+, SCP-\d+, [a-z]+
+   * The `?` quantifier (optional) does not create length ambiguity, so it is
+   * not flagged as an inner repetition.
    */
   function isRedosPronePattern(pattern: string): boolean {
-    // Replace escaped shorthand classes (\d, \w, \s, \D, \W, \S, \b, \B)
-    // with narrow placeholder 'N' that we won't flag
-    const step1 = pattern.replace(/\\[dwsbDWSB]/g, 'N');
-    // Replace other escaped chars (\., \+, \\, etc.) with literal placeholder 'X'
-    const step2 = step1.replace(/\\./g, 'X');
-    // Replace character classes with narrow placeholder
-    const skeleton = step2.replace(/\[[^\]]*\]/g, 'N');
+    // Normalize: escaped chars → placeholders, character classes → single char
+    const skeleton = pattern
+      .replace(/\\./g, 'X')        // all escaped chars → X
+      .replace(/\[[^\]]*\]/g, 'X') // character classes → X
 
-    // Walk the skeleton with a stack tracking each group
-    const stack: { hasDangerousQuantifier: boolean }[] = [];
+    const stack: { hasRepetition: boolean }[] = [];
     for (let i = 0; i < skeleton.length; i++) {
       const ch = skeleton[i];
       if (ch === '(') {
-        stack.push({ hasDangerousQuantifier: false });
+        stack.push({ hasRepetition: false });
       } else if (ch === ')') {
         const current = stack.pop();
         const next = skeleton[i + 1];
         const isQuantified = next === '+' || next === '*' || next === '{';
-        if (isQuantified && current?.hasDangerousQuantifier) {
+        if (isQuantified && current?.hasRepetition) {
           return true;
         }
-        // If this group is quantified, it becomes a dangerous quantifier in parent
+        // If this group is quantified, it counts as a repetition in the parent
         if (isQuantified && stack.length > 0) {
-          stack[stack.length - 1].hasDangerousQuantifier = true;
+          stack[stack.length - 1].hasRepetition = true;
         }
       } else if ((ch === '+' || ch === '*' || ch === '{') && stack.length > 0) {
-        // Check what token precedes this quantifier
-        const prev = skeleton[i - 1];
-        // Dangerous if quantifier is on: ), a literal char, or dot (wide tokens)
-        // Safe if quantifier is on: N (narrow placeholder for \d, \w, [...], etc.)
-        if (prev !== 'N') {
-          stack[stack.length - 1].hasDangerousQuantifier = true;
-        }
+        stack[stack.length - 1].hasRepetition = true;
       }
     }
     return false;
