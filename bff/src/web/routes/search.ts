@@ -931,8 +931,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     const altTitleMatchSql = 'pv."alternateTitle" &@~ pgroonga_query_escape($1)';
     const textMatchSql = 'pv."search_text" &@~ pgroonga_query_escape($1)';
     const scoreExprSql = 'pgroonga_score(pv.tableoid, pv.ctid) AS score';
-    const aTitleMatchSql = 'a.title &@~ pgroonga_query_escape($1)';
-    const aAltMatchSql = 'a."alternateTitle" &@~ pgroonga_query_escape($1)';
+    const eTitleMatchSql = 'e.title &@~ pgroonga_query_escape($1)';
+    const eAltMatchSql = 'e."alternateTitle" &@~ pgroonga_query_escape($1)';
 
     const cteFilters = buildCteInlineFilters(false);
     const cteFiltersWithDate = buildCteInlineFilters(true);
@@ -1129,8 +1129,8 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           CASE WHEN lower(split_part(e.url, '/', 4)) = lower($1) THEN 1 ELSE 0 END AS host_match,
           CASE WHEN lower(e.url) = lower($1) THEN 1 ELSE 0 END AS exact_url,
           CASE WHEN e.title IS NOT NULL AND lower(e.title) = lower($1) THEN 1 ELSE 0 END AS exact_title,
-          CASE WHEN e.title IS NOT NULL AND ${aTitleMatchSql} THEN 1 ELSE 0 END AS title_hit,
-          CASE WHEN e."alternateTitle" IS NOT NULL AND ${aAltMatchSql} THEN 1 ELSE 0 END AS alt_hit
+          CASE WHEN e.title IS NOT NULL AND ${eTitleMatchSql} THEN 1 ELSE 0 END AS title_hit,
+          CASE WHEN e."alternateTitle" IS NOT NULL AND ${eAltMatchSql} THEN 1 ELSE 0 END AS alt_hit
         FROM enriched e
         ORDER BY
           CASE WHEN $9 IN ('rating', 'rating_asc', 'wilson95', 'wilson95_asc', 'controversy', 'controversy_asc', 'comment_count', 'comment_count_asc', 'vote_count', 'vote_count_asc') THEN NULL END,
