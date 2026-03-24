@@ -24,12 +24,26 @@ const updateProjectSchema = z.object({
   isArchived: z.boolean().optional()
 });
 
+// Known business error messages that are safe to expose to the client
+const SAFE_ERROR_MESSAGES = new Set([
+  '项目标题不能为空',
+  '项目标题过长',
+  '源文本过大',
+  '项目不存在',
+  '未提供需要更新的内容'
+]);
+
 function createErrorResponse(error: unknown) {
   if (error instanceof z.ZodError) {
     return { status: 400, body: { error: error.issues[0]?.message || '参数错误' } };
   }
-  if (error instanceof Error) {
+  if (error instanceof Error && SAFE_ERROR_MESSAGES.has(error.message)) {
     return { status: 400, body: { error: error.message } };
+  }
+  if (error instanceof Error) {
+    // eslint-disable-next-line no-console
+    console.error('[ftml-projects] unexpected error:', error);
+    return { status: 500, body: { error: '操作失败' } };
   }
   return { status: 500, body: { error: '未知错误' } };
 }

@@ -2,6 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import pinoHttp from 'pino-http';
+import rateLimit from 'express-rate-limit';
 import { createClient } from 'redis';
 import { buildRouter } from './web/router.js';
 import { createProxyMiddleware } from 'http-proxy-middleware';
@@ -38,6 +39,22 @@ export async function createServer() {
       censor: '[REDACTED]'
     }
   }));
+
+  // Global rate limit: 120 requests per minute per IP.
+  // Skip healthz (monitoring), /internal (authenticated server-to-server),
+  // and /avatar (proxied to avatar-agent which has its own limits).
+  const globalLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too_many_requests' },
+    skip: (req) => {
+      const p = req.path;
+      return p === '/healthz' || p.startsWith('/internal') || p.startsWith('/avatar');
+    }
+  });
+  app.use(globalLimiter);
 
   // Proxy avatar to avatar-agent early to avoid interference
   // Important: include '/avatar' in target so that Express mount path truncation is compensated.

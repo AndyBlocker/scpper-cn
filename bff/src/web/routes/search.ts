@@ -178,12 +178,37 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
   // ── 正则搜索辅助 ──────────────────────────────
   const MAX_REGEX_LENGTH = 200;
 
+  /**
+   * Detect ReDoS-prone patterns (nested quantifiers, overlapping alternations)
+   * and reject them before they reach the JS or PostgreSQL regex engine.
+   */
+  function isRedosPronePattern(pattern: string): boolean {
+    // Nested quantifiers: (x+)+, (x*)+, (x+)*, (x{n,})+ etc.
+    // Matches a group containing a quantifier, followed by another quantifier.
+    if (/(\([^)]*[+*}]\s*\))[+*?]|\(\?:[^)]*[+*}]\s*\)[+*?]/i.test(pattern)) return true;
+    // Alternation inside a quantified group with overlapping character classes:
+    // e.g. (a|a+)*, (\w|\d+)+ — groups with alternation AND quantifier both inside and outside
+    if (/\([^)]*\|[^)]*[+*][^)]*\)[+*]/i.test(pattern)) return true;
+    // Deeply nested groups with quantifiers: ((x+))+
+    if (/\(\([^)]*[+*}][^)]*\)[^)]*[+*}]*\)[+*]/i.test(pattern)) return true;
+    return false;
+  }
+
   function validateRegex(pattern: string): { valid: boolean; error?: string } {
     if (!pattern || pattern.trim().length === 0) {
       return { valid: false, error: '正则表达式不能为空' };
     }
     if (pattern.length > MAX_REGEX_LENGTH) {
       return { valid: false, error: `正则表达式过长（最多 ${MAX_REGEX_LENGTH} 个字符）` };
+    }
+    if (isRedosPronePattern(pattern)) {
+      return { valid: false, error: '正则表达式包含不安全的嵌套量词' };
+    }
+    // Verify the pattern compiles as valid JS regex
+    try {
+      new RegExp(pattern, 'gi');
+    } catch {
+      return { valid: false, error: '无效的正则表达式语法' };
     }
     return { valid: true };
   }

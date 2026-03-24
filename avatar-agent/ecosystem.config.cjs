@@ -13,7 +13,7 @@ module.exports = {
         AVATAR_ROOT: '/home/andyblocker/scpper-cn/.data/avatar-agent/avatars',
         DEFAULT_AVATAR: '/home/andyblocker/scpper-cn/avatar-agent/default-avatar.png',
         LOG_LEVEL: 'info',
-        UPSTREAM_ALLOWED_HOSTS: '*'
+        UPSTREAM_ALLOWED_HOSTS: 'd2qhngyckgiutd.cloudfront.net,graph.facebook.com'
       }
     },
     {
@@ -28,7 +28,7 @@ module.exports = {
         AVATAR_ROOT: '/home/andyblocker/scpper-cn/.data/avatar-agent/avatars',
         DEFAULT_AVATAR: '/home/andyblocker/scpper-cn/avatar-agent/default-avatar.png',
         LOG_LEVEL: 'info',
-        UPSTREAM_ALLOWED_HOSTS: '*'
+        UPSTREAM_ALLOWED_HOSTS: 'd2qhngyckgiutd.cloudfront.net,graph.facebook.com'
       }
     }
   ]
