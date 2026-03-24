@@ -26,8 +26,8 @@
     "image-size": "^1.2.1",
     "mime-types": "^2.1.35",
     "pg": "^8.16.3",
-    "sharp": "^0.33.4",
     "pino": "^9.3.2",
+    "sharp": "^0.33.4",
     "undici": "^6.19.6"
   },
   "devDependencies": {
@@ -35,7 +35,7 @@
     "@types/mime-types": "^2.1.4",
     "@types/node": "^20.14.10",
     "@types/pg": "^8.15.5",
-    "typescript": "^5.6.3"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20.10"
