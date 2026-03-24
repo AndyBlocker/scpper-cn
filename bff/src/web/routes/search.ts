@@ -179,17 +179,19 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
   const MAX_REGEX_LENGTH = 200;
 
   /**
-   * Detect ReDoS-prone patterns (nested quantifiers) and reject them before
-   * they reach the JS or PostgreSQL regex engine.
+   * Detect ReDoS-prone patterns and reject them before they reach the JS or
+   * PostgreSQL regex engine.  Two classes of danger:
    *
-   * Rule: a group that contains any repetition quantifier (+, *, {n,}) on
-   * any token AND is itself followed by a repetition quantifier is rejected.
-   * This is conservative — it will reject some technically-safe patterns like
-   * `(foo|bar\d+)+` — but it eliminates all catastrophic-backtracking cases
-   * including `(a+)+`, `(\d+)+`, `([a-z]+)+`, `(.+)*`, `((x)+)+`, etc.
+   * 1. Nested quantifiers: a quantified group containing a repetition
+   *    quantifier (+, *, {n,}).  E.g. (a+)+, (\d+)+, ([a-z]+)+, (.+)*
    *
-   * The `?` quantifier (optional) does not create length ambiguity, so it is
-   * not flagged as an inner repetition.
+   * 2. Quantified alternation: a quantified group containing `|`.
+   *    Overlapping alternatives create ambiguous partition points.
+   *    E.g. (a|aa)+, ([ab]|a)+, (?:a|aa)+
+   *
+   * This is conservative and may reject some technically-safe patterns, but
+   * it eliminates all known catastrophic-backtracking shapes.  The existing
+   * PostgreSQL statement_timeout provides an additional safety net.
    */
   function isRedosPronePattern(pattern: string): boolean {
     // Normalize: escaped chars → placeholders, character classes → single char
@@ -197,16 +199,18 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       .replace(/\\./g, 'X')        // all escaped chars → X
       .replace(/\[[^\]]*\]/g, 'X') // character classes → X
 
-    const stack: { hasRepetition: boolean }[] = [];
+    const stack: { hasRepetition: boolean; hasAlternation: boolean }[] = [];
     for (let i = 0; i < skeleton.length; i++) {
       const ch = skeleton[i];
       if (ch === '(') {
-        stack.push({ hasRepetition: false });
+        stack.push({ hasRepetition: false, hasAlternation: false });
+      } else if (ch === '|' && stack.length > 0) {
+        stack[stack.length - 1].hasAlternation = true;
       } else if (ch === ')') {
         const current = stack.pop();
         const next = skeleton[i + 1];
         const isQuantified = next === '+' || next === '*' || next === '{';
-        if (isQuantified && current?.hasRepetition) {
+        if (isQuantified && (current?.hasRepetition || current?.hasAlternation)) {
           return true;
         }
         // If this group is quantified, it counts as a repetition in the parent
