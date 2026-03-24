@@ -500,10 +500,6 @@ const canonicalUrl = computed(() => {
   return ''
 })
 
-watch(wikidotId, () => {
-  // reset image-related state handled by PageImages component
-})
-
 const { data: stats, pending: statsPending } = await useAsyncData(
   () => `stats-${wikidotId.value}`,
   () => $bff(`/stats/pages/${wikidotId.value}`),

@@ -72,7 +72,7 @@
         <div class="hidden sm:flex items-center gap-1">
           <input
             :value="jumpPage"
-            @input="$emit('update:jump-page', Number(($event.target as HTMLInputElement).value))"
+            @input="emitJumpPage($event)"
             type="number"
             :min="1"
             :max="totalPages"
@@ -105,15 +105,25 @@ defineProps<{
   copiedAnchorId: string | null
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   'copy-anchor': [sectionId: string]
   'refresh': []
   'prev-page': []
   'next-page': []
   'go-page': [n: number]
   'jump': []
-  'update:jump-page': [value: number]
+  'update:jump-page': [value: number | null]
 }>()
+
+function emitJumpPage(event: Event) {
+  const raw = (event.target as HTMLInputElement).value
+  if (raw === '') {
+    emit('update:jump-page', null)
+  } else {
+    const num = Number(raw)
+    if (Number.isFinite(num)) emit('update:jump-page', num)
+  }
+}
 
 function formatDateCompact(dateStr: string) {
   if (!dateStr) return ''

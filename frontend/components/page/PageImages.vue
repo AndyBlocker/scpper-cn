@@ -242,7 +242,14 @@ async function copyImageUrl(img: PageImageItem) {
   }, 1800)
 }
 
-watch(() => props.images, () => {
+watch(() => props.images, (newImages, oldImages) => {
+  // Full reset when images array changes identity (route navigation)
+  if (newImages !== oldImages) {
+    previewOpen.value = false
+    previewItem.value = null
+    copiedImageKey.value = null
+    localPage.value = 1
+  }
   if (localPage.value > totalPages.value) {
     localPage.value = totalPages.value
   }
