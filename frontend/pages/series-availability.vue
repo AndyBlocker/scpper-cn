@@ -62,7 +62,7 @@
 
 <script setup lang="ts">
 import { formatDateIsoUtc8 } from '~/utils/timezone'
-type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>;
+import type { BffFetcher } from '~/types/nuxt-bff'
 
 type SeriesAvailability = {
   seriesNumber: number;

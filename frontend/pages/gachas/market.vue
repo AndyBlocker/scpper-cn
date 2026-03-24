@@ -46,6 +46,8 @@
 </template>
 
 <script setup lang="ts">
+useHead({ title: '扭蛋 - 市场' })
+
 import GachaPageShell from '~/components/gacha/GachaPageShell.vue'
 import GachaErrorBanner from '~/components/gacha/GachaErrorBanner.vue'
 import GachaActivationBlock from '~/components/gacha/GachaActivationBlock.vue'

@@ -140,12 +140,14 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useNuxtApp, useHead, useState } from 'nuxt/app'
+
+definePageMeta({ key: route => route.fullPath })
 import PageCard from '~/components/PageCard.vue'
 import { orderTags } from '~/composables/useTagOrder'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { formatDateIsoUtc8, diffUtc8CalendarDays, nowUtc8, toUtc8Date } from '~/utils/timezone'
 
-type BffFetcher = <T = any>(url: string, options?: Record<string, any>) => Promise<T>
+import type { BffFetcher } from '~/types/nuxt-bff'
 
 const route = useRoute()
 const router = useRouter()

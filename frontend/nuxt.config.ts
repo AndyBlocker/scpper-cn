@@ -65,10 +65,7 @@ export default defineNuxtConfig({
   modules: [
     '@nuxtjs/tailwindcss'
   ],
-  css: [
-    // Base CodeMirror styles for FTML editors (avoids missing layout in ftml-projects)
-    'codemirror/lib/codemirror.css'
-  ],
+  css: [],
   components: {
     dirs: [
       { path: '~/components', pathPrefix: false, extensions: ['vue'] }

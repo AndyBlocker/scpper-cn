@@ -10,7 +10,7 @@ const { getThreads } = useForumsApi()
 
 const currentPage = ref(1)
 
-const { data, pending, error } = useAsyncData(
+const { data, pending, error } = await useAsyncData(
   `forum-category-${categoryId.value}`,
   () => getThreads(categoryId.value, currentPage.value),
   { watch: [categoryId, currentPage] }

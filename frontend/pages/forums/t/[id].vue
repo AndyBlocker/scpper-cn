@@ -32,7 +32,7 @@ watch(
   { immediate: true }
 )
 
-const { data, pending, error } = useAsyncData(
+const { data, pending, error } = await useAsyncData(
   `forum-thread-${threadId.value}`,
   () => getThread(threadId.value, currentPage.value, 50, sortOrder.value),
   { watch: [threadId, currentPage, sortOrder] }

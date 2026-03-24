@@ -136,7 +136,7 @@ type SiteOverviewRich = {
   votes: { total: number; upvotes: number; downvotes: number };
   revisions: { total: number };
 };
-type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>;
+import type { BffFetcher } from '~/types/nuxt-bff'
 const nuxtApp = useNuxtApp();
 const bff = nuxtApp.$bff as unknown as BffFetcher;
 const runtimeConfig = useRuntimeConfig();

@@ -1,5 +1,8 @@
 import type { $Fetch } from 'ofetch'
 
+/** Convenience alias used across pages/components for typing $bff */
+export type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
+
 declare module '#app' {
   interface NuxtApp {
     $bff: $Fetch
@@ -11,5 +14,3 @@ declare module 'vue' {
     $bff: $Fetch
   }
 }
-
-export {}
