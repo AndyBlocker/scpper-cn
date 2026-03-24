@@ -4,14 +4,7 @@ import type { RedisClientType } from 'redis';
 import { consola } from 'consola';
 import { createCache } from '../utils/cache.js';
 import { getReadPoolSync } from '../utils/dbPool.js';
-
-function parsePositiveInt(value: unknown): number | null {
-	const parsed = Number(value);
-	if (!Number.isInteger(parsed) || parsed <= 0) {
-		return null;
-	}
-	return parsed;
-}
+import { parsePositiveInt } from '../utils/helpers.js';
 
 export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 	const router = Router();

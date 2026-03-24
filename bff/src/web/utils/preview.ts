@@ -4,6 +4,8 @@
 //   SCPPER_CN_PREVIEW_BEGIN(meta: ... ) ... SCPPER_CN_PREVIEW_END
 //   Content may be wrapped by /* ... */ or { ... } and will be unwrapped.
 
+import { escapeHtml as _escapeHtml } from './helpers.js';
+
 export type PreviewPick = {
   text: string;
   html: string;
@@ -113,18 +115,11 @@ export function pickPreview(items: string[], seed?: string | number): string | n
   return items[idx] || null;
 }
 
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+export { escapeHtml } from './helpers.js';
 
 export function toPreviewPick(text: string): PreviewPick {
   const trimmed = text.trim();
-  const html = escapeHtml(trimmed).replace(/\n/g, '<br>');
+  const html = _escapeHtml(trimmed).replace(/\n/g, '<br>');
   return { text: trimmed, html };
 }
 
