@@ -1,12 +1,17 @@
 // src/core/client/GraphQLClient.js
 import { GraphQLClient as GQLClient } from 'graphql-request';
+import https from 'node:https';
 import { MAX_RETRY_ATTEMPTS } from '../../config/RateLimitConfig.js';
 import { BackoffManager } from '../scheduler/BackoffManager.js';
 import { Logger } from '../../utils/Logger.js';
 
 export class GraphQLClient {
   constructor(endpoint = 'https://apiv2.crom.avn.sh/graphql', options = {}) {
-    this.client = new GQLClient(endpoint);
+    // Per-instance HTTPS agent so we can destroy() its keep-alive sockets explicitly.
+    // graphql-request spreads extra requestConfig options into the fetch init,
+    // and node-fetch 3.x (via cross-fetch) reads `agent` from init.
+    this._agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
+    this.client = new GQLClient(endpoint, { agent: this._agent });
     this.backoff = new BackoffManager();
     const timeoutFromEnv = Number.parseInt(process.env.SCPPER_GRAPHQL_TIMEOUT_MS || '', 10);
     const timeoutFromOptions = Number(options.requestTimeoutMs);
@@ -45,10 +50,10 @@ export class GraphQLClient {
           Logger.error('GraphQL request error:', err);
         }
         if (attempt === MAX_RETRY_ATTEMPTS) throw err;
-        
+
         Logger.warn(`Network error, retry #${attempt}`);
         await this.backoff.sleep(1000 * attempt);
-        
+
       } finally {
         clear();
       }
@@ -113,12 +118,14 @@ export class GraphQLClient {
   }
 
   /**
-   * 释放引用以允许 GC 回收底层资源（包括 undici 连接池）。
-   * graphql-request 6.x 使用全局 fetch，没有暴露 per-instance HTTP agent，
-   * 因此无法显式关闭连接。通过断开引用链让 GC 回收是唯一可行的方式。
+   * 显式销毁 per-instance HTTPS agent，关闭所有 keep-alive 连接。
    * 调用后此实例不应再发起请求。
    */
   destroy() {
+    if (this._agent) {
+      this._agent.destroy();
+      this._agent = null;
+    }
     this.client = null;
     this.backoff = null;
   }
