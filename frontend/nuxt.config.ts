@@ -90,6 +90,7 @@ export default defineNuxtConfig({
       dir: outputDir
     },
     preset: 'node-server',
+    compressPublicAssets: { gzip: true, brotli: true },
     // 在生产环境代理 /api 请求到 BFF 服务
     devProxy: {
       '/api': apiDevProxy,
