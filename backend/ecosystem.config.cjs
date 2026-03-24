@@ -4,10 +4,11 @@ module.exports = {
       name: 'scpper-sync',
       cwd: __dirname,
       script: '/bin/bash',
-      args: ['-lc', 'node --import tsx/esm src/cli/index.ts sync-hourly'],
+      args: ['-lc', 'node --max-old-space-size=1024 --import tsx/esm src/cli/index.ts sync-hourly'],
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
+      max_memory_restart: '1024M',
       time: true,
       env: {
         NODE_ENV: 'production',
