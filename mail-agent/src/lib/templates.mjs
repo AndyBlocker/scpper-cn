@@ -45,7 +45,7 @@ function buildVerificationTemplate(payload, context) {
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>${subject}</title>
+    <title>${escapeHtml(subject)}</title>
   </head>
   <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; padding: 24px; color: #111827;">
     <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);">
@@ -72,7 +72,7 @@ const MAIL_SAFE_TAGS = new Set([
 
 // 邮件 HTML 安全属性白名单
 const MAIL_SAFE_ATTRS = new Set([
-  'href', 'src', 'alt', 'title', 'style', 'class',
+  'href', 'src', 'alt', 'title', 'class',
   'width', 'height', 'colspan', 'rowspan', 'target', 'rel',
 ]);
 
@@ -112,6 +112,8 @@ function decodeHtmlEntities(str) {
 function isSafeUrl(rawVal) {
   const decoded = decodeHtmlEntities(rawVal).replace(/[\s\x00-\x1f]+/g, '').trim();
   if (!decoded) return false;
+  // 协议相对 URL（//host）不允许，可能加载外部资源
+  if (decoded.startsWith('//')) return false;
   // 相对路径和锚点链接视为安全
   if (decoded.startsWith('/') || decoded.startsWith('#') || decoded.startsWith('?')) return true;
   // 提取协议部分
