@@ -21,6 +21,7 @@ const DATA_DIR = (() => {
 
 // In-memory cache: { data, loadedAt }
 const cache = new Map<string, { data: any; loadedAt: number }>();
+const inflight = new Map<string, Promise<any>>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 async function loadJSON(filename: string): Promise<any> {
@@ -31,16 +32,26 @@ async function loadJSON(filename: string): Promise<any> {
     return cached.data;
   }
 
-  const filePath = path.join(DATA_DIR, filename);
-  try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    const data = JSON.parse(raw);
-    cache.set(key, { data, loadedAt: now });
-    return data;
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') return null;
-    throw err;
-  }
+  // Deduplicate concurrent loads for the same file
+  const pending = inflight.get(key);
+  if (pending) return pending;
+
+  const promise = (async () => {
+    try {
+      const filePath = path.join(DATA_DIR, filename);
+      const raw = await fs.readFile(filePath, 'utf8');
+      const data = JSON.parse(raw);
+      cache.set(key, { data, loadedAt: Date.now() });
+      return data;
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return null;
+      throw err;
+    } finally {
+      inflight.delete(key);
+    }
+  })();
+  inflight.set(key, promise);
+  return promise;
 }
 
 function jsonEndpoint(filename: string) {

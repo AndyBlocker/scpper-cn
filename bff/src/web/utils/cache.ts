@@ -20,43 +20,56 @@ const DEFAULT_PREFIX = 'scpcn:bff:';
 const memoryCache = new Map<string, { value: unknown; expiresAt: number }>();
 const MAX_MEMORY_CACHE_SIZE = 1000;
 
-function memoryGet<T>(key: string): T | null {
-  const entry = memoryCache.get(key);
+type MemoryStore = Map<string, { value: unknown; expiresAt: number }>;
+
+function memoryGet<T>(store: MemoryStore, key: string): T | null {
+  const entry = store.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    memoryCache.delete(key);
+    store.delete(key);
     return null;
   }
   return entry.value as T;
 }
 
-function memorySet(key: string, value: unknown, ttlSeconds: number): void {
+function memorySet(store: MemoryStore, maxSize: number, key: string, value: unknown, ttlSeconds: number): void {
   // Evict old entries if cache is too large
-  if (memoryCache.size >= MAX_MEMORY_CACHE_SIZE) {
+  if (store.size >= maxSize) {
     const now = Date.now();
-    for (const [k, v] of memoryCache) {
-      if (v.expiresAt < now) memoryCache.delete(k);
+    for (const [k, v] of store) {
+      if (v.expiresAt < now) store.delete(k);
     }
     // If still too large, delete oldest entries
-    if (memoryCache.size >= MAX_MEMORY_CACHE_SIZE) {
-      const keysToDelete = Array.from(memoryCache.keys()).slice(0, 100);
-      keysToDelete.forEach(k => memoryCache.delete(k));
+    if (store.size >= maxSize) {
+      const keysToDelete = Array.from(store.keys()).slice(0, 100);
+      keysToDelete.forEach(k => store.delete(k));
     }
   }
-  memoryCache.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+  store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
 }
 
-export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREFIX): CacheHandle {
+type CreateCacheOptions = {
+  /** Use an isolated in-memory store instead of the shared global one */
+  isolatedMemory?: boolean;
+  /** Max entries for isolated memory store (default: MAX_MEMORY_CACHE_SIZE) */
+  maxMemorySize?: number;
+};
+
+export function createCache(redis: RedisClientType | null, prefix?: string, options?: CreateCacheOptions): CacheHandle;
+export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREFIX, options: CreateCacheOptions = {}): CacheHandle {
   // In-flight loader deduplication (singleflight) to prevent thundering herd
   const inflight = new Map<string, Promise<unknown>>();
 
+  const maxSize = options.maxMemorySize ?? MAX_MEMORY_CACHE_SIZE;
+
   if (!redis) {
+    const store: MemoryStore = options.isolatedMemory ? new Map() : memoryCache;
     // Use in-memory cache as fallback when Redis is unavailable
     return {
       enabled: true, // Memory cache is still caching
-      async remember<T>(key: string, ttl: number, loader: Loader<T>, options?: RememberOptions): Promise<T> {
+      async remember<T>(key: string, ttl: number, loader: Loader<T>, opts?: RememberOptions): Promise<T> {
         const fullKey = `${prefix}${key}`;
-        const cached = memoryGet<T>(fullKey);
+        const cached = memoryGet<T>(store, fullKey);
         if (cached !== null) return cached;
 
         // Deduplicate concurrent loads for the same key
@@ -67,8 +80,8 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
           try {
             const result = await loader();
             if (result === undefined) return result;
-            if (result === null && options?.cacheNull !== true) return result;
-            memorySet(fullKey, result, ttl);
+            if (result === null && opts?.cacheNull !== true) return result;
+            memorySet(store, maxSize, fullKey, result, ttl);
             return result;
           } finally {
             inflight.delete(fullKey);
@@ -78,11 +91,11 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
         return promise as Promise<T>;
       },
       async getJSON<T>(key: string): Promise<T | null> {
-        return memoryGet<T>(`${prefix}${key}`);
+        return memoryGet<T>(store, `${prefix}${key}`);
       },
       async setJSON(key: string, value: unknown, ttlSeconds: number): Promise<void> {
         if (value !== undefined) {
-          memorySet(`${prefix}${key}`, value, ttlSeconds);
+          memorySet(store, maxSize, `${prefix}${key}`, value, ttlSeconds);
         }
       }
     };

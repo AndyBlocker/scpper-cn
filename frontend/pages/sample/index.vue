@@ -475,7 +475,13 @@ function formatNumber(num: number): string {
 const mounted = ref(false)
 onMounted(() => { mounted.value = true })
 
-const overviewUpdatedAtRelative = computed(() => mounted.value ? formatRelativeZh(overview.value.updatedAt) : '...')
+function formatRelativeZhShort(input?: string | Date | null): string {
+  const result = formatRelativeZh(input)
+  if (result.includes('个月') || result.includes('年')) return '很久以前'
+  return result
+}
+
+const overviewUpdatedAtRelative = computed(() => mounted.value ? formatRelativeZhShort(overview.value.updatedAt) : '...')
 
 const onHeroSearch = () => {
   const q = heroQuery.value.trim()
