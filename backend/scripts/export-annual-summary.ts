@@ -6,7 +6,7 @@
  * - users/index.json: user index
  * - users/{id}.json: individual user data
  *
- * Run: npx tsx scripts/export-annual-summary.ts [--year 2025] [--output ../frontend/public/annual-summary]
+ * Run: npx tsx scripts/export-annual-summary.ts [--year 2025] [--output ../bff/data/annual-summary]
  */
 
 import { prisma, disconnectPrisma } from '../src/utils/db-connection.ts';
@@ -978,7 +978,7 @@ async function loadOrGenerateUserFirsts(year: number, forceGenerate: boolean, re
   }
 }
 
-const DEFAULT_OUTPUT = path.join(process.cwd(), '..', 'frontend', 'public', 'annual-summary');
+const DEFAULT_OUTPUT = path.join(process.cwd(), '..', 'bff', 'data', 'annual-summary');
 
 interface CommandArgs {
   year: number;

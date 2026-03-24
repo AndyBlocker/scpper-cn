@@ -261,8 +261,8 @@ const progressPercent = computed(() => {
 onMounted(async () => {
   try {
     const [site, users] = await Promise.all([
-      $fetch('/annual-summary/2025/site.json'),
-      $fetch('/annual-summary/2025/users/index.json')
+      $fetch('/api/annual-summary/2025/site.json'),
+      $fetch('/api/annual-summary/2025/users/index.json')
     ])
     rawSiteData.value = site
     usersIndex.value = users
@@ -309,7 +309,7 @@ async function handleLogin() {
       return
     }
 
-    const userDataResponse = await $fetch(`/annual-summary/2025/users/${userId}.json`)
+    const userDataResponse = await $fetch(`/api/annual-summary/2025/users/${userId}.json`)
     rawUserData.value = userDataResponse
 
     isLoading.value = false
