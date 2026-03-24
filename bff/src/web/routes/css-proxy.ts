@@ -1,5 +1,81 @@
 import { Router } from 'express';
 import type { Request, Response as ExpressResponse } from 'express';
+import { createHash } from 'crypto';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+
+// ── Disk cache ──
+const DISK_CACHE_DIR = process.env.CSS_PROXY_CACHE_DIR ||
+  path.resolve(process.cwd(), 'cache/css-proxy');
+const DISK_CACHE_ENABLED = process.env.CSS_PROXY_DISK_CACHE !== '0';
+const DISK_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const DISK_CACHE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+if (DISK_CACHE_ENABLED) {
+  try { fs.mkdirSync(DISK_CACHE_DIR, { recursive: true }); } catch { /* ignore */ }
+}
+
+function cacheKeyFor(url: string): string {
+  return createHash('sha256').update(url).digest('hex');
+}
+
+type CachedEntry = { contentType: string; body: Buffer };
+
+function readFromDisk(url: string): CachedEntry | null {
+  if (!DISK_CACHE_ENABLED) return null;
+  const key = cacheKeyFor(url);
+  const metaPath = path.join(DISK_CACHE_DIR, key + '.meta');
+  const dataPath = path.join(DISK_CACHE_DIR, key + '.data');
+  try {
+    if (!fs.existsSync(metaPath) || !fs.existsSync(dataPath)) return null;
+    const stat = fs.statSync(metaPath);
+    if (Date.now() - stat.mtimeMs > DISK_CACHE_MAX_AGE_MS) {
+      // Expired — remove lazily
+      try { fs.unlinkSync(metaPath); } catch { /* ignore */ }
+      try { fs.unlinkSync(dataPath); } catch { /* ignore */ }
+      return null;
+    }
+    const contentType = fs.readFileSync(metaPath, 'utf-8').trim();
+    const body = fs.readFileSync(dataPath);
+    return { contentType, body };
+  } catch {
+    return null;
+  }
+}
+
+function writeToDisk(url: string, contentType: string, body: Buffer | string): void {
+  if (!DISK_CACHE_ENABLED) return;
+  const key = cacheKeyFor(url);
+  try {
+    // Write .data first, then .meta — readFromDisk checks .meta existence,
+    // so if .data write fails we won't serve stale content.
+    fs.writeFileSync(path.join(DISK_CACHE_DIR, key + '.data'), body);
+    fs.writeFileSync(path.join(DISK_CACHE_DIR, key + '.meta'), contentType, 'utf-8');
+  } catch { /* ignore write errors */ }
+}
+
+// Periodic disk cache cleanup: remove files older than 7 days
+if (DISK_CACHE_ENABLED) {
+  setInterval(async () => {
+    try {
+      const entries = await fsp.readdir(DISK_CACHE_DIR);
+      const now = Date.now();
+      for (const entry of entries) {
+        if (!entry.endsWith('.meta')) continue;
+        const metaPath = path.join(DISK_CACHE_DIR, entry);
+        const dataPath = path.join(DISK_CACHE_DIR, entry.replace(/\.meta$/, '.data'));
+        try {
+          const stat = await fsp.stat(metaPath);
+          if (now - stat.mtimeMs > DISK_CACHE_MAX_AGE_MS) {
+            await fsp.rm(metaPath, { force: true });
+            await fsp.rm(dataPath, { force: true });
+          }
+        } catch { /* ignore per-file errors */ }
+      }
+    } catch { /* ignore sweep errors */ }
+  }, DISK_CACHE_CLEANUP_INTERVAL_MS).unref();
+}
 
 const ALLOWED_EXACT_HOSTS = [
   'd3g0gp89917ko0.cloudfront.net',
@@ -16,6 +92,7 @@ const MAX_REDIRECTS = 5;
 const MAX_RESPONSE_SIZE = 2 * 1024 * 1024; // 2 MB
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_IP = 60;
+const RATE_BUCKETS_MAX_SIZE = 10_000;
 
 // Simple in-memory per-IP rate limiter
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -24,6 +101,10 @@ function isRateLimited(ip: string): boolean {
   const now = Date.now();
   const bucket = rateBuckets.get(ip);
   if (!bucket || now >= bucket.resetAt) {
+    // Refuse new entries when map is at capacity (OOM protection)
+    if (!bucket && rateBuckets.size >= RATE_BUCKETS_MAX_SIZE) {
+      return true;
+    }
     rateBuckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return false;
   }
@@ -36,6 +117,14 @@ setInterval(() => {
   const now = Date.now();
   for (const [ip, bucket] of rateBuckets) {
     if (now >= bucket.resetAt) rateBuckets.delete(ip);
+  }
+  // Hard cap: if map is still oversized after expiry sweep, evict oldest half
+  if (rateBuckets.size > RATE_BUCKETS_MAX_SIZE) {
+    const entries = [...rateBuckets.entries()].sort((a, b) => a[1].resetAt - b[1].resetAt);
+    const toRemove = Math.ceil(entries.length / 2);
+    for (let i = 0; i < toRemove; i++) {
+      rateBuckets.delete(entries[i][0]);
+    }
   }
 }, RATE_WINDOW_MS).unref();
 
@@ -232,6 +321,13 @@ export function cssProxyRouter() {
       return res.status(400).send('invalid or disallowed url');
     }
 
+    // Disk cache hit — return directly without rate-limiting upstream fetch
+    const cached = readFromDisk(url);
+    if (cached) {
+      setHeaders(res, cached.contentType, DEFAULT_CACHE_CONTROL);
+      return res.status(200).send(cached.body);
+    }
+
     try {
       const upstream = await fetchAllowedUpstream(url);
 
@@ -276,12 +372,15 @@ export function cssProxyRouter() {
       if (contentType.includes('text/css') || contentType.includes('/css')) {
         let css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
         css = rewriteCssUrls(css, finalUrl, proxyPath);
+        writeToDisk(url, 'text/css; charset=utf-8', css);
         setHeaders(res, 'text/css; charset=utf-8', DEFAULT_CACHE_CONTROL);
         return res.status(200).send(css);
       }
 
       const buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
-      setHeaders(res, contentType || 'application/octet-stream', DEFAULT_CACHE_CONTROL);
+      const finalContentType = contentType || 'application/octet-stream';
+      writeToDisk(url, finalContentType, buf);
+      setHeaders(res, finalContentType, DEFAULT_CACHE_CONTROL);
       return res.status(200).send(buf);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

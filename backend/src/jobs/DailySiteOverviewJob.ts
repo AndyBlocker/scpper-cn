@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '../utils/db-connection.js';
 import { Logger } from '../utils/Logger.js';
 
@@ -19,10 +19,10 @@ export class DailySiteOverviewJob {
     return d.toISOString().slice(0, 10);
   }
 
-  private async upsertRange(startDate: string, endDate: string, dryRun = false): Promise<void> {
-    const sql = `
+  private buildCteSql(startDate: string, endDate: string) {
+    return Prisma.sql`
 WITH params AS (
-  SELECT $1::date AS start, $2::date AS finish
+  SELECT ${startDate}::date AS start, ${endDate}::date AS finish
 ),
 days AS (
   SELECT gs::date AS day
@@ -40,7 +40,7 @@ current_pv AS (
 effective_attributions AS (
   SELECT a.*
   FROM (
-    SELECT 
+    SELECT
       a.*,
       BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
     FROM "Attribution" a
@@ -98,7 +98,7 @@ contributors_total AS (
   LEFT JOIN contributors_new cn ON cn.day = d.day
 ),
 
-/******** usersAuthors：在“当前为原创”的页面上的首次作者事件 -> 累积 ********/
+/******** usersAuthors：在"当前为原创"的页面上的首次作者事件 -> 累积 ********/
 page_created AS (
   SELECT pv."pageId" AS pid, MIN(r."timestamp") AS created_at
   FROM "Revision" r
@@ -253,42 +253,46 @@ final AS (
   LEFT JOIN authors_total   at ON at.day = d.day
   LEFT JOIN pages_total     pt ON pt.day = d.day
   LEFT JOIN votes_daily     vd ON vd.day = d.day
-)
-${dryRun ? `
-SELECT * FROM final ORDER BY date;`
-: `
-INSERT INTO "SiteOverviewDaily" (
-  date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
-  "pagesTotal", "pagesOriginals", "pagesTranslations",
-  "votesUp", "votesDown", "revisionsTotal"
-)
-SELECT
-  date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
-  "pagesTotal", "pagesOriginals", "pagesTranslations",
-  "votesUp", "votesDown", "revisionsTotal"
-FROM final
-ON CONFLICT (date) DO UPDATE SET
-  "usersTotal"        = EXCLUDED."usersTotal",
-  "usersActive"       = EXCLUDED."usersActive",
-  "usersContributors" = EXCLUDED."usersContributors",
-  "usersAuthors"      = EXCLUDED."usersAuthors",
-  "pagesTotal"        = EXCLUDED."pagesTotal",
-  "pagesOriginals"    = EXCLUDED."pagesOriginals",
-  "pagesTranslations" = EXCLUDED."pagesTranslations",
-  "votesUp"           = EXCLUDED."votesUp",
-  "votesDown"         = EXCLUDED."votesDown",
-  "revisionsTotal"    = EXCLUDED."revisionsTotal";`
-}
-  `;
+)`;
+  }
+
+  private async upsertRange(startDate: string, endDate: string, dryRun = false): Promise<void> {
+    const cte = this.buildCteSql(startDate, endDate);
 
     if (dryRun) {
-      const rows = await this.prisma.$queryRawUnsafe<any[]>(sql, startDate, endDate);
+      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        ${cte}
+        SELECT * FROM final ORDER BY date
+      `);
       Logger.info(`[DryRun] SiteOverviewDaily ${startDate}..${endDate} rows=${rows.length}`);
       if (rows.length) {
         Logger.info(JSON.stringify(rows.slice(0, Math.min(5, rows.length))));
       }
     } else {
-      await this.prisma.$executeRawUnsafe(sql, startDate, endDate);
+      await this.prisma.$executeRaw(Prisma.sql`
+        ${cte}
+        INSERT INTO "SiteOverviewDaily" (
+          date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+          "pagesTotal", "pagesOriginals", "pagesTranslations",
+          "votesUp", "votesDown", "revisionsTotal"
+        )
+        SELECT
+          date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+          "pagesTotal", "pagesOriginals", "pagesTranslations",
+          "votesUp", "votesDown", "revisionsTotal"
+        FROM final
+        ON CONFLICT (date) DO UPDATE SET
+          "usersTotal"        = EXCLUDED."usersTotal",
+          "usersActive"       = EXCLUDED."usersActive",
+          "usersContributors" = EXCLUDED."usersContributors",
+          "usersAuthors"      = EXCLUDED."usersAuthors",
+          "pagesTotal"        = EXCLUDED."pagesTotal",
+          "pagesOriginals"    = EXCLUDED."pagesOriginals",
+          "pagesTranslations" = EXCLUDED."pagesTranslations",
+          "votesUp"           = EXCLUDED."votesUp",
+          "votesDown"         = EXCLUDED."votesDown",
+          "revisionsTotal"    = EXCLUDED."revisionsTotal"
+      `);
     }
   }
 
