@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Request, Response } from 'express';
 
 /**
@@ -11,7 +12,7 @@ import type { Request, Response } from 'express';
 
 // 数据根目录：相对于 bff/ 项目根目录
 const DATA_ROOT = path.resolve(
-  import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
+  import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url)),
   '../../../data/annual-summary'
 );
 
