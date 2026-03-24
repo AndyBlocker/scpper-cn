@@ -12,586 +12,97 @@
         加载失败: {{ userError.message }}
       </div>
       <div v-else class="space-y-6">
-      <!-- Header -->
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b-2 border-[var(--g-accent-medium)] dark:border-[var(--g-accent-strong)] pb-3 mb-4">
-        <div class="flex items-center gap-3">
-          <div class="h-8 w-1 bg-[var(--g-accent)] rounded" />
-          <h2 class="text-lg font-bold text-neutral-800 dark:text-neutral-100">用户详情</h2>
-        </div>
-        <div class="flex items-center gap-3 w-full sm:w-auto sm:justify-end">
-          <button
-            v-if="canFollow"
-            type="button"
-            :aria-label="isFollowingThis ? '取消收藏作者' : '收藏作者'"
-            :title="isFollowingThis ? '取消收藏作者' : '收藏作者'"
-            class="inline-flex items-center justify-center h-9 w-9 rounded-full border transition shadow-sm"
-            :class="isFollowingThis
-              ? 'border-[rgba(var(--accent),0.45)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] dark:border-[rgba(var(--accent),0.45)]'
-              : 'border-neutral-200 bg-white/80 text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300'"
-            @click="toggleFollow"
-          >
-            <!-- Use the same star geometry for both states to ensure equal visual size -->
-            <LucideIcon v-if="isFollowingThis" name="Star" class="w-5 h-5" stroke-width="1.8" fill="currentColor" />
-            <LucideIcon v-else name="Star" class="w-5 h-5" stroke-width="1.8" />
-          </button>
-        </div>
-      </div>
 
-      
+      <UserHeader
+        :wikidot-id="wikidotId"
+        :user="user"
+        :stats="stats"
+        :stats-pending="statsPending"
+        :public-collections="publicCollections"
+        :public-collections-loading="publicCollectionsLoading"
+        :rating-history="ratingHistory"
+        :rating-history-pending="ratingHistoryPending"
+        :activity-heatmap-records="activityHeatmapRecords"
+        :activity-heatmap-range="activityHeatmapRange"
+        :user-daily-stats-pending="userDailyStatsPending"
+        :user-daily-stats-error="userDailyStatsError"
+        :can-follow="canFollow"
+        :is-following-this="isFollowingThis"
+        @toggle-follow="toggleFollow"
+      />
 
-      <!-- User Info and Overall Stats -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- User Basic Info -->
-        <div class="lg:col-span-2 border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex flex-wrap items-start justify-between gap-4">
-            <div class="flex items-start gap-3 min-w-0 flex-1">
-              <UserAvatar :wikidot-id="wikidotId" :name="user?.displayName || 'Unknown User'" :size="56" class="shrink-0 ring-1 ring-neutral-200 dark:ring-neutral-800" />
-              <div class="min-w-0 flex-1">
-                <h1 class="text-xl sm:text-2xl font-bold text-neutral-900 dark:text-neutral-100 truncate">{{ user?.displayName || 'Unknown User' }}</h1>
-                <div class="mt-1 text-xs text-neutral-600 dark:text-neutral-400 flex items-center gap-2">
-                  <span>ID：{{ wikidotId }}</span>
-                  <span v-if="user?.isGuest" class="inline-flex items-center px-2 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">访客</span>
-                </div>
-              </div>
-            </div>
-            <div v-if="statsPending" class="text-right shrink-0">
-              <div class="w-16 h-7 rounded bg-neutral-100 animate-pulse dark:bg-neutral-700/60 mb-1"></div>
-              <div class="w-20 h-3 rounded bg-neutral-100 animate-pulse dark:bg-neutral-700/60 ml-auto"></div>
-            </div>
-            <div v-else-if="stats?.rank" class="text-right shrink-0">
-              <div class="text-2xl sm:text-3xl font-bold text-[var(--g-accent)] whitespace-nowrap overflow-hidden">#{{ stats.rank }}</div>
-              <div class="text-xs text-neutral-600 dark:text-neutral-400">综合排名</div>
-            </div>
-          </div>
+      <UserWorks
+        :work-tabs="workTabs"
+        :active-tab="activeTab"
+        :sort-field="sortField"
+        :sort-order="sortOrder"
+        :works-pending="worksPending"
+        :works="works as any[] | null"
+        :displayed-works="displayedWorks"
+        :current-tab-label="currentTabLabel"
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :authors="[{ name: user?.displayName || 'Unknown User', url: `/user/${wikidotId}` }]"
+        @update:active-tab="activeTab = $event"
+        @update:sort-field="sortField = $event as 'date' | 'rating'"
+        @update:sort-order="sortOrder = $event as 'asc' | 'desc'"
+        @update:current-page="currentPage = $event"
+      />
 
-          <!-- Activity Timeline -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-            <div v-if="user?.firstActivityAt" class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3">
-              <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">首次活动</div>
-              <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatDate(user.firstActivityAt) }}</div>
-              <div v-if="user?.firstActivityType && !isForumPostActivity(user?.firstActivityType)" class="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
-                {{ formatActivityType(user.firstActivityType) }}
-              </div>
-              <div v-if="user?.firstActivityPageWikidotId || user?.firstActivityPageTitle" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
-                <div class="flex flex-wrap items-start gap-1">
-                  <NuxtLink :to="`/page/${user.firstActivityPageWikidotId}`" class="hover:text-[var(--g-accent)] truncate max-w-full block">
-                    {{ user.firstActivityPageTitle || '未知页面' }}
-                  </NuxtLink>
-                  <span v-if="user?.firstActivityType === 'VOTE'" :class="[
-                    'font-bold shrink-0',
-                    Number(user?.firstActivityDirection || 0) > 0 ? 'text-green-600 dark:text-green-400' : Number(user?.firstActivityDirection || 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-neutral-500 dark:text-neutral-500'
-                  ]">
-                    {{ Number(user?.firstActivityDirection || 0) > 0 ? '+1' : Number(user?.firstActivityDirection || 0) < 0 ? '-1' : '0' }}
-                  </span>
-                  <span v-else-if="user?.firstActivityType === 'REVISION' && user?.firstActivityRevisionType" class="text-neutral-500 dark:text-neutral-500 shrink-0">— {{ formatRevisionType(user.firstActivityRevisionType) }}</span>
-                </div>
-                <div v-if="user?.firstActivityComment" class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">
-                  — {{ user.firstActivityComment }}
-                </div>
-              </div>
-              <div v-else-if="isForumPostActivity(user?.firstActivityType)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
-                <NuxtLink
-                  :to="forumPostLink(user?.firstActivityForumThreadId, user?.firstActivityForumPostId)"
-                  class="block text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:text-[var(--g-accent)] break-words overflow-hidden"
-                  style="display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical;"
-                >
-                  发帖 - {{ user?.firstActivityForumThreadTitle || '论坛主题' }} - {{ user?.firstActivityForumPostTitle || '无标题' }}
-                </NuxtLink>
-                <div
-                  v-if="user?.firstActivityForumExcerpt"
-                  class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden"
-                  style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;"
-                >
-                  {{ user.firstActivityForumExcerpt }}
-                </div>
-              </div>
-            </div>
-            <div v-if="user?.lastActivityAt" class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3">
-              <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">最近活动</div>
-              <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ formatDate(user.lastActivityAt) }}</div>
-              <div v-if="user?.lastActivityType && !isForumPostActivity(user?.lastActivityType)" class="text-xs text-neutral-500 dark:text-neutral-500 mt-1">
-                {{ formatActivityType(user.lastActivityType) }}
-              </div>
-              <div v-if="user?.lastActivityType === 'VOTE' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
-                <div class="flex flex-wrap items-start gap-1">
-                  <span class="shrink-0">投票 ·</span>
-                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[var(--g-accent)] truncate max-w-full block">
-                    {{ user.lastActivityPageTitle || '未知页面' }}
-                  </NuxtLink>
-                  <span :class="[
-                    'font-bold shrink-0',
-                    Number(user?.lastActivityDirection || 0) > 0 ? 'text-green-600 dark:text-green-400' : Number(user?.lastActivityDirection || 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-neutral-500 dark:text-neutral-500'
-                  ]">
-                    {{ Number(user?.lastActivityDirection || 0) > 0 ? '+1' : Number(user?.lastActivityDirection || 0) < 0 ? '-1' : '0' }}
-                  </span>
-                </div>
-              </div>
-              <div v-else-if="user?.lastActivityType === 'REVISION' && (user?.lastActivityPageWikidotId || user?.lastActivityPageTitle)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
-                <div class="flex flex-wrap items-start gap-1">
-                  <span class="shrink-0">{{ formatRevisionType(user?.lastActivityRevisionType || '') }} ·</span>
-                  <NuxtLink :to="`/page/${user.lastActivityPageWikidotId}`" class="hover:text-[var(--g-accent)] truncate max-w-full block">
-                    {{ user.lastActivityPageTitle || '未知页面' }}
-                  </NuxtLink>
-                </div>
-                <div v-if="user?.lastActivityComment" class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">
-                  — {{ user.lastActivityComment }}
-                </div>
-              </div>
-              <div v-else-if="isForumPostActivity(user?.lastActivityType)" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden">
-                <NuxtLink
-                  :to="forumPostLink(user?.lastActivityForumThreadId, user?.lastActivityForumPostId)"
-                  class="block text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:text-[var(--g-accent)] break-words overflow-hidden"
-                  style="display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical;"
-                >
-                  发帖 - {{ user?.lastActivityForumThreadTitle || '论坛主题' }} - {{ user?.lastActivityForumPostTitle || '无标题' }}
-                </NuxtLink>
-                <div
-                  v-if="user?.lastActivityForumExcerpt"
-                  class="text-neutral-500 dark:text-neutral-500 mt-1 text-xs break-words overflow-hidden"
-                  style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;"
-                >
-                  {{ user.lastActivityForumExcerpt }}
-                </div>
-              </div>
-            </div>
-          </div>
+      <UserPreferences
+        :fav-authors="favAuthors"
+        :fan-authors="fanAuthors"
+        :liker-authors-pending="likerAuthorsPending"
+        :fan-authors-pending="fanAuthorsPending"
+        :has-more-fav-authors="hasMoreFavAuthors"
+        :has-more-fan-authors="hasMoreFanAuthors"
+        :pref-authors-offset="prefAuthorsOffset"
+        :pref-fans-offset="prefFansOffset"
+        :fav-tags="favTags"
+        :hate-tags="hateTags"
+        :liker-tags-pending="likerTagsPending"
+        :hater-tags-pending="haterTagsPending"
+        :has-more-fav-tags="hasMoreFavTags"
+        :has-more-hate-tags="hasMoreHateTags"
+        :pref-fav-tags-offset="prefFavTagsOffset"
+        :pref-hate-tags-offset="prefHateTagsOffset"
+        @prev-fav-authors="prevFavAuthorsPage"
+        @next-fav-authors="nextFavAuthorsPage"
+        @prev-fan-authors="prevFanAuthorsPage"
+        @next-fan-authors="nextFanAuthorsPage"
+        @prev-fav-tags="prevFavTagsPage"
+        @next-fav-tags="nextFavTagsPage"
+        @prev-hate-tags="prevHateTagsPage"
+        @next-hate-tags="nextHateTagsPage"
+      />
 
-          <!-- Overall Stats Grid -->
-          <div v-if="statsPending" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-            <div v-for="n in 4" :key="`stats-skeleton-${n}`" class="bg-neutral-100 dark:bg-neutral-800 rounded-lg p-3 animate-pulse">
-              <div class="h-3 w-20 bg-neutral-300/70 dark:bg-neutral-700/70 rounded mb-3"></div>
-              <div class="h-8 bg-neutral-300/80 dark:bg-neutral-700/80 rounded"></div>
-            </div>
-          </div>
-          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-            <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3 text-center">
-              <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">总评分</div>
-              <div class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">{{ stats?.totalRating ?? '0' }}</div>
-            </div>
-            <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3 text-center">
-              <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">平均评分</div>
-              <div class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">{{ stats?.meanRating ? Number(stats.meanRating).toFixed(1) : '0.0' }}</div>
-            </div>
-            <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3 text-center">
-              <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">作品数</div>
-              <div class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">{{ stats?.pageCount ?? '0' }}</div>
-            </div>
-            <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-3 text-center">
-              <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">投票</div>
-              <div class="flex items-center justify-center gap-4">
-                <span class="text-2xl font-bold text-green-600 dark:text-green-400">{{ stats?.votesUp ?? '0' }}</span>
-                <span class="text-neutral-400">/</span>
-                <span class="text-2xl font-bold text-red-600 dark:text-red-400">{{ stats?.votesDown ?? '0' }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+      <UserVotes
+        :votes="recentVotes"
+        :pending="userVotesPending"
+        :offset="userVoteOffset"
+        :page-index="userVotePageIndex"
+        :total-pages="userVoteTotalPages"
+        :has-more="userHasMoreVotes"
+        @prev-page="prevUserVotePage"
+        @next-page="nextUserVotePage"
+      />
 
-        <!-- Category Rankings / Radar -->
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">分类表现</h3>
-            <div class="inline-flex w-full sm:w-auto rounded-md overflow-hidden border border-neutral-200 dark:border-neutral-800 justify-center sm:justify-start">
-              <button type="button" class="px-2 py-1 text-xs"
-                :class="categoryView==='list' ? 'bg-[var(--g-accent)] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
-                @click="categoryView='list'">列表</button>
-              <button type="button" class="px-2 py-1 text-xs"
-                :class="categoryView==='radar' ? 'bg-[var(--g-accent)] text-white' : 'bg-transparent text-neutral-600 dark:text-neutral-300'"
-                @click="categoryView='radar'">雷达</button>
-            </div>
-          </div>
-          <div v-if="statsPending">
-            <div class="space-y-3">
-              <div v-for="n in 6" :key="`category-skeleton-${n}`" class="h-10 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-800" />
-            </div>
-          </div>
-          <div v-else-if="stats">
-            <div v-if="categoryView==='list'" class="space-y-3">
-              <CategoryRank label="SCP" :rank="stats.scpRank ?? '-'" :rating="stats.scpRating ?? 0" :count="stats.pageCountScp ?? 0" />
-              <CategoryRank label="故事" :rank="stats.storyRank ?? '-'" :rating="stats.storyRating ?? 0" :count="stats.pageCountTale ?? 0" />
-              <CategoryRank label="GoI格式" :rank="stats.goiRank ?? '-'" :rating="stats.goiRating ?? 0" :count="stats.pageCountGoiFormat ?? 0" />
-              <CategoryRank label="翻译" :rank="stats.translationRank ?? '-'" :rating="stats.translationRating ?? 0" :count="stats.translationPageCount ?? 0" />
-              <CategoryRank label="被放逐者的图书馆" :rank="stats.wanderersRank ?? '-'" :rating="stats.wanderersRating ?? 0" :count="stats.wanderersPageCount ?? 0" />
-              <CategoryRank label="艺术作品" :rank="stats.artRank ?? '-'" :rating="stats.artRating ?? 0" :count="stats.pageCountArtwork ?? 0" />
-            </div>
-            <div v-else>
-              <ClientOnly>
-                <UserCategoryRadarChart :user-stats="stats" />
-                <template #fallback>
-                  <div class="h-72 flex items-center justify-center text-neutral-500 dark:text-neutral-400">加载雷达图中...</div>
-                </template>
-              </ClientOnly>
-            </div>
-          </div>
-          <div v-if="stats?.favTag" class="mt-4 pt-4 border-t border-neutral-200 dark:border-neutral-700">
-            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-1">最爱标签</div>
-            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-              #{{ stats.favTag }}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <section
-        v-if="publicCollectionsLoading || publicCollections.length > 0"
-        class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950"
-      >
-        <div class="space-y-6">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <h3 class="flex items-center gap-2 text-base font-semibold text-neutral-800 dark:text-neutral-100">
-              <LucideIcon name="BookmarkPlus" class="h-5 w-5 text-[var(--g-accent)]" />
-              公开收藏夹
-            </h3>
-            <span v-if="!publicCollectionsLoading && publicCollections.length > 0" class="text-xs text-neutral-500 dark:text-neutral-400">
-              共 {{ publicCollections.length }} 个
-            </span>
-          </div>
-          <div v-if="publicCollectionsLoading" class="grid gap-4 md:grid-cols-2">
-            <div v-for="n in 3" :key="`collection-skeleton-${n}`" class="h-40 rounded-lg bg-neutral-100/80 animate-pulse dark:bg-neutral-800/60" />
-          </div>
-          <div v-else class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            <NuxtLink
-              v-for="collection in publicCollections"
-              :key="collection.id"
-              :to="`/user/${wikidotId}/collections/${collection.slug}`"
-              class="block rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
-            >
-              <CollectionCard :collection="collection" :show-visibility="false" :clickable="false">
-                <template #footer>
-                  <span class="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
-                    <LucideIcon name="ArrowUpRight" class="h-3 w-3" />
-                    查看详情
-                  </span>
-                </template>
-              </CollectionCard>
-            </NuxtLink>
-          </div>
-        </div>
-      </section>
-
-      <!-- Rating History Chart -->
-      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-        <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">评分历史趋势</h3>
-        <div v-if="ratingHistoryPending" class="h-64 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-800/70"></div>
-        <ClientOnly v-else-if="ratingHistory && ratingHistory.length > 0">
-          <RatingHistoryChart 
-            :data="ratingHistory" 
-            :first-activity-date="user?.firstActivityAt || '2022-06-15'"
-            :compact="true"
-            :allow-page-markers="true"
-            :target-total="stats?.totalRating || undefined"
-          />
-          <template #fallback>
-            <div class="h-64 flex items-center justify-center text-neutral-500 dark:text-neutral-400">
-              加载图表中...
-            </div>
-          </template>
-        </ClientOnly>
-        <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无评分历史数据</div>
-      </div>
-
-      
-      <!-- Activity Heatmap -->
-      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">过去一年活跃热力图</h3>
-          <span class="text-xs text-neutral-500 dark:text-neutral-400">绿色越深代表当天的投票与创作更多</span>
-        </div>
-        <UserActivityHeatmap
-          :records="activityHeatmapRecords"
-          :requested-range="activityHeatmapRange"
-          :pending="userDailyStatsPending"
-          :error="userDailyStatsError"
-        />
-      </div>
-
-      
-      <!-- Works Tabs -->
-      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900 shadow-sm">
-        <div class="border-b border-neutral-200 dark:border-neutral-800">
-          <nav class="flex items-center justify-between px-6" aria-label="Tabs">
-            <button
-              v-for="tab in workTabs"
-              :key="tab.key"
-              @click="activeTab = tab.key"
-              :class="[
-                'py-3 px-1 border-b-2 font-medium text-sm transition-colors',
-                activeTab === tab.key
-                  ? 'border-[var(--g-accent)] text-[var(--g-accent)]'
-                  : 'border-transparent text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-300'
-              ]"
-            >
-              {{ tab.label }}
-              <span v-if="tab.count !== null && tab.count !== undefined" class="ml-2 text-xs text-neutral-400">({{ tab.count }})</span>
-            </button>
-            <div class="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-              <label class="sr-only">排序</label>
-              <select v-model="sortField" class="px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800">
-                <option value="date">按时间</option>
-                <option value="rating">按Rating</option>
-              </select>
-              <select v-model="sortOrder" class="px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800">
-                <option value="desc">降序</option>
-                <option value="asc">升序</option>
-              </select>
-            </div>
-          </nav>
-          
-        </div>
-
-        <!-- Works List -->
-        <div class="p-6">
-          <div v-if="worksPending" class="text-center py-8">
-            <LucideIcon name="Loader2" class="w-5 h-5 animate-spin text-[var(--g-accent)] mx-auto" stroke-width="2" />
-          </div>
-          <div v-else-if="!works || works.length === 0" class="text-center py-8 text-neutral-500 dark:text-neutral-400">
-            暂无{{ currentTabLabel }}作品
-          </div>
-          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            <PageCard
-              v-for="work in displayedWorks"
-              :key="work.wikidotId"
-              size="md"
-              :p="normalizeWork(work)"
-              :authors="[{ name: user?.displayName || 'Unknown User', url: `/user/${wikidotId}` }]"
-            />
-          </div>
-
-          <!-- Pagination with selector -->
-          <div v-if="totalPages > 1" class="flex flex-wrap items-center justify-center gap-2 mt-6">
-            <button
-              @click="currentPage = Math.max(1, currentPage - 1)"
-              :disabled="currentPage === 1"
-              class="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700"
-            >上一页</button>
-            <div class="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-400">
-              第
-              <select v-model.number="currentPage" class="px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800">
-                <option v-for="n in totalPages" :key="`wp-${n}`" :value="n">{{ n }}</option>
-              </select>
-              / {{ totalPages }} 页
-            </div>
-            <button
-              @click="currentPage = Math.min(totalPages, currentPage + 1)"
-              :disabled="currentPage === totalPages"
-              class="px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700"
-            >下一页</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Preferences Summary (2x2 on desktop, 1x4 on mobile) - moved below Works and above Recent Activity -->
-      <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">偏好一览</h3>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <!-- Favorite Authors with avatar -->
-          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
-            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最喜欢的作者</div>
-            <div v-if="likerAuthorsPending" class="space-y-2">
-              <div v-for="n in 3" :key="`fav-author-skeleton-${n}`" class="h-10 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
-            </div>
-            <div v-else-if="favAuthors && favAuthors.length > 0" class="space-y-2">
-              <div v-for="a in favAuthors" :key="`fa-${a.userId}`" class="flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2 min-w-0">
-                  <UserAvatar :wikidot-id="a.wikidotId" :name="a.displayName || String(a.wikidotId || a.userId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
-                  <NuxtLink :to="`/user/${a.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
-                    {{ a.displayName || a.wikidotId || a.userId }}
-                  </NuxtLink>
-                </div>
-                <div class="text-xs shrink-0 inline-flex items-center gap-1">
-                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ a.uv }}</span>
-                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ a.dv }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
-            <div class="flex items-center justify-end gap-2 mt-3">
-              <button @click="prevFavAuthorsPage" :disabled="prefAuthorsOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-              <button @click="nextFavAuthorsPage" :disabled="!hasMoreFavAuthors" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
-            </div>
-          </div>
-
-          <!-- Fans -->
-          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
-            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">我的粉丝</div>
-            <div v-if="fanAuthorsPending" class="space-y-2">
-              <div v-for="n in 3" :key="`fan-author-skeleton-${n}`" class="h-10 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
-            </div>
-            <div v-else-if="fanAuthors && fanAuthors.length > 0" class="space-y-2">
-              <div v-for="fan in fanAuthors" :key="`fan-${fan.userId}`" class="flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2 min-w-0">
-                  <UserAvatar :wikidot-id="fan.wikidotId" :name="fan.displayName || String(fan.wikidotId || fan.userId)" :size="24" class="ring-1 ring-neutral-200 dark:ring-neutral-800" />
-                  <NuxtLink :to="`/user/${fan.wikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
-                    {{ fan.displayName || fan.wikidotId || fan.userId }}
-                  </NuxtLink>
-                </div>
-                <div class="text-xs shrink-0 inline-flex items-center gap-1">
-                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ fan.uv }}</span>
-                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ fan.dv }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
-            <div class="flex items-center justify-end gap-2 mt-3">
-              <button @click="prevFanAuthorsPage" :disabled="prefFansOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-              <button @click="nextFanAuthorsPage" :disabled="!hasMoreFanAuthors" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
-            </div>
-          </div>
-
-          <!-- Favorite Tags -->
-          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
-            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最喜欢的标签</div>
-            <div v-if="likerTagsPending" class="space-y-2">
-              <div v-for="n in 4" :key="`fav-tag-skeleton-${n}`" class="h-8 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
-            </div>
-            <div v-else-if="favTags && favTags.length > 0" class="space-y-2">
-              <div v-for="t in favTags" :key="`ft-${t.tag}`" class="flex items-center justify-between">
-                <NuxtLink :to="`/search?tags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
-                  #{{ t.tag }}
-                </NuxtLink>
-                <div class="text-xs shrink-0 inline-flex items-center gap-1">
-                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ t.uv }}</span>
-                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ t.dv }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
-            <div class="flex items-center justify-end gap-2 mt-3">
-              <button @click="prevFavTagsPage" :disabled="prefFavTagsOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-              <button @click="nextFavTagsPage" :disabled="!hasMoreFavTags" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
-            </div>
-          </div>
-
-          <!-- Most Hated Tags -->
-          <div class="bg-neutral-50 dark:bg-neutral-800 rounded-lg p-4">
-            <div class="text-xs text-neutral-600 dark:text-neutral-400 mb-2">最讨厌的标签</div>
-            <div v-if="haterTagsPending" class="space-y-2">
-              <div v-for="n in 4" :key="`hate-tag-skeleton-${n}`" class="h-8 rounded-lg bg-neutral-100 animate-pulse dark:bg-neutral-700/60" />
-            </div>
-            <div v-else-if="hateTags && hateTags.length > 0" class="space-y-2">
-              <div v-for="t in hateTags" :key="`ht-${t.tag}`" class="flex items-center justify-between">
-                <NuxtLink :to="`/search?excludeTags=${encodeURIComponent(t.tag)}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate">
-                  #{{ t.tag }}
-                </NuxtLink>
-                <div class="text-xs shrink-0 inline-flex items-center gap-1">
-                  <span class="px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">-{{ t.dv }}</span>
-                  <span class="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">+{{ t.uv }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-else class="text-xs text-neutral-500 dark:text-neutral-400">暂无数据</div>
-            <div class="flex items-center justify-end gap-2 mt-3">
-              <button @click="prevHateTagsPage" :disabled="prefHateTagsOffset===0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-              <button @click="nextHateTagsPage" :disabled="!hasMoreHateTags" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Recent Activity -->
-      <div class="space-y-6">
-        <!-- Recent Votes -->
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">最近投票</h3>
-          <div v-if="userVotesPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            <div v-for="n in 6" :key="`vote-skeleton-${n}`" class="h-16 rounded bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
-          </div>
-          <div v-else-if="recentVotes && recentVotes.length > 0" class="space-y-2">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              <div v-for="vote in recentVotes" :key="`${vote.timestamp}-${vote.pageWikidotId}`" 
-                   :class="[
-                     'flex items-center justify-between p-2 rounded',
-                     vote.direction > 0 ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/40' :
-                     vote.direction < 0 ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40' :
-                     'bg-neutral-50 dark:bg-neutral-800'
-                   ]">
-                <div class="flex-1 min-w-0">
-                  <NuxtLink :to="`/page/${vote.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] truncate block">
-                    {{ composeTitle(vote.pageTitle, vote.pageAlternateTitle) || 'Untitled' }}
-                  </NuxtLink>
-                  <div class="text-xs text-neutral-600 dark:text-neutral-400">{{ formatRelativeTime(vote.timestamp) }}</div>
-                </div>
-                <div :class="[
-                  'text-lg font-bold ml-2',
-                  vote.direction > 0 ? 'text-green-600 dark:text-green-400' : 
-                  vote.direction < 0 ? 'text-red-600 dark:text-red-400' : 
-                  'text-neutral-600 dark:text-neutral-400'
-                ]">
-                  {{ vote.direction > 0 ? '+1' : vote.direction < 0 ? '-1' : '0' }}
-                </div>
-              </div>
-            </div>
-            <div class="flex items-center justify-between mt-3">
-              <button @click="prevUserVotePage" :disabled="userVoteOffset === 0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-              <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ userVotePageIndex + 1 }} / {{ userVoteTotalPages }} 页</div>
-              <button @click="nextUserVotePage" :disabled="!userHasMoreVotes" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
-            </div>
-          </div>
-          <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无数据</div>
-        </div>
-
-        <!-- Recent Revisions -->
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">最近编辑</h3>
-          <div v-if="userRevisionsPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            <div v-for="n in 6" :key="`revision-skeleton-${n}`" class="h-20 rounded bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
-          </div>
-          <div v-else-if="recentRevisions && recentRevisions.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            <div v-for="revision in recentRevisions" :key="`${revision.timestamp}-${revision.pageWikidotId}`" 
-                 class="p-2 rounded border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800">
-              <div class="flex items-center justify-between gap-2">
-                <span :class="['inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 w-[120px] justify-center', revisionTypeClass(revision.type)]">
-                  {{ formatRevisionType(revision.type) }}
-                </span>
-                <div class="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap shrink-0">{{ formatRelativeTime(revision.timestamp) }}</div>
-              </div>
-              <NuxtLink :to="`/page/${revision.pageWikidotId}`" class="text-sm font-medium text-neutral-900 dark:text-neutral-100 hover:text-[var(--g-accent)] mt-1 block truncate">
-                {{ composeTitle(revision.pageTitle, revision.pageAlternateTitle) || 'Untitled' }}
-              </NuxtLink>
-              <div v-if="revision.comment" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;">{{ revision.comment }}</div>
-            </div>
-          </div>
-          <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无数据</div>
-          <div v-if="!userRevisionsPending && recentRevisions && recentRevisions.length > 0" class="flex items-center justify-between mt-3">
-            <button @click="prevUserRevPage" :disabled="userRevOffset === 0" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ userRevPageIndex + 1 }} / {{ userRevTotalPages }} 页</div>
-            <button @click="nextUserRevPage" :disabled="!userHasMoreRevisions" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Recent Forum Posts -->
-      <ClientOnly>
-        <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-          <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-4">最近论坛发帖</h3>
-          <div v-if="forumPostsPending" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            <div v-for="n in 6" :key="`forum-skeleton-${n}`" class="h-20 rounded bg-neutral-100 animate-pulse dark:bg-neutral-800/70" />
-          </div>
-          <div v-else-if="forumPosts && forumPosts.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            <NuxtLink
-              v-for="post in forumPosts"
-              :key="post.id"
-              :to="`/forums/t/${post.threadId}`"
-              class="p-2 rounded border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800 block"
-            >
-              <div class="flex items-center justify-between gap-2">
-                <span v-if="post.categoryTitle" class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 max-w-[120px] truncate">{{ post.categoryTitle }}</span>
-                <div class="text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap shrink-0">{{ formatRelativeTime(String(post.createdAt ?? '')) }}</div>
-              </div>
-              <div class="text-sm font-medium text-neutral-900 dark:text-neutral-100 mt-1 truncate">{{ post.threadTitle || post.title || '无标题' }}</div>
-              <div v-if="post.textHtml" class="text-xs text-neutral-600 dark:text-neutral-400 mt-1 break-words overflow-hidden" style="display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;" v-html="stripHtml(post.textHtml)"></div>
-            </NuxtLink>
-          </div>
-          <div v-else class="text-sm text-neutral-500 dark:text-neutral-400">暂无论坛发帖</div>
-          <div v-if="!forumPostsPending && forumPosts && forumPosts.length > 0" class="flex items-center justify-between mt-3">
-            <button @click="prevForumPage" :disabled="forumPostPage === 1" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">上一页</button>
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">第 {{ forumPostPage }} / {{ forumTotalPages }} 页</div>
-            <button @click="nextForumPage" :disabled="forumPostPage >= forumTotalPages" class="text-xs px-2 py-1 rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-50">下一页</button>
-          </div>
-        </div>
-      </ClientOnly>
+      <UserRevisions
+        :revisions="recentRevisions"
+        :revisions-pending="userRevisionsPending"
+        :rev-offset="userRevOffset"
+        :rev-page-index="userRevPageIndex"
+        :rev-total-pages="userRevTotalPages"
+        :rev-has-more="userHasMoreRevisions"
+        :forum-posts="forumPosts"
+        :forum-posts-pending="forumPostsPending"
+        :forum-post-page="forumPostPage"
+        :forum-total-pages="forumTotalPages"
+        @prev-rev-page="prevUserRevPage"
+        @next-rev-page="nextUserRevPage"
+        @prev-forum-page="prevForumPage"
+        @next-forum-page="nextForumPage"
+      />
 
       </div>
     </div>
@@ -606,10 +117,14 @@ definePageMeta({ key: route => route.fullPath })
 import { useAuth } from '~/composables/useAuth'
 import { useFollows } from '~/composables/useFollows'
 import { useCollections, type CollectionSummary } from '~/composables/useCollections'
-import CollectionCard from '~/components/collections/CollectionCard.vue'
 import { useViewerVotes } from '~/composables/useViewerVotes'
 import { orderTags } from '~/composables/useTagOrder'
-import { formatDateUtc8, formatDateIsoUtc8, diffUtc8CalendarDays, startOfUtc8Day, nowUtc8 } from '~/utils/timezone'
+import { formatDateUtc8, formatDateIsoUtc8, startOfUtc8Day, nowUtc8 } from '~/utils/timezone'
+import UserHeader from '~/components/user/UserHeader.vue'
+import UserWorks from '~/components/user/UserWorks.vue'
+import UserPreferences from '~/components/user/UserPreferences.vue'
+import UserVotes from '~/components/user/UserVotes.vue'
+import UserRevisions from '~/components/user/UserRevisions.vue'
 
 type UserDailyStatRecord = {
   date: string;
@@ -654,7 +169,6 @@ const currentPage = ref(1);
 // Sorting (server-side)
 const sortField = ref<'date'|'rating'>('date')
 const sortOrder = ref<'asc'|'desc'>('desc')
-const categoryView = ref<'list'|'radar'>('list')
 // Responsive items per page for works list
 const itemsPerPage = ref(10);
 if (isClient) {
@@ -689,31 +203,6 @@ const userPageTitle = computed(() => {
   return name ? '用户：' + name : '用户详情'
 })
 
-function revisionTypeClass(type: string) {
-  const t = String(type || '')
-  if (t === 'PAGE_CREATED' || t === 'PAGE_RESTORED') {
-    return 'bg-[var(--g-accent-soft)] dark:bg-[var(--g-accent-strong)] text-[var(--g-accent)]'
-  }
-  if (t === 'PAGE_EDITED') {
-    return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-  }
-  if (t === 'PAGE_RENAMED') {
-    return 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400'
-  }
-  if (t === 'PAGE_DELETED') {
-    return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-  }
-  if (t === 'METADATA_CHANGED') {
-    return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
-  }
-  if (t === 'TAGS_CHANGED') {
-    return 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400'
-  }
-  if (t === 'SOURCE_CHANGED') {
-    return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
-  }
-  return 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300'
-}
 useHead(() => {
   const title = userPageTitle.value
   const description = user.value?.displayName
@@ -922,8 +411,8 @@ const { data: stats, pending: statsPending } = await useAsyncData(
 const { data: works, pending: worksPending, refresh: refreshWorks } = await useAsyncData(
   () => `user-works-${wikidotId.value}-${activeTab.value}-${sortField.value}-${sortOrder.value}-${currentPage.value}-${itemsPerPage.value}`,
   async () => {
-    const params: any = { 
-      limit: itemsPerPage.value, 
+    const params: any = {
+      limit: itemsPerPage.value,
       offset: (Math.max(1, Number(currentPage.value || 1)) - 1) * Math.max(1, Number(itemsPerPage.value || 10)),
       sortBy: (sortField.value === 'rating') ? 'rating' : 'date',
       sortDir: (sortOrder.value === 'asc') ? 'asc' : 'desc',
@@ -950,9 +439,9 @@ const userVotePageSize = ref(10)
 if (isClient) {
   const computeVotePageSize = () => {
     const width = window.innerWidth
-    if (width >= 1024) return 12 // 3列时每页12个
-    if (width >= 768) return 10  // 2列时每页10个
-    return 12                    // 1列时可多一些
+    if (width >= 1024) return 12
+    if (width >= 768) return 10
+    return 12
   }
   userVotePageSize.value = computeVotePageSize()
   window.addEventListener('resize', () => {
@@ -1024,8 +513,8 @@ const userRevPageSize = ref(10)
 if (isClient) {
   const computeRevPageSize = () => {
     const width = window.innerWidth
-    if (width >= 1024) return 12 // 3列
-    if (width >= 768) return 10  // 2列
+    if (width >= 1024) return 12
+    if (width >= 768) return 10
     return 12
   }
   userRevPageSize.value = computeRevPageSize()
@@ -1120,17 +609,14 @@ const forumTotalPages = computed(() => {
 })
 function prevForumPage() { if (forumPostPage.value > 1) forumPostPage.value-- }
 function nextForumPage() { if (forumPostPage.value < forumTotalPages.value) forumPostPage.value++ }
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '').trim().slice(0, 200)
-}
 
 // Fetch rating history
 const { data: ratingHistory, pending: ratingHistoryPending } = await useAsyncData(
   () => `user-rating-history-${wikidotId.value}`,
-  () => $bff(`/users/${wikidotId.value}/rating-history`, { 
-    params: { 
-      granularity: 'week'  // 按周聚合，获取全部历史数据
-    } 
+  () => $bff(`/users/${wikidotId.value}/rating-history`, {
+    params: {
+      granularity: 'week'
+    }
   }),
   {
     watch: [() => route.params.wikidotId],
@@ -1183,31 +669,25 @@ const { data: tabCounts, pending: tabCountsPending } = await useAsyncData(
   }
 );
 
-// Works helpers and tag-based filters (counts computed from all works to avoid tab-switch bugs)
+// Works helpers and tag-based filters
 const allWorks = computed(() => Array.isArray(works.value) ? (works.value as any[]) : ([] as any[]))
 
 function hasTag(work: any, tag: string): boolean {
   return Array.isArray(work?.tags) && work.tags.includes(tag)
 }
 
-// Prefer server-side grouping when available
 const hasGroup = (w: any, key: string) => (w && typeof w.groupKey === 'string' && w.groupKey === key)
 const isOriginal = (w: any) => hasGroup(w, 'author') || hasTag(w, '原创')
 const isAuthorPage = (w: any) => hasTag(w, '作者')
 const isCoverPage = (w: any) => hasTag(w, '掩盖页')
 const isParagraph = (w: any) => hasTag(w, '段落')
-
 const isShortStories = (w: any) => hasGroup(w, 'short_stories') || (w?.category === 'short-stories')
 const isAnomalousLog = (w: any) => hasGroup(w, 'anomalous_log') || (w?.category === 'log-of-anomalous-items-cn')
 
-// Exclude short-stories & anomalous-log from original/translation/other
 const filterOriginal = (w: any) => isOriginal(w) && !isCoverPage(w) && !isParagraph(w) && !isShortStories(w) && !isAnomalousLog(w)
 const filterTranslation = (w: any) => hasGroup(w, 'translator') || (!isOriginal(w) && !isAuthorPage(w) && !isCoverPage(w) && !isParagraph(w) && !isShortStories(w) && !isAnomalousLog(w))
 const filterOther = (w: any) => hasGroup(w, 'other') || ((isAuthorPage(w) || isCoverPage(w) || isParagraph(w)) && !isShortStories(w) && !isAnomalousLog(w))
 
-// Category-based tabs
-
-// Hide-zero tabs: compute counts safely from BFF counts if available, else local
 const shortStoriesCount = computed(() => {
   if (tabCounts.value && typeof tabCounts.value.shortStories === 'number') return tabCounts.value.shortStories
   return allWorks.value.filter(isShortStories).length
@@ -1217,7 +697,6 @@ const anomalousLogCount = computed(() => {
   return allWorks.value.filter(isAnomalousLog).length
 })
 
-// Work tabs configuration
 const workTabs = computed(() => {
   const tabs = [
     { key: 'all', label: '全部作品', count: (tabCounts.value && typeof tabCounts.value.total === 'number') ? tabCounts.value.total : allWorks.value.length },
@@ -1230,7 +709,6 @@ const workTabs = computed(() => {
   if (al > 0) tabs.push({ key: 'ANOMALOUS_LOG', label: '异常物品记录', count: al })
   const otherCount = (tabCounts.value && typeof tabCounts.value.other === 'number') ? tabCounts.value.other : allWorks.value.filter(filterOther).length
   tabs.push({ key: 'OTHER', label: '其他', count: otherCount })
-  // hide tabs with zero count except 'all'
   return tabs.filter(t => t.key === 'all' || (t.count || 0) > 0)
 })
 
@@ -1272,31 +750,19 @@ const activeTabTotalCount = computed(() => {
 
 const filteredWorks = computed(() => {
   const all = allWorks.value
-  if (activeTab.value === 'AUTHOR') {
-    return all.filter(filterOriginal)
-  }
-  if (activeTab.value === 'TRANSLATOR') {
-    return all.filter(filterTranslation)
-  }
-  if (activeTab.value === 'SHORT_STORIES') {
-    return all.filter(isShortStories)
-  }
-  if (activeTab.value === 'ANOMALOUS_LOG') {
-    return all.filter(isAnomalousLog)
-  }
-  if (activeTab.value === 'OTHER') {
-    return all.filter(filterOther)
-  }
+  if (activeTab.value === 'AUTHOR') return all.filter(filterOriginal)
+  if (activeTab.value === 'TRANSLATOR') return all.filter(filterTranslation)
+  if (activeTab.value === 'SHORT_STORIES') return all.filter(isShortStories)
+  if (activeTab.value === 'ANOMALOUS_LOG') return all.filter(isAnomalousLog)
+  if (activeTab.value === 'OTHER') return all.filter(filterOther)
   return all
 });
 
-// Server-side sorted; keep client no-op to preserve existing bindings
 const sortedWorks = computed(() => filteredWorks.value)
 
 watch([sortField, sortOrder], () => { currentPage.value = 1 })
 
-// Server-side pagination: displayed list equals fetched page
-const displayedWorks = computed(() => sortedWorks.value);
+const displayedWorks = computed(() => sortedWorks.value.map(normalizeWork));
 
 watch(
   () => works.value,
@@ -1315,10 +781,7 @@ const totalPages = computed(() => {
   return Math.max(1, Math.ceil(total / size));
 });
 
-// Reset page when tab changes
-watch(activeTab, () => {
-  currentPage.value = 1;
-});
+watch(activeTab, () => { currentPage.value = 1; });
 
 watch(totalPages, (nextTotal) => {
   if (!Number.isFinite(nextTotal) || nextTotal <= 0) {
@@ -1330,7 +793,6 @@ watch(totalPages, (nextTotal) => {
   }
 });
 
-// Ensure active tab is visible; if hidden by zero-count, reset to 'all'
 watch(workTabs, (tabs) => {
   const exists = tabs.some(t => t.key === activeTab.value)
   if (!exists) activeTab.value = 'all'
@@ -1348,76 +810,6 @@ function computeHeatmapFetchRange(): HeatmapRange {
     startIso: formatDateIsoUtc8(start),
     endIso: formatDateIsoUtc8(end)
   };
-}
-
-function formatDateParam(date: Date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-  return formatDateIsoUtc8(date);
-}
-
-function formatDate(dateStr: string) {
-  if (!dateStr) return 'N/A';
-  return formatDateUtc8(dateStr, {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  }) || 'N/A';
-}
-
-
-function formatActivityType(type: string) {
-  const typeMap: Record<string, string> = {
-    'PAGE_CREATED': '创建页面',
-    'PAGE_EDITED': '编辑页面',
-    'PAGE_TRANSLATED': '翻译页面',
-    'VOTE_CAST': '投票',
-    'COMMENT_POSTED': '发表评论',
-    'VOTE': '投票',
-    'REVISION': '修订',
-    'FORUM_POST': '论坛发帖',
-    'forum_post': '论坛发帖',
-    'attribution': '页面归属',
-    'revision': '修订',
-    'vote': '投票',
-  };
-  return typeMap[type] || type;
-}
-
-function isForumPostActivity(type: string | null | undefined) {
-  return String(type || '').toUpperCase() === 'FORUM_POST';
-}
-
-function forumPostLink(threadId: number | string | null | undefined, postId: number | string | null | undefined) {
-  const tid = Number(threadId);
-  if (!Number.isFinite(tid) || tid <= 0) return '/forums';
-  const pid = Number(postId);
-  if (Number.isFinite(pid) && pid > 0) {
-    return `/forums/t/${tid}?postId=${pid}`;
-  }
-  return `/forums/t/${tid}`;
-}
-
-function formatRevisionType(type: string) {
-  const typeMap: Record<string, string> = {
-    'PAGE_CREATED': '创建页面',
-    'PAGE_EDITED': '编辑内容',
-    'PAGE_RENAMED': '重命名',
-    'PAGE_DELETED': '删除',
-    'PAGE_RESTORED': '恢复',
-    'METADATA_CHANGED': '修改元数据',
-    'TAGS_CHANGED': '修改标签',
-    'SOURCE_CHANGED': '编辑内容',
-  };
-  return typeMap[type] || type;
-}
-
-// Removed inline CategoryRank to avoid hydration mismatch
-
-function composeTitle(title?: string | null, alternateTitle?: string | null) {
-  const base = typeof title === 'string' ? title.trim() : ''
-  const alt = typeof alternateTitle === 'string' ? alternateTitle.trim() : ''
-  if (alt) return base ? `${base} - ${alt}` : alt
-  return base
 }
 
 function normalizeWork(work: any) {
