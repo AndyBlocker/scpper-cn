@@ -160,12 +160,70 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
   // ── 正则搜索辅助 ──────────────────────────────
   const MAX_REGEX_LENGTH = 200;
 
+  /**
+   * Detect ReDoS-prone patterns and reject them before they reach the JS or
+   * PostgreSQL regex engine.  Two classes of danger:
+   *
+   * 1. Nested quantifiers: a quantified group containing a repetition
+   *    quantifier (+, *, {n,}).  E.g. (a+)+, (\d+)+, ([a-z]+)+, (.+)*
+   *
+   * 2. Quantified alternation: a quantified group containing `|`.
+   *    Overlapping alternatives create ambiguous partition points.
+   *    E.g. (a|aa)+, ([ab]|a)+, (?:a|aa)+
+   *
+   * This is conservative and may reject some technically-safe patterns, but
+   * it eliminates all known catastrophic-backtracking shapes.  The existing
+   * PostgreSQL statement_timeout provides an additional safety net.
+   */
+  function isRedosPronePattern(pattern: string): boolean {
+    // Normalize: escaped chars → placeholders, character classes → single char
+    const skeleton = pattern
+      .replace(/\\./g, 'X')        // all escaped chars → X
+      .replace(/\[[^\]]*\]/g, 'X') // character classes → X
+
+    const stack: { hasRepetition: boolean; hasAlternation: boolean }[] = [];
+    for (let i = 0; i < skeleton.length; i++) {
+      const ch = skeleton[i];
+      if (ch === '(') {
+        stack.push({ hasRepetition: false, hasAlternation: false });
+      } else if (ch === '|' && stack.length > 0) {
+        stack[stack.length - 1].hasAlternation = true;
+      } else if (ch === ')') {
+        const current = stack.pop();
+        const next = skeleton[i + 1];
+        // All quantifiers on groups are treated as repetition — including `?`,
+        // because an optional sub-group inside a quantified outer group creates
+        // empty-or-match ambiguity that causes exponential backtracking.
+        const isQuantified = next === '+' || next === '*' || next === '{' || next === '?';
+        if (isQuantified && (current?.hasRepetition || current?.hasAlternation)) {
+          return true;
+        }
+        // If this group is quantified, it counts as a repetition in the parent
+        if (isQuantified && stack.length > 0) {
+          stack[stack.length - 1].hasRepetition = true;
+        }
+      } else if ((ch === '+' || ch === '*' || ch === '{') && stack.length > 0) {
+        stack[stack.length - 1].hasRepetition = true;
+      }
+    }
+    return false;
+  }
+
   function validateRegex(pattern: string): { valid: boolean; error?: string } {
     if (!pattern || pattern.trim().length === 0) {
       return { valid: false, error: '正则表达式不能为空' };
     }
     if (pattern.length > MAX_REGEX_LENGTH) {
       return { valid: false, error: `正则表达式过长（最多 ${MAX_REGEX_LENGTH} 个字符）` };
+    }
+    if (isRedosPronePattern(pattern)) {
+      return { valid: false, error: '正则表达式包含不安全的嵌套量词' };
+    }
+    // Verify the pattern compiles as valid JS regex
+    try {
+      new RegExp(pattern, 'gi');
+    } catch {
+      return { valid: false, error: '无效的正则表达式语法' };
     }
     return { valid: true };
   }

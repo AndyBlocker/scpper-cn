@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import type { Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import { pagesRouter } from './routes/pages.js';
 import { usersRouter } from './routes/users.js';
 import { searchRouter } from './routes/search.js';
@@ -29,6 +30,16 @@ import { pagePreviewRouter } from './routes/page-preview.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+
+  // Stricter rate limit for expensive endpoints (search, random page)
+  const expensiveLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too_many_requests' }
+  });
+
   const avatarAgentBase = (process.env.AVATAR_AGENT_BASE_URL || 'http://127.0.0.1:3200').replace(/\/$/, '');
   const normalizeRemoteIp = (value: string | null | undefined) => {
     if (!value) return '';
@@ -50,8 +61,10 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
     // internal route access.
     return res.status(403).json({ error: 'internal_access_denied' });
   };
+  router.use('/pages/random', expensiveLimiter);
   router.use('/pages', pagesRouter(pool, redis));
   router.use('/users', usersRouter(pool, redis));
+  router.use('/search/pages', expensiveLimiter);
   router.use('/search', searchRouter(pool, redis));
   router.use('/aggregate', aggregateRouter(pool, redis));
   router.use('/stats', statsRouter(pool, redis));

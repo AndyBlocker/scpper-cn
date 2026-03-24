@@ -50,12 +50,30 @@ const updateCheckSchema = z.object({
   taskId: z.string().min(1, '任务 ID 不能为空')
 });
 
+// Known business error messages that are safe to expose to the client.
+// Must stay in sync with errors thrown in services/wikidotBinding.ts.
+const SAFE_ERROR_MESSAGES = new Set([
+  '用户不存在',
+  '你已绑定 Wikidot 账号，如需更换请先联系管理员解绑',
+  '请输入 Wikidot 用户名或 ID',
+  '未找到该 Wikidot 用户，请确认用户名正确且该用户在站点有活动记录',
+  '该 Wikidot 账号已被其他用户绑定',
+  '该用户名匹配多个 Wikidot 用户，请使用更精确的用户名或联系管理员处理',
+  '无法生成验证码，请稍后重试',
+  '内部服务暂时不可用，请稍后再试'
+]);
+
 function createErrorResponse(error: unknown) {
   if (error instanceof z.ZodError) {
     return { status: 400, body: { error: error.issues[0]?.message || '参数错误' } };
   }
-  if (error instanceof Error) {
+  if (error instanceof Error && SAFE_ERROR_MESSAGES.has(error.message)) {
     return { status: 400, body: { error: error.message } };
+  }
+  if (error instanceof Error) {
+    // eslint-disable-next-line no-console
+    console.error('[wikidot-binding] unexpected error:', error);
+    return { status: 500, body: { error: '操作失败' } };
   }
   return { status: 500, body: { error: '未知错误' } };
 }
