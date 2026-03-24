@@ -1,5 +1,1 @@
-import { gachaRouter } from './runtime.js';
-
-export function coreRouter() {
-  return gachaRouter();
-}
+// Core routes are now registered via core.routes.ts and composed in index.ts

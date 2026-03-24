@@ -15,7 +15,7 @@ import {
   ensureWallet,
   settleDueMarketPositions,
   ORACLE_TICK_LIMIT_POSITION
-} from '../routes/gacha/runtime.js';
+} from '../routes/gacha/_helpers.js';
 
 // Users affected by the anomalous tick (from the reopen inspect)
 const AFFECTED_USER_IDS = [

@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { computePlacementMetrics } from './src/routes/gacha/runtime.ts';
+import { computePlacementMetrics } from './src/routes/gacha/_helpers.ts';
 
 const prisma = new PrismaClient();
 const userId = 'cmgefehmh0003epu3atyfn35z';

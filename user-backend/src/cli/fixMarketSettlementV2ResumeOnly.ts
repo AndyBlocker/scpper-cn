@@ -14,7 +14,7 @@
 import { writeFile } from 'node:fs/promises';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
-import { loadOracleContext, ORACLE_TICK_LIMIT_POSITION } from '../routes/gacha/runtime.js';
+import { loadOracleContext, ORACLE_TICK_LIMIT_POSITION } from '../routes/gacha/_helpers.js';
 import { MARKET_CONTRACT_ALIASES, type MarketCategory } from '../routes/gacha/shared/constants.js';
 
 const THRESHOLD_ISO = '2026-02-25T16:00:00.000Z';
