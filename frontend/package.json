@@ -22,8 +22,8 @@
     "chartjs-adapter-date-fns": "^3.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "consola": "^3.4.0",
     "codemirror": "^5.65.16",
+    "consola": "^3.4.0",
     "d3-force": "^3.0.0",
     "date-fns": "^4.1.0",
     "diff": "^8.0.2",
@@ -52,7 +52,7 @@
     "@types/codemirror": "^5.60.15",
     "eslint": "^9.13.0",
     "eslint-plugin-vue": "^9.28.0",
-    "typescript": "^5.6.3",
+    "typescript": "^5.9.3",
     "typescript-eslint": "^8.11.0",
     "vue-eslint-parser": "^9.4.3"
   }
