@@ -426,6 +426,8 @@ html.dark .surface-card {
   height: 100%;
   width: 100%;
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
 }
 
 .gacha-card-grid--mini > * > * {
@@ -437,6 +439,11 @@ html.dark .surface-card {
   display: grid;
   gap: 14px;
   grid-template-columns: 1fr;
+}
+
+.gacha-card-grid--large > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
 }
 
 .gacha-listing-grid {
