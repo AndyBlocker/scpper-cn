@@ -48,8 +48,10 @@ function writeToDisk(url: string, contentType: string, body: Buffer | string): v
   if (!DISK_CACHE_ENABLED) return;
   const key = cacheKeyFor(url);
   try {
-    fs.writeFileSync(path.join(DISK_CACHE_DIR, key + '.meta'), contentType, 'utf-8');
+    // Write .data first, then .meta — readFromDisk checks .meta existence,
+    // so if .data write fails we won't serve stale content.
     fs.writeFileSync(path.join(DISK_CACHE_DIR, key + '.data'), body);
+    fs.writeFileSync(path.join(DISK_CACHE_DIR, key + '.meta'), contentType, 'utf-8');
   } catch { /* ignore write errors */ }
 }
 
@@ -112,9 +114,13 @@ setInterval(() => {
   for (const [ip, bucket] of rateBuckets) {
     if (now >= bucket.resetAt) rateBuckets.delete(ip);
   }
-  // Hard cap: if map is still oversized after expiry sweep, clear it entirely
+  // Hard cap: if map is still oversized after expiry sweep, evict oldest half
   if (rateBuckets.size > RATE_BUCKETS_MAX_SIZE) {
-    rateBuckets.clear();
+    const entries = [...rateBuckets.entries()].sort((a, b) => a[1].resetAt - b[1].resetAt);
+    const toRemove = Math.ceil(entries.length / 2);
+    for (let i = 0; i < toRemove; i++) {
+      rateBuckets.delete(entries[i][0]);
+    }
   }
 }, RATE_WINDOW_MS).unref();
 

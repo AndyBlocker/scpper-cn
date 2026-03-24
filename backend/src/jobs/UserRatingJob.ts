@@ -163,7 +163,7 @@ export class UserRatingSystem {
           COUNT(CASE WHEN upr.has_author = 1 THEN 1 END) as total_pages,
 
           -- 按均值口径的过滤条件（仅作用于均值，不影响总分与作品数）：
-          --  1) 排除含有“段落”标签
+          --  1) 排除含有"段落"标签
           --  2) 排除无标签页面，除非 currentUrl 以 'log-of-anomalous-items-cn:' 或 'short-stories:' 开头
           --  3) 排除已删除页面（Page.isDeleted = true）
           SUM(CASE 
@@ -199,7 +199,7 @@ export class UserRatingSystem {
           SUM(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN cv.rating::float ELSE 0 END) as scp_rating,
           COUNT(CASE WHEN upr.has_author = 1 AND cv.tags @> ARRAY['原创','scp'] THEN 1 END) as scp_pages,
 
-          -- 翻译分类：标签判定（非“原创”且排除“作者/掩盖页/段落/补充材料”），并排除特定分类，作者为任一有归属的用户
+          -- 翻译分类：标签判定（非"原创"且排除"作者/掩盖页/段落/补充材料"），并排除特定分类，作者为任一有归属的用户
           SUM(CASE WHEN upr.has_author = 1
                      AND NOT (cv.tags @> ARRAY['原创'])
                      AND NOT (cv.tags @> ARRAY['作者'])
@@ -238,7 +238,7 @@ export class UserRatingSystem {
       ),
       all_users AS (
         -- 关键修复：以 UserStats 全量用户为基准，左连接贡献结果
-        -- 这样“当前已无有效归属页”的用户会被归零，避免残留历史分数
+        -- 这样"当前已无有效归属页"的用户会被归零，避免残留历史分数
         SELECT
           us."userId",
           uc.overall_rating,
@@ -262,13 +262,13 @@ export class UserRatingSystem {
       )
       UPDATE "UserStats" us
       SET 
-        -- overallRating 用于承载“按过滤口径计算的平均分”
+        -- overallRating 用于承载"按过滤口径计算的平均分"
         "overallRating" = CASE 
                              WHEN COALESCE(au.avg_pages, 0) > 0 
                              THEN (COALESCE(au.avg_sum, 0))::float / NULLIF(au.avg_pages, 0)::float
                              ELSE 0::float 
                            END,
-        -- totalRating 继续承载“总评分（和）”
+        -- totalRating 继续承载"总评分（和）"
         "totalRating" = COALESCE(au.overall_rating, 0)::int,
         "pageCount" = COALESCE(au.total_pages, 0),
         "scpRating" = COALESCE(au.scp_rating, 0),
@@ -292,7 +292,7 @@ export class UserRatingSystem {
 
   /**
    * 预先计算用户投票统计
-   * - votesCast*: 用户发出的票（按“页面”去重，取该用户对该页面的最后一票）
+   * - votesCast*: 用户发出的票（按"页面"去重，取该用户对该页面的最后一票）
    * - totalUp/totalDown: 用户收到的票（仍按 LatestVote + 归属聚合，保持稳定口径）
    */
   private async updateUserVoteTotals(): Promise<void> {
@@ -321,7 +321,7 @@ export class UserRatingSystem {
         WHERE v."userId" IS NOT NULL
       ),
       votes_cast_ranked AS (
-        -- 按 (userId, pageId) 分组取“最后一次投票”（时间倒序，ID倒序兜底）
+        -- 按 (userId, pageId) 分组取"最后一次投票"（时间倒序，ID倒序兜底）
         SELECT 
           r.*,
           ROW_NUMBER() OVER (

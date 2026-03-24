@@ -31,9 +31,9 @@ days AS (
 
 /******** 当前有效 PageVersion（做页面归类用） ********/
 current_pv AS (
-  SELECT pv.”pageId”, pv.tags
-  FROM “PageVersion” pv
-  WHERE pv.”validTo” IS NULL AND pv.”isDeleted” = false
+  SELECT pv."pageId", pv.tags
+  FROM "PageVersion" pv
+  WHERE pv."validTo" IS NULL AND pv."isDeleted" = false
 ),
 
 /******** 有效归属（剔除混入的 SUBMITTER） ********/
@@ -42,17 +42,17 @@ effective_attributions AS (
   FROM (
     SELECT
       a.*,
-      BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a.”pageVerId”) AS has_non_submitter
-    FROM “Attribution” a
+      BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
+    FROM "Attribution" a
   ) a
   WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
 ),
 
 /******** usersTotal：按 firstActivityAt 的累积 ********/
 new_users AS (
-  SELECT date_trunc('day', u.”firstActivityAt”)::date AS day, COUNT(*)::bigint AS cnt
-  FROM “User” u
-  WHERE u.”firstActivityAt” IS NOT NULL
+  SELECT date_trunc('day', u."firstActivityAt")::date AS day, COUNT(*)::bigint AS cnt
+  FROM "User" u
+  WHERE u."firstActivityAt" IS NOT NULL
   GROUP BY 1
 ),
 users_total AS (
@@ -65,16 +65,16 @@ users_total AS (
 
 /******** usersContributors：首次贡献日 -> 累积 ********/
 rev_first AS (
-  SELECT r.”userId” AS uid, MIN(r.”timestamp”) AS first_ts
-  FROM “Revision” r
-  WHERE r.”userId” IS NOT NULL
-  GROUP BY r.”userId”
+  SELECT r."userId" AS uid, MIN(r."timestamp") AS first_ts
+  FROM "Revision" r
+  WHERE r."userId" IS NOT NULL
+  GROUP BY r."userId"
 ),
 attr_first AS (
-  SELECT a.”userId” AS uid, MIN(a.”date”) AS first_ts
+  SELECT a."userId" AS uid, MIN(a."date") AS first_ts
   FROM effective_attributions a
-  WHERE a.”userId” IS NOT NULL AND a.”date” IS NOT NULL
-  GROUP BY a.”userId”
+  WHERE a."userId" IS NOT NULL AND a."date" IS NOT NULL
+  GROUP BY a."userId"
 ),
 first_contrib AS (
   SELECT uid, MIN(first_ts) AS first_ts
@@ -98,25 +98,25 @@ contributors_total AS (
   LEFT JOIN contributors_new cn ON cn.day = d.day
 ),
 
-/******** usersAuthors：在”当前为原创”的页面上的首次作者事件 -> 累积 ********/
+/******** usersAuthors：在"当前为原创"的页面上的首次作者事件 -> 累积 ********/
 page_created AS (
-  SELECT pv.”pageId” AS pid, MIN(r.”timestamp”) AS created_at
-  FROM “Revision” r
-  JOIN “PageVersion” pv ON pv.id = r.”pageVersionId”
+  SELECT pv."pageId" AS pid, MIN(r."timestamp") AS created_at
+  FROM "Revision" r
+  JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
   WHERE r.type = 'PAGE_CREATED'
-  GROUP BY pv.”pageId”
+  GROUP BY pv."pageId"
 ),
 attr_with_page AS (
-  SELECT a.”userId” AS uid, a.”date” AS at_date, pv.”pageId” AS pid
+  SELECT a."userId" AS uid, a."date" AS at_date, pv."pageId" AS pid
   FROM effective_attributions a
-  JOIN “PageVersion” pv ON pv.id = a.”pageVerId”
-  WHERE a.”userId” IS NOT NULL
+  JOIN "PageVersion" pv ON pv.id = a."pageVerId"
+  WHERE a."userId" IS NOT NULL
 ),
 author_events AS (
   SELECT awp.uid,
          COALESCE(awp.at_date, pc.created_at) AS event_at
   FROM attr_with_page awp
-  JOIN current_pv cp ON cp.”pageId” = awp.pid
+  JOIN current_pv cp ON cp."pageId" = awp.pid
   LEFT JOIN page_created pc ON pc.pid = awp.pid
   WHERE '原创' = ANY(cp.tags)
 ),
@@ -141,11 +141,11 @@ authors_total AS (
 
 /******** 页面累计（用当前 tags 归类） ********/
 first_rev AS (
-  SELECT pv.”pageId”, MIN(r.”timestamp”) AS first_ts
-  FROM “Revision” r
-  JOIN “PageVersion” pv ON pv.id = r.”pageVersionId”
+  SELECT pv."pageId", MIN(r."timestamp") AS first_ts
+  FROM "Revision" r
+  JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
   WHERE r.type = 'PAGE_CREATED'
-  GROUP BY pv.”pageId”
+  GROUP BY pv."pageId"
 ),
 pages_new AS (
   SELECT date_trunc('day', fr.first_ts)::date AS day,
@@ -153,7 +153,7 @@ pages_new AS (
          COUNT(*) FILTER (WHERE '原创' = ANY(cp.tags))::bigint AS originals,
          COUNT(*) FILTER (WHERE NOT ('原创' = ANY(cp.tags)))::bigint AS translations
   FROM first_rev fr
-  JOIN current_pv cp ON cp.”pageId” = fr.”pageId”
+  JOIN current_pv cp ON cp."pageId" = fr."pageId"
   GROUP BY 1
 ),
 pages_total AS (
@@ -174,38 +174,38 @@ votes_daily AS (
          SUM(pds.votes_up)::bigint   AS votes_up,
          SUM(pds.votes_down)::bigint AS votes_down,
          SUM(pds.revisions)::bigint  AS revisions
-  FROM “PageDailyStats” pds
+  FROM "PageDailyStats" pds
   WHERE pds.date BETWEEN (SELECT start FROM params) AND (SELECT finish FROM params)
   GROUP BY pds.date
 ),
 
 /******** usersActive：60 天窗口去重（区间合并 + 前缀和） ********/
 ud AS (
-  SELECT DISTINCT uds.”userId”, uds.date::date AS day
-  FROM “UserDailyStats” uds
+  SELECT DISTINCT uds."userId", uds.date::date AS day
+  FROM "UserDailyStats" uds
   WHERE uds.date BETWEEN ((SELECT start FROM params) - INTERVAL '59 days') AND (SELECT finish FROM params)
 ),
 ud_sorted AS (
-  SELECT u.”userId”, u.day,
-         LAG(u.day) OVER (PARTITION BY u.”userId” ORDER BY u.day) AS prev_day
+  SELECT u."userId", u.day,
+         LAG(u.day) OVER (PARTITION BY u."userId" ORDER BY u.day) AS prev_day
   FROM ud u
 ),
 ud_grp AS (
-  SELECT “userId”, day,
+  SELECT "userId", day,
          CASE WHEN prev_day IS NULL OR day > prev_day + INTERVAL '59 days' THEN 1 ELSE 0 END AS is_new
   FROM ud_sorted
 ),
 ud_grp_id AS (
-  SELECT “userId”, day,
-         SUM(is_new) OVER (PARTITION BY “userId” ORDER BY day) AS grp
+  SELECT "userId", day,
+         SUM(is_new) OVER (PARTITION BY "userId" ORDER BY day) AS grp
   FROM ud_grp
 ),
 intervals AS (
-  SELECT “userId”,
+  SELECT "userId",
          MIN(day) AS s,
          (MAX(day) + INTERVAL '59 days')::date AS e
   FROM ud_grp_id
-  GROUP BY “userId”, grp
+  GROUP BY "userId", grp
 ),
 intervals_clip AS (
   SELECT GREATEST(s, (SELECT start FROM params)) AS s,
@@ -236,16 +236,16 @@ users_active AS (
 /******** 汇总 ********/
 final AS (
   SELECT d.day AS date,
-         ut.users_total             AS “usersTotal”,
-         ua.users_active            AS “usersActive”,
-         ct.total_contributors      AS “usersContributors”,
-         at.total_authors           AS “usersAuthors”,
-         pt.total_pages             AS “pagesTotal”,
-         pt.originals               AS “pagesOriginals”,
-         pt.translations            AS “pagesTranslations”,
-         COALESCE(vd.votes_up,0)    AS “votesUp”,
-         COALESCE(vd.votes_down,0)  AS “votesDown”,
-         COALESCE(vd.revisions,0)   AS “revisionsTotal”
+         ut.users_total             AS "usersTotal",
+         ua.users_active            AS "usersActive",
+         ct.total_contributors      AS "usersContributors",
+         at.total_authors           AS "usersAuthors",
+         pt.total_pages             AS "pagesTotal",
+         pt.originals               AS "pagesOriginals",
+         pt.translations            AS "pagesTranslations",
+         COALESCE(vd.votes_up,0)    AS "votesUp",
+         COALESCE(vd.votes_down,0)  AS "votesDown",
+         COALESCE(vd.revisions,0)   AS "revisionsTotal"
   FROM days d
   LEFT JOIN users_total     ut ON ut.day = d.day
   LEFT JOIN users_active    ua ON ua.day = d.day
@@ -271,27 +271,27 @@ final AS (
     } else {
       await this.prisma.$executeRaw(Prisma.sql`
         ${cte}
-        INSERT INTO “SiteOverviewDaily” (
-          date, “usersTotal”, “usersActive”, “usersContributors”, “usersAuthors”,
-          “pagesTotal”, “pagesOriginals”, “pagesTranslations”,
-          “votesUp”, “votesDown”, “revisionsTotal”
+        INSERT INTO "SiteOverviewDaily" (
+          date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+          "pagesTotal", "pagesOriginals", "pagesTranslations",
+          "votesUp", "votesDown", "revisionsTotal"
         )
         SELECT
-          date, “usersTotal”, “usersActive”, “usersContributors”, “usersAuthors”,
-          “pagesTotal”, “pagesOriginals”, “pagesTranslations”,
-          “votesUp”, “votesDown”, “revisionsTotal”
+          date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
+          "pagesTotal", "pagesOriginals", "pagesTranslations",
+          "votesUp", "votesDown", "revisionsTotal"
         FROM final
         ON CONFLICT (date) DO UPDATE SET
-          “usersTotal”        = EXCLUDED.”usersTotal”,
-          “usersActive”       = EXCLUDED.”usersActive”,
-          “usersContributors” = EXCLUDED.”usersContributors”,
-          “usersAuthors”      = EXCLUDED.”usersAuthors”,
-          “pagesTotal”        = EXCLUDED.”pagesTotal”,
-          “pagesOriginals”    = EXCLUDED.”pagesOriginals”,
-          “pagesTranslations” = EXCLUDED.”pagesTranslations”,
-          “votesUp”           = EXCLUDED.”votesUp”,
-          “votesDown”         = EXCLUDED.”votesDown”,
-          “revisionsTotal”    = EXCLUDED.”revisionsTotal”
+          "usersTotal"        = EXCLUDED."usersTotal",
+          "usersActive"       = EXCLUDED."usersActive",
+          "usersContributors" = EXCLUDED."usersContributors",
+          "usersAuthors"      = EXCLUDED."usersAuthors",
+          "pagesTotal"        = EXCLUDED."pagesTotal",
+          "pagesOriginals"    = EXCLUDED."pagesOriginals",
+          "pagesTranslations" = EXCLUDED."pagesTranslations",
+          "votesUp"           = EXCLUDED."votesUp",
+          "votesDown"         = EXCLUDED."votesDown",
+          "revisionsTotal"    = EXCLUDED."revisionsTotal"
       `);
     }
   }
