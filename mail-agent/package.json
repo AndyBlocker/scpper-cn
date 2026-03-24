@@ -1,0 +1,16 @@
+{
+  "name": "scpper-mail-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "mail:dev": "node --watch src/server.mjs",
+    "mail:test": "node scripts/test-send.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "nodemailer": "^7.0.6"
+  }
+}

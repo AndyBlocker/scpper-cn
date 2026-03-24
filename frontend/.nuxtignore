@@ -1,0 +1,2 @@
+# Sample/demo pages — excluded from build and routing
+pages/sample/**
