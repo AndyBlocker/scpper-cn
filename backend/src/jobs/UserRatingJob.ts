@@ -19,9 +19,9 @@ export class UserRatingSystem {
     console.log('📋 确保所有用户都有UserStats记录...');
     
     // 插入缺失的UserStats记录
-    await this.prisma.$executeRawUnsafe(`
+    await this.prisma.$executeRaw`
       INSERT INTO "UserStats" (
-        "userId", 
+        "userId",
         "totalUp", "totalDown", "totalRating",
         "votesCastUp", "votesCastDown",
         "scpRating", "scpPageCount",
@@ -32,7 +32,7 @@ export class UserRatingSystem {
         "artRating", "artPageCount",
         "pageCount", "overallRating"
       )
-      SELECT 
+      SELECT
         u.id,
         0, 0, 0,
         0, 0,
@@ -47,7 +47,7 @@ export class UserRatingSystem {
       LEFT JOIN "UserStats" us ON u.id = us."userId"
       WHERE us."userId" IS NULL
       ON CONFLICT ("userId") DO NOTHING
-    `);
+    `;
     
     console.log('✅ UserStats记录创建完成');
   }
@@ -87,7 +87,7 @@ export class UserRatingSystem {
    * 避免用户在 pageCount 归零后仍展示历史评分曲线
    */
   private async clearInactiveUserAttributionVotingCache(): Promise<void> {
-    const clearedCount = await this.prisma.$executeRawUnsafe(`
+    const clearedCount = await this.prisma.$executeRaw`
       UPDATE "User" u
       SET
         "attributionVotingTimeSeriesCache" = NULL,
@@ -99,7 +99,7 @@ export class UserRatingSystem {
           u."attributionVotingTimeSeriesCache" IS NOT NULL
           OR u."attributionVotingCacheUpdatedAt" IS NOT NULL
         )
-    `);
+    `;
 
     console.log(`🧹 Cleared attribution voting cache for ${Number(clearedCount || 0)} inactive users`);
   }
@@ -114,11 +114,11 @@ export class UserRatingSystem {
     await this.ensureUserStatsExist();
     
     // 使用复杂SQL一次性计算所有用户的rating
-    await this.prisma.$executeRawUnsafe(`
+    await this.prisma.$executeRaw`
       WITH effective_attributions AS (
         SELECT a.*
         FROM (
-          SELECT 
+          SELECT
             a.*,
             BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
           FROM "Attribution" a
@@ -127,7 +127,7 @@ export class UserRatingSystem {
       ),
       user_page_roles AS (
         -- 每个用户-页面的角色汇总：有任何归属即视为作者
-        SELECT 
+        SELECT
           a."userId",
           pv."pageId",
           MAX(CASE WHEN a.type IS NOT NULL THEN 1 ELSE 0 END) AS has_author
@@ -285,7 +285,7 @@ export class UserRatingSystem {
         "artPageCount" = COALESCE(au.art_pages, 0)
       FROM all_users au
       WHERE us."userId" = au."userId"
-    `);
+    `;
 
     console.log('✅ 用户rating计算完成');
   }
@@ -297,11 +297,11 @@ export class UserRatingSystem {
    */
   private async updateUserVoteTotals(): Promise<void> {
     console.log('🗳️ 计算用户投票汇总...');
-    await this.prisma.$executeRawUnsafe(`
+    await this.prisma.$executeRaw`
       WITH effective_attributions AS (
         SELECT a.*
         FROM (
-          SELECT 
+          SELECT
             a.*,
             BOOL_OR(a.type <> 'SUBMITTER') OVER (PARTITION BY a."pageVerId") AS has_non_submitter
           FROM "Attribution" a
@@ -413,7 +413,7 @@ export class UserRatingSystem {
         "totalDown" = combined.votes_received_down
       FROM combined
       WHERE us."userId" = combined."userId"
-    `);
+    `;
     console.log('✅ 用户投票汇总更新完成');
   }
 
@@ -489,11 +489,11 @@ export class UserRatingSystem {
    * 更新时间戳
    */
   private async updateTimestamps(): Promise<void> {
-    await this.prisma.$executeRawUnsafe(`
-      UPDATE "UserStats" 
+    await this.prisma.$executeRaw`
+      UPDATE "UserStats"
       SET "ratingUpdatedAt" = NOW()
       WHERE "overallRating" > 0
-    `);
+    `;
   }
 
   /**

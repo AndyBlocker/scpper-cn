@@ -7,6 +7,7 @@ import path from 'node:path';
 const DEFAULT_MAX_BYTES = 64 * 1024; // 64 KiB
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const DEFAULT_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days cap for user-supplied TTL
+const MAX_SNIPPET_FILES = 1000;
 const SNIPPET_ROUTE_BASES = ['/html-snippet', '/html-snippets'] as const;
 const EXPRESS_PATHS = SNIPPET_ROUTE_BASES.flatMap((base) => [base, `/api${base}`]);
 const HTML_SNIPPET_DIR =
@@ -167,8 +168,38 @@ async function loadSnippetIfFresh(
   }
 }
 
+async function evictOldestSnippets(): Promise<void> {
+  try {
+    const entries = await fs.readdir(HTML_SNIPPET_DIR);
+    const jsonFiles = entries.filter(e => e.endsWith('.json'));
+    if (jsonFiles.length < MAX_SNIPPET_FILES) return;
+
+    // Gather mtime for each file and sort oldest-first
+    const withStats = await Promise.all(
+      jsonFiles.map(async (name) => {
+        const filePath = path.join(HTML_SNIPPET_DIR, name);
+        try {
+          const stat = await fs.stat(filePath);
+          return { name, filePath, mtimeMs: stat.mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+    );
+    const valid = withStats.filter((s): s is NonNullable<typeof s> => s !== null);
+    valid.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+    // Remove oldest files until we're under the limit
+    const toRemove = valid.length - MAX_SNIPPET_FILES + 1; // +1 to make room for the new file
+    for (let i = 0; i < toRemove; i++) {
+      await fs.rm(valid[i].filePath, { force: true });
+    }
+  } catch { /* ignore eviction errors */ }
+}
+
 async function persistSnippet(id: string, snippet: StoredSnippet) {
   await ensureDir();
+  await evictOldestSnippets();
   await fs.writeFile(buildPath(id), JSON.stringify(snippet), 'utf8');
 }
 
