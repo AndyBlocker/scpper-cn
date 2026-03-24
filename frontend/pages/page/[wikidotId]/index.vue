@@ -538,8 +538,9 @@ function goRevPage(n:number){
 }
 const revJumpPage = ref<number | null>(null)
 function jumpToRevPage(){
+  if (revJumpPage.value == null) return
   const raw = Number(revJumpPage.value)
-  if (!Number.isFinite(raw)) return
+  if (!Number.isFinite(raw) || raw < 1) return
   const target = Math.max(1, Math.min(revTotalPages.value, Math.trunc(raw)))
   revPage.value = target - 1
   revJumpPage.value = target
@@ -638,8 +639,9 @@ function nextVotePage(){ if (hasMoreVotes.value) voteOffset.value += votePageSiz
 function prevVotePage(){ voteOffset.value = Math.max(0, voteOffset.value - votePageSize.value) }
 const voteJumpPage = ref<number | null>(null)
 function jumpToVotePage(){
+  if (voteJumpPage.value == null) return
   const raw = Number(voteJumpPage.value)
-  if (!Number.isFinite(raw)) return
+  if (!Number.isFinite(raw) || raw < 1) return
   const target = Math.max(1, Math.min(voteTotalPages.value, Math.trunc(raw)))
   voteOffset.value = (target - 1) * votePageSize.value
   voteJumpPage.value = target
