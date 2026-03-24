@@ -476,9 +476,14 @@ const mounted = ref(false)
 onMounted(() => { mounted.value = true })
 
 function formatRelativeZhShort(input?: string | Date | null): string {
-  const result = formatRelativeZh(input)
-  if (result.includes('个月') || result.includes('年')) return '很久以前'
-  return result
+  if (!input) return '—'
+  const d = new Date(input as any)
+  if (isNaN(d.getTime())) return '—'
+  const diffMs = Date.now() - d.getTime()
+  // Original behavior: future timestamps clamped to "刚刚", >=30 days to "很久以前"
+  if (diffMs < 0) return '刚刚'
+  if (diffMs >= 30 * 86400_000) return '很久以前'
+  return formatRelativeZh(input)
 }
 
 const overviewUpdatedAtRelative = computed(() => mounted.value ? formatRelativeZhShort(overview.value.updatedAt) : '...')
