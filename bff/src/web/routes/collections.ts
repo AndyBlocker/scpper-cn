@@ -99,6 +99,7 @@ const slugify = (input: string): string => input
   .replace(/^-|-$/g, '');
 
 async function ensureUniqueSlug(pool: Pool, ownerId: number, baseSlug: string, excludeId?: number | null): Promise<string> {
+  const MAX_SLUG_ATTEMPTS = 100;
   let attempt = 0;
   let candidate = baseSlug || `collection-${Date.now().toString(36)}`;
   while (true) {
@@ -114,6 +115,9 @@ async function ensureUniqueSlug(pool: Pool, ownerId: number, baseSlug: string, e
     );
     if (rows.length === 0) return candidate;
     attempt += 1;
+    if (attempt >= MAX_SLUG_ATTEMPTS) {
+      throw new Error(`Failed to generate unique slug after ${MAX_SLUG_ATTEMPTS} attempts`);
+    }
     candidate = `${baseSlug}-${attempt}`;
   }
 }
@@ -512,6 +516,11 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       try {
         await client.query('BEGIN');
 
+        // Advisory lock on ownerId to serialize concurrent isDefault changes
+        if (isDefault) {
+          await client.query('SELECT pg_advisory_xact_lock($1)', [ownerId]);
+        }
+
         const result = await client.query<any>(
           supportsTransforms
             ? `
@@ -617,91 +626,107 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
 
       const supportsTransforms = await ensureCoverTransformColumns(pool);
 
-      const updated = await pool.query<any>(
-        supportsTransforms
-          ? `
-            UPDATE "UserCollection"
-            SET
-              title = $1,
-              slug = $2,
-              visibility = $3,
-              description = $4,
-              notes = $5,
-              "coverImageUrl" = $6,
-              "coverImageOffsetX" = $7,
-              "coverImageOffsetY" = $8,
-              "coverImageScale" = $9,
-              "isDefault" = $10,
-              "publishedAt" = CASE
-                WHEN $11::timestamptz IS NOT NULL THEN $11
-                WHEN $12::boolean IS TRUE THEN NULL
-                ELSE "publishedAt"
-              END,
-              "updatedAt" = NOW()
-            WHERE id = $13
-            RETURNING *
-          `
-          : `
-            UPDATE "UserCollection"
-            SET
-              title = $1,
-              slug = $2,
-              visibility = $3,
-              description = $4,
-              notes = $5,
-              "coverImageUrl" = $6,
-              "isDefault" = $7,
-              "publishedAt" = CASE
-                WHEN $8::timestamptz IS NOT NULL THEN $8
-                WHEN $9::boolean IS TRUE THEN NULL
-                ELSE "publishedAt"
-              END,
-              "updatedAt" = NOW()
-            WHERE id = $10
-            RETURNING *
-          `,
-        supportsTransforms
-          ? [
-              title,
-              slug,
-              visibility,
-              description,
-              notes,
-              coverImageUrl,
-              coverImageOffsetX,
-              coverImageOffsetY,
-              coverImageScale,
-              isDefault,
-              publishMoment,
-              unpublish,
-              id
-            ]
-          : [
-              title,
-              slug,
-              visibility,
-              description,
-              notes,
-              coverImageUrl,
-              isDefault,
-              publishMoment,
-              unpublish,
-              id
-            ]
-      );
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      if (isDefault) {
-        await pool.query(
-          `
-            UPDATE "UserCollection"
-            SET "isDefault" = FALSE
-            WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
-          `,
-          [ownerId, id]
+        // Advisory lock on ownerId to serialize concurrent isDefault changes
+        if (isDefault) {
+          await client.query('SELECT pg_advisory_xact_lock($1)', [ownerId]);
+        }
+
+        const updated = await client.query<any>(
+          supportsTransforms
+            ? `
+              UPDATE "UserCollection"
+              SET
+                title = $1,
+                slug = $2,
+                visibility = $3,
+                description = $4,
+                notes = $5,
+                "coverImageUrl" = $6,
+                "coverImageOffsetX" = $7,
+                "coverImageOffsetY" = $8,
+                "coverImageScale" = $9,
+                "isDefault" = $10,
+                "publishedAt" = CASE
+                  WHEN $11::timestamptz IS NOT NULL THEN $11
+                  WHEN $12::boolean IS TRUE THEN NULL
+                  ELSE "publishedAt"
+                END,
+                "updatedAt" = NOW()
+              WHERE id = $13
+              RETURNING *
+            `
+            : `
+              UPDATE "UserCollection"
+              SET
+                title = $1,
+                slug = $2,
+                visibility = $3,
+                description = $4,
+                notes = $5,
+                "coverImageUrl" = $6,
+                "isDefault" = $7,
+                "publishedAt" = CASE
+                  WHEN $8::timestamptz IS NOT NULL THEN $8
+                  WHEN $9::boolean IS TRUE THEN NULL
+                  ELSE "publishedAt"
+                END,
+                "updatedAt" = NOW()
+              WHERE id = $10
+              RETURNING *
+            `,
+          supportsTransforms
+            ? [
+                title,
+                slug,
+                visibility,
+                description,
+                notes,
+                coverImageUrl,
+                coverImageOffsetX,
+                coverImageOffsetY,
+                coverImageScale,
+                isDefault,
+                publishMoment,
+                unpublish,
+                id
+              ]
+            : [
+                title,
+                slug,
+                visibility,
+                description,
+                notes,
+                coverImageUrl,
+                isDefault,
+                publishMoment,
+                unpublish,
+                id
+              ]
         );
-      }
 
-      res.json({ ok: true, collection: mapCollectionRow(updated.rows[0]) });
+        if (isDefault) {
+          await client.query(
+            `
+              UPDATE "UserCollection"
+              SET "isDefault" = FALSE
+              WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
+            `,
+            [ownerId, id]
+          );
+        }
+
+        await client.query('COMMIT');
+        res.json({ ok: true, collection: mapCollectionRow(updated.rows[0]) });
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
     } catch (error) {
       next(error);
     }
