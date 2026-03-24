@@ -77,6 +77,30 @@ const MAIL_SAFE_ATTRS = new Set([
 ]);
 
 /**
+ * 解码 HTML 实体，用于在协议校验前还原属性值的真实内容。
+ * 覆盖 &#xHH;、&#DDD;、以及常见命名实体。
+ */
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&#x([0-9a-f]+);?/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);?/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ');
+}
+
+/**
+ * 检查 URL 是否使用危险协议（解码实体后校验）。
+ */
+function hasDangerousProtocol(rawVal) {
+  const decoded = decodeHtmlEntities(rawVal).replace(/[\s\x00-\x1f]+/g, '').toLowerCase();
+  return /^(javascript|vbscript|data):/i.test(decoded);
+}
+
+/**
  * 简易 HTML 过滤：只保留白名单中的标签和属性，
  * 移除 script、iframe、事件处理器等危险内容。
  */
@@ -99,8 +123,8 @@ function sanitizeMailHtml(raw) {
       const attrName = m[1].toLowerCase();
       const attrVal = m[2] ?? m[3] ?? m[4] ?? '';
       if (!MAIL_SAFE_ATTRS.has(attrName)) continue;
-      // 阻止 javascript: 协议
-      if ((attrName === 'href' || attrName === 'src') && /^\s*javascript:/i.test(attrVal)) continue;
+      // 解码实体后检查危险协议（javascript:, vbscript:, data:）
+      if ((attrName === 'href' || attrName === 'src') && hasDangerousProtocol(attrVal)) continue;
       safeAttrs.push(`${attrName}="${attrVal.replace(/"/g, '&quot;')}"`);
     }
     const attrStr = safeAttrs.length > 0 ? ' ' + safeAttrs.join(' ') : '';
