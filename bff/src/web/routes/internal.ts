@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { getReadPoolSync } from '../utils/dbPool.js';
+import { createCache } from '../utils/cache.js';
 
 export function internalRouter() {
   const router = Router();
   const readPool = getReadPoolSync();
+  const cache = createCache(null, 'internal:', { isolatedMemory: true, maxMemorySize: 400 });
   const MARKET_CATEGORIES = ['OVERALL', 'TRANSLATION', 'SCP', 'TALE', 'GOI', 'WANDERERS'] as const;
   type MarketCategory = typeof MARKET_CATEGORIES[number];
   type MarketTickRow = {
@@ -16,10 +18,7 @@ export function internalRouter() {
     crowdDrag: string | null;
     createdAt: Date;
   };
-  const MARKET_TICK_CACHE_TTL_MS = 8_000;
-  const SHORT_CACHE_MAX_ENTRIES = 400;
-  const marketTicksCache = new Map<string, { expiresAt: number; payload: any }>();
-  const marketPriceAtCache = new Map<string, { expiresAt: number; payload: any }>();
+  const MARKET_TICK_CACHE_TTL_S = 8;
 
   type WikidotUserRow = {
     wikidotId: number | null;
@@ -60,42 +59,6 @@ export function internalRouter() {
     const date = new Date(input);
     date.setUTCMinutes(0, 0, 0);
     return date.toISOString();
-  };
-
-  const pruneShortCache = <T,>(cache: Map<string, { expiresAt: number; payload: T }>) => {
-    const nowMs = Date.now();
-    for (const [key, entry] of cache.entries()) {
-      if (entry.expiresAt <= nowMs) {
-        cache.delete(key);
-      }
-    }
-    while (cache.size >= SHORT_CACHE_MAX_ENTRIES) {
-      const oldestKey = cache.keys().next().value;
-      if (!oldestKey) break;
-      cache.delete(oldestKey);
-    }
-  };
-
-  const readShortCache = <T,>(cache: Map<string, { expiresAt: number; payload: T }>, key: string): T | null => {
-    const nowMs = Date.now();
-    if (cache.size > SHORT_CACHE_MAX_ENTRIES) {
-      pruneShortCache(cache);
-    }
-    const hit = cache.get(key);
-    if (!hit) return null;
-    if (hit.expiresAt <= nowMs) {
-      cache.delete(key);
-      return null;
-    }
-    return hit.payload;
-  };
-
-  const writeShortCache = <T,>(cache: Map<string, { expiresAt: number; payload: T }>, key: string, payload: T) => {
-    pruneShortCache(cache);
-    cache.set(key, {
-      expiresAt: Date.now() + MARKET_TICK_CACHE_TTL_MS,
-      payload
-    });
   };
 
   async function findUserByWikidotId(wikidotId: number): Promise<WikidotUserRow | null> {
@@ -337,8 +300,8 @@ export function internalRouter() {
       const asOfDate = asOfRaw ? new Date(asOfRaw) : null;
       const asOfTs = asOfDate && !Number.isNaN(asOfDate.getTime()) ? asOfDate : new Date();
 
-      const cacheKey = `${category}:${limit}:${floorHourIso(asOfTs)}`;
-      const cached = readShortCache(marketTicksCache, cacheKey);
+      const cacheKey = `ticks:${category}:${limit}:${floorHourIso(asOfTs)}`;
+      const cached = await cache.getJSON(cacheKey);
       if (cached) {
         return res.json(cached);
       }
@@ -376,7 +339,7 @@ export function internalRouter() {
           createdAt: row.createdAt.toISOString()
         }))
       };
-      writeShortCache(marketTicksCache, cacheKey, payload);
+      await cache.setJSON(cacheKey, payload, MARKET_TICK_CACHE_TTL_S);
       return res.json(payload);
     } catch (err) {
       next(err);
@@ -399,8 +362,8 @@ export function internalRouter() {
         return res.status(400).json({ error: 'ts_invalid' });
       }
 
-      const cacheKey = `${category}:${floorHourIso(ts)}`;
-      const cached = readShortCache(marketPriceAtCache, cacheKey);
+      const cacheKey = `price:${category}:${floorHourIso(ts)}`;
+      const cached = await cache.getJSON(cacheKey);
       if (cached) {
         return res.json(cached);
       }
@@ -439,7 +402,7 @@ export function internalRouter() {
           createdAt: row.createdAt.toISOString()
         }
       };
-      writeShortCache(marketPriceAtCache, cacheKey, payload);
+      await cache.setJSON(cacheKey, payload, MARKET_TICK_CACHE_TTL_S);
       return res.json(payload);
     } catch (err) {
       next(err);

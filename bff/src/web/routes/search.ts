@@ -2,6 +2,8 @@ import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { getReadPoolSync } from '../utils/dbPool.js';
+import { createCache } from '../utils/cache.js';
+import { extractExcerpt, escapeHtml } from '../utils/helpers.js';
 
 const CACHE_VERSION = 'v4';
 
@@ -46,6 +48,7 @@ type PageSearchResult = {
 
 export function searchRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
+  const cache = createCache(redis, 'scpcn:search:');
 
   // 读写分离：search 全部是读操作，使用从库
   const readPool = getReadPoolSync(pool);
@@ -82,27 +85,6 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       .sort()
       .join('&');
     return `${prefix}:${CACHE_VERSION}:${normalized}`;
-  }
-
-  async function readCache<T>(key: string | null): Promise<T | null> {
-    if (!redis || !key) return null;
-    try {
-      const cached = await redis.get(key);
-      if (!cached) return null;
-      return JSON.parse(cached) as T;
-    } catch (err) {
-      console.warn('[search-cache] Failed to read cache:', err);
-      return null;
-    }
-  }
-
-  async function writeCache<T>(key: string | null, payload: T, ttlSeconds: number): Promise<void> {
-    if (!redis || !key || ttlSeconds <= 0) return;
-    try {
-      await redis.set(key, JSON.stringify(payload), { EX: ttlSeconds });
-    } catch (err) {
-      console.warn('[search-cache] Failed to write cache:', err);
-    }
   }
 
   const parseNullableInt = (value: unknown): number | null => {
@@ -202,36 +184,6 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     } finally {
       client.release();
     }
-  }
-
-  function extractExcerpt(textContent: string | null, maxLength = 160): string | null {
-    if (!textContent) return null;
-    const cleanText = textContent
-      .replace(/\[\[[^\]]*\]\]/g, '')
-      .replace(/\{\{[^}]*\}\}/g, '')
-      .replace(/<[^>]+>/g, '')
-      .replace(/^[#*\-+>|\s]+/gm, '')
-      .replace(/\n+/g, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-
-    if (!cleanText) return null;
-
-    const sentences = (cleanText.match(/[^。！？.!?]+[。！？.!?]+/g) || [])
-      .map((s) => s.trim())
-      .filter((s) => s.length > 12);
-    const chosen = sentences.length > 0 ? sentences[Math.floor(Math.random() * sentences.length)] : cleanText;
-    const normalized = chosen.trim();
-    if (!normalized) return null;
-
-    if (normalized.length <= maxLength) {
-      return normalized;
-    }
-    return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
-  }
-
-  function escapeHtml(str: string): string {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   /**
@@ -1426,7 +1378,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         hasQuery ? 'search:pages:query' : 'search:pages:filters',
         cacheParamsBase
       );
-      const cached = await readCache<{ results: any[]; total?: number }>(cacheKey);
+      const cached = cacheKey ? await cache.getJSON<{ results: any[]; total?: number }>(cacheKey) : null;
       if (cached) {
         return res.json(cached);
       }
@@ -1470,7 +1422,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         ? { results: pageData.results, total: pageData.total }
         : { results: pageData.results };
 
-      await writeCache(cacheKey, payload, defaultCacheTtl);
+      if (cacheKey && defaultCacheTtl > 0) await cache.setJSON(cacheKey, payload, defaultCacheTtl);
       return res.json(payload);
     } catch (err: any) {
       if (regexMode && err?.code === '2201B') {
@@ -1661,10 +1613,10 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         includeDate: wantDate,
         exactTags: enforceExactTags
       });
-      const cached = await readCache<{
+      const cached = cacheKey ? await cache.getJSON<{
         results: any[];
         meta: { counts: { pages: number; users: number }; usedCaps: { pageLimit: number; userLimit: number }; orderBy: string };
-      }>(cacheKey);
+      }>(cacheKey) : null;
       if (cached) {
         return res.json(cached);
       }
@@ -1834,7 +1786,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         }
       };
 
-      await writeCache(cacheKey, payload, defaultCacheTtl);
+      if (cacheKey && defaultCacheTtl > 0) await cache.setJSON(cacheKey, payload, defaultCacheTtl);
       res.json(payload);
     } catch (err) {
       next(err);

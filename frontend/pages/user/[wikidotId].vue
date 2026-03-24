@@ -1364,16 +1364,6 @@ function formatDate(dateStr: string) {
   }) || 'N/A';
 }
 
-function formatRelativeTime(dateStr: string) {
-  if (!dateStr) return '';
-  const diffDays = diffUtc8CalendarDays(nowUtc8(), dateStr);
-  if (diffDays == null) return '';
-  if (diffDays === 0) return '今天';
-  if (diffDays === 1) return '昨天';
-  if (diffDays < 30) return `${diffDays} 天前`;
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)} 个月前`;
-  return `${Math.floor(diffDays / 365)} 年前`;
-}
 
 function formatActivityType(type: string) {
   const typeMap: Record<string, string> = {

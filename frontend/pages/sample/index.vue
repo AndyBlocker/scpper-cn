@@ -475,35 +475,18 @@ function formatNumber(num: number): string {
 const mounted = ref(false)
 onMounted(() => { mounted.value = true })
 
-function parseDateInput(input?: string | Date | null): Date | null {
-  if (!input) return null
+function formatRelativeZhShort(input?: string | Date | null): string {
+  if (!input) return '—'
   const d = new Date(input as any)
-  if (isNaN(d.getTime())) return null
-  return d
+  if (isNaN(d.getTime())) return '—'
+  const diffMs = Date.now() - d.getTime()
+  // Original behavior: future timestamps clamped to "刚刚", >=30 days to "很久以前"
+  if (diffMs < 0) return '刚刚'
+  if (diffMs >= 30 * 86400_000) return '很久以前'
+  return formatRelativeZh(input)
 }
 
-function chineseNum(n: number, unit: string): string {
-  if (n === 1) return `一${unit}前`
-  if (n === 2) return `两${unit}前`
-  return `${n}${unit}前`
-}
-
-function formatRelativeZh(input?: string | Date | null): string {
-  const d = parseDateInput(input)
-  if (!d) return '—'
-  const now = Date.now()
-  const diffSec = Math.max(0, Math.floor((now - d.getTime()) / 1000))
-  if (diffSec < 60) return '刚刚'
-  const mins = Math.floor(diffSec / 60)
-  if (mins < 60) return chineseNum(mins, '分钟')
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return chineseNum(hours, '小时')
-  const days = Math.floor(hours / 24)
-  if (days < 30) return chineseNum(days, '天')
-  return '很久以前'
-}
-
-const overviewUpdatedAtRelative = computed(() => mounted.value ? formatRelativeZh(overview.value.updatedAt) : '...')
+const overviewUpdatedAtRelative = computed(() => mounted.value ? formatRelativeZhShort(overview.value.updatedAt) : '...')
 
 const onHeroSearch = () => {
   const q = heroQuery.value.trim()

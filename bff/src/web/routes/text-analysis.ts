@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
+import fsSyncForInit from 'node:fs';
 import path from 'node:path';
 
 const DATA_DIR = (() => {
@@ -10,7 +11,7 @@ const DATA_DIR = (() => {
   ].filter((value): value is string => Boolean(value));
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (fsSyncForInit.existsSync(candidate)) {
       return candidate;
     }
   }
@@ -20,9 +21,10 @@ const DATA_DIR = (() => {
 
 // In-memory cache: { data, loadedAt }
 const cache = new Map<string, { data: any; loadedAt: number }>();
+const inflight = new Map<string, Promise<any>>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function loadJSON(filename: string): any {
+async function loadJSON(filename: string): Promise<any> {
   const key = filename;
   const now = Date.now();
   const cached = cache.get(key);
@@ -30,21 +32,32 @@ function loadJSON(filename: string): any {
     return cached.data;
   }
 
-  const filePath = path.join(DATA_DIR, filename);
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
+  // Deduplicate concurrent loads for the same file
+  const pending = inflight.get(key);
+  if (pending) return pending;
 
-  const raw = fs.readFileSync(filePath, 'utf8');
-  const data = JSON.parse(raw);
-  cache.set(key, { data, loadedAt: now });
-  return data;
+  const promise = (async () => {
+    try {
+      const filePath = path.join(DATA_DIR, filename);
+      const raw = await fs.readFile(filePath, 'utf8');
+      const data = JSON.parse(raw);
+      cache.set(key, { data, loadedAt: Date.now() });
+      return data;
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return null;
+      throw err;
+    } finally {
+      inflight.delete(key);
+    }
+  })();
+  inflight.set(key, promise);
+  return promise;
 }
 
 function jsonEndpoint(filename: string) {
-  return (_req: any, res: any, next: any) => {
+  return async (_req: any, res: any, next: any) => {
     try {
-      const data = loadJSON(filename);
+      const data = await loadJSON(filename);
       if (data === null) {
         return res.status(404).json({ error: 'data_not_generated', message: `${filename} not found. Run the text-analysis pipeline first.` });
       }
@@ -56,9 +69,9 @@ function jsonEndpoint(filename: string) {
 }
 
 function paginatedEndpoint(filename: string, defaultLimit = 100) {
-  return (req: any, res: any, next: any) => {
+  return async (req: any, res: any, next: any) => {
     try {
-      const data = loadJSON(filename);
+      const data = await loadJSON(filename);
       if (data === null) {
         return res.status(404).json({ error: 'data_not_generated' });
       }

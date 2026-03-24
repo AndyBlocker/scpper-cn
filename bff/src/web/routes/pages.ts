@@ -5,6 +5,7 @@ import { extractPreviewCandidates, pickPreview, toPreviewPick, extractExcerptFal
 import { buildPageImagePath } from '../pageImagesConfig.js';
 import { createCache } from '../utils/cache.js';
 import { getReadPoolSync } from '../utils/dbPool.js';
+import { parsePositiveInt } from '../utils/helpers.js';
 
 export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -12,13 +13,6 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
 
   // 读写分离：pages 全部是读操作，使用从库
   const readPool = getReadPoolSync(pool);
-  const parsePositiveInt = (value: unknown): number | null => {
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      return null;
-    }
-    return parsed;
-  };
 
   router.param('wikidotId', (req, res, next, value) => {
     if (parsePositiveInt(value) === null) {
