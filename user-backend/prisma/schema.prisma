@@ -140,8 +140,6 @@ model GachaWallet {
   updatedAt        DateTime     @updatedAt
   user             UserAccount  @relation(fields: [userId], references: [id], onDelete: Cascade)
   ledgerEntries    GachaLedgerEntry[]
-
-  @@index([userId])
 }
 
 model GachaPool {

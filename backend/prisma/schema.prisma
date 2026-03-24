@@ -105,20 +105,6 @@ model SyncExecutionLock {
   @@index([expiresAt])
 }
 
-model DirtyPageBackup {
-  pageId      Int?
-  needPhaseB  Boolean?
-  needPhaseC  Boolean?
-  reasons     String[]
-  donePhaseB  Boolean?
-  donePhaseC  Boolean?
-  createdAt   DateTime?
-  updatedAt   DateTime?
-  url         String?
-  backup_time DateTime?
-  id          Int       @id @default(autoincrement())
-}
-
 model Page {
   id                    Int                @id @default(autoincrement())
   wikidotId             Int                @unique
@@ -387,7 +373,6 @@ model SeriesStats {
   createdAt       DateTime @default(now())
 
   @@index([isOpen])
-  @@index([seriesNumber])
   @@index([usagePercentage])
 }
 
@@ -404,7 +389,6 @@ model SiteStats {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@index([date])
 }
 
 model SourceVersion {
@@ -453,6 +437,9 @@ model User {
   metricPreferences                UserMetricPreference[]
   collections                      UserCollection[]
   collectionAccountOwner           CollectionAccountOwner?
+  tagPreferences                   UserTagPreference[]
+  voteInteractionsFrom             UserVoteInteraction[]   @relation("UserVoteInteractionFrom")
+  voteInteractionsTo               UserVoteInteraction[]   @relation("UserVoteInteractionTo")
   forumAlertsReceived              ForumInteractionAlert[] @relation("ForumInteractionAlertRecipient")
   forumAlertsTriggered             ForumInteractionAlert[] @relation("ForumInteractionAlertActor")
 
@@ -581,6 +568,7 @@ model UserTagPreference {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   id            Int       @id @default(autoincrement())
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, tag])
 }
@@ -595,6 +583,8 @@ model UserVoteInteraction {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   id            Int       @id @default(autoincrement())
+  fromUser      User      @relation("UserVoteInteractionFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser        User      @relation("UserVoteInteractionTo", fields: [toUserId], references: [id], onDelete: Cascade)
 
   @@unique([fromUserId, toUserId])
 }
@@ -766,7 +756,6 @@ model CategoryIndexTick {
   createdAt        DateTime @default(now()) @map("created_at")
 
   @@unique([category, asOfTs], map: "uniq_category_index_tick_category_as_of_ts")
-  @@index([category, asOfTs], map: "idx_category_index_tick_category_as_of_ts")
   @@index([watermarkTs], map: "idx_category_index_tick_watermark_ts")
 }
 
@@ -869,7 +858,6 @@ model LeaderboardCache {
   expiresAt DateTime?
 
   @@unique([key, period])
-  @@index([key, period])
   @@index([expiresAt])
 }
 
@@ -894,7 +882,6 @@ model SiteOverviewDaily {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  @@index([date])
 }
 
 /// 标签定义表 - 存储官方标签的中英文对照

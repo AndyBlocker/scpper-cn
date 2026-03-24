@@ -229,7 +229,6 @@ async function clearAllData(prisma: PrismaClient): Promise<void> {
     { name: 'User', op: () => prisma.user.deleteMany() },
     { name: 'PageMetaStaging', op: () => prisma.pageMetaStaging.deleteMany() },
     { name: 'DirtyPage', op: () => prisma.dirtyPage.deleteMany() },
-    { name: 'DirtyPageBackup', op: () => prisma.dirtyPageBackup.deleteMany() },
   ];
   for (const { name, op } of operations) {
     console.log(`  清空 ${name}...`);
