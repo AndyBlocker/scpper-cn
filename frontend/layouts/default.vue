@@ -311,7 +311,7 @@
                 </div>
               </div>
 
-              <div class="px-4 py-3 text-[11px] text-[rgb(var(--muted)_/_0.75)] border-t border-[rgb(var(--sidebar-border)_/_0.45)]">© {{ new Date().getFullYear() }} SCPPER-CN</div>
+              <div class="px-4 py-3 text-[11px] text-[rgb(var(--muted)_/_0.75)] border-t border-[rgb(var(--sidebar-border)_/_0.45)]">© {{ copyrightYear }} SCPPER-CN</div>
             </div>
           </div>
         </div>
@@ -397,7 +397,7 @@
           <slot />
         </div>
       </main>
-      <footer class="mt-auto app-footer py-6 text-center text-xs backdrop-blur">© {{ new Date().getFullYear() }} AndyBlocker</footer>
+      <footer class="mt-auto app-footer py-6 text-center text-xs backdrop-blur">© {{ copyrightYear }} AndyBlocker</footer>
     </div>
   </div>
 </template>
@@ -405,6 +405,8 @@
 <script setup lang="ts">
 import BrandIcon from '../components/BrandIcon.vue'
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'
+
+const copyrightYear = new Date().getFullYear()
 import { useNuxtApp, navigateTo, useHead } from 'nuxt/app'
 import { useRoute } from 'vue-router'
 import UserAvatar from '~/components/UserAvatar.vue'
@@ -471,7 +473,7 @@ const suggestionGroups = computed(() => {
 })
 const suggestionsLoading = ref(false);
 const selectedIndex = ref(-1);
-type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
+import type { BffFetcher } from '~/types/nuxt-bff'
 const {$bff} = useNuxtApp() as unknown as { $bff: BffFetcher };
 
 const { user: authUser, isAuthenticated, fetchCurrentUser, status: authStatus } = useAuth()

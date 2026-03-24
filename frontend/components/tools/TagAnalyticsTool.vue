@@ -224,7 +224,7 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
-type BffFetcher = <T=any>(url: string, options?: any) => Promise<T>
+import type { BffFetcher } from '~/types/nuxt-bff'
 const { $bff } = useNuxtApp()
 const bff = $bff as BffFetcher
 const router = useRouter()

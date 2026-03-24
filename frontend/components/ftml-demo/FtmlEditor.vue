@@ -27,6 +27,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import 'codemirror/lib/codemirror.css'
 
 const props = defineProps<{
   modelValue: string

@@ -55,6 +55,8 @@
 </template>
 
 <script setup lang="ts">
+useHead({ title: '找回密码' })
+
 const config = useRuntimeConfig();
 const apiBase = computed(() => {
   const base = (config.public as Record<string, any> | undefined)?.bffBase;

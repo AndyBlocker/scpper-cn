@@ -73,6 +73,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+
+useHead({ title: '扭蛋 - 展示' })
+
 import GachaPageShell from '~/components/gacha/GachaPageShell.vue'
 import GachaErrorBanner from '~/components/gacha/GachaErrorBanner.vue'
 import GachaActivationBlock from '~/components/gacha/GachaActivationBlock.vue'

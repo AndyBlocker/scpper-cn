@@ -133,6 +133,9 @@
 
 <script setup lang="ts">
 import { computed, watch, onBeforeUnmount } from 'vue'
+
+useHead({ title: '扭蛋' })
+
 import GachaPageShell from '~/components/gacha/GachaPageShell.vue'
 import GachaWalletBar from '~/components/gacha/GachaWalletBar.vue'
 import GachaErrorBanner from '~/components/gacha/GachaErrorBanner.vue'

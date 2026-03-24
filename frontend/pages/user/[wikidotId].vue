@@ -601,6 +601,8 @@
 <script setup lang="ts">
 import { computed, ref, watch, watchEffect } from 'vue'
 import { useAsyncData, useHead, useNuxtApp, useRoute, useState } from '#imports'
+
+definePageMeta({ key: route => route.fullPath })
 import { useAuth } from '~/composables/useAuth'
 import { useFollows } from '~/composables/useFollows'
 import { useCollections, type CollectionSummary } from '~/composables/useCollections'

@@ -83,7 +83,7 @@
 import { ref, watch } from 'vue'
 import { useNuxtApp } from 'nuxt/app'
 
-type BffFetcher = <T=any>(url: string, options?: any) => Promise<T>
+import type { BffFetcher } from '~/types/nuxt-bff'
 const { $bff } = useNuxtApp()
 const bff = $bff as BffFetcher
 

@@ -55,7 +55,7 @@ type CategoryBenchmarksPayload = {
 
 const props = defineProps<{ userStats: UserStatsLike | null | undefined }>()
 
-type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>
+import type { BffFetcher } from '~/types/nuxt-bff'
 const { $bff } = useNuxtApp()
 const bff = $bff as unknown as BffFetcher
 

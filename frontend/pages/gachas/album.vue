@@ -283,6 +283,9 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
+
+useHead({ title: '扭蛋 - 图鉴' })
+
 import GachaPageShell from '~/components/gacha/GachaPageShell.vue'
 import GachaErrorBanner from '~/components/gacha/GachaErrorBanner.vue'
 import GachaSkeleton from '~/components/gacha/GachaSkeleton.vue'

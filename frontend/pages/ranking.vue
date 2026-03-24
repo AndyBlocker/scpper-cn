@@ -361,7 +361,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAsyncData, useHead, useNuxtApp } from 'nuxt/app';
 
-type BffFetcher = <T = any>(url: string, options?: any) => Promise<T>;
+import type { BffFetcher } from '~/types/nuxt-bff'
 type RankUser = {
   id: number;
   wikidotId: number;

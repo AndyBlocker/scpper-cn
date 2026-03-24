@@ -89,6 +89,8 @@
 </template>
 
 <script setup lang="ts">
+useHead({ title: '重置密码' })
+
 const router = useRouter();
 const config = useRuntimeConfig();
 const apiBase = computed(() => {
