@@ -1,5 +1,1 @@
-import { gachaRouter } from './runtime.js';
-
-export function albumRouter() {
-  return gachaRouter();
-}
+// Album routes are now registered via album.routes.ts and composed in index.ts
