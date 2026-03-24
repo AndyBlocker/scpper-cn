@@ -54,7 +54,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'private, max-age=300');
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-      res.removeHeader('Content-Security-Policy');
+      res.setHeader('Content-Security-Policy', "script-src 'none'; style-src 'self' 'unsafe-inline'; img-src * data:; frame-ancestors 'self'; default-src 'none'");
       return res.send(contentResult.rows[0].full_page_html);
     } catch (err) {
       next(err);
