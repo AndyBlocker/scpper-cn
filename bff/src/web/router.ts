@@ -64,7 +64,8 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/pages/random', expensiveLimiter);
   router.use('/pages', pagesRouter(pool, redis));
   router.use('/users', usersRouter(pool, redis));
-  router.use('/search', expensiveLimiter, searchRouter(pool, redis));
+  router.use('/search/pages', expensiveLimiter);
+  router.use('/search', searchRouter(pool, redis));
   router.use('/aggregate', aggregateRouter(pool, redis));
   router.use('/stats', statsRouter(pool, redis));
   router.use('/stats', extendStatsRouter(pool, redis));

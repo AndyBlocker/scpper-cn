@@ -179,18 +179,55 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
   const MAX_REGEX_LENGTH = 200;
 
   /**
-   * Detect ReDoS-prone patterns (nested quantifiers, overlapping alternations)
-   * and reject them before they reach the JS or PostgreSQL regex engine.
+   * Detect ReDoS-prone patterns (nested quantifiers) and reject them before
+   * they reach the JS or PostgreSQL regex engine.
+   *
+   * Strategy: strip escaped shorthand classes (\d, \w, etc.) and character
+   * classes ([...]) to single-char placeholders, then walk the structure
+   * tracking groups.  A group is flagged if it contains a quantifier on a
+   * "wide" token (literal char, dot, or a sub-group) AND the group itself
+   * is also quantified.  Escaped shorthand classes (\d, \w, \s, etc.) are
+   * narrow enough to not cause overlapping-length ambiguity in practice.
+   *
+   * Catches: (a+)+, (a*)+, (.+)+, ((x)+)+, (a+|b+)*
+   * Allows: (foo|bar\d+)+, (abc)+, SCP-\d+, [a-z]+
    */
   function isRedosPronePattern(pattern: string): boolean {
-    // Nested quantifiers: (x+)+, (x*)+, (x+)*, (x{n,})+ etc.
-    // Matches a group containing a quantifier, followed by another quantifier.
-    if (/(\([^)]*[+*}]\s*\))[+*?]|\(\?:[^)]*[+*}]\s*\)[+*?]/i.test(pattern)) return true;
-    // Alternation inside a quantified group with overlapping character classes:
-    // e.g. (a|a+)*, (\w|\d+)+ — groups with alternation AND quantifier both inside and outside
-    if (/\([^)]*\|[^)]*[+*][^)]*\)[+*]/i.test(pattern)) return true;
-    // Deeply nested groups with quantifiers: ((x+))+
-    if (/\(\([^)]*[+*}][^)]*\)[^)]*[+*}]*\)[+*]/i.test(pattern)) return true;
+    // Replace escaped shorthand classes (\d, \w, \s, \D, \W, \S, \b, \B)
+    // with narrow placeholder 'N' that we won't flag
+    const step1 = pattern.replace(/\\[dwsbDWSB]/g, 'N');
+    // Replace other escaped chars (\., \+, \\, etc.) with literal placeholder 'X'
+    const step2 = step1.replace(/\\./g, 'X');
+    // Replace character classes with narrow placeholder
+    const skeleton = step2.replace(/\[[^\]]*\]/g, 'N');
+
+    // Walk the skeleton with a stack tracking each group
+    const stack: { hasDangerousQuantifier: boolean }[] = [];
+    for (let i = 0; i < skeleton.length; i++) {
+      const ch = skeleton[i];
+      if (ch === '(') {
+        stack.push({ hasDangerousQuantifier: false });
+      } else if (ch === ')') {
+        const current = stack.pop();
+        const next = skeleton[i + 1];
+        const isQuantified = next === '+' || next === '*' || next === '{';
+        if (isQuantified && current?.hasDangerousQuantifier) {
+          return true;
+        }
+        // If this group is quantified, it becomes a dangerous quantifier in parent
+        if (isQuantified && stack.length > 0) {
+          stack[stack.length - 1].hasDangerousQuantifier = true;
+        }
+      } else if ((ch === '+' || ch === '*' || ch === '{') && stack.length > 0) {
+        // Check what token precedes this quantifier
+        const prev = skeleton[i - 1];
+        // Dangerous if quantifier is on: ), a literal char, or dot (wide tokens)
+        // Safe if quantifier is on: N (narrow placeholder for \d, \w, [...], etc.)
+        if (prev !== 'N') {
+          stack[stack.length - 1].hasDangerousQuantifier = true;
+        }
+      }
+    }
     return false;
   }
 

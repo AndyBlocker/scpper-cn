@@ -50,16 +50,17 @@ const updateCheckSchema = z.object({
   taskId: z.string().min(1, '任务 ID 不能为空')
 });
 
-// Known business error messages that are safe to expose to the client
+// Known business error messages that are safe to expose to the client.
+// Must stay in sync with errors thrown in services/wikidotBinding.ts.
 const SAFE_ERROR_MESSAGES = new Set([
-  '请输入 Wikidot 用户名或 Wikidot ID',
-  '该 Wikidot 用户不存在',
+  '用户不存在',
+  '你已绑定 Wikidot 账号，如需更换请先联系管理员解绑',
+  '请输入 Wikidot 用户名或 ID',
+  '未找到该 Wikidot 用户，请确认用户名正确且该用户在站点有活动记录',
   '该 Wikidot 账号已被其他用户绑定',
-  '你已经绑定了一个 Wikidot 账号',
-  '已有进行中的绑定任务',
-  '没有可取消的绑定任务',
-  '任务不存在或已完成',
-  '绑定任务已过期'
+  '该用户名匹配多个 Wikidot 用户，请使用更精确的用户名或联系管理员处理',
+  '无法生成验证码，请稍后重试',
+  '内部服务暂时不可用，请稍后再试'
 ]);
 
 function createErrorResponse(error: unknown) {
