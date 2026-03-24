@@ -199,8 +199,19 @@ async function evictOldestSnippets(): Promise<void> {
 
 async function persistSnippet(id: string, snippet: StoredSnippet) {
   await ensureDir();
-  await evictOldestSnippets();
-  await fs.writeFile(buildPath(id), JSON.stringify(snippet), 'utf8');
+  // Only evict when creating a genuinely new file (content-hash miss).
+  // Re-submitting identical HTML overwrites the existing file and should
+  // not trigger eviction of an unrelated snippet.
+  const targetPath = buildPath(id);
+  let isNew = true;
+  try {
+    await fs.access(targetPath);
+    isNew = false;
+  } catch { /* file does not exist — this is a new snippet */ }
+  if (isNew) {
+    await evictOldestSnippets();
+  }
+  await fs.writeFile(targetPath, JSON.stringify(snippet), 'utf8');
 }
 
 function validateId(id: string) {
