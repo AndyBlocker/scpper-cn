@@ -30,6 +30,7 @@ export type {
   Wallet,
   TicketBalance,
   RewardPack,
+  RewardPackPartial,
   GachaFeatureFlags,
   GachaFeatureStatus,
   GachaPool,

@@ -55,10 +55,17 @@ export type TicketBalance = {
   affixReforgeTicket: number;
 };
 
-export interface RewardPack {
+/** API response shape — both fields always present in JSON payloads. */
+export type RewardPack = {
+  tokens: number;
+  tickets: TicketBalance;
+};
+
+/** Backend-internal shape used when defining missions/achievements (fields optional). */
+export type RewardPackPartial = {
   tokens?: number;
   tickets?: Partial<TicketBalance>;
-}
+};
 
 // ─── Feature Flags ──────────────────────────────────────────────────────────
 

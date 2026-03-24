@@ -3,14 +3,16 @@ import type {
   MarketLockTier,
   MarketLockTierMeta,
   TradeListing,
+  TradeSortMode,
   BuyRequestStatus,
   BuyRequestMatchLevel,
   AffixVisualStyle
 } from '~/types/gacha'
 
-// ─── Type Aliases ──────────────────────────────────────
+// ─── Re-export shared type ──────────────────────────────
+export type { TradeSortMode } from '~/types/gacha'
 
-export type TradeSortMode = 'LATEST' | 'PRICE_ASC' | 'PRICE_DESC' | 'TOTAL_ASC' | 'TOTAL_DESC' | 'RARITY_DESC'
+// ─── Type Aliases ──────────────────────────────────────
 export type BuyRequestSortMode = 'LATEST' | 'TOKEN_DESC' | 'TOKEN_ASC' | 'EXPIRY_ASC' | 'RARITY_DESC'
 export type MarketLockTierViewMeta = {
   label: string

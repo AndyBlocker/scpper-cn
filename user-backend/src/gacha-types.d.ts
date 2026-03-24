@@ -49,6 +49,11 @@ declare module '@scpper/gacha-types' {
   };
 
   export type RewardPack = {
+    tokens: number;
+    tickets: TicketBalance;
+  };
+
+  export type RewardPackPartial = {
     tokens?: number;
     tickets?: Partial<TicketBalance>;
   };

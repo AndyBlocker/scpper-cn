@@ -32,6 +32,7 @@ export type {
   MissionPeriodType,
   TicketBalance,
   RewardPack,
+  RewardPackPartial,
   MarketContractDefinition,
 } from '@scpper/gacha-types';
 
@@ -43,6 +44,7 @@ import type {
   MarketCategory,
   TicketBalance,
   RewardPack,
+  RewardPackPartial,
   MarketContractDefinition,
 } from '@scpper/gacha-types';
 
@@ -115,7 +117,7 @@ export const FEATURE_FLAGS = {
   buyRequest: parseBooleanEnv(process.env.GACHA_FEATURE_BUY_REQUEST) ?? defaultFeatureFlag
 } as const;
 
-// ─── Market (backend-only) ──────────────────────────────────────────────────
+// ─── Market ──────────────────────────────────────────────────────────────────
 
 export const MARKET_POSITION_MAX_OPEN = 5;
 export const MARKET_LOT_TOKEN = 10;
@@ -171,7 +173,7 @@ export const DAILY_MISSION_KEY = 'DAILY_SPEND_200';
 export const WEEKLY_MISSION_KEY = 'WEEKLY_SPEND_800';
 
 // ─── Market lock tiers ───────────────────────────────────────────────────────
-// Values kept in sync with shared/gacha-types/src/constants.ts
+// MarketLockTier and MarketPositionStatus are re-exported from @scpper/gacha-types above.
 
 export const MARKET_LOCK_TIERS: MarketLockTier[] = ['T1', 'T7', 'T15', 'T30'];
 
@@ -223,6 +225,9 @@ export const MARKET_LEVERAGE_SURCHARGE_RATE: Record<number, number> = {
 };
 
 // ─── Domain types (backend-only) ────────────────────────────────────────────
+// Shared types (TicketBalance, RewardPack, DrawPaymentMethod, DismantleKeepScope,
+// TradeSearchMode, TradeSortMode, MarketCategory, MarketContractDefinition,
+// MarketPositionSide, MissionPeriodType) are re-exported from @scpper/gacha-types above.
 
 export type WalletPityCounters = {
   purplePityCount: number;
@@ -237,6 +242,41 @@ export const AUTHOR_CARD_SEARCH_LIMIT = 2000;
 export const AUTHOR_BFF_PAGE_LOOKUP_LIMIT = 2200;
 export const AUTHOR_BFF_USER_LOOKUP_LIMIT = 160;
 export const AUTHOR_SEARCH_CACHE_TTL_MS = 3 * 60 * 1000;
+
+export type MissionDefinition = {
+  key: string;
+  title: string;
+  description: string;
+  target: number;
+  periodType: 'daily' | 'weekly';
+  reward: RewardPackPartial;
+};
+
+export type AchievementDefinition = {
+  key: string;
+  title: string;
+  description: string;
+  target: number;
+  metric: (stats: UserGachaStats) => number;
+  reward: RewardPackPartial;
+  hidden?: boolean;
+};
+
+export type UserGachaStats = {
+  totalDraws: number;
+  uniqueCards: number;
+  goldCardsDrawn: number;
+  purpleCardsDrawn: number;
+  placementClaims: number;
+  placementTokensEarned: number;
+  dailyClaims: number;
+  marketProfit: number;
+  marketLoss: number;
+  tradeSells: number;
+  dismantleCount: number;
+  affixReforgeCount: number;
+  totalTokensSpent: number;
+};
 
 export const EMPTY_TICKETS: TicketBalance = {
   drawTicket: 0,
@@ -271,42 +311,7 @@ export const MARKET_CONTRACTS: MarketContractDefinition[] = [
   { id: 'WANDERERS', category: 'WANDERERS', symbol: 'WANDERERS', name: '图书馆指数' }
 ];
 
-export type MissionDefinition = {
-  key: string;
-  title: string;
-  description: string;
-  target: number;
-  periodType: 'daily' | 'weekly';
-  reward: RewardPack;
-};
-
-export type AchievementDefinition = {
-  key: string;
-  title: string;
-  description: string;
-  target: number;
-  metric: (stats: UserGachaStats) => number;
-  reward: RewardPack;
-  hidden?: boolean;
-};
-
-export type UserGachaStats = {
-  totalDraws: number;
-  uniqueCards: number;
-  goldCardsDrawn: number;
-  purpleCardsDrawn: number;
-  placementClaims: number;
-  placementTokensEarned: number;
-  dailyClaims: number;
-  marketProfit: number;
-  marketLoss: number;
-  tradeSells: number;
-  dismantleCount: number;
-  affixReforgeCount: number;
-  totalTokensSpent: number;
-};
-
-export type MarketTickTimeframeLocal = '24H' | '7D' | '30D';
+// MarketTickTimeframe is re-exported from @scpper/gacha-types above.
 
 export type OracleTick = {
   category: MarketCategory;
