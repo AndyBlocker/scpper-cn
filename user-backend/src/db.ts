@@ -22,7 +22,7 @@ function ensureConnectionLimit(url: string, defaultLimit = 5, defaultPoolTimeout
   }
 }
 
-const databaseUrl = process.env.USER_DATABASE_URL || process.env.DATABASE_URL;
+const databaseUrl = process.env.USER_DATABASE_URL;
 
 export const prisma = new PrismaClient({
   datasources: databaseUrl ? {
