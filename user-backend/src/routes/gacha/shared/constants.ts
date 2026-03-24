@@ -3,11 +3,52 @@
  *
  * This file contains NO mutable state and NO side effects.
  * Extracted from runtime.ts for readability.
+ *
+ * Shared enums and API types are imported (type-only) from @scpper/gacha-types
+ * to ensure a single source of truth. Runtime constants remain here since the
+ * backend compiles with rootDir=src and cannot emit files from shared/.
  */
 
 import { GachaRarity, Prisma } from '@prisma/client';
 
-// ─── Core types ──────────────────────────────────────────────────────────────
+// ─── Re-export shared types (type-only — no emit) ──────────────────────────
+
+export type {
+  Rarity,
+  AffixVisualStyle,
+  MatchMode,
+  TradeListingStatus,
+  BuyRequestStatus,
+  BuyRequestMatchLevel,
+  DrawPaymentMethod,
+  DismantleKeepScope,
+  MarketPositionSide,
+  MarketLockTier,
+  MarketCategory,
+  MarketPositionStatus,
+  MarketTickTimeframe,
+  TradeSearchMode,
+  TradeSortMode,
+  MissionPeriodType,
+  TicketBalance,
+  RewardPack,
+  RewardPackPartial,
+  MarketContractDefinition,
+} from '@scpper/gacha-types';
+
+// ─── Import types needed by local definitions ───────────────────────────────
+
+import type {
+  Rarity,
+  MarketLockTier,
+  MarketCategory,
+  TicketBalance,
+  RewardPack,
+  RewardPackPartial,
+  MarketContractDefinition,
+} from '@scpper/gacha-types';
+
+// ─── Core types (backend-only) ──────────────────────────────────────────────
 
 export type Tx = Prisma.TransactionClient;
 
@@ -132,9 +173,8 @@ export const DAILY_MISSION_KEY = 'DAILY_SPEND_200';
 export const WEEKLY_MISSION_KEY = 'WEEKLY_SPEND_800';
 
 // ─── Market lock tiers ───────────────────────────────────────────────────────
+// MarketLockTier and MarketPositionStatus are re-exported from @scpper/gacha-types above.
 
-export type MarketLockTier = 'T1' | 'T7' | 'T15' | 'T30';
-export type MarketPositionStatus = 'OPEN' | 'EXPIRED' | 'SETTLED' | 'LIQUIDATED';
 export const MARKET_LOCK_TIERS: MarketLockTier[] = ['T1', 'T7', 'T15', 'T30'];
 
 export const MARKET_LOCK_TIER_CONFIG: Record<MarketLockTier, {
@@ -184,23 +224,15 @@ export const MARKET_LEVERAGE_SURCHARGE_RATE: Record<number, number> = {
   100: 0.22
 };
 
-// ─── Domain types ────────────────────────────────────────────────────────────
-
-export type TicketBalance = {
-  drawTicket: number;
-  draw10Ticket: number;
-  affixReforgeTicket: number;
-};
+// ─── Domain types (backend-only) ────────────────────────────────────────────
+// Shared types (TicketBalance, RewardPack, DrawPaymentMethod, DismantleKeepScope,
+// TradeSearchMode, TradeSortMode, MarketCategory, MarketContractDefinition,
+// MarketPositionSide, MissionPeriodType) are re-exported from @scpper/gacha-types above.
 
 export type WalletPityCounters = {
   purplePityCount: number;
   goldPityCount: number;
 };
-
-export type DrawPaymentMethod = 'TOKEN' | 'DRAW_TICKET' | 'DRAW10_TICKET' | 'AUTO';
-export type DismantleKeepScope = 'CARD' | 'VARIANT';
-export type TradeSearchMode = 'ALL' | 'CARD' | 'SELLER';
-export type TradeSortMode = 'LATEST' | 'PRICE_ASC' | 'PRICE_DESC' | 'TOTAL_ASC' | 'TOTAL_DESC' | 'RARITY_DESC';
 
 export const DISMANTLE_KEEP_SCOPE_VALUES = ['CARD', 'VARIANT'] as const;
 export const TRADE_SEARCH_MODE_VALUES = ['ALL', 'CARD', 'SELLER'] as const;
@@ -211,30 +243,13 @@ export const AUTHOR_BFF_PAGE_LOOKUP_LIMIT = 2200;
 export const AUTHOR_BFF_USER_LOOKUP_LIMIT = 160;
 export const AUTHOR_SEARCH_CACHE_TTL_MS = 3 * 60 * 1000;
 
-export type RewardPack = {
-  tokens?: number;
-  tickets?: Partial<TicketBalance>;
-};
-
-export type MarketCategory = 'OVERALL' | 'TRANSLATION' | 'SCP' | 'TALE' | 'GOI' | 'WANDERERS';
-
-export type MarketContractDefinition = {
-  id: MarketCategory;
-  category: MarketCategory;
-  symbol: MarketCategory;
-  name: string;
-};
-
-export type MarketPositionSide = 'LONG' | 'SHORT';
-export type MissionPeriodType = 'daily' | 'weekly';
-
 export type MissionDefinition = {
   key: string;
   title: string;
   description: string;
   target: number;
-  periodType: MissionPeriodType;
-  reward: RewardPack;
+  periodType: 'daily' | 'weekly';
+  reward: RewardPackPartial;
 };
 
 export type AchievementDefinition = {
@@ -243,7 +258,7 @@ export type AchievementDefinition = {
   description: string;
   target: number;
   metric: (stats: UserGachaStats) => number;
-  reward: RewardPack;
+  reward: RewardPackPartial;
   hidden?: boolean;
 };
 
@@ -296,7 +311,7 @@ export const MARKET_CONTRACTS: MarketContractDefinition[] = [
   { id: 'WANDERERS', category: 'WANDERERS', symbol: 'WANDERERS', name: '图书馆指数' }
 ];
 
-export type MarketTickTimeframe = '24H' | '7D' | '30D';
+// MarketTickTimeframe is re-exported from @scpper/gacha-types above.
 
 export type OracleTick = {
   category: MarketCategory;

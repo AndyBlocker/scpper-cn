@@ -10,7 +10,7 @@ import { requireAdmin } from '../../middleware/requireAdmin.js';
 import {
   type Tx, type MarketLockTier, type MarketPositionStatus, type TicketBalance,
   type WalletPityCounters, type DrawPaymentMethod, type DismantleKeepScope,
-  type TradeSearchMode, type TradeSortMode, type RewardPack, type MarketCategory,
+  type TradeSearchMode, type TradeSortMode, type RewardPack, type RewardPackPartial, type MarketCategory,
   type MarketContractDefinition, type MarketPositionSide, type MissionPeriodType,
   type MissionDefinition, type AchievementDefinition, type UserGachaStats,
   type MarketTickTimeframe, type OracleTick, type OracleCacheEntry,
@@ -5862,7 +5862,7 @@ export async function loadUserGachaStats(tx: Tx, userId: string): Promise<UserGa
   };
 }
 
-export function normalizeRewardPack(reward: RewardPack) {
+export function normalizeRewardPack(reward: RewardPackPartial) {
   return {
     tokens: Math.max(0, toSafeInt(reward.tokens, 0)),
     tickets: normalizeTicketBalance(reward.tickets)
@@ -5877,7 +5877,7 @@ export type MissionProgressSnapshot = {
   progress: number;
   title: string;
   description: string;
-  reward: RewardPack;
+  reward: RewardPackPartial;
 };
 
 export async function loadMissionProgressSnapshots(tx: Tx, userId: string, asOf = now()): Promise<MissionProgressSnapshot[]> {
@@ -6020,7 +6020,7 @@ export async function applyRewardPack(
   tx: Tx,
   wallet: Prisma.GachaWalletGetPayload<{}>,
   userId: string,
-  reward: RewardPack,
+  reward: RewardPack | RewardPackPartial,
   source: string,
   sourceKey: string
 ) {
