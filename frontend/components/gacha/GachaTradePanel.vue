@@ -596,6 +596,23 @@ function formatAccountDisplayName(
   return `用户-${rawId.slice(0, 8)}`
 }
 
+function listingRemainingLabel(listing: TradeListing) {
+  if (listing.status !== 'OPEN' || listing.remaining <= 0) return tradeStatusLabel(listing.status)
+  if (!listing.expiresAt) return '无期限'
+  const now = clientNow.value
+  if (!now) return formatDateCompact(listing.expiresAt) || '无'
+  const expiresTs = new Date(listing.expiresAt).getTime()
+  if (!Number.isFinite(expiresTs)) return formatDateCompact(listing.expiresAt) || '无'
+  const diffMs = expiresTs - now
+  if (diffMs <= 0) return '已到期'
+  const diffMin = Math.max(1, Math.ceil(diffMs / 60_000))
+  if (diffMin < 60) return `剩${diffMin}m`
+  const diffH = Math.ceil(diffMin / 60)
+  if (diffH < 48) return `剩${diffH}h`
+  const diffD = Math.ceil(diffH / 24)
+  return `剩${diffD}d`
+}
+
 function buyRequestRemainingLabel(br: BuyRequest) {
   if (br.status !== 'OPEN') return buyRequestStatusLabelMap[br.status]
   if (!br.expiresAt) return '无期限'
@@ -765,6 +782,7 @@ watch([brSortMode, brRarityFilter], () => {
         :filtered-trade-card-options="filteredTradeCardOptions"
         :visible-trade-card-options="visibleTradeCardOptions"
         :rarity-groups="rarityGroups"
+        :trade-create-search="tradeCreateSearch"
         :normalized-create-search="normalizedCreateSearch"
         :trade-selection-key="tradeSelectionKey"
         :selected-trade-card-option="selectedTradeCardOption"
@@ -853,7 +871,7 @@ watch([brSortMode, brRarityFilter], () => {
                 :class="tradeStatusChipClassMap[listing.status]"
               >{{ tradeStatusLabel(listing.status) }}</span>
               <span class="trade-item-row__price">{{ formatTokens(listing.unitPrice) }}T <span class="trade-item-row__qty">× {{ listing.remaining }}/{{ listing.quantity }}</span></span>
-              <span class="trade-item-row__time">{{ buyRequestRemainingLabel({ status: listing.status, expiresAt: listing.expiresAt } as any) }}</span>
+              <span class="trade-item-row__time">{{ listingRemainingLabel(listing) }}</span>
             </div>
           </button>
         </div>

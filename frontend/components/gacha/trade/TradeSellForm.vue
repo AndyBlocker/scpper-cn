@@ -33,6 +33,7 @@ const props = defineProps<{
   filteredTradeCardOptions: TradeCardOption[]
   visibleTradeCardOptions: TradeCardOption[]
   rarityGroups: RarityGroup[]
+  tradeCreateSearch: string
   normalizedCreateSearch: string
   tradeSelectionKey: string
   selectedTradeCardOption: TradeCardOption | null
@@ -111,7 +112,7 @@ function pickerNextGroupLabel(): string {
               正在后台同步可上架库存...
             </p>
             <UiInput
-              :model-value="normalizedCreateSearch"
+              :model-value="tradeCreateSearch"
               type="search"
               placeholder="搜索可上架卡片（标题 / 标签 / 作者 / ID）"
               class="w-full"

@@ -35,7 +35,7 @@ type BuyRequestDraft =
   | { targetCardId: string; matchLevel: 'IMAGE_VARIANT' }
   | { targetCardId: string; matchLevel: 'COATING'; requiredCoating: AffixVisualStyle }
 
-defineProps<{
+const props = defineProps<{
   // Form state
   showBuyRequestForm: boolean
   brSelectedPage: PageCatalogEntry | null
@@ -114,9 +114,9 @@ function formatAccountDisplayName(
 function buyRequestRemainingLabel(br: BuyRequest, now: number | null) {
   if (br.status !== 'OPEN') return buyRequestStatusLabelMap[br.status]
   if (!br.expiresAt) return '无期限'
-  if (!now) return '无'
+  if (!now) return formatDateCompact(br.expiresAt) || '无'
   const expiresTs = new Date(br.expiresAt).getTime()
-  if (!Number.isFinite(expiresTs)) return '无'
+  if (!Number.isFinite(expiresTs)) return formatDateCompact(br.expiresAt) || '无'
   const diffMs = expiresTs - now
   if (diffMs <= 0) return '已到期'
   const diffMin = Math.max(1, Math.ceil(diffMs / 60_000))

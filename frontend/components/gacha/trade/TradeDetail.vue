@@ -482,3 +482,33 @@ function formatAccountDisplayName(
     </UiDialogPortal>
   </UiDialogRoot>
 </template>
+
+<style>
+/* These styles are NOT scoped and NOT namespaced under .trade-bazaar because
+   UiDialogPortal teleports content to <body>, outside the .trade-bazaar ancestor. */
+.trade-detail-mini-card { width: 100%; max-width: 150px; margin-inline: auto; }
+.trade-detail-mini-card > * { width: 100%; }
+
+.trade-create-card { position: relative; display: block; width: 100%; min-width: 0; border-radius: 0.9rem; border: 1px solid rgba(148, 163, 184, 0.24); background: rgba(255, 255, 255, 0.72); padding: 0.22rem; text-align: left; cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; }
+.trade-create-card:hover { border-color: rgba(14, 116, 144, 0.35); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08); transform: translateY(-1px); }
+.trade-create-card--selected { border-color: rgba(14, 116, 144, 0.55); box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.22), 0 0 0 1px rgba(14, 116, 144, 0.12), 0 8px 20px rgba(8, 145, 178, 0.16); }
+html.dark .trade-create-card { border-color: rgba(100, 116, 139, 0.45); background: rgba(15, 23, 42, 0.62); }
+html.dark .trade-create-card:hover { border-color: rgba(34, 211, 238, 0.45); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); }
+html.dark .trade-create-card--selected { border-color: rgba(34, 211, 238, 0.62); box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.22), 0 0 0 1px rgba(34, 211, 238, 0.2), 0 10px 22px rgba(6, 182, 212, 0.18); }
+
+.trade-remaining-chip { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.35); background: rgba(248, 250, 252, 0.8); color: rgb(100 116 139); font-size: 9px; font-weight: 600; padding: 1px 5px; white-space: nowrap; }
+html.dark .trade-remaining-chip { border-color: rgba(100, 116, 139, 0.45); background: rgba(15, 23, 42, 0.7); color: rgb(148 163 184); }
+
+.br-detail-body { max-height: calc(100vh - 7rem); max-height: calc(100dvh - 7rem); overflow-y: auto; padding: 1rem 1.25rem 1.25rem; }
+.br-detail-layout { display: grid; gap: 12px; align-items: start; }
+.br-detail-card { width: 100%; max-width: 140px; margin-inline: auto; }
+.br-detail-card > * { width: 100%; }
+@media (min-width: 640px) { .br-detail-layout { gap: 16px; grid-template-columns: 160px minmax(0, 1fr); } .br-detail-card { max-width: none; margin-inline: 0; } }
+.br-detail-stats { display: grid; gap: 6px; grid-template-columns: 1fr; font-size: 12px; }
+@media (min-width: 640px) { .br-detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } }
+.br-detail-actions { position: sticky; bottom: 0; padding-top: 12px; background: linear-gradient(to bottom, transparent, var(--g-surface-card) 6px); }
+.br-fulfill-grid { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+.br-fulfill-grid > * { display: flex; height: 100%; width: 100%; min-width: 0; }
+.br-fulfill-grid > * > * { width: 100%; height: 100%; }
+@media (min-width: 640px) { .br-fulfill-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+</style>
