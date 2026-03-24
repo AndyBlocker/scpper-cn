@@ -76,28 +76,49 @@ const MAIL_SAFE_ATTRS = new Set([
   'width', 'height', 'colspan', 'rowspan', 'target', 'rel',
 ]);
 
+/** 安全 URL 协议白名单 */
+const SAFE_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
 /**
- * 解码 HTML 实体，用于在协议校验前还原属性值的真实内容。
- * 覆盖 &#xHH;、&#DDD;、以及常见命名实体。
+ * 粗略解码 HTML 实体，将属性值还原为真实文本，
+ * 用于在协议校验前消除各种实体编码绕过。
  */
 function decodeHtmlEntities(str) {
-  return str
-    .replace(/&#x([0-9a-f]+);?/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);?/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/&nbsp;/gi, ' ');
+  // 数字实体（十六进制和十进制）
+  let decoded = str.replace(/&#x([0-9a-f]+);?/gi, (_, hex) => {
+    try { return String.fromCodePoint(parseInt(hex, 16)); } catch { return ''; }
+  });
+  decoded = decoded.replace(/&#(\d+);?/g, (_, dec) => {
+    try { return String.fromCodePoint(parseInt(dec, 10)); } catch { return ''; }
+  });
+  // 命名实体：替换为对应字符（覆盖常见攻击向量）
+  const namedEntities = {
+    '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'",
+    '&nbsp;': ' ', '&colon;': ':', '&tab;': '\t', '&newline;': '\n',
+    '&lpar;': '(', '&rpar;': ')', '&sol;': '/', '&bsol;': '\\',
+    '&comma;': ',', '&semi;': ';', '&equals;': '=', '&num;': '#',
+    '&period;': '.', '&excl;': '!', '&quest;': '?', '&plus;': '+',
+  };
+  decoded = decoded.replace(/&[a-z]+;/gi, (entity) => {
+    return namedEntities[entity.toLowerCase()] ?? '';
+  });
+  return decoded;
 }
 
 /**
- * 检查 URL 是否使用危险协议（解码实体后校验）。
+ * 检查 URL 是否安全（白名单协议策略）。
+ * 只允许 http:, https:, mailto: 和相对路径；其余一律拒绝。
  */
-function hasDangerousProtocol(rawVal) {
-  const decoded = decodeHtmlEntities(rawVal).replace(/[\s\x00-\x1f]+/g, '').toLowerCase();
-  return /^(javascript|vbscript|data):/i.test(decoded);
+function isSafeUrl(rawVal) {
+  const decoded = decodeHtmlEntities(rawVal).replace(/[\s\x00-\x1f]+/g, '').trim();
+  if (!decoded) return false;
+  // 相对路径和锚点链接视为安全
+  if (decoded.startsWith('/') || decoded.startsWith('#') || decoded.startsWith('?')) return true;
+  // 提取协议部分
+  const colonIdx = decoded.indexOf(':');
+  if (colonIdx === -1) return true; // 无协议的相对路径
+  const protocol = decoded.slice(0, colonIdx + 1).toLowerCase();
+  return SAFE_URL_PROTOCOLS.has(protocol);
 }
 
 /**
@@ -123,8 +144,8 @@ function sanitizeMailHtml(raw) {
       const attrName = m[1].toLowerCase();
       const attrVal = m[2] ?? m[3] ?? m[4] ?? '';
       if (!MAIL_SAFE_ATTRS.has(attrName)) continue;
-      // 解码实体后检查危险协议（javascript:, vbscript:, data:）
-      if ((attrName === 'href' || attrName === 'src') && hasDangerousProtocol(attrVal)) continue;
+      // 白名单协议校验：只允许 http/https/mailto 和相对路径
+      if ((attrName === 'href' || attrName === 'src') && !isSafeUrl(attrVal)) continue;
       safeAttrs.push(`${attrName}="${attrVal.replace(/"/g, '&quot;')}"`);
     }
     const attrStr = safeAttrs.length > 0 ? ' ' + safeAttrs.join(' ') : '';
