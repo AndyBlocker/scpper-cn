@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AffixVisualStyle, Rarity, BuyRequest, PageCatalogEntry, BuyRequestMatchLevel } from '~/types/gacha'
-import { formatTokens } from '~/utils/gachaFormatters'
+import { formatTokens, formatDateCompact } from '~/utils/gachaFormatters'
 import { rarityLabel } from '~/utils/gachaRarity'
 import { buyRequestStatusLabelMap, buyRequestStatusChipClassMap, buyRequestMatchLevelLabelMap, buyRequestMatchLevelShortMap, coatingStyleLabelMap } from '~/utils/gachaConstants'
 import type { BuyRequestSortMode } from '~/utils/gachaConstants'
