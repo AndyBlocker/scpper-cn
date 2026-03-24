@@ -1,9 +1,22 @@
 import { Router } from 'express';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-// annual-summary 数据根目录（BFF 进程 cwd 下的 data/annual-summary）
-const DATA_ROOT = path.resolve(process.cwd(), 'data', 'annual-summary');
+// annual-summary 数据根目录：兼容从 bff/ 或 repo root 启动
+const DATA_ROOT = (() => {
+  const candidates = [
+    process.env.ANNUAL_SUMMARY_DATA_DIR,
+    path.resolve(process.cwd(), 'data/annual-summary'),
+    path.resolve(process.cwd(), 'bff/data/annual-summary')
+  ].filter((v): v is string => Boolean(v));
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return candidates[0] || path.resolve(process.cwd(), 'data/annual-summary');
+})();
 
 // 年份白名单：仅允许纯数字
 const YEAR_RE = /^\d{4}$/;
