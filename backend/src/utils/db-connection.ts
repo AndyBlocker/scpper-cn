@@ -14,38 +14,50 @@ let prismaInstance: PrismaClient | null = null;
 let signalsBound = false;
 
 /**
+ * 在 DATABASE_URL 中追加连接池参数（如果缺失）。
+ * Prisma Query Engine 通过 URL 参数读取 connection_limit / pool_timeout。
+ * 仅对 postgresql/postgres 协议生效；其他协议（如 file: SQLite）原样返回。
+ */
+function ensureConnectionLimit(url: string, defaultLimit = 10, defaultPoolTimeout = 10): string {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'postgresql:' && u.protocol !== 'postgres:') {
+      return url;
+    }
+    if (!u.searchParams.has('connection_limit')) {
+      u.searchParams.set('connection_limit', String(defaultLimit));
+    }
+    if (!u.searchParams.has('pool_timeout')) {
+      u.searchParams.set('pool_timeout', String(defaultPoolTimeout));
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
  * 创建或获取PrismaClient实例
  * 使用单例模式避免创建多个连接
  */
 export function getPrismaClient(): PrismaClient {
   if (!prismaInstance) {
     const databaseUrl = process.env.DATABASE_URL;
-    
+
     if (!databaseUrl) {
       throw new Error('DATABASE_URL environment variable is not set. Please check your .env file.');
     }
-    
+
     prismaInstance = new PrismaClient({
       datasources: {
         db: {
-          url: databaseUrl
+          url: ensureConnectionLimit(databaseUrl)
         }
       },
-      log: process.env.NODE_ENV === 'development' 
-        ? ['query', 'error', 'warn'] 
+      log: process.env.NODE_ENV === 'development'
+        ? ['query', 'error', 'warn']
         : ['error'],
-      // Add connection pooling configuration
-      __internal: {
-        engine: {
-          // Configure connection pool
-          maxIdleConnections: 5,
-          maxConnections: 20,
-          connectionTimeout: 20000,
-          maxWriteConnections: 10,
-          maxReadConnections: 10,
-        }
-      }
-    } as any);
+    });
   }
   
   if (!signalsBound) {

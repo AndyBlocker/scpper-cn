@@ -193,6 +193,11 @@ export class PhaseAProcessor {
     this.attrService = new AttributionService(this.store.prisma);
   }
 
+  /** 释放 GraphQL 连接等资源，防止 keep-alive 泄漏 */
+  destroy(): void {
+    (this.client as any).destroy?.();
+  }
+
   async runComplete(onProgress?: () => void): Promise<PhaseAResult> {
     Logger.info('=== Phase A: Complete Page Scanning (New Architecture) ===');
 

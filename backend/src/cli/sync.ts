@@ -188,25 +188,33 @@ export async function sync({
       phase = phase || 'all';
       console.log('\n=== Test Mode: Phase A with first batch only ===');
       const phaseAProcessor = new PhaseAProcessor();
-      const phaseAResTest = await phaseAProcessor.runTestBatch();
-      results.phaseA = phaseAResTest;
-      console.log(`✅ Phase A (test batch) completed: ${phaseAResTest.totalScanned} pages scanned`);
-      console.log(`📊 Dirty Queue: ${phaseAResTest.queueStats.total} pages need processing`);
-      console.log(`   - Phase B: ${phaseAResTest.queueStats.phaseB} pages`);
-      console.log(`   - Phase C: ${phaseAResTest.queueStats.phaseC} pages`);
-      console.log(`   - Deleted: ${phaseAResTest.queueStats.deleted} pages`);
+      try {
+        const phaseAResTest = await phaseAProcessor.runTestBatch();
+        results.phaseA = phaseAResTest;
+        console.log(`✅ Phase A (test batch) completed: ${phaseAResTest.totalScanned} pages scanned`);
+        console.log(`📊 Dirty Queue: ${phaseAResTest.queueStats.total} pages need processing`);
+        console.log(`   - Phase B: ${phaseAResTest.queueStats.phaseB} pages`);
+        console.log(`   - Phase C: ${phaseAResTest.queueStats.phaseC} pages`);
+        console.log(`   - Deleted: ${phaseAResTest.queueStats.deleted} pages`);
+      } finally {
+        phaseAProcessor.destroy();
+      }
     } else if (phase === 'all' || phase === 'a') {
       // Avoid spinner to keep progress bar clean
       console.log('Phase A: Scanning pages...');
       const phaseAProcessor = new PhaseAProcessor();
-      const phaseARes = await phaseAProcessor.runComplete(onProgress);
-      results.phaseA = phaseARes;
-      console.log(`Phase A: ${phaseARes.totalScanned} pages scanned in ${phaseARes.elapsedTime.toFixed(1)}s`);
-      console.log(`📊 Dirty Queue: ${phaseARes.queueStats.total} pages need processing`);
-      console.log(`   - Phase B: ${phaseARes.queueStats.phaseB} pages`);
-      console.log(`   - Phase C: ${phaseARes.queueStats.phaseC} pages`);
-      console.log(`   - Deleted: ${phaseARes.queueStats.deleted} pages`);
-      onProgress?.();
+      try {
+        const phaseARes = await phaseAProcessor.runComplete(onProgress);
+        results.phaseA = phaseARes;
+        console.log(`Phase A: ${phaseARes.totalScanned} pages scanned in ${phaseARes.elapsedTime.toFixed(1)}s`);
+        console.log(`📊 Dirty Queue: ${phaseARes.queueStats.total} pages need processing`);
+        console.log(`   - Phase B: ${phaseARes.queueStats.phaseB} pages`);
+        console.log(`   - Phase C: ${phaseARes.queueStats.phaseC} pages`);
+        console.log(`   - Deleted: ${phaseARes.queueStats.deleted} pages`);
+        onProgress?.();
+      } finally {
+        phaseAProcessor.destroy();
+      }
 
       // Reconcile unseen and URL-reused pages and mark deletions now
       const db = new DatabaseStore();
@@ -218,17 +226,25 @@ export async function sync({
     if ((testMode && phase === 'all') || (!testMode && (phase === 'all' || phase === 'b'))) {
       console.log(testMode ? 'Phase B (test): Collecting content...' : 'Phase B: Collecting content...');
       const phaseBProcessor = new PhaseBProcessor();
-      await phaseBProcessor.run(full, testMode, onProgress);
-      console.log('Phase B completed');
-      onProgress?.();
+      try {
+        await phaseBProcessor.run(full, testMode, onProgress);
+        console.log('Phase B completed');
+        onProgress?.();
+      } finally {
+        phaseBProcessor.destroy();
+      }
     }
 
     if ((testMode && phase === 'all') || (!testMode && (phase === 'all' || phase === 'c'))) {
       console.log(testMode ? 'Phase C (test): Deep processing...' : 'Phase C: Deep processing...');
       const phaseCProcessor = new PhaseCProcessor({ concurrency: parseInt(concurrency || '4') });
-      await phaseCProcessor.run(testMode, onProgress);
-      console.log('Phase C completed');
-      onProgress?.();
+      try {
+        await phaseCProcessor.run(testMode, onProgress);
+        console.log('Phase C completed');
+        onProgress?.();
+      } finally {
+        phaseCProcessor.destroy();
+      }
     }
 
     // 只有在运行所有阶段或者明确指定 analyze 时才运行分析

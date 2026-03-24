@@ -32,6 +32,11 @@ export class PhaseCProcessor {
     this.queue = new TaskQueue(concurrency);
   }
 
+  /** 释放 GraphQL 连接等资源，防止 keep-alive 泄漏 */
+  destroy(): void {
+    (this.client as any).destroy?.();
+  }
+
   async run(testMode = false, onProgress?: () => void): Promise<void> {
     Logger.info('=== Phase C: Targeted Complex Page Processing ===');
     

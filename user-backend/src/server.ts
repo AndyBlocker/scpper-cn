@@ -24,13 +24,32 @@ async function main() {
     triggerMarketSettleSweep();
   }, EXPIRY_SWEEP_INTERVAL_MS);
 
-  const shutdown = async (signal: string) => {
+  const shutdown = (signal: string) => {
     // eslint-disable-next-line no-console
     console.log(`Received ${signal}, shutting down...`);
     clearInterval(sweepTimer);
-    server.close(async () => {
-      await prisma.$disconnect();
-      process.exit(0);
+
+    const forceTimer = setTimeout(() => {
+      // eslint-disable-next-line no-console
+      console.error('Graceful shutdown timed out after 10s, forcing exit');
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
+
+    server.close((err) => {
+      if (err) {
+        // eslint-disable-next-line no-console
+        console.error('server.close error:', err);
+      }
+      prisma.$disconnect()
+        .catch((disconnectErr: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error('prisma.$disconnect error:', disconnectErr);
+        })
+        .finally(() => {
+          clearTimeout(forceTimer);
+          process.exit(err ? 1 : 0);
+        });
     });
   };
 
