@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { computePlacementMetrics } from '../user-backend/src/routes/gacha/runtime.ts';
+import { computePlacementMetrics } from '../user-backend/src/routes/gacha/_helpers.ts';
 
 const { Pool } = pg;
 
