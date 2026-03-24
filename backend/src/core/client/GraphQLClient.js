@@ -113,7 +113,9 @@ export class GraphQLClient {
   }
 
   /**
-   * 释放底层 HTTP 连接资源，防止 keep-alive 连接池泄漏。
+   * 释放引用以允许 GC 回收底层资源（包括 undici 连接池）。
+   * graphql-request 6.x 使用全局 fetch，没有暴露 per-instance HTTP agent，
+   * 因此无法显式关闭连接。通过断开引用链让 GC 回收是唯一可行的方式。
    * 调用后此实例不应再发起请求。
    */
   destroy() {

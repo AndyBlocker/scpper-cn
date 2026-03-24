@@ -16,16 +16,24 @@ let signalsBound = false;
 /**
  * 在 DATABASE_URL 中追加连接池参数（如果缺失）。
  * Prisma Query Engine 通过 URL 参数读取 connection_limit / pool_timeout。
+ * 仅对 postgresql/postgres 协议生效；其他协议（如 file: SQLite）原样返回。
  */
 function ensureConnectionLimit(url: string, defaultLimit = 10, defaultPoolTimeout = 10): string {
-  const u = new URL(url);
-  if (!u.searchParams.has('connection_limit')) {
-    u.searchParams.set('connection_limit', String(defaultLimit));
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'postgresql:' && u.protocol !== 'postgres:') {
+      return url;
+    }
+    if (!u.searchParams.has('connection_limit')) {
+      u.searchParams.set('connection_limit', String(defaultLimit));
+    }
+    if (!u.searchParams.has('pool_timeout')) {
+      u.searchParams.set('pool_timeout', String(defaultPoolTimeout));
+    }
+    return u.toString();
+  } catch {
+    return url;
   }
-  if (!u.searchParams.has('pool_timeout')) {
-    u.searchParams.set('pool_timeout', String(defaultPoolTimeout));
-  }
-  return u.toString();
 }
 
 /**
