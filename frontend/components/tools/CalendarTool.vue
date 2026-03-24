@@ -195,6 +195,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import DOMPurify from 'isomorphic-dompurify';
 import LucideIcon from '~/components/LucideIcon.vue';
 import {
   addMonths,
@@ -577,7 +578,7 @@ async function onSegmentClick(seg: Segment) {
       detailTitle.value = seg.title;
       detailSummary.value = seg.summary ?? null;
       detailColor.value = seg.color;
-      detailHtml.value = md.render(String(seg.localDetails));
+      detailHtml.value = DOMPurify.sanitize(md.render(String(seg.localDetails)));
       detailDateRange.value = formatRange(seg.startsAt, seg.endsAt);
       detailVisible.value = true;
       return;
@@ -586,7 +587,7 @@ async function onSegmentClick(seg: Segment) {
     detailTitle.value = res.title || '';
     detailSummary.value = res.summary ?? null;
     detailColor.value = res.color ?? null;
-    detailHtml.value = res.detailsMd ? md.render(String(res.detailsMd)) : '';
+    detailHtml.value = res.detailsMd ? DOMPurify.sanitize(md.render(String(res.detailsMd))) : '';
     detailDateRange.value = formatRange(res.startsAt, res.endsAt);
     detailVisible.value = true;
   } catch (err) {

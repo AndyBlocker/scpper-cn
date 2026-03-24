@@ -45,7 +45,7 @@ function buildVerificationTemplate(payload, context) {
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>${subject}</title>
+    <title>${escapeHtml(subject)}</title>
   </head>
   <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; padding: 24px; color: #111827;">
     <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);">
@@ -61,13 +61,113 @@ function buildVerificationTemplate(payload, context) {
   return { subject, text, html };
 }
 
+// 邮件 HTML 安全标签白名单
+const MAIL_SAFE_TAGS = new Set([
+  'p', 'div', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'strong', 'b', 'em', 'i', 'u', 's', 'del', 'small', 'mark',
+  'span', 'a', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
+  'table', 'thead', 'tbody', 'tr', 'td', 'th',
+  'img',
+]);
+
+// 邮件 HTML 安全属性白名单
+const MAIL_SAFE_ATTRS = new Set([
+  'href', 'src', 'alt', 'title', 'class',
+  'width', 'height', 'colspan', 'rowspan', 'target', 'rel',
+]);
+
+/** 安全 URL 协议白名单 */
+const SAFE_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
+/**
+ * 粗略解码 HTML 实体，将属性值还原为真实文本，
+ * 用于在协议校验前消除各种实体编码绕过。
+ */
+function decodeHtmlEntities(str) {
+  // 数字实体（十六进制和十进制）
+  let decoded = str.replace(/&#x([0-9a-f]+);?/gi, (_, hex) => {
+    try { return String.fromCodePoint(parseInt(hex, 16)); } catch { return ''; }
+  });
+  decoded = decoded.replace(/&#(\d+);?/g, (_, dec) => {
+    try { return String.fromCodePoint(parseInt(dec, 10)); } catch { return ''; }
+  });
+  // 命名实体：替换为对应字符（覆盖常见攻击向量）
+  const namedEntities = {
+    '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'",
+    '&nbsp;': ' ', '&colon;': ':', '&tab;': '\t', '&newline;': '\n',
+    '&lpar;': '(', '&rpar;': ')', '&sol;': '/', '&bsol;': '\\',
+    '&comma;': ',', '&semi;': ';', '&equals;': '=', '&num;': '#',
+    '&period;': '.', '&excl;': '!', '&quest;': '?', '&plus;': '+',
+  };
+  decoded = decoded.replace(/&[a-z]+;/gi, (entity) => {
+    return namedEntities[entity.toLowerCase()] ?? '';
+  });
+  return decoded;
+}
+
+/**
+ * 检查 URL 是否安全（白名单协议策略）。
+ * 只允许 http:, https:, mailto: 和相对路径；其余一律拒绝。
+ */
+function isSafeUrl(rawVal) {
+  const decoded = decodeHtmlEntities(rawVal).replace(/[\s\x00-\x1f]+/g, '').trim();
+  if (!decoded) return false;
+  // 协议相对 URL（//host）不允许，可能加载外部资源
+  if (decoded.startsWith('//')) return false;
+  // 相对路径和锚点链接视为安全
+  if (decoded.startsWith('/') || decoded.startsWith('#') || decoded.startsWith('?')) return true;
+  // 提取协议部分
+  const colonIdx = decoded.indexOf(':');
+  if (colonIdx === -1) return true; // 无协议的相对路径
+  const protocol = decoded.slice(0, colonIdx + 1).toLowerCase();
+  return SAFE_URL_PROTOCOLS.has(protocol);
+}
+
+/**
+ * 简易 HTML 过滤：只保留白名单中的标签和属性，
+ * 移除 script、iframe、事件处理器等危险内容。
+ */
+function sanitizeMailHtml(raw) {
+  if (!raw) return '';
+  // 移除 script/style/iframe 等危险标签及其内容
+  let html = raw.replace(/<(script|style|iframe|object|embed|form|input|textarea|select|button)\b[^]*?<\/\1\s*>/gi, '');
+  // 移除未闭合的危险标签
+  html = html.replace(/<\/?(script|style|iframe|object|embed|form|input|textarea|select|button)\b[^>]*>/gi, '');
+  // 过滤剩余标签：只保留白名单标签和属性
+  html = html.replace(/<\/?([a-z][a-z0-9]*)\b([^>]*)?\/?>/gi, (match, tag, attrs) => {
+    const lowerTag = tag.toLowerCase();
+    if (!MAIL_SAFE_TAGS.has(lowerTag)) return '';
+    if (!attrs || !attrs.trim()) return match.startsWith('</') ? `</${lowerTag}>` : `<${lowerTag}>`;
+    // 过滤属性
+    const safeAttrs = [];
+    const attrRe = /([a-z][a-z0-9-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/gi;
+    let m;
+    while ((m = attrRe.exec(attrs)) !== null) {
+      const attrName = m[1].toLowerCase();
+      const attrVal = m[2] ?? m[3] ?? m[4] ?? '';
+      if (!MAIL_SAFE_ATTRS.has(attrName)) continue;
+      // 白名单协议校验：只允许 http/https/mailto 和相对路径
+      if ((attrName === 'href' || attrName === 'src') && !isSafeUrl(attrVal)) continue;
+      safeAttrs.push(`${attrName}="${attrVal.replace(/"/g, '&quot;')}"`);
+    }
+    const attrStr = safeAttrs.length > 0 ? ' ' + safeAttrs.join(' ') : '';
+    if (match.startsWith('</')) return `</${lowerTag}>`;
+    const selfClose = match.trimEnd().endsWith('/>') ? ' /' : '';
+    return `<${lowerTag}${attrStr}${selfClose}>`;
+  });
+  // 移除所有事件属性 (on*)
+  html = html.replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/gi, '');
+  return html;
+}
+
 function buildGenericTemplate(payload) {
   const subject = ensureString(payload?.subject).trim();
   if (!subject) {
     throw new Error('消息主题不能为空');
   }
   const text = ensureString(payload?.text).trim();
-  const html = ensureString(payload?.html).trim() || undefined;
+  const rawHtml = ensureString(payload?.html).trim() || undefined;
+  const html = rawHtml ? sanitizeMailHtml(rawHtml) : undefined;
   if (!text && !html) {
     throw new Error('消息内容必须包含 text 或 html');
   }

@@ -188,7 +188,7 @@
           <div class="h-[32px] overflow-hidden flex items-center">
             <div v-if="snippetHtml"
                  class="text-[12px] leading-4 text-neutral-600 dark:text-neutral-400 clamp-2"
-                 v-html="snippetHtml"></div>
+                 v-html="sanitizeSnippetHtml(snippetHtml)"></div>
           </div>
         </div>
   

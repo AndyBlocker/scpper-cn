@@ -106,7 +106,7 @@
                           <div
                             v-if="entry.item.snippet"
                             class="mt-1 text-xs leading-relaxed text-[rgb(var(--muted)_/_0.85)]"
-                            v-html="entry.item.snippet"
+                            v-html="sanitizeSnippetHtml(entry.item.snippet)"
                           ></div>
                         </div>
                         <span class="ml-2 shrink-0 rounded-full border border-[var(--g-accent-strong)] bg-[var(--g-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))]">
@@ -377,7 +377,7 @@
                         <div
                           v-if="entry.item.snippet"
                           class="mt-1 text-xs leading-relaxed text-[rgb(var(--muted)_/_0.85)]"
-                          v-html="entry.item.snippet"
+                          v-html="sanitizeSnippetHtml(entry.item.snippet)"
                         ></div>
                       </div>
                       <span class="ml-2 shrink-0 rounded-full border border-[var(--g-accent-strong)] bg-[var(--g-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent-strong))]">
