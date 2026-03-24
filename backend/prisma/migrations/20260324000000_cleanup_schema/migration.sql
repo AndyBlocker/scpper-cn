@@ -2,7 +2,7 @@
 
 -- 1. Remove redundant indexes (unique constraints already create indexes)
 DROP INDEX IF EXISTS "SiteStats_date_idx";
-DROP INDEX IF EXISTS "SiteOverviewDaily_date_idx";
+DROP INDEX IF EXISTS "idx_siteoverviewdaily_date";
 DROP INDEX IF EXISTS "idx_category_index_tick_category_as_of_ts";
 DROP INDEX IF EXISTS "LeaderboardCache_key_period_idx";
 DROP INDEX IF EXISTS "SeriesStats_seriesNumber_idx";

@@ -516,6 +516,14 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       try {
         await client.query('BEGIN');
 
+        // Lock owner's collections to serialize concurrent isDefault changes
+        if (isDefault) {
+          await client.query(
+            'SELECT id FROM "UserCollection" WHERE "ownerId" = $1 FOR UPDATE',
+            [ownerId]
+          );
+        }
+
         const result = await client.query<any>(
           supportsTransforms
             ? `
@@ -624,6 +632,14 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+
+        // Lock owner's collections to serialize concurrent isDefault changes
+        if (isDefault) {
+          await client.query(
+            'SELECT id FROM "UserCollection" WHERE "ownerId" = $1 FOR UPDATE',
+            [ownerId]
+          );
+        }
 
         const updated = await client.query<any>(
           supportsTransforms
