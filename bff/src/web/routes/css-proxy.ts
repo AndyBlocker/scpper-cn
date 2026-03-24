@@ -101,6 +101,10 @@ function isRateLimited(ip: string): boolean {
   const now = Date.now();
   const bucket = rateBuckets.get(ip);
   if (!bucket || now >= bucket.resetAt) {
+    // Refuse new entries when map is at capacity (OOM protection)
+    if (!bucket && rateBuckets.size >= RATE_BUCKETS_MAX_SIZE) {
+      return true;
+    }
     rateBuckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return false;
   }
