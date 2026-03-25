@@ -53,6 +53,15 @@
               </span>
             </span>
           </a>
+          <NuxtLink
+            v-if="page?.wikidotId && previewAvailable"
+            :to="`/page/${page.wikidotId}/preview`"
+            class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700"
+            title="预览 Wikidot 页面"
+          >
+            <LucideIcon name="Eye" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
+            预览
+          </NuxtLink>
           <CollectionPicker
             v-if="page?.pageId"
             :page-id="page.pageId"
@@ -309,7 +318,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import { definePageMeta, useAsyncData, useHead, useNuxtApp, useRoute, useRuntimeConfig } from '#imports'
 import { orderTags } from '~/composables/useTagOrder'
 import { onBeforeRouteUpdate } from 'vue-router'
@@ -369,6 +378,21 @@ const { data: page, pending: pagePending, error: pageError } = await useAsyncDat
   () => $bff(`/pages/by-id`, { params: { wikidotId: wikidotId.value } }),
   { watch: [() => route.params.wikidotId] }
 )
+
+// 预览可用性检查（仅客户端）
+const previewAvailable = ref(false)
+if (import.meta.client) {
+  watchEffect(async () => {
+    const wid = page.value?.wikidotId
+    if (!wid) { previewAvailable.value = false; return }
+    try {
+      const res = await $fetch<{ available: boolean }>(`/api/pages/${wid}/preview-status`)
+      previewAvailable.value = res?.available ?? false
+    } catch {
+      previewAvailable.value = false
+    }
+  })
+}
 
 const pageDisplayTitle = computed(() => {
   const base = typeof page.value?.title === 'string' ? page.value!.title!.trim() : ''
