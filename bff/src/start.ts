@@ -40,12 +40,15 @@ export async function createServer() {
     }
   }));
 
-  // Global rate limit: 120 requests per minute per IP.
+  // Global rate limit: 600 requests per minute per IP.
+  // The frontend fires ~25-30 requests per page load (alerts, relations,
+  // vote-status, stats, etc.), so 120 was too tight for normal browsing
+  // across 3-4 navigations per minute.
   // Skip healthz (monitoring), /internal (authenticated server-to-server),
   // and /avatar (proxied to avatar-agent which has its own limits).
   const globalLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 120,
+    max: 600,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'too_many_requests' },
