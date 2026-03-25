@@ -310,7 +310,7 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
   }
   
   const props = defineProps<Props>()
-  const { ensureVotes, getVote, viewerWikidotId } = useViewerVotes()
+  const { getVote, viewerWikidotId } = useViewerVotes()
   const isClient = () => typeof window !== 'undefined'
   
   const variant = computed<'lg'|'md'|'sm'>(() => {
@@ -509,19 +509,6 @@ import { normalizeBffBase, resolveWithFallback } from '~/utils/assetUrl'
     }
   })
 
-  watch(
-    [viewerWikidotId, numericPageId, () => props.viewerVote],
-    async ([viewer, pageId, directVote]) => {
-      if (!isClient()) return
-      if (!viewer || !pageId) return
-      if (directVote != null) return
-      const cached = getVote(pageId)
-      if (cached != null) return
-      await ensureVotes([pageId])
-    },
-    { immediate: true }
-  )
-  
 const controversyText = computed(() => {
     const v = Number(controversy.value ?? 0)
     return Number.isFinite(v) ? v.toFixed(3) : '0.000'
