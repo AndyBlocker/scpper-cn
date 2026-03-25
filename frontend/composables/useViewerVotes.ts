@@ -78,10 +78,18 @@ export function useViewerVotes() {
     return voteMap.value[Math.trunc(numericId)]
   }
 
+  // Pending pages queued while auth was not yet resolved.
+  // When viewerWikidotId becomes available we flush and hydrate them.
+  let pendingPages: Array<{ wikidotId?: number | string | null; viewerVote?: number | null }> = []
+
   async function hydratePages(pages: Array<{ wikidotId?: number | string | null; viewerVote?: number | null }>) {
     if (!isClient) return
-    if (!viewerWikidotId.value) return
     if (!Array.isArray(pages) || pages.length === 0) return
+    if (!viewerWikidotId.value) {
+      // Auth not ready yet — queue for later
+      pendingPages = pendingPages.concat(pages)
+      return
+    }
     const ids = pages
       .map((page) => Number(page?.wikidotId))
       .filter((id) => Number.isFinite(id) && id > 0)
@@ -102,6 +110,15 @@ export function useViewerVotes() {
       console.warn('[viewer-votes] hydratePages failed', error)
     }
   }
+
+  // When auth resolves (viewerWikidotId changes from null → value),
+  // flush any pages that were queued while waiting for auth.
+  watch(viewerWikidotId, (newId) => {
+    if (!newId || pendingPages.length === 0) return
+    const toFlush = pendingPages
+    pendingPages = []
+    void hydratePages(toFlush)
+  })
 
   return {
     ensureVotes,
