@@ -10,7 +10,7 @@ interface VoteMap {
 }
 
 export function useViewerVotes() {
-  const { user } = useAuth()
+  const { user, status: authStatus } = useAuth()
   const { $bff } = useNuxtApp()
   const voteMap = useState<VoteMap>(STATE_KEY, () => ({}))
 
@@ -78,16 +78,20 @@ export function useViewerVotes() {
     return voteMap.value[Math.trunc(numericId)]
   }
 
-  // Pending pages queued while auth was not yet resolved.
+  // Pending pages queued while auth is still resolving (status === 'unknown').
   // When viewerWikidotId becomes available we flush and hydrate them.
+  // We only queue when auth is genuinely pending — not for resolved guests
+  // (status === 'unauthenticated') who will never have a viewerWikidotId.
   let pendingPages: Array<{ wikidotId?: number | string | null; viewerVote?: number | null }> = []
 
   async function hydratePages(pages: Array<{ wikidotId?: number | string | null; viewerVote?: number | null }>) {
     if (!isClient) return
     if (!Array.isArray(pages) || pages.length === 0) return
     if (!viewerWikidotId.value) {
-      // Auth not ready yet — queue for later
-      pendingPages = pendingPages.concat(pages)
+      if (authStatus.value === 'unknown') {
+        // Auth still loading — queue for later flush
+        pendingPages = pendingPages.concat(pages)
+      }
       return
     }
     const ids = pages
