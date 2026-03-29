@@ -1,7 +1,6 @@
 import type { Router } from 'express';
-import { Prisma, GachaRarity, GachaAffixVisualStyle as PrismaAffixVisualStyle } from '@prisma/client';
+import { GachaRarity, GachaAffixVisualStyle as PrismaAffixVisualStyle } from '@prisma/client';
 import { z } from 'zod';
-import { prisma } from '../../db.js';
 import * as h from './_helpers.js';
 
 export function registerPlacementRoutes(router: Router) {
@@ -409,114 +408,63 @@ export function registerPlacementRoutes(router: Router) {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
       const scope = h.buildIdempotencyScope(req, req.authUser.id);
-      let outcome: h.IdempotencyOutcome;
-      try {
-        outcome = await h.runSerializableTransaction(async (tx) => {
-          const asOf = h.now();
-          await tx.apiIdempotencyRecord.deleteMany({
-            where: {
-              userId: scope.userId,
-              expireAt: { lte: asOf }
-            }
-          });
-          const existing = await tx.apiIdempotencyRecord.findUnique({
-            where: {
-              userId_method_path_idemKey: {
-                userId: scope.userId,
-                method: scope.method,
-                path: scope.path,
-                idemKey: scope.idemKey
-              }
-            }
-          });
-          if (existing) {
-            if (existing.requestHash !== scope.requestHash) {
-              throw Object.assign(new Error('idempotency_key_conflict'), { status: 409, code: 'IDEMPOTENCY_KEY_CONFLICT' });
-            }
-            return h.mapIdempotencyReplay(existing);
-          }
-
-          const ensured = await h.ensurePlacementStateAndSlots(tx, scope.userId);
-          const accruedState = await h.accruePlacementPending(tx, {
-            userId: scope.userId,
-            state: ensured.state,
-            slots: ensured.slots,
-            addons: ensured.addons,
-            asOf
-          });
-          const beforePlacement = h.serializePlacement(scope.userId, accruedState, ensured.slots, ensured.addons);
-
-          let nextOutcome: h.IdempotencyOutcome;
-          if (beforePlacement.claimableToken <= 0) {
-            nextOutcome = {
-              statusCode: 400,
-              responseJson: {
-                ok: false,
-                error: '当前暂无可领取收益'
-              }
-            };
-          } else {
-            const claimToken = beforePlacement.claimableToken;
-            const wallet = await h.ensureWallet(tx, scope.userId);
-            const updatedWallet = await tx.gachaWallet.update({
-              where: { id: wallet.id },
-              data: {
-                balance: { increment: claimToken },
-                totalEarned: { increment: claimToken }
-              }
-            });
-            const pendingAfter = h.clampPlacementToken(
-              beforePlacement.pendingToken - claimToken,
-              beforePlacement.cap
-            );
-            const stateAfter = await tx.gachaPlacementState.update({
-              where: { id: accruedState.id },
-              data: {
-                pendingToken: h.toPlacementDecimal(pendingAfter),
-                lastAccrualAt: asOf
-              }
-            });
-            await h.recordLedger(tx, wallet.id, scope.userId, claimToken, 'PLACEMENT_CLAIM', {
-              claimToken,
-              pendingBefore: beforePlacement.pendingToken,
-              pendingAfter
-            });
-            nextOutcome = {
-              statusCode: 200,
-              responseJson: {
-                ok: true,
-                claimedToken: claimToken,
-                wallet: await h.serializeWalletWithPity(tx, updatedWallet),
-                placement: h.serializePlacement(scope.userId, stateAfter, ensured.slots, ensured.addons)
-              }
-            };
-          }
-
-          await tx.apiIdempotencyRecord.create({
-            data: {
-              userId: scope.userId,
-              method: scope.method,
-              path: scope.path,
-              idemKey: scope.idemKey,
-              requestHash: scope.requestHash,
-              responseJson: h.normalizeJsonValue(nextOutcome.responseJson) as Prisma.InputJsonValue,
-              statusCode: nextOutcome.statusCode,
-              expireAt: new Date(asOf.getTime() + h.IDEMPOTENCY_TTL_HOURS * 3_600_000)
-            }
-          });
-
-          return nextOutcome;
+      const outcome = await h.executeIdempotent(scope, async (tx) => {
+        const asOf = h.now();
+        const ensured = await h.ensurePlacementStateAndSlots(tx, scope.userId);
+        const accruedState = await h.accruePlacementPending(tx, {
+          userId: scope.userId,
+          state: ensured.state,
+          slots: ensured.slots,
+          addons: ensured.addons,
+          asOf
         });
-      } catch (error) {
-        if (!h.isUniqueConstraintError(error)) {
-          throw error;
+        const beforePlacement = h.serializePlacement(scope.userId, accruedState, ensured.slots, ensured.addons);
+
+        if (beforePlacement.claimableToken <= 0) {
+          return {
+            statusCode: 400,
+            responseJson: {
+              ok: false,
+              error: '当前暂无可领取收益'
+            }
+          };
         }
-        const replayed = await h.replayIdempotencyRecord(scope);
-        if (!replayed) {
-          throw error;
-        }
-        outcome = replayed;
-      }
+
+        const claimToken = beforePlacement.claimableToken;
+        const wallet = await h.ensureWallet(tx, scope.userId);
+        const updatedWallet = await tx.gachaWallet.update({
+          where: { id: wallet.id },
+          data: {
+            balance: { increment: claimToken },
+            totalEarned: { increment: claimToken }
+          }
+        });
+        const pendingAfter = h.clampPlacementToken(
+          beforePlacement.pendingToken - claimToken,
+          beforePlacement.cap
+        );
+        const stateAfter = await tx.gachaPlacementState.update({
+          where: { id: accruedState.id },
+          data: {
+            pendingToken: h.toPlacementDecimal(pendingAfter),
+            lastAccrualAt: asOf
+          }
+        });
+        await h.recordLedger(tx, wallet.id, scope.userId, claimToken, 'PLACEMENT_CLAIM', {
+          claimToken,
+          pendingBefore: beforePlacement.pendingToken,
+          pendingAfter
+        });
+        return {
+          statusCode: 200,
+          responseJson: {
+            ok: true,
+            claimedToken: claimToken,
+            wallet: await h.serializeWalletWithPity(tx, updatedWallet),
+            placement: h.serializePlacement(scope.userId, stateAfter, ensured.slots, ensured.addons)
+          }
+        };
+      });
 
       res.status(outcome.statusCode).json(outcome.responseJson);
     } catch (error: any) {
