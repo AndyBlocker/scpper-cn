@@ -359,6 +359,7 @@ model Revision {
   @@index([pageVersionId, timestamp], map: "idx_rev_pv_ts")
   @@index([userId])
   @@index([timestamp])
+  @@index([userId, timestamp], map: "idx_revision_user_ts")
 }
 
 model SeriesStats {
@@ -604,6 +605,7 @@ model Vote {
   @@index([pageVersionId, direction])
   @@index([pageVersionId, timestamp], map: "idx_vote_pv_ts")
   @@index([userId])
+  @@index([userId, timestamp], map: "idx_vote_user_ts")
 }
 
 model InterestingFacts {
@@ -991,6 +993,7 @@ model ForumPost {
   @@index([parentId])
   @@index([createdAt])
   @@index([createdByWikidotId])
+  @@index([createdByWikidotId, createdByType, isDeleted, createdAt], map: "idx_forum_post_user_type_deleted_created")
 }
 
 model ForumInteractionAlert {
