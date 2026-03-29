@@ -941,7 +941,8 @@ export async function loadRarityRewards(tx: typeof prisma | Tx, force = false): 
 }
 
 export const SERIALIZABLE_RETRY_ATTEMPTS = 5;
-export const SERIALIZABLE_RETRY_BASE_DELAY_MS = 50;
+export const SERIALIZABLE_RETRY_BASE_DELAY_MS = 100;
+export const SERIALIZABLE_RETRY_MAX_DELAY_MS = 1500;
 export const SERIALIZABLE_MAX_WAIT_MS = 10_000;
 export const SERIALIZABLE_TIMEOUT_MS = 20_000;
 
@@ -976,7 +977,7 @@ export function isMissingTableError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
 }
 
-export async function runSerializableTransaction<T>(task: (tx: Tx) => Promise<T>): Promise<T> {
+export async function runSerializableTransaction<T>(task: (tx: Tx) => Promise<T>, label?: string): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= SERIALIZABLE_RETRY_ATTEMPTS; attempt += 1) {
     try {
@@ -987,11 +988,17 @@ export async function runSerializableTransaction<T>(task: (tx: Tx) => Promise<T>
       });
     } catch (error) {
       lastError = error;
-      if (!isRetryableTransactionError(error) || attempt === SERIALIZABLE_RETRY_ATTEMPTS) {
+      const retryable = isRetryableTransactionError(error);
+      if (!retryable || attempt === SERIALIZABLE_RETRY_ATTEMPTS) {
+        if (retryable) {
+          console.error(`[serializable-tx] ${label ?? 'unknown'} exhausted ${SERIALIZABLE_RETRY_ATTEMPTS} retries`, error);
+        }
         throw error;
       }
-      const jitterMs = Math.floor(Math.random() * SERIALIZABLE_RETRY_BASE_DELAY_MS);
-      const delayMs = SERIALIZABLE_RETRY_BASE_DELAY_MS * attempt + jitterMs;
+      // Full-jitter exponential backoff: delay ∈ [0, min(cap, base * 2^(attempt-1))]
+      const cap = Math.min(SERIALIZABLE_RETRY_MAX_DELAY_MS, SERIALIZABLE_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
+      const delayMs = Math.floor(Math.random() * cap);
+      console.warn(`[serializable-tx] ${label ?? 'unknown'} retry #${attempt}/${SERIALIZABLE_RETRY_ATTEMPTS}, delay=${delayMs}ms`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
@@ -6937,6 +6944,9 @@ export async function replayIdempotencyRecord(scope: IdempotencyScope) {
     }
   });
   if (!record) return null;
+  // Expired records should not be replayed — treat as absent so the
+  // caller falls through to a fresh execution.
+  if (record.expireAt <= now()) return null;
   if (record.requestHash !== scope.requestHash) {
     throw Object.assign(new Error('idempotency_key_conflict'), { status: 409, code: 'IDEMPOTENCY_KEY_CONFLICT' });
   }
@@ -6947,15 +6957,25 @@ export async function executeIdempotent(
   scope: IdempotencyScope,
   task: (tx: Tx) => Promise<IdempotencyOutcome>
 ) {
+  // Best-effort cleanup of expired records OUTSIDE the Serializable transaction.
+  // This reduces lock contention without affecting correctness — expired records
+  // are never matched by the idempotency check (they have different idemKey or
+  // are already past expiry), so deleting them is safe to do non-transactionally.
+  try {
+    await prisma.apiIdempotencyRecord.deleteMany({
+      where: {
+        userId: scope.userId,
+        expireAt: { lte: now() }
+      }
+    });
+  } catch {
+    // Cleanup failure is non-critical; expired records will be cleaned next time.
+  }
+
+  const txLabel = `idempotent:${scope.method}:${scope.path}`;
   try {
     return await runSerializableTransaction(async (tx) => {
       const asOf = now();
-      await tx.apiIdempotencyRecord.deleteMany({
-        where: {
-          userId: scope.userId,
-          expireAt: { lte: asOf }
-        }
-      });
 
       const existing = await tx.apiIdempotencyRecord.findUnique({
         where: {
@@ -6968,10 +6988,17 @@ export async function executeIdempotent(
         }
       });
       if (existing) {
-        if (existing.requestHash !== scope.requestHash) {
-          throw Object.assign(new Error('idempotency_key_conflict'), { status: 409, code: 'IDEMPOTENCY_KEY_CONFLICT' });
+        // If the cleanup outside the transaction missed this record, treat
+        // expired entries as absent so a fresh execution can proceed.
+        if (existing.expireAt > asOf) {
+          if (existing.requestHash !== scope.requestHash) {
+            throw Object.assign(new Error('idempotency_key_conflict'), { status: 409, code: 'IDEMPOTENCY_KEY_CONFLICT' });
+          }
+          return mapIdempotencyReplay(existing);
         }
-        return mapIdempotencyReplay(existing);
+        // Expired — delete stale record so the create below succeeds.
+        // Use deleteMany to tolerate concurrent deletion (avoids P2025).
+        await tx.apiIdempotencyRecord.deleteMany({ where: { id: existing.id } });
       }
 
       const outcome = await task(tx);
@@ -6989,7 +7016,7 @@ export async function executeIdempotent(
         }
       });
       return outcome;
-    });
+    }, txLabel);
   } catch (error) {
     if (!isUniqueConstraintError(error)) {
       throw error;

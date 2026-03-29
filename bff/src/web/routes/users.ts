@@ -179,9 +179,13 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
         const { rows } = await readPool.query(sql, [wikidotIdInt]);
         if (rows.length === 0) return null;
 
+        // Use userId (internal id) for Vote/Revision JOINs,
+        // and wikidotId directly for ForumPost (no User JOIN needed).
+        const userId = rows[0].id;
+
         const lastActivitySql = `
           WITH last_vote AS (
-            SELECT 
+            SELECT
               v.timestamp,
               'VOTE'::text AS type,
               pv."wikidotId" AS "pageWikidotId",
@@ -197,13 +201,12 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               NULL::text AS "forumPostExcerpt"
             FROM "Vote" v
             JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-            JOIN "User" u ON v."userId" = u.id
-            WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+            WHERE v."userId" = $2 AND pv."validTo" IS NULL AND pv."isDeleted" = false
             ORDER BY v.timestamp DESC
             LIMIT 1
           ),
           last_rev AS (
-            SELECT 
+            SELECT
               r.timestamp,
               'REVISION'::text AS type,
               pv."wikidotId" AS "pageWikidotId",
@@ -219,8 +222,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               NULL::text AS "forumPostExcerpt"
             FROM "Revision" r
             JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
-            JOIN "User" u ON r."userId" = u.id
-            WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+            WHERE r."userId" = $2 AND pv."validTo" IS NULL AND pv."isDeleted" = false
             ORDER BY r.timestamp DESC
             LIMIT 1
           ),
@@ -258,9 +260,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
                 200
               )::text AS "forumPostExcerpt"
             FROM "ForumPost" fp
-            JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
             JOIN "ForumThread" t ON t.id = fp."threadId"
-            WHERE u."wikidotId" = $1
+            WHERE fp."createdByWikidotId" = $1
               AND fp."createdAt" IS NOT NULL
               AND fp."isDeleted" = false
               AND fp."createdByType" = 'user'
@@ -280,7 +281,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
 
         const firstActivitySql = `
           WITH first_vote AS (
-            SELECT 
+            SELECT
               v.timestamp,
               'VOTE'::text AS type,
               pv."wikidotId" AS "pageWikidotId",
@@ -296,13 +297,12 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               NULL::text AS "forumPostExcerpt"
             FROM "Vote" v
             JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-            JOIN "User" u ON v."userId" = u.id
-            WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+            WHERE v."userId" = $2 AND pv."validTo" IS NULL AND pv."isDeleted" = false
             ORDER BY v.timestamp ASC
             LIMIT 1
           ),
           first_rev AS (
-            SELECT 
+            SELECT
               r.timestamp,
               'REVISION'::text AS type,
               pv."wikidotId" AS "pageWikidotId",
@@ -318,8 +318,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               NULL::text AS "forumPostExcerpt"
             FROM "Revision" r
             JOIN "PageVersion" pv ON r."pageVersionId" = pv.id
-            JOIN "User" u ON r."userId" = u.id
-            WHERE u."wikidotId" = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+            WHERE r."userId" = $2 AND pv."validTo" IS NULL AND pv."isDeleted" = false
             ORDER BY r.timestamp ASC
             LIMIT 1
           ),
@@ -357,9 +356,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
                 200
               )::text AS "forumPostExcerpt"
             FROM "ForumPost" fp
-            JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
             JOIN "ForumThread" t ON t.id = fp."threadId"
-            WHERE u."wikidotId" = $1
+            WHERE fp."createdByWikidotId" = $1
               AND fp."createdAt" IS NOT NULL
               AND fp."isDeleted" = false
               AND fp."createdByType" = 'user'
@@ -380,8 +378,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
         let payload: any = rows[0];
         try {
           const [laRes, faRes] = await Promise.all([
-            readPool.query(lastActivitySql, [wikidotIdInt]),
-            readPool.query(firstActivitySql, [wikidotIdInt])
+            readPool.query(lastActivitySql, [wikidotIdInt, userId]),
+            readPool.query(firstActivitySql, [wikidotIdInt, userId])
           ]);
           const la = laRes.rows[0];
           const fa = faRes.rows[0];
