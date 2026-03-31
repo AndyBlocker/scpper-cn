@@ -4,10 +4,11 @@ import { prisma } from './db.js';
 import {
   triggerTradeExpirySweep,
   triggerBuyRequestExpirySweep,
-  triggerMarketSettleSweep
+  triggerMarketSettleSweep,
+  TRADE_EXPIRY_SWEEP_INTERVAL_MS,
+  BUY_REQUEST_EXPIRY_SWEEP_INTERVAL_MS,
+  MARKET_SETTLE_SWEEP_INTERVAL_MS
 } from './routes/gacha/index.js';
-
-const EXPIRY_SWEEP_INTERVAL_MS = 60_000; // 60 seconds
 
 async function main() {
   const app = createApp();
@@ -16,18 +17,20 @@ async function main() {
     console.log(`[user-backend] listening on http://localhost:${config.port}`);
   });
 
-  // Background expiry sweeps — ensure expired trades/buy-requests are cleaned
-  // up even when no user traffic is flowing.
-  const sweepTimer = setInterval(() => {
-    triggerTradeExpirySweep();
-    triggerBuyRequestExpirySweep();
-    triggerMarketSettleSweep();
-  }, EXPIRY_SWEEP_INTERVAL_MS);
+  // Background expiry sweeps — each on its own interval to avoid bunching.
+  const tradeTimer = setInterval(triggerTradeExpirySweep, TRADE_EXPIRY_SWEEP_INTERVAL_MS);
+  const buyReqTimer = setInterval(triggerBuyRequestExpirySweep, BUY_REQUEST_EXPIRY_SWEEP_INTERVAL_MS);
+  const marketTimer = setInterval(triggerMarketSettleSweep, MARKET_SETTLE_SWEEP_INTERVAL_MS);
+  tradeTimer.unref();
+  buyReqTimer.unref();
+  marketTimer.unref();
 
   const shutdown = (signal: string) => {
     // eslint-disable-next-line no-console
     console.log(`Received ${signal}, shutting down...`);
-    clearInterval(sweepTimer);
+    clearInterval(tradeTimer);
+    clearInterval(buyReqTimer);
+    clearInterval(marketTimer);
 
     const forceTimer = setTimeout(() => {
       // eslint-disable-next-line no-console

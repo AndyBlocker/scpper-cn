@@ -24,6 +24,14 @@ const cache = new Map<string, { data: any; loadedAt: number }>();
 const inflight = new Map<string, Promise<any>>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
+// Periodic sweep to evict expired entries (every 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (now - entry.loadedAt >= CACHE_TTL_MS) cache.delete(key);
+  }
+}, 10 * 60 * 1000).unref();
+
 async function loadJSON(filename: string): Promise<any> {
   const key = filename;
   const now = Date.now();
