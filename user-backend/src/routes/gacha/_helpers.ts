@@ -56,6 +56,14 @@ export * from './shared/constants.js';
 export const oracleTickCache = new Map<MarketCategory, OracleCacheEntry>();
 export const oracleTickInflight = new Map<MarketCategory, OracleInflightEntry>();
 export const authorCardSearchCache = new Map<string, AuthorCardSearchCacheEntry>();
+
+// Periodic eviction of stale oracle tick cache entries
+setInterval(() => {
+  const nowMs = Date.now();
+  for (const [cat, entry] of oracleTickCache.entries()) {
+    if (nowMs - entry.fetchedAt > ORACLE_CACHE_TTL_MS * 4) oracleTickCache.delete(cat);
+  }
+}, 60_000).unref();
 export let drawPoolCache: {
   fetchedAt: number;
   items: DrawPoolCardSnapshot[];
@@ -5076,20 +5084,30 @@ export function escapeSqlLikePattern(value: string) {
   return String(value || '').replace(/[\\%_]/g, '\\$&');
 }
 
+const AUTHOR_SEARCH_CACHE_MAX_SIZE = 200;
+
 export function pruneAuthorCardSearchCache() {
-  if (authorCardSearchCache.size <= 600) return;
+  if (authorCardSearchCache.size <= AUTHOR_SEARCH_CACHE_MAX_SIZE) return;
   const nowMs = Date.now();
   for (const [key, entry] of authorCardSearchCache.entries()) {
     if (entry.expiresAt <= nowMs) {
       authorCardSearchCache.delete(key);
     }
   }
-  while (authorCardSearchCache.size > 600) {
+  while (authorCardSearchCache.size > AUTHOR_SEARCH_CACHE_MAX_SIZE) {
     const oldestKey = authorCardSearchCache.keys().next().value;
     if (!oldestKey) break;
     authorCardSearchCache.delete(oldestKey);
   }
 }
+
+// Periodic sweep to evict expired entries even without new writes
+setInterval(() => {
+  const nowMs = Date.now();
+  for (const [key, entry] of authorCardSearchCache.entries()) {
+    if (entry.expiresAt <= nowMs) authorCardSearchCache.delete(key);
+  }
+}, 5 * 60 * 1000).unref();
 
 export function readAuthorCardSearchCache(key: string) {
   const entry = authorCardSearchCache.get(key);
@@ -6199,12 +6217,14 @@ export async function loadGlobalMarketOpenPositions(tx: typeof prisma | Tx, asOf
     return globalMarketPositionCache.items;
   }
   const since = new Date(asOf.getTime() - MARKET_GLOBAL_POSITION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  const GLOBAL_POSITION_QUERY_LIMIT = 50_000;
   const entries = await tx.gachaLedgerEntry.findMany({
     where: {
       reason: { in: [MARKET_OPEN_REASON, MARKET_SETTLE_REASON] },
       createdAt: { gte: since }
     },
     orderBy: { createdAt: 'asc' },
+    take: GLOBAL_POSITION_QUERY_LIMIT,
     select: {
       userId: true,
       createdAt: true,
@@ -6212,6 +6232,9 @@ export async function loadGlobalMarketOpenPositions(tx: typeof prisma | Tx, asOf
       metadata: true
     }
   });
+  if (entries.length >= GLOBAL_POSITION_QUERY_LIMIT) {
+    console.warn(`[gacha] loadGlobalMarketOpenPositions hit ${GLOBAL_POSITION_QUERY_LIMIT} row limit — results may be incomplete`);
+  }
   const openMap = new Map<string, GlobalActiveMarketPosition>();
   const settledSet = new Set<string>();
   for (const entry of entries) {

@@ -5,7 +5,7 @@ import { createCache } from '../utils/cache.js';
 export function internalRouter() {
   const router = Router();
   const readPool = getReadPoolSync();
-  const cache = createCache(null, 'internal:', { isolatedMemory: true, maxMemorySize: 400 });
+  const cache = createCache(null, 'internal:', { isolatedMemory: true, maxMemorySize: 200 });
   const MARKET_CATEGORIES = ['OVERALL', 'TRANSLATION', 'SCP', 'TALE', 'GOI', 'WANDERERS'] as const;
   type MarketCategory = typeof MARKET_CATEGORIES[number];
   type MarketTickRow = {
