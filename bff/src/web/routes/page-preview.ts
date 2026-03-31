@@ -93,7 +93,18 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'private, max-age=300');
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-      res.setHeader('Content-Security-Policy', "script-src 'none'; style-src 'self' 'unsafe-inline'; img-src * data:; frame-ancestors 'self'; default-src 'none'");
+      res.setHeader('Content-Security-Policy', [
+        "default-src 'self'",
+        "script-src 'unsafe-inline' 'self' https://d3g0gp89917ko0.cloudfront.net",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src * data:",
+        "font-src 'self' data: https://d3g0gp89917ko0.cloudfront.net https://*.wdfiles.com",
+        "media-src * data:",
+        "connect-src 'self'",
+        "frame-src 'none'",
+        "frame-ancestors 'self'",
+        "form-action 'none'"
+      ].join('; '));
       return res.send(contentResult.rows[0].full_page_html);
     } catch (err) {
       next(err);
