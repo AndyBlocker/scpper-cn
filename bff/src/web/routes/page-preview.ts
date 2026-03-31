@@ -16,6 +16,45 @@ function getSyncerPool(): pg.Pool | null {
 export function pagePreviewRouter(mainPool: pg.Pool) {
   const router = Router();
 
+  // 轻量检查：预览内容是否可用
+  router.get('/:wikidotId/preview-status', async (req, res, next) => {
+    try {
+      const wikidotId = parseInt(req.params.wikidotId, 10);
+      if (!Number.isFinite(wikidotId)) {
+        return res.json({ available: false });
+      }
+
+      const pool = getSyncerPool();
+      if (!pool) {
+        return res.json({ available: false });
+      }
+
+      const pageResult = await mainPool.query<{ fullname: string }>(`
+        SELECT SUBSTRING(p."currentUrl" FROM '//[^/]+/(.+)$') AS fullname
+        FROM "Page" p
+        WHERE p."wikidotId" = $1 AND p."isDeleted" = false
+        LIMIT 1
+      `, [wikidotId]);
+
+      if (pageResult.rows.length === 0) {
+        return res.json({ available: false });
+      }
+
+      const contentResult = await pool.query<{ cnt: string }>(`
+        SELECT COUNT(*)::text AS cnt
+        FROM "PageContentCache"
+        WHERE fullname = $1 AND "fullPageHtml" IS NOT NULL
+        LIMIT 1
+      `, [pageResult.rows[0].fullname]);
+
+      const available = Number(contentResult.rows[0]?.cnt) > 0;
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      return res.json({ available });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.get('/:wikidotId/preview', async (req, res, next) => {
     try {
       const wikidotId = parseInt(req.params.wikidotId, 10);
