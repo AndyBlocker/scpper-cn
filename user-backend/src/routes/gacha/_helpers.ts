@@ -6217,14 +6217,12 @@ export async function loadGlobalMarketOpenPositions(tx: typeof prisma | Tx, asOf
     return globalMarketPositionCache.items;
   }
   const since = new Date(asOf.getTime() - MARKET_GLOBAL_POSITION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-  const GLOBAL_POSITION_QUERY_LIMIT = 50_000;
   const entries = await tx.gachaLedgerEntry.findMany({
     where: {
       reason: { in: [MARKET_OPEN_REASON, MARKET_SETTLE_REASON] },
       createdAt: { gte: since }
     },
     orderBy: { createdAt: 'asc' },
-    take: GLOBAL_POSITION_QUERY_LIMIT,
     select: {
       userId: true,
       createdAt: true,
@@ -6232,9 +6230,6 @@ export async function loadGlobalMarketOpenPositions(tx: typeof prisma | Tx, asOf
       metadata: true
     }
   });
-  if (entries.length >= GLOBAL_POSITION_QUERY_LIMIT) {
-    console.warn(`[gacha] loadGlobalMarketOpenPositions hit ${GLOBAL_POSITION_QUERY_LIMIT} row limit — results may be incomplete`);
-  }
   const openMap = new Map<string, GlobalActiveMarketPosition>();
   const settledSet = new Set<string>();
   for (const entry of entries) {
