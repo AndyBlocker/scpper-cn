@@ -124,9 +124,16 @@
 </template>
 
 <script setup lang="ts">
-import { useNuxtApp, useAsyncData, useRuntimeConfig } from 'nuxt/app';
+import { useNuxtApp, useAsyncData, useRuntimeConfig, navigateTo } from 'nuxt/app';
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { normalizeBffBase, resolveAssetUrl } from '~/utils/assetUrl';
+
+// 愚人节彩蛋：2026-04-01 (UTC+8) 首页跳转到排行榜
+const _now = new Date()
+const _utc8 = new Date(_now.getTime() + 8 * 60 * 60 * 1000)
+if (_utc8.getUTCFullYear() === 2026 && _utc8.getUTCMonth() === 3 && _utc8.getUTCDate() === 1) {
+  navigateTo('/ranking', { redirectCode: 302 })
+}
 
 type SiteOverviewRich = {
   date?: string;
