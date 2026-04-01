@@ -1,37 +1,5 @@
 <template>
   <div class="space-y-8">
-    <section
-      class="relative mx-auto max-w-5xl overflow-hidden rounded-lg border border-white/30 p-6 shadow-sm"
-      :style="bannerSectionStyle"
-    >
-      <div class="relative flex flex-col gap-6">
-        <div class="space-y-4">
-          <div class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-black/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white">
-            <span>竞赛专题</span>
-            <span class="h-1.5 w-1.5 rounded-full bg-[var(--g-accent)]" />
-            <span>2026 冬季征文</span>
-          </div>
-          <div class="space-y-2">
-            <h2 class="text-2xl font-semibold text-white">2026冬季征文：循环</h2>
-            <p class="max-w-2xl text-sm leading-relaxed text-white/90">
-              专题页已上线，包含赛程节点、完整规则、随机四篇与全部参赛作品列表。
-            </p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2 text-xs text-white/90">
-            <span class="rounded-full border border-white/20 bg-black/20 px-3 py-1">征文开始：2026-02-17 00:00（GMT+8）</span>
-            <span class="rounded-full border border-white/20 bg-black/20 px-3 py-1">投稿截止：2026-03-03 23:59（GMT+8）</span>
-            <span class="rounded-full border border-white/20 bg-black/20 px-3 py-1">计票截止：2026-03-10 23:59（GMT+8）</span>
-          </div>
-          <NuxtLink
-            to="/winter-contest-2026"
-            class="inline-flex w-fit items-center rounded-lg bg-[var(--g-accent)] px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-95"
-          >
-            查看竞赛页
-          </NuxtLink>
-        </div>
-      </div>
-    </section>
-
     <!-- Overview metrics -->
     <section class="space-y-6">
       <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -124,9 +92,8 @@
 </template>
 
 <script setup lang="ts">
-import { useNuxtApp, useAsyncData, useRuntimeConfig, useCookie, navigateTo } from 'nuxt/app';
+import { useNuxtApp, useAsyncData, useCookie, navigateTo } from 'nuxt/app';
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
-import { normalizeBffBase, resolveAssetUrl } from '~/utils/assetUrl';
 
 // 愚人节彩蛋：2026-04-01 (UTC+8) 首页仅首次访问跳转到排行榜
 const _afCookie = useCookie('af2026', { maxAge: 86400 })
@@ -148,24 +115,6 @@ type SiteOverviewRich = {
 import type { BffFetcher } from '~/types/nuxt-bff'
 const nuxtApp = useNuxtApp();
 const bff = nuxtApp.$bff as unknown as BffFetcher;
-const runtimeConfig = useRuntimeConfig();
-const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase);
-const WINTER_CONTEST_HERO_ASSET_PATH = '/page-images/39867';
-const WINTER_CONTEST_HERO_FALLBACK_URL = 'https://05command-cn.wdfiles.com/local--files/collab%3Aimage-collection/2026wintercon-banner.jpg';
-const bannerImageLowSrc = resolveAssetUrl(WINTER_CONTEST_HERO_ASSET_PATH, bffBase, { variant: 'low' });
-const bannerImageFullSrc = resolveAssetUrl(WINTER_CONTEST_HERO_ASSET_PATH, bffBase) || WINTER_CONTEST_HERO_FALLBACK_URL;
-const bannerSectionStyle = computed(() => {
-  const imageLayers = [bannerImageLowSrc, bannerImageFullSrc]
-    .filter((src): src is string => typeof src === 'string' && src.length > 0)
-    .map(src => `url("${src}")`);
-  const overlay = 'linear-gradient(120deg, rgba(8, 12, 20, 0.78) 0%, rgba(10, 18, 34, 0.62) 48%, rgba(18, 35, 72, 0.58) 100%)';
-  return {
-    backgroundImage: imageLayers.length > 0 ? `${overlay}, ${imageLayers.join(', ')}` : overlay,
-    backgroundPosition: 'center 24%',
-    backgroundSize: 'cover',
-    backgroundRepeat: 'no-repeat'
-  };
-});
 
 // Fetch overview data server-side
 const { data: overview } = await useAsyncData<SiteOverviewRich>('site-overview', () => bff<SiteOverviewRich>('/stats/site/overview'));
