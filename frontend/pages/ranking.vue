@@ -242,12 +242,16 @@
         >
           <!-- 排名（统一居中） -->
           <div class="col-span-2 tabular-nums px-2 flex justify-center">
-            <span
-              class="inline-flex items-center justify-center min-w-[2.75rem] text-xs font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset"
-              :class="rankBadgeClass(displayRank(u, idx))"
-              :aria-label="`排名第 ${displayRank(u, idx)} 位`"
-            >
-              #{{ displayRank(u, idx) }}
+            <span class="inline-flex items-center gap-0.5">
+              <span v-if="isAprilFools" class="text-[10px]">🐾</span>
+              <span
+                class="inline-flex items-center justify-center min-w-[2.75rem] text-xs font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset"
+                :class="rankBadgeClass(displayRank(u, idx))"
+                :aria-label="`排名第 ${displayRank(u, idx)} 位`"
+              >
+                #{{ displayRank(u, idx) }}
+              </span>
+              <span v-if="isAprilFools" class="text-[10px]">🐾</span>
             </span>
           </div>
 
@@ -606,8 +610,16 @@ onUnmounted(() => {
   window.removeEventListener('resize', scheduleMeasure);
 });
 
+/** —— 愚人节彩蛋：2026-04-01 (UTC+8) 所有排名显示为 #1 —— */
+const isAprilFools = computed(() => {
+  const now = new Date()
+  const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000)
+  return utc8.getUTCFullYear() === 2026 && utc8.getUTCMonth() === 3 && utc8.getUTCDate() === 1
+})
+
 /** —— 其它 —— */
 function displayRank(_u: RankUser, idx: number) {
+  if (isAprilFools.value) return 1
   return startIndex.value + idx;
 }
 function rankBadgeClass(rank: number) {
