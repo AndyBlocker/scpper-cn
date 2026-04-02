@@ -6,7 +6,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { onBeforeUnmount, onMounted } from 'vue'
-import type { AffixVisualStyle, Rarity, TradeListing, BuyRequest, PageCatalogEntry, BuyRequestMatchLevel } from '~/types/gacha'
+import type { AffixVisualStyle, Rarity, TradeListing, BuyRequest, TradeActivityItem, PageCatalogEntry, BuyRequestMatchLevel } from '~/types/gacha'
 import { formatTokens, formatDateCompact } from '~/utils/gachaFormatters'
 import { rarityLabel } from '~/utils/gachaRarity'
 import { resolveAffixParts } from '~/utils/gachaAffix'
@@ -22,6 +22,7 @@ import TradeSellForm from '~/components/gacha/trade/TradeSellForm.vue'
 import TradeListings from '~/components/gacha/trade/TradeListings.vue'
 import TradeBuyForm from '~/components/gacha/trade/TradeBuyForm.vue'
 import TradeDetail from '~/components/gacha/trade/TradeDetail.vue'
+import TradeActivity from '~/components/gacha/trade/TradeActivity.vue'
 
 // ─── 类型 ────────────────────────────────────────────────
 
@@ -85,6 +86,12 @@ const props = defineProps<{
   buyRequestPublicHasMore: boolean
   buyRequestPublicLoadingMore: boolean
   myOpenBuyRequestCount: number
+  // Activity props
+  activityItems: TradeActivityItem[]
+  activityTotal: number
+  activityPage: number
+  activityLoading: boolean
+  activityLoaded: boolean
 }>()
 
 const emit = defineEmits<{
@@ -122,6 +129,8 @@ const emit = defineEmits<{
   'refresh-buy-requests': [options?: { resetPublic?: boolean }]
   'request-inventory': []
   'request-catalog': []
+  'activity-page-change': [page: number]
+  'request-activity': []
 }>()
 
 // ─── 表单状态 ────────────────────────────────────────────
@@ -133,7 +142,7 @@ const tradeUnitPrice = ref<number>(100)
 const tradeExpiresHours = ref<number>(72)
 
 // ─── 子标签页 ──────────────────────────────────────────
-type TradeSubTab = 'market' | 'buyRequest' | 'mine'
+type TradeSubTab = 'market' | 'buyRequest' | 'mine' | 'activity'
 const activeSubTab = ref<TradeSubTab>('market')
 const showCreateForm = ref(false)
 const showBuyRequestForm = ref(false)
@@ -146,6 +155,13 @@ watch(showCreateForm, (val) => {
 // Lazy-load: emit request-catalog when buy request form opens
 watch(showBuyRequestForm, (val) => {
   if (val) emit('request-catalog')
+})
+
+// Lazy-load: emit request-activity when activity tab is first opened
+watch(activeSubTab, (tab) => {
+  if (tab === 'activity' && !props.activityLoaded) {
+    emit('request-activity')
+  }
 })
 
 // ─── Picker 分页 ─────────────────────────────────────
@@ -760,7 +776,8 @@ watch([brSortMode, brRarityFilter], () => {
           v-for="tab in ([
             { key: 'market', label: '挂牌', badge: publicTotal },
             { key: 'buyRequest', label: '求购', badge: buyRequestPublicTotal },
-            { key: 'mine', label: '我的', badge: myOpenTradeCount + myOpenBuyRequestCount }
+            { key: 'mine', label: '我的', badge: myOpenTradeCount + myOpenBuyRequestCount },
+            { key: 'activity', label: '动态', badge: null }
           ] as const)"
           :key="tab.key"
           type="button"
@@ -974,6 +991,18 @@ watch([brSortMode, brRarityFilter], () => {
         @br-load-more-local="brVisibleCount += BR_PAGE_SIZE"
         @buy-request-page-change="(p) => { buyRequestPublicPage = p; emit('buy-request-page-change', p) }"
         @refresh-buy-requests="emit('refresh-buy-requests', { resetPublic: true })"
+      />
+    </div>
+
+    <!-- ═══ 动态 Tab ═══ -->
+    <div v-else-if="activeSubTab === 'activity'" class="mt-4">
+      <TradeActivity
+        :items="activityItems"
+        :total="activityTotal"
+        :current-page="activityPage"
+        :page-size="20"
+        :loading="activityLoading"
+        @page-change="(p) => emit('activity-page-change', p)"
       />
     </div>
 

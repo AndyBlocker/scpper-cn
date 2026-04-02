@@ -532,6 +532,7 @@ model GachaBuyRequest {
   @@index([status, expiresAt])
   @@index([buyerId, status])
   @@index([targetCardId, status])
+  @@index([fulfillerId, status])
 }
 
 model GachaBuyRequestOfferedCard {

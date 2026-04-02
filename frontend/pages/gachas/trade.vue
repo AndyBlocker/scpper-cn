@@ -51,6 +51,11 @@
             :buy-request-public-has-more="buyRequestPublicHasMore"
             :buy-request-public-loading-more="buyRequestPublicLoadingMore"
             :my-open-buy-request-count="myOpenBuyRequestCount"
+            :activity-items="activityItems"
+            :activity-total="activityTotal"
+            :activity-page="activityPage"
+            :activity-loading="activityLoading"
+            :activity-loaded="activityLoaded"
             @refresh="refreshTradePanel"
             @create="requestCreateTradeListing"
             @buy="requestBuyTradeListing"
@@ -67,6 +72,8 @@
             @refresh-buy-requests="refreshBuyRequestPanel"
             @request-inventory="handleRequestInventory"
             @request-catalog="handleRequestCatalog"
+            @activity-page-change="loadActivityPage"
+            @request-activity="loadActivityPage(1)"
           />
         </div>
       </Transition>
@@ -198,6 +205,9 @@ const {
   loadPublicBuyRequestPage,
   setBuyRequestQuery,
   handleCreateBuyRequest, handleFulfillBuyRequest, handleCancelBuyRequest,
+  // Activity
+  activityItems, activityLoading, activityTotal, activityPage, activityLoaded,
+  loadActivityPage,
   // Lazy-load helpers
   refreshOwnedCardIds, refreshCardCatalog,
   cleanup: cleanupTrade
