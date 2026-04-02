@@ -628,7 +628,9 @@ export function useGachaTrade(page: GachaPageContext) {
             myBuyRequests.value = mineRes.data ?? []
             seedAuthorCacheForBuyRequests(myBuyRequests.value)
           }
-        })
+        }),
+        // Invalidate activity cache so next tab visit re-fetches
+        ...(activityLoaded.value ? [loadActivityPage(activityPage.value)] : [])
       ])
     }, BACKGROUND_REFRESH_DELAY_MS)
   }
