@@ -556,6 +556,10 @@ export function useGachaTrade(page: GachaPageContext) {
       if (tradeQuantity.value > tradeQuantityMax.value) {
         tradeQuantity.value = tradeQuantityMax.value
       }
+      // Also refresh activity if it has been loaded
+      if (activityLoaded.value) {
+        void loadActivityPage(activityPage.value)
+      }
     } finally {
       tradeLoading.value = false
     }
