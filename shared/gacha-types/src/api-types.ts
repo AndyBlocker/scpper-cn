@@ -703,6 +703,17 @@ export interface BuyRequest {
   offeredCards: BuyRequestOfferedCard[];
 }
 
+// ─── Trade Activity ────────────────────────────────────────────────────────
+
+export type TradeActivityRole = 'seller' | 'buyer' | 'poster' | 'fulfiller';
+
+export interface TradeActivityItem {
+  kind: 'listing' | 'buyRequest';
+  role: TradeActivityRole;
+  activityTs: string;
+  data: TradeListing | BuyRequest;
+}
+
 export interface CardCatalogItem {
   id: string;
   title: string;

@@ -7,6 +7,7 @@ import type {
   Rarity,
   TradeListing,
   BuyRequest,
+  TradeActivityItem,
   PageCatalogEntry,
   BuyRequestMatchLevel
 } from '~/types/gacha'
@@ -109,6 +110,14 @@ export function useGachaTrade(page: GachaPageContext) {
   const BUY_REQUEST_QUERY_DEBOUNCE_MS = 280
   let buyRequestQueryTimer: ReturnType<typeof setTimeout> | null = null
   let buyRequestRequestSeq = 0
+
+  // ─── Activity State ──────────────────────────────────────
+  const activityItems = ref<TradeActivityItem[]>([])
+  const activityLoading = ref(false)
+  const activityTotal = ref(0)
+  const activityPage = ref(1)
+  const activityLoaded = ref(false)
+  const ACTIVITY_PAGE_SIZE = 20
 
   // ─── Placement (for StatusBar) ────────────────────────
   const placement = computed(() => page.gacha.state.value.placement)
@@ -999,6 +1008,38 @@ export function useGachaTrade(page: GachaPageContext) {
     }
   }
 
+  // ─── Activity Handlers ──────────────────────────────────
+
+  function seedActivityAuthors(items: TradeActivityItem[]) {
+    for (const item of items) {
+      if (item.kind === 'listing') {
+        seedAuthorCacheForListings([item.data as TradeListing])
+      } else {
+        seedAuthorCacheForBuyRequests([item.data as BuyRequest])
+      }
+    }
+  }
+
+  async function loadActivityPage(page: number = 1) {
+    if (activityLoading.value) return
+    activityLoading.value = true
+    try {
+      const offset = (page - 1) * ACTIVITY_PAGE_SIZE
+      const res = await gacha.getMyActivity({ limit: ACTIVITY_PAGE_SIZE, offset })
+      if (!res.ok) {
+        emitError(res.error || '加载交易动态失败')
+      } else {
+        activityItems.value = res.data ?? []
+        activityTotal.value = res.pagination?.total ?? 0
+        activityPage.value = page
+        activityLoaded.value = true
+        seedActivityAuthors(activityItems.value)
+      }
+    } finally {
+      activityLoading.value = false
+    }
+  }
+
   // ═══════════════════════════════════════════════════════
   // LIFECYCLE
   // ═══════════════════════════════════════════════════════
@@ -1136,6 +1177,15 @@ export function useGachaTrade(page: GachaPageContext) {
     handleCreateBuyRequest,
     handleFulfillBuyRequest,
     handleCancelBuyRequest,
+
+    // Activity state
+    activityItems,
+    activityLoading,
+    activityTotal,
+    activityPage,
+    activityLoaded,
+    // Activity handlers
+    loadActivityPage,
 
     // Lazy-load helpers
     refreshOwnedCardIds,

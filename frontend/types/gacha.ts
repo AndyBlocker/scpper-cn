@@ -69,6 +69,8 @@ export type {
   TradeListing,
   BuyRequestOfferedCard,
   BuyRequest,
+  TradeActivityRole,
+  TradeActivityItem,
   CardCatalogItem,
   PageCatalogVariant,
   PageCatalogEntry,
