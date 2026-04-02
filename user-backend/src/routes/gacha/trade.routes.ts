@@ -172,6 +172,100 @@ export function registerTradeRoutes(router: Router) {
     }
   });
 
+  // ─── My Activity (unified trade history) ────────────────
+  router.get('/trade/my-activity', async (req, res, next) => {
+    try {
+      if (!req.authUser) return res.status(401).json({ error: '未登录' });
+      const userId = req.authUser.id;
+      const rawLimit = Number(req.query?.limit ?? '20');
+      const rawOffset = Number(req.query?.offset ?? '0');
+      const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), 60);
+      const offset = Math.max(Number.isFinite(rawOffset) ? rawOffset : 0, 0);
+      const fetchSize = limit + offset;
+
+      h.triggerTradeExpirySweep();
+      h.triggerBuyRequestExpirySweep();
+
+      // Terminal statuses + OPEN records that are logically expired (past expiresAt)
+      const asOf = h.now();
+      const listingWhere: Prisma.GachaTradeListingWhereInput = {
+        OR: [{ sellerId: userId }, { buyerId: userId }],
+        AND: [{
+          OR: [
+            { status: { in: ['SOLD', 'CANCELLED', 'EXPIRED'] } },
+            { status: 'OPEN', expiresAt: { lte: asOf } }
+          ]
+        }]
+      };
+      const buyRequestWhere: Prisma.GachaBuyRequestWhereInput = {
+        OR: [{ buyerId: userId }, { fulfillerId: userId }],
+        AND: [{
+          OR: [
+            { status: { in: ['FULFILLED', 'CANCELLED', 'EXPIRED'] } },
+            { status: 'OPEN', expiresAt: { lte: asOf } }
+          ]
+        }]
+      };
+
+      const tradeListingInclude = {
+        card: true as const,
+        seller: { select: { id: true, displayName: true, linkedWikidotId: true } },
+        buyer: { select: { id: true, displayName: true, linkedWikidotId: true } }
+      };
+      const [listings, listingCount, buyRequests, buyRequestCount] = await Promise.all([
+        prisma.gachaTradeListing.findMany({
+          where: listingWhere,
+          orderBy: [{ updatedAt: 'desc' }],
+          take: fetchSize,
+          include: tradeListingInclude
+        }),
+        prisma.gachaTradeListing.count({ where: listingWhere }),
+        prisma.gachaBuyRequest.findMany({
+          where: buyRequestWhere,
+          orderBy: [{ updatedAt: 'desc' }],
+          take: fetchSize,
+          include: h.buyRequestInclude
+        }),
+        prisma.gachaBuyRequest.count({ where: buyRequestWhere })
+      ]);
+
+      type ActivityItem = { kind: 'listing' | 'buyRequest'; role: string; activityTs: string; data: ReturnType<typeof h.serializeTradeListing> | ReturnType<typeof h.serializeBuyRequest> };
+      const items: ActivityItem[] = [];
+
+      for (const listing of listings) {
+        const serialized = h.serializeTradeListing(listing);
+        const role = listing.sellerId === userId ? 'seller' : 'buyer';
+        // Use soldAt for SOLD, expiresAt for EXPIRED (including unswept), else updatedAt
+        const activityTs = (
+          listing.soldAt ?? (serialized.status === 'EXPIRED' && listing.expiresAt ? listing.expiresAt : listing.updatedAt)
+        ).toISOString();
+        items.push({ kind: 'listing', role, activityTs, data: serialized });
+      }
+
+      for (const br of buyRequests) {
+        const serialized = h.serializeBuyRequest(br);
+        const role = br.buyerId === userId ? 'poster' : 'fulfiller';
+        const activityTs = (
+          br.fulfilledAt ?? (serialized.status === 'EXPIRED' && br.expiresAt ? br.expiresAt : br.updatedAt)
+        ).toISOString();
+        items.push({ kind: 'buyRequest', role, activityTs, data: serialized });
+      }
+
+      items.sort((a, b) => new Date(b.activityTs).getTime() - new Date(a.activityTs).getTime());
+      const paged = items.slice(offset, offset + limit);
+      const total = listingCount + buyRequestCount;
+
+      res.json({
+        ok: true,
+        items: paged,
+        pagination: { total, limit, offset },
+        ...h.featureStatusPayload()
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post('/trade/listings', async (req, res, next) => {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });

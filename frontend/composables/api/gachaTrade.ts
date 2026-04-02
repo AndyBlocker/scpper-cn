@@ -1,10 +1,10 @@
 import type { GachaCoreContext, ApiResponse } from './gachaCore'
 import { normalizeError } from './gachaCore'
-import type { TradeListing, Wallet, Rarity } from '~/types/gacha'
+import type { TradeListing, TradeActivityItem, BuyRequest, Wallet, Rarity } from '~/types/gacha'
 import type { TradeSortMode } from '~/utils/gachaConstants'
 
 export function useGachaTradeApi(core: GachaCoreContext) {
-  const { $bff, state, withTradeListingCardVariant, createIdempotencyKey, captureWalletSeq, setWalletIfFresh } = core
+  const { $bff, state, withCardVariant, withTradeListingCardVariant, createIdempotencyKey, captureWalletSeq, setWalletIfFresh } = core
 
   async function getTradeListings(params: {
     status?: 'OPEN' | 'SOLD' | 'CANCELLED' | 'EXPIRED' | 'ALL'
@@ -161,12 +161,55 @@ export function useGachaTradeApi(core: GachaCoreContext) {
     }
   }
 
+  function withBuyRequestCardVariant(br: BuyRequest): BuyRequest {
+    return {
+      ...br,
+      targetCard: withCardVariant(br.targetCard),
+      offeredCards: (br.offeredCards ?? []).map((offered) => ({
+        ...offered,
+        card: withCardVariant(offered.card)
+      }))
+    }
+  }
+
+  async function getMyActivity(params: { limit?: number; offset?: number } = {}) {
+    try {
+      const res = await $bff<ApiResponse<{
+        items: TradeActivityItem[]
+        pagination?: { total: number; limit: number; offset: number }
+      }>>('/gacha/trade/my-activity', {
+        method: 'GET',
+        params: {
+          limit: params.limit != null ? String(params.limit) : undefined,
+          offset: params.offset != null ? String(params.offset) : undefined
+        }
+      })
+      if (res?.ok) {
+        const items = (res.items ?? []).map((item) => {
+          if (item.kind === 'listing') {
+            return { ...item, data: withTradeListingCardVariant(item.data as TradeListing) }
+          }
+          return { ...item, data: withBuyRequestCardVariant(item.data as BuyRequest) }
+        })
+        return {
+          ok: true as const,
+          data: items,
+          pagination: res.pagination ?? { total: items.length, limit: params.limit ?? 20, offset: params.offset ?? 0 }
+        }
+      }
+      return { ok: false as const, error: res?.error || '加载交易动态失败' }
+    } catch (error: unknown) {
+      return { ok: false as const, error: normalizeError(error, '加载交易动态失败') }
+    }
+  }
+
   return {
     getTradeListings,
     getMyTradeListings,
     createTradeListing,
     buyTradeListing,
     cancelTradeListing,
-    getOwnedCardIds
+    getOwnedCardIds,
+    getMyActivity
   }
 }
