@@ -186,17 +186,25 @@ export function registerTradeRoutes(router: Router) {
       h.triggerTradeExpirySweep();
       h.triggerBuyRequestExpirySweep();
 
-      // Include OPEN so that logically-expired-but-not-yet-swept records
-      // are picked up; the serializer converts OPEN+pastExpiry to EXPIRED.
-      const listingStatuses: Array<'OPEN' | 'SOLD' | 'CANCELLED' | 'EXPIRED'> = ['OPEN', 'SOLD', 'CANCELLED', 'EXPIRED'];
-      const buyRequestStatuses: Array<'OPEN' | 'FULFILLED' | 'CANCELLED' | 'EXPIRED'> = ['OPEN', 'FULFILLED', 'CANCELLED', 'EXPIRED'];
+      // Terminal statuses + OPEN records that are logically expired (past expiresAt)
+      const asOf = h.now();
       const listingWhere: Prisma.GachaTradeListingWhereInput = {
         OR: [{ sellerId: userId }, { buyerId: userId }],
-        status: { in: listingStatuses }
+        AND: [{
+          OR: [
+            { status: { in: ['SOLD', 'CANCELLED', 'EXPIRED'] } },
+            { status: 'OPEN', expiresAt: { lte: asOf } }
+          ]
+        }]
       };
       const buyRequestWhere: Prisma.GachaBuyRequestWhereInput = {
         OR: [{ buyerId: userId }, { fulfillerId: userId }],
-        status: { in: buyRequestStatuses }
+        AND: [{
+          OR: [
+            { status: { in: ['FULFILLED', 'CANCELLED', 'EXPIRED'] } },
+            { status: 'OPEN', expiresAt: { lte: asOf } }
+          ]
+        }]
       };
 
       const tradeListingInclude = {
@@ -226,18 +234,20 @@ export function registerTradeRoutes(router: Router) {
 
       for (const listing of listings) {
         const serialized = h.serializeTradeListing(listing);
-        // Skip records that are still genuinely OPEN (not yet sold/expired)
-        if (serialized.status === 'OPEN') continue;
         const role = listing.sellerId === userId ? 'seller' : 'buyer';
-        const activityTs = (listing.soldAt ?? listing.updatedAt).toISOString();
+        // Use soldAt for SOLD, expiresAt for EXPIRED (including unswept), else updatedAt
+        const activityTs = (
+          listing.soldAt ?? (serialized.status === 'EXPIRED' && listing.expiresAt ? listing.expiresAt : listing.updatedAt)
+        ).toISOString();
         items.push({ kind: 'listing', role, activityTs, data: serialized });
       }
 
       for (const br of buyRequests) {
         const serialized = h.serializeBuyRequest(br);
-        if (serialized.status === 'OPEN') continue;
         const role = br.buyerId === userId ? 'poster' : 'fulfiller';
-        const activityTs = (br.fulfilledAt ?? br.updatedAt).toISOString();
+        const activityTs = (
+          br.fulfilledAt ?? (serialized.status === 'EXPIRED' && br.expiresAt ? br.expiresAt : br.updatedAt)
+        ).toISOString();
         items.push({ kind: 'buyRequest', role, activityTs, data: serialized });
       }
 
