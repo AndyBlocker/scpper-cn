@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
         <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
-          <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-[rgb(var(--fg)_/_0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="Share2" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
           <h2 class="text-xl md:text-2xl font-bold text-[rgb(var(--fg))] mb-3">分享报告</h2>
@@ -152,7 +152,7 @@
               <h3 class="text-lg font-bold text-[rgb(var(--fg))]">选择展示的成就</h3>
               <button
                 @click="showAchievementPicker = false"
-                class="p-1.5 hover:bg-[rgba(var(--fg),0.1)] rounded-lg transition-colors"
+                class="p-1.5 hover:bg-[rgb(var(--fg)_/_0.1)] rounded-lg transition-colors"
               >
                 <LucideIcon name="X" class="w-5 h-5 text-[rgb(var(--muted))]" />
               </button>
@@ -166,7 +166,7 @@
                 class="w-full flex items-start gap-3 p-3 rounded-xl border transition-all text-left"
                 :class="selectedIndices.includes(idx)
                   ? 'bg-[var(--g-accent-soft)] border-[var(--g-accent)]'
-                  : 'bg-[rgba(var(--fg),0.03)] border-transparent hover:border-[rgba(var(--fg),0.1)]'"
+                  : 'bg-[rgb(var(--fg)_/_0.03)] border-transparent hover:border-[rgb(var(--fg)_/_0.1)]'"
               >
                 <div
                   class="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5"
