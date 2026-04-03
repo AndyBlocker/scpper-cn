@@ -103,13 +103,13 @@ function quantityLabel(item: TradeActivityItem): string {
     <p v-if="loading && !items.length" class="gacha-empty mt-3">加载中...</p>
     <p v-else-if="!items.length" class="gacha-empty mt-3">暂无交易动态。完成一笔交易后会在此显示。</p>
 
-    <div v-else class="mt-3 space-y-2">
+    <div v-else class="mt-3 gacha-trade-item-grid">
       <div
         v-for="item in items"
         :key="`${item.kind}-${item.data.id}`"
-        class="trade-activity-row"
+        class="trade-item-row"
       >
-        <div class="trade-activity-row__card">
+        <div class="trade-item-row__card">
           <GachaCardMini
             :title="itemCard(item).title"
             :rarity="itemCard(item).rarity"
@@ -121,27 +121,19 @@ function quantityLabel(item: TradeActivityItem): string {
           />
         </div>
 
-        <div class="trade-activity-row__body">
-          <div class="flex flex-wrap items-center gap-1.5">
-            <span
-              class="inline-flex rounded-full border px-2 py-0.5 text-[9px] font-semibold"
-              :class="activityChipClass(item)"
-            >{{ activityLabel(item) }}</span>
-            <span v-if="quantityLabel(item)" class="text-[10px] text-neutral-500 dark:text-neutral-400">{{ quantityLabel(item) }}</span>
-          </div>
-
-          <span v-if="tokenAmount(item) > 0" class="trade-activity-row__price">
-            {{ formatTokens(tokenAmount(item)) }} T
+        <div class="trade-item-row__info">
+          <span
+            class="inline-flex self-start rounded-full border px-2 py-0.5 text-[9px] font-semibold"
+            :class="activityChipClass(item)"
+          >{{ activityLabel(item) }}</span>
+          <span class="trade-item-row__price">
+            {{ tokenAmount(item) > 0 ? `${formatTokens(tokenAmount(item))}T` : '' }}
+            <span v-if="quantityLabel(item)" class="trade-item-row__qty">{{ quantityLabel(item) }}</span>
           </span>
-
-          <div class="flex items-center gap-1.5 text-[10px]">
-            <span v-if="counterparty(item)" class="trade-activity-row__user">
-              {{ formatAccountDisplayName(counterparty(item)) }}
-            </span>
-            <span class="trade-activity-row__time">
-              {{ formatDateCompact(item.activityTs) }}
-            </span>
-          </div>
+          <span class="trade-item-row__time">
+            <span v-if="counterparty(item)" class="trade-item-row__user">{{ formatAccountDisplayName(counterparty(item)) }}</span>
+            {{ formatDateCompact(item.activityTs) }}
+          </span>
         </div>
       </div>
     </div>
@@ -158,79 +150,3 @@ function quantityLabel(item: TradeActivityItem): string {
   </article>
 </template>
 
-<style scoped>
-.trade-activity-row {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
-  padding: 8px;
-  border-radius: 0.85rem;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.55);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.trade-activity-row:hover {
-  border-color: rgba(148, 163, 184, 0.35);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
-}
-html.dark .trade-activity-row {
-  border-color: rgba(100, 116, 139, 0.3);
-  background: rgba(15, 23, 42, 0.45);
-}
-html.dark .trade-activity-row:hover {
-  border-color: rgba(100, 116, 139, 0.5);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.trade-activity-row__card {
-  flex: 0 0 64px;
-  min-width: 0;
-}
-.trade-activity-row__card > * {
-  width: 100%;
-  height: 100%;
-}
-
-.trade-activity-row__body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-  min-width: 0;
-  padding: 2px 0;
-}
-
-.trade-activity-row__price {
-  font-size: 12px;
-  font-weight: 700;
-  color: rgb(180 83 9);
-  font-variant-numeric: tabular-nums;
-}
-html.dark .trade-activity-row__price {
-  color: rgb(252 211 77);
-}
-
-.trade-activity-row__user {
-  font-weight: 600;
-  color: rgb(14 116 144);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 120px;
-}
-html.dark .trade-activity-row__user {
-  color: rgb(103 232 249);
-}
-
-.trade-activity-row__time {
-  font-size: 10px;
-  font-weight: 500;
-  color: rgb(100 116 139);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-html.dark .trade-activity-row__time {
-  color: rgb(148 163 184);
-}
-</style>
