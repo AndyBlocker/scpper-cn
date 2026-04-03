@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div class="max-w-lg w-full mx-auto px-4 text-center">
         <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
-          <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-[rgb(var(--fg)_/_0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="PartyPopper" class="w-10 h-10 text-[var(--g-accent)]" />
           </div>
           <h2 class="text-xl md:text-2xl font-bold text-[rgb(var(--fg))] mb-3">2025 站点数据回顾完毕</h2>

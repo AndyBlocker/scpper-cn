@@ -22,7 +22,7 @@
                 <span
                   v-for="t in siteData.pageRankings.topOriginal.tags"
                   :key="t"
-                  class="px-2 py-1 bg-[rgba(var(--fg),0.1)] rounded text-[10px] md:text-xs text-[rgb(var(--muted))]"
+                  class="px-2 py-1 bg-[rgb(var(--fg)_/_0.1)] rounded text-[10px] md:text-xs text-[rgb(var(--muted))]"
                 >
                   #{{ t }}
                 </span>
@@ -49,7 +49,7 @@
                 <span
                   v-for="t in siteData.pageRankings.topTranslation.tags"
                   :key="t"
-                  class="px-2 py-1 bg-[rgba(var(--fg),0.1)] rounded text-[10px] md:text-xs text-[rgb(var(--muted))]"
+                  class="px-2 py-1 bg-[rgb(var(--fg)_/_0.1)] rounded text-[10px] md:text-xs text-[rgb(var(--muted))]"
                 >
                   #{{ t }}
                 </span>

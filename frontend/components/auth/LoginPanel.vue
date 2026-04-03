@@ -43,7 +43,7 @@
 
         <button
           type="submit"
-          class="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--g-accent)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(var(--accent),0.6)] disabled:opacity-60 disabled:cursor-not-allowed dark:focus:ring-offset-neutral-950"
+          class="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--g-accent)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--accent)_/_0.6)] disabled:opacity-60 disabled:cursor-not-allowed dark:focus:ring-offset-neutral-950"
           :disabled="!canSubmit || isSubmitting"
         >
           <LucideIcon v-if="isSubmitting" name="Loader2" class="h-4 w-4 animate-spin" stroke-width="2" />

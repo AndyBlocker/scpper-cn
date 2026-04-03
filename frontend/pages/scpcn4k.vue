@@ -27,12 +27,12 @@
             </div>
           </div>
         </div>
-        <div class="rounded-lg border border-[rgba(var(--accent),0.4)] bg-[var(--g-accent-soft)] px-6 py-5 text-sm text-[rgb(var(--accent-strong))]">
+        <div class="rounded-lg border border-[rgb(var(--accent)_/_0.4)] bg-[var(--g-accent-soft)] px-6 py-5 text-sm text-[rgb(var(--accent-strong))]">
           <div class="font-semibold">当前更新时间</div>
           <div class="mt-1 font-mono text-lg tracking-wide">
             {{ nowFormatted }}
           </div>
-          <div class="mt-2 text-xs text-[rgba(var(--accent-strong),0.7)]">基于浏览器本地时间</div>
+          <div class="mt-2 text-xs text-[rgb(var(--accent-strong)_/_0.7)]">基于浏览器本地时间</div>
         </div>
       </div>
       <div
@@ -109,7 +109,7 @@
           class="relative rounded-lg border p-5 transition-colors"
           :class="[
             'border-neutral-200/80 bg-white/80 dark:border-neutral-800/70 dark:bg-neutral-900/80 backdrop-blur',
-            phase.key === nextPhaseKey || phase.status === 'ongoing' ? 'ring-2 ring-[rgba(var(--accent),0.65)]' : ''
+            phase.key === nextPhaseKey || phase.status === 'ongoing' ? 'ring-2 ring-[rgb(var(--accent)_/_0.65)]' : ''
           ]"
         >
           <div class="flex items-start justify-between gap-4">
@@ -140,7 +140,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
+          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgb(var(--accent)_/_0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
           @click="refreshHighlights"
           :disabled="entriesPending"
         >
@@ -192,7 +192,7 @@
           <button
             v-if="orderMode === 'random'"
             type="button"
-            class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgba(var(--accent),0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
+            class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:border-[rgb(var(--accent)_/_0.5)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:text-neutral-300"
             @click="reshuffleAll"
             :disabled="entriesPending"
           >

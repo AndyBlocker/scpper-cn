@@ -14,7 +14,7 @@
           :title="isFollowingThis ? '取消收藏作者' : '收藏作者'"
           class="inline-flex items-center justify-center h-9 w-9 rounded-full border transition shadow-sm"
           :class="isFollowingThis
-            ? 'border-[rgba(var(--accent),0.45)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] dark:border-[rgba(var(--accent),0.45)]'
+            ? 'border-[rgb(var(--accent)_/_0.45)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] dark:border-[rgb(var(--accent)_/_0.45)]'
             : 'border-neutral-200 bg-white/80 text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300'"
           @click="$emit('toggle-follow')"
         >
