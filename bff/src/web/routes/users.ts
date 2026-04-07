@@ -537,27 +537,31 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
       const items = await cache.remember(cacheKey, 180, async () => {
         let tabCond = '';
         const params: any[] = [wikidotIdInt, includeDeletedBool];
+        // For deleted pages the effective (latest) version often has empty tags,
+        // losing classification metadata such as '原创'. Fall back to the last
+        // non-deleted version's tags so tab classification remains correct.
+        const CLS_TAGS = `COALESCE(NULLIF(effective_pv.tags, ARRAY[]::text[]), hist_tags.tags, ARRAY[]::text[])`;
         switch (tabLower) {
           case 'author':
             tabCond = ` AND a.type IN ('AUTHOR','SUBMITTER')
-                        AND ('原创' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                        AND NOT ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                        AND NOT ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+                        AND ('原创' = ANY(${CLS_TAGS}))
+                        AND NOT ('掩盖页' = ANY(${CLS_TAGS}))
+                        AND NOT ('段落' = ANY(${CLS_TAGS}))
                         AND NOT (effective_pv.category = ANY($3::text[]))`;
             params.push(excludedCats);
             break;
           case 'translator':
-            tabCond = ` AND NOT ('原创' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                        AND NOT ('作者' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                        AND NOT ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                        AND NOT ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
+            tabCond = ` AND NOT ('原创' = ANY(${CLS_TAGS}))
+                        AND NOT ('作者' = ANY(${CLS_TAGS}))
+                        AND NOT ('掩盖页' = ANY(${CLS_TAGS}))
+                        AND NOT ('段落' = ANY(${CLS_TAGS}))
                         AND NOT (effective_pv.category = ANY($3::text[]))`;
             params.push(excludedCats);
             break;
           case 'other':
-            tabCond = ` AND (('作者' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                          OR ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                          OR ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[]))))
+            tabCond = ` AND (('作者' = ANY(${CLS_TAGS}))
+                          OR ('掩盖页' = ANY(${CLS_TAGS}))
+                          OR ('段落' = ANY(${CLS_TAGS})))
                         AND NOT (effective_pv.category = ANY($3::text[]))`;
             params.push(excludedCats);
             break;
@@ -584,7 +588,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             COALESCE(effective_pv."alternateTitle", live_pv."alternateTitle", pv."alternateTitle") AS "alternateTitle",
             COALESCE(effective_pv.category, pv.category) AS category,
             COALESCE(effective_pv.rating, pv.rating) AS rating,
-            COALESCE(effective_pv.tags, pv.tags) AS tags,
+            COALESCE(NULLIF(effective_pv.tags, ARRAY[]::text[]), hist_tags.tags, pv.tags) AS tags,
             COALESCE(effective_pv."voteCount", pv."voteCount") AS "voteCount",
             COALESCE(effective_pv."commentCount", pv."commentCount") AS "commentCount",
             SUBSTRING(COALESCE(effective_pv."textContent", pv."textContent") FOR 2000) AS "textSnippet",
@@ -632,14 +636,14 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               WHEN COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) THEN COALESCE(latest."deletedAt", pv."validTo") 
               ELSE NULL 
             END AS "deletedAt",
-            -- Server-side group classification used by frontend tabs (effective version)
-            CASE 
+            -- Server-side group classification; falls back to hist_tags for deleted pages
+            CASE
               WHEN effective_pv.category = 'short-stories' THEN 'short_stories'
               WHEN effective_pv.category = 'log-of-anomalous-items-cn' THEN 'anomalous_log'
-              WHEN ('作者' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                OR ('掩盖页' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[])))
-                OR ('段落' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[]))) THEN 'other'
-              WHEN ('原创' = ANY(COALESCE(effective_pv.tags, ARRAY[]::text[]))) THEN 'author'
+              WHEN ('作者' = ANY(${CLS_TAGS}))
+                OR ('掩盖页' = ANY(${CLS_TAGS}))
+                OR ('段落' = ANY(${CLS_TAGS})) THEN 'other'
+              WHEN ('原创' = ANY(${CLS_TAGS})) THEN 'author'
               ELSE 'translator'
             END AS "groupKey"
           FROM "Attribution" a
@@ -667,6 +671,17 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               pv2.id DESC
             LIMIT 1
           ) effective_pv ON TRUE
+          -- Historical tags: last non-deleted version with real tags (only for deleted pages)
+          LEFT JOIN LATERAL (
+            SELECT pv2.tags
+            FROM "PageVersion" pv2
+            WHERE pv2."pageId" = pv."pageId"
+              AND p."isDeleted"
+              AND NOT pv2."isDeleted"
+              AND pv2.tags != '{}'::text[]
+            ORDER BY pv2."validFrom" DESC NULLS LAST, pv2.id DESC
+            LIMIT 1
+          ) hist_tags ON TRUE
           -- Current (live) snapshot for robust display fallback fields (no effect on inclusion)
           LEFT JOIN LATERAL (
             SELECT pv2.id, pv2.title, pv2."alternateTitle"
@@ -737,7 +752,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
           WITH latest_user_pages AS (
             SELECT DISTINCT ON (p."wikidotId")
               p."wikidotId" AS "wikidotId",
-              effective_pv.tags AS tags,
+              COALESCE(NULLIF(effective_pv.tags, ARRAY[]::text[]), hist_tags.tags, ARRAY[]::text[]) AS tags,
               effective_pv.category AS category,
               effective_pv."validTo" AS "validTo",
               COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) AS is_deleted
@@ -746,7 +761,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             JOIN "PageVersion" pv ON pv.id = a."pageVerId"
             JOIN "Page" p ON p.id = pv."pageId"
             LEFT JOIN LATERAL (
-              SELECT 
+              SELECT
                 pv2.id AS id,
                 pv2.tags,
                 pv2.category,
@@ -755,13 +770,23 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
                 pv2."isDeleted" AS "isDeleted"
               FROM "PageVersion" pv2
               WHERE pv2."pageId" = p.id
-              ORDER BY 
+              ORDER BY
                 (pv2."validTo" IS NULL) DESC,
                 (NOT pv2."isDeleted") DESC,
                 pv2."validFrom" DESC NULLS LAST,
                 pv2.id DESC
               LIMIT 1
             ) effective_pv ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT pv2.tags
+              FROM "PageVersion" pv2
+              WHERE pv2."pageId" = p.id
+                AND p."isDeleted"
+                AND NOT pv2."isDeleted"
+                AND pv2.tags != '{}'::text[]
+              ORDER BY pv2."validFrom" DESC NULLS LAST, pv2.id DESC
+              LIMIT 1
+            ) hist_tags ON TRUE
             LEFT JOIN LATERAL (
               SELECT pv2."isDeleted" AS "isDeleted"
               FROM "PageVersion" pv2
