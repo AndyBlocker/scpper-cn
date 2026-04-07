@@ -671,11 +671,12 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               pv2.id DESC
             LIMIT 1
           ) effective_pv ON TRUE
-          -- Historical tags: last non-deleted version with real tags (fallback for deleted pages)
+          -- Historical tags: last non-deleted version with real tags (only for deleted pages)
           LEFT JOIN LATERAL (
             SELECT pv2.tags
             FROM "PageVersion" pv2
             WHERE pv2."pageId" = pv."pageId"
+              AND p."isDeleted"
               AND NOT pv2."isDeleted"
               AND pv2.tags != '{}'::text[]
             ORDER BY pv2."validFrom" DESC NULLS LAST, pv2.id DESC
@@ -780,6 +781,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               SELECT pv2.tags
               FROM "PageVersion" pv2
               WHERE pv2."pageId" = p.id
+                AND p."isDeleted"
                 AND NOT pv2."isDeleted"
                 AND pv2.tags != '{}'::text[]
               ORDER BY pv2."validFrom" DESC NULLS LAST, pv2.id DESC
