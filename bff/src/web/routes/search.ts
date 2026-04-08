@@ -406,7 +406,7 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     // 避免候选池被不符合过滤条件的行占满而遗漏真正匹配的结果
     const buildCteInlineFilters = (includeDate: boolean): string => {
       const directFilters = `
-            ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
+            AND ($2::text[] IS NULL OR COALESCE(pv.tags, ARRAY[]::text[]) @> $2::text[])
             AND ($3::text[] IS NULL OR NOT (COALESCE(pv.tags, ARRAY[]::text[]) && $3::text[]))
             AND ($4::int IS NULL OR pv.rating >= $4)
             AND ($5::int IS NULL OR pv.rating <= $5)
