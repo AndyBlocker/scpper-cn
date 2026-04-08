@@ -14,7 +14,7 @@
       </div>
       <button
         type="button"
-        class="self-start inline-flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
+        class="self-start inline-flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgb(var(--accent)_/_0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
         @click="reload"
       >
         <span class="inline-block w-2 h-2 rounded-full" :class="loading ? 'animate-ping bg-[var(--g-accent)]' : 'bg-neutral-400 dark:bg-neutral-500'" />
