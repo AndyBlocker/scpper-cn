@@ -397,10 +397,12 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
 
       const loversSql = `${baseSelect} ORDER BY ${orderLovers} LIMIT $3 OFFSET $4`;
       const hatersSql = `${baseSelect} ORDER BY ${orderHaters} LIMIT $3 OFFSET $4`;
+      // COUNT 不需要 JOIN "User"：每条 UserTagPreference 有 FK 到 User，且
+      // 查询没有 User 列上的 WHERE 条件，JOIN 仅用于取 displayName/wikidotId
+      // 给 lovers/haters 的行用。剥离 JOIN 让 COUNT 只扫 UserTagPreference。
       const countSql = `
         SELECT COUNT(*)::int AS total
         FROM "UserTagPreference" utp
-        JOIN "User" u ON u.id = utp."userId"
         WHERE utp.tag = $1 AND utp."totalVotes" >= $2
       `;
 
@@ -479,10 +481,12 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
       `;
       const loversSql = `${baseSelect} ORDER BY ${orderLovers} LIMIT $3 OFFSET $4`;
       const hatersSql = `${baseSelect} ORDER BY ${orderHaters} LIMIT $3 OFFSET $4`;
+      // COUNT 不需要 JOIN "User"：每条 UserTagPreference 有 FK 到 User，且
+      // 查询没有 User 列上的 WHERE 条件，JOIN 仅用于取 displayName/wikidotId
+      // 给 lovers/haters 的行用。剥离 JOIN 让 COUNT 只扫 UserTagPreference。
       const countSql = `
         SELECT COUNT(*)::int AS total
         FROM "UserTagPreference" utp
-        JOIN "User" u ON u.id = utp."userId"
         WHERE utp.tag = $1 AND utp."totalVotes" >= $2
       `;
 
