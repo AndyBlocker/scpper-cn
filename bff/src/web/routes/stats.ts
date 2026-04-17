@@ -73,12 +73,14 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 					WHERE "lastActivityAt" IS NOT NULL
 					  AND "lastActivityAt" >= CURRENT_DATE - INTERVAL '90 days'
 				`;
-				const [baseRes, countsRes] = await Promise.all([
-					timedQuery('site.latest base', baseSql, undefined, reqLabel),
-					timedQuery('site.latest activeCounts', activeCountsSql, undefined, reqLabel)
-				]);
+				// Short-circuit before the expensive active-user scan. cache.remember
+				// does not cache null, so if SiteStats is empty (fresh env / first
+				// deploy) every request would otherwise re-run `activeCountsSql`
+				// only to return 404. Do the cheap base query first, bail on miss.
+				const baseRes = await timedQuery('site.latest base', baseSql, undefined, reqLabel);
 				const base = baseRes.rows[0];
 				if (!base) return null;
+				const countsRes = await timedQuery('site.latest activeCounts', activeCountsSql, undefined, reqLabel);
 				const counts = countsRes.rows[0] ?? { activeUsers30: 0, activeUsers60: 0, activeUsers90: 0 };
 				return { ...base, ...counts };
 			});
