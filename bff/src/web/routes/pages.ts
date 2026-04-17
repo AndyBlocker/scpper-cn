@@ -44,13 +44,22 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         return res.json({ votes: {} });
       }
 
-      const ids = (Array.isArray(idsParam) ? idsParam : String(idsParam).split(','))
+      // Hard cap on array size so a caller passing thousands of ids can't
+      // push PG's planner to a seq scan on Vote. 200 comfortably covers all
+      // real page-list responses (default page size is 40).
+      const MAX_VOTE_STATUS_IDS = 200;
+      const parsedIds = (Array.isArray(idsParam) ? idsParam : String(idsParam).split(','))
         .map((value) => Number(String(value).trim()))
         .filter((value) => Number.isInteger(value) && value > 0);
 
-      if (ids.length === 0) {
+      if (parsedIds.length === 0) {
         return res.json({ votes: {} });
       }
+
+      if (parsedIds.length > MAX_VOTE_STATUS_IDS) {
+        return res.status(400).json({ error: 'too_many_ids', max: MAX_VOTE_STATUS_IDS });
+      }
+      const ids = parsedIds;
 
       const viewerWikidotId = Number(viewerParam);
       if (!Number.isInteger(viewerWikidotId) || viewerWikidotId <= 0) {
@@ -735,7 +744,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           AND ($7::timestamptz IS NULL OR pv."createdAt" >= $7::timestamptz)
           AND ($8::timestamptz IS NULL OR pv."createdAt" <= $8::timestamptz)
           
-        ORDER BY ${orderColumn} ${dir} NULLS LAST
+        ORDER BY ${orderColumn} ${dir} NULLS LAST, p.id DESC
         LIMIT $9::int OFFSET $10::int
       `;
 

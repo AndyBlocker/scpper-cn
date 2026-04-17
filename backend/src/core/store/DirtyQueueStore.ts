@@ -4,6 +4,29 @@ import { SIMPLE_PAGE_THRESHOLD } from '../../config/RateLimitConfig.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
+// PostgreSQL's extended-query protocol caps a single statement at 65535 bind
+// parameters (uint16). DirtyPage has ~10 columns/row, so at ~6500 rows a
+// single createMany would already be at risk. Keep the per-call chunk well
+// under that — 2000 rows gives a comfortable safety margin and is still one
+// multi-row INSERT per chunk.
+const DIRTY_PAGE_CHUNK_SIZE = 2000;
+// Full-sync rebuilds can legitimately take tens of seconds, which exceeds
+// Prisma's 5s default transaction timeout. Size this high enough to cover
+// realistic workloads while still bounded so a stuck query surfaces.
+const DIRTY_QUEUE_TX_TIMEOUT_MS = 120_000;
+const DIRTY_QUEUE_TX_MAX_WAIT_MS = 10_000;
+
+async function createDirtyPagesChunked(
+  prisma: DbClient,
+  rows: Prisma.DirtyPageCreateManyInput[]
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += DIRTY_PAGE_CHUNK_SIZE) {
+    await prisma.dirtyPage.createMany({
+      data: rows.slice(i, i + DIRTY_PAGE_CHUNK_SIZE)
+    });
+  }
+}
+
 /**
  * Dirty Queue存储类
  * 负责管理需要更新的页面队列
@@ -121,9 +144,6 @@ export class DirtyQueueStore {
   async buildDirtyQueue() {
     Logger.info('🔍 Building dirty page queue...');
 
-    // 清理旧的dirty记录
-    await this.prisma.dirtyPage.deleteMany({});
-
     const stats = {
       total: 0,
       phaseB: 0,
@@ -140,6 +160,8 @@ export class DirtyQueueStore {
     // 获取所有staging记录
     const stagingPages = await this.prisma.pageMetaStaging.findMany();
 
+    const toCreate: Prisma.DirtyPageCreateManyInput[] = [];
+
     for (const staging of stagingPages) {
       const page = staging.wikidotId ? pageMap.get(staging.wikidotId) ?? null : null;
       const currentVersion = page ? versionMap.get(page.id) ?? null : null;
@@ -155,21 +177,33 @@ export class DirtyQueueStore {
       if (result.hasVotesRevChanges) stats.votesRevChanges++;
 
       if (result.needPhaseB || result.needPhaseC) {
-        await this.prisma.dirtyPage.create({
-          data: {
-            page: page?.id ? { connect: { id: page.id } } : undefined,
-            stagingUrl: staging.url,
-            wikidotId: staging.wikidotId,
-            needPhaseB: result.needPhaseB,
-            needPhaseC: result.needPhaseC,
-            donePhaseB: false,
-            donePhaseC: false,
-            reasons: result.reasons,
-            detectedAt: new Date()
-          }
+        toCreate.push({
+          pageId: page?.id ?? null,
+          stagingUrl: staging.url,
+          wikidotId: staging.wikidotId,
+          needPhaseB: result.needPhaseB,
+          needPhaseC: result.needPhaseC,
+          donePhaseB: false,
+          donePhaseC: false,
+          reasons: result.reasons,
+          detectedAt: new Date()
         });
       }
     }
+
+    // Atomic rebuild: wrap the delete + chunked inserts in a single
+    // transaction so the table is never left in a partially-populated
+    // intermediate state. Chunk size stays under PostgreSQL's 65535
+    // bind-parameter cap; without chunking, full syncs (tens of thousands
+    // of rows) would fail the insert on the driver side. Timeout is lifted
+    // above the default 5s because a large rebuild can legitimately take
+    // tens of seconds.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.dirtyPage.deleteMany({});
+      if (toCreate.length > 0) {
+        await createDirtyPagesChunked(tx, toCreate);
+      }
+    }, { timeout: DIRTY_QUEUE_TX_TIMEOUT_MS, maxWait: DIRTY_QUEUE_TX_MAX_WAIT_MS });
 
     Logger.info(`✅ Dirty queue built: ${stats.total} pages processed`);
     Logger.info(`   - New pages: ${stats.newPages}`);
@@ -187,9 +221,6 @@ export class DirtyQueueStore {
   async buildDirtyQueueTestMode() {
     Logger.info('🔍 Building dirty page queue (TEST MODE)...');
 
-    // 清理旧的dirty记录
-    await this.prisma.dirtyPage.deleteMany({});
-
     const stats = {
       total: 0,
       phaseB: 0,
@@ -202,6 +233,8 @@ export class DirtyQueueStore {
     // 获取所有staging记录（测试模式）
     const stagingPages = await this.prisma.pageMetaStaging.findMany();
 
+    const toCreate: Prisma.DirtyPageCreateManyInput[] = [];
+
     for (const staging of stagingPages) {
       const page = staging.wikidotId ? pageMap.get(staging.wikidotId) ?? null : null;
       const currentVersion = page ? versionMap.get(page.id) ?? null : null;
@@ -213,21 +246,26 @@ export class DirtyQueueStore {
       if (result.isDeleted) stats.deleted++;
 
       if (result.needPhaseB || result.needPhaseC) {
-        await this.prisma.dirtyPage.create({
-          data: {
-            page: page?.id ? { connect: { id: page.id } } : undefined,
-            stagingUrl: staging.url,
-            wikidotId: staging.wikidotId,
-            needPhaseB: result.needPhaseB,
-            needPhaseC: result.needPhaseC,
-            donePhaseB: false,
-            donePhaseC: false,
-            reasons: result.reasons,
-            detectedAt: new Date()
-          }
+        toCreate.push({
+          pageId: page?.id ?? null,
+          stagingUrl: staging.url,
+          wikidotId: staging.wikidotId,
+          needPhaseB: result.needPhaseB,
+          needPhaseC: result.needPhaseC,
+          donePhaseB: false,
+          donePhaseC: false,
+          reasons: result.reasons,
+          detectedAt: new Date()
         });
       }
     }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.dirtyPage.deleteMany({});
+      if (toCreate.length > 0) {
+        await createDirtyPagesChunked(tx, toCreate);
+      }
+    }, { timeout: DIRTY_QUEUE_TX_TIMEOUT_MS, maxWait: DIRTY_QUEUE_TX_MAX_WAIT_MS });
 
     Logger.info(`✅ Dirty queue built (TEST): ${stats.total} pages`);
 

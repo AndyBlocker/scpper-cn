@@ -111,7 +111,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
                    "createdAt", "postCount", "pageId", "isDeleted"
             FROM "ForumThread"
             WHERE "categoryId" = $1 AND "isDeleted" = false
-            ORDER BY "createdAt" DESC NULLS LAST
+            ORDER BY "createdAt" DESC NULLS LAST, id DESC
             LIMIT $2 OFFSET $3
           `, [categoryId, limit, offset]),
           readPool.query(`

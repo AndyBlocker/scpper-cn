@@ -655,18 +655,57 @@ export function useGachaTrade(page: GachaPageContext) {
     }
   }
 
-  /** Refresh card catalog on demand */
-  async function refreshCardCatalog() {
+  /**
+   * Populate `cardCatalog` with server-side search results.
+   *
+   * The old model pre-loaded the entire card catalog (~2 MB, ~5k cards)
+   * when the buy-request form opened, then filtered locally on each
+   * keystroke. The new model keeps `cardCatalog` empty until the user
+   * types, then replaces it with a small (up to 30) set of matching
+   * pages returned by the backend.
+   *
+   * Callers must debounce on their side; this function does no throttling.
+   * Passing an empty string resets `cardCatalog` to an empty list so the
+   * picker renders a "type to search" placeholder.
+   *
+   * Stale-response guarding: each call is tagged with a monotonically
+   * increasing sequence number. When the response resolves we only mutate
+   * `cardCatalog` if our sequence is still the latest. Without this, a slow
+   * in-flight request for an older query can resolve after a newer one and
+   * overwrite the fresh results — including "repopulating" the list after
+   * the user cleared the input.
+   */
+  let catalogSearchSeq = 0
+  async function searchCatalogPages(q: string) {
+    const query = (q ?? '').trim()
+    const mySeq = ++catalogSearchSeq
+    if (!query) {
+      // The empty-query reset also needs to respect sequence order:
+      // a slow non-empty response from before the clear must not repopulate.
+      cardCatalog.value = []
+      return
+    }
     try {
-      const catalogRes = await gacha.getPageCatalog()
-      if (catalogRes.ok) {
-        cardCatalog.value = catalogRes.data ?? []
+      const res = await gacha.searchPages(query, 30)
+      if (mySeq !== catalogSearchSeq) return
+      if (res.ok) {
+        cardCatalog.value = res.data ?? []
         seedAuthorCacheForCatalog(cardCatalog.value)
         queueAuthorHydration(cardCatalog.value.map((p) => p.wikidotId))
       }
     } catch (error) {
-      console.warn('[gacha] load card catalog failed', error)
+      if (mySeq !== catalogSearchSeq) return
+      console.warn('[gacha] search card catalog failed', error)
     }
+  }
+
+  /**
+   * @deprecated retained as a no-op so existing `@request-catalog` callers
+   * don't need to be edited. Use `searchCatalogPages` from the picker's
+   * input event instead.
+   */
+  async function refreshCardCatalog() {
+    // Intentionally empty: see searchCatalogPages above.
   }
 
   // ═══════════════════════════════════════════════════════
@@ -914,17 +953,10 @@ export function useGachaTrade(page: GachaPageContext) {
           }
         })
       ]
-      if (loadCatalog && cardCatalog.value.length === 0) {
-        promises.push(
-          gacha.getPageCatalog().then((catalogRes) => {
-            if (catalogRes.ok) {
-              cardCatalog.value = catalogRes.data ?? []
-              seedAuthorCacheForCatalog(cardCatalog.value)
-              queueAuthorHydration(cardCatalog.value.map((p) => p.wikidotId))
-            }
-          })
-        )
-      }
+      // `loadCatalog` used to trigger a full /card-catalog preload here.
+      // Catalog pages are now fetched on demand via `searchCatalogPages`
+      // (triggered by the picker's search input); nothing else to preload.
+      void loadCatalog
       const results = await Promise.all(promises)
       const publicRes = results[0] as { ok: boolean; stale?: boolean; error?: string }
       if (!publicRes.ok && !publicRes.stale) emitError(publicRes.error || '加载求购列表失败')
@@ -1196,6 +1228,7 @@ export function useGachaTrade(page: GachaPageContext) {
     // Lazy-load helpers
     refreshOwnedCardIds,
     refreshCardCatalog,
+    searchCatalogPages,
 
     // Lifecycle
     loadInitial,

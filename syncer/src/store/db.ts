@@ -37,7 +37,13 @@ export function getMainPool(): pg.Pool {
   if (!mainPool) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error('DATABASE_URL is not set (main DB for bootstrap reads)');
-    mainPool = new pg.Pool({ connectionString: url, max: 3 });
+    // max used to be 3, which serialized every parallelizable write in
+    // MainDbBridge (markPagesDeleted, createNewPageVersion, etc.). 10 lets
+    // the bridge exploit concurrency within one run without dwarfing the
+    // database's total max_connections (=500 in prod).
+    const rawMax = Number(process.env.SYNCER_MAIN_POOL_MAX ?? '10');
+    const max = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(rawMax, 50) : 10;
+    mainPool = new pg.Pool({ connectionString: url, max });
   }
   return mainPool;
 }

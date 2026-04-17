@@ -46,26 +46,43 @@ export function statsRouter(pool: Pool, redis: RedisClientType | null) {
 			// 缓存 1 小时 - 站点统计变化较慢，减少 sync 期间的数据库压力
 		const data = await cache.remember('stats:site:latest', 3600, async () => {
 				const reqLabel = `site.latest:${Date.now().toString(36)}`;
-				const sql = `
-					SELECT 
-						s.date, 
-						s."totalUsers", 
+				// Base stats row is cheap (single-row SELECT from SiteStats).
+				const baseSql = `
+					SELECT
+						s.date,
+						s."totalUsers",
 						s."activeUsers", -- 约定为近60天活跃
-						s."totalPages", 
+						s."totalPages",
 						s."totalVotes",
-						s."newUsersToday", 
-						s."newPagesToday", 
-						s."newVotesToday",
-						-- 参考口径：近30/60/90天活跃用户（基于当前日期）
-						(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '30 days') AS "activeUsers30",
-						(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '60 days') AS "activeUsers60",
-						(SELECT COUNT(*) FROM "User" u WHERE u."lastActivityAt" IS NOT NULL AND u."lastActivityAt" >= CURRENT_DATE - INTERVAL '90 days') AS "activeUsers90"
+						s."newUsersToday",
+						s."newPagesToday",
+						s."newVotesToday"
 					FROM "SiteStats" s
 					ORDER BY s.date DESC
 					LIMIT 1
 				`;
-				const { rows } = await timedQuery('site.latest base', sql, undefined, reqLabel);
-				return rows[0] ?? null;
+				// 近 30/60/90 天活跃用户合并为一次扫描 — 先按索引范围 (>= 90 days)
+				// 收窄行集，再用 COUNT FILTER 一次出三列。原版是三条独立 subquery
+				// 每条扫全表，冷缓存下可达秒级。
+				const activeCountsSql = `
+					SELECT
+						COUNT(*) FILTER (WHERE "lastActivityAt" >= CURRENT_DATE - INTERVAL '30 days')::int AS "activeUsers30",
+						COUNT(*) FILTER (WHERE "lastActivityAt" >= CURRENT_DATE - INTERVAL '60 days')::int AS "activeUsers60",
+						COUNT(*) AS "activeUsers90"
+					FROM "User"
+					WHERE "lastActivityAt" IS NOT NULL
+					  AND "lastActivityAt" >= CURRENT_DATE - INTERVAL '90 days'
+				`;
+				// Short-circuit before the expensive active-user scan. cache.remember
+				// does not cache null, so if SiteStats is empty (fresh env / first
+				// deploy) every request would otherwise re-run `activeCountsSql`
+				// only to return 404. Do the cheap base query first, bail on miss.
+				const baseRes = await timedQuery('site.latest base', baseSql, undefined, reqLabel);
+				const base = baseRes.rows[0];
+				if (!base) return null;
+				const countsRes = await timedQuery('site.latest activeCounts', activeCountsSql, undefined, reqLabel);
+				const counts = countsRes.rows[0] ?? { activeUsers30: 0, activeUsers60: 0, activeUsers90: 0 };
+				return { ...base, ...counts };
 			});
 			if (!data) return res.status(404).json({ error: 'not_found' });
 			res.json(data);
