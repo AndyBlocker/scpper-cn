@@ -735,7 +735,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           AND ($7::timestamptz IS NULL OR pv."createdAt" >= $7::timestamptz)
           AND ($8::timestamptz IS NULL OR pv."createdAt" <= $8::timestamptz)
           
-        ORDER BY ${orderColumn} ${dir} NULLS LAST
+        ORDER BY ${orderColumn} ${dir} NULLS LAST, p.id DESC
         LIMIT $9::int OFFSET $10::int
       `;
 
