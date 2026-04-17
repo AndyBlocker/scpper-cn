@@ -140,6 +140,8 @@ export class DirtyQueueStore {
     // 获取所有staging记录
     const stagingPages = await this.prisma.pageMetaStaging.findMany();
 
+    const toCreate: Prisma.DirtyPageCreateManyInput[] = [];
+
     for (const staging of stagingPages) {
       const page = staging.wikidotId ? pageMap.get(staging.wikidotId) ?? null : null;
       const currentVersion = page ? versionMap.get(page.id) ?? null : null;
@@ -155,20 +157,24 @@ export class DirtyQueueStore {
       if (result.hasVotesRevChanges) stats.votesRevChanges++;
 
       if (result.needPhaseB || result.needPhaseC) {
-        await this.prisma.dirtyPage.create({
-          data: {
-            page: page?.id ? { connect: { id: page.id } } : undefined,
-            stagingUrl: staging.url,
-            wikidotId: staging.wikidotId,
-            needPhaseB: result.needPhaseB,
-            needPhaseC: result.needPhaseC,
-            donePhaseB: false,
-            donePhaseC: false,
-            reasons: result.reasons,
-            detectedAt: new Date()
-          }
+        toCreate.push({
+          pageId: page?.id ?? null,
+          stagingUrl: staging.url,
+          wikidotId: staging.wikidotId,
+          needPhaseB: result.needPhaseB,
+          needPhaseC: result.needPhaseC,
+          donePhaseB: false,
+          donePhaseC: false,
+          reasons: result.reasons,
+          detectedAt: new Date()
         });
       }
+    }
+
+    // One round-trip instead of N. PostgreSQL will still batch-insert these
+    // internally; createMany submits a single multi-row INSERT.
+    if (toCreate.length > 0) {
+      await this.prisma.dirtyPage.createMany({ data: toCreate });
     }
 
     Logger.info(`✅ Dirty queue built: ${stats.total} pages processed`);
@@ -202,6 +208,8 @@ export class DirtyQueueStore {
     // 获取所有staging记录（测试模式）
     const stagingPages = await this.prisma.pageMetaStaging.findMany();
 
+    const toCreate: Prisma.DirtyPageCreateManyInput[] = [];
+
     for (const staging of stagingPages) {
       const page = staging.wikidotId ? pageMap.get(staging.wikidotId) ?? null : null;
       const currentVersion = page ? versionMap.get(page.id) ?? null : null;
@@ -213,20 +221,22 @@ export class DirtyQueueStore {
       if (result.isDeleted) stats.deleted++;
 
       if (result.needPhaseB || result.needPhaseC) {
-        await this.prisma.dirtyPage.create({
-          data: {
-            page: page?.id ? { connect: { id: page.id } } : undefined,
-            stagingUrl: staging.url,
-            wikidotId: staging.wikidotId,
-            needPhaseB: result.needPhaseB,
-            needPhaseC: result.needPhaseC,
-            donePhaseB: false,
-            donePhaseC: false,
-            reasons: result.reasons,
-            detectedAt: new Date()
-          }
+        toCreate.push({
+          pageId: page?.id ?? null,
+          stagingUrl: staging.url,
+          wikidotId: staging.wikidotId,
+          needPhaseB: result.needPhaseB,
+          needPhaseC: result.needPhaseC,
+          donePhaseB: false,
+          donePhaseC: false,
+          reasons: result.reasons,
+          detectedAt: new Date()
         });
       }
+    }
+
+    if (toCreate.length > 0) {
+      await this.prisma.dirtyPage.createMany({ data: toCreate });
     }
 
     Logger.info(`✅ Dirty queue built (TEST): ${stats.total} pages`);

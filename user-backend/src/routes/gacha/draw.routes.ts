@@ -349,6 +349,15 @@ export function registerDrawRoutes(router: Router) {
         let cardsAffected = 0;
         let totalCount = 0;
         let totalReward = 0;
+        // Accumulated so we can write all dismantle logs in one createMany at
+        // the end of the loop. `deleteCardInstances` still runs per iteration
+        // because each card has a different set of instance ids.
+        const dismantleLogsToCreate: Array<{
+          userId: string;
+          cardId: string;
+          count: number;
+          tokensEarned: number;
+        }> = [];
 
         for (const item of inventoryItems) {
           const freeInstances = freeByCard.get(item.cardId) ?? [];
@@ -380,15 +389,16 @@ export function registerDrawRoutes(router: Router) {
           byRarityCount[item.card.rarity] += dismantleCount;
           byRarityReward[item.card.rarity] += reward;
 
-          // eslint-disable-next-line no-await-in-loop
-          await tx.gachaDismantleLog.create({
-            data: {
-              userId,
-              cardId: item.cardId,
-              count: dismantleCount,
-              tokensEarned: reward
-            }
+          dismantleLogsToCreate.push({
+            userId,
+            cardId: item.cardId,
+            count: dismantleCount,
+            tokensEarned: reward
           });
+        }
+
+        if (dismantleLogsToCreate.length > 0) {
+          await tx.gachaDismantleLog.createMany({ data: dismantleLogsToCreate });
         }
 
         let updatedWallet = wallet;
