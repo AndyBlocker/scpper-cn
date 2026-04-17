@@ -667,21 +667,34 @@ export function useGachaTrade(page: GachaPageContext) {
    * Callers must debounce on their side; this function does no throttling.
    * Passing an empty string resets `cardCatalog` to an empty list so the
    * picker renders a "type to search" placeholder.
+   *
+   * Stale-response guarding: each call is tagged with a monotonically
+   * increasing sequence number. When the response resolves we only mutate
+   * `cardCatalog` if our sequence is still the latest. Without this, a slow
+   * in-flight request for an older query can resolve after a newer one and
+   * overwrite the fresh results — including "repopulating" the list after
+   * the user cleared the input.
    */
+  let catalogSearchSeq = 0
   async function searchCatalogPages(q: string) {
     const query = (q ?? '').trim()
+    const mySeq = ++catalogSearchSeq
     if (!query) {
+      // The empty-query reset also needs to respect sequence order:
+      // a slow non-empty response from before the clear must not repopulate.
       cardCatalog.value = []
       return
     }
     try {
       const res = await gacha.searchPages(query, 30)
+      if (mySeq !== catalogSearchSeq) return
       if (res.ok) {
         cardCatalog.value = res.data ?? []
         seedAuthorCacheForCatalog(cardCatalog.value)
         queueAuthorHydration(cardCatalog.value.map((p) => p.wikidotId))
       }
     } catch (error) {
+      if (mySeq !== catalogSearchSeq) return
       console.warn('[gacha] search card catalog failed', error)
     }
   }
