@@ -10,6 +10,11 @@ type DbClient = PrismaClient | Prisma.TransactionClient;
 // under that — 2000 rows gives a comfortable safety margin and is still one
 // multi-row INSERT per chunk.
 const DIRTY_PAGE_CHUNK_SIZE = 2000;
+// Full-sync rebuilds can legitimately take tens of seconds, which exceeds
+// Prisma's 5s default transaction timeout. Size this high enough to cover
+// realistic workloads while still bounded so a stuck query surfaces.
+const DIRTY_QUEUE_TX_TIMEOUT_MS = 120_000;
+const DIRTY_QUEUE_TX_MAX_WAIT_MS = 10_000;
 
 async function createDirtyPagesChunked(
   prisma: DbClient,
@@ -139,9 +144,6 @@ export class DirtyQueueStore {
   async buildDirtyQueue() {
     Logger.info('🔍 Building dirty page queue...');
 
-    // 清理旧的dirty记录
-    await this.prisma.dirtyPage.deleteMany({});
-
     const stats = {
       total: 0,
       phaseB: 0,
@@ -189,13 +191,19 @@ export class DirtyQueueStore {
       }
     }
 
-    // Chunked to stay under PostgreSQL's 65535 bind-parameter cap. Without
-    // the split a full sync (tens of thousands of staging pages) would fail
-    // the createMany; because we already ran deleteMany, that failure would
-    // leave DirtyPage empty and silently block Phase B/C.
-    if (toCreate.length > 0) {
-      await createDirtyPagesChunked(this.prisma, toCreate);
-    }
+    // Atomic rebuild: wrap the delete + chunked inserts in a single
+    // transaction so the table is never left in a partially-populated
+    // intermediate state. Chunk size stays under PostgreSQL's 65535
+    // bind-parameter cap; without chunking, full syncs (tens of thousands
+    // of rows) would fail the insert on the driver side. Timeout is lifted
+    // above the default 5s because a large rebuild can legitimately take
+    // tens of seconds.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.dirtyPage.deleteMany({});
+      if (toCreate.length > 0) {
+        await createDirtyPagesChunked(tx, toCreate);
+      }
+    }, { timeout: DIRTY_QUEUE_TX_TIMEOUT_MS, maxWait: DIRTY_QUEUE_TX_MAX_WAIT_MS });
 
     Logger.info(`✅ Dirty queue built: ${stats.total} pages processed`);
     Logger.info(`   - New pages: ${stats.newPages}`);
@@ -212,9 +220,6 @@ export class DirtyQueueStore {
    */
   async buildDirtyQueueTestMode() {
     Logger.info('🔍 Building dirty page queue (TEST MODE)...');
-
-    // 清理旧的dirty记录
-    await this.prisma.dirtyPage.deleteMany({});
 
     const stats = {
       total: 0,
@@ -255,9 +260,12 @@ export class DirtyQueueStore {
       }
     }
 
-    if (toCreate.length > 0) {
-      await createDirtyPagesChunked(this.prisma, toCreate);
-    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.dirtyPage.deleteMany({});
+      if (toCreate.length > 0) {
+        await createDirtyPagesChunked(tx, toCreate);
+      }
+    }, { timeout: DIRTY_QUEUE_TX_TIMEOUT_MS, maxWait: DIRTY_QUEUE_TX_MAX_WAIT_MS });
 
     Logger.info(`✅ Dirty queue built (TEST): ${stats.total} pages`);
 
