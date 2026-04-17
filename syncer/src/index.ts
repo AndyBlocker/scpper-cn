@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-import { bindGracefulShutdown } from './store/db.js';
+import { bindGracefulShutdown, cleanupDb } from './store/db.js';
 import { connect, close } from './client/WikidotDirectClient.js';
 
 const program = new Command();
@@ -38,6 +38,7 @@ program
       });
     } finally {
       await close();
+      await cleanupDb();
     }
   });
 
@@ -66,6 +67,7 @@ program
       console.log(`Total votes sum: ${totalVotes}`);
     } finally {
       await close();
+      await cleanupDb();
     }
   });
 
@@ -92,6 +94,34 @@ program
       }
     } finally {
       await close();
+      await cleanupDb();
+    }
+  });
+
+// ── syncer fast-vote ── (快速投票监控：并发 rating 扫描 + Tier 2 + 轻量 Bridge)
+program
+  .command('fast-vote')
+  .description('Fast vote monitoring loop (concurrent rating scan, ~30s/cycle)')
+  .option('--interval <seconds>', 'Polling interval in seconds', '300')
+  .option('--concurrency <n>', 'Concurrent ListPagesModule requests', '5')
+  .option('--run-immediately', 'Run first cycle immediately', false)
+  .action(async (opts) => {
+    bindGracefulShutdown();
+    await connect();
+
+    const { runFastVoteLoop } = await import('./sentinel/FastVoteLoop.js');
+    const tier2Concurrency = parseInt(process.env.SYNCER_TIER2_CONCURRENCY || '3', 10);
+
+    try {
+      await runFastVoteLoop({
+        intervalSeconds: parseInt(opts.interval, 10),
+        concurrency: parseInt(opts.concurrency, 10),
+        runImmediately: opts.runImmediately,
+        tier2Concurrency,
+      });
+    } finally {
+      await close();
+      await cleanupDb();
     }
   });
 
@@ -116,6 +146,7 @@ program
       });
     } finally {
       await close();
+      await cleanupDb();
     }
   });
 
@@ -147,6 +178,7 @@ program
       console.log(`Unique tags: ${tagCounts.size}`);
     } finally {
       await close();
+      await cleanupDb();
     }
   });
 
@@ -178,6 +210,77 @@ program
       }
     } finally {
       await close();
+      await cleanupDb();
+    }
+  });
+
+// ── syncer sync:attributions ── (采集并同步归属数据到主库)
+program
+  .command('sync:attributions')
+  .description('Scan attribution-metadata pages and sync to main DB')
+  .action(async () => {
+    bindGracefulShutdown();
+    await connect();
+
+    const { scanAttributions } = await import('./scanner/AttributionScanner.js');
+    const { bridgeAttributions } = await import('./bridge/MainDbBridge.js');
+
+    try {
+      const entries = await scanAttributions();
+      const result = await bridgeAttributions(entries);
+      console.log(`\nAttribution sync: ${result.written} written, ${result.skipped} skipped`);
+    } finally {
+      await close();
+      await cleanupDb();
+    }
+  });
+
+// ── syncer sync:alt-titles ── (从系列页面同步 alternateTitle)
+program
+  .command('sync:alt-titles')
+  .description('Scan SCP series pages and sync alternate titles to main DB')
+  .action(async () => {
+    bindGracefulShutdown();
+    await connect();
+
+    const { scanAlternateTitles } = await import('./scanner/AlternateTitleScanner.js');
+    const { bridgeAlternateTitles } = await import('./bridge/MainDbBridge.js');
+
+    try {
+      const entries = await scanAlternateTitles();
+      const result = await bridgeAlternateTitles(entries);
+      console.log(`\nAlternate title sync: ${result.updated} updated, ${result.skipped} skipped`);
+    } finally {
+      await close();
+      await cleanupDb();
+    }
+  });
+
+// ── syncer sync:metadata ── (一次性同步归属 + alternateTitle)
+program
+  .command('sync:metadata')
+  .description('Sync attributions + alternate titles (run periodically)')
+  .action(async () => {
+    bindGracefulShutdown();
+    await connect();
+
+    try {
+      const { scanAttributions } = await import('./scanner/AttributionScanner.js');
+      const { bridgeAttributions, bridgeAlternateTitles } = await import('./bridge/MainDbBridge.js');
+      const { scanAlternateTitles } = await import('./scanner/AlternateTitleScanner.js');
+
+      console.log('=== Attribution sync ===');
+      const attrEntries = await scanAttributions();
+      const attrResult = await bridgeAttributions(attrEntries);
+      console.log(`Attributions: ${attrResult.written} written, ${attrResult.skipped} skipped\n`);
+
+      console.log('=== Alternate title sync ===');
+      const altEntries = await scanAlternateTitles();
+      const altResult = await bridgeAlternateTitles(altEntries);
+      console.log(`Alternate titles: ${altResult.updated} updated, ${altResult.skipped} skipped`);
+    } finally {
+      await close();
+      await cleanupDb();
     }
   });
 

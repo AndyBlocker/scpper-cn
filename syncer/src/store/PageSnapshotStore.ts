@@ -106,6 +106,18 @@ export async function loadWikidotIdMap(): Promise<Map<string, number>> {
 }
 
 /**
+ * 从 syncer DB 中删除已不存在的页面快照（避免重启后幻象 deleted_page）
+ */
+export async function removeDeletedSnapshots(deletedFullnames: string[]): Promise<number> {
+  if (deletedFullnames.length === 0) return 0;
+  const prisma = getSyncerPrisma();
+  const result = await prisma.pageSnapshot.deleteMany({
+    where: { fullname: { in: deletedFullnames } },
+  });
+  return result.count;
+}
+
+/**
  * 批量 upsert PageSnapshot 到 syncer DB
  */
 export async function saveSnapshots(entries: PageSnapshotEntry[], wikidotIds: Map<string, number>): Promise<void> {
