@@ -670,6 +670,84 @@ export function registerTradeRoutes(router: Router) {
   // BUY REQUEST ENDPOINTS
   // ═══════════════════════════════════════════════════════
 
+  // ─── Page search (input-driven, supersedes card-catalog) ──────
+  // Returns a page-grouped list matching `q` (title / author keywords).
+  // Page size defaults to 30 — the caller debounces keystrokes so the server
+  // load is bounded. Empty `q` returns an empty list: the UI uses this to
+  // render a "type to search" placeholder instead of eagerly loading ~5000
+  // cards like the old /card-catalog endpoint did.
+  router.get('/trade/buy-requests/page-search', async (req, res, next) => {
+    try {
+      if (!req.authUser) return res.status(401).json({ error: '未登录' });
+      const q = String(req.query?.q ?? '').trim();
+      const rawLimit = Number(req.query?.limit ?? '30');
+      const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 30, 1), 60);
+
+      const pools = await h.fetchActivePools(prisma);
+      if (pools.length === 0 || q.length === 0) {
+        return res.json({ ok: true, enabled: h.FEATURE_FLAGS.buyRequest, pages: [], total: 0, query: q });
+      }
+
+      const authorMatchedCardIds = await h.findCardIdsByAuthorKeyword(q);
+      const where: Prisma.GachaCardDefinitionWhereInput = {
+        poolId: { in: pools.map((p) => p.id) },
+        OR: [
+          { title: { contains: q, mode: 'insensitive' } },
+          ...(authorMatchedCardIds.length > 0 ? [{ id: { in: authorMatchedCardIds } }] : [])
+        ]
+      };
+
+      // Fetch enough cards to build `limit` groups (pages). Each page can have
+      // several variants × rarities, so 20x gives healthy headroom.
+      const cards = await prisma.gachaCardDefinition.findMany({
+        where,
+        select: { id: true, title: true, rarity: true, imageUrl: true, tags: true, wikidotId: true, pageId: true, poolId: true, weight: true },
+        orderBy: [{ rarity: 'asc' }, { title: 'asc' }],
+        take: limit * 20
+      });
+
+      const pageMap = new Map<number | string, typeof cards>();
+      let nullIdx = 0;
+      for (const c of cards) {
+        const key = c.pageId != null ? c.pageId : `__null_${nullIdx++}`;
+        const group = pageMap.get(key);
+        if (group) { group.push(c); } else { pageMap.set(key, [c]); }
+      }
+      const allPages = Array.from(pageMap.values()).map((group) => {
+        const first = group[0]!;
+        return {
+          pageId: first.pageId ?? null,
+          title: first.title,
+          rarity: first.rarity,
+          tags: first.tags ?? [],
+          authors: h.resolveCardAuthorsFromTags(first.tags),
+          wikidotId: first.wikidotId ?? null,
+          isRetired: group.every((card) => h.isRetiredCard(card)),
+          variants: h.buildImageVariants(group.map((c) => ({
+            id: c.id,
+            imageUrl: c.imageUrl ?? null,
+            poolId: c.poolId,
+            weight: c.weight
+          })))
+        };
+      });
+
+      res.json({
+        ok: true,
+        enabled: h.FEATURE_FLAGS.buyRequest,
+        pages: allPages.slice(0, limit),
+        total: allPages.length,
+        query: q,
+        limit
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // DEPRECATED: kept for one release to ease rollback. The frontend has moved
+  // to /page-search; this route will be removed in a follow-up PR once no
+  // client version relies on it.
   router.get('/trade/buy-requests/card-catalog', async (req, res, next) => {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
