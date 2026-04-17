@@ -18,7 +18,7 @@
 
 | 索引名 | 表 | 键 | 条件 | 场景 |
 |---|---|---|---|---|
-| `idx_gacha_trade_open_live` | `GachaTradeListing` | `(createdAt DESC, cardId)` | `status='OPEN' AND remaining>0` | 求购面板「正在售卖」列表 ⭐ |
+| `idx_gacha_trade_open_live` | `GachaTradeListing` | `(createdAt DESC, cardId)` | `status='OPEN'` | 求购面板「正在售卖」列表 ⭐ |
 | `idx_gacha_buyreq_open_live` | `GachaBuyRequest` | `(createdAt DESC, targetCardId)` | `status='OPEN'` | 求购单「公开求购」列表 ⭐ |
 | `idx_gacha_card_instance_unlocked` | `GachaCardInstance` | `(userId, cardId)` | `isLocked=false` | 用户可交易/可挂单卡片选择器 ⭐ |
 | `idx_gacha_inventory_active` | `GachaInventory` | `(userId, count DESC)` | `count>0` | 我的库存面板 |

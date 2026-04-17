@@ -12,10 +12,16 @@
 -- Then DROP INDEX CONCURRENTLY <name>; and re-run the matching statement.
 
 \echo '=== GachaTradeListing: only index live open-for-sale listings ==='
--- Query: market browse -> WHERE status='OPEN' AND remaining>0 ORDER BY createdAt DESC
+-- Query: market browse -> WHERE status='OPEN' AND (expiresAt IS NULL OR expiresAt > NOW()).
+-- The actual read path (trade.routes.ts /trade/listings) only constrains
+-- `status='OPEN'`; there is NO `remaining > 0` predicate, and no CHECK
+-- constraint that lets the planner infer `status='OPEN' => remaining > 0`.
+-- A partial index whose predicate is strictly tighter than the query would
+-- never be chosen. Index only on `status='OPEN'` and let the row-level
+-- `remaining` / `expiresAt` filters apply on the small result set.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_gacha_trade_open_live
   ON "GachaTradeListing" ("createdAt" DESC, "cardId")
-  WHERE status = 'OPEN' AND remaining > 0;
+  WHERE status = 'OPEN';
 
 \echo '=== GachaBuyRequest: only index live requests ==='
 -- Query: buy-request board -> WHERE status='OPEN' ORDER BY createdAt DESC
