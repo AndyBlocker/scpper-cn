@@ -4,6 +4,24 @@ import { SIMPLE_PAGE_THRESHOLD } from '../../config/RateLimitConfig.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
+// PostgreSQL's extended-query protocol caps a single statement at 65535 bind
+// parameters (uint16). DirtyPage has ~10 columns/row, so at ~6500 rows a
+// single createMany would already be at risk. Keep the per-call chunk well
+// under that — 2000 rows gives a comfortable safety margin and is still one
+// multi-row INSERT per chunk.
+const DIRTY_PAGE_CHUNK_SIZE = 2000;
+
+async function createDirtyPagesChunked(
+  prisma: DbClient,
+  rows: Prisma.DirtyPageCreateManyInput[]
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += DIRTY_PAGE_CHUNK_SIZE) {
+    await prisma.dirtyPage.createMany({
+      data: rows.slice(i, i + DIRTY_PAGE_CHUNK_SIZE)
+    });
+  }
+}
+
 /**
  * Dirty Queue存储类
  * 负责管理需要更新的页面队列
@@ -171,10 +189,12 @@ export class DirtyQueueStore {
       }
     }
 
-    // One round-trip instead of N. PostgreSQL will still batch-insert these
-    // internally; createMany submits a single multi-row INSERT.
+    // Chunked to stay under PostgreSQL's 65535 bind-parameter cap. Without
+    // the split a full sync (tens of thousands of staging pages) would fail
+    // the createMany; because we already ran deleteMany, that failure would
+    // leave DirtyPage empty and silently block Phase B/C.
     if (toCreate.length > 0) {
-      await this.prisma.dirtyPage.createMany({ data: toCreate });
+      await createDirtyPagesChunked(this.prisma, toCreate);
     }
 
     Logger.info(`✅ Dirty queue built: ${stats.total} pages processed`);
@@ -236,7 +256,7 @@ export class DirtyQueueStore {
     }
 
     if (toCreate.length > 0) {
-      await this.prisma.dirtyPage.createMany({ data: toCreate });
+      await createDirtyPagesChunked(this.prisma, toCreate);
     }
 
     Logger.info(`✅ Dirty queue built (TEST): ${stats.total} pages`);
