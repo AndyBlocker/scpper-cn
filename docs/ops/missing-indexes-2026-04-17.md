@@ -99,8 +99,11 @@ DROP INDEX CONCURRENTLY IF EXISTS idx_metric_alert_unread;
 应用后运行几条代表性查询并 `EXPLAIN ANALYZE` 验证使用了新索引：
 
 ```sql
+-- NOTE: the index predicate is only `status='OPEN'`. `remaining` and
+-- `expiresAt` are filtered after the index scan on the already-narrow set.
 EXPLAIN ANALYZE SELECT * FROM "GachaTradeListing"
-  WHERE status='OPEN' AND remaining>0 ORDER BY "createdAt" DESC LIMIT 60;
+  WHERE status='OPEN' AND remaining>0 AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
+  ORDER BY "createdAt" DESC LIMIT 60;
 
 EXPLAIN ANALYZE SELECT * FROM "Page"
   WHERE "isDeleted"=false ORDER BY "firstPublishedAt" DESC LIMIT 100;
