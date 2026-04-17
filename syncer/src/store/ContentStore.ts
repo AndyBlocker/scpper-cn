@@ -16,10 +16,22 @@ export async function saveContent(
   let revisionsSaved = 0;
   let filesSaved = 0;
 
+  // Per-page concurrency cap for the revision/file upsert fan-out.
+  // Prisma's default connection_limit is num_cpus*2+1 on the syncer host.
+  // Keep the batch size well under that so we don't thrash the pool while
+  // still trading serial round-trips for parallel ones.
+  const PER_PAGE_CONCURRENCY = 8;
+
+  async function runChunked<T>(tasks: Array<() => Promise<T>>, chunkSize: number) {
+    for (let i = 0; i < tasks.length; i += chunkSize) {
+      await Promise.all(tasks.slice(i, i + chunkSize).map((fn) => fn()));
+    }
+  }
+
   for (const [fullname, content] of results) {
     const wikidotId = wikidotIds.get(fullname) ?? null;
 
-    // 1. Upsert PageContentCache
+    // 1. Upsert PageContentCache (must complete before dependants).
     await prisma.pageContentCache.upsert({
       where: { fullname },
       create: {
@@ -41,8 +53,10 @@ export async function saveContent(
     });
     contentSaved++;
 
-    // 2. Upsert RevisionRecords
-    for (const rev of content.revisions) {
+    // 2+3. Revisions and files for this page are independent of each other
+    // and of other rows, so fan them out concurrently. The try/catch keeps
+    // the old "skip duplicates / FK errors" behaviour.
+    const revTasks = content.revisions.map((rev) => async () => {
       try {
         await prisma.revisionRecord.upsert({
           where: { fullname_revNo: { fullname, revNo: rev.revNo } },
@@ -65,12 +79,11 @@ export async function saveContent(
         });
         revisionsSaved++;
       } catch {
-        // skip duplicates
+        // skip duplicates / FK errors
       }
-    }
+    });
 
-    // 3. Upsert FileRecords
-    for (const file of content.files) {
+    const fileTasks = content.files.map((file) => async () => {
       try {
         await prisma.fileRecord.upsert({
           where: { fullname_fileName: { fullname, fileName: file.fileName } },
@@ -90,9 +103,11 @@ export async function saveContent(
         });
         filesSaved++;
       } catch {
-        // skip duplicates
+        // skip duplicates / FK errors
       }
-    }
+    });
+
+    await runChunked([...revTasks, ...fileTasks], PER_PAGE_CONCURRENCY);
   }
 
   return { contentSaved, revisionsSaved, filesSaved };
