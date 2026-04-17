@@ -89,6 +89,7 @@ model RevisionRecord {
   createdByWikidotId Int?
   createdAt          DateTime?
   comment            String?
+  type               String?   /// SOURCE_CHANGED, TAGS_CHANGED, TITLE_CHANGED, PAGE_CREATED, FILES_CHANGED
   detectedAt         DateTime  @default(now())
 
   @@unique([fullname, revNo])

@@ -63,9 +63,7 @@
           </p>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6513052" :display-name="'14#7_MonochromeMix'" bare />
-            ：来玩
-            <a href="https://ghostpia.xyz/zh_cn" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">《Ghostpia》</a>
-            吧！ -- 2025.10.24
+            ：来玩<a href="https://ghostpia.xyz/zh_cn" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">《Ghostpia》</a>和<a href="https://houseonhouse.com/FortheGHOSTs.html" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">《For the GHOSTs》</a>吧！（或者吃点好吃的也挺好的） -- 2025.10.24
           </p>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="9827716" :display-name="'Dyosme'" bare />

@@ -6,8 +6,12 @@
   "scripts": {
     "dev": "node --import tsx/esm src/index.ts",
     "sentinel": "node --import tsx/esm src/index.ts sentinel --run-immediately",
+    "sync": "node --import tsx/esm src/index.ts sync --run-immediately",
+    "sync:hourly": "node --import tsx/esm src/index.ts sync --interval 3600 --run-immediately",
     "scan:tier1": "node --import tsx/esm src/index.ts scan:tier1",
-    "scan:tier2": "node --import tsx/esm src/index.ts scan:tier2"
+    "scan:tier2": "node --import tsx/esm src/index.ts scan:tier2",
+    "scan:pages": "node --import tsx/esm src/index.ts scan:pages",
+    "scan:content": "node --import tsx/esm src/index.ts scan:content"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
