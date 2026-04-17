@@ -68,6 +68,7 @@ export async function saveContent(
             createdByWikidotId: rev.createdByWikidotId,
             createdAt: rev.createdAt,
             comment: rev.comment,
+            type: rev.type,
           },
           update: {
             wikidotRevisionId: rev.wikidotRevisionId,
@@ -75,6 +76,7 @@ export async function saveContent(
             createdByWikidotId: rev.createdByWikidotId,
             createdAt: rev.createdAt,
             comment: rev.comment,
+            type: rev.type,
           },
         });
         revisionsSaved++;
