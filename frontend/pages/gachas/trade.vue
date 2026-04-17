@@ -72,6 +72,7 @@
             @refresh-buy-requests="refreshBuyRequestPanel"
             @request-inventory="handleRequestInventory"
             @request-catalog="handleRequestCatalog"
+            @search-catalog="handleSearchCatalog"
             @activity-page-change="loadActivityPage"
             @request-activity="loadActivityPage(1)"
           />
@@ -209,7 +210,7 @@ const {
   activityItems, activityLoading, activityTotal, activityPage, activityLoaded,
   loadActivityPage,
   // Lazy-load helpers
-  refreshOwnedCardIds, refreshCardCatalog,
+  refreshOwnedCardIds, refreshCardCatalog, searchCatalogPages,
   cleanup: cleanupTrade
 } = idx
 
@@ -429,10 +430,15 @@ function handleRequestInventory() {
   }
 }
 
-// Lazy-load card catalog when the buy-request form opens
+// The old "Lazy-load full card catalog" behaviour is gone — opening the
+// buy-request form no longer pulls ~2 MB of card data. The picker's search
+// input drives `handleSearchCatalog` below instead.
 function handleRequestCatalog() {
-  if (cardCatalog.value.length === 0) {
-    void refreshCardCatalog()
-  }
+  // retained as a no-op so the existing emit still has a handler
+  void refreshCardCatalog
+}
+
+function handleSearchCatalog(q: string) {
+  void searchCatalogPages(q)
 }
 </script>

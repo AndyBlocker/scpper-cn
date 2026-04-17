@@ -129,6 +129,7 @@ const emit = defineEmits<{
   'refresh-buy-requests': [options?: { resetPublic?: boolean }]
   'request-inventory': []
   'request-catalog': []
+  'search-catalog': [query: string]
   'activity-page-change': [page: number]
   'request-activity': []
 }>()
@@ -288,7 +289,10 @@ function searchableTags(tags: string[] | null | undefined) {
   })
 }
 
-// Pre-compute search text for catalog pages
+// Catalog pages are now the server-side search result for `brTargetSearch`.
+// The parent populates `props.pageCatalog` via the `search-catalog` emit
+// below; no client-side filter is needed anymore. The authoring-text index is
+// kept for secondary use (e.g. highlighting author matches in the picker).
 const catalogSearchIndex = computed(() => {
   const index = new Map<string, string>()
   for (const p of props.pageCatalog) {
@@ -299,15 +303,17 @@ const catalogSearchIndex = computed(() => {
   return index
 })
 
-const brFilteredCatalog = computed(() => {
-  const keyword = brTargetSearch.value.trim().toLowerCase()
-  if (!keyword) return props.pageCatalog
-  const idx = catalogSearchIndex.value
-  return props.pageCatalog.filter((p) => {
-    const key = String(p.pageId ?? p.variants[0]?.id ?? p.title)
-    const text = idx.get(key) || ''
-    return text.includes(keyword)
-  })
+const brFilteredCatalog = computed(() => props.pageCatalog)
+
+// Debounced emit so each keystroke doesn't hammer the backend.
+const BR_TARGET_SEARCH_DEBOUNCE_MS = 280
+let brTargetSearchTimer: ReturnType<typeof setTimeout> | null = null
+watch(brTargetSearch, (value) => {
+  if (brTargetSearchTimer) clearTimeout(brTargetSearchTimer)
+  brTargetSearchTimer = setTimeout(() => {
+    emit('search-catalog', value.trim())
+    brTargetSearchTimer = null
+  }, BR_TARGET_SEARCH_DEBOUNCE_MS)
 })
 
 const brDerivedPayloads = computed<BuyRequestDraft[]>(() => {

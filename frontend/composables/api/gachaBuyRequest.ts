@@ -108,6 +108,30 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
     }
   }
 
+  async function searchPages(q: string, limit = 30) {
+    try {
+      const res = await $bff<ApiResponse<{ pages: PageCatalogEntry[]; total?: number }>>('/gacha/trade/buy-requests/page-search', {
+        method: 'GET',
+        params: { q, limit: String(limit) }
+      })
+      if (res?.ok) {
+        const pages = (res.pages ?? []).map(page => ({
+          ...page,
+          title: withCardVariant({ title: page.title, imageUrl: null }).title,
+          variants: page.variants.map(v => ({
+            id: v.id,
+            imageUrl: withCardVariant({ title: '', imageUrl: v.imageUrl }).imageUrl ?? null,
+            isRetired: !!v.isRetired
+          }))
+        }))
+        return { ok: true as const, data: pages, total: res.total ?? pages.length }
+      }
+      return { ok: false as const, error: res?.error || '搜索卡片失败' }
+    } catch (error: unknown) {
+      return { ok: false as const, error: normalizeError(error, '搜索卡片失败') }
+    }
+  }
+
   async function createBuyRequest(payload: {
     targetCardId: string
     matchLevel?: BuyRequestMatchLevel
@@ -201,6 +225,7 @@ export function useGachaBuyRequestApi(core: GachaCoreContext) {
     getMyBuyRequests,
     getCardCatalog,
     getPageCatalog,
+    searchPages,
     createBuyRequest,
     fulfillBuyRequest,
     cancelBuyRequest
