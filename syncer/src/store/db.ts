@@ -52,22 +52,27 @@ export function getMainPool(): pg.Pool {
 
 let signalsBound = false;
 
+/**
+ * 清理所有数据库连接（由 CLI 的 finally 块显式调用）
+ */
+export async function cleanupDb(): Promise<void> {
+  try {
+    if (syncerPrisma) await syncerPrisma.$disconnect();
+    if (mainPool) await mainPool.end();
+  } catch (err) {
+    console.error('[db] Cleanup error:', err);
+  } finally {
+    syncerPrisma = null;
+    mainPool = null;
+  }
+}
+
+/**
+ * 空操作 — 保持 API 兼容性。
+ * 不再注册 SIGINT/SIGTERM handler（由 SyncerLoop 管理信号）。
+ * DB 清理由 CLI finally 块调用 cleanupDb()。
+ */
 export function bindGracefulShutdown(): void {
-  if (signalsBound) return;
-  const cleanup = async (signal?: string) => {
-    if (signal) console.log(`[db] Received ${signal}, disconnecting...`);
-    try {
-      if (syncerPrisma) await syncerPrisma.$disconnect();
-      if (mainPool) await mainPool.end();
-    } catch (err) {
-      console.error('[db] Cleanup error:', err);
-    } finally {
-      syncerPrisma = null;
-      mainPool = null;
-      if (signal) process.exit(0);
-    }
-  };
-  process.on('SIGINT', () => void cleanup('SIGINT'));
-  process.on('SIGTERM', () => void cleanup('SIGTERM'));
+  // 不注册信号处理器 — SyncerLoop 自己管理生命周期
   signalsBound = true;
 }
