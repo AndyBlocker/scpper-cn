@@ -2714,14 +2714,29 @@ export async function executeDrawForUser(
   }
 
   const countIncrements = new Map<string, number>();
+  // Accumulate GachaCardInstance rows so we can insert them with a single
+  // createMany after the pick loop instead of N serial awaits. For a 10-pull
+  // this collapses 10 round-trips into 1 and tightens the serializable
+  // transaction footprint (reducing spurious 40001 retries).
+  const instancesToCreate: Prisma.GachaCardInstanceCreateManyInput[] = [];
   for (const { card: pickedCard, chosenCardId, chosenImageUrl } of resolvedPicks) {
     const previousCount = (inventoryCountBefore.get(chosenCardId) ?? 0) + (countIncrements.get(chosenCardId) ?? 0);
     const rolledStyles = rollDrawAffixStyles();
     const rolledFingerprint = buildAffixFingerprintFromStyles(rolledStyles);
     const nextCount = previousCount + 1;
     countIncrements.set(chosenCardId, (countIncrements.get(chosenCardId) ?? 0) + 1);
-    // eslint-disable-next-line no-await-in-loop
-    await createCardInstance(tx, options.userId, chosenCardId, rolledFingerprint.affixSignature, 'DRAW');
+    // Build GachaCardInstance row inline (mirrors createCardInstance), but
+    // defer the actual INSERT to a batched createMany below.
+    const normalizedSignature = affixSignatureFromStyles(parseAffixSignature(rolledFingerprint.affixSignature));
+    const fingerprint = buildAffixFingerprintFromSignature(normalizedSignature);
+    instancesToCreate.push({
+      userId: options.userId,
+      cardId: chosenCardId,
+      affixVisualStyle: fingerprint.affixVisualStyle as PrismaAffixVisualStyle,
+      affixSignature: normalizedSignature,
+      affixLabel: fingerprint.affixLabel,
+      obtainedVia: 'DRAW'
+    });
     const rarityReward = Math.max(0, Math.floor(Number(rarityRewards.drawRewards[pickedCard.rarity] ?? 0) || 0));
     const configuredReward = Math.max(0, Math.floor(Number(pickedCard.rewardTokens ?? 0) || 0));
     const rewardTokens = configuredReward > 0 ? configuredReward : rarityReward;
@@ -2750,9 +2765,38 @@ export async function executeDrawForUser(
     });
   }
 
-  for (const cardId of uniqueCardIds) {
+  // Batch-insert all instance rows in one SQL statement.
+  if (instancesToCreate.length > 0) {
+    await tx.gachaCardInstance.createMany({ data: instancesToCreate });
+  }
+
+  // Batch-upsert inventory counts. For each unique card, do a single upsert;
+  // callers already dedup in countIncrements so the loop is short (typically
+  // 1-4 iterations, not 10). This can't easily become one SQL via Prisma
+  // without raw SQL, so we leave it as a bounded loop.
+  for (const [cardId, delta] of countIncrements) {
     // eslint-disable-next-line no-await-in-loop
-    await safeUpsertCardUnlock(tx, options.userId, cardId);
+    await tx.gachaInventory.upsert({
+      where: { userId_cardId: { userId: options.userId, cardId } },
+      create: { userId: options.userId, cardId, count: delta },
+      update: { count: { increment: delta } }
+    });
+  }
+
+  // GachaCardUnlock "set of cards user has ever owned" — upsert is idempotent
+  // and update:{} is a no-op, so this is exactly `createMany skipDuplicates`
+  // semantics but in ONE SQL instead of N serial round-trips.
+  if (uniqueCardIds.length > 0) {
+    try {
+      await tx.gachaCardUnlock.createMany({
+        data: uniqueCardIds.map((cardId) => ({ userId: options.userId, cardId })),
+        skipDuplicates: true
+      });
+    } catch (error) {
+      // Mirror safeUpsertCardUnlock's tolerance for missing-table errors
+      // during migrations; any other failure should still abort the draw.
+      if (!isMissingTableError(error)) throw error;
+    }
   }
 
   const nextPurplePityCount = Math.max(0, purplePityCount);
