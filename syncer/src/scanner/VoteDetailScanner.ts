@@ -10,7 +10,12 @@ export type VoteDetailMap = Map<string, VoteRecord[]>;
 
 /**
  * Tier 2 扫描：对指定页面获取详细投票记录
+ *
+ * 内置断路器：连续失败 >= BREAKER_THRESHOLD 次后自动中止，
+ * 避免 Wikidot API 不可用时浪费几十分钟等超时。
  */
+const BREAKER_THRESHOLD = 5;
+
 export async function scanVoteDetails(
   fullnames: string[],
   concurrency: number = 3
@@ -25,38 +30,45 @@ export async function scanVoteDetails(
 
   let completed = 0;
   let failed = 0;
+  let consecutiveFails = 0;
+  let aborted = false;
 
   // Promise 池模式并发控制
   let index = 0;
   const workers = Array.from({ length: Math.min(concurrency, fullnames.length) }, async () => {
     while (true) {
+      if (aborted) return;
       const i = index++;
       if (i >= fullnames.length) return;
 
       const fullname = fullnames[i];
       try {
         const pageRes = await site.page.get(fullname);
-        if (!pageRes.isOk()) {
-          console.warn(`[tier2] Failed to get page ${fullname}:`, pageRes.error);
+        if (!pageRes.isOk() || !pageRes.value) {
           failed++;
+          consecutiveFails++;
+          if (consecutiveFails >= BREAKER_THRESHOLD && !aborted) {
+            aborted = true;
+            console.warn(`[tier2] Circuit breaker: ${consecutiveFails} consecutive failures, aborting remaining ${fullnames.length - i - 1} pages`);
+          }
           continue;
         }
 
         const page = pageRes.value;
-        if (!page) {
-          console.warn(`[tier2] Page ${fullname} not found`);
-          failed++;
-          continue;
-        }
-
         const votesRes = await page.getVotes();
         if (!votesRes.isOk()) {
-          console.warn(`[tier2] Failed to get votes for ${fullname}:`, votesRes.error);
           failed++;
+          consecutiveFails++;
+          if (consecutiveFails >= BREAKER_THRESHOLD && !aborted) {
+            aborted = true;
+            console.warn(`[tier2] Circuit breaker: ${consecutiveFails} consecutive failures, aborting`);
+          }
           continue;
         }
 
-        // 按 userId 去重（取最后一条）
+        // 成功 → 重置连续失败计数
+        consecutiveFails = 0;
+
         const voteMap = new Map<number, VoteRecord>();
         for (const vote of votesRes.value) {
           voteMap.set(vote.user.id, {
@@ -69,8 +81,12 @@ export async function scanVoteDetails(
         result.set(fullname, [...voteMap.values()]);
         completed++;
       } catch (err) {
-        console.warn(`[tier2] Error scanning ${fullname}:`, err);
         failed++;
+        consecutiveFails++;
+        if (consecutiveFails >= BREAKER_THRESHOLD && !aborted) {
+          aborted = true;
+          console.warn(`[tier2] Circuit breaker: ${consecutiveFails} consecutive failures, aborting`);
+        }
       }
     }
   });
@@ -78,7 +94,7 @@ export async function scanVoteDetails(
   await Promise.all(workers);
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[tier2] Done: ${completed} ok, ${failed} failed in ${elapsed}s`);
+  console.log(`[tier2] Done: ${completed} ok, ${failed} failed${aborted ? ' (breaker tripped)' : ''} in ${elapsed}s`);
 
   return result;
 }

@@ -47,28 +47,38 @@ export async function scanAllPages(): Promise<PageSnapshotMap> {
   console.log('[tier1] Starting full page scan...');
   const startTime = Date.now();
 
+  const MAX_RETRIES = 3;
+
   while (true) {
     if (totalBatches !== null && pageNum > totalBatches) break;
 
-    const res = await site.amcRequestSingle({
-      moduleName: 'list/ListPagesModule',
-      category: '*',
-      perPage: '250',
-      order: 'created_at desc',
-      p: String(pageNum),
-      module_body: MODULE_BODY,
-    });
+    let response: any = null;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const res = await site.amcRequestSingle({
+        moduleName: 'list/ListPagesModule',
+        category: '*',
+        perPage: '250',
+        order: 'created_at desc',
+        p: String(pageNum),
+        module_body: MODULE_BODY,
+      });
 
-    if (!res.isOk()) {
-      console.warn(`[tier1] Batch ${pageNum} failed:`, res.error);
-      break;
+      if (res.isOk() && isSuccessResponse(res.value)) {
+        response = res.value;
+        break;
+      }
+
+      const errMsg = res.isOk() ? `status ${res.value.status}` : String(res.error);
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[tier1] Batch ${pageNum} attempt ${attempt}/${MAX_RETRIES} failed: ${errMsg}, retrying...`);
+        await new Promise(r => setTimeout(r, 2000 * attempt));
+      } else {
+        // 重试耗尽：抛出错误让调用方决定处理策略
+        throw new Error(`[tier1] Batch ${pageNum} failed after ${MAX_RETRIES} attempts: ${errMsg}`);
+      }
     }
 
-    const response = res.value;
-    if (!isSuccessResponse(response)) {
-      console.warn(`[tier1] Batch ${pageNum} non-ok:`, response.status);
-      break;
-    }
+    if (!response) break; // 不应到达
 
     if (totalBatches === null) {
       totalBatches = parseTotalPages(response.body);
@@ -117,8 +127,10 @@ function stripPercent(s: string): string {
 }
 
 function parseDateValue(raw: string): number | null {
-  // %%date|UNIX_TIMESTAMP%% format
-  const match = raw.match(/%%date\|(\d+)%%/);
+  // 支持两种格式：
+  //   %%date|UNIX_TIMESTAMP%%  (原始未 stripPercent)
+  //   date|UNIX_TIMESTAMP      (stripPercent 后)
+  const match = raw.match(/(?:%%)?date\|(\d+)(?:%%)?/);
   if (match) return parseInt(match[1], 10);
   // raw number fallback
   const n = parseInt(raw, 10);
