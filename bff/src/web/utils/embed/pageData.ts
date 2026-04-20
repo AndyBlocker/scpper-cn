@@ -10,7 +10,10 @@ export interface PageBadgeData {
   voteCount: number;
   wilson95: number | null;
   controversy: number | null;
-  isDeleted: boolean;             // true 当仅能回退到已删除版本
+  /** 返回的 PageVersion 本身是否为 tombstone（isDeleted=true）。常见用途：决定徽章是否加 "deleted" 前缀。 */
+  isDeleted: boolean;
+  /** 当前版本是 tombstone、已回退到最后一个非 deleted 版本时为 true。 */
+  fromDeletedFallback: boolean;
   firstPublishedAt: Date | null;
 }
 
@@ -101,7 +104,8 @@ export async function loadPageBadgeData(
     voteCount: Number(r.voteCount ?? 0),
     wilson95: r.wilson95 != null ? Number(r.wilson95) : null,
     controversy: r.controversy != null ? Number(r.controversy) : null,
-    isDeleted: resolved.fromDeleted || Boolean(r.versionIsDeleted),
+    isDeleted: Boolean(r.versionIsDeleted),
+    fromDeletedFallback: resolved.fromDeleted,
     firstPublishedAt: resolved.firstPublishedAt
   };
 }

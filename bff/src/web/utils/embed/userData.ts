@@ -146,6 +146,8 @@ export async function loadUserActivityHeatmap(
   userId: number,
   days: number
 ): Promise<Array<{ date: string; votes: number; pages: number }>> {
+  // 显式用 Asia/Shanghai 的当天做锚点：若 DB session 的 TimeZone 是 UTC，
+  // 直接用 CURRENT_DATE 会在本地 00:00-08:00 这段时间漏掉"今天"的行。
   const { rows } = await pool.query(
     `SELECT
        to_char(date::date, 'YYYY-MM-DD') AS date,
@@ -153,7 +155,8 @@ export async function loadUserActivityHeatmap(
        COALESCE("pages_created", 0)::int AS pages
      FROM "UserDailyStats"
      WHERE "userId" = $1
-       AND date >= CURRENT_DATE - ($2::int - 1) * INTERVAL '1 day'
+       AND date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date
+                   - ($2::int - 1) * INTERVAL '1 day'
      ORDER BY date ASC`,
     [userId, Math.max(1, Math.min(days, 366))]
   );
