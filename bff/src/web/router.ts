@@ -28,6 +28,7 @@ import { forumsRouter } from './routes/forums.js';
 import { cssProxyRouter } from './routes/css-proxy.js';
 import { pagePreviewRouter } from './routes/page-preview.js';
 import { annualSummaryRouter } from './routes/annual-summary.js';
+import { embedRouter } from './routes/embed.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -85,6 +86,7 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/pages', pagePreviewRouter(pool));
   router.use(cssProxyRouter());
   router.use('/annual-summary', annualSummaryRouter());
+  router.use('/embed', embedRouter(pool, redis));
   router.use('/internal', guardInternalRoutes, internalRouter());
   router.use('/', htmlSnippetsRouter);
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));
