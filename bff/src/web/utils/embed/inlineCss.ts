@@ -87,11 +87,15 @@ export function sanitizeInlineCss(raw: unknown): string {
   }
 
   // 限制 url(...)：
-  //   - `url("...")` / `url('...')` 分支单独匹配，允许 URL 内部包含 `)` 和转义字符
-  //     （`(?:\\.|[^"\\])*` 允许 `\\"`、`\\\\` 这类合法 CSS string escape，否则
-  //     遇到 `url("https://x/a\\""` 这类输入正则会整体不命中，导致原文直接透传）
+  //   - `url("...")` / `url('...')` 分支允许 URL 内部包含 `)` 和 CSS string escape；
+  //     escape 用 `\\(?:\r\n|[\s\S])`：
+  //       - `\<CRLF>` 按 CSS string-continuation 规则被整体吃掉（最长匹配，放最前）
+  //       - `\<任意单字符>` 覆盖 `\"` / `\'` / `\\` / `\<LF>` 等转义形式
+  //     否则遇到 `url("https://x/a\\""` 或 `url("https://x/a\<nl>")` 这类输入
+  //     正则会中途脱轨，导致原文直接透传给浏览器（浏览器会按 CSS 规则把 escape
+  //     吃掉，拿到真实外链）。
   //   - 不带引号的走 URL-token 分支，内部不可出现 `'"()` 和空白
-  const URL_REGEX = /url\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^'")\s]+))\s*\)/gi;
+  const URL_REGEX = /url\(\s*(?:"((?:\\(?:\r\n|[\s\S])|[^"\\])*)"|'((?:\\(?:\r\n|[\s\S])|[^'\\])*)'|([^'")\s]+))\s*\)/gi;
   const urlCleaned = commentStripped.replace(URL_REGEX, (_full, dq, sq, bare) => {
     const url = String(dq ?? sq ?? bare ?? '').trim();
     if (!url) return 'none';
