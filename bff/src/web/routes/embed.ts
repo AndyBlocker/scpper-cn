@@ -34,6 +34,9 @@ const BADGE_CACHE_SECONDS = 300;
 const USER_CARD_CACHE_SECONDS = 300;
 const USER_HISTORY_CACHE_SECONDS = 600;
 
+const VALID_BADGE_METRICS = new Set(['rating', 'wilson', 'controversy', 'votes', 'trend']);
+const VALID_BADGE_STYLES = new Set(['flat', 'plastic', 'mono']);
+
 function parseFlag(value: unknown, def: boolean): boolean {
   if (value === undefined || value === null) return def;
   const str = String(value).toLowerCase();
@@ -47,6 +50,52 @@ function parseRange(raw: unknown): '90d' | '1y' | 'all' {
   if (s === '1y' || s === '365d' || s === '12m') return '1y';
   if (s === 'all') return 'all';
   return '90d';
+}
+
+/** 仅接受 3/6/8 位 hex，不带 #。其他输入（含 "currentColor" 之类的关键字）一律视为未传。 */
+function normalizeAccentParam(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim().replace(/^#/, '').toLowerCase();
+  if (/^[0-9a-f]{3}$/.test(trimmed) || /^[0-9a-f]{6}$/.test(trimmed) || /^[0-9a-f]{8}$/.test(trimmed)) {
+    return trimmed;
+  }
+  return '';
+}
+
+/** label 长度/字符收紧，最多 32 个可见 ASCII+中文，用来防御 cache key 轰炸和 SVG 过宽。 */
+function normalizeLabelParam(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (trimmed.length > 32) return trimmed.slice(0, 32);
+  return trimmed;
+}
+
+/** 渲染一个走 sendEmbedHtml 包装的极简 404 页，保留 frame-ancestors / CSP / 缓存控制。 */
+function sendEmbedNotFound(
+  res: import('express').Response,
+  themeOpts: import('../utils/embed/theme.js').ResolvedTheme,
+  message: string
+) {
+  const body = `<div class="e-empty-card">${message
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')}</div>`;
+  const baseCss = `
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: transparent; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif; color: var(--e-text-muted); font-size: 13px; }
+    .e-empty-card { padding: 16px 20px; border: 1px dashed var(--e-border); border-radius: 12px; background: var(--e-surface); text-align: center; }
+  `;
+  sendEmbedHtml(res, {
+    title: 'SCPPER-CN',
+    baseCss,
+    bodyHtml: body,
+    theme: themeOpts,
+    extraImgSrc: "'self' data:",
+    cacheSeconds: 60,
+    statusCode: 404
+  });
 }
 
 function trimSeriesToLastDays(values: number[], days: number): number[] {
@@ -98,20 +147,31 @@ export function embedRouter(pool: Pool, redis: RedisClientType | null) {
   router.get('/badge/page/:wikidotId\\.svg', async (req, res, next) => {
     try {
       const wikidotId = Number((req.params as Record<string, string>).wikidotId);
-      const metric = String(req.query.metric || 'rating').toLowerCase();
-      const style = (String(req.query.style || 'flat').toLowerCase() as 'flat' | 'plastic' | 'mono');
+      const rawMetric = typeof req.query.metric === 'string' ? req.query.metric.toLowerCase() : 'rating';
+      const rawStyle = typeof req.query.style === 'string' ? req.query.style.toLowerCase() : 'flat';
+      if (!VALID_BADGE_METRICS.has(rawMetric)) {
+        return res.status(400).json({ error: 'invalid_metric', allowed: Array.from(VALID_BADGE_METRICS) });
+      }
+      if (!VALID_BADGE_STYLES.has(rawStyle)) {
+        return res.status(400).json({ error: 'invalid_style', allowed: Array.from(VALID_BADGE_STYLES) });
+      }
+      const metric = rawMetric as 'rating' | 'wilson' | 'controversy' | 'votes' | 'trend';
+      const style = rawStyle as 'flat' | 'plastic' | 'mono';
       const themeMono = style === 'mono' || String(req.query.theme || '').toLowerCase() === 'mono';
-      const accent = typeof req.query.accent === 'string' ? req.query.accent : undefined;
-      const labelOverride = typeof req.query.label === 'string' ? req.query.label : undefined;
+      const accentHex = normalizeAccentParam(req.query.accent);
+      // trend 模式下 accent/label 不参与渲染，就不要让它进 cache key，避免
+      // `?metric=trend&accent=1/2/3...` 刷穿 JSONB 读取。
+      const labelOverride = metric === 'trend' ? '' : normalizeLabelParam(req.query.label);
+      const accentForKey = metric === 'trend' ? '' : accentHex;
 
-      const cacheKey = `embed:badge:page:${wikidotId}:${metric}:${style}:${themeMono ? 'm' : 'c'}:${accent || ''}:${labelOverride || ''}`;
+      const cacheKey = `embed:badge:page:${wikidotId}:${metric}:${style}:${themeMono ? 'm' : 'c'}:${accentForKey}:${labelOverride}`;
 
       const svg = await cache.remember(cacheKey, BADGE_CACHE_SECONDS, async () => {
         if (metric === 'trend') {
           const series = await loadPageVotingSeries(readPool, wikidotId);
           if (!series) {
             return renderSvgBadge({
-              label: labelOverride || 'scpper',
+              label: 'scpper',
               value: 'no data',
               style: style === 'mono' ? 'flat' : style,
               themeMono,
@@ -184,14 +244,14 @@ export function embedRouter(pool: Pool, redis: RedisClientType | null) {
           if (colorKey === 'rating_pos') color = '#4c1';
           else if (colorKey === 'rating_neg') color = '#e05d44';
           else color = metricColor(metric, false);
-          if (accent) color = undefined; // 若用户传 accent，优先走 accent
+          if (accentHex) color = undefined; // 若用户传 accent，优先走 accent
         }
         return renderSvgBadge({
           label,
           value,
           style: style === 'mono' ? 'flat' : style,
           themeMono,
-          color: accent ? `#${String(accent).replace(/^#/, '')}` : color,
+          color: accentHex ? `#${accentHex}` : color,
           title: page.title || undefined
         });
       });
@@ -234,8 +294,7 @@ export function embedRouter(pool: Pool, redis: RedisClientType | null) {
       });
 
       if (!data) {
-        res.status(404).setHeader('Cache-Control', 'public, max-age=60');
-        return res.type('text/html').send('<!doctype html><html><body style="font-family:sans-serif;padding:16px;color:#888">用户不存在或无统计数据</body></html>');
+        return sendEmbedNotFound(res, themeOpts, '用户不存在或无统计数据');
       }
 
       const renderOpts: UserCardRenderOptions = {
@@ -251,7 +310,9 @@ export function embedRouter(pool: Pool, redis: RedisClientType | null) {
         userCss: sanitizedCss,
         bodyHtml,
         theme: themeOpts,
-        extraImgSrc: "'self' data: https:",
+        // user-card 不再放开外部 https 图片：作者自定义 CSS 只允许 same-origin 和 data:image，
+        // 防止 url() 被当作访客追踪像素。头像走 /api/avatar（同源）仍能工作。
+        extraImgSrc: "'self' data:",
         cacheSeconds: USER_CARD_CACHE_SECONDS
       });
     } catch (error) {
@@ -285,8 +346,7 @@ export function embedRouter(pool: Pool, redis: RedisClientType | null) {
       });
 
       if (!data) {
-        res.status(404).setHeader('Cache-Control', 'public, max-age=60');
-        return res.type('text/html').send('<!doctype html><html><body style="font-family:sans-serif;padding:16px;color:#888">用户不存在</body></html>');
+        return sendEmbedNotFound(res, themeOpts, '用户不存在');
       }
 
       const renderOpts: UserHistoryRenderOptions = {

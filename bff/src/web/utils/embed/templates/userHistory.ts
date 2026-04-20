@@ -19,6 +19,35 @@ function formatInt(n: number): string {
 }
 
 /**
+ * 本地（Asia/Shanghai）YYYY-MM-DD 格式化。传入 `Date` 或 UNIX ms。
+ * `toISOString().slice(0,10)` 会用 UTC 日，凌晨时段会错切到前一天，所以这里统一显式走站点时区。
+ */
+const SH_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+function shanghaiDate(input: Date | number): string {
+  const d = typeof input === 'number' ? new Date(input) : input;
+  return SH_DATE.format(d);
+}
+
+/**
+ * 按"本地日期"后退 N 天：在 UTC 基础上加时区偏移得到 Shanghai 当日的午夜时刻，再减天数。
+ * Shanghai 无 DST，偏移固定 +08:00，这样处理比拼字符串更稳。
+ */
+function shanghaiDateNDaysAgo(days: number): string {
+  const todayStr = shanghaiDate(Date.now());
+  const [y, m, d] = todayStr.split('-').map(Number);
+  // 构造 Shanghai 当日 00:00 UTC 等价时间戳（-8h）
+  const shanghaiMidnightUtcMs = Date.UTC(y, m - 1, d) - 8 * 3600 * 1000;
+  const cutoffMs = shanghaiMidnightUtcMs - days * 24 * 3600 * 1000;
+  return shanghaiDate(cutoffMs);
+}
+
+/**
  * 从 VotingSeries 生成累计评分序列（upvotes[i] - downvotes[i]）。
  */
 function buildCumulativeRating(series: VotingSeries): Array<{ date: string; rating: number }> {
@@ -35,9 +64,7 @@ function buildCumulativeRating(series: VotingSeries): Array<{ date: string; rati
 function trimToRange(points: Array<{ date: string; rating: number }>, range: UserHistoryRenderOptions['range']): Array<{ date: string; rating: number }> {
   if (range === 'all' || points.length === 0) return points;
   const days = range === '90d' ? 90 : 365;
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - days);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const cutoffStr = shanghaiDateNDaysAgo(days);
   return points.filter(p => p.date >= cutoffStr);
 }
 
@@ -103,23 +130,28 @@ function renderRatingChart(points: Array<{ date: string; rating: number }>): str
 
 /**
  * GitHub 风格的活动热力图：12 个月 / 53 周 / 7 天。
- * dayMap 的 key 是 YYYY-MM-DD。
+ * dayMap 的 key 是 Asia/Shanghai 下的 YYYY-MM-DD。
+ *
+ * 内部完全在"Shanghai 本地日"坐标系下推进：把每一天的 UTC 偏移算一次，后续都用
+ * 天数偏移累加，避免受 JS `Date` 方法的本地时区影响（服务器可能在 UTC 运行）。
  */
 function renderHeatmap(dayMap: Map<string, number>): string {
   const cellSize = 11;
   const gap = 2;
-  const today = new Date();
-  // 以今天为最后一格的日子，算出 52×7 网格左上角需要对齐的起点（让最后一列包含今天）
   const weeks = 52;
   const totalDays = weeks * 7;
+  const MS_PER_DAY = 24 * 3600 * 1000;
 
-  // 起点：totalDays-1 天前，再往前推到那天所在的"周一"
-  const start = new Date(today);
-  start.setDate(today.getDate() - (totalDays - 1));
-  // 把 start 对齐到周一（getDay: 0=Sun,1=Mon...）
-  const dow = start.getDay();
-  const daysToMonday = (dow + 6) % 7;
-  start.setDate(start.getDate() - daysToMonday);
+  const todayStr = shanghaiDate(Date.now());
+  const [ty, tm, td] = todayStr.split('-').map(Number);
+  // Shanghai 无 DST，直接用 +08:00 偏移；UTC 时刻 = 本地午夜 - 8h
+  const todayMidnightUtcMs = Date.UTC(ty, tm - 1, td) - 8 * 3600 * 1000;
+  // Shanghai 当日是周几（0=Sun），把它转成 Monday=0 的坐标系
+  const todayDow = new Date(todayMidnightUtcMs + 8 * 3600 * 1000).getUTCDay();
+  const todayDowMon = (todayDow + 6) % 7;
+
+  // 网格左上角：往前 totalDays-1 天到 "N 天前"，再补齐到那天所在周的周一
+  const gridStartMs = todayMidnightUtcMs - (totalDays - 1 + todayDowMon) * MS_PER_DAY;
 
   // 收集非零值以便分档
   const allValues = Array.from(dayMap.values()).filter(v => v > 0);
@@ -137,28 +169,29 @@ function renderHeatmap(dayMap: Map<string, number>): string {
 
   // 构造格子
   const cellsPerWeek = 7;
-  const totalWeeks = Math.ceil((totalDays + daysToMonday) / 7);
+  // 从 gridStart 到今天需要多少周
+  const daysSpan = Math.round((todayMidnightUtcMs - gridStartMs) / MS_PER_DAY) + 1;
+  const totalWeeks = Math.ceil(daysSpan / 7);
   const cells: string[] = [];
   const monthLabels: string[] = [];
   let lastMonth = -1;
 
   for (let w = 0; w < totalWeeks; w += 1) {
     for (let d = 0; d < cellsPerWeek; d += 1) {
-      const cur = new Date(start);
-      cur.setDate(start.getDate() + w * 7 + d);
-      if (cur > today) continue;
-      const y = d * (cellSize + gap);
-      const x = w * (cellSize + gap);
-      const iso = cur.toISOString().slice(0, 10);
+      const cellMs = gridStartMs + (w * 7 + d) * MS_PER_DAY;
+      if (cellMs > todayMidnightUtcMs) continue;
+      const yPos = d * (cellSize + gap);
+      const xPos = w * (cellSize + gap);
+      const iso = shanghaiDate(cellMs);
       const v = dayMap.get(iso) ?? 0;
       const lvl = levelFor(v);
       const title = v > 0 ? `${iso}: ${v}` : iso;
-      cells.push(`<rect x="${x}" y="${y}" width="${cellSize}" height="${cellSize}" rx="2" ry="2" class="hm-cell lvl-${lvl}"><title>${esc(title)}</title></rect>`);
+      cells.push(`<rect x="${xPos}" y="${yPos}" width="${cellSize}" height="${cellSize}" rx="2" ry="2" class="hm-cell lvl-${lvl}"><title>${esc(title)}</title></rect>`);
 
       if (d === 0) {
-        const month = cur.getMonth();
+        const month = Number(iso.slice(5, 7));
         if (month !== lastMonth) {
-          monthLabels.push(`<text x="${x}" y="-4" class="hm-month">${cur.getMonth() + 1}月</text>`);
+          monthLabels.push(`<text x="${xPos}" y="-4" class="hm-month">${month}月</text>`);
           lastMonth = month;
         }
       }

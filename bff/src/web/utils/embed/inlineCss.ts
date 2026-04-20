@@ -1,6 +1,52 @@
 export const INLINE_CSS_MAX_BYTES = 4096;
 
 /**
+ * 把 CSS 转义（`\HH ` / `\HHHHHH` / `\X`）展开成真实字符。
+ *
+ * 该函数只用于"检测输入里是否混入了需要被拒绝的关键字"。实际返回给客户端的仍然是
+ * 原始字符串：让浏览器自己按 CSS 规范重新识别转义，这样作者还能用 `\feff` 之类的
+ * 合法写法。参考 CSS Syntax Module Level 3 §4.3.7。
+ */
+function decodeCssEscapes(src: string): string {
+  return src.replace(/\\([0-9a-fA-F]{1,6})[\t\n\f\r ]?|\\([^\n\r\f])/g, (_, hex, other) => {
+    if (hex) {
+      const code = parseInt(hex, 16);
+      if (!Number.isFinite(code) || code === 0 || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff) {
+        return '\ufffd';
+      }
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return '\ufffd';
+      }
+    }
+    return other || '';
+  });
+}
+
+const FORBIDDEN_DECODED: RegExp[] = [
+  /@import/i,
+  /@charset/i,
+  /@namespace/i,
+  /@document/i,
+  /behavior\s*:/i,
+  /-moz-binding/i,
+  /expression\s*\(/i,
+  /javascript\s*:/i,
+  /vbscript\s*:/i,
+  /data\s*:\s*text\//i,
+  /data\s*:\s*application\/(x-)?javascript/i
+];
+
+// HTML-层 break-out 必须对原始字符串匹配：HTML 解析器看 <style> 里的文本时
+// 只找字面 `</style>` / `</script>`，不过任何 CSS 转义，所以检测必须基于原文。
+const FORBIDDEN_RAW: RegExp[] = [
+  /<\s*\/?\s*style\b/i,
+  /<\s*\/?\s*script\b/i,
+  /<\s*\/?\s*iframe\b/i
+];
+
+/**
  * 结果：safe 版的 CSS 字符串（若被截断或拒绝，会返回空串）。
  *
  * 拒绝而非抛错的理由：CSS 是纯装饰，任何"解析不了"的情况直接回落到默认样式即可，
@@ -22,43 +68,35 @@ export function sanitizeInlineCss(raw: unknown): string {
   }
 
   // 剥离块注释，避免注释里绕过关键字检查；CSS 行注释 (//) 不是标准，不处理。
-  let cleaned = input.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const commentStripped = input.replace(/\/\*[\s\S]*?\*\//g, ' ');
 
-  // 关键字黑名单：遇到一项直接拒绝整块
-  const forbidden: RegExp[] = [
-    /@import/i,
-    /@charset/i,
-    /@namespace/i,
-    /behavior\s*:/i,
-    /-moz-binding/i,
-    /expression\s*\(/i,
-    /javascript\s*:/i,
-    /vbscript\s*:/i,
-    /<\s*\/?\s*style\b/i,
-    /<\s*\/?\s*script\b/i,
-    /<\s*\/?\s*iframe\b/i
-  ];
-  for (const rule of forbidden) {
-    if (rule.test(cleaned)) return '';
+  // HTML break-out 基于原文匹配
+  for (const rule of FORBIDDEN_RAW) {
+    if (rule.test(commentStripped)) return '';
   }
 
-  // 限制 url(...)：只允许 http/https/相对路径 / data:image/*
-  cleaned = cleaned.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (full, quote, urlRaw) => {
+  // 其他关键字用"CSS 转义展开后"的文本匹配，堵掉 `@\41import` / `ex\70 ression(` 之类绕过
+  const decoded = decodeCssEscapes(commentStripped);
+  for (const rule of FORBIDDEN_DECODED) {
+    if (rule.test(decoded)) return '';
+  }
+
+  // 限制 url(...)：只允许同源（/ 开头）和 data:image/*。
+  // 显式拒绝任意 http(s) 外链，避免作者 CSS 被当作访客追踪像素。
+  const urlCleaned = commentStripped.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (_full, _quote, urlRaw) => {
     const url = String(urlRaw).trim();
     if (!url) return 'none';
-    const lower = url.toLowerCase();
-    if (lower.startsWith('data:')) {
-      // 只允许 data:image/*
-      if (!/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(url)) return 'none';
-      return `url("${url.replace(/"/g, '')}")`;
+    const decodedUrl = decodeCssEscapes(url).toLowerCase();
+    if (decodedUrl.startsWith('data:')) {
+      if (!/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(decodedUrl)) return 'none';
+      return `url("${url.replace(/["\\<>]/g, '')}")`;
     }
-    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('/') || lower.startsWith('./') || lower.startsWith('../')) {
-      // 去掉引号反斜杠，避免 CSS 字符串注入
-      const safe = url.replace(/["\\<>]/g, '');
-      return `url("${safe}")`;
+    if (decodedUrl.startsWith('/') && !decodedUrl.startsWith('//')) {
+      return `url("${url.replace(/["\\<>]/g, '')}")`;
     }
+    // 其他（含 http:/https:/相对路径/协议相对）一律清洗掉，防止追踪像素
     return 'none';
   });
 
-  return cleaned.trim();
+  return urlCleaned.trim();
 }

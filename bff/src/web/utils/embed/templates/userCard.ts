@@ -119,8 +119,7 @@ export const USER_CARD_BASE_CSS = `
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif; color: var(--e-text); font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
   .e-card { background: var(--e-bg); border: 1px solid var(--e-border); border-radius: 14px; padding: 18px 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 16px; }
   .e-header { display: flex; align-items: center; gap: 14px; position: relative; }
-  .e-avatar { width: 56px; height: 56px; border-radius: 50%; overflow: hidden; background: var(--e-surface); flex-shrink: 0; ring: 1px solid var(--e-border); position: relative; }
-  .e-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .e-avatar { width: 56px; height: 56px; border-radius: 50%; overflow: hidden; background: var(--e-surface) center/cover no-repeat; flex-shrink: 0; box-shadow: inset 0 0 0 1px var(--e-border); position: relative; }
   .e-name-block { min-width: 0; flex: 1; }
   .e-name { font-size: 16px; font-weight: 600; color: var(--e-accent); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .e-subtitle { font-size: 11px; color: var(--e-text-subtle); margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -169,16 +168,20 @@ export function renderUserCardBody(
     : '';
 
   const keep = new Set(opts.showCategories.filter(Boolean));
-  const breakdownHtml = opts.breakdown === 'radar'
-    ? `<div class="radar-wrap">${renderRadar(stats.categories.filter(c => keep.size === 0 ? true : keep.has(c.key)))}</div>`
+  const radarCategories = stats.categories.filter(c => keep.size === 0 ? true : keep.has(c.key));
+  // 雷达图最少需要 3 个顶点才有意义；过滤后不足时退回列表渲染，避免出现空白区
+  const effectiveBreakdown: 'list' | 'radar' =
+    opts.breakdown === 'radar' && radarCategories.length >= 3 ? 'radar' : 'list';
+  const breakdownHtml = effectiveBreakdown === 'radar'
+    ? `<div class="radar-wrap">${renderRadar(radarCategories)}</div>`
     : renderCategoryList(stats.categories, keep);
 
+  // 用 background-image 承载头像；img 元素加载失败会显示浏览器默认的 broken-image 图标，
+  // 而 CSP `script-src 'none'` 下 <img onerror> 不生效，因此直接用背景图 + aria-label 承担语义。
+  const avatarStyle = `background-image: url(/api/avatar/${wikidotId})`;
   return `<div class="e-card">
     <header class="e-header">
-      <div class="e-avatar">
-        <img src="/api/avatar/${wikidotId}" alt="${esc(displayName)}" width="56" height="56"
-             onerror="this.style.visibility='hidden'"/>
-      </div>
+      <div class="e-avatar" role="img" aria-label="${esc(displayName)}" style="${avatarStyle}"></div>
       <div class="e-name-block">
         <span class="e-name">${esc(displayName)}</span>
         <div class="e-subtitle">${subtitleParts.join('')}</div>

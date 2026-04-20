@@ -12,6 +12,8 @@ export interface EmbedHtmlOptions {
   extraImgSrc?: string;
   /** 缓存秒数，默认 300 */
   cacheSeconds?: number;
+  /** HTTP 状态码；默认 200。用于把 embed wrapper 复用给 404/410 等错误页。 */
+  statusCode?: number;
 }
 
 function escapeHtml(str: string): string {
@@ -62,5 +64,6 @@ ${cleanUser ? `<style data-origin="user">${cleanUser}</style>` : ''}
 <body class="e-body">${opts.bodyHtml}</body>
 </html>`;
 
-  res.status(200).send(html);
+  const status = Number.isInteger(opts.statusCode) ? opts.statusCode! : 200;
+  res.status(status).send(html);
 }
