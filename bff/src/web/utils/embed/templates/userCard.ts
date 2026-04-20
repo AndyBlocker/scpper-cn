@@ -22,11 +22,18 @@ function formatFloat(n: number, digits = 1): string {
   return Number.isFinite(n) ? n.toFixed(digits) : '—';
 }
 
-function formatDate(d: Date | null): string {
-  if (!d) return '—';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
+/**
+ * Redis 缓存反序列化后 Date 会退化成 ISO 字符串，原版 `d.getFullYear` 直接抛
+ * `TypeError: d.getFullYear is not a function`，导致 /embed/user-card 在生产 500。
+ * 这里同时接受 Date / string / number / null，并对无效日期兜底到 '—'。
+ */
+function formatDate(d: Date | string | number | null | undefined): string {
+  if (d == null || d === '') return '—';
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return '—';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 }
 
