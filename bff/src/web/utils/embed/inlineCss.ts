@@ -88,14 +88,19 @@ export function sanitizeInlineCss(raw: unknown): string {
 
   // 限制 url(...)：
   //   - `url("...")` / `url('...')` 分支允许 URL 内部包含 `)` 和 CSS string escape；
-  //     escape 用 `\\(?:\r\n|[\s\S])`：
-  //       - `\<CRLF>` 按 CSS string-continuation 规则被整体吃掉（最长匹配，放最前）
-  //       - `\<任意单字符>` 覆盖 `\"` / `\'` / `\\` / `\<LF>` 等转义形式
-  //     否则遇到 `url("https://x/a\\""` 或 `url("https://x/a\<nl>")` 这类输入
-  //     正则会中途脱轨，导致原文直接透传给浏览器（浏览器会按 CSS 规则把 escape
-  //     吃掉，拿到真实外链）。
+  //     escape 用 `\\[\s\S]`：`\<任意单字符>` 整体吞掉，覆盖 `\"` / `\'` / `\\` /
+  //     `\<LF>` / `\<CR>` / `\<FF>` 等转义形式，避免上一版 regex 遇到
+  //     `url("https://x/a\\""` 或 `url("https://x/a\<nl>")` 会脱轨放原文透传。
+  //
+  //     为什么不把 `\<CRLF>` 作整体 alternation（`(?:\r\n|[\s\S])`）：那种写法在
+  //     未闭合 quoted-string 上会产生 "\<CR>\<LF>" 两条等价展开路径，`*` 量词叠加
+  //     之后 V8 会指数级回溯（实测 repeat(25) 就要秒级 CPU），构成 ReDoS。这里每
+  //     个位置只有"要么 `\<x>` 2 字符、要么 `[^"\\]` 1 字符"一种走法，线性时间。
+  //     `\<CRLF>` 会被拆成 `\<CR>` + 裸 `<LF>` 两步消费；对我们只做 protocol 判断
+  //     的下游逻辑来说等价（任何含 `\`/`\r`/`\n` 的字符串都不会 startsWith('/')
+  //     或 'data:'，会被统一替换成 none）。
   //   - 不带引号的走 URL-token 分支，内部不可出现 `'"()` 和空白
-  const URL_REGEX = /url\(\s*(?:"((?:\\(?:\r\n|[\s\S])|[^"\\])*)"|'((?:\\(?:\r\n|[\s\S])|[^'\\])*)'|([^'")\s]+))\s*\)/gi;
+  const URL_REGEX = /url\(\s*(?:"((?:\\[\s\S]|[^"\\])*)"|'((?:\\[\s\S]|[^'\\])*)'|([^'")\s]+))\s*\)/gi;
   const urlCleaned = commentStripped.replace(URL_REGEX, (_full, dq, sq, bare) => {
     const url = String(dq ?? sq ?? bare ?? '').trim();
     if (!url) return 'none';
