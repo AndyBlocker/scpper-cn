@@ -87,9 +87,11 @@ export function sanitizeInlineCss(raw: unknown): string {
   }
 
   // 限制 url(...)：
-  //   - `url("...")` / `url('...')` 分支单独匹配，允许 URL 内部包含 `)`
+  //   - `url("...")` / `url('...')` 分支单独匹配，允许 URL 内部包含 `)` 和转义字符
+  //     （`(?:\\.|[^"\\])*` 允许 `\\"`、`\\\\` 这类合法 CSS string escape，否则
+  //     遇到 `url("https://x/a\\""` 这类输入正则会整体不命中，导致原文直接透传）
   //   - 不带引号的走 URL-token 分支，内部不可出现 `'"()` 和空白
-  const URL_REGEX = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")\s]+))\s*\)/gi;
+  const URL_REGEX = /url\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^'")\s]+))\s*\)/gi;
   const urlCleaned = commentStripped.replace(URL_REGEX, (_full, dq, sq, bare) => {
     const url = String(dq ?? sq ?? bare ?? '').trim();
     if (!url) return 'none';
