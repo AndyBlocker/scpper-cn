@@ -119,8 +119,8 @@ export async function listEmbeddingCandidates(
 }
 
 /**
- * 批量 upsert embedding。collisions 按 `(pageVersionId, model)` 唯一键 ON CONFLICT 更新。
- * 使用 INSERT ... VALUES ..., ...ON CONFLICT DO UPDATE 一次提交 N 行，减少 round-trip。
+ * 批量 upsert chunk embedding。collisions 按 `(pageVersionId, model, chunkIndex)`
+ * 唯一键 ON CONFLICT DO UPDATE。一次 INSERT 多行，减少 round-trip。
  */
 export async function upsertEmbeddings(
   prisma: PrismaClient,
@@ -131,37 +131,49 @@ export async function upsertEmbeddings(
     embedding: number[];
     sourceCharLen: number;
     sourceTruncated: boolean;
+    chunkIndex: number;
+    chunkTotal: number;
+    chunkCharStart: number;
+    chunkCharEnd: number;
   }>
 ): Promise<number> {
   if (rows.length === 0) return 0;
 
-  // 拼 VALUES 字面量：所有 halfvec 字面串 + 其他参数走 $n 位置
-  // pgvector 接收 `[n1,n2,...]::halfvec(1024)` 的 cast 形式
+  // placeholder: ($pvId, $1, $2, $vec::halfvec(dim), $len, $trunc, $cIdx, $cTotal, $cStart, $cEnd)
   const placeholders: string[] = [];
   const params: any[] = [model, dim];
   let idx = 3;
   for (const r of rows) {
     placeholders.push(
-      `($${idx++}, $1, $2, $${idx++}::halfvec(${dim}), $${idx++}, $${idx++})`
+      `($${idx++}, $1, $2, $${idx++}::halfvec(${dim}), $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`
     );
     params.push(
       r.pageVersionId,
       toVectorLiteral(r.embedding),
       r.sourceCharLen,
-      r.sourceTruncated
+      r.sourceTruncated,
+      r.chunkIndex,
+      r.chunkTotal,
+      r.chunkCharStart,
+      r.chunkCharEnd
     );
   }
 
   const sql = `
     INSERT INTO "PageEmbedding" (
-      "pageVersionId", "model", "dim", "embedding", "sourceCharLen", "sourceTruncated"
+      "pageVersionId", "model", "dim", "embedding",
+      "sourceCharLen", "sourceTruncated",
+      "chunkIndex", "chunkTotal", "chunkCharStart", "chunkCharEnd"
     )
     VALUES ${placeholders.join(',')}
-    ON CONFLICT ("pageVersionId", "model") DO UPDATE SET
+    ON CONFLICT ("pageVersionId", "model", "chunkIndex") DO UPDATE SET
       "embedding" = EXCLUDED."embedding",
       "dim" = EXCLUDED."dim",
       "sourceCharLen" = EXCLUDED."sourceCharLen",
       "sourceTruncated" = EXCLUDED."sourceTruncated",
+      "chunkTotal" = EXCLUDED."chunkTotal",
+      "chunkCharStart" = EXCLUDED."chunkCharStart",
+      "chunkCharEnd" = EXCLUDED."chunkCharEnd",
       "createdAt" = CURRENT_TIMESTAMP
   `;
   const res: any = await prisma.$executeRawUnsafe(sql, ...params);
@@ -177,15 +189,21 @@ export interface SearchHit {
   rating: number | null;
   category: string | null;
   tags: string[];
-  denseScore: number;            // 1 - cosine distance
+  denseScore: number;            // 1 - cosine distance（chunk 里的最高分）
   sparseScore: number;           // pgroonga score normalized roughly to [0,1]
   finalScore: number;            // weighted combination
   isDeletedPage: boolean;
+  /** 命中的最佳 chunk 序号（若 dense 命中）。用于 UI 跳转/高亮。 */
+  hitChunkIndex: number | null;
+  hitChunkCharStart: number | null;
+  hitChunkCharEnd: number | null;
 }
 
 /**
- * Hybrid search: dense cosine（pgvector HNSW）+ sparse（pgroonga 全文）+ tag 交集加权。
- * 前 K 直接在 SQL 里融合；真实权重可以随 query 日志调。
+ * Hybrid search: dense cosine（pgvector HNSW，chunk 粒度）+ sparse（pgroonga 全文，
+ * PageVersion 粒度）。chunk 候选按 max 聚合到 PageVersion，再与 sparse UNION。
+ *
+ * 权重可配，默认 dense 0.65 / sparse 0.35；真实权重可以随 query 日志调。
  */
 export async function hybridSearch(
   prisma: PrismaClient,
@@ -201,7 +219,8 @@ export async function hybridSearch(
   } = {}
 ): Promise<SearchHit[]> {
   const limit = opts.limit ?? 10;
-  const denseN = opts.denseCandidates ?? 60;
+  // chunk 比 PV 多，所以 denseN 要拉大一些，保证聚合后还能覆盖够多 PV
+  const denseN = opts.denseCandidates ?? 200;
   const sparseN = opts.sparseCandidates ?? 60;
   const wd = opts.denseWeight ?? 0.65;
   const ws = opts.sparseWeight ?? 0.35;
@@ -209,13 +228,23 @@ export async function hybridSearch(
 
   const rows = await prisma.$queryRawUnsafe<any[]>(
     `
-    WITH dense AS (
+    WITH dense_chunks AS (
       SELECT pe."pageVersionId",
+             pe."chunkIndex",
+             pe."chunkCharStart",
+             pe."chunkCharEnd",
              1 - (pe.embedding <=> $1::halfvec(${queryEmbedding.length})) AS score
       FROM "PageEmbedding" pe
       WHERE pe.model = $2
       ORDER BY pe.embedding <=> $1::halfvec(${queryEmbedding.length})
       LIMIT $3
+    ),
+    dense AS (
+      -- 每个 PV 只保留分数最高的 chunk
+      SELECT DISTINCT ON ("pageVersionId")
+        "pageVersionId", score, "chunkIndex", "chunkCharStart", "chunkCharEnd"
+      FROM dense_chunks
+      ORDER BY "pageVersionId", score DESC
     ),
     sparse AS (
       SELECT pv.id AS "pageVersionId",
@@ -246,7 +275,10 @@ export async function hybridSearch(
       p."isDeleted" AS "isDeletedPage",
       COALESCE(dense.score, 0)::float AS "denseScore",
       COALESCE(sparse.score / (SELECT mx FROM max_sparse), 0)::float AS "sparseScore",
-      (COALESCE(dense.score, 0) * $6 + COALESCE(sparse.score / (SELECT mx FROM max_sparse), 0) * $7)::float AS "finalScore"
+      (COALESCE(dense.score, 0) * $6 + COALESCE(sparse.score / (SELECT mx FROM max_sparse), 0) * $7)::float AS "finalScore",
+      dense."chunkIndex" AS "hitChunkIndex",
+      dense."chunkCharStart" AS "hitChunkCharStart",
+      dense."chunkCharEnd" AS "hitChunkCharEnd"
     FROM merged m
     JOIN "PageVersion" pv ON pv.id = m."pageVersionId"
     JOIN "Page" p ON p.id = pv."pageId"
@@ -277,6 +309,9 @@ export async function hybridSearch(
     denseScore: Number(r.denseScore ?? 0),
     sparseScore: Number(r.sparseScore ?? 0),
     finalScore: Number(r.finalScore ?? 0),
-    isDeletedPage: Boolean(r.isDeletedPage)
+    isDeletedPage: Boolean(r.isDeletedPage),
+    hitChunkIndex: r.hitChunkIndex == null ? null : Number(r.hitChunkIndex),
+    hitChunkCharStart: r.hitChunkCharStart == null ? null : Number(r.hitChunkCharStart),
+    hitChunkCharEnd: r.hitChunkCharEnd == null ? null : Number(r.hitChunkCharEnd)
   }));
 }

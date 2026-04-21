@@ -21,20 +21,22 @@ export function registerEmbedCommands(program: Command) {
 
   embed
     .command('backfill')
-    .description('Embed all PageVersion rows that do not yet have a row in PageEmbedding for the current model')
-    .option('--batch-size <n>', 'Texts per embed request', (v) => parseInt(v, 10), 16)
-    .option('--limit <n>', 'Cap the number of PageVersions to process', (v) => parseInt(v, 10))
+    .description('Chunk + embed every PageVersion that does not yet have a row in PageEmbedding for the current model')
+    .option('--batch-size <n>', 'Chunks per embed request (server batch)', (v) => parseInt(v, 10), 8)
+    .option('--concurrency <n>', 'Parallel in-flight embed batches (needs server multi-worker to help)', (v) => parseInt(v, 10), 1)
+    .option('--limit <n>', 'Cap the number of PageVersions (not chunks) to process', (v) => parseInt(v, 10))
     .option('--no-deleted', 'Skip pages whose Page.isDeleted=true (default: include)')
     .option('--dry-run', 'List the candidates but do not call the embedding server or write DB')
     .action(async (opts) => {
       try {
         const res = await runPageEmbeddingBackfill({
           batchSize: opts.batchSize,
+          concurrency: opts.concurrency,
           limit: Number.isFinite(opts.limit) ? opts.limit : undefined,
           includeDeletedPages: opts.deleted !== false,
           dryRun: opts.dryRun === true
         });
-        console.log(`[embed:backfill] total=${res.total} written=${res.written} truncated=${res.truncatedCount} skippedEmpty=${res.skippedEmpty} durationMs=${res.durationMs}`);
+        console.log(`[embed:backfill] PV=${res.totalPages} chunks=${res.totalChunks} written=${res.written} truncated=${res.truncatedChunks} skippedEmpty=${res.skippedEmptyPages} durationMs=${res.durationMs}`);
       } finally {
         await disconnectPrisma();
       }
@@ -43,15 +45,17 @@ export function registerEmbedCommands(program: Command) {
   embed
     .command('incremental')
     .description('Embed only the still-missing PageVersions (same query as backfill, smaller batch)')
-    .option('--batch-size <n>', 'Texts per embed request', (v) => parseInt(v, 10), 8)
+    .option('--batch-size <n>', 'Chunks per embed request', (v) => parseInt(v, 10), 8)
+    .option('--concurrency <n>', 'Parallel in-flight embed batches', (v) => parseInt(v, 10), 1)
     .option('--limit <n>', 'Cap per run (safety for cron)', (v) => parseInt(v, 10), 500)
     .action(async (opts) => {
       try {
         const res = await runPageEmbeddingIncremental({
           batchSize: opts.batchSize,
+          concurrency: opts.concurrency,
           limit: Number.isFinite(opts.limit) ? opts.limit : 500
         });
-        console.log(`[embed:incremental] written=${res.written} truncated=${res.truncatedCount} durationMs=${res.durationMs}`);
+        console.log(`[embed:incremental] PV=${res.totalPages} chunks=${res.totalChunks} written=${res.written} truncated=${res.truncatedChunks} durationMs=${res.durationMs}`);
       } finally {
         await disconnectPrisma();
       }
@@ -89,8 +93,11 @@ export function registerEmbedCommands(program: Command) {
         for (const h of hits) {
           const name = h.title || h.alternateTitle || `PV#${h.pageVersionId}`;
           const mark = h.isDeletedPage ? ' (deleted)' : '';
+          const chunkHint = h.hitChunkIndex != null
+            ? ` [chunk ${h.hitChunkIndex} @${h.hitChunkCharStart}-${h.hitChunkCharEnd}]`
+            : '';
           console.log(
-            `${h.finalScore.toFixed(4)}  dense=${h.denseScore.toFixed(3)} sparse=${h.sparseScore.toFixed(3)}  wid=${h.wikidotId ?? '-'}  ${name}${mark}`
+            `${h.finalScore.toFixed(4)}  dense=${h.denseScore.toFixed(3)} sparse=${h.sparseScore.toFixed(3)}  wid=${h.wikidotId ?? '-'}  ${name}${mark}${chunkHint}`
           );
         }
       } finally {

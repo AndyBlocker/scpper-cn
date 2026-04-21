@@ -219,7 +219,7 @@ export async function runSyncHourlyScheduler(options: SyncHourlySchedulerOptions
       if (options.runEmbed) {
         try {
           const embedResult = await runPageEmbeddingIncremental({ limit: 500, batchSize: 8 });
-          console.log(`[sync-hourly] Embedding incremental done: written=${embedResult.written} (truncated=${embedResult.truncatedCount}, skippedEmpty=${embedResult.skippedEmpty}, durationMs=${embedResult.durationMs}).`);
+          console.log(`[sync-hourly] Embedding incremental done: PV=${embedResult.totalPages} chunks=${embedResult.totalChunks} written=${embedResult.written} (truncated=${embedResult.truncatedChunks}, skippedEmpty=${embedResult.skippedEmptyPages}, durationMs=${embedResult.durationMs}).`);
         } catch (embedErr: any) {
           const msg = embedErr instanceof Error ? embedErr.message : String(embedErr);
           console.error(`[sync-hourly] Embedding incremental failed (non-fatal): ${msg}`);
