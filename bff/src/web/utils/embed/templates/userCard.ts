@@ -237,10 +237,24 @@ export const USER_CARD_BASE_CSS = `
   .e-rank-prefix { font-size: 10px; color: var(--e-fg-muted); font-weight: 500; letter-spacing: 0.02em; }
   .e-rank-num { font-size: 15px; letter-spacing: -0.01em; }
 
-  /* 两列主体：stretch 让两列等高；两列第一行 y=0 对齐（capsule 已搬走） */
+  /* 两列主体：stretch 让两列等高；两列第一行 y=0 对齐（capsule 已搬走）。
+     窄 iframe（wikidot [[iframe]] 常见宽度 400-560px）下回退单列纵排，恢复"宽大"视觉；
+     阈值选 560 是因为 wikidot 默认正文列宽 ~620-760，iframe 通常被 wrap 到 550 以下。 */
   .e-body { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr); gap: 16px; align-items: stretch; }
-  @media (max-width: 480px) {
-    .e-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 560px) {
+    .e-body { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    /* 单列下 stat-grid 横排 4 tile，每个 tile 仍有足够宽度展示数字 */
+    .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: auto; }
+    /* 窄屏下 header 允许 capsule wrap 到下一行，不挤压 name-block */
+    .e-header { flex-wrap: wrap; }
+    .e-header-side { flex-direction: row; width: 100%; min-height: 0; justify-content: space-between; align-items: center; order: 2; gap: 12px; }
+  }
+  /* 极窄 iframe（< 380px）下进一步压缩：stat-grid 2×2 回到紧凑方阵，
+     cat-row 去掉固定 rank 列宽让 label 吃掉空间 */
+  @media (max-width: 380px) {
+    .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto; }
+    .cat-row { grid-template-columns: 1fr auto auto; gap: 8px; padding: 6px 10px; }
+    .cat-meta { font-size: 10.5px; }
   }
 
   /* stat-grid 4 tile 2×2 等大方阵：总评分 | 作品 / 投出 UpVote | 投出 DownVote。
