@@ -27,6 +27,22 @@ export interface UserCardStats {
   }>;
 }
 
+export interface CategoryBenchmark {
+  p05Rating: number;
+  p50Rating: number;
+  p95Rating: number;
+  p99Rating: number;
+  avgRating: number;
+  tau?: number;
+  nAuthors: number;
+}
+
+export interface CategoryBenchmarksPayload {
+  asOf: string;
+  method: 'asinh_piecewise_p50_p95_p99_v3' | 'asinh_p50_p95_v2' | 'legacy_linear_p50_p95';
+  benchmarks: Record<string, CategoryBenchmark>;
+}
+
 export interface VotingSeries {
   dates: string[];
   dailyUpvotes: number[];
@@ -41,7 +57,7 @@ const CATEGORY_MAP: Array<{ key: string; label: string; rankField: string; ratin
   { key: 'story', label: '故事', rankField: 'storyRank', ratingField: 'storyRating', countField: 'storyPageCount' },
   { key: 'translation', label: '翻译', rankField: 'translationRank', ratingField: 'translationRating', countField: 'translationPageCount' },
   { key: 'goi', label: 'GoI', rankField: 'goiRank', ratingField: 'goiRating', countField: 'goiPageCount' },
-  { key: 'wanderers', label: '漫游者', rankField: 'wanderersRank', ratingField: 'wanderersRating', countField: 'wanderersPageCount' },
+  { key: 'wanderers', label: '图书馆', rankField: 'wanderersRank', ratingField: 'wanderersRating', countField: 'wanderersPageCount' },
   { key: 'art', label: '艺术', rankField: 'artRank', ratingField: 'artRating', countField: 'artPageCount' }
 ];
 
@@ -115,6 +131,32 @@ export async function loadUserCardStats(
     favTag: r.favTag ?? null,
     categories
   };
+}
+
+/**
+ * 读取由 backend UserCategoryBenchmarksJob 写入 LeaderboardCache 的全站分类基准。
+ * 用 v3 → v2 → v1 的顺序回退，和 /stats/category-benchmarks 的行为一致。
+ * 未运行过该 job 时返回 null，调用方需要自己做降级（例如退回到自身最高值归一化）。
+ */
+export async function loadCategoryBenchmarks(
+  pool: Pool
+): Promise<CategoryBenchmarksPayload | null> {
+  const keys = [
+    'category_benchmarks_author_rating_v3',
+    'category_benchmarks_author_rating_v2',
+    'category_benchmarks_author_rating'
+  ];
+  for (const key of keys) {
+    const { rows } = await pool.query(
+      `SELECT payload FROM "LeaderboardCache" WHERE key = $1 AND period = 'daily' LIMIT 1`,
+      [key]
+    );
+    const payload = rows[0]?.payload;
+    if (payload && typeof payload === 'object' && payload.benchmarks) {
+      return payload as CategoryBenchmarksPayload;
+    }
+  }
+  return null;
 }
 
 export async function loadUserVotingSeries(
