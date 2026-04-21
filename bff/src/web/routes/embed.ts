@@ -17,7 +17,8 @@ import {
   loadUserBasicByWikidotId,
   loadUserCardStats,
   loadUserVotingSeries,
-  loadUserActivityHeatmap
+  loadUserActivityHeatmap,
+  loadCategoryBenchmarks
 } from '../utils/embed/userData.js';
 import {
   USER_CARD_BASE_CSS,
@@ -84,7 +85,7 @@ function sendEmbedNotFound(
   const baseCss = `
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; background: transparent; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif; color: var(--e-text-muted); font-size: 13px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif; color: var(--e-fg-muted); font-size: 13px; }
     .e-empty-card { padding: 16px 20px; border: 1px dashed var(--e-border); border-radius: 12px; background: var(--e-surface); text-align: center; }
   `;
   sendEmbedHtml(res, {
@@ -297,10 +298,19 @@ export function embedRouter(pool: Pool, redis: RedisClientType | null) {
         return sendEmbedNotFound(res, themeOpts, '用户不存在或无统计数据');
       }
 
+      // 全站分类基准（用于雷达图归一化）；单独缓存 30 分钟避免每次读 LeaderboardCache
+      // 没有基准时传 null，renderRadar 会降级到"自身最高值"归一化
+      const benchmarks = await cache.remember(
+        'embed:category-benchmarks',
+        1800,
+        () => loadCategoryBenchmarks(readPool)
+      );
+
       const renderOpts: UserCardRenderOptions = {
         breakdown,
         hideActivity,
-        showCategories
+        showCategories,
+        benchmarks
       };
 
       const bodyHtml = renderUserCardBody(data.user, data.stats, renderOpts);

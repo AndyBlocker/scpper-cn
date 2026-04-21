@@ -220,37 +220,37 @@ function renderHeatmap(dayMap: Map<string, number>): string {
 export const USER_HISTORY_BASE_CSS = `
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: transparent; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif; color: var(--e-text); font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif; color: var(--e-fg); font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
   .e-card { background: var(--e-bg); border: 1px solid var(--e-border); border-radius: 14px; padding: 18px 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 18px; }
   .e-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .e-title { font-size: 15px; font-weight: 600; color: var(--e-text); }
+  .e-title { font-size: 15px; font-weight: 600; color: var(--e-fg); }
   .e-name-inline { color: var(--e-accent); font-weight: 600; }
-  .e-sub { color: var(--e-text-subtle); font-size: 11px; }
-  .section-title { font-size: 11px; color: var(--e-text-muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 8px; }
+  .e-sub { color: var(--e-fg-subtle); font-size: 11px; }
+  .section-title { font-size: 11px; color: var(--e-fg-muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 8px; }
   .chart-wrap { background: var(--e-surface); border: 1px solid var(--e-border); border-radius: 8px; padding: 10px; }
   .chart-svg { display: block; width: 100%; height: auto; }
   .chart-grid line { stroke: var(--e-border); stroke-dasharray: 2 3; }
   .chart-area { fill: var(--e-accent-soft); }
   .chart-line { fill: none; stroke: var(--e-accent); stroke-width: 1.8; stroke-linejoin: round; }
-  .chart-axis-y text, .chart-axis-x text { fill: var(--e-text-muted); font-size: 10px; font-family: inherit; font-variant-numeric: tabular-nums; }
-  .chart-empty { color: var(--e-text-subtle); text-align: center; padding: 24px 0; }
+  .chart-axis-y text, .chart-axis-x text { fill: var(--e-fg-muted); font-size: 10px; font-family: inherit; font-variant-numeric: tabular-nums; }
+  .chart-empty { color: var(--e-fg-subtle); text-align: center; padding: 24px 0; }
   .hm-wrap { background: var(--e-surface); border: 1px solid var(--e-border); border-radius: 8px; padding: 16px 12px 12px; }
   .hm-svg { display: block; }
-  .hm-months text { fill: var(--e-text-subtle); font-size: 9px; font-family: inherit; }
+  .hm-months text { fill: var(--e-fg-subtle); font-size: 9px; font-family: inherit; }
   .hm-cell { fill: var(--e-border); }
   .hm-cell.lvl-0 { fill: var(--e-border); fill-opacity: 0.5; }
   .hm-cell.lvl-1 { fill: color-mix(in srgb, var(--e-accent) 28%, var(--e-border)); }
   .hm-cell.lvl-2 { fill: color-mix(in srgb, var(--e-accent) 52%, var(--e-border)); }
   .hm-cell.lvl-3 { fill: color-mix(in srgb, var(--e-accent) 76%, var(--e-border)); }
   .hm-cell.lvl-4 { fill: var(--e-accent); }
-  .hm-legend { display: flex; align-items: center; gap: 6px; color: var(--e-text-muted); font-size: 10px; margin-top: 8px; justify-content: flex-end; }
+  .hm-legend { display: flex; align-items: center; gap: 6px; color: var(--e-fg-muted); font-size: 10px; margin-top: 8px; justify-content: flex-end; }
   .hm-chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
   .hm-chip.lvl-0 { background: var(--e-border); opacity: 0.5; }
   .hm-chip.lvl-1 { background: color-mix(in srgb, var(--e-accent) 28%, var(--e-border)); }
   .hm-chip.lvl-2 { background: color-mix(in srgb, var(--e-accent) 52%, var(--e-border)); }
   .hm-chip.lvl-3 { background: color-mix(in srgb, var(--e-accent) 76%, var(--e-border)); }
   .hm-chip.lvl-4 { background: var(--e-accent); }
-  .e-empty { color: var(--e-text-subtle); font-size: 11px; text-align: center; padding: 12px 0; }
+  .e-empty { color: var(--e-fg-subtle); font-size: 11px; text-align: center; padding: 12px 0; }
 `;
 
 export function renderUserHistoryBody(
