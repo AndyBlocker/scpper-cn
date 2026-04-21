@@ -240,9 +240,9 @@ export const USER_CARD_BASE_CSS = `
   /* 两列主体：stretch 让两列等高；两列第一行 y=0 对齐（capsule 已搬走）。
      窄 iframe（wikidot [[iframe]] 常见宽度 400-560px）下回退单列纵排，恢复"宽大"视觉；
      阈值选 560 是因为 wikidot 默认正文列宽 ~620-760，iframe 通常被 wrap 到 550 以下。 */
-  .e-body { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr); gap: 16px; align-items: stretch; }
+  .uc-body { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr); gap: 16px; align-items: stretch; }
   @media (max-width: 560px) {
-    .e-body { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .uc-body { grid-template-columns: minmax(0, 1fr); gap: 12px; }
     /* 单列下 stat-grid 横排 4 tile，每个 tile 仍有足够宽度展示数字 */
     .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: auto; }
     /* 窄屏下 header 允许 capsule wrap 到下一行，不挤压 name-block */
@@ -277,9 +277,9 @@ export const USER_CARD_BASE_CSS = `
   .breakdown-stage { position: relative; flex: 1; min-height: 0; }
   .panel-list { position: relative; visibility: hidden; }
   .panel-radar { position: absolute; inset: 0; visibility: hidden; }
-  /* radio 在 .e-card 直接子，选择器穿过 .e-body / .e-header 触达 panel 与 tab */
-  #bk-mode-list:checked ~ .e-body .panel-list { visibility: visible; }
-  #bk-mode-radar:checked ~ .e-body .panel-radar { visibility: visible; }
+  /* radio 在 .e-card 直接子，选择器穿过 .uc-body / .e-header 触达 panel 与 tab */
+  #bk-mode-list:checked ~ .uc-body .panel-list { visibility: visible; }
+  #bk-mode-radar:checked ~ .uc-body .panel-radar { visibility: visible; }
   #bk-mode-list:checked ~ .e-header .mode-tab[for="bk-mode-list"],
   #bk-mode-radar:checked ~ .e-header .mode-tab[for="bk-mode-radar"] {
     background: var(--e-bg); color: var(--e-accent); box-shadow: 0 1px 2px rgba(0,0,0,0.06);
@@ -375,7 +375,7 @@ export function renderUserCardBody(
       </div>
     </header>
 
-    <div class="e-body">
+    <div class="uc-body">
       <section class="stat-grid" aria-label="数值概览">
         <div class="stat-tile"><div class="lbl">总评分</div><div class="val">${formatInt(stats.totalRating)}</div></div>
         <div class="stat-tile"><div class="lbl">作品</div><div class="val">${formatInt(stats.pageCount)}</div></div>
