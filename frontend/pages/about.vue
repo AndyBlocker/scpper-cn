@@ -27,13 +27,13 @@
             <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">CC-BY-SA 3.0</a>
             授权协议。
           </p>
-          <p class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          <div class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             网站图标由
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="3471238" :display-name="'breaddddd'" bare />
             创作，遵循
             <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">CC-BY-SA 3.0</a>
             授权协议。
-          </p>
+          </div>
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             2025.10.31更新：基于
             <a href="https://scpper.com/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">SCPPER</a>
@@ -46,10 +46,10 @@
         <div class="rounded-lg p-5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
           <h2 class="text-base font-semibold text-neutral-800 dark:text-neutral-100">作者的话</h2>
 
-          <p class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          <div class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="3471238" :display-name="'breaddddd'" bare/>
             ：面！
-          </p>
+          </div>
         </div>
 
 
@@ -57,26 +57,26 @@
         <div class="rounded-lg p-5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
           <h2 class="text-base font-semibold text-neutral-800 dark:text-neutral-100">赞助者的话</h2>
           <!-- Small UserCard + 一句话-->
-          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8584266" :display-name="'DVA24'" bare />
             ：加个赞助者就行了，没必要写太多。 -- 2025.9.17 
-          </p>
-          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6513052" :display-name="'14#7_MonochromeMix'" bare />
             ：来玩<a href="https://ghostpia.xyz/zh_cn" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">《Ghostpia》</a>和<a href="https://houseonhouse.com/FortheGHOSTs.html" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">《For the GHOSTs》</a>吧！（或者吃点好吃的也挺好的） -- 2025.10.24
-          </p>
-          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="9827716" :display-name="'Dyosme'" bare />
             ：AndyBlocker太牛逼克拉斯了，豆包给Andy生成最新一期彩票中奖号码！PS：Andy保佑我抽卡出Scp049 -- 2026.2.13 
-          </p>
-          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6238162" :display-name="'Northern Lake'" bare />
             ：答案是42 -- 2026.2.13 
-          </p>
-          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8274616" :display-name="'four_clovers'" bare />
             ：看到这句话的人去观看50遍《超时空辉夜姬》，我知道这很难但这是命令。 -- 2026.4.22
-          </p>
+          </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
