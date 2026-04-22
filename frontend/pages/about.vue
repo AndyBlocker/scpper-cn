@@ -73,6 +73,10 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6238162" :display-name="'Northern Lake'" bare />
             ：答案是42 -- 2026.2.13 
           </p>
+          <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8274616" :display-name="'four_clovers'" bare />
+            ：看到这句话的人去观看50遍《超时空辉夜姬》，我知道这很难但这是命令。 -- 2026.4.22
+          </p>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
