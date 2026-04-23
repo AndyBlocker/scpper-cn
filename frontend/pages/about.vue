@@ -77,6 +77,22 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8274616" :display-name="'four_clovers'" bare />
             ：看到这句话的人去观看50遍《超时空辉夜姬》，我知道这很难但这是命令。 -- 2026.4.22
           </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8241942" :display-name="'LeeBr'" bare />
+            ：香骨鸡冻一冻热一热再吃，有火腿滋味（AndyBlocker注：LeeBr赞助了45个香骨鸡。） -- 2026.4.23
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8429394" :display-name="'Wumin-Yoka'" bare />
+            ：五花八门牛逼 -- 2026.4.23
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6996994" :display-name="'Penrose Sowhat'" bare />
+            ：奶龙已然降临，亿万人必须今夜星光闪闪 -- 2026.4.23
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6150268" :display-name="'Valeriya_C074'" bare />
+            ：愿SCPPER-CN——和Andy平平稳稳，无忧无灾地继续走下去！ -- 2026.4.23
+          </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
