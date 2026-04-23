@@ -93,6 +93,14 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6150268" :display-name="'Valeriya_C074'" bare />
             ：愿SCPPER-CN——和Andy平平稳稳，无忧无灾地继续走下去！ -- 2026.4.23
           </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="9867209" :display-name="'Only_sLeeping'" bare />
+            ：投资SCPPER就是投资中分的未来，请支持SCPPER。今天是我生日能祝我生日快乐吗 -- 2026.4.23
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6227689" :display-name="'OxygenNine'" bare />
+            ：誓死效忠scpper和它忠诚的中猫 -- 2026.4.23
+          </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
