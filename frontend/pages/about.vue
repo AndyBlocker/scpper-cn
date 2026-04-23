@@ -101,6 +101,10 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6227689" :display-name="'OxygenNine'" bare />
             ：誓死效忠scpper和它忠诚的中猫 -- 2026.4.23
           </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="3290685" :display-name="'Rye Travis'" bare />
+            ：大猫和小猫相比，那我还是觉得我们中猫牛批 -- 2026.4.23
+          </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
