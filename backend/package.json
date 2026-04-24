@@ -5,6 +5,12 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
+    "embed:health": "node --import tsx/esm src/cli/index.ts embed health",
+    "embed:backfill": "node --import tsx/esm src/cli/index.ts embed backfill",
+    "embed:incremental": "node --import tsx/esm src/cli/index.ts embed incremental",
+    "embed:search": "node --import tsx/esm src/cli/index.ts embed search",
+    "embed:server": "bash services/embedding-server/start.sh",
+    "embed:server:install": "bash -c 'cd services/embedding-server && python3 -m virtualenv .venv && .venv/bin/pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt && .venv/bin/python download_model.py'",
     "sync": "node --import tsx/esm src/cli/index.ts sync",
     "sync:full": "node --import tsx/esm src/cli/index.ts sync --full",
     "sync:test": "node --import tsx/esm src/cli/index.ts sync --test",

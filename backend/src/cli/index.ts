@@ -26,6 +26,7 @@ import { ForumSyncProcessor } from '../core/processors/ForumSyncProcessor.js';
 import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { runSyncHourlyScheduler } from './sync-hourly.js';
 import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
+import { registerEmbedCommands } from './embed.js';
 
 const program = new Command();
 
@@ -55,6 +56,7 @@ program
   .option('--run-immediately', 'Run one cycle on startup before waiting for next top-of-hour trigger')
   .option('--skip-gacha', 'Skip post-sync gacha-sync step')
   .option('--skip-forum', 'Skip post-sync forum-sync step')
+  .option('--skip-embed', 'Skip post-sync page-embedding incremental step')
   .action(async (options) => {
     if (options.poolId) {
       console.warn(`[sync-hourly] --pool-id=${String(options.poolId)} is deprecated and ignored in single-pool mode.`);
@@ -63,7 +65,8 @@ program
       concurrency: String(options.concurrency ?? '4'),
       runImmediately: Boolean(options.runImmediately),
       runGacha: !Boolean(options.skipGacha),
-      runForum: !Boolean(options.skipForum)
+      runForum: !Boolean(options.skipForum),
+      runEmbed: !Boolean(options.skipEmbed)
     });
   });
 
@@ -1196,5 +1199,7 @@ const handleFatal = async (err: any) => {
 
 process.on('unhandledRejection', handleFatal);
 process.on('uncaughtException', handleFatal);
+
+registerEmbedCommands(program);
 
 program.parse();

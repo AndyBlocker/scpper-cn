@@ -6,7 +6,7 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [pgroonga]
+  extensions = [pgroonga, vector]
 }
 
 enum PageVersionImageStatus {
@@ -204,6 +204,7 @@ model PageVersion {
   votes            Vote[]
   images           PageVersionImage[]
   references       PageReference[]
+  embeddings       PageEmbedding[]
 
   @@index([pageId])
   @@index([rating])
@@ -211,6 +212,30 @@ model PageVersion {
   @@index([wikidotId])
   @@index([commentCount])
   @@index([voteCount])
+}
+
+/// 一段 text 生成的语义向量。Chunk 粒度：一个 PageVersion 在同一模型下可以有多行
+/// （每 chunk 一行），`chunkIndex` 从 0 开始。对短文（<= 1 chunk）仍然只有一行。
+/// 支持多模型并存（`model` 区分），以后迁移模型不用砸掉旧数据。
+/// `embedding` 是 pgvector 的 halfvec(1024)（FP16），因为 Prisma 不原生支持，
+/// 这里用 Unsupported；具体类型在 migration SQL 里声明，HNSW 索引也在 migration 里建。
+model PageEmbedding {
+  id              Int      @id @default(autoincrement())
+  pageVersionId   Int
+  model           String   @db.VarChar(64)
+  dim             Int
+  embedding       Unsupported("halfvec(1024)")
+  sourceCharLen   Int
+  sourceTruncated Boolean  @default(false)
+  chunkIndex      Int      @default(0)
+  chunkTotal      Int      @default(1)
+  chunkCharStart  Int      @default(0)
+  chunkCharEnd    Int      @default(0)
+  createdAt       DateTime @default(now())
+  pageVersion     PageVersion @relation(fields: [pageVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([pageVersionId, model, chunkIndex])
+  @@index([model])
 }
 
 model PageReference {

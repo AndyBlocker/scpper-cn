@@ -3,12 +3,14 @@ import { syncGachaPool } from './gacha-sync.js';
 import { ForumSyncProcessor } from '../core/processors/ForumSyncProcessor.js';
 import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
+import { runPageEmbeddingIncremental } from '../jobs/PageEmbeddingBackfillJob.js';
 
 type SyncHourlySchedulerOptions = {
   concurrency: string;
   runImmediately: boolean;
   runGacha: boolean;
   runForum: boolean;
+  runEmbed: boolean;
 };
 
 const STALE_PROGRESS_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -209,6 +211,21 @@ export async function runSyncHourlyScheduler(options: SyncHourlySchedulerOptions
         await syncGachaPool();
       } else {
         console.log('[sync-hourly] gacha-sync disabled by option, skipping.');
+      }
+
+      // Page embeddings incremental (non-fatal; embedding server may be offline).
+      // `runPageEmbeddingIncremental` has its own cap (default 500) so one cycle
+      // can't stall the scheduler — anything still behind is picked up next hour.
+      if (options.runEmbed) {
+        try {
+          const embedResult = await runPageEmbeddingIncremental({ limit: 500, batchSize: 8 });
+          console.log(`[sync-hourly] Embedding incremental done: PV=${embedResult.totalPages} chunks=${embedResult.totalChunks} written=${embedResult.written} (truncated=${embedResult.truncatedChunks}, skippedEmpty=${embedResult.skippedEmptyPages}, durationMs=${embedResult.durationMs}).`);
+        } catch (embedErr: any) {
+          const msg = embedErr instanceof Error ? embedErr.message : String(embedErr);
+          console.error(`[sync-hourly] Embedding incremental failed (non-fatal): ${msg}`);
+        }
+      } else {
+        console.log('[sync-hourly] embed-incremental disabled by option, skipping.');
       }
     } catch (error: any) {
       const message = error instanceof Error ? error.stack || error.message : String(error);
