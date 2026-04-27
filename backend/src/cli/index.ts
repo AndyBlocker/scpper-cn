@@ -26,6 +26,7 @@ import { ForumSyncProcessor } from '../core/processors/ForumSyncProcessor.js';
 import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { runSyncHourlyScheduler } from './sync-hourly.js';
 import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
+import { runVoteResyncAudit } from './voteResyncAudit.js';
 
 const program = new Command();
 
@@ -1181,6 +1182,29 @@ program
     } finally {
       await disconnectPrisma();
     }
+  });
+
+program
+  .command('vote-resync-audit')
+  .description('Audit + repair Vote rows for pages whose LatestVote drifts from CROM rating/voteCount')
+  .option('--setup', 'Create schema vote_resync_audit + tmp_audit_summary + tmp_vote tables')
+  .option('--collect', 'Seed tmp_audit_summary with mismatched pages and pull fuzzyVoteRecords from CROM')
+  .option('--report', 'Aggregate expected_rating/expected_count and print markdown report')
+  .option('--apply', 'Write tmp_vote rows back into "Vote" inside a single transaction (use with care)')
+  .option('--cleanup', 'DROP SCHEMA vote_resync_audit CASCADE')
+  .option('--fetch-concurrency <n>', 'CROM page-level fetch concurrency (default 3)', '3')
+  .option('--schema <name>', 'Override temporary schema name (default vote_resync_audit)')
+  .action(async (options) => {
+    const concurrency = Number.parseInt(String(options.fetchConcurrency ?? '3'), 10);
+    await runVoteResyncAudit({
+      setup: Boolean(options.setup),
+      collect: Boolean(options.collect),
+      report: Boolean(options.report),
+      apply: Boolean(options.apply),
+      cleanup: Boolean(options.cleanup),
+      fetchConcurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 3,
+      schema: options.schema ? String(options.schema) : undefined
+    });
   });
 
 // Global error handlers for robust CLI processes

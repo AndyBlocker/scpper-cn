@@ -725,8 +725,8 @@ export class IncrementalAnalyzeJob {
     await this.prisma.$executeRaw`
       WITH vote_stats AS (
         SELECT v."pageVersionId" AS id,
-               COUNT(*) FILTER (WHERE v.direction = 1) AS uv,
-               COUNT(*) FILTER (WHERE v.direction = -1) AS dv
+               COUNT(*) FILTER (WHERE v.direction > 0) AS uv,
+               COUNT(*) FILTER (WHERE v.direction < 0) AS dv
         FROM "LatestVote" v
         WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
         GROUP BY v."pageVersionId"
@@ -872,8 +872,8 @@ export class IncrementalAnalyzeJob {
           SELECT 
             pv."pageId",
             date_trunc('day', v."timestamp") AS dt,
-            COUNT(*) FILTER (WHERE v.direction = 1)      AS votes_up,
-            COUNT(*) FILTER (WHERE v.direction = -1)     AS votes_down,
+            COUNT(*) FILTER (WHERE v.direction > 0)      AS votes_up,
+            COUNT(*) FILTER (WHERE v.direction < 0)     AS votes_down,
             COUNT(*) FILTER (WHERE v.direction != 0)     AS total_votes,
             COUNT(DISTINCT v."userId") FILTER (WHERE v."userId" IS NOT NULL) AS unique_voters,
             0::bigint                                   AS revisions
@@ -1223,8 +1223,8 @@ export class IncrementalAnalyzeJob {
         SELECT 
           "userId",
           tag,
-          COUNT(*) FILTER (WHERE direction = 1) as upvote_count,
-          COUNT(*) FILTER (WHERE direction = -1) as downvote_count,
+          COUNT(*) FILTER (WHERE direction > 0) as upvote_count,
+          COUNT(*) FILTER (WHERE direction < 0) as downvote_count,
           COUNT(*) as total_votes,
           MAX(timestamp) as last_vote_at
         FROM user_tag_votes
@@ -1293,8 +1293,8 @@ export class IncrementalAnalyzeJob {
         SELECT 
           ai.from_user_id,
           ai.to_user_id,
-          COUNT(*) FILTER (WHERE ai.direction = 1) AS upvote_count,
-          COUNT(*) FILTER (WHERE ai.direction = -1) AS downvote_count,
+          COUNT(*) FILTER (WHERE ai.direction > 0) AS upvote_count,
+          COUNT(*) FILTER (WHERE ai.direction < 0) AS downvote_count,
           COUNT(*) AS total_votes,
           MAX(ai.timestamp) AS last_vote_at
         FROM all_interactions ai
@@ -1616,8 +1616,8 @@ export class IncrementalAnalyzeJob {
           SELECT 
             pv."pageId",
             COUNT(*) as new_votes,
-            COUNT(*) FILTER (WHERE v.direction = 1) as new_upvotes,
-            COUNT(*) FILTER (WHERE v.direction = -1) as new_downvotes
+            COUNT(*) FILTER (WHERE v.direction > 0) as new_upvotes,
+            COUNT(*) FILTER (WHERE v.direction < 0) as new_downvotes
           FROM "Vote" v
           JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
           WHERE v."timestamp" >= NOW() - INTERVAL '24 hours'
@@ -1628,8 +1628,8 @@ export class IncrementalAnalyzeJob {
           SELECT 
             pv."pageId",
             f_wilson_lower_bound(
-              COUNT(*) FILTER (WHERE v.direction = 1 AND v."timestamp" < NOW() - INTERVAL '24 hours'),
-              COUNT(*) FILTER (WHERE v.direction = -1 AND v."timestamp" < NOW() - INTERVAL '24 hours')
+              COUNT(*) FILTER (WHERE v.direction > 0 AND v."timestamp" < NOW() - INTERVAL '24 hours'),
+              COUNT(*) FILTER (WHERE v.direction < 0 AND v."timestamp" < NOW() - INTERVAL '24 hours')
             ) as prev_wilson
           FROM "PageVersion" pv
           LEFT JOIN "Vote" v ON v."pageVersionId" = pv.id
