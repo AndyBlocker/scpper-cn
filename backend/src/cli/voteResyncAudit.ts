@@ -701,15 +701,19 @@ async function doReport(prisma: PrismaClient, schema: string): Promise<void> {
  *
  * 安全过滤（每条 INSERT 都强制）：
  *   AND s.status = 'collected'
- *   AND s.expected_rating IS NOT NULL AND s.expected_count IS NOT NULL
+ *   AND s.expected_rating IS NOT NULL
  *   AND s.expected_rating = s.cr_rating
- *   AND s.expected_count  = s.cr_count
  *   AND pv."validTo" IS NULL AND pv."isDeleted" = false
  *   AND pv.rating       IS NOT DISTINCT FROM s.pa_rating   -- freshness guard
  *   AND pv."voteCount"  IS NOT DISTINCT FROM s.pa_count    -- freshness guard
  *
- * 这能：(a) 拦掉 status!='collected' 的 partial 行；(b) 拦掉 expected!=cr 的异常页；
- * (c) 拦掉 collect 之后被 PhaseA 增量同步覆盖了 pa_* 的 stale 页。
+ * 这能：(a) 拦掉 status!='collected' 的 partial 行；(b) 拦掉 expected_rating!=cr_rating
+ * 的异常页（rating 是用户最关心的页面分数，必须严格对齐 wikidot）；(c) 拦掉 collect 之后
+ * 被 PhaseA 增量同步覆盖了 pa_* 的 stale 页。
+ *
+ * 注：故意不强制 expected_count == cr_count。CROM voteCount 字段包含 direction=0
+ * (cancelled vote) 用户，而我们 expected_count = COUNT(direction <> 0) 过滤了 cancelled。
+ * 这是有意的口径选择——本地 LatestVote 聚合在语义上更准确。
  */
 async function doApply(prisma: PrismaClient, schema: string): Promise<void> {
   const qs = quoteIdent(schema);
@@ -862,9 +866,7 @@ async function doApply(prisma: PrismaClient, schema: string): Promise<void> {
          WHERE s.status = 'collected'
            AND s.expected_rating IS NOT NULL
            AND s.expected_count  IS NOT NULL
-           AND s.expected_rating = s.cr_rating
-           AND s.expected_count  = s.cr_count
-           AND NOT (
+           AND s.expected_rating = s.cr_rating           AND NOT (
              pv."validTo" IS NULL
              AND pv."isDeleted" = false
              AND pv.rating       IS NOT DISTINCT FROM s.pa_rating
@@ -907,9 +909,7 @@ async function doApply(prisma: PrismaClient, schema: string): Promise<void> {
             AND s.status = 'collected'
             AND s.expected_rating IS NOT NULL
             AND s.expected_count  IS NOT NULL
-            AND s.expected_rating = s.cr_rating
-            AND s.expected_count  = s.cr_count
-            AND pv."validTo" IS NULL
+            AND s.expected_rating = s.cr_rating            AND pv."validTo" IS NULL
             AND pv."isDeleted" = false
             AND pv.rating       IS NOT DISTINCT FROM s.pa_rating
             AND pv."voteCount"  IS NOT DISTINCT FROM s.pa_count
