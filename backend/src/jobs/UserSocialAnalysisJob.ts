@@ -88,8 +88,8 @@ export class UserSocialAnalysisJob {
           SELECT 
             "userId",
             tag,
-            COUNT(*) FILTER (WHERE direction = 1) as upvote_count,
-            COUNT(*) FILTER (WHERE direction = -1) as downvote_count,
+            COUNT(*) FILTER (WHERE direction > 0) as upvote_count,
+            COUNT(*) FILTER (WHERE direction < 0) as downvote_count,
             COUNT(*) as total_votes,
             MAX(timestamp) as last_vote_at
           FROM user_tag_votes
@@ -193,8 +193,8 @@ export class UserSocialAnalysisJob {
           SELECT 
             from_user_id,
             to_user_id,
-            COUNT(*) FILTER (WHERE direction = 1) as upvote_count,
-            COUNT(*) FILTER (WHERE direction = -1) as downvote_count,
+            COUNT(*) FILTER (WHERE direction > 0) as upvote_count,
+            COUNT(*) FILTER (WHERE direction < 0) as downvote_count,
             COUNT(*) as total_votes,
             MAX(timestamp) as last_vote_at
           FROM vote_interactions

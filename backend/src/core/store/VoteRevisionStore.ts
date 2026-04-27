@@ -102,42 +102,22 @@ export class VoteRevisionStore {
 
   /**
    * 导入投票记录
+   *
+   * 直接依赖 schema 上的唯一约束 (Vote_unique_constraint / Vote_anon_unique_constraint)
+   * 进行 upsert，避免人工去重时把上游新 timestamp 误判为「已存在」而丢弃。
+   * 既无 userId 又无 anonKey 的票无法去重（schema 无对应唯一索引），直接跳过避免无限膨胀。
    */
   private async importVotes(pageVersionId: number, voteEdges: any[], userMap: Map<number, number>) {
     const stats = { inserted: 0, updated: 0, skipped: 0, errors: 0 };
     const batchSize = 100;
     const votes = voteEdges.map(edge => edge.node);
-    const existingVotes = await this.prisma.vote.findMany({
-      where: { pageVersionId },
-      select: { id: true, userId: true, anonKey: true, direction: true, timestamp: true }
-    });
-
-    const existingVoteMap = new Map<string, { id: number; timestamp: Date }>();
-    for (const vote of existingVotes) {
-      const directionKey = typeof vote.direction === 'number'
-        ? vote.direction
-        : Number.parseInt(String(vote.direction ?? '0'), 10);
-      if (Number.isNaN(directionKey)) continue;
-
-      const key = vote.userId != null
-        ? `user:${vote.userId}:${directionKey}`
-        : vote.anonKey
-          ? `anon:${vote.anonKey}:${directionKey}`
-          : null;
-
-      if (!key) continue;
-      const existing = existingVoteMap.get(key);
-      if (!existing || vote.timestamp < existing.timestamp) {
-        existingVoteMap.set(key, { id: vote.id, timestamp: vote.timestamp });
-      }
-    }
 
     for (let i = 0; i < votes.length; i += batchSize) {
       const batch = votes.slice(i, i + batchSize);
 
       try {
         // 准备投票数据
-        const voteData: Array<{ pageVersionId: number; userId: number | null; anonKey: string | null; direction: number; timestamp: Date; key: string | null }> = [];
+        const voteData: Array<{ pageVersionId: number; userId: number | null; anonKey: string | null; direction: number; timestamp: Date }> = [];
         for (const vote of batch) {
           let userId: number | null = null;
           const wid = vote.user?.wikidotId
@@ -162,54 +142,20 @@ export class VoteRevisionStore {
             continue;
           }
 
-          const voteKey = userId != null
-            ? `user:${userId}:${direction}`
-            : (vote.anonKey ? `anon:${vote.anonKey}:${direction}` : null);
-
-          if (voteKey) {
-            const existing = existingVoteMap.get(voteKey);
-            if (existing) {
-              const existingTime = existing.timestamp.getTime();
-              if (!Number.isNaN(existingTime)) {
-                if (timestampTime >= existingTime) {
-                  stats.skipped++;
-                  continue;
-                }
-                try {
-                  const updated = await this.prisma.vote.update({
-                    where: { id: existing.id },
-                    data: {
-                      direction,
-                      timestamp: timestampValue
-                    }
-                  });
-                  existing.timestamp = updated.timestamp;
-                  stats.updated++;
-                  continue;
-                } catch (error) {
-                  stats.errors++;
-                  Logger.error(`Vote timestamp update error: ${error}`);
-                  continue;
-                }
-              }
-            }
-          }
-
           voteData.push({
             pageVersionId,
             userId,
             anonKey: vote.anonKey || null,
             direction,
-            timestamp: timestampValue,
-            key: voteKey
+            timestamp: timestampValue
           });
         }
 
-        // 批量upsert
+        // 依赖唯一约束 upsert：(pageVersionId, userId, timestamp) 或 (pageVersionId, anonKey, timestamp)
         for (const data of voteData) {
           try {
             if (data.userId != null) {
-              const userVote = await this.prisma.vote.upsert({
+              await this.prisma.vote.upsert({
                 where: {
                   Vote_unique_constraint: {
                     pageVersionId: data.pageVersionId,
@@ -228,11 +174,8 @@ export class VoteRevisionStore {
                 }
               });
               stats.inserted++;
-              if (data.key) {
-                existingVoteMap.set(data.key, { id: userVote.id, timestamp: userVote.timestamp });
-              }
             } else if (data.anonKey) {
-              const anonVote = await this.prisma.vote.upsert({
+              await this.prisma.vote.upsert({
                 where: {
                   Vote_anon_unique_constraint: {
                     pageVersionId: data.pageVersionId,
@@ -251,18 +194,10 @@ export class VoteRevisionStore {
                 }
               });
               stats.inserted++;
-              if (data.key) {
-                existingVoteMap.set(data.key, { id: anonVote.id, timestamp: anonVote.timestamp });
-              }
             } else {
-              await this.prisma.vote.create({
-                data: {
-                  pageVersionId: data.pageVersionId,
-                  direction: data.direction,
-                  timestamp: data.timestamp
-                }
-              });
-              stats.inserted++;
+              // 既无 userId 又无 anonKey：schema 没有对应唯一约束，直接 create 会在重复跑时无限膨胀，跳过
+              Logger.debug(`Skipping vote with neither userId nor anonKey (pageVersionId=${pageVersionId}, timestamp=${data.timestamp.toISOString()})`);
+              stats.skipped++;
             }
           } catch (error) {
             stats.errors++;

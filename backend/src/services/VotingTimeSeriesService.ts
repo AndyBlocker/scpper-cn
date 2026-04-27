@@ -67,10 +67,10 @@ export class VotingTimeSeriesService {
       deltas AS (
         SELECT
           vote_date,
-          (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END)
-            - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
-          (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END)
-            - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
+          (CASE WHEN current_direction > 0 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) > 0 THEN 1 ELSE 0 END) AS up_delta,
+          (CASE WHEN current_direction < 0 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) < 0 THEN 1 ELSE 0 END) AS down_delta,
           (CASE WHEN current_direction <> 0 THEN 1 ELSE 0 END)
             - (CASE WHEN COALESCE(prev_direction, 0) <> 0 THEN 1 ELSE 0 END) AS total_delta
         FROM ordered
@@ -279,10 +279,10 @@ export class VotingTimeSeriesService {
       vote_deltas AS (
         SELECT
           vote_date,
-          (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END)
-            - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
-          (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END)
-            - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
+          (CASE WHEN current_direction > 0 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) > 0 THEN 1 ELSE 0 END) AS up_delta,
+          (CASE WHEN current_direction < 0 THEN 1 ELSE 0 END)
+            - (CASE WHEN COALESCE(prev_direction, 0) < 0 THEN 1 ELSE 0 END) AS down_delta,
           (CASE WHEN current_direction <> 0 THEN 1 ELSE 0 END)
             - (CASE WHEN COALESCE(prev_direction, 0) <> 0 THEN 1 ELSE 0 END) AS total_delta
         FROM ordered

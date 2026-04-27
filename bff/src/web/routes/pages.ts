@@ -2150,8 +2150,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const result = await cache.remember(cacheKey, 180, async () => {
         const sql = `
           SELECT
-            COUNT(CASE WHEN v.direction = 1 THEN 1 END) as upvotes,
-            COUNT(CASE WHEN v.direction = -1 THEN 1 END) as downvotes,
+            COUNT(CASE WHEN v.direction > 0 THEN 1 END) as upvotes,
+            COUNT(CASE WHEN v.direction < 0 THEN 1 END) as downvotes,
             COUNT(CASE WHEN v.direction = 0 THEN 1 END) as novotes,
             COUNT(*) as total
           FROM "LatestVote" v
@@ -2256,8 +2256,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
           deltas AS (
             SELECT
               period,
-              (CASE WHEN current_direction = 1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = 1 THEN 1 ELSE 0 END) AS up_delta,
-              (CASE WHEN current_direction = -1 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) = -1 THEN 1 ELSE 0 END) AS down_delta,
+              (CASE WHEN current_direction > 0 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) > 0 THEN 1 ELSE 0 END) AS up_delta,
+              (CASE WHEN current_direction < 0 THEN 1 ELSE 0 END) - (CASE WHEN COALESCE(prev_direction, 0) < 0 THEN 1 ELSE 0 END) AS down_delta,
               current_direction - COALESCE(prev_direction, 0) AS net_delta
             FROM ordered
           ),

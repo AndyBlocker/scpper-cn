@@ -560,8 +560,8 @@ async function getDailyVoterCountLeadersFirsts(year: number): Promise<TagLeaderR
     )
     SELECT day, "userId", u."displayName",
       COUNT(*) AS "totalVotes",
-      COUNT(*) FILTER (WHERE direction = 1) AS "upVotes",
-      COUNT(*) FILTER (WHERE direction = -1) AS "downVotes"
+      COUNT(*) FILTER (WHERE direction > 0) AS "upVotes",
+      COUNT(*) FILTER (WHERE direction < 0) AS "downVotes"
     FROM dedup_votes dv
     LEFT JOIN "User" u ON u.id = dv."userId"
     GROUP BY day, "userId", u."displayName"
@@ -711,8 +711,8 @@ async function getAuthorReceivedVotesByPeriodFirsts(
     aggregated AS (
       SELECT bucket, author_id, "displayName",
         COUNT(*) FILTER (WHERE direction != 0) AS total_votes,
-        COUNT(*) FILTER (WHERE direction = 1) AS up_votes,
-        COUNT(*) FILTER (WHERE direction = -1) AS down_votes,
+        COUNT(*) FILTER (WHERE direction > 0) AS up_votes,
+        COUNT(*) FILTER (WHERE direction < 0) AS down_votes,
         COALESCE(SUM(direction), 0) AS net_votes
       FROM vote_author GROUP BY bucket, author_id, "displayName"
     ),
@@ -1139,8 +1139,8 @@ async function getSiteOverview(year: number) {
     }]>`
       SELECT
         COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE direction = 1) AS up,
-        COUNT(*) FILTER (WHERE direction = -1) AS down
+        COUNT(*) FILTER (WHERE direction > 0) AS up,
+        COUNT(*) FILTER (WHERE direction < 0) AS down
       FROM "Vote" v
       JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
       WHERE v.timestamp >= ${startTzIso}::timestamptz
@@ -1835,7 +1835,7 @@ async function getExtremeStats(year: number) {
       JOIN "Vote" v ON v."pageVersionId" = pv.id
       WHERE v.timestamp >= ${startTzIso}::timestamptz
         AND v.timestamp < ${endTzIso}::timestamptz
-        AND v.direction = 1
+        AND v.direction > 0
       GROUP BY pv."wikidotId", pv.title, pv."currentUrl", pv.id, (v.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai')::date
     ),
     daily_upvotes_with_authors AS (
@@ -2178,8 +2178,8 @@ async function getTopVoters(year: number, limit: number = 10) {
       u.username AS "userName",
       u."displayName" AS "displayName",
       COUNT(*) AS "totalVotes",
-      COUNT(*) FILTER (WHERE dv.direction = 1) AS "upVotes",
-      COUNT(*) FILTER (WHERE dv.direction = -1) AS "downVotes",
+      COUNT(*) FILTER (WHERE dv.direction > 0) AS "upVotes",
+      COUNT(*) FILTER (WHERE dv.direction < 0) AS "downVotes",
       COUNT(DISTINCT (dv.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai')::date) AS "activeDays"
     FROM dedup_votes dv
     LEFT JOIN "User" u ON u.id = dv."userId"
@@ -2219,8 +2219,8 @@ async function getMonthlyVoteStats(year: number) {
     SELECT
       date_trunc('month', v.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai') AS month,
       COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE v.direction = 1) AS up,
-      COUNT(*) FILTER (WHERE v.direction = -1) AS down
+      COUNT(*) FILTER (WHERE v.direction > 0) AS up,
+      COUNT(*) FILTER (WHERE v.direction < 0) AS down
     FROM "Vote" v
     JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
     WHERE v.timestamp >= ${startTzIso}::timestamptz
@@ -2258,8 +2258,8 @@ async function getVotesByCategory(year: number) {
     }]>`
       SELECT
         COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE v.direction = 1) AS up,
-        COUNT(*) FILTER (WHERE v.direction = -1) AS down
+        COUNT(*) FILTER (WHERE v.direction > 0) AS up,
+        COUNT(*) FILTER (WHERE v.direction < 0) AS down
       FROM "Vote" v
       JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
       WHERE v.timestamp >= ${startTzIso}::timestamptz
@@ -2552,7 +2552,7 @@ async function getInterestingStats(year: number) {
         pv.title,
         pv.id AS pv_id,
         COUNT(*) AS total_votes,
-        COUNT(*) FILTER (WHERE v.direction = -1) AS down_votes
+        COUNT(*) FILTER (WHERE v.direction < 0) AS down_votes
       FROM pv
       JOIN "Vote" v ON v."pageVersionId" = pv.id
       WHERE pv.published_at >= ${startTzIso}::timestamptz
@@ -4526,8 +4526,8 @@ async function precomputeAllVotesReceived(year: number): Promise<Map<number, Vot
     SELECT
       author_id AS "userId",
       COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE direction = 1) AS up,
-      COUNT(*) FILTER (WHERE direction = -1) AS down
+      COUNT(*) FILTER (WHERE direction > 0) AS up,
+      COUNT(*) FILTER (WHERE direction < 0) AS down
     FROM dedup_votes
     GROUP BY author_id
   `;
@@ -4580,8 +4580,8 @@ async function precomputeAllVotesCast(year: number): Promise<Map<number, VoteCas
     SELECT
       "userId",
       COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE direction = 1) AS up,
-      COUNT(*) FILTER (WHERE direction = -1) AS down,
+      COUNT(*) FILTER (WHERE direction > 0) AS up,
+      COUNT(*) FILTER (WHERE direction < 0) AS down,
       COUNT(DISTINCT (timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai')::date) AS "activeDays"
     FROM dedup_votes
     GROUP BY "userId"
@@ -5174,7 +5174,7 @@ async function getUserSummary(userId: number, year: number) {
           AND pv."validTo" IS NULL AND NOT pv."isDeleted"
       ),
       tagged AS (SELECT unnest(tags) AS tag, direction FROM user_votes)
-      SELECT tag, COUNT(*) AS "voteCount", COUNT(*) FILTER (WHERE direction = 1) AS "upCount"
+      SELECT tag, COUNT(*) AS "voteCount", COUNT(*) FILTER (WHERE direction > 0) AS "upCount"
       FROM tagged
       WHERE tag NOT IN (${Prisma.join(NON_DESCRIPTIVE_TAGS)})
         AND tag NOT LIKE '\\_%' ESCAPE '\\' AND tag NOT LIKE 'crom%'

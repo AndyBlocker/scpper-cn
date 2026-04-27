@@ -119,6 +119,9 @@ async function detect(options: ScriptOptions): Promise<void> {
   const displayLimit = limitSpecified && limit != null ? limit : DEFAULT_DISPLAY_LIMIT;
   const limitClause = queryLimit != null ? Prisma.sql`LIMIT ${queryLimit}` : Prisma.sql``;
 
+  // NOTE: 本脚本只检测 ±1 方向的同向重复投票（数据完整性检查）；±2 不在此分析范围内，
+  // 因此 SQL 内仍使用 `direction IN (-1, 1)` 与 `direction = 1`/`direction = -1`，与全站
+  // upvote/downvote 计数口径（`direction > 0`/`direction < 0`）有意区分，请勿改动。
   const rows = await prisma.$queryRaw<DuplicateRow[]>(Prisma.sql`
     WITH filtered_votes AS (
       SELECT
