@@ -11,7 +11,19 @@
           找到用户 <span class="font-semibold text-[var(--g-accent)]">{{ totalUsers }}</span>
           ，页面 <span class="font-semibold text-[var(--g-accent)]">{{ totalPages }}</span>
         </div>
+        <button
+          v-if="canExportCsv"
+          type="button"
+          class="inline-flex h-8 items-center gap-1.5 rounded-full border border-neutral-200 bg-white/80 px-3 text-xs font-medium text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+          :disabled="csvExporting"
+          :aria-busy="csvExporting ? 'true' : 'false'"
+          @click="$emit('export-csv')"
+        >
+          <LucideIcon :name="csvExporting ? 'Loader2' : 'Download'" :class="['h-3.5 w-3.5', csvExporting ? 'animate-spin' : '']" />
+          <span>{{ csvExporting ? '导出中...' : '导出 CSV' }}</span>
+        </button>
       </div>
+      <p v-if="csvExportError" class="-mt-2 mb-4 text-xs text-red-600 dark:text-red-400">{{ csvExportError }}</p>
 
       <div class="space-y-8">
         <!-- Users -->
@@ -146,7 +158,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import LucideIcon from '~/components/LucideIcon.vue'
 import UserAvatar from '~/components/UserAvatar.vue'
 
 const props = defineProps<{
@@ -170,12 +183,15 @@ const props = defineProps<{
   userHasMore: boolean
   pageHasMore: boolean
   forumHasMore: boolean
+  csvExporting?: boolean
+  csvExportError?: string
 }>()
 
 const emit = defineEmits<{
   'load-more-users': []
   'load-more-pages': []
   'load-more-forums': []
+  'export-csv': []
 }>()
 
 const pageSentinelRef = ref<HTMLElement | null>(null)
@@ -186,6 +202,12 @@ let pageObserver: IntersectionObserver | null = null
 let userObserver: IntersectionObserver | null = null
 let forumObserver: IntersectionObserver | null = null
 const isClient = typeof window !== 'undefined'
+const canExportCsv = computed(() => (
+  props.scope === 'forums' ? props.totalForums > 0
+    : props.scope === 'users' ? props.totalUsers > 0
+      : props.scope === 'pages' ? props.totalPages > 0
+        : (props.totalUsers + props.totalPages) > 0
+))
 
 defineExpose({ pageSentinelRef, userSentinelRef, forumSentinelRef })
 

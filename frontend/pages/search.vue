@@ -572,8 +572,8 @@
       :search-performed="searchPerformed"
       :initial-loading="initialLoading"
       :error="error"
-      :scope="searchForm.scope"
-      :search-query="searchForm.query"
+      :scope="resultScope"
+      :search-query="resultSearchQuery"
       :user-results="userResults"
       :page-results="pageResults"
       :forum-results="forumResults"
@@ -589,9 +589,12 @@
       :user-has-more="userHasMore"
       :page-has-more="pageHasMore"
       :forum-has-more="forumHasMore"
+      :csv-exporting="csvExporting"
+      :csv-export-error="csvExportError"
       @load-more-users="loadMoreUsers"
       @load-more-pages="loadMorePages"
       @load-more-forums="loadMoreForums"
+      @export-csv="exportSearchCsv"
     />
   </div>
 </template>
@@ -627,6 +630,8 @@ const initialLoading = ref(false);
 const error = ref(false);
 const regexError = ref('');
 const authorScopeAutoAdjusted = ref(false);
+const resultScope = ref<'both' | 'users' | 'pages' | 'forums'>('both')
+const resultSearchQuery = ref('')
 
 // 高级搜索表单
 const searchForm = ref({
@@ -787,8 +792,8 @@ const searchCache = useState<{
   scrollY: 0
 }))
 const restoringScroll = ref(false)
-// CSV export temporarily disabled.
-// const csvPending = ref(false)
+const csvExporting = ref(false)
+const csvExportError = ref('')
 const { hydratePages } = useViewerVotes()
 const isClient = typeof window !== 'undefined'
 
@@ -1311,6 +1316,8 @@ function restoreFromCacheIfAvailable(key: string) {
   userHasMore.value = searchCache.value.userHasMore
   forumHasMore.value = searchCache.value.forumHasMore
   lastSearchParams.value = buildSearchParamsFromForm(true)
+  resultScope.value = searchForm.value.scope
+  resultSearchQuery.value = searchForm.value.query
   searchPerformed.value = true
   initialLoading.value = false
   if (isClient) {
@@ -1411,37 +1418,340 @@ async function loadMoreForums() {
   await fetchForumPosts(null, { append: true })
 }
 
-// async function exportCsv() {
-//   if (!pageResults.value.length) return
-//   csvPending.value = true
-//   try {
-//     const headers = ['wikidotId', '标题', '别名', 'Rating', '评论数', '标签', '创建日期']
-//     const rows = pageResults.value.map((p) => {
-//       const id = p.wikidotId ?? ''
-//       const title = (p.title || '').replace(/"/g, '""')
-//       const alt = (p.alternateTitle || '').replace(/"/g, '""')
-//       const rating = p.rating ?? ''
-//       const comments = p.commentCount ?? ''
-//       const tags = Array.isArray(p.tags) ? p.tags.join(' ') : ''
-//       const created = p.createdDate || ''
-//       return [id, `"${title}"`, alt ? `"${alt}"` : '', rating, comments, `"${tags.replace(/"/g, '""')}"`, created]
-//     })
-//     const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
-//     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-//     const url = URL.createObjectURL(blob)
-//     const link = document.createElement('a')
-//     link.href = url
-//     link.download = `search-results-${Date.now()}.csv`
-//     document.body.appendChild(link)
-//     link.click()
-//     document.body.removeChild(link)
-//     URL.revokeObjectURL(url)
-//   } catch (err) {
-//     console.error('导出 CSV 失败:', err)
-//   } finally {
-//     csvPending.value = false
-//   }
-// }
+const CSV_HEADERS = [
+  '类型',
+  'wikidotId',
+  '内部ID',
+  '标题/名称',
+  '副标题/主题',
+  '链接',
+  'Rating/总分',
+  '排名',
+  '作品数',
+  '投票数',
+  '评论数',
+  'Wilson95',
+  '争议度',
+  '标签',
+  '作者/用户',
+  '日期',
+  '状态',
+  '删除时间',
+  '讨论区分类',
+  '主题ID',
+  '帖子ID',
+  '摘要'
+]
+const USER_EXPORT_BATCH_SIZE = 100
+const PAGE_EXPORT_BATCH_SIZE = 100
+const FORUM_EXPORT_BATCH_SIZE = 50
+const MAX_EXPORT_ROWS = 10000
+const MAX_EXPORT_REQUESTS = Math.ceil(MAX_EXPORT_ROWS / Math.min(FORUM_EXPORT_BATCH_SIZE, PAGE_EXPORT_BATCH_SIZE, USER_EXPORT_BATCH_SIZE)) + 2
+
+type CsvCell = string | number | boolean | null | undefined
+
+function parseResponseTotal(resp: any): number | null {
+  const total = resp?.total
+  if (total === undefined || total === null) return null
+  const parsed = Number(total)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function cleanCsvText(value: any): string {
+  if (value === undefined || value === null) return ''
+  return String(value).replace(/\s+/g, ' ').trim()
+}
+
+function stripHtmlForCsv(value: any): string {
+  if (value === undefined || value === null) return ''
+  return String(value)
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function formatCsvDate(value: any): string {
+  if (!value) return ''
+  const normalizedValue = (() => {
+    if (typeof value === 'number') return value < 1_000_000_000_000 ? value * 1000 : value
+    if (typeof value === 'string' && /^\d{10,13}$/.test(value.trim())) {
+      const numeric = Number(value.trim())
+      return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric
+    }
+    return value
+  })()
+  const date = new Date(normalizedValue)
+  if (Number.isNaN(date.getTime())) return cleanCsvText(value)
+  return date.toISOString().replace('T', ' ').slice(0, 19)
+}
+
+function formatCsvNumber(value: any): CsvCell {
+  if (value === undefined || value === null || value === '') return ''
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : cleanCsvText(value)
+}
+
+function serializeTags(tags: any): string {
+  if (!Array.isArray(tags)) return ''
+  return orderTags(tags).join(' ')
+}
+
+function serializeAuthors(authors: any): string {
+  if (!Array.isArray(authors)) return cleanCsvText(authors)
+  return authors
+    .map((author) => {
+      if (typeof author === 'string') return author
+      return author?.displayName || author?.name || author?.username || author?.wikidotId || ''
+    })
+    .map(cleanCsvText)
+    .filter(Boolean)
+    .join(' / ')
+}
+
+function pageLink(p: any): string {
+  if (typeof p?.url === 'string' && p.url.trim()) return p.url.trim()
+  const wikidotId = Number(p?.wikidotId)
+  return Number.isInteger(wikidotId) && wikidotId > 0 ? `/page/${wikidotId}` : ''
+}
+
+function userLink(u: any): string {
+  const wikidotId = Number(u?.wikidotId)
+  return Number.isInteger(wikidotId) && wikidotId > 0 ? `/user/${wikidotId}` : ''
+}
+
+function forumPostExportLink(post: any): string {
+  const threadId = Number(post?.threadId)
+  if (!Number.isInteger(threadId) || threadId <= 0) return '/forums'
+  const postId = Number(post?.postId ?? post?.id)
+  return Number.isInteger(postId) && postId > 0
+    ? `/forums/t/${threadId}?postId=${postId}`
+    : `/forums/t/${threadId}`
+}
+
+function pageCsvRow(p: any): CsvCell[] {
+  return [
+    '页面',
+    p?.wikidotId ?? '',
+    p?.pageId ?? p?.id ?? '',
+    cleanCsvText(p?.title),
+    cleanCsvText(p?.alternateTitle),
+    pageLink(p),
+    formatCsvNumber(p?.rating),
+    '',
+    '',
+    formatCsvNumber(p?.voteCount),
+    formatCsvNumber(p?.commentCount ?? p?.revisionCount),
+    formatCsvNumber(p?.wilson95),
+    formatCsvNumber(p?.controversy),
+    serializeTags(p?.tags),
+    serializeAuthors(p?.authors),
+    formatCsvDate(p?.firstRevisionAt ?? p?.createdDate ?? p?.createdAt ?? p?.validFrom),
+    p?.isDeleted ? '已删除' : '正常',
+    formatCsvDate(p?.deletedAt),
+    '',
+    '',
+    '',
+    stripHtmlForCsv(p?.snippet ?? p?.excerpt ?? p?.snippetHtml)
+  ]
+}
+
+function userCsvRow(u: any): CsvCell[] {
+  return [
+    '用户',
+    u?.wikidotId ?? '',
+    u?.id ?? '',
+    cleanCsvText(u?.displayName ?? u?.username),
+    '',
+    userLink(u),
+    formatCsvNumber(u?.totalRating),
+    formatCsvNumber(u?.rank),
+    formatCsvNumber(u?.pageCount),
+    '',
+    '',
+    '',
+    '',
+    '',
+    cleanCsvText(u?.displayName ?? u?.username),
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    ''
+  ]
+}
+
+function forumCsvRow(post: any): CsvCell[] {
+  return [
+    '讨论区',
+    post?.createdByWikidotId ?? '',
+    post?.postId ?? post?.id ?? '',
+    cleanCsvText(post?.title || post?.threadTitle || '(无标题)'),
+    cleanCsvText(post?.threadTitle),
+    forumPostExportLink(post),
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    cleanCsvText(post?.createdByName),
+    formatCsvDate(post?.createdAt),
+    '',
+    '',
+    cleanCsvText(post?.categoryTitle),
+    post?.threadId ?? '',
+    post?.postId ?? post?.id ?? '',
+    stripHtmlForCsv(post?.textHtml)
+  ]
+}
+
+function encodeCsvCell(value: CsvCell): string {
+  let text = value === undefined || value === null ? '' : String(value)
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`
+  }
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`
+  }
+  return text
+}
+
+function buildCsv(rows: CsvCell[][]): string {
+  const lines = [CSV_HEADERS, ...rows].map((row) => row.map(encodeCsvCell).join(','))
+  return `\uFEFF${lines.join('\r\n')}`
+}
+
+function buildSearchCsvFilename(scope: string): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  return `search-results-${scope}-${timestamp}.csv`
+}
+
+function downloadCsv(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+async function fetchAllSearchRows(
+  endpoint: string,
+  params: Record<string, any>,
+  limit: number,
+  extraParams: Record<string, any> = {}
+): Promise<any[]> {
+  const rows: any[] = []
+  let offset = 0
+  let total: number | null = null
+  let requestCount = 0
+
+  while (true) {
+    requestCount += 1
+    if (requestCount > MAX_EXPORT_REQUESTS) {
+      throw new Error('csv_export_too_large')
+    }
+    const resp = await bff(endpoint, {
+      params: {
+        ...params,
+        ...extraParams,
+        limit,
+        offset,
+        includeTotal: total === null
+      }
+    })
+    const chunk = Array.isArray(resp?.results) ? resp.results : (Array.isArray(resp) ? resp : [])
+    rows.push(...chunk)
+
+    const parsedTotal = parseResponseTotal(resp)
+    if (parsedTotal !== null) {
+      total = parsedTotal
+      if (total > MAX_EXPORT_ROWS) {
+        throw new Error('csv_export_too_large')
+      }
+    }
+
+    offset += chunk.length
+    if (chunk.length === 0) break
+    if (rows.length > MAX_EXPORT_ROWS) {
+      throw new Error('csv_export_too_large')
+    }
+    if (total !== null && offset >= total) break
+    if (total === null && chunk.length < limit) break
+  }
+
+  return rows
+}
+
+function expectedExportTotal(scope: 'both' | 'users' | 'pages' | 'forums'): number {
+  if (scope === 'forums') return totalForums.value
+  if (scope === 'users') return totalUsers.value
+  if (scope === 'pages') return totalPages.value
+  return totalUsers.value + totalPages.value
+}
+
+async function exportSearchCsv() {
+  if (!isClient || csvExporting.value) return
+  csvExporting.value = true
+  csvExportError.value = ''
+
+  const scope = resultScope.value
+  const params = { ...lastSearchParams.value }
+  const rows: CsvCell[][] = []
+
+  try {
+    const expectedTotal = expectedExportTotal(scope)
+    if (expectedTotal > MAX_EXPORT_ROWS) {
+      throw new Error('csv_export_too_large')
+    }
+    const hasQuery = Boolean(params.query)
+
+    if (scope === 'forums') {
+      const forums = await fetchAllSearchRows('/search/forums', params, FORUM_EXPORT_BATCH_SIZE)
+      rows.push(...forums.map((post) => forumCsvRow(normalizeForumPost(post))))
+    } else {
+      if ((scope === 'both' || scope === 'users') && hasQuery) {
+        const users = await fetchAllSearchRows('/search/users', params, USER_EXPORT_BATCH_SIZE)
+        rows.push(...users.map(userCsvRow))
+      }
+      if (scope === 'both' || scope === 'pages') {
+        const pages = await fetchAllSearchRows('/search/pages', params, PAGE_EXPORT_BATCH_SIZE, {
+          includeSnippet: true,
+          includeDate: true
+        })
+        rows.push(...pages.map(pageCsvRow))
+      }
+    }
+
+    if (rows.length === 0) {
+      csvExportError.value = '没有可导出的搜索结果'
+      return
+    }
+
+    downloadCsv(buildCsv(rows), buildSearchCsvFilename(scope))
+  } catch (err) {
+    console.error('导出 CSV 失败:', err)
+    csvExportError.value = err instanceof Error && err.message === 'csv_export_too_large'
+      ? `搜索结果超过 ${MAX_EXPORT_ROWS} 条，请缩小搜索条件后再导出`
+      : '导出失败，请稍后重试'
+  } finally {
+    csvExporting.value = false
+  }
+}
 
 onBeforeUnmount(() => {
   if (tagSearchTimeout) {
@@ -1576,6 +1886,9 @@ const initializeFromQuery = () => {
     resetPagination()
     totalUsers.value = 0
     totalPages.value = 0
+    totalForums.value = 0
+    resultScope.value = searchForm.value.scope
+    resultSearchQuery.value = searchForm.value.query
     searchPerformed.value = true
     initialLoading.value = false
     updateCache()
@@ -1585,6 +1898,7 @@ const initializeFromQuery = () => {
 const performSearch = async () => {
   error.value = false
   regexError.value = ''
+  csvExportError.value = ''
   enforceScopeForAuthorFilter()
   searchPerformed.value = true
   const hasAnyCondition = hasSearchCriteria()
@@ -1593,6 +1907,9 @@ const performSearch = async () => {
     resetPagination()
     totalUsers.value = 0
     totalPages.value = 0
+    totalForums.value = 0
+    resultScope.value = searchForm.value.scope
+    resultSearchQuery.value = searchForm.value.query
     updateCache()
     return
   }
@@ -1604,9 +1921,11 @@ const performSearch = async () => {
   const apiParams: Record<string, any> = { ...routerParams }
   apiParams.orderBy = searchForm.value.orderBy || 'relevance'
   lastSearchParams.value = apiParams
+  resultScope.value = searchForm.value.scope
+  resultSearchQuery.value = searchForm.value.query
 
   try {
-    const scope = searchForm.value.scope
+    const scope = resultScope.value
     const hasQuery = Boolean(apiParams.query)
     if (scope === 'forums') {
       if (hasQuery) {

@@ -1497,7 +1497,9 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       const dateMaxParsed = parseNullableDate(dateMax);
       // 当过滤条件已下推到 CTE 内部时，候选池中的行已经通过了基础过滤，
       // 因此可以安全地使用更大的 LIMIT 而不会引入大量无关候选。
-      // 无过滤时保持低 LIMIT（性能优先）；有过滤时提高 LIMIT（准确性优先）。
+      // 无过滤时保持较小缓冲（性能优先）；有过滤时保留更大缓冲（准确性优先）。
+      // 候选窗口需要覆盖 offset + limit，否则深分页或 CSV 导出会被固定候选池截断。
+      // 同时保留上限，防止恶意 offset 让候选池无限放大。
       const hasAnyFilters = !!(
         includeTagsArray || excludeTagsArray ||
         ratingMinNumber !== null || ratingMaxNumber !== null ||
@@ -1509,9 +1511,12 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         controversyMinNumber !== null || controversyMaxNumber !== null ||
         dateMinParsed || dateMaxParsed
       );
+      const candidateWindow = offsetInt + limitInt;
+      const candidateBuffer = hasAnyFilters ? 10000 : 120;
+      const candidateCap = hasAnyFilters ? 50000 : 20000;
       const candidateLimit = hasAnyFilters
-        ? Math.max(limitInt * 100, 10000)
-        : Math.max(limitInt * 4, 120);
+        ? Math.min(Math.max(candidateWindow + candidateBuffer, 10000), candidateCap)
+        : Math.min(Math.max(candidateWindow + candidateBuffer, 120), candidateCap);
       const snippetTop = wantSnippet ? Math.min(defaultSnippetTopK, Math.max(1, limitInt)) : 0;
 
       const cacheParamsBase = {
