@@ -299,7 +299,7 @@ export class UserRatingSystem {
     console.log('🗳️ 计算用户投票汇总...');
     await this.prisma.$executeRaw`
       WITH effective_attributions AS (
-        SELECT a.*
+        SELECT DISTINCT a."pageVerId", a."userId"
         FROM (
           SELECT
             a.*,
@@ -307,6 +307,7 @@ export class UserRatingSystem {
           FROM "Attribution" a
         ) a
         WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
+          AND a."userId" IS NOT NULL
       ),
       votes_cast_raw AS (
         -- 原始用户投票明细（包含页面维度）
@@ -340,7 +341,7 @@ export class UserRatingSystem {
         WHERE r.rn = 1
         GROUP BY r."userId"
       ),
-      -- 收到的票：按 (actor, page) 去重（最后一票），并在投票时间点映射到当时的归属作者
+      -- 收到的票：按 (actor, page) 去重（最后一票），并映射到当前/最近版本的归属作者
       votes_received_raw AS (
         SELECT 
           v.id,
@@ -354,7 +355,6 @@ export class UserRatingSystem {
           END AS actor_key
         FROM "Vote" v
         JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
-        WHERE v.direction <> 0
       ),
       votes_received_ranked AS (
         SELECT 
@@ -369,6 +369,7 @@ export class UserRatingSystem {
         SELECT page_id, direction
         FROM votes_received_ranked
         WHERE rn = 1
+          AND direction <> 0
       ),
       votes_received_attrib AS (
         SELECT 
