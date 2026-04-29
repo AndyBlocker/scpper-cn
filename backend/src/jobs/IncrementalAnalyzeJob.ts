@@ -1191,7 +1191,6 @@ export class IncrementalAnalyzeJob {
       FROM "Vote" v
       WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
         AND v."userId" IS NOT NULL
-        AND v.direction != 0
     `;
     
     if (votingUsers.length === 0) {
@@ -1202,22 +1201,60 @@ export class IncrementalAnalyzeJob {
     const userIds = votingUsers.map(u => u.userId);
     console.log(`  📊 Analyzing social patterns for ${userIds.length} users`);
 
-    // 更新标签偏好（仅针对有新投票的用户）
-    await this.prisma.$executeRaw`
-      WITH user_tag_votes AS (
+    // 更新标签偏好（仅针对有新投票的用户）：Vote 存储改投历史，统计只取每个用户对每页的最后一票。
+    await this.prisma.$transaction([
+      this.prisma.userTagPreference.deleteMany({
+        where: {
+          userId: { in: userIds }
+        }
+      }),
+      this.prisma.$executeRaw`
+      WITH affected_users AS (
+        SELECT unnest(${userIds}::int[]) AS "userId"
+      ),
+      latest_vote_candidates AS (
         SELECT 
+          v.id,
           v."userId",
-          unnest(pv.tags) as tag,
+          pv."pageId",
           v.direction,
-          v.timestamp
+          v.timestamp,
+          ROW_NUMBER() OVER (
+            PARTITION BY v."userId", pv."pageId"
+            ORDER BY v.timestamp DESC, v.id DESC
+          ) AS rn
         FROM "Vote" v
-        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        WHERE v."userId" = ANY(${userIds}::int[])
-          AND v.direction != 0
-          AND pv.tags IS NOT NULL
-          AND array_length(pv.tags, 1) > 0
-          AND pv."validTo" IS NULL
-          AND pv."isDeleted" = false
+        JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
+        JOIN affected_users au ON au."userId" = v."userId"
+        WHERE v."userId" IS NOT NULL
+      ),
+      latest_user_page_votes AS (
+        SELECT "userId", "pageId", direction, timestamp
+        FROM latest_vote_candidates
+        WHERE rn = 1
+          AND direction != 0
+      ),
+      user_tag_votes AS (
+        SELECT
+          lupv."userId",
+          unnest(pv_pick.tags) as tag,
+          lupv.direction,
+          lupv.timestamp
+        FROM latest_user_page_votes lupv
+        JOIN LATERAL (
+          SELECT pv2.tags, pv2."isDeleted"
+          FROM "PageVersion" pv2
+          WHERE pv2."pageId" = lupv."pageId"
+          ORDER BY
+            (pv2."validTo" IS NULL) DESC,
+            (NOT pv2."isDeleted") DESC,
+            pv2."validFrom" DESC NULLS LAST,
+            pv2.id DESC
+          LIMIT 1
+        ) pv_pick ON TRUE
+        WHERE pv_pick."isDeleted" = false
+          AND pv_pick.tags IS NOT NULL
+          AND array_length(pv_pick.tags, 1) > 0
       ),
       tag_stats AS (
         SELECT 
@@ -1246,12 +1283,22 @@ export class IncrementalAnalyzeJob {
         "totalVotes" = EXCLUDED."totalVotes",
         "lastVoteAt" = EXCLUDED."lastVoteAt",
         "updatedAt" = NOW()
-    `;
+      `
+    ]);
     
     // 更新用户投票交互（基于新的投票活动）
-    await this.prisma.$executeRaw`
-      WITH effective_attributions AS (
-        SELECT a.*
+    await this.prisma.$transaction([
+      this.prisma.userVoteInteraction.deleteMany({
+        where: {
+          fromUserId: { in: userIds }
+        }
+      }),
+      this.prisma.$executeRaw`
+      WITH affected_voters AS (
+        SELECT unnest(${userIds}::int[]) AS "userId"
+      ),
+      effective_attributions AS (
+        SELECT DISTINCT a."pageVerId", a."userId"
         FROM (
           SELECT 
             a.*,
@@ -1259,35 +1306,51 @@ export class IncrementalAnalyzeJob {
           FROM "Attribution" a
         ) a
         WHERE NOT (a.has_non_submitter AND a.type = 'SUBMITTER')
-      ),
-      affected_pairs AS (
-        SELECT DISTINCT 
-          v."userId" AS from_user_id,
-          a."userId" AS to_user_id
-        FROM "Vote" v
-        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN effective_attributions a ON a."pageVerId" = pv.id
-        WHERE v."pageVersionId" = ANY(${pageVersionIds}::int[])
-          AND v."userId" IS NOT NULL
           AND a."userId" IS NOT NULL
-          AND v."userId" != a."userId"
-          AND v.direction != 0
+      ),
+      latest_vote_candidates AS (
+        SELECT
+          v.id,
+          v."userId" AS from_user_id,
+          pv."pageId" AS page_id,
+          v.direction,
+          v.timestamp,
+          ROW_NUMBER() OVER (
+            PARTITION BY v."userId", pv."pageId"
+            ORDER BY v.timestamp DESC, v.id DESC
+          ) AS rn
+        FROM "Vote" v
+        JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
+        JOIN affected_voters av ON av."userId" = v."userId"
+        WHERE v."userId" IS NOT NULL
+      ),
+      latest_user_page_votes AS (
+        SELECT from_user_id, page_id, direction, timestamp
+        FROM latest_vote_candidates
+        WHERE rn = 1
+          AND direction != 0
       ),
       all_interactions AS (
-        SELECT 
-          v."userId" AS from_user_id,
+        SELECT
+          lupv.from_user_id,
           a."userId" AS to_user_id,
-          v.direction,
-          v.timestamp
-        FROM "Vote" v
-        JOIN "PageVersion" pv ON v."pageVersionId" = pv.id
-        JOIN effective_attributions a ON a."pageVerId" = pv.id
-        WHERE v."userId" IS NOT NULL
-          AND a."userId" IS NOT NULL
-          AND v."userId" != a."userId"
-          AND v.direction != 0
-          AND pv."validTo" IS NULL
-          AND pv."isDeleted" = false
+          lupv.direction,
+          lupv.timestamp
+        FROM latest_user_page_votes lupv
+        JOIN LATERAL (
+          SELECT pv2.id, pv2."isDeleted"
+          FROM "PageVersion" pv2
+          WHERE pv2."pageId" = lupv.page_id
+          ORDER BY
+            (pv2."validTo" IS NULL) DESC,
+            (NOT pv2."isDeleted") DESC,
+            pv2."validFrom" DESC NULLS LAST,
+            pv2.id DESC
+          LIMIT 1
+        ) pv_pick ON TRUE
+        JOIN effective_attributions a ON a."pageVerId" = pv_pick.id
+        WHERE lupv.from_user_id != a."userId"
+          AND pv_pick."isDeleted" = false
       ),
       interaction_stats AS (
         SELECT 
@@ -1298,9 +1361,6 @@ export class IncrementalAnalyzeJob {
           COUNT(*) AS total_votes,
           MAX(ai.timestamp) AS last_vote_at
         FROM all_interactions ai
-        JOIN affected_pairs ap
-          ON ai.from_user_id = ap.from_user_id
-         AND ai.to_user_id = ap.to_user_id
         GROUP BY ai.from_user_id, ai.to_user_id
       )
       INSERT INTO "UserVoteInteraction" (
@@ -1318,7 +1378,8 @@ export class IncrementalAnalyzeJob {
         "totalVotes" = EXCLUDED."totalVotes",
         "lastVoteAt" = EXCLUDED."lastVoteAt",
         "updatedAt" = NOW()
-    `;
+      `
+    ]);
     
     console.log('✅ User social analysis updated');
   }

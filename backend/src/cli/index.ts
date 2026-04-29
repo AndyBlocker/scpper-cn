@@ -27,6 +27,7 @@ import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { runSyncHourlyScheduler } from './sync-hourly.js';
 import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
 import { runVoteResyncAudit } from './voteResyncAudit.js';
+import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
 
 const program = new Command();
 
@@ -200,6 +201,28 @@ program
     // but --full forces a complete analysis which is equivalent to the old behavior
     const forceFullAnalysis = options.full || options.since;
     await analyzeIncremental({ forceFullAnalysis });
+  });
+
+program
+  .command('repair-user-vote-stats')
+  .description('Rebuild user vote social stats and user vote totals without running gacha market ticks')
+  .option('--batch-size <n>', 'Batch size for incremental social analysis paths (full rebuild uses set-based SQL)', '1000')
+  .option('--dry-run', 'Recompute summaries in a read-only transaction without writing data')
+  .option('--social-only', 'Only rebuild UserTagPreference and UserVoteInteraction')
+  .option('--user-stats-only', 'Only rebuild UserStats vote totals/rankings')
+  .action(async (options) => {
+    const prisma = getPrismaClient();
+    const batchSize = Math.max(1, Number.parseInt(String(options.batchSize ?? '1000'), 10) || 1000);
+    try {
+      await runRepairUserVoteStats(prisma, {
+        batchSize,
+        dryRun: Boolean(options.dryRun),
+        socialOnly: Boolean(options.socialOnly),
+        userStatsOnly: Boolean(options.userStatsOnly)
+      });
+    } finally {
+      await disconnectPrisma();
+    }
   });
 
 program
