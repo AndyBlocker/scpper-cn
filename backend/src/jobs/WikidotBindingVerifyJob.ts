@@ -11,6 +11,25 @@ const NO_MATCH_LOG_EVERY_N_CHECKS = Math.max(
   1,
   Math.floor(Number(process.env.WIKIDOT_BINDING_NO_MATCH_LOG_EVERY ?? '12') || 12)
 );
+// Wikidot revisions reach us via Crom GraphQL with a server-side timestamp that
+// can lag PostgreSQL `now()` by tens of seconds. Without slack, a user who edits
+// /andyblocker right after starting a binding task gets their (correct) revision
+// timestamp recorded *before* task.createdAt and is filtered out forever.
+// verificationCode is already a 6-char base31 unique key, so a generous backstop
+// has effectively zero forgery risk.
+const TASK_TIMESTAMP_SLACK_MS = Math.max(
+  0,
+  Math.floor(Number(process.env.WIKIDOT_BINDING_TIMESTAMP_SLACK_MS ?? '300000') || 300000)
+);
+// Surface stuck tasks so we don't silently burn 500 checks again before noticing.
+const STUCK_TASK_WARN_THRESHOLD = Math.max(
+  1,
+  Math.floor(Number(process.env.WIKIDOT_BINDING_STUCK_WARN_THRESHOLD ?? '60') || 60)
+);
+const STUCK_TASK_WARN_INTERVAL = Math.max(
+  1,
+  Math.floor(Number(process.env.WIKIDOT_BINDING_STUCK_WARN_INTERVAL ?? '60') || 60)
+);
 
 interface PendingTask {
   id: string;
@@ -141,12 +160,13 @@ export class WikidotBindingVerifyJob {
         return;
       }
 
-      // Query revisions on the target page made by this user after task creation
+      // Apply slack on task.createdAt to absorb wikidot↔PG clock skew.
+      const lowerBound = new Date(new Date(task.createdAt).getTime() - TASK_TIMESTAMP_SLACK_MS);
       const revisions = await this.prisma.revision.findMany({
         where: {
           pageVersion: { pageId },
           userId: user.id,
-          timestamp: { gte: new Date(task.createdAt) }
+          timestamp: { gte: lowerBound }
         },
         select: {
           id: true,
@@ -174,6 +194,14 @@ export class WikidotBindingVerifyJob {
         if (shouldLogNoMatch) {
           console.log(
             `ℹ️ No matching revision for task ${task.id} (checked ${revisions.length} revisions, checkCount=${checkCount}).`
+          );
+        }
+        if (
+          checkCount >= STUCK_TASK_WARN_THRESHOLD
+          && checkCount % STUCK_TASK_WARN_INTERVAL === 0
+        ) {
+          console.warn(
+            `⚠️ Wikidot binding task ${task.id} stuck after ${checkCount} checks (wikidotUserId=${task.wikidotUserId}, code=${task.verificationCode}).`
           );
         }
         await this.updateTaskCheck(task.id);
