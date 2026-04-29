@@ -47,7 +47,7 @@
                   class="w-full h-full rounded-full shadow-inner"
                   :style="{ background: scpClassPieGradient }"
                 />
-                <div class="absolute inset-3 rounded-full bg-[rgb(var(--bg))] border border-[rgba(var(--fg),0.08)] flex flex-col items-center justify-center text-center">
+                <div class="absolute inset-3 rounded-full bg-[rgb(var(--bg))] border border-[rgb(var(--fg)_/_0.08)] flex flex-col items-center justify-center text-center">
                   <span class="text-[9px] md:text-[10px] text-[rgb(var(--muted))]">总计</span>
                   <span class="text-lg md:text-xl font-black text-[rgb(var(--fg))]">{{ formatNumber(scpClassTotal) }}</span>
                 </div>
@@ -137,7 +137,7 @@
                     :key="idx"
                     :to="page.wikidotId ? `/page/${page.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
                       :class="idx === 0 ? 'bg-yellow-500 text-black' : idx === 1 ? 'bg-gray-400 text-black' : 'bg-amber-700 text-white'">{{ idx + 1 }}</span>
@@ -160,7 +160,7 @@
                     :key="idx"
                     :to="page.wikidotId ? `/page/${page.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
                       :class="idx === 0 ? 'bg-yellow-500 text-black' : idx === 1 ? 'bg-gray-400 text-black' : 'bg-amber-700 text-white'">{{ idx + 1 }}</span>
@@ -192,10 +192,10 @@
                     :key="idx"
                     :to="author.wikidotId ? `/user/${author.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
-                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
+                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgb(var(--fg)_/_0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
                     <UserAvatar
                       :wikidot-id="author.wikidotId"
                       :name="author.displayName"
@@ -219,10 +219,10 @@
                     :key="idx"
                     :to="author.wikidotId ? `/user/${author.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
-                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
+                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgb(var(--fg)_/_0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
                     <UserAvatar
                       :wikidot-id="author.wikidotId"
                       :name="author.displayName"
@@ -281,7 +281,7 @@ const scpClassPieGradient = computed(() => {
   const items = props.siteData.breakdown.scpByClass
   const total = scpClassTotal.value
   if (!items.length || total === 0) {
-    return 'conic-gradient(rgba(var(--fg),0.08) 0deg 360deg)'
+    return 'conic-gradient(rgb(var(--fg) / 0.08) 0deg 360deg)'
   }
 
   let currentAngle = 0
@@ -295,6 +295,6 @@ const scpClassPieGradient = computed(() => {
     currentAngle = end
   })
 
-  return segments.length ? `conic-gradient(${segments.join(', ')})` : 'conic-gradient(rgba(var(--fg),0.08) 0deg 360deg)'
+  return segments.length ? `conic-gradient(${segments.join(', ')})` : 'conic-gradient(rgb(var(--fg) / 0.08) 0deg 360deg)'
 })
 </script>

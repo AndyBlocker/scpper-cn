@@ -173,7 +173,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[radial-gradient(rgba(var(--fg),0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
+      <div class="w-full h-full bg-[radial-gradient(rgb(var(--fg) / 0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
     </div>
   </section>
 </template>

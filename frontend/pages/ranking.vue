@@ -688,7 +688,7 @@ useHead({ title: '作者排行' });
   pointer-events: none;
   border-radius: 0px;                     /* 需要无圆角可设为 0 */
 }
-.dark .rank-row::before{ background-color: rgba(var(--accent-strong),0.22); }
+.dark .rank-row::before{ background-color: rgb(var(--accent-strong) / 0.22); }
 
 /* —— 表头列高亮（仅在右侧网格内） —— */
 .metric-head-grid{ position: relative; }
@@ -702,7 +702,7 @@ useHead({ title: '作者排行' });
   pointer-events: none;
   border-radius: 6px;
 }
-.dark .metric-head-grid::before{ background-color: rgba(var(--accent-strong),0.22); }
+.dark .metric-head-grid::before{ background-color: rgb(var(--accent-strong) / 0.22); }
 
 /* —— 表头按钮（填满单元格，不影响列高亮） —— */
 .th-btn{

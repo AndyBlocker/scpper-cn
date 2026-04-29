@@ -18,7 +18,7 @@
             <div class="text-4xl md:text-6xl font-black text-[rgb(var(--fg))] mb-2">
               <Annual2025CountUp :end="siteData.overview.pages.total" />
             </div>
-            <div class="flex items-center gap-1 md:gap-2 text-[rgb(var(--success))] bg-[rgba(var(--success),0.1)] w-fit px-2 py-1 rounded text-xs md:text-sm mb-3 md:mb-4">
+            <div class="flex items-center gap-1 md:gap-2 text-[rgb(var(--success))] bg-[rgb(var(--success)_/_0.1)] w-fit px-2 py-1 rounded text-xs md:text-sm mb-3 md:mb-4">
               <LucideIcon name="TrendingUp" class="w-3 h-3 md:w-4 md:h-4" /> {{ siteData.overview.pages.growth }} 同比增长
             </div>
             <div class="mt-4 md:mt-6 flex-1 flex flex-col justify-center gap-1.5">
@@ -81,7 +81,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[radial-gradient(rgba(var(--fg),0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
+      <div class="w-full h-full bg-[radial-gradient(rgb(var(--fg) / 0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
     </div>
   </section>
 </template>

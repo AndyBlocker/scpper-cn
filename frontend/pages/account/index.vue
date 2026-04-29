@@ -293,7 +293,7 @@
               :class="[
                 'rounded-lg border p-5 shadow-sm transition',
                 followGroupUnreadCount(group) > 0
-                  ? 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] hover:border-[rgba(var(--accent),0.6)] dark:border-[rgba(var(--accent),0.55)] dark:bg-[var(--g-accent-medium)] dark:hover:border-[rgba(var(--accent),0.7)]'
+                  ? 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] hover:border-[rgb(var(--accent)_/_0.6)] dark:border-[rgb(var(--accent)_/_0.55)] dark:bg-[var(--g-accent-medium)] dark:hover:border-[rgb(var(--accent)_/_0.7)]'
                   : 'border-neutral-200 bg-white/80 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-600'
               ]"
             >
@@ -343,7 +343,7 @@
                   class="rounded-xl border px-3 py-2"
                   :class="alert.acknowledgedAt
                     ? 'border-transparent bg-neutral-100/70 text-neutral-600 dark:bg-neutral-900/60 dark:text-neutral-300'
-                    : 'border-[var(--g-accent-border)] bg-white/90 text-neutral-700 shadow-sm dark:border-[rgba(var(--accent),0.55)] dark:bg-neutral-900/80 dark:text-neutral-100'"
+                    : 'border-[var(--g-accent-border)] bg-white/90 text-neutral-700 shadow-sm dark:border-[rgb(var(--accent)_/_0.55)] dark:bg-neutral-900/80 dark:text-neutral-100'"
                 >
                   <div class="flex flex-wrap items-center gap-2">
                     <span
@@ -437,7 +437,7 @@
                 'rounded-lg border p-5 shadow-sm transition',
                 item.acknowledgedAt
                   ? 'border-neutral-200 bg-white/80 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-600'
-                  : 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] hover:border-[rgba(var(--accent),0.6)] dark:border-[rgba(var(--accent),0.55)] dark:bg-[var(--g-accent-medium)] dark:hover:border-[rgba(var(--accent),0.7)]'
+                  : 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] hover:border-[rgb(var(--accent)_/_0.6)] dark:border-[rgb(var(--accent)_/_0.55)] dark:bg-[var(--g-accent-medium)] dark:hover:border-[rgb(var(--accent)_/_0.7)]'
               ]"
             >
               <div class="flex flex-wrap items-start justify-between gap-4">
@@ -539,7 +539,7 @@
                 class="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-semibold transition"
                 :class="activeMetricMuted
                   ? 'border-neutral-200 bg-white/60 text-neutral-500 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-400'
-                  : 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] hover:border-[rgba(var(--accent),0.55)] dark:border-[var(--g-accent-border)] dark:bg-neutral-900/70 dark:text-[var(--g-accent)]'"
+                  : 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] hover:border-[rgb(var(--accent)_/_0.55)] dark:border-[var(--g-accent-border)] dark:bg-neutral-900/70 dark:text-[var(--g-accent)]'"
                 :disabled="alertPreferencesLoading || alertPreferencesSaving || metricMutePending"
                 @click="handleToggleMetricMute"
               >{{ metricMutePending ? '处理中…' : (activeMetricMuted ? '开启提醒' : '关闭提醒') }}</button>

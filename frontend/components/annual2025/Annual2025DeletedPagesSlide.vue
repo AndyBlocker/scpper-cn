@@ -112,7 +112,7 @@
               <div
                 v-for="author in stats.topAuthors.slice(0, 5)"
                 :key="author.userId"
-                class="flex items-center gap-2 p-2 rounded-lg bg-[rgba(var(--fg),0.03)]"
+                class="flex items-center gap-2 p-2 rounded-lg bg-[rgb(var(--fg)_/_0.03)]"
               >
                 <div class="w-6 h-6 md:w-8 md:h-8 rounded-full bg-red-500/20 flex items-center justify-center text-xs md:text-sm font-bold text-red-400">
                   {{ author.rank }}
@@ -134,7 +134,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[radial-gradient(rgba(var(--fg),0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
+      <div class="w-full h-full bg-[radial-gradient(rgb(var(--fg) / 0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
     </div>
   </section>
 </template>
