@@ -196,10 +196,15 @@ export async function runVoteTzDupCleanup(options: VoteTzDupCleanupOptions): Pro
   const runId = randomUUID();
 
   // 多行报告：直接 console.log 避免 Logger.info 的 500ms 节流丢行。
-  console.log(
+  // JSON 模式下 header 走 stderr，让 stdout 保持纯 JSON，方便上游脚本解析。
+  const header =
     `🛠 vote-tz-dup-cleanup ${apply ? '(APPLY)' : '(dry-run)'} ` +
-    `pairWindowSec=${pairWindowSec} runId=${runId}`
-  );
+    `pairWindowSec=${pairWindowSec} runId=${runId}`;
+  if (json) {
+    console.error(header);
+  } else {
+    console.log(header);
+  }
 
   const counts = await getCounts(prisma, pairWindowSec);
   const samples = await getSamplePages(prisma, pairWindowSec, sampleSize);
