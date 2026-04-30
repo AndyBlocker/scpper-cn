@@ -161,15 +161,19 @@ async function ensureSchemaAndTables(prisma: PrismaClient, schema: string): Prom
 
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS ${qs}.tmp_vote (
-      edge_seq        bigserial   PRIMARY KEY,
-      "pageVersionId" int         NOT NULL,
+      edge_seq        bigserial      PRIMARY KEY,
+      "pageVersionId" int            NOT NULL,
       user_wikidot_id int,
       "anonKey"       text,
-      direction       int         NOT NULL,
-      timestamp       timestamp   NOT NULL,
-      fetched_at      timestamptz NOT NULL DEFAULT now()
+      direction       int            NOT NULL,
+      timestamp       timestamp(3)   NOT NULL,
+      fetched_at      timestamptz    NOT NULL DEFAULT now()
     )
   `);
+  // 兜底已存在的旧 audit schema：把 timestamp 列对齐到 timestamp(3)（与 "Vote".timestamp 一致）。
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE ${qs}.tmp_vote ALTER COLUMN timestamp TYPE timestamp(3)`
+  );
 
   await prisma.$executeRawUnsafe(`
     CREATE INDEX IF NOT EXISTS tmp_vote_pv_uwid_ts
@@ -351,13 +355,23 @@ async function fetchAndStorePageVotes(
       }
 
       // tmp_vote bulk insert (anonKey 永远 NULL)
+      // timestamp 走显式 ISO 字符串 + (::timestamptz AT TIME ZONE 'UTC')::timestamp，
+      // 防止 pg-node 把 JS Date 按 session TimeZone(Asia/Shanghai) 落库，
+      // 与 Prisma ORM 的 UTC 写入口径偏离 8h，制造 (pageVersionId, userId, timestamp+8h) 重复行。
       for (const chunk of chunkArray(voteRows, TMP_VOTE_INSERT_CHUNK)) {
         const params: unknown[] = [];
         const valueClauses: string[] = [];
         chunk.forEach((row, idx) => {
           const base = idx * 4;
-          valueClauses.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
-          params.push(row.pvid, row.userWikidotId, row.direction, row.timestamp);
+          valueClauses.push(
+            `($${base + 1}, $${base + 2}, $${base + 3}, ($${base + 4}::timestamptz AT TIME ZONE 'UTC')::timestamp)`
+          );
+          params.push(
+            row.pvid,
+            row.userWikidotId,
+            row.direction,
+            row.timestamp.toISOString()
+          );
         });
         await prisma.$executeRawUnsafe(
           `INSERT INTO ${qs}.tmp_vote ("pageVersionId", user_wikidot_id, direction, timestamp)
@@ -747,6 +761,9 @@ async function doApply(prisma: PrismaClient, schema: string): Promise<void> {
 
   // INSERT 180k+ 行 + 多步 SQL 的事务可能跑数十秒到几分钟；Prisma 默认 5s timeout 不够
   const result = await prisma.$transaction(async (tx) => {
+    // 防御：保证事务内任何 raw timestamp 转换都按 UTC，与 Prisma ORM 写入口径一致。
+    await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE 'UTC'`);
+
     // Step 0: 事务内重跑 expected_*，避免 report 跑过后又有新 collect 行带来的 stale
     const expectedRecomputed = await tx.$executeRawUnsafe(`
       WITH ranked AS (

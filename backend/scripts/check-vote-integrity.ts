@@ -7,9 +7,13 @@ import { disconnectPrisma, getPrismaClient } from '../src/utils/db-connection.ts
  * 常态化对账脚本：比对 LatestVote 重算的 (rating, voteCount) 与 PageVersion 上的
  * pa_rating / pa_count，输出 7 个 bucket 的统计 + top 20 偏差页详情。
  *
+ * 同时统计 TZ-induced 重复票（actor=user/anon, direction 同, ts 差恰好 8h）：
+ * 这是 voteResyncAudit 早期 TZ 写入口径 bug 的指纹，cleanup 后应当回到 0。
+ *
  * CLI 选项：
- *   --threshold N     any_mismatch > N 时 exit 1（默认 100）
- *   --json            以 JSON 输出
+ *   --threshold N         any_mismatch > N 时 exit 1（默认 100）
+ *   --json                以 JSON 输出
+ *   --fail-if-tz-dup      suspect_tz_dup_pair_count > 0 时 exit 1（CI 用）
  */
 
 type SummaryRow = {
@@ -41,13 +45,16 @@ function toNumber(value: bigint | number | string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function parseArgs(argv: string[]): { threshold: number; json: boolean } {
+function parseArgs(argv: string[]): { threshold: number; json: boolean; failIfTzDup: boolean } {
   let threshold = 100;
   let json = false;
+  let failIfTzDup = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--json') {
       json = true;
+    } else if (arg === '--fail-if-tz-dup') {
+      failIfTzDup = true;
     } else if (arg === '--threshold') {
       const next = argv[i + 1];
       if (next !== undefined) {
@@ -60,11 +67,11 @@ function parseArgs(argv: string[]): { threshold: number; json: boolean } {
       if (Number.isFinite(parsed) && parsed >= 0) threshold = parsed;
     }
   }
-  return { threshold, json };
+  return { threshold, json, failIfTzDup };
 }
 
 async function main(): Promise<number> {
-  const { threshold, json } = parseArgs(process.argv.slice(2));
+  const { threshold, json, failIfTzDup } = parseArgs(process.argv.slice(2));
   const prisma = getPrismaClient();
 
   const summaryRows = await prisma.$queryRawUnsafe<SummaryRow[]>(`
@@ -140,6 +147,21 @@ async function main(): Promise<number> {
      LIMIT 20
   `);
 
+  const tzDupRows = await prisma.$queryRawUnsafe<Array<{ pair_count: bigint | number | null }>>(`
+    WITH actor_groups AS (
+      SELECT array_agg(v.timestamp ORDER BY v.timestamp, v.id) AS tses
+        FROM "Vote" v
+       WHERE v.direction <> 0
+         AND (v."userId" IS NOT NULL OR v."anonKey" IS NOT NULL)
+       GROUP BY v."pageVersionId", v.direction,
+                COALESCE('u:' || v."userId"::text, 'a:' || v."anonKey")
+       HAVING COUNT(*) = 2
+    )
+    SELECT COUNT(*)::bigint AS pair_count
+      FROM actor_groups
+     WHERE ABS(EXTRACT(EPOCH FROM (tses[2] - tses[1])) - 28800) <= 1
+  `);
+
   const summary = {
     totalPages: toNumber(summaryRows[0]?.total_pages),
     noVotesSynced: toNumber(summaryRows[0]?.no_votes_synced),
@@ -147,7 +169,8 @@ async function main(): Promise<number> {
     ratingMismatch: toNumber(summaryRows[0]?.rating_mismatch),
     countMismatch: toNumber(summaryRows[0]?.count_mismatch),
     directionOutOfRange: toNumber(summaryRows[0]?.direction_out_of_range),
-    anyMismatch: toNumber(summaryRows[0]?.any_mismatch)
+    anyMismatch: toNumber(summaryRows[0]?.any_mismatch),
+    suspectTzDupPairCount: toNumber(tzDupRows[0]?.pair_count)
   };
 
   const anomaliesDisplay = anomalies.map((a) => {
@@ -170,7 +193,8 @@ async function main(): Promise<number> {
     };
   });
 
-  const exceeded = summary.anyMismatch > threshold;
+  const tzDupViolated = failIfTzDup && summary.suspectTzDupPairCount > 0;
+  const exceeded = summary.anyMismatch > threshold || tzDupViolated;
 
   if (json) {
     console.log(
@@ -179,6 +203,7 @@ async function main(): Promise<number> {
           summary,
           threshold,
           exceeded,
+          tzDupViolated,
           anomalies: anomaliesDisplay
         },
         null,
@@ -192,6 +217,11 @@ async function main(): Promise<number> {
     console.table(summary);
     console.log('');
     console.log(`Threshold = ${threshold} on any_mismatch (current = ${summary.anyMismatch})`);
+    if (failIfTzDup) {
+      console.log(`TZ-dup gate enabled: suspect_tz_dup_pair_count = ${summary.suspectTzDupPairCount} (must be 0)`);
+    } else {
+      console.log(`suspect_tz_dup_pair_count = ${summary.suspectTzDupPairCount} (informational; pass --fail-if-tz-dup to gate)`);
+    }
     console.log(exceeded ? '⚠️  exceeded threshold — exit 1' : '✅ within threshold');
     if (anomaliesDisplay.length > 0) {
       console.log('');
