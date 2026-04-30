@@ -354,9 +354,21 @@ export async function runVoteTzDupCleanup(options: VoteTzDupCleanupOptions): Pro
   console.log(
     `🎉 cleanup complete. runId=${runId} backup=${result.backupCount} deleted=${result.deletedCount}`
   );
-  console.log(
-    `   rollback: re-INSERT rows from public.vote_tz_dup_cleanup_log WHERE run_id = '${runId}'`
-  );
+  console.log('');
+  console.log('## rollback');
+  console.log(`   to fully revert this run, execute the following inside a transaction:`);
+  console.log(``);
+  console.log(`   BEGIN;`);
+  console.log(`   INSERT INTO "Vote" (id, "pageVersionId", "userId", "anonKey", direction, timestamp)`);
+  console.log(`   SELECT vote_id, "pageVersionId", "userId", "anonKey", direction, ts_deleted`);
+  console.log(`     FROM public.vote_tz_dup_cleanup_log`);
+  console.log(`    WHERE run_id = '${runId}'::uuid;`);
+  console.log(`   -- Vote.id is an autoincrement; reusing old ids is safe as long as the sequence`);
+  console.log(`   -- has advanced past them (it has — DELETEs do not retract serial sequences).`);
+  console.log(`   -- If the unique constraint (pageVersionId, userId, timestamp) blocks reinsertion,`);
+  console.log(`   -- it means the canonical UTC row is still present (expected) and the rollback`);
+  console.log(`   -- would re-introduce the duplicate; resolve manually before proceeding.`);
+  console.log(`   COMMIT;`);
 }
 
 if (process.argv[1] && process.argv[1].endsWith('voteTzDupCleanup.js')) {
