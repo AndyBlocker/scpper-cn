@@ -39,11 +39,6 @@ export type VoteTzDupCleanupOptions = {
   json?: boolean;
 };
 
-type SuspectPairIds = {
-  delete_id: number;
-  keep_id: number;
-};
-
 type Counts = {
   total_vote_rows: number;
   pair_8h_pairs: number;
@@ -192,31 +187,6 @@ async function getSamplePages(
   );
 }
 
-async function fetchSuspectPairIds(
-  prisma: PrismaClient,
-  pairWindowSec: number
-): Promise<SuspectPairIds[]> {
-  return prisma.$queryRawUnsafe<SuspectPairIds[]>(
-    `
-    WITH actor_groups AS (
-      SELECT
-        array_agg(v.id        ORDER BY v.timestamp, v.id) AS ids,
-        array_agg(v.timestamp ORDER BY v.timestamp, v.id) AS tses
-      FROM "Vote" v
-      WHERE v.direction <> 0
-        AND (v."userId" IS NOT NULL OR v."anonKey" IS NOT NULL)
-      GROUP BY v."pageVersionId", v.direction,
-               COALESCE('u:' || v."userId"::text, 'a:' || v."anonKey")
-      HAVING COUNT(*) = 2
-    )
-    SELECT ids[1] AS keep_id, ids[2] AS delete_id
-      FROM actor_groups
-     WHERE ABS(EXTRACT(EPOCH FROM (tses[2] - tses[1])) - 28800) <= $1
-    `,
-    pairWindowSec
-  );
-}
-
 export async function runVoteTzDupCleanup(options: VoteTzDupCleanupOptions): Promise<void> {
   const prisma = getPrismaClient();
   const apply = Boolean(options.apply);
@@ -225,7 +195,8 @@ export async function runVoteTzDupCleanup(options: VoteTzDupCleanupOptions): Pro
   const json = Boolean(options.json);
   const runId = randomUUID();
 
-  Logger.info(
+  // 多行报告：直接 console.log 避免 Logger.info 的 500ms 节流丢行。
+  console.log(
     `🛠 vote-tz-dup-cleanup ${apply ? '(APPLY)' : '(dry-run)'} ` +
     `pairWindowSec=${pairWindowSec} runId=${runId}`
   );
@@ -234,7 +205,7 @@ export async function runVoteTzDupCleanup(options: VoteTzDupCleanupOptions): Pro
   const samples = await getSamplePages(prisma, pairWindowSec, sampleSize);
 
   if (json) {
-    Logger.info(
+    console.log(
       JSON.stringify(
         {
           mode: apply ? 'apply' : 'dry-run',
@@ -248,16 +219,16 @@ export async function runVoteTzDupCleanup(options: VoteTzDupCleanupOptions): Pro
       )
     );
   } else {
-    Logger.info('## counts');
-    Logger.info(`  total_vote_rows  = ${counts.total_vote_rows}`);
-    Logger.info(`  pair_8h_pairs    = ${counts.pair_8h_pairs}     (cleanup target)`);
-    Logger.info(`  affected_pages   = ${counts.affected_pages}`);
-    Logger.info(`  multi_groups     = ${counts.multi_groups}      (review only, not touched)`);
-    Logger.info(`  multi_extra_rows = ${counts.multi_extra_rows}  (potential extra rows in multi)`);
-    Logger.info('');
-    Logger.info(`## top ${samples.length} affected pages`);
+    console.log('## counts');
+    console.log(`  total_vote_rows  = ${counts.total_vote_rows}`);
+    console.log(`  pair_8h_pairs    = ${counts.pair_8h_pairs}     (cleanup target)`);
+    console.log(`  affected_pages   = ${counts.affected_pages}`);
+    console.log(`  multi_groups     = ${counts.multi_groups}      (review only, not touched)`);
+    console.log(`  multi_extra_rows = ${counts.multi_extra_rows}  (potential extra rows in multi)`);
+    console.log('');
+    console.log(`## top ${samples.length} affected pages`);
     for (const s of samples) {
-      Logger.info(
+      console.log(
         `  pv=${s.page_version_id} wikidotId=${s.wikidot_id ?? '(null)'} ` +
         `pair_count=${s.pair_count} url=${s.current_url ?? '(unknown)'}`
       );
@@ -265,102 +236,122 @@ export async function runVoteTzDupCleanup(options: VoteTzDupCleanupOptions): Pro
   }
 
   if (!apply) {
-    Logger.info('');
-    Logger.info('🧪 dry-run only. re-run with --apply to perform the cleanup.');
+    console.log('');
+    console.log('🧪 dry-run only. re-run with --apply to perform the cleanup.');
     return;
   }
 
   if (counts.pair_8h_pairs === 0) {
-    Logger.info('✅ no suspect pairs to clean up.');
+    console.log('✅ no suspect pairs to clean up.');
     return;
   }
 
   await ensureLogTable(prisma);
 
-  Logger.info(`🚀 fetching ${counts.pair_8h_pairs} suspect pair ids for apply transaction...`);
-  const pairs = await fetchSuspectPairIds(prisma, pairWindowSec);
-  if (pairs.length !== counts.pair_8h_pairs) {
-    Logger.warn(
-      `⚠️ suspect pair count drift: expected ${counts.pair_8h_pairs}, fetched ${pairs.length}; ` +
-      `proceeding with the fetched set.`
-    );
-  }
-
-  const deleteIds = pairs.map((p) => p.delete_id);
-  const keepIds = pairs.map((p) => p.keep_id);
+  console.log(`🚀 entering single transaction (pair select + backup + DELETE all in tx) runId=${runId}`);
 
   const result = await prisma.$transaction(
     async (tx) => {
       // 防御：保证事务内 timestamp 比较口径与 Vote 表写入一致（UTC）。
       await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE 'UTC'`);
 
-      // 备份待删行：全部 server-side JOIN，timestamp 不出库，避免任何 TZ 反序列化风险。
+      // 1) 在事务内重选 suspect pair 并直接备份到 cleanup_log，避免 tx 外/内 pair 集合 drift。
+      //    timestamp 全程 server-side，不出库；run_id 是本次唯一 provenance。
       const backupInserted = await tx.$executeRawUnsafe(
-        `INSERT INTO public.vote_tz_dup_cleanup_log
+        `WITH actor_groups AS (
+           SELECT
+             array_agg(v.id        ORDER BY v.timestamp, v.id) AS ids,
+             array_agg(v.timestamp ORDER BY v.timestamp, v.id) AS tses
+           FROM "Vote" v
+           WHERE v.direction <> 0
+             AND (v."userId" IS NOT NULL OR v."anonKey" IS NOT NULL)
+           GROUP BY v."pageVersionId", v.direction,
+                    COALESCE('u:' || v."userId"::text, 'a:' || v."anonKey")
+           HAVING COUNT(*) = 2
+         ),
+         pairs AS (
+           SELECT ids[1] AS keep_id, ids[2] AS delete_id
+             FROM actor_groups
+            WHERE ABS(EXTRACT(EPOCH FROM (tses[2] - tses[1])) - 28800) <= $2
+         )
+         INSERT INTO public.vote_tz_dup_cleanup_log
            (run_id, vote_id, "pageVersionId", "userId", "anonKey", direction,
             ts_deleted, paired_vote_id, ts_kept, reason)
          SELECT $1::uuid,
                 v.id, v."pageVersionId", v."userId", v."anonKey", v.direction,
                 v.timestamp, k.id, k.timestamp, 'tz_dup_pair_8h'
-           FROM unnest($2::int[], $3::int[]) AS p(delete_id, keep_id)
+           FROM pairs p
            JOIN "Vote" v ON v.id = p.delete_id
            JOIN "Vote" k ON k.id = p.keep_id`,
         runId,
-        deleteIds,
-        keepIds
+        pairWindowSec
       );
+      const backupCount = Number(backupInserted ?? 0);
+      console.log(`📝 backup rows inserted into vote_tz_dup_cleanup_log: ${backupCount}`);
 
-      Logger.info(`📝 backup rows inserted into vote_tz_dup_cleanup_log: ${Number(backupInserted ?? 0)}`);
-
-      // DELETE 待清理票
+      // 2) DELETE 直接驱动自 log（同 run_id），保证 DELETE 严格是 backup 的子集 — 一一对应。
       const deleted = await tx.$executeRawUnsafe(
-        `DELETE FROM "Vote" WHERE id = ANY($1::int[])`,
-        deleteIds
+        `DELETE FROM "Vote" v
+           USING public.vote_tz_dup_cleanup_log l
+          WHERE l.run_id = $1::uuid
+            AND v.id     = l.vote_id`,
+        runId
       );
-      Logger.info(`🗑  deleted Vote rows: ${Number(deleted ?? 0)}`);
+      const deletedCount = Number(deleted ?? 0);
+      console.log(`🗑  deleted Vote rows: ${deletedCount}`);
 
-      // 事务内立即断言 suspect_pair_count = 0
+      if (deletedCount !== backupCount) {
+        throw new Error(
+          `backup/delete mismatch: backup=${backupCount}, deleted=${deletedCount}; rolling back`
+        );
+      }
+
+      // 3) 残留断言：仅在 cleanup_log 涉及的 actor 子集上重新分组，确认这些 actor 不再有 8h pair。
+      //    比全表 GROUP 便宜得多，且语义上覆盖了所有"被本次 cleanup 触及"的 actor。
       const residualRows = await tx.$queryRawUnsafe<Array<{ residual: bigint }>>(
-        `
-        WITH actor_groups AS (
-          SELECT
-            v."pageVersionId" AS page_version_id,
-            v.direction,
-            COALESCE('u:' || v."userId"::text, 'a:' || v."anonKey") AS actor_key,
-            array_agg(v.timestamp ORDER BY v.timestamp, v.id) AS tses
-          FROM "Vote" v
-          WHERE v.direction <> 0
-            AND (v."userId" IS NOT NULL OR v."anonKey" IS NOT NULL)
-          GROUP BY 1, 2, 3
-          HAVING COUNT(*) = 2
-        )
-        SELECT COUNT(*)::bigint AS residual
-          FROM actor_groups
-         WHERE ABS(EXTRACT(EPOCH FROM (tses[2] - tses[1])) - 28800) <= $1
-        `,
+        `WITH affected AS (
+           SELECT DISTINCT "pageVersionId", "userId", "anonKey", direction
+             FROM public.vote_tz_dup_cleanup_log
+            WHERE run_id = $1::uuid
+         ),
+         residual_groups AS (
+           SELECT array_agg(v.timestamp ORDER BY v.timestamp, v.id) AS tses
+             FROM "Vote" v
+             JOIN affected a
+               ON a."pageVersionId" = v."pageVersionId"
+              AND a.direction       = v.direction
+              AND ((a."userId"  IS NOT NULL AND v."userId"  = a."userId")
+                OR (a."anonKey" IS NOT NULL AND v."anonKey" = a."anonKey"))
+            WHERE v.direction <> 0
+            GROUP BY v."pageVersionId", v.direction,
+                     COALESCE('u:' || v."userId"::text, 'a:' || v."anonKey")
+           HAVING COUNT(*) = 2
+         )
+         SELECT COUNT(*)::bigint AS residual
+           FROM residual_groups
+          WHERE ABS(EXTRACT(EPOCH FROM (tses[2] - tses[1])) - 28800) <= $2`,
+        runId,
         pairWindowSec
       );
       const residual = Number(residualRows[0]?.residual ?? 0);
       if (residual !== 0) {
         throw new Error(
-          `post-cleanup residual suspect pairs = ${residual} (expected 0); rolling back`
+          `post-cleanup residual suspect pairs on affected actors = ${residual} (expected 0); rolling back`
         );
       }
-      Logger.info(`✅ residual pair_8h_pairs = 0 (post-cleanup assertion passed)`);
+      console.log(`✅ residual pair_8h_pairs on affected actors = 0 (post-cleanup assertion passed)`);
 
-      return {
-        backupInserted: Number(backupInserted ?? 0),
-        deleted: Number(deleted ?? 0),
-        residual
-      };
+      return { backupCount, deletedCount, residual };
     },
-    { timeout: 5 * 60 * 1000, maxWait: 60 * 1000 }
+    { timeout: 10 * 60 * 1000, maxWait: 60 * 1000 }
   );
 
-  Logger.info(
-    `🎉 cleanup complete. runId=${runId} backup=${result.backupInserted} deleted=${result.deleted}`
+  console.log(
+    `🎉 cleanup complete. runId=${runId} backup=${result.backupCount} deleted=${result.deletedCount}`
   );
-  Logger.info('   rollback: re-INSERT rows from vote_tz_dup_cleanup_log WHERE run_id = ...');
+  console.log(
+    `   rollback: re-INSERT rows from public.vote_tz_dup_cleanup_log WHERE run_id = '${runId}'`
+  );
 }
 
 if (process.argv[1] && process.argv[1].endsWith('voteTzDupCleanup.js')) {
