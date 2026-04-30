@@ -1,13 +1,15 @@
 import request from 'supertest';
-import { createServer } from '../src/start';
+import express from 'express';
+import { trackingRouter } from '../src/web/routes/tracking';
 
 const queryMock = jest.fn();
 
-jest.mock('pg', () => ({
-  Pool: jest.fn().mockImplementation(() => ({
-    query: queryMock
-  }))
-}));
+function createTrackingTestServer() {
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use('/tracking', trackingRouter({ query: queryMock } as any));
+  return app;
+}
 
 describe('Tracking pixel endpoint', () => {
   beforeEach(() => {
@@ -31,7 +33,7 @@ describe('Tracking pixel endpoint', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel')
       .set('User-Agent', 'jest-agent')
@@ -63,7 +65,7 @@ describe('Tracking pixel endpoint', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const target = 'scp-173';
     const res = await request(app)
       .get('/tracking/pixel/by-url')
@@ -78,6 +80,42 @@ describe('Tracking pixel endpoint', () => {
     const arrParam = historyCalls?.[1]?.[0] as string[] | undefined;
     expect(Array.isArray(arrParam)).toBe(true);
     expect((arrParam || [])).toContain(`http://scp-wiki-cn.wikidot.com/${target}`);
+  });
+
+  test('prefers active current-url page when url lookup has deleted duplicates', async () => {
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes('FROM "Page"') && sql.includes('urlHistory')) {
+        return Promise.resolve({ rows: [{ id: 103731, wikidotId: 1468359417 }] });
+      }
+      if (sql.includes('FROM "PageViewEvent"') && sql.includes('"clientIp"')) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (sql.includes('INSERT INTO "PageViewEvent"')) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (sql.includes('INSERT INTO "PageDailyStats"')) {
+        return Promise.resolve({ rows: [] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const app = createTrackingTestServer();
+    const res = await request(app)
+      .get('/tracking/pixel/by-url')
+      .set('User-Agent', 'jest-agent')
+      .set('X-Forwarded-For', '203.0.113.42')
+      .query({ url: 'scp-cn-4042' })
+      .expect(200);
+
+    expect(res.headers['x-tracking-counted']).toBe('1');
+    const lookupCall = queryMock.mock.calls.find(([sql]) => sql.includes('FROM "Page"') && sql.includes('urlHistory'));
+    expect(lookupCall?.[0]).toContain('ORDER BY "isDeleted" ASC');
+    expect(lookupCall?.[0]).toContain('CASE WHEN lower("currentUrl") = ANY($1) THEN 0 ELSE 1 END ASC');
+
+    const insertCall = queryMock.mock.calls.find(([sql]) => sql.includes('INSERT INTO "PageViewEvent"'));
+    const insertParams = insertCall?.[1] as unknown[] | undefined;
+    expect(insertParams?.[0]).toBe(103731);
+    expect(insertParams?.[1]).toBe(1468359417);
   });
 
   test('skips increment when recently counted', async () => {
@@ -99,7 +137,7 @@ describe('Tracking pixel endpoint', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel')
       .set('User-Agent', 'jest-agent')
@@ -112,7 +150,7 @@ describe('Tracking pixel endpoint', () => {
   });
 
   test('handles missing wikidotId gracefully', async () => {
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel')
       .expect(200);
@@ -122,7 +160,7 @@ describe('Tracking pixel endpoint', () => {
   });
 
   test('rejects absolute url in by-url endpoint', async () => {
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel/by-url')
       .query({ url: 'http://scp-wiki-cn.wikidot.com/scp-173' })
@@ -146,7 +184,7 @@ describe('Tracking pixel endpoint', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel/by-username')
       .set('User-Agent', 'jest-agent')
@@ -180,7 +218,7 @@ describe('Tracking pixel endpoint', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel/by-username')
       .set('User-Agent', 'jest-agent')
@@ -192,7 +230,7 @@ describe('Tracking pixel endpoint', () => {
   });
 
   test('handles missing username gracefully', async () => {
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel/by-username')
       .expect(200);
@@ -209,7 +247,7 @@ describe('Tracking pixel endpoint', () => {
       return Promise.resolve({ rows: [] });
     });
 
-    const app = await createServer();
+    const app = createTrackingTestServer();
     const res = await request(app)
       .get('/tracking/pixel/by-username')
       .query({ wikidotId: '999999' })

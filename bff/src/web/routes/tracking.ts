@@ -477,6 +477,10 @@ export function trackingRouter(pool: Pool) {
                FROM unnest("urlHistory") AS hist(url)
                WHERE lower(hist.url) = ANY($1)
              )
+          ORDER BY "isDeleted" ASC,
+                   CASE WHEN lower("currentUrl") = ANY($1) THEN 0 ELSE 1 END ASC,
+                   "updatedAt" DESC,
+                   id DESC
           LIMIT 1`,
         [candidateUrls]
       );
