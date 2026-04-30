@@ -27,6 +27,7 @@ import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { runSyncHourlyScheduler } from './sync-hourly.js';
 import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
 import { runVoteResyncAudit } from './voteResyncAudit.js';
+import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 
 const program = new Command();
 
@@ -1204,6 +1205,24 @@ program
       cleanup: Boolean(options.cleanup),
       fetchConcurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 3,
       schema: options.schema ? String(options.schema) : undefined
+    });
+  });
+
+program
+  .command('vote-tz-dup-cleanup')
+  .description('Clean up TZ-induced duplicate Vote rows introduced by the original voteResyncAudit (default dry-run)')
+  .option('--apply', 'Perform cleanup inside a single transaction with backup + post-assertion (default: dry-run)')
+  .option('--pair-window-sec <n>', '+/- tolerance around 28800s (8h) when matching pairs (default 1)', '1')
+  .option('--sample-size <n>', 'Number of top affected pages to print in the report (default 20)', '20')
+  .option('--json', 'Emit JSON instead of markdown lines')
+  .action(async (options) => {
+    const pairWindowSec = Number.parseInt(String(options.pairWindowSec ?? '1'), 10);
+    const sampleSize = Number.parseInt(String(options.sampleSize ?? '20'), 10);
+    await runVoteTzDupCleanup({
+      apply: Boolean(options.apply),
+      pairWindowSec: Number.isFinite(pairWindowSec) && pairWindowSec >= 0 ? pairWindowSec : 1,
+      sampleSize: Number.isFinite(sampleSize) && sampleSize >= 0 ? sampleSize : 20,
+      json: Boolean(options.json)
     });
   });
 

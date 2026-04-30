@@ -33,6 +33,7 @@
     "check:tracking": "node --import tsx/esm scripts/check-tracking-health.ts",
     "check:vote-integrity": "node --import tsx/esm scripts/check-vote-integrity.ts",
     "vote-resync-audit": "node --import tsx/esm src/cli/index.ts vote-resync-audit",
+    "vote-tz-dup-cleanup": "node --import tsx/esm src/cli/index.ts vote-tz-dup-cleanup",
     "check:preview-usage": "node --import tsx/esm src/cli/preview-usage.ts",
     "audit:pageversion-validity": "node --import tsx/esm scripts/check-pageversion-validity-window.ts",
     "fix:pageversion-boundaries": "node --import tsx/esm scripts/fix-pageversion-boundaries.ts",
