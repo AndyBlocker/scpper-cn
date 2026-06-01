@@ -47,18 +47,18 @@ async function dryRunTagPreferences(prisma: PrismaClient) {
         lupv.timestamp
       FROM latest_user_page_votes lupv
       JOIN LATERAL (
-        SELECT pv2.tags, pv2."isDeleted"
+        -- 纳入已删除页面：取最后一个【未删除】版本的标签（当前未删优先，否则历史末个未删版本）
+        SELECT pv2.tags
         FROM "PageVersion" pv2
         WHERE pv2."pageId" = lupv."pageId"
+          AND pv2."isDeleted" = false
         ORDER BY
           (pv2."validTo" IS NULL) DESC,
-          (NOT pv2."isDeleted") DESC,
           pv2."validFrom" DESC NULLS LAST,
           pv2.id DESC
         LIMIT 1
       ) pv_pick ON TRUE
-      WHERE pv_pick."isDeleted" = false
-        AND pv_pick.tags IS NOT NULL
+      WHERE pv_pick.tags IS NOT NULL
         AND array_length(pv_pick.tags, 1) > 0
     ),
     recomputed AS (
@@ -69,7 +69,7 @@ async function dryRunTagPreferences(prisma: PrismaClient) {
         COUNT(*) FILTER (WHERE direction < 0)::int AS downvote_count,
         COUNT(*)::int AS total_votes
       FROM user_tag_votes
-      WHERE tag NOT IN ('页面', '重定向', '管理', '_cc')
+      WHERE tag NOT IN ('原创', '页面', '重定向', '管理', '_cc')
       GROUP BY "userId", tag
       HAVING COUNT(*) >= 3
     ),
@@ -157,19 +157,19 @@ async function dryRunVoteInteractions(prisma: PrismaClient) {
         lupv.direction
       FROM latest_user_page_votes lupv
       JOIN LATERAL (
-        SELECT pv2.id, pv2."isDeleted"
+        -- 纳入已删除页面：取最后一个【未删除】版本做作者映射（当前未删优先，否则历史末个未删版本）
+        SELECT pv2.id
         FROM "PageVersion" pv2
         WHERE pv2."pageId" = lupv.page_id
+          AND pv2."isDeleted" = false
         ORDER BY
           (pv2."validTo" IS NULL) DESC,
-          (NOT pv2."isDeleted") DESC,
           pv2."validFrom" DESC NULLS LAST,
           pv2.id DESC
         LIMIT 1
       ) pv_pick ON TRUE
       JOIN effective_attributions a ON a."pageVerId" = pv_pick.id
       WHERE lupv.from_user_id != a."userId"
-        AND pv_pick."isDeleted" = false
     ),
     recomputed AS (
       SELECT
