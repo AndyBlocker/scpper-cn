@@ -180,23 +180,33 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
           // 故跨页稳定、与树形 DFS 显示顺序解耦（修 #114 楼层错位）。
           // parentCreatedByName/parentFloor：父帖快照，自连接同一 CTE 取得，使父帖即便在别的页
           // 也能渲染"回复 @某人 #楼层"，不再静默丢失上下文（修 #114 跨页孤儿）。
+          // ordered 只携带【轻字段】(排名/父帖快照所需)对整线程算全局楼层 floor，自连接取父帖
+          // 快照后分页；正文 textHtml/title 等大字段只对分页后的 50 行 JOIN 回 ForumPost，避免
+          // 热门长帖每次翻页都物化全线程正文。
           readPool.query(`
             WITH ordered AS (
-              SELECT id, "threadId", "parentId", title, "textHtml", "createdByName",
-                     "createdByWikidotId", "createdByType", "createdAt", "editedAt", "isDeleted",
+              SELECT id, "parentId", "createdByName", "createdAt",
                      (ROW_NUMBER() OVER (ORDER BY "createdAt" ASC NULLS LAST, id ASC))::int AS floor
               FROM "ForumPost"
               WHERE "threadId" = $1
+            ),
+            page AS (
+              SELECT o.id, o.floor,
+                     par."createdByName" AS "parentCreatedByName",
+                     par.floor AS "parentFloor"
+              FROM ordered o
+              LEFT JOIN ordered par ON par.id = o."parentId"
+              ORDER BY o."createdAt" ${order} NULLS LAST, o.id ${order}
+              LIMIT $2 OFFSET $3
             )
-            SELECT o.id, o."threadId", o."parentId", o.title, o."textHtml", o."createdByName",
-                   o."createdByWikidotId", o."createdByType", o."createdAt", o."editedAt", o."isDeleted",
-                   o.floor,
-                   par."createdByName" AS "parentCreatedByName",
-                   par.floor AS "parentFloor"
-            FROM ordered o
-            LEFT JOIN ordered par ON par.id = o."parentId"
-            ORDER BY o."createdAt" ${order} NULLS LAST, o.id ${order}
-            LIMIT $2 OFFSET $3
+            SELECT fp.id, fp."threadId", fp."parentId", fp.title, fp."textHtml", fp."createdByName",
+                   fp."createdByWikidotId", fp."createdByType", fp."createdAt", fp."editedAt", fp."isDeleted",
+                   pg.floor,
+                   pg."parentCreatedByName",
+                   pg."parentFloor"
+            FROM page pg
+            JOIN "ForumPost" fp ON fp.id = pg.id
+            ORDER BY fp."createdAt" ${order} NULLS LAST, fp.id ${order}
           `, [threadId, limit, offset]),
           readPool.query(`
             SELECT COUNT(*)::int AS total
