@@ -30,6 +30,7 @@ import { runVoteResyncAudit } from './voteResyncAudit.js';
 import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
 import { runRepairForumPageLinks } from './repair-forum-page-links.js';
+import { runRepairForumStuckThreads } from './repair-forum-stuck-threads.js';
 
 const program = new Command();
 
@@ -241,6 +242,34 @@ program
     const prisma = getPrismaClient();
     try {
       await runRepairForumPageLinks(prisma, { apply: Boolean(options.apply) });
+    } finally {
+      await disconnectPrisma();
+    }
+  });
+
+program
+  .command('repair-forum-stuck-threads')
+  .description('定向重抓"有帖实际0帖"的卡住线程(#113;不触发提醒;默认 dry-run,--apply 才联网重抓)')
+  .option('--apply', '实际联网重抓并落库(默认仅 dry-run 列出,不联网)')
+  .option('--threads <ids>', '逗号分隔的 thread id,直接重抓这些线程(绕过自动检测,用于精确重试失败线程)')
+  .action(async (options) => {
+    const prisma = getPrismaClient();
+    try {
+      let threadIds: number[] | undefined;
+      if (options.threads !== undefined) {
+        // 显式传了 --threads：解析为空(非法/全过滤)必须报错退出,绝不回退到自动检测,
+        // 否则 `--threads abc --apply` 会从"精确重试"误变成"apply 所有检测命中的线程"。
+        threadIds = String(options.threads)
+          .split(',')
+          .map((s: string) => Number.parseInt(s.trim(), 10))
+          .filter((n: number) => Number.isInteger(n) && n > 0);
+        if (threadIds.length === 0) {
+          console.error('--threads 未解析出有效 thread id(应为逗号分隔的正整数)。已中止。');
+          process.exitCode = 1;
+          return;
+        }
+      }
+      await runRepairForumStuckThreads(prisma, { apply: Boolean(options.apply), threadIds });
     } finally {
       await disconnectPrisma();
     }
