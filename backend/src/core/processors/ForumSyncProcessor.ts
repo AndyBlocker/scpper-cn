@@ -153,11 +153,13 @@ export class ForumSyncProcessor {
    * 复用同步的 client + upsertPost，但【不收集 newPostIds、不触发任何论坛提醒】
    * （ForumInteractionAlertJob 只处理显式传入的 newPostIds，本路径不喂它，故旧帖不会误触发提醒）。
    * 成功后把 postCount/postCountAtSync 推进为实际抓到的帖数，使线程内部一致并不再被增量跳过。
+   * 若远端返回 no_thread（线程在 Wikidot 已删除/页面被删），标记 isDeleted=true 收敛，
+   * 计入 remoteDeleted（与可重试的网络 failed 区分），避免这类线程永久滞留在卡住检测里。
    */
   async resyncThreads(
     threadIds: number[]
-  ): Promise<{ threads: number; succeeded: number; failed: number; postsUpserted: number }> {
-    const summary = { threads: threadIds.length, succeeded: 0, failed: 0, postsUpserted: 0 };
+  ): Promise<{ threads: number; succeeded: number; failed: number; remoteDeleted: number; postsUpserted: number }> {
+    const summary = { threads: threadIds.length, succeeded: 0, failed: 0, remoteDeleted: 0, postsUpserted: 0 };
     if (threadIds.length === 0) return summary;
 
     // 与主同步流程一致：联网前装载论坛代理/IP 池（FORUM_HTTP_PROXY 未配置时为安全空操作）。
@@ -182,8 +184,26 @@ export class ForumSyncProcessor {
           summary.succeeded++;
           Logger.info(`[ForumResync] thread ${threadId}: 重抓 ${posts.length} 帖,已落库`);
         } catch (err: any) {
-          summary.failed++;
-          Logger.error(`[ForumResync] thread ${threadId} 重抓失败: ${err.message}`);
+          // 远端返回 no_thread：线程在 Wikidot 已删除（页面被删/重建致旧 thread id 失效）。
+          // 本地 0 帖即真实状态，标记 isDeleted=true 让其退出卡住检测，不再当作可重试失败。
+          if (/no_thread/i.test(String(err?.message ?? ''))) {
+            // update 本身失败(如 --threads 传入本地不存在的 id 触发 P2025)只计入该线程,
+            // 不让异常冒出 catch 中断整批(catch 体抛出不会被同一 try 捕获)。
+            try {
+              await this.prisma.forumThread.update({
+                where: { id: threadId },
+                data: { isDeleted: true, lastSyncedAt: new Date() },
+              });
+              summary.remoteDeleted++;
+              Logger.warn(`[ForumResync] thread ${threadId} 远端已删除(no_thread),标记 isDeleted=true`);
+            } catch (markErr: any) {
+              summary.failed++;
+              Logger.error(`[ForumResync] thread ${threadId} no_thread 但标记 isDeleted 失败: ${markErr.message}`);
+            }
+          } else {
+            summary.failed++;
+            Logger.error(`[ForumResync] thread ${threadId} 重抓失败: ${err.message}`);
+          }
         }
         await this.client.delay();
       }
