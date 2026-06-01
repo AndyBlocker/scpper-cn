@@ -65,13 +65,13 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
             WHERE pv."validTo" IS NULL
           ), base AS (
             SELECT 
-              timezone('Asia/Shanghai', p."firstPublishedAt") AS local_ts,
+              ((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai') AS local_ts,
               ${CATEGORY_CASE_SQL} AS category
             FROM "Page" p
             JOIN pv ON pv."pageId" = p.id
             WHERE p."firstPublishedAt" IS NOT NULL
-              AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
-              AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
+              AND ($1::date IS NULL OR (((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date >= $1::date))
+              AND ($2::date IS NULL OR (((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date <= $2::date))
           )
           SELECT category, COUNT(*)::int AS count
           FROM base
@@ -115,13 +115,13 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
           ), base AS (
             -- Use Asia/Shanghai local time for bucketing
             SELECT 
-              date_trunc($3::text, timezone('Asia/Shanghai', p."firstPublishedAt"))::date AS bucket,
+              date_trunc($3::text, ((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai'))::date AS bucket,
               ${CATEGORY_CASE_SQL} AS category
             FROM "Page" p
             JOIN pv ON pv."pageId" = p.id
             WHERE p."firstPublishedAt" IS NOT NULL
-              AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
-              AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
+              AND ($1::date IS NULL OR (((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date >= $1::date))
+              AND ($2::date IS NULL OR (((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date <= $2::date))
           )
           SELECT bucket AS date, category, COUNT(*)::int AS count
           FROM base
@@ -205,12 +205,12 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
           ), base AS (
             SELECT 
               -- Use Asia/Shanghai local time for bucketing
-              date_trunc($3::text, timezone('Asia/Shanghai', p."firstPublishedAt"))::date AS bucket
+              date_trunc($3::text, ((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai'))::date AS bucket
             FROM "Page" p
             JOIN pv ON pv."pageId" = p.id
             WHERE p."firstPublishedAt" IS NOT NULL
-              AND ($1::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date >= $1::date))
-             	AND ($2::date IS NULL OR (timezone('Asia/Shanghai', p."firstPublishedAt")::date <= $2::date))
+              AND ($1::date IS NULL OR (((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date >= $1::date))
+              AND ($2::date IS NULL OR (((p."firstPublishedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date <= $2::date))
               AND (
                 ($4::text = 'all' AND pv.e_tags @> $5::text[])
                 OR
@@ -303,8 +303,8 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
         FROM base b
         WHERE b.category = $1
           AND b."firstRevisionAt" IS NOT NULL
-          AND ($2::date IS NULL OR (timezone('Asia/Shanghai', b."firstRevisionAt")::date >= $2::date))
-          AND ($3::date IS NULL OR (timezone('Asia/Shanghai', b."firstRevisionAt")::date <= $3::date))
+          AND ($2::date IS NULL OR (((b."firstRevisionAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date >= $2::date))
+          AND ($3::date IS NULL OR (((b."firstRevisionAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date <= $3::date))
         ORDER BY 
           CASE WHEN $4 = 'rating' THEN b.rating END DESC NULLS LAST,
           CASE WHEN $4 = 'recent' THEN COALESCE(b."firstRevisionAt", b."validFrom") END DESC,
@@ -340,8 +340,8 @@ export function analyticsRouter(pool: Pool, redis: RedisClientType | null) {
         FROM base b
         WHERE b.category = $1
           AND b."firstRevisionAt" IS NOT NULL
-          AND ($2::date IS NULL OR (timezone('Asia/Shanghai', b."firstRevisionAt")::date >= $2::date))
-          AND ($3::date IS NULL OR (timezone('Asia/Shanghai', b."firstRevisionAt")::date <= $3::date))
+          AND ($2::date IS NULL OR (((b."firstRevisionAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date >= $2::date))
+          AND ($3::date IS NULL OR (((b."firstRevisionAt" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai')::date <= $3::date))
       `;
 
       const params = [category, startDate || null, endDate || null, normalizedOrder, limitInt, offsetInt];
