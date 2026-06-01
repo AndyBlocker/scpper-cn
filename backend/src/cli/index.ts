@@ -202,6 +202,11 @@ program
     // Note: --since option is not directly supported by IncrementalAnalyzeJob
     // but --full forces a complete analysis which is equivalent to the old behavior
     const forceFullAnalysis = options.full || options.since;
+    if (options.rebuildIndexTicks && !forceFullAnalysis) {
+      // tick 清空仅在全量重建路径(cleanAnalysisData)中执行，单独 --rebuild-index-ticks 不会生效，避免误导。
+      console.error('❌ --rebuild-index-ticks 必须配合 --full（或 --since）使用：tick 清空/重建仅在全量重建路径中执行。');
+      process.exit(1);
+    }
     await analyzeIncremental({ forceFullAnalysis, rebuildIndexTicks: Boolean(options.rebuildIndexTicks) });
   });
 
