@@ -186,11 +186,23 @@ import { navigateTo } from 'nuxt/app'
   })
   const avgRatingText = computed(() => Number.isFinite(avgRatingResolved.value) ? avgRatingResolved.value.toFixed(1) : '—')
   
+  // SSR 与首次客户端渲染必须一致，否则水合告警：相对时间依赖 Date.now()（当前时刻）与本地
+  // 时区，服务端/客户端必然不同。故挂载前统一渲染【时区无关的 UTC 绝对日期】（稳定、可 SSR），
+  // 挂载后再切换为相对时间（仅客户端）。
+  const lastActiveMounted = ref(false)
+  onMounted(() => { lastActiveMounted.value = true })
+  function formatUtcDate(parsed: number): string {
+    const d = new Date(parsed)
+    const y = d.getUTCFullYear(); const m = String(d.getUTCMonth() + 1).padStart(2, '0'); const da = String(d.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${da}`
+  }
   const lastActiveText = computed(() => {
     const iso = props.lastActiveISO
     if (!iso) return ''
     const parsed = Date.parse(iso)
     if (Number.isNaN(parsed)) return ''
+    // 挂载前（SSR + 首次客户端渲染）：稳定的 UTC 绝对日期，避免水合不一致。
+    if (!lastActiveMounted.value) return formatUtcDate(parsed)
     const diff = Date.now() - parsed
     const sec = Math.floor(diff / 1000)
     if (sec < 60) return '刚刚'
@@ -200,9 +212,7 @@ import { navigateTo } from 'nuxt/app'
     if (hr < 24) return `${hr} 小时前`
     const day = Math.floor(hr / 24)
     if (day < 30) return `${day} 天前`
-    const d = new Date(parsed)
-    const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); const da = String(d.getDate()).padStart(2,'0')
-    return `${y}-${m}-${da}`
+    return formatUtcDate(parsed)
   })
 
   const viewerVoteBadge = computed(() => {

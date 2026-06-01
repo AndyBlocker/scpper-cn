@@ -16,6 +16,19 @@ export type CacheHandle = {
 
 const DEFAULT_PREFIX = 'scpcn:bff:';
 
+// #124：统一缓存契约为"JSON 归一化值"。Redis 命中走 JSON.parse（Date 退化为字符串），
+// 未命中却直接返回 loader 的原始对象（Date 仍是对象），导致同一 key 命中/未命中类型不一致、
+// 消费端行为漂移。jsonClone 让未命中路径也返回归一化形态，并据此存储，使命中/未命中、
+// Redis/内存后端的返回类型一律一致（日期统一为字符串，符合代码库"字段可能是字符串需转换"约定）。
+function jsonClone<T>(value: T): T {
+  if (value === null || value === undefined || typeof value !== 'object') return value;
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {
+    return value;
+  }
+}
+
 // Simple in-memory cache fallback when Redis is unavailable
 const memoryCache = new Map<string, { value: unknown; expiresAt: number }>();
 const MAX_MEMORY_CACHE_SIZE = 1000;
@@ -81,8 +94,10 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
             const result = await loader();
             if (result === undefined) return result;
             if (result === null && opts?.cacheNull !== true) return result;
-            memorySet(store, maxSize, fullKey, result, ttl);
-            return result;
+            // 存储并返回归一化形态，使内存后端的命中/未命中与 Redis 后端口径一致（#124）。
+            const normalized = jsonClone(result);
+            memorySet(store, maxSize, fullKey, normalized, ttl);
+            return normalized;
           } finally {
             inflight.delete(fullKey);
           }
@@ -150,7 +165,8 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
         if (result === undefined) return result;
         if (result === null && options?.cacheNull !== true) return result;
         await setJSON(key, result, ttlSeconds);
-        return result;
+        // 未命中也返回 JSON 归一化形态，与后续命中（getJSON→JSON.parse）口径一致（#124）。
+        return jsonClone(result);
       } finally {
         inflight.delete(fullKey);
       }
