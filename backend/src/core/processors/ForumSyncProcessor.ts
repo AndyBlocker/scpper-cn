@@ -187,12 +187,19 @@ export class ForumSyncProcessor {
           // 远端返回 no_thread：线程在 Wikidot 已删除（页面被删/重建致旧 thread id 失效）。
           // 本地 0 帖即真实状态，标记 isDeleted=true 让其退出卡住检测，不再当作可重试失败。
           if (/no_thread/i.test(String(err?.message ?? ''))) {
-            await this.prisma.forumThread.update({
-              where: { id: threadId },
-              data: { isDeleted: true, lastSyncedAt: new Date() },
-            });
-            summary.remoteDeleted++;
-            Logger.warn(`[ForumResync] thread ${threadId} 远端已删除(no_thread),标记 isDeleted=true`);
+            // update 本身失败(如 --threads 传入本地不存在的 id 触发 P2025)只计入该线程,
+            // 不让异常冒出 catch 中断整批(catch 体抛出不会被同一 try 捕获)。
+            try {
+              await this.prisma.forumThread.update({
+                where: { id: threadId },
+                data: { isDeleted: true, lastSyncedAt: new Date() },
+              });
+              summary.remoteDeleted++;
+              Logger.warn(`[ForumResync] thread ${threadId} 远端已删除(no_thread),标记 isDeleted=true`);
+            } catch (markErr: any) {
+              summary.failed++;
+              Logger.error(`[ForumResync] thread ${threadId} no_thread 但标记 isDeleted 失败: ${markErr.message}`);
+            }
           } else {
             summary.failed++;
             Logger.error(`[ForumResync] thread ${threadId} 重抓失败: ${err.message}`);
