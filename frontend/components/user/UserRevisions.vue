@@ -63,6 +63,8 @@
 </template>
 
 <script setup lang="ts">
+import DOMPurify from 'isomorphic-dompurify'
+
 type ForumPostItem = {
   id: number
   title?: string
@@ -160,7 +162,10 @@ function formatRelativeTime(dateStr: string) {
   return `${Math.floor(diffM / 12)} 年前`
 }
 
+// 用 DOMPurify 解析器级剥离全部标签（替代脆弱正则——正则对 <img onerror=x// 等未闭合/
+// 嵌套标签会留下可执行残片，再经 v-html 直出即 XSS）。ALLOWED_TAGS:[] 输出为 DOMPurify
+// 保证安全的纯文本，可安全用于 v-html。
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '').trim().slice(0, 200)
+  return DOMPurify.sanitize(html, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] }).trim().slice(0, 200)
 }
 </script>

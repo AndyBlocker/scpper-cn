@@ -155,6 +155,19 @@ export class VoteRevisionStore {
         for (const data of voteData) {
           try {
             if (data.userId != null) {
+              // #125：upsert 不区分插入/更新，故先按唯一约束探测是否已存在，再据此分别计数
+              // （原实现一律计入 inserted、updated 恒为 0，统计不可信）。导入为离线批处理，
+              // 多一次按唯一索引的 findUnique 开销可接受。
+              const existing = await this.prisma.vote.findUnique({
+                where: {
+                  Vote_unique_constraint: {
+                    pageVersionId: data.pageVersionId,
+                    userId: data.userId,
+                    timestamp: data.timestamp
+                  }
+                },
+                select: { id: true }
+              });
               await this.prisma.vote.upsert({
                 where: {
                   Vote_unique_constraint: {
@@ -173,8 +186,18 @@ export class VoteRevisionStore {
                   timestamp: data.timestamp
                 }
               });
-              stats.inserted++;
+              if (existing) stats.updated++; else stats.inserted++;
             } else if (data.anonKey) {
+              const existing = await this.prisma.vote.findUnique({
+                where: {
+                  Vote_anon_unique_constraint: {
+                    pageVersionId: data.pageVersionId,
+                    anonKey: data.anonKey,
+                    timestamp: data.timestamp
+                  }
+                },
+                select: { id: true }
+              });
               await this.prisma.vote.upsert({
                 where: {
                   Vote_anon_unique_constraint: {
@@ -193,7 +216,7 @@ export class VoteRevisionStore {
                   timestamp: data.timestamp
                 }
               });
-              stats.inserted++;
+              if (existing) stats.updated++; else stats.inserted++;
             } else {
               // 既无 userId 又无 anonKey：schema 没有对应唯一约束，直接 create 会在重复跑时无限膨胀，跳过
               Logger.debug(`Skipping vote with neither userId nor anonKey (pageVersionId=${pageVersionId}, timestamp=${data.timestamp.toISOString()})`);
