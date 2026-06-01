@@ -25,7 +25,10 @@ async function main() {
   buyReqTimer.unref();
   marketTimer.unref();
 
-  const shutdown = (signal: string) => {
+  let isShuttingDown = false;
+  const shutdown = (signal: string, exitCode = 0) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     // eslint-disable-next-line no-console
     console.log(`Received ${signal}, shutting down...`);
     clearInterval(tradeTimer);
@@ -35,7 +38,7 @@ async function main() {
     const forceTimer = setTimeout(() => {
       // eslint-disable-next-line no-console
       console.error('Graceful shutdown timed out after 10s, forcing exit');
-      process.exit(1);
+      process.exit(exitCode || 1);
     }, 10_000);
     forceTimer.unref();
 
@@ -51,13 +54,25 @@ async function main() {
         })
         .finally(() => {
           clearTimeout(forceTimer);
-          process.exit(err ? 1 : 0);
+          process.exit(err ? 1 : exitCode);
         });
     });
   };
 
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  // 全局兜底：未处理的 Promise rejection 仅记录(不退出,避免单个失败拖垮服务)；
+  // 未捕获异常视为进程已处于不可知状态，记录后优雅关闭(由 PM2 拉起新进程)。
+  process.on('unhandledRejection', (reason) => {
+    // eslint-disable-next-line no-console
+    console.error('[user-backend] Unhandled promise rejection:', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('[user-backend] Uncaught exception, shutting down:', err);
+    void shutdown('uncaughtException', 1);
+  });
 }
 
 main().catch(async (error) => {
