@@ -3,6 +3,7 @@ import { Prisma, GachaRarity } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../db.js';
 import * as h from './_helpers.js';
+import { planBatchSelectiveDismantle } from './_dismantlePlanner.js';
 
 export function registerDrawRoutes(router: Router) {
   router.post('/draw', async (req, res, next) => {
@@ -583,72 +584,128 @@ export function registerDrawRoutes(router: Router) {
         const byRarityCount: Record<GachaRarity, number> = { WHITE: 0, GREEN: 0, BLUE: 0, PURPLE: 0, GOLD: 0 };
         const byRarityReward: Record<GachaRarity, number> = { WHITE: 0, GREEN: 0, BLUE: 0, PURPLE: 0, GOLD: 0 };
 
-        for (const item of payload.items) {
-          const normalizedSignature = item.affixSignature
+        // ── #96 集合化：原实现对 ≤500 个 item 在单个长事务里逐个串行查询/删除(~4000 次往返、
+        // 持锁数十秒、串行化冲突重试风暴)。改为单次批量读取快照 → 纯函数规划器复刻旧 per-item
+        // 顺序语义(planBatchSelectiveDismantle，由 scripts/verify-dismantle-planner.ts golden 验证
+        // 与旧循环逐项等价) → 一次性 deleteMany/createMany/count 同步/钱包结算。仍是单原子事务，
+        // 外部"全成或全不成"契约与幂等不变；事务大幅变短，冲突窗口骤降。
+        const planItems = payload.items.map((item) => ({
+          cardId: item.cardId,
+          affixSignature: item.affixSignature
             ? h.affixSignatureFromStyles(h.parseAffixSignature(item.affixSignature))
-            : undefined;
-          const instanceWhere: Prisma.GachaCardInstanceWhereInput = {
-            userId,
-            cardId: item.cardId,
-            tradeListingId: null,
-            buyRequestId: null
-          };
-          if (normalizedSignature) {
-            instanceWhere.affixSignature = normalizedSignature;
+            : undefined,
+          count: item.count
+        }));
+        const cardIds = [...new Set(planItems.map((it) => it.cardId))];
+
+        // 快照：一次性批量读取（替代每 item 的 2×count + findFreeInstances + findUnique）。
+        const [cardDefs, totalGroups, lockedGroups, freeInstances] = await Promise.all([
+          tx.gachaCardDefinition.findMany({ where: { id: { in: cardIds } } }),
+          // 留存护栏分母：排除交易/求购，但包含锁定/放置/展示。
+          tx.gachaCardInstance.groupBy({
+            by: ['cardId', 'affixSignature'],
+            where: { userId, cardId: { in: cardIds }, tradeListingId: null, buyRequestId: null },
+            _count: { _all: true }
+          }),
+          tx.gachaCardInstance.groupBy({
+            by: ['cardId', 'affixSignature'],
+            where: { userId, cardId: { in: cardIds }, tradeListingId: null, buyRequestId: null, isLocked: true },
+            _count: { _all: true }
+          }),
+          // 自由实例池（完整白名单），按 obtainedAt 升序；加 id 次级排序消除 obtainedAt 并列
+          // （如十连同一时刻获得）的歧义，使批量选择【确定性】，并保证一次全池查询与逐 item
+          // 查询的并列解析一致。
+          tx.gachaCardInstance.findMany({
+            where: {
+              userId, cardId: { in: cardIds },
+              tradeListingId: null, buyRequestId: null,
+              placementSlot: { is: null }, showcaseSlot: { is: null }, isLocked: false
+            },
+            select: { id: true, cardId: true, affixSignature: true },
+            orderBy: [{ obtainedAt: 'asc' }, { id: 'asc' }]
+          })
+        ]);
+
+        const cardById = new Map(cardDefs.map((c) => [c.id, c]));
+        const cardExists = new Set(cardById.keys());
+
+        const totalByCard = new Map<string, number>();
+        const totalByCardSig = new Map<string, Map<string, number>>();
+        const lockedByCard = new Map<string, number>();
+        const lockedByCardSig = new Map<string, Map<string, number>>();
+        const accumulate = (
+          flat: Map<string, number>,
+          nested: Map<string, Map<string, number>>,
+          groups: Array<{ cardId: string; affixSignature: string; _count: { _all: number } }>
+        ) => {
+          for (const g of groups) {
+            const cnt = g._count._all;
+            flat.set(g.cardId, (flat.get(g.cardId) ?? 0) + cnt);
+            let inner = nested.get(g.cardId);
+            if (!inner) { inner = new Map(); nested.set(g.cardId, inner); }
+            inner.set(g.affixSignature, (inner.get(g.affixSignature) ?? 0) + cnt);
           }
+        };
+        accumulate(totalByCard, totalByCardSig, totalGroups);
+        accumulate(lockedByCard, lockedByCardSig, lockedGroups);
 
-          // Server-side retention guard: destructive count must always respect keepAtLeast
-          // against the current instance set, not just the stale client snapshot.
-          // We must preserve at least `keepAtLeast` instances OR all locked instances,
-          // whichever is greater. Locked instances are never deletable anyway, so the
-          // effective minimum to keep = max(lockedOwnedCount, keepAtLeast).
-          const [totalOwnedCount, lockedOwnedCount] = await Promise.all([
-            tx.gachaCardInstance.count({ where: instanceWhere }),
-            tx.gachaCardInstance.count({ where: { ...instanceWhere, isLocked: true } })
-          ]);
-          const minKeep = Math.max(lockedOwnedCount, payload.keepAtLeast);
-          const maxDeletableCount = Math.max(0, totalOwnedCount - minKeep);
-          const targetDeleteCount = Math.min(item.count, maxDeletableCount);
-          if (targetDeleteCount <= 0) continue;
+        const freeByCard = new Map<string, Array<{ id: string; cardId: string; affixSignature: string }>>();
+        for (const inst of freeInstances) {
+          let list = freeByCard.get(inst.cardId);
+          if (!list) { list = []; freeByCard.set(inst.cardId, list); }
+          list.push(inst);
+        }
 
-          // eslint-disable-next-line no-await-in-loop
-          const freeInstances = await h.findFreeInstances(tx, userId, item.cardId, {
-            affixSignature: normalizedSignature,
-            limit: targetDeleteCount
-          });
-          const dismantleCount = Math.min(freeInstances.length, targetDeleteCount);
-          if (dismantleCount <= 0) continue;
+        // 纯规划：复刻旧 per-item 顺序语义（按已删后的状态续算，含重复 item/混合 affix）。
+        const plan = planBatchSelectiveDismantle(planItems, payload.keepAtLeast, {
+          totalByCard, totalByCardSig, lockedByCard, lockedByCardSig, freeByCard, cardExists
+        });
 
-          const toDelete = freeInstances.slice(0, dismantleCount);
-          const consumeGroups = new Map<string, number>();
-          for (const inst of toDelete) {
-            consumeGroups.set(inst.affixSignature, (consumeGroups.get(inst.affixSignature) ?? 0) + 1);
-          }
-
-          // eslint-disable-next-line no-await-in-loop
-          const card = await tx.gachaCardDefinition.findUnique({ where: { id: item.cardId } });
-          if (!card) continue;
-
+        const logRows: Prisma.GachaDismantleLogCreateManyInput[] = [];
+        for (const it of plan.perItem) {
+          const card = cardById.get(it.cardId);
+          if (!card) continue; // planner 已按 cardExists 过滤，此处仅防御
           const consumed: Array<{ affixVisualStyle: h.AffixVisualStyle; affixSignature: string; affixStyles: h.AffixVisualStyle[]; count: number }> = [];
-          for (const [signature, count] of consumeGroups) {
+          for (const [signature, count] of it.consumeGroups) {
             const fp = h.buildAffixFingerprintFromSignature(signature);
             consumed.push({ affixVisualStyle: fp.affixVisualStyle, affixSignature: fp.affixSignature, affixStyles: fp.affixStyles, count });
           }
-
-          // eslint-disable-next-line no-await-in-loop
-          await h.deleteCardInstances(tx, toDelete.map((inst) => inst.id));
-
           const rewardDetail = h.computeDismantleRewardByAffix(card, consumed);
           cardsAffected += 1;
-          totalCount += dismantleCount;
+          totalCount += it.dismantleCount;
           totalReward += rewardDetail.totalReward;
-          byRarityCount[card.rarity] += dismantleCount;
+          byRarityCount[card.rarity] += it.dismantleCount;
           byRarityReward[card.rarity] += rewardDetail.totalReward;
+          logRows.push({ userId, cardId: it.cardId, count: it.dismantleCount, tokensEarned: rewardDetail.totalReward });
+        }
 
-          // eslint-disable-next-line no-await-in-loop
-          await tx.gachaDismantleLog.create({
-            data: { userId, cardId: item.cardId, count: dismantleCount, tokensEarned: rewardDetail.totalReward }
+        // 批量写入：一次 deleteMany（再次套白名单兜底并发）+ createMany 日志 + 库存 count 同步。
+        if (plan.selectedIds.length > 0) {
+          const deleted = await tx.gachaCardInstance.deleteMany({
+            where: {
+              id: { in: plan.selectedIds },
+              userId,
+              tradeListingId: null, buyRequestId: null,
+              placementSlot: { is: null }, showcaseSlot: { is: null }, isLocked: false
+            }
           });
+          // 同一 Serializable 事务内快照一致，理论上必相等；不等说明并发改动，抛出使整事务回滚重试。
+          if (deleted.count !== plan.selectedIds.length) {
+            throw new Error(`dismantle_selection_changed: expected ${plan.selectedIds.length}, deleted ${deleted.count}`);
+          }
+          if (logRows.length > 0) {
+            await tx.gachaDismantleLog.createMany({ data: logRows });
+          }
+          // 受影响卡牌库存 count 按删除后真实实例数重算（自愈式，含归零）。
+          const affectedCardIds = [...plan.deletedCountByCard.keys()];
+          await tx.$executeRaw(Prisma.sql`
+            UPDATE "GachaInventory" gi
+            SET count = (
+              SELECT COUNT(*)::int FROM "GachaCardInstance" ci
+              WHERE ci."userId" = gi."userId" AND ci."cardId" = gi."cardId"
+            )
+            WHERE gi."userId" = ${userId} AND gi."cardId" IN (${Prisma.join(affectedCardIds)})
+          `);
         }
 
         let updatedWallet = wallet;
