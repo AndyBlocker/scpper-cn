@@ -544,15 +544,44 @@ export function extendStatsRouter(pool: Pool, redis: RedisClientType | null) {
 			const limitInt = Math.max(0, Math.min(parseInt(limit, 10) || 100, 1000));
 			const offsetInt = Math.max(0, parseInt(offset, 10) || 0);
 
+			// votesCast 口径：按 (pageId, userId, 投票日) 取当日最后一票去重，
+			// 压掉版本快照重复行与当日改投噪声，同时保留跨天活动（heatmap 语义）。
+			// 排除 direction=0（撤票）以与 UserStats.votesCast(=up+down) 概念对齐。
+			// 注：date() 仍为 UTC 日界，统一上海时区留待后续时区批次处理。
 			const votesSql = `
-				SELECT date(v."timestamp") AS date,
-				       COUNT(*)::int AS "votesCast",
-				       MAX(v."timestamp") AS "lastVote"
-				FROM "Vote" v
-				WHERE v."userId" = $1::int
-				  AND ($2::date IS NULL OR date(v."timestamp") >= $2::date)
-				  AND ($3::date IS NULL OR date(v."timestamp") <= $3::date)
-				GROUP BY date(v."timestamp")
+				WITH vote_events AS (
+					SELECT
+						pv."pageId",
+						v."userId",
+						date(v."timestamp") AS vote_date,
+						v."timestamp",
+						v.direction,
+						v.id
+					FROM "Vote" v
+					JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
+					WHERE v."userId" = $1::int
+						AND ($2::date IS NULL OR v."timestamp" >= $2::date::timestamp)
+						AND ($3::date IS NULL OR v."timestamp" < ($3::date + INTERVAL '1 day')::timestamp)
+				),
+				ranked_votes AS (
+					SELECT
+						vote_date,
+						"timestamp",
+						direction,
+						ROW_NUMBER() OVER (
+							PARTITION BY "pageId", "userId", vote_date
+							ORDER BY "timestamp" DESC, id DESC
+						) AS row_num
+					FROM vote_events
+				)
+				SELECT
+					vote_date AS date,
+					COUNT(*)::int AS "votesCast",
+					MAX("timestamp") AS "lastVote"
+				FROM ranked_votes
+				WHERE row_num = 1
+					AND direction <> 0
+				GROUP BY vote_date
 			`;
 			const revisionsSql = `
 				WITH ranked_revisions AS (
