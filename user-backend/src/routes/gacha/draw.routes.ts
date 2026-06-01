@@ -689,7 +689,10 @@ export function registerDrawRoutes(router: Router) {
               placementSlot: { is: null }, showcaseSlot: { is: null }, isLocked: false
             }
           });
-          // 同一 Serializable 事务内快照一致，理论上必相等；不等说明并发改动，抛出使整事务回滚重试。
+          // 同一 Serializable 事务内快照一致，此断言理论上恒真；万一不等（并发把实例改为
+          // 已锁/已放置/上架等），抛出使整事务【回滚】——请求以错误失败、无任何部分副作用
+          // （非自动重试：普通 Error 不被 runSerializableTransaction 当 DB 序列化错误重试，
+          // 客户端可凭同一幂等键安全重试）。
           if (deleted.count !== plan.selectedIds.length) {
             throw new Error(`dismantle_selection_changed: expected ${plan.selectedIds.length}, deleted ${deleted.count}`);
           }
@@ -697,13 +700,18 @@ export function registerDrawRoutes(router: Router) {
             await tx.gachaDismantleLog.createMany({ data: logRows });
           }
           // 受影响卡牌库存 count 按删除后真实实例数重算（自愈式，含归零）。
+          // 注意 count 口径：排除已上架交易/求购抵押的实例（与 draw +1 / 上架·求购 -1 的维护
+          // 口径、以及库存聚合的 tradeListingId/buyRequestId IS NULL 一致），否则会把在售/抵押中
+          // 的实例错误加回库存。手动 updatedAt=NOW() 以匹配 @updatedAt（raw SQL 不触发 Prisma）。
           const affectedCardIds = [...plan.deletedCountByCard.keys()];
           await tx.$executeRaw(Prisma.sql`
             UPDATE "GachaInventory" gi
             SET count = (
               SELECT COUNT(*)::int FROM "GachaCardInstance" ci
               WHERE ci."userId" = gi."userId" AND ci."cardId" = gi."cardId"
-            )
+                AND ci."tradeListingId" IS NULL AND ci."buyRequestId" IS NULL
+            ),
+            "updatedAt" = NOW()
             WHERE gi."userId" = ${userId} AND gi."cardId" IN (${Prisma.join(affectedCardIds)})
           `);
         }

@@ -2012,9 +2012,12 @@ export async function findFreeInstances(
   if (opts?.affixSignature) {
     where.affixSignature = affixSignatureFromStyles(parseAffixSignature(opts.affixSignature));
   }
+  // id 次级排序：消除同一 obtainedAt（如十连同刻获得）的并列歧义，使自由实例选择【确定性】。
+  // 这是全站自由实例选择（单张/批量分解、放置、交易、求购履约）共享的稳定排序契约，保证
+  // 批量分解的全池一次查询与各处逐次查询在并列时解析一致。
   return tx.gachaCardInstance.findMany({
     where,
-    orderBy: { obtainedAt: 'asc' },
+    orderBy: [{ obtainedAt: 'asc' }, { id: 'asc' }],
     ...(opts?.limit ? { take: opts.limit } : {})
   });
 }
