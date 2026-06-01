@@ -251,10 +251,17 @@ program
   .command('repair-forum-stuck-threads')
   .description('定向重抓"有帖实际0帖"的卡住线程(#113;不触发提醒;默认 dry-run,--apply 才联网重抓)')
   .option('--apply', '实际联网重抓并落库(默认仅 dry-run 列出,不联网)')
+  .option('--threads <ids>', '逗号分隔的 thread id,直接重抓这些线程(绕过自动检测,用于精确重试失败线程)')
   .action(async (options) => {
     const prisma = getPrismaClient();
     try {
-      await runRepairForumStuckThreads(prisma, { apply: Boolean(options.apply) });
+      const threadIds = options.threads
+        ? String(options.threads)
+            .split(',')
+            .map((s: string) => Number.parseInt(s.trim(), 10))
+            .filter((n: number) => Number.isInteger(n) && n > 0)
+        : undefined;
+      await runRepairForumStuckThreads(prisma, { apply: Boolean(options.apply), threadIds });
     } finally {
       await disconnectPrisma();
     }

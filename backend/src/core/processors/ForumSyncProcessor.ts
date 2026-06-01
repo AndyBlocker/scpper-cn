@@ -160,8 +160,10 @@ export class ForumSyncProcessor {
     const summary = { threads: threadIds.length, succeeded: 0, failed: 0, postsUpserted: 0 };
     if (threadIds.length === 0) return summary;
 
-    await this.client.connect();
+    // 与主同步流程一致：联网前装载论坛代理/IP 池（FORUM_HTTP_PROXY 未配置时为安全空操作）。
+    WikidotForumClient.setupProxy();
     try {
+      await this.client.connect();
       for (const threadId of threadIds) {
         try {
           const posts = await this.client.getPosts(threadId);
