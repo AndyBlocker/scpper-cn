@@ -197,11 +197,12 @@ program
   .description('Calculate Wilson scores and controversy metrics')
   .option('--since <date>', 'Only analyze pages updated since date (YYYY-MM-DD)')
   .option('--full', 'Force full analysis instead of incremental')
+  .option('--rebuild-index-ticks', '危险：清空并重建 Gacha 股市指数 Tick（默认保留已有 Tick 续接生成）。会用当前公式/数据重算整段历史价格，影响存续合约参考价，仅在确需重建时使用')
   .action(async (options) => {
     // Note: --since option is not directly supported by IncrementalAnalyzeJob
     // but --full forces a complete analysis which is equivalent to the old behavior
     const forceFullAnalysis = options.full || options.since;
-    await analyzeIncremental({ forceFullAnalysis });
+    await analyzeIncremental({ forceFullAnalysis, rebuildIndexTicks: Boolean(options.rebuildIndexTicks) });
   });
 
 program

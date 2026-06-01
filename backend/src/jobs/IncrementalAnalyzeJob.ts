@@ -31,7 +31,7 @@ export class IncrementalAnalyzeJob {
   /**
    * 主分析入口点 - 增量模式
    */
-  async analyze(options: { forceFullAnalysis?: boolean; forceFullHistory?: boolean; tasks?: string[] } = {}) {
+  async analyze(options: { forceFullAnalysis?: boolean; forceFullHistory?: boolean; tasks?: string[]; rebuildIndexTicks?: boolean } = {}) {
     console.log('🔄 Starting incremental analysis...');
 
     try {
@@ -91,7 +91,7 @@ export class IncrementalAnalyzeJob {
       // 如果是强制全量分析，先清理相关分析数据
       if (options.forceFullAnalysis) {
         console.log('🧹 Cleaning analysis data for full rebuild...');
-        await this.cleanAnalysisData(tasksToRun);
+        await this.cleanAnalysisData(tasksToRun, { rebuildIndexTicks: options.rebuildIndexTicks });
       }
 
       const failedTasks: Array<{ name: string; error: unknown }> = [];
@@ -123,7 +123,7 @@ export class IncrementalAnalyzeJob {
   /**
    * 清理分析数据（用于全量重建）
    */
-  private async cleanAnalysisData(tasks: string[]) {
+  private async cleanAnalysisData(tasks: string[], opts: { rebuildIndexTicks?: boolean } = {}) {
     console.log('🗑️ Cleaning analysis data for tasks:', tasks.join(', '));
 
     for (const taskName of tasks) {
@@ -220,12 +220,23 @@ export class IncrementalAnalyzeJob {
             console.log('  ✓ Category benchmarks cache cleared');
             break;
           case 'category_index_tick':
-            await this.prisma.categoryIndexTick.deleteMany({});
-            console.log('  ✓ Category index ticks cleared');
+            // 默认保留已生成的股市 Tick：TickJob 是追加式的（从最新 tick 续接生成），
+            // 全量重算会清空整段历史价格并用当前公式/数据重算，导致存续合约参考价剧变。
+            // 仅在显式 rebuildIndexTicks 时才清空重建。
+            if (opts.rebuildIndexTicks) {
+              await this.prisma.categoryIndexTick.deleteMany({});
+              console.log('  ✓ Category index ticks cleared (rebuildIndexTicks)');
+            } else {
+              console.log('  ⏭️ Category index ticks PRESERVED (append-only resume; 用 --rebuild-index-ticks 才会清空)');
+            }
             break;
           case 'category_index_forecast':
-            await (this.prisma as any).categoryIndexForecastTick?.deleteMany?.({});
-            console.log('  ✓ Category index forecast ticks cleared');
+            if (opts.rebuildIndexTicks) {
+              await (this.prisma as any).categoryIndexForecastTick?.deleteMany?.({});
+              console.log('  ✓ Category index forecast ticks cleared (rebuildIndexTicks)');
+            } else {
+              console.log('  ⏭️ Category index forecast ticks PRESERVED');
+            }
             break;
           case 'tag_validation_cache':
             try {
@@ -2995,7 +3006,7 @@ export class IncrementalAnalyzeJob {
 /**
  * 便捷的分析入口函数
  */
-export async function analyzeIncremental(options: { forceFullAnalysis?: boolean; forceFullHistory?: boolean; tasks?: string[] } = {}) {
+export async function analyzeIncremental(options: { forceFullAnalysis?: boolean; forceFullHistory?: boolean; tasks?: string[]; rebuildIndexTicks?: boolean } = {}) {
   const job = new IncrementalAnalyzeJob();
   await job.analyze(options);
 }
