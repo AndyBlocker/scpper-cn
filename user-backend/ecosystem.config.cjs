@@ -11,6 +11,9 @@ module.exports = {
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'production',
+        // 限制 Prisma 查询引擎(Rust/Tokio)在高核数机器上拉起的 worker 线程数，
+        // 默认按 CPU 核数(本机 56 核)拉起 ~56 线程，空闲即占用约 700MB+。
+        TOKIO_WORKER_THREADS: process.env.TOKIO_WORKER_THREADS || '8',
         USER_BACKEND_PORT: process.env.USER_BACKEND_PORT || '4455',
         USER_DATABASE_URL: process.env.USER_DATABASE_URL,
         MAIL_AGENT_BASE_URL: process.env.MAIL_AGENT_BASE_URL || 'http://127.0.0.1:3110',

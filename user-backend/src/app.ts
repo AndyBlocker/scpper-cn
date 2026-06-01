@@ -29,6 +29,13 @@ export function createApp() {
     autoLogging: {
       ignore: (req) => req.url === '/healthz'
     },
+    // 精简请求/响应日志：只记 method/url/远端地址 + 状态码，不落盘完整 header。
+    // 默认 serializer 会把每个请求的全部 header 写入，导致 out 日志数小时打满数十 MB。
+    serializers: {
+      req: (req) => ({ id: req.id, method: req.method, url: req.url, remoteAddress: req.remoteAddress }),
+      res: (res) => ({ statusCode: res.statusCode })
+    },
+    // 防御性保留：即使将来 serializer 改回包含 header，也不落盘敏感字段。
     redact: {
       paths: [
         'req.headers.authorization',
