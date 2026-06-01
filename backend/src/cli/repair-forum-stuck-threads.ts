@@ -50,6 +50,7 @@ export async function runRepairForumStuckThreads(
   const processor = new ForumSyncProcessor({ dryRun: false });
   const summary = await processor.resyncThreads(ids);
   console.log(
-    `✓ 完成:重抓 ${summary.succeeded}/${summary.threads} 线程,落库 ${summary.postsUpserted} 帖,失败 ${summary.failed}。`
+    `✓ 完成:重抓 ${summary.succeeded}/${summary.threads} 线程,落库 ${summary.postsUpserted} 帖,` +
+    `远端已删除 ${summary.remoteDeleted}(标记 isDeleted),失败 ${summary.failed}。`
   );
 }
