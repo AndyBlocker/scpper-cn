@@ -44,6 +44,10 @@ export function useForumsApi() {
         createdAt: string | null
         editedAt: string | null
         isDeleted: boolean
+        // 线程全局楼层号（#1=最早，跨页稳定）；父帖快照（作者名 + 楼层），用于跨页渲染"回复 @某人 #楼层"。
+        floor: number | null
+        parentCreatedByName: string | null
+        parentFloor: number | null
         sourceThreadUrl: string | null
         sourcePostUrl: string | null
       }>

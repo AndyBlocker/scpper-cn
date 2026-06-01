@@ -99,6 +99,10 @@ interface PostItem {
   createdAt?: string | null
   editedAt?: string | null
   isDeleted?: boolean
+  // 服务端线程全局楼层号 + 父帖快照（作者/楼层），跨页稳定（#114）。
+  floor?: number | null
+  parentCreatedByName?: string | null
+  parentFloor?: number | null
   sourceThreadUrl?: string | null
   sourcePostUrl?: string | null
   _dbIndex: number // original position in API response
@@ -170,9 +174,10 @@ const flatPosts = computed(() => {
   return result
 })
 
-// Compute floor number for a post based on its original DB position
-// 楼层号始终以正序为基准（即按时间先后顺序编号）
+// 楼层号优先用服务端线程全局 floor（#1=最早，跨页稳定、与树形 DFS 显示顺序解耦，修 #114
+// 楼层错位）；floor 缺失时兜底沿用旧的按页推算。
 function getFloorNumber(item: { post: PostItem }): number {
+  if (item.post.floor != null) return item.post.floor
   if (!data.value) return 0
   const { total, limit } = data.value
   const pageOffset = (currentPage.value - 1) * limit
@@ -180,13 +185,6 @@ function getFloorNumber(item: { post: PostItem }): number {
     return pageOffset + item.post._dbIndex + 1
   }
   return total - pageOffset - item.post._dbIndex
-}
-
-// Get parent author name for reply indicator
-function getParentAuthor(parentId: number | null | undefined): string | null {
-  if (!parentId || !data.value?.posts) return null
-  const parent = data.value.posts.find((p: any) => p.id === parentId)
-  return parent?.createdByName || null
 }
 
 // 使用 DOMPurify 过滤 HTML 并转换 Wikidot 相对链接
@@ -531,13 +529,15 @@ function copyFloorLink(floor: number) {
               </a>
             </div>
 
-            <!-- Reply indicator -->
+            <!-- Reply indicator：用服务端父帖快照（作者 + 楼层），父帖即便在别的页也能显示
+                 "回复 @某人 #楼层"，不再因跨页静默丢失上下文（修 #114）。 -->
             <div
-              v-if="item.post.parentId && getParentAuthor(item.post.parentId)"
+              v-if="item.post.parentId && item.post.parentCreatedByName"
               class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.7)] inline-flex items-center gap-1"
             >
               <LucideIcon name="CornerDownRight" class="w-3 h-3" stroke-width="2" aria-hidden="true" />
-              回复 <span class="font-medium">{{ getParentAuthor(item.post.parentId) }}</span>
+              回复 <span class="font-medium">{{ item.post.parentCreatedByName }}</span>
+              <span v-if="item.post.parentFloor" class="font-mono text-[rgb(var(--muted)_/_0.6)]">#{{ item.post.parentFloor }}</span>
             </div>
 
             <!-- Post title -->
