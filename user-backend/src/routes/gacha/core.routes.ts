@@ -756,9 +756,12 @@ export function registerCoreRoutes(router: Router) {
         });
       }
 
+      // PICKER 模式：高稀有度优先（GachaRarity 枚举物理序为 WHITE<GREEN<BLUE<PURPLE<GOLD，
+      // 故用 desc 让 GOLD/PURPLE 排在前面），与 /inventory 的稀有度优先口径一致，
+      // 避免紫/金卡被分页上限截断而检索不到。
       const orderBy: Prisma.GachaCardInstanceOrderByWithRelationInput[] = sortMode === 'PICKER'
         ? [
-            { card: { rarity: 'asc' } },
+            { card: { rarity: 'desc' } },
             { card: { title: 'asc' } },
             { obtainedAt: 'desc' }
           ]
