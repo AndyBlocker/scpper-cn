@@ -255,12 +255,20 @@ program
   .action(async (options) => {
     const prisma = getPrismaClient();
     try {
-      const threadIds = options.threads
-        ? String(options.threads)
-            .split(',')
-            .map((s: string) => Number.parseInt(s.trim(), 10))
-            .filter((n: number) => Number.isInteger(n) && n > 0)
-        : undefined;
+      let threadIds: number[] | undefined;
+      if (options.threads !== undefined) {
+        // 显式传了 --threads：解析为空(非法/全过滤)必须报错退出,绝不回退到自动检测,
+        // 否则 `--threads abc --apply` 会从"精确重试"误变成"apply 所有检测命中的线程"。
+        threadIds = String(options.threads)
+          .split(',')
+          .map((s: string) => Number.parseInt(s.trim(), 10))
+          .filter((n: number) => Number.isInteger(n) && n > 0);
+        if (threadIds.length === 0) {
+          console.error('--threads 未解析出有效 thread id(应为逗号分隔的正整数)。已中止。');
+          process.exitCode = 1;
+          return;
+        }
+      }
       await runRepairForumStuckThreads(prisma, { apply: Boolean(options.apply), threadIds });
     } finally {
       await disconnectPrisma();
