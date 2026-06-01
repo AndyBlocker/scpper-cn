@@ -30,7 +30,7 @@
           <div class="mt-1 font-mono text-lg tracking-wide">
             <ClientOnly>{{ nowFormatted }}<template #fallback>--</template></ClientOnly>
           </div>
-          <div class="mt-2 text-xs text-[rgba(var(--accent-strong),0.7)]">基于浏览器本地时间</div>
+          <div class="mt-2 text-xs text-[rgb(var(--accent-strong)_/_0.7)]">基于浏览器本地时间</div>
         </div>
       </div>
       <div
@@ -71,7 +71,7 @@
           class="relative rounded-lg border p-5 transition-colors"
           :class="[
             'border-neutral-200/80 bg-white/80 dark:border-neutral-800/70 dark:bg-neutral-900/80 backdrop-blur',
-            milestone.key === nextMilestoneKey && milestone.status === 'upcoming' ? 'ring-2 ring-[rgba(var(--accent),0.65)]' : ''
+            milestone.key === nextMilestoneKey && milestone.status === 'upcoming' ? 'ring-2 ring-[rgb(var(--accent)_/_0.65)]' : ''
           ]"
         >
           <div class="flex items-start justify-between gap-4">

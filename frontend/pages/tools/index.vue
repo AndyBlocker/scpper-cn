@@ -33,7 +33,7 @@
             <h3 class="text-lg font-semibold text-neutral-900 transition-colors group-hover:text-[var(--g-accent)] dark:text-neutral-100">{{ item.title }}</h3>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">{{ item.description }}</p>
           </div>
-          <span class="absolute right-6 top-6 text-xs font-medium uppercase tracking-wide text-[rgba(var(--accent),0.7)]">
+          <span class="absolute right-6 top-6 text-xs font-medium uppercase tracking-wide text-[rgb(var(--accent)_/_0.7)]">
             {{ item.badge }}
           </span>
         </NuxtLink>

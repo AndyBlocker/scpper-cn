@@ -472,7 +472,7 @@ onUnmounted(() => {
 }
 
 .annual-summary :deep(.bar-track) {
-  @apply bg-[rgba(var(--fg),0.12)] rounded-full flex;
+  @apply bg-[rgb(var(--fg)_/_0.12)] rounded-full flex;
 }
 
 /* 水平 bar 基础样式 */
@@ -538,14 +538,14 @@ onUnmounted(() => {
 }
 
 .annual-summary :deep(.clock-ring) {
-  stroke: rgba(var(--fg), 0.12);
+  stroke: rgb(var(--fg) / 0.12);
   stroke-width: 1.2;
   fill: none;
 }
 
 .annual-summary :deep(.clock-core) {
   fill: rgb(var(--bg));
-  stroke: rgba(var(--fg), 0.08);
+  stroke: rgb(var(--fg) / 0.08);
   stroke-width: 1;
 }
 
@@ -576,7 +576,7 @@ onUnmounted(() => {
 
 .annual-summary :deep(.contributor-card-mini) {
   @apply bg-[rgb(var(--panel))] border rounded-xl p-4 relative overflow-hidden;
-  @apply hover:bg-[rgba(var(--fg),0.03)] transition-all duration-300;
+  @apply hover:bg-[rgb(var(--fg)_/_0.03)] transition-all duration-300;
 }
 
 .annual-summary :deep(.contributor-avatar) {

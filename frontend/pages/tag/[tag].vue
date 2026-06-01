@@ -16,7 +16,7 @@
       <div class="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
+          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgb(var(--accent)_/_0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
           @click="navigateToSearch"
         >
           <LucideIcon name="Search" class="h-4 w-4" />
@@ -24,7 +24,7 @@
         </button>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgba(var(--accent),0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
+          class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/80 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:border-[rgb(var(--accent)_/_0.4)] hover:text-[var(--g-accent)] dark:border-neutral-700/70 dark:bg-neutral-900/70 dark:text-neutral-200"
           @click="reload"
         >
           <LucideIcon name="RefreshCcw" class="h-4 w-4" />
@@ -115,7 +115,7 @@
         <article
           v-for="page in recentPages.slice(0, 8)"
           :key="`recent-${page.wikidotId || page.title}`"
-          class="rounded-lg border border-neutral-200/70 bg-white/85 p-4 transition hover:-translate-y-0.5 hover:border-[rgba(var(--accent),0.4)] dark:border-neutral-800/70 dark:bg-neutral-900/80"
+          class="rounded-lg border border-neutral-200/70 bg-white/85 p-4 transition hover:-translate-y-0.5 hover:border-[rgb(var(--accent)_/_0.4)] dark:border-neutral-800/70 dark:bg-neutral-900/80"
         >
           <div class="flex items-start justify-between gap-3">
             <NuxtLink :to="`/page/${page.wikidotId}`" class="font-medium text-neutral-900 hover:text-[var(--g-accent)] dark:text-neutral-100">

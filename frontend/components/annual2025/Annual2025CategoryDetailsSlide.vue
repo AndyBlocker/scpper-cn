@@ -104,7 +104,7 @@
                     :key="idx"
                     :to="page.wikidotId ? `/page/${page.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
                       :class="idx === 0 ? 'bg-yellow-500 text-black' : idx === 1 ? 'bg-gray-400 text-black' : 'bg-amber-700 text-white'">{{ idx + 1 }}</span>
@@ -127,7 +127,7 @@
                     :key="idx"
                     :to="page.wikidotId ? `/page/${page.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
                       :class="idx === 0 ? 'bg-yellow-500 text-black' : idx === 1 ? 'bg-gray-400 text-black' : 'bg-amber-700 text-white'">{{ idx + 1 }}</span>
@@ -159,10 +159,10 @@
                     :key="idx"
                     :to="author.wikidotId ? `/user/${author.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
-                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
+                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgb(var(--fg)_/_0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
                     <UserAvatar
                       :wikidot-id="author.wikidotId"
                       :name="author.displayName"
@@ -186,10 +186,10 @@
                     :key="idx"
                     :to="author.wikidotId ? `/user/${author.wikidotId}` : undefined"
                     target="_blank"
-                    class="flex items-center gap-2 p-1.5 bg-[rgba(var(--fg),0.05)] rounded-lg hover:bg-[rgba(var(--fg),0.1)] transition-colors"
+                    class="flex items-center gap-2 p-1.5 bg-[rgb(var(--fg)_/_0.05)] rounded-lg hover:bg-[rgb(var(--fg)_/_0.1)] transition-colors"
                   >
                     <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center"
-                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgba(var(--fg),0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
+                      :class="idx === 0 ? 'bg-[var(--g-accent)] text-white' : 'bg-[rgb(var(--fg)_/_0.1)] text-[rgb(var(--fg))]'">{{ idx + 1 }}</span>
                     <UserAvatar
                       :wikidot-id="author.wikidotId"
                       :name="author.displayName"

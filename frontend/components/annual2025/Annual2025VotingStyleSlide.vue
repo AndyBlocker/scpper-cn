@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
         <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
-          <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-[rgb(var(--fg)_/_0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="Vote" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
           <h2 class="text-xl md:text-2xl font-bold text-[rgb(var(--fg))] mb-3">投票风格</h2>
@@ -165,7 +165,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[radial-gradient(rgba(var(--fg),0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
+      <div class="w-full h-full bg-[radial-gradient(rgb(var(--fg) / 0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
     </div>
   </section>
 </template>

@@ -13,7 +13,7 @@
           <div
             v-for="(item, idx) in siteData.categoryBest"
             :key="idx"
-            class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-lg p-4 md:p-6 flex items-start gap-3 md:gap-4 hover:bg-[rgba(var(--fg),0.03)] transition-colors"
+            class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-xl md:rounded-lg p-4 md:p-6 flex items-start gap-3 md:gap-4 hover:bg-[rgb(var(--fg)_/_0.03)] transition-colors"
           >
             <div class="p-2 md:p-3 rounded-lg md:rounded-xl" :class="item.iconBgClass">
               <LucideIcon :name="item.icon" class="w-5 h-5 md:w-6 md:h-6" :class="item.iconClass" />
@@ -27,7 +27,7 @@
                   v-if="item.original"
                   :to="item.original.wikidotId ? `/page/${item.original.wikidotId}` : undefined"
                   target="_blank"
-                  class="flex items-start justify-between gap-3 hover:bg-[rgba(var(--fg),0.05)] -mx-2 px-2 py-1 rounded-lg transition-colors"
+                  class="flex items-start justify-between gap-3 hover:bg-[rgb(var(--fg)_/_0.05)] -mx-2 px-2 py-1 rounded-lg transition-colors"
                 >
                   <div class="min-w-0">
                     <div class="text-[10px] md:text-xs text-green-400 font-bold uppercase tracking-wider">原创最高分</div>
@@ -42,7 +42,7 @@
                   v-if="item.translation"
                   :to="item.translation.wikidotId ? `/page/${item.translation.wikidotId}` : undefined"
                   target="_blank"
-                  class="flex items-start justify-between gap-3 hover:bg-[rgba(var(--fg),0.05)] -mx-2 px-2 py-1 rounded-lg transition-colors"
+                  class="flex items-start justify-between gap-3 hover:bg-[rgb(var(--fg)_/_0.05)] -mx-2 px-2 py-1 rounded-lg transition-colors"
                 >
                   <div class="min-w-0">
                     <div class="text-[10px] md:text-xs text-blue-400 font-bold uppercase tracking-wider">翻译最高分</div>

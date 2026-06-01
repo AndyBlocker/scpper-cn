@@ -110,7 +110,7 @@
                   <div
                     v-if="seg.isHead || (segmentsByMonth[mIdx][wIdx].visible.length === 1 && segmentsByMonth[mIdx][wIdx].overflow === 0)"
                     :key="'s-' + seg.key + '-expanded'"
-                    class="absolute group box-border flex h-full items-center overflow-hidden px-1.5 text-[10px] font-medium leading-tight shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.5)] z-10"
+                    class="absolute group box-border flex h-full items-center overflow-hidden px-1.5 text-[10px] font-medium leading-tight shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent)_/_0.5)] z-10"
                     :style="segmentStyleExpanded(seg)"
                     role="button"
                     tabindex="0"
@@ -653,7 +653,7 @@ onUnmounted(() => {
   position: absolute;
   inset: -2px -5px;
   border-radius: 9999px;
-  box-shadow: 0 0 0 1.5px rgba(var(--accent), 0.75) inset;
+  box-shadow: 0 0 0 1.5px rgb(var(--accent) / 0.75) inset;
 }
 
 /* Animations */
@@ -664,7 +664,7 @@ onUnmounted(() => {
 
 /* Improve focus visibility for keyboard users */
 :focus-visible {
-  outline: 2px solid rgba(var(--accent), 0.6);
+  outline: 2px solid rgb(var(--accent) / 0.6);
   outline-offset: 2px;
 }
 </style>

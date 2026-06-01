@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
         <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
-          <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-[rgb(var(--fg)_/_0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="PenTool" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
           <h2 class="text-xl md:text-2xl font-bold text-[rgb(var(--fg))] mb-3">创作数据</h2>
@@ -164,7 +164,7 @@
                   <button
                     @click.stop="prevTimelinePage"
                     :disabled="timelinePageIndex === 0"
-                    class="p-0.5 md:p-1 rounded hover:bg-[rgba(var(--fg),0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    class="p-0.5 md:p-1 rounded hover:bg-[rgb(var(--fg)_/_0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <LucideIcon name="ChevronLeft" class="w-3 h-3 md:w-4 md:h-4" />
                   </button>
@@ -172,7 +172,7 @@
                   <button
                     @click.stop="nextTimelinePage"
                     :disabled="timelinePageIndex >= timelineTotalPages - 1"
-                    class="p-0.5 md:p-1 rounded hover:bg-[rgba(var(--fg),0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    class="p-0.5 md:p-1 rounded hover:bg-[rgb(var(--fg)_/_0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <LucideIcon name="ChevronRight" class="w-3 h-3 md:w-4 md:h-4" />
                   </button>

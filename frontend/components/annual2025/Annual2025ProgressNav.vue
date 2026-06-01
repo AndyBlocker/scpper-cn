@@ -19,7 +19,7 @@
     />
   </div>
 
-  <div class="sm:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[rgba(var(--bg),0.9)] backdrop-blur-md px-3 py-1.5 rounded-full border border-[rgb(var(--panel-border))]">
+  <div class="sm:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[rgb(var(--bg)_/_0.9)] backdrop-blur-md px-3 py-1.5 rounded-full border border-[rgb(var(--panel-border))]">
     <span class="text-xs text-[rgb(var(--muted))]">{{ currentSlideIndex + 1 }}/{{ totalSlides }}</span>
     <span class="text-[10px] text-[var(--g-accent)]">{{ slideLabels[currentSlideIndex] }}</span>
   </div>

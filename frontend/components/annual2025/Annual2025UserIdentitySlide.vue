@@ -3,7 +3,7 @@
     <div class="slide-content">
       <div v-if="!hasUserData" class="max-w-md w-full mx-auto px-4 text-center">
         <div class="bg-[rgb(var(--panel))] border border-[rgb(var(--panel-border))] rounded-lg p-8 md:p-12">
-          <div class="w-20 h-20 mx-auto mb-6 bg-[rgba(var(--fg),0.1)] rounded-full flex items-center justify-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-[rgb(var(--fg)_/_0.1)] rounded-full flex items-center justify-center">
             <LucideIcon name="User" class="w-10 h-10 text-[rgb(var(--muted))]" />
           </div>
           <h2 class="text-xl md:text-2xl font-bold text-[rgb(var(--fg))] mb-3">个人年度报告</h2>
@@ -35,7 +35,7 @@
             <div class="flex-1 text-center md:text-left w-full">
               <div class="flex flex-col md:flex-row items-center justify-center md:justify-start gap-2 md:gap-3 mb-2">
                 <h1 class="text-2xl md:text-4xl font-bold text-[rgb(var(--fg))]">{{ userData.displayName }}</h1>
-                <span class="px-2 md:px-3 py-1 rounded-full bg-[rgba(var(--success),0.2)] text-[rgb(var(--success))] text-[10px] md:text-xs font-bold border border-[rgba(var(--success),0.3)]">
+                <span class="px-2 md:px-3 py-1 rounded-full bg-[rgb(var(--success)_/_0.2)] text-[rgb(var(--success))] text-[10px] md:text-xs font-bold border border-[rgb(var(--success)_/_0.3)]">
                   {{ userData.rankings.overall.percentileLabel }}
                 </span>
               </div>
@@ -44,21 +44,21 @@
               </p>
 
               <div class="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
-                <div class="text-center bg-[rgba(var(--fg),0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgba(var(--fg),0.05)]">
+                <div class="text-center bg-[rgb(var(--fg)_/_0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgb(var(--fg)_/_0.05)]">
                   <div class="text-[10px] md:text-xs text-[rgb(var(--muted))] uppercase">全站排名</div>
                   <div class="text-lg md:text-2xl font-black text-[rgb(var(--fg))]">#{{ userData.overview.rankChange.endRank }}</div>
                 </div>
-                <div class="text-center bg-[rgba(var(--fg),0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgba(var(--fg),0.05)]">
+                <div class="text-center bg-[rgb(var(--fg)_/_0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgb(var(--fg)_/_0.05)]">
                   <div class="text-[10px] md:text-xs text-[rgb(var(--muted))] uppercase">作品数</div>
                   <div class="text-lg md:text-2xl font-black text-[rgb(var(--fg))]">{{ userData.overview.creation.totalCount }}</div>
                   <div class="text-[10px] md:text-xs text-[rgb(var(--muted))]">原创{{ userData.overview.creation.originals }} 翻译{{ userData.overview.creation.translations }}</div>
                 </div>
-                <div class="text-center bg-[rgba(var(--fg),0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgba(var(--fg),0.05)]">
+                <div class="text-center bg-[rgb(var(--fg)_/_0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgb(var(--fg)_/_0.05)]">
                   <div class="text-[10px] md:text-xs text-[rgb(var(--muted))] uppercase">获得 UpVotes</div>
                   <div class="text-lg md:text-2xl font-black text-[rgb(var(--fg))]">{{ userData.overview.votesReceived.up }}</div>
                   <div class="text-[10px] md:text-xs text-[rgb(var(--muted))]">UpVote 率 {{ (userData.overview.votesReceived.upRate * 100).toFixed(0) }}%</div>
                 </div>
-                <div class="text-center bg-[rgba(var(--fg),0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgba(var(--fg),0.05)]">
+                <div class="text-center bg-[rgb(var(--fg)_/_0.05)] p-2 md:p-3 rounded-lg md:rounded-xl border border-[rgb(var(--fg)_/_0.05)]">
                   <div class="text-[10px] md:text-xs text-[rgb(var(--muted))] uppercase">总字数</div>
                   <div class="text-lg md:text-2xl font-black text-[rgb(var(--fg))]">{{ formatNumber(userData.overview.creation.totalWords) }}</div>
                   <div class="text-[10px] md:text-xs text-[rgb(var(--muted))]">{{ userData.overview.creation.totalCount > 0 ? Math.round(userData.overview.creation.totalWords / userData.overview.creation.totalCount).toLocaleString() : 0 }} 字/篇</div>
@@ -70,7 +70,7 @@
       </div>
     </div>
     <div class="slide-bg">
-      <div class="w-full h-full bg-[radial-gradient(rgba(var(--fg),0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
+      <div class="w-full h-full bg-[radial-gradient(rgb(var(--fg) / 0.03)_1px,transparent_1px)] bg-[length:24px_24px]" />
     </div>
   </section>
 </template>

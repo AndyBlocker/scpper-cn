@@ -90,7 +90,7 @@
               type="button"
               class="group relative w-full overflow-hidden rounded-lg border border-transparent bg-white/90 p-5 text-left shadow-sm backdrop-blur-sm transition duration-300 hover:-translate-y-1 hover:shadow-sm dark:bg-neutral-900/80 dark:shadow-lg"
               :class="collection.id === activeId
-                ? 'ring-2 ring-[var(--g-accent-border)] shadow dark:ring-[rgba(var(--accent),0.5)]'
+                ? 'ring-2 ring-[var(--g-accent-border)] shadow dark:ring-[rgb(var(--accent)_/_0.5)]'
                 : 'border-neutral-200/80 hover:border-[var(--g-accent-border)] dark:border-neutral-800/70'"
               @click="select(collection.id)"
             >

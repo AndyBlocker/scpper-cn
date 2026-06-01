@@ -53,7 +53,7 @@
             >
             <button
               type="button"
-              class="inline-flex items-center justify-center rounded-xl border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-4 py-3 text-sm font-medium text-[var(--g-accent)] transition hover:bg-[var(--g-accent-strong)] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent),0.4)] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto w-full"
+              class="inline-flex items-center justify-center rounded-xl border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-4 py-3 text-sm font-medium text-[var(--g-accent)] transition hover:bg-[var(--g-accent-strong)] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent)_/_0.4)] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto w-full"
               :disabled="isSendingCode || isSubmitting || !isEmailValid || cooldown > 0"
               @click="handleSendCode"
             >
@@ -105,7 +105,7 @@
 
         <button
           type="submit"
-          class="inline-flex w-full items-center justify-center rounded-xl border border-[rgba(var(--accent),0.4)] bg-[var(--g-accent)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(var(--accent),0.4)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[rgb(var(--accent-strong))] dark:text-neutral-100"
+          class="inline-flex w-full items-center justify-center rounded-xl border border-[rgb(var(--accent)_/_0.4)] bg-[var(--g-accent)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--accent)_/_0.4)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[rgb(var(--accent-strong))] dark:text-neutral-100"
           :disabled="isSubmitting || !canSubmit"
         >
           <span v-if="isSubmitting">正在注册...</span>

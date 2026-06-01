@@ -95,7 +95,7 @@
             :class="[
               'group relative overflow-hidden rounded-lg border p-5 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-sm',
               item.pinned
-                ? 'border-[rgba(var(--accent),0.45)] bg-[var(--g-accent-hover)] dark:border-[rgba(var(--accent),0.45)] dark:bg-[var(--g-accent-medium)]'
+                ? 'border-[rgb(var(--accent)_/_0.45)] bg-[var(--g-accent-hover)] dark:border-[rgb(var(--accent)_/_0.45)] dark:bg-[var(--g-accent-medium)]'
                 : 'border-neutral-200/80 bg-white/95 dark:border-neutral-800/70 dark:bg-neutral-900/80'
             ]"
           >
@@ -104,7 +104,7 @@
             </div>
             <span
               v-if="item.pinned"
-              class="absolute right-5 top-5 inline-flex items-center gap-1 rounded-full bg-[rgba(var(--accent),0.9)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white shadow-lg"
+              class="absolute right-5 top-5 inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent)_/_0.9)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white shadow-lg"
             >
               <LucideIcon name="Star" class="h-3 w-3" />
               置顶

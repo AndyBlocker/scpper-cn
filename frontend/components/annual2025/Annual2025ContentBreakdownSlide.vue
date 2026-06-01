@@ -80,7 +80,7 @@
                   <button
                     @click.stop="prevBranchPage"
                     :disabled="branchPageIndex === 0"
-                    class="p-0.5 md:p-1 rounded hover:bg-[rgba(var(--fg),0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    class="p-0.5 md:p-1 rounded hover:bg-[rgb(var(--fg)_/_0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <LucideIcon name="ChevronLeft" class="w-3 h-3 md:w-4 md:h-4" />
                   </button>
@@ -88,7 +88,7 @@
                   <button
                     @click.stop="nextBranchPage"
                     :disabled="branchPageIndex >= branchTotalPages - 1"
-                    class="p-0.5 md:p-1 rounded hover:bg-[rgba(var(--fg),0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    class="p-0.5 md:p-1 rounded hover:bg-[rgb(var(--fg)_/_0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <LucideIcon name="ChevronRight" class="w-3 h-3 md:w-4 md:h-4" />
                   </button>
@@ -149,7 +149,7 @@
                   <button
                     @click.stop="prevNewTagsPage"
                     :disabled="newTagsPageIndex === 0"
-                    class="p-0.5 md:p-1 rounded hover:bg-[rgba(var(--fg),0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    class="p-0.5 md:p-1 rounded hover:bg-[rgb(var(--fg)_/_0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <LucideIcon name="ChevronLeft" class="w-3 h-3 md:w-4 md:h-4" />
                   </button>
@@ -157,7 +157,7 @@
                   <button
                     @click.stop="nextNewTagsPage"
                     :disabled="newTagsPageIndex >= newTagsTotalPages - 1"
-                    class="p-0.5 md:p-1 rounded hover:bg-[rgba(var(--fg),0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    class="p-0.5 md:p-1 rounded hover:bg-[rgb(var(--fg)_/_0.1)] disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <LucideIcon name="ChevronRight" class="w-3 h-3 md:w-4 md:h-4" />
                   </button>

@@ -87,11 +87,11 @@
               <LucideIcon name="BarChart2" class="w-4 h-4 md:w-5 md:h-5 text-[var(--g-accent)]" />
             </div>
             <div class="grid grid-cols-2 gap-3 mt-3">
-              <div class="text-center p-3 bg-[rgba(var(--fg),0.03)] rounded-lg">
+              <div class="text-center p-3 bg-[rgb(var(--fg)_/_0.03)] rounded-lg">
                 <div class="text-xl md:text-2xl font-bold text-green-500">{{ formatNumber(siteData.overview.votes.up) }}</div>
                 <div class="text-[10px] text-[rgb(var(--muted))]">UpVotes</div>
               </div>
-              <div class="text-center p-3 bg-[rgba(var(--fg),0.03)] rounded-lg">
+              <div class="text-center p-3 bg-[rgb(var(--fg)_/_0.03)] rounded-lg">
                 <div class="text-xl md:text-2xl font-bold text-red-400">{{ formatNumber(siteData.overview.votes.down) }}</div>
                 <div class="text-[10px] text-[rgb(var(--muted))]">DownVotes</div>
               </div>

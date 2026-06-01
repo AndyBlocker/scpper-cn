@@ -148,7 +148,7 @@
                     <ul>
                       <li v-for="u in wikidotResults" :key="u.wikidotId" class="flex items-center justify-between gap-2 border-b border-neutral-200/70 px-3 py-2 last:border-none dark:border-neutral-800/60">
                         <div class="truncate"><span class="font-medium">{{ u.displayName }}</span> <span class="text-neutral-500">#{{ u.wikidotId }}</span></div>
-                        <button class="rounded border border-[rgba(var(--accent),0.5)] px-2 py-1 text-xs font-semibold text-[rgb(var(--accent-strong))] hover:bg-[var(--g-accent-soft)]" @click="selectWikidot(u)">选择</button>
+                        <button class="rounded border border-[rgb(var(--accent)_/_0.5)] px-2 py-1 text-xs font-semibold text-[rgb(var(--accent-strong))] hover:bg-[var(--g-accent-soft)]" @click="selectWikidot(u)">选择</button>
                       </li>
                     </ul>
                   </div>
