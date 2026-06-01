@@ -16,7 +16,6 @@ import {
 import { normalizeAffixStyle } from '~/utils/gachaAffixTheme'
 import { raritySortWeight } from '~/utils/gachaRarity'
 import { displayCardTitle } from '~/utils/gachaTitle'
-import { paginatedLoadAll } from '~/utils/gachaPagination'
 import { usePageAuthors } from '~/composables/usePageAuthors'
 import { resolveAuthorSearchText } from '~/utils/gachaAuthorSearch'
 import { normalizeError } from '~/composables/api/gachaCore'
@@ -456,14 +455,10 @@ export function useGachaPlacement(page: GachaPageContext) {
     placementOptionsLoading.value = true
     placementOptionsRefreshQueued.value = false
     try {
-      const allItems = await paginatedLoadAll<InventoryItem>({
-        fetchPage: async (offset, limit, skipTotal) => {
-          const res = await gacha.getInventory({ limit, offset, skipTotal })
-          if (!res.ok) throw new Error(res.error || '加载放置卡片库存失败')
-          return { items: res.data ?? [], total: res.total ?? 0, pageRows: Number(res.pageRows ?? 0) }
-        },
-        pageSize: 1000
-      })
+      // 单次全量取尽(all=1)：后端一次扫描+排序+聚合返回全部库存，避免逐页 offset 重扫的近二次成本(#95)。
+      const res = await gacha.getInventory({ all: true, skipTotal: true })
+      if (!res.ok) throw new Error(res.error || '加载放置卡片库存失败')
+      const allItems = res.data ?? []
       const byStackKey = new Map<string, InventoryItem>()
       for (const item of allItems) {
         if (!item) continue

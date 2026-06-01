@@ -1040,6 +1040,9 @@ export const inventoryQuerySchema = z.object({
   limit: z.string().trim().optional(),
   offset: z.string().trim().optional(),
   skipTotal: z.string().trim().optional(),
+  // all=1：单次全量载入(放置/改造/分解候选)，绕过 offset 分页，一次扫描+排序+聚合
+  // 取尽全部库存，避免前端逐页 offset 重扫造成的近二次成本。
+  all: z.string().trim().optional(),
   affixFilter: z.string().trim().optional(),
   search: z.string().trim().optional()
 });

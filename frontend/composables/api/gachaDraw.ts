@@ -72,7 +72,7 @@ export function useGachaDrawApi(core: GachaCoreContext) {
     }
   }
 
-  async function getInventory(params: { poolId?: string; rarity?: Rarity; limit?: number; offset?: number; skipTotal?: boolean; affixFilter?: string; search?: string }) {
+  async function getInventory(params: { poolId?: string; rarity?: Rarity; limit?: number; offset?: number; skipTotal?: boolean; all?: boolean; affixFilter?: string; search?: string }) {
     try {
       const res = await $bff<ApiResponse<{ items: InventoryItem[]; total: number; pageRows?: number }>>('/gacha/inventory', {
         method: 'GET',
@@ -82,6 +82,8 @@ export function useGachaDrawApi(core: GachaCoreContext) {
           limit: params.limit != null ? String(params.limit) : undefined,
           offset: params.offset != null ? String(params.offset) : undefined,
           skipTotal: params.skipTotal ? '1' : undefined,
+          // all=1：一次性取尽全部库存(放置/改造/分解候选)，避免逐页 offset 重扫的近二次成本。
+          all: params.all ? '1' : undefined,
           affixFilter: params.affixFilter || undefined,
           search: params.search || undefined
         }

@@ -72,6 +72,11 @@ export const PLACEMENT_SLOT_UNLOCK_COSTS = [1000, 1500, 2000, 3000, 5000] as con
 export const PLACEMENT_BUFFER_CAP_BASE = Math.max(0, Math.floor(Number(process.env.GACHA_PLACEMENT_BUFFER_CAP_BASE ?? '3000') || 3000));
 export const PLACEMENT_OPTION_LIMIT = Math.max(120, Math.floor(Number(process.env.GACHA_INVENTORY_QUERY_LIMIT_MAX ?? '1000') || 0));
 export const ALBUM_PAGE_QUERY_LIMIT_MAX = 5000;
+// /gacha/inventory?all=1 单次全量载入的安全上限。GachaInventory 行数 ≤ 用户拥有的不同
+// 卡牌数 ≤ 卡牌定义总数(~8 万),取 10 万即在该天花板之上,放置/改造/分解候选永不被截断
+// (避免重现按稀有度排序时截断点落在紫卡区间、重库存用户检索不到紫卡的 #129 回归);
+// 同时作为防御性内存上限,杜绝异常情况下无界查询。命中即记日志告警。
+export const INVENTORY_FULL_LOAD_CAP = Math.max(50000, Math.floor(Number(process.env.GACHA_INVENTORY_FULL_LOAD_CAP ?? '100000') || 0));
 export const PLACEMENT_DECIMAL_SCALE = 6;
 export const DEFAULT_PLACEMENT_YIELD_BOOST_PERCENT = Number(process.env.GACHA_PLACEMENT_YIELD_BOOST_PERCENT ?? '0');
 
