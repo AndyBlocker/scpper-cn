@@ -18,6 +18,7 @@ import {
   toTimestamp
 } from '~/utils/gachaFormatters'
 import { resolveAffixSignatureFromSource } from '~/utils/gachaAffix'
+import { paginatedLoadAll } from '~/utils/gachaPagination'
 import {
   poolPriorityMap
 } from '~/utils/gachaConstants'
@@ -350,10 +351,17 @@ export function useGachaDraw(page: GachaPageContext) {
       }).catch(() => new Map<string, number>())
 
       const activeAffixFilter = reforgeAffixFilter.value || undefined
-      // Single large request instead of paginated loading to avoid multiple slow fetches
-      const res = await gacha.getInventory({ limit: 5000, offset: 0, affixFilter: activeAffixFilter })
-      if (!res.ok) throw new Error(res.error || '加载改造候选卡片失败')
-      const allItems: InventoryItem[] = res.data ?? []
+      // 分页取尽全部库存：服务端单页上限为 1000，单次大请求(limit:5000)会被钳到 1000，
+      // 按稀有度排序时截断点正好落在紫卡区间，导致重库存用户检索不到紫卡。
+      // 与放置面板一致改用 paginatedLoadAll 翻到底。
+      const allItems: InventoryItem[] = await paginatedLoadAll<InventoryItem>({
+        fetchPage: async (offset, limit, skipTotal) => {
+          const res = await gacha.getInventory({ limit, offset, skipTotal, affixFilter: activeAffixFilter })
+          if (!res.ok) throw new Error(res.error || '加载改造候选卡片失败')
+          return { items: res.data ?? [], total: res.total ?? 0, pageRows: Number(res.pageRows ?? 0) }
+        },
+        pageSize: 1000
+      })
       seedAuthorCacheFromInventory(allItems)
       queueAuthorHydration(allItems.map((item) => item.wikidotId))
       const grouped = new Map<string, ReforgeCardOption>()
