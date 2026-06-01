@@ -21,6 +21,7 @@
     "query:stats": "node --import tsx/esm src/cli/index.ts query --stats",
     "query:rankings": "node --import tsx/esm src/cli/index.ts query --user-rank",
     "repair:user-vote-stats": "node --import tsx/esm src/cli/index.ts repair-user-vote-stats",
+    "repair:forum-page-links": "node --import tsx/esm src/cli/index.ts repair-forum-page-links",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",

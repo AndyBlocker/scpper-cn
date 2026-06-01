@@ -29,6 +29,7 @@ import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
 import { runVoteResyncAudit } from './voteResyncAudit.js';
 import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
+import { runRepairForumPageLinks } from './repair-forum-page-links.js';
 
 const program = new Command();
 
@@ -227,6 +228,19 @@ program
         socialOnly: Boolean(options.socialOnly),
         userStatsOnly: Boolean(options.userStatsOnly)
       });
+    } finally {
+      await disconnectPrisma();
+    }
+  });
+
+program
+  .command('repair-forum-page-links')
+  .description('回填单页讨论帖 pageId 关联(标题→副标题→slug 精确匹配,仅唯一高置信,只补空不覆盖;默认 dry-run)')
+  .option('--apply', '实际写入回填(默认仅 dry-run 预览,不写入)')
+  .action(async (options) => {
+    const prisma = getPrismaClient();
+    try {
+      await runRepairForumPageLinks(prisma, { apply: Boolean(options.apply) });
     } finally {
       await disconnectPrisma();
     }
