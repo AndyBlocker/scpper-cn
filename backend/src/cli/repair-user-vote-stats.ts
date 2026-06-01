@@ -9,11 +9,6 @@ export interface RepairUserVoteStatsOptions {
   userStatsOnly?: boolean;
 }
 
-function toInt(value: unknown): number {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
 function printStats(label: string, row: Record<string, unknown>) {
   console.log(`\n${label}`);
   for (const [key, value] of Object.entries(row)) {
