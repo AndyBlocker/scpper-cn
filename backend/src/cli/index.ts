@@ -30,6 +30,7 @@ import { runVoteResyncAudit } from './voteResyncAudit.js';
 import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
 import { runRepairForumPageLinks } from './repair-forum-page-links.js';
+import { runRepairForumStuckThreads } from './repair-forum-stuck-threads.js';
 
 const program = new Command();
 
@@ -241,6 +242,19 @@ program
     const prisma = getPrismaClient();
     try {
       await runRepairForumPageLinks(prisma, { apply: Boolean(options.apply) });
+    } finally {
+      await disconnectPrisma();
+    }
+  });
+
+program
+  .command('repair-forum-stuck-threads')
+  .description('定向重抓"有帖实际0帖"的卡住线程(#113;不触发提醒;默认 dry-run,--apply 才联网重抓)')
+  .option('--apply', '实际联网重抓并落库(默认仅 dry-run 列出,不联网)')
+  .action(async (options) => {
+    const prisma = getPrismaClient();
+    try {
+      await runRepairForumStuckThreads(prisma, { apply: Boolean(options.apply) });
     } finally {
       await disconnectPrisma();
     }

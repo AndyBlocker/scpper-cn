@@ -148,6 +148,49 @@ export class ForumSyncProcessor {
     return result;
   }
 
+  /**
+   * 定向重抓指定 thread 的帖子（修复历史抓帖失败导致"有帖实际0帖"的卡住线程，#113）。
+   * 复用同步的 client + upsertPost，但【不收集 newPostIds、不触发任何论坛提醒】
+   * （ForumInteractionAlertJob 只处理显式传入的 newPostIds，本路径不喂它，故旧帖不会误触发提醒）。
+   * 成功后把 postCount/postCountAtSync 推进为实际抓到的帖数，使线程内部一致并不再被增量跳过。
+   */
+  async resyncThreads(
+    threadIds: number[]
+  ): Promise<{ threads: number; succeeded: number; failed: number; postsUpserted: number }> {
+    const summary = { threads: threadIds.length, succeeded: 0, failed: 0, postsUpserted: 0 };
+    if (threadIds.length === 0) return summary;
+
+    await this.client.connect();
+    try {
+      for (const threadId of threadIds) {
+        try {
+          const posts = await this.client.getPosts(threadId);
+          for (const post of posts) {
+            await this.upsertPost(threadId, post);
+            summary.postsUpserted++;
+          }
+          await this.prisma.forumThread.update({
+            where: { id: threadId },
+            data: {
+              postCount: posts.length,
+              postCountAtSync: posts.length,
+              lastSyncedAt: new Date(),
+            },
+          });
+          summary.succeeded++;
+          Logger.info(`[ForumResync] thread ${threadId}: 重抓 ${posts.length} 帖,已落库`);
+        } catch (err: any) {
+          summary.failed++;
+          Logger.error(`[ForumResync] thread ${threadId} 重抓失败: ${err.message}`);
+        }
+        await this.client.delay();
+      }
+    } finally {
+      await this.client.close();
+    }
+    return summary;
+  }
+
   private async processCategory(
     remoteCat: ForumCategoryDTO,
     rawCatObj: any,
