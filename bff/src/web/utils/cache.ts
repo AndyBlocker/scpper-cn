@@ -110,7 +110,8 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
       },
       async setJSON(key: string, value: unknown, ttlSeconds: number): Promise<void> {
         if (value !== undefined) {
-          memorySet(store, maxSize, `${prefix}${key}`, value, ttlSeconds);
+          // 存归一化形态，使内存后端的 getJSON 与 Redis(JSON 往返)口径一致（#124）。
+          memorySet(store, maxSize, `${prefix}${key}`, jsonClone(value), ttlSeconds);
         }
       }
     };
