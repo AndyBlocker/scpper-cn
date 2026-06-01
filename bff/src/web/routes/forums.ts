@@ -176,13 +176,26 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
             LEFT JOIN "Page" p ON p.id = t."pageId"
             WHERE t.id = $1 AND t."isDeleted" = false
           `, [threadId]),
+          // floor：线程内全局楼层号（按时间序，#1=最早），用窗口函数对【整个线程】计算后再分页，
+          // 故跨页稳定、与树形 DFS 显示顺序解耦（修 #114 楼层错位）。
+          // parentCreatedByName/parentFloor：父帖快照，自连接同一 CTE 取得，使父帖即便在别的页
+          // 也能渲染"回复 @某人 #楼层"，不再静默丢失上下文（修 #114 跨页孤儿）。
           readPool.query(`
-            SELECT id, "threadId", "parentId", title, "textHtml", "createdByName",
-                   "createdByWikidotId", "createdByType", "createdAt",
-                   "editedAt", "isDeleted"
-            FROM "ForumPost"
-            WHERE "threadId" = $1
-            ORDER BY "createdAt" ${order} NULLS LAST, id ${order}
+            WITH ordered AS (
+              SELECT id, "threadId", "parentId", title, "textHtml", "createdByName",
+                     "createdByWikidotId", "createdByType", "createdAt", "editedAt", "isDeleted",
+                     (ROW_NUMBER() OVER (ORDER BY "createdAt" ASC NULLS LAST, id ASC))::int AS floor
+              FROM "ForumPost"
+              WHERE "threadId" = $1
+            )
+            SELECT o.id, o."threadId", o."parentId", o.title, o."textHtml", o."createdByName",
+                   o."createdByWikidotId", o."createdByType", o."createdAt", o."editedAt", o."isDeleted",
+                   o.floor,
+                   par."createdByName" AS "parentCreatedByName",
+                   par.floor AS "parentFloor"
+            FROM ordered o
+            LEFT JOIN ordered par ON par.id = o."parentId"
+            ORDER BY o."createdAt" ${order} NULLS LAST, o.id ${order}
             LIMIT $2 OFFSET $3
           `, [threadId, limit, offset]),
           readPool.query(`
