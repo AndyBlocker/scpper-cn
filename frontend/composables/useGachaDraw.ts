@@ -18,7 +18,6 @@ import {
   toTimestamp
 } from '~/utils/gachaFormatters'
 import { resolveAffixSignatureFromSource } from '~/utils/gachaAffix'
-import { paginatedLoadAll } from '~/utils/gachaPagination'
 import {
   poolPriorityMap
 } from '~/utils/gachaConstants'
@@ -351,17 +350,12 @@ export function useGachaDraw(page: GachaPageContext) {
       }).catch(() => new Map<string, number>())
 
       const activeAffixFilter = reforgeAffixFilter.value || undefined
-      // 分页取尽全部库存：服务端单页上限为 1000，单次大请求(limit:5000)会被钳到 1000，
-      // 按稀有度排序时截断点正好落在紫卡区间，导致重库存用户检索不到紫卡。
-      // 与放置面板一致改用 paginatedLoadAll 翻到底。
-      const allItems: InventoryItem[] = await paginatedLoadAll<InventoryItem>({
-        fetchPage: async (offset, limit, skipTotal) => {
-          const res = await gacha.getInventory({ limit, offset, skipTotal, affixFilter: activeAffixFilter })
-          if (!res.ok) throw new Error(res.error || '加载改造候选卡片失败')
-          return { items: res.data ?? [], total: res.total ?? 0, pageRows: Number(res.pageRows ?? 0) }
-        },
-        pageSize: 1000
-      })
+      // 单次全量取尽(all=1)：后端一次扫描+排序+聚合返回全部库存。安全上限远高于卡牌定义总数，
+      // 故按稀有度排序也绝不会在紫卡区间截断(保持 #129 的紫卡可检索保证)，同时消除逐页 offset
+      // 重扫的近二次成本(#95)。
+      const res = await gacha.getInventory({ all: true, skipTotal: true, affixFilter: activeAffixFilter })
+      if (!res.ok) throw new Error(res.error || '加载改造候选卡片失败')
+      const allItems: InventoryItem[] = res.data ?? []
       seedAuthorCacheFromInventory(allItems)
       queueAuthorHydration(allItems.map((item) => item.wikidotId))
       const grouped = new Map<string, ReforgeCardOption>()

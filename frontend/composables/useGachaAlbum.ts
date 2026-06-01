@@ -10,7 +10,6 @@ import type {
 import { formatTokens } from '~/utils/gachaFormatters'
 import { resolveAffixSignatureFromSource } from '~/utils/gachaAffix'
 import { variantStackKey } from '~/utils/gachaAffix'
-import { paginatedLoadAll } from '~/utils/gachaPagination'
 import { normalizeError } from '~/composables/api/gachaCore'
 import { usePageAuthors } from '~/composables/usePageAuthors'
 
@@ -214,15 +213,11 @@ export function useGachaAlbum(page: GachaPageContext) {
     batchDismantleLoading.value = true
     try {
       // Load all inventory for batch dismantle (separate request, not tied to current page)
-      const items = await paginatedLoadAll<AlbumPageVariant>({
-        fetchPage: async (offset, limit, skipTotal) => {
-          const res = await gacha.getInventory({ limit, offset, skipTotal })
-          if (!res.ok) return { items: [], total: 0, pageRows: 0 }
-          const chunk = (res.data ?? []).map(normalizeVariant).filter((i) => i.count > 0)
-          return { items: chunk, total: res.total ?? 0, pageRows: Number(res.pageRows ?? 0) }
-        },
-        pageSize: 1000
-      })
+      // 单次全量取尽(all=1)：避免逐页 offset 重扫的近二次成本(#95)；!ok 时沿用原静默返回空的语义。
+      const res = await gacha.getInventory({ all: true, skipTotal: true })
+      const items = res.ok
+        ? (res.data ?? []).map(normalizeVariant).filter((i) => i.count > 0)
+        : []
       batchDismantleCandidates.value = items
       hydrateVariantAuthors(items)
     } catch (error: unknown) {

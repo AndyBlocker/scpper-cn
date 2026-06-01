@@ -102,6 +102,14 @@ export function registerCoreRoutes(router: Router) {
       const limit = Math.min(Math.max(Number(parsed.limit ?? '30'), 1), h.PLACEMENT_OPTION_LIMIT);
       const offset = Math.max(Number(parsed.offset ?? '0'), 0);
       const skipTotal = parsed.skipTotal === '1';
+      // all=1：单次全量载入。放置/改造/分解候选本就要取尽全部库存，过去前端用 offset 逐页拉取，
+      // 后端每页都全扫库存+JOIN+排序+对全部实例 GROUP BY，成本随库存量近二次增长(#95)。改为
+      // 一次查询取尽(无 offset，仅安全上限 LIMIT)，把 O(M*N) 降回单次 O(M log M)。
+      const loadAll = parsed.all === '1';
+      // 分页子句：全量模式无 offset、用永不截断的安全上限；否则保持原 offset/limit 行为。
+      const paginationSql = loadAll
+        ? Prisma.sql`LIMIT ${h.INVENTORY_FULL_LOAD_CAP}`
+        : Prisma.sql`OFFSET ${offset} LIMIT ${limit}`;
       const rarityFilter = parsed.rarity ? parsed.rarity.toUpperCase() : null;
       const poolId = parsed.poolId ?? null;
       const affixFilter = parsed.affixFilter ? parsed.affixFilter.toUpperCase().trim() : null;
@@ -185,7 +193,7 @@ export function registerCoreRoutes(router: Router) {
             JOIN "GachaCardDefinition" c ON c.id = i."cardId"
             WHERE ${invWhere}
             ORDER BY rarity_weight ASC, i."createdAt" ASC, i.id ASC
-            OFFSET ${offset} LIMIT ${limit}
+            ${paginationSql}
           ),
           inst_agg AS (
             SELECT ci."cardId", ci."affixSignature", ci."affixVisualStyle"::text AS "affixVisualStyle", COUNT(*)::int AS cnt,
@@ -209,7 +217,7 @@ export function registerCoreRoutes(router: Router) {
           FROM inv_page p
           ORDER BY p.rarity_weight ASC, p."createdAt" ASC, p.inv_id ASC
         `),
-        skipTotal
+        (skipTotal || loadAll)
           ? Promise.resolve(-1)
           : prisma.$queryRaw<[{ count: number }]>(Prisma.sql`
               SELECT COUNT(*)::int AS count
@@ -218,6 +226,12 @@ export function registerCoreRoutes(router: Router) {
               WHERE ${invWhere}
             `).then(r => Number(r[0]?.count ?? 0))
       ]);
+
+      // 全量模式：行数即真实总量(无 count 查询)；命中安全上限则告警(可能被截断，需调大上限)。
+      if (loadAll && rows.length >= h.INVENTORY_FULL_LOAD_CAP) {
+        console.warn(`[gacha/inventory] all=1 命中安全上限 ${h.INVENTORY_FULL_LOAD_CAP}，userId=${userId}，结果可能被截断，请调大 GACHA_INVENTORY_FULL_LOAD_CAP`);
+      }
+      const reportedTotal = loadAll ? rows.length : total;
 
       res.json({
         ok: true,
@@ -283,7 +297,7 @@ export function registerCoreRoutes(router: Router) {
             });
         }),
         pageRows: rows.length,
-        total
+        total: reportedTotal
       });
     } catch (error) {
       next(error);
