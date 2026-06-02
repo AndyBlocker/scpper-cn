@@ -533,7 +533,8 @@ html.dark .gacha-card__fallback-icon {
   opacity: 0;
   transition: opacity 0.4s ease;
   z-index: 1;
-  will-change: opacity;
+  /* #101：will-change 不再常驻——否则图鉴每页 80 张卡各为这层常驻一个 GPU 合成层，是图鉴
+     卡顿主因之一。foil 仅 hover 时才动画，故把 will-change 收敛到 hover(见下方 hover 规则)。 */
 }
 
 /* Foil sweep animation on hover entrance */
@@ -545,6 +546,8 @@ html.dark .gacha-card__fallback-icon {
 
 @media (hover: hover) {
   .gacha-card:hover .gacha-card__foil {
+    /* 仅 hover 时提示合成器，避免静止时 80 张卡常驻 GPU 层（#101）。 */
+    will-change: opacity;
     animation: foil-sweep-in 0.8s ease-out forwards;
   }
 }
