@@ -1,6 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import pinoHttp from 'pino-http';
 import rateLimit from 'express-rate-limit';
 import { createClient } from 'redis';
@@ -13,6 +14,10 @@ export async function createServer() {
   app.disable('x-powered-by');
   // Trust the first proxy (Nginx) so req.ip maps to real client IP.
   app.set('trust proxy', 1);
+  // 压缩 BFF 自有聚合 JSON 路由（按 Accept-Encoding 协商 br/gzip）。代理路由（/gacha→user-backend、
+  // /avatar）的响应若上游已带 Content-Encoding（user-backend 已压缩）compression 会自动跳过不重复
+  // 压缩；图片等不可压类型也被默认 filter 跳过。zlib 流在线程池压缩，不阻塞主事件循环。
+  app.use(compression());
   app.use(helmet());
   const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   app.use(cors({
