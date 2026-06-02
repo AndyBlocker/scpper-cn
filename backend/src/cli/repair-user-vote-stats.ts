@@ -69,7 +69,7 @@ async function dryRunTagPreferences(prisma: PrismaClient) {
         COUNT(*) FILTER (WHERE direction < 0)::int AS downvote_count,
         COUNT(*)::int AS total_votes
       FROM user_tag_votes
-      WHERE tag NOT IN ('原创', '页面', '重定向', '管理', '_cc')
+      WHERE tag NOT IN ('页面', '重定向', '管理', '_cc')
       GROUP BY "userId", tag
       HAVING COUNT(*) >= 3
     ),
