@@ -1213,7 +1213,10 @@ export class IncrementalAnalyzeJob {
     console.log(`  📊 Analyzing social patterns for ${userIds.length} users`);
 
     // 更新标签偏好（仅针对有新投票的用户）：Vote 存储改投历史，统计只取每个用户对每页的最后一票。
+    // #90：事务级 advisory lock 与全量重算(scpper-social-rebuild)互斥(同 key);两侧都用 xact 锁
+    // 才可靠(不依赖 Prisma 连接池上的 session 锁),防止并发写 UTP 撞唯一约束/覆盖。
     await this.prisma.$transaction([
+      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis'))`,
       this.prisma.userTagPreference.deleteMany({
         where: {
           userId: { in: userIds }
@@ -1298,7 +1301,9 @@ export class IncrementalAnalyzeJob {
     ]);
     
     // 更新用户投票交互（基于新的投票活动）
+    // #90：同上，事务级 advisory lock 与全量重算互斥，防止并发写 UVI 撞唯一约束/覆盖。
     await this.prisma.$transaction([
+      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis'))`,
       this.prisma.userVoteInteraction.deleteMany({
         where: {
           fromUserId: { in: userIds }
