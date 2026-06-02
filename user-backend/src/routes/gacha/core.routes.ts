@@ -205,16 +205,22 @@ export function registerCoreRoutes(router: Router) {
               AND ci."buyRequestId" IS NULL
               ${instAffixWhere}
             GROUP BY ci."cardId", ci."affixSignature", ci."affixVisualStyle"
+          ),
+          -- 把变体按 cardId 预聚合成 JSON 一次（O(inst_agg)），再 LEFT JOIN；替代原"每行一个相关
+          -- json_agg 子查询"（对每个 inv_page 行线性扫未索引的 inst_agg → O(inv行×inst_agg行) 近二次）。
+          -- 全量模式下重库存用户实测 40.5s → 0.3s（per-row 相关子查询是真正瓶颈，非 all=1 本身）。
+          inst_agg_json AS (
+            SELECT ia."cardId",
+                   json_agg(json_build_object('s', ia."affixSignature", 'style', ia."affixVisualStyle", 'c', ia.cnt, 'lc', ia.locked_cnt)) AS variants
+            FROM inst_agg ia
+            GROUP BY ia."cardId"
           )
           SELECT
             p."cardId", p.inv_count, p.title, p.rarity,
             p.tags, p."imageUrl", p."wikidotId", p."pageId", p."poolId", p.weight,
-            COALESCE(
-              (SELECT json_agg(json_build_object('s', ia."affixSignature", 'style', ia."affixVisualStyle", 'c', ia.cnt, 'lc', ia.locked_cnt))
-               FROM inst_agg ia WHERE ia."cardId" = p."cardId"),
-              '[]'::json
-            ) AS variants
+            COALESCE(iaj.variants, '[]'::json) AS variants
           FROM inv_page p
+          LEFT JOIN inst_agg_json iaj ON iaj."cardId" = p."cardId"
           ORDER BY p.rarity_weight ASC, p."createdAt" ASC, p.inv_id ASC
         `),
         (skipTotal || loadAll)
