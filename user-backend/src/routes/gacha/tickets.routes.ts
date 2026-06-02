@@ -4,6 +4,48 @@ import { z } from 'zod';
 import { prisma } from '../../db.js';
 import * as h from './_helpers.js';
 
+const ADMIN_AFFIX_REFORGE_OVERRIDE_TYPE = 'AFFIX_REFORGE_FORCE';
+const ADMIN_AFFIX_REFORGE_OVERRIDE_PENDING_REASON = 'ADMIN_AFFIX_REFORGE_OVERRIDE_PENDING';
+const ADMIN_AFFIX_REFORGE_OVERRIDE_CONSUMED_REASON = 'ADMIN_AFFIX_REFORGE_OVERRIDE_CONSUMED';
+
+type PendingAffixReforgeOverrideRow = {
+  id: string;
+  signature: string | null;
+};
+
+async function loadAndClaimPendingAffixReforgeOverride(tx: Prisma.TransactionClient, userId: string) {
+  const rows = await tx.$queryRaw<PendingAffixReforgeOverrideRow[]>(Prisma.sql`
+    UPDATE "GachaLedgerEntry" pending
+    SET metadata = COALESCE(pending.metadata, '{}'::jsonb)
+      || jsonb_build_object('claimedAt', to_jsonb(now()))
+    WHERE pending.id = (
+      SELECT p.id
+      FROM "GachaLedgerEntry" p
+      WHERE p."userId" = ${userId}
+        AND p.reason = ${ADMIN_AFFIX_REFORGE_OVERRIDE_PENDING_REASON}
+        AND p.metadata->>'type' = ${ADMIN_AFFIX_REFORGE_OVERRIDE_TYPE}
+        AND p.metadata->>'signature' IS NOT NULL
+        AND p.metadata->>'claimedAt' IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "GachaLedgerEntry" consumed
+          WHERE consumed."userId" = p."userId"
+            AND consumed.reason = ${ADMIN_AFFIX_REFORGE_OVERRIDE_CONSUMED_REASON}
+            AND consumed.metadata->>'pendingId' = p.id
+        )
+      ORDER BY p."createdAt" ASC, p.id ASC
+      LIMIT 1
+      FOR UPDATE
+    )
+    RETURNING pending.id, pending.metadata->>'signature' AS signature
+  `);
+  const row = rows[0];
+  if (!row?.signature) return null;
+  const fingerprint = h.buildAffixFingerprintFromSignature(row.signature);
+  if (fingerprint.affixSignature === 'NONE') return null;
+  return { pendingId: row.id, fingerprint };
+}
+
 export function registerTicketsRoutes(router: Router) {
   router.get('/tickets', async (req, res, next) => {
     try {
@@ -236,11 +278,13 @@ export function registerTicketsRoutes(router: Router) {
         const beforeFingerprint = h.buildAffixFingerprintFromSignature(targetInstance.affixSignature);
         const beforeSignature = beforeFingerprint.affixSignature;
         const beforeStyleCount = beforeFingerprint.affixStyles.filter((style) => style !== 'NONE').length;
-        const nextStyles = h.rollReforgeAffixStyles({
-          minCount: Math.max(1, beforeStyleCount),
-          excludeSignature: beforeSignature
-        });
-        const nextFingerprint = h.buildAffixFingerprintFromStyles(nextStyles);
+        const pendingOverride = await loadAndClaimPendingAffixReforgeOverride(tx, userId);
+        const nextFingerprint = pendingOverride?.fingerprint ?? h.buildAffixFingerprintFromStyles(
+          h.rollReforgeAffixStyles({
+            minCount: Math.max(1, beforeStyleCount),
+            excludeSignature: beforeSignature
+          })
+        );
         const before = {
           affixSignature: beforeFingerprint.affixSignature,
           affixVisualStyle: beforeFingerprint.affixVisualStyle,
@@ -275,6 +319,17 @@ export function registerTicketsRoutes(router: Router) {
             }
           });
           placementUpdated = true;
+        }
+
+        if (pendingOverride) {
+          await h.recordLedger(tx, wallet.id, userId, 0, ADMIN_AFFIX_REFORGE_OVERRIDE_CONSUMED_REASON, {
+            type: ADMIN_AFFIX_REFORGE_OVERRIDE_TYPE,
+            pendingId: pendingOverride.pendingId,
+            targetInstanceId: targetInstance.id,
+            cardId: selected.inventory.card.id,
+            beforeSignature,
+            afterSignature: nextFingerprint.affixSignature
+          });
         }
 
         const tickets = await h.computeTicketBalance(tx, userId);
