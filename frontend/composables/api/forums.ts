@@ -84,7 +84,7 @@ export function useForumsApi() {
       threadsCount: number
       postsCount: number
       lastPostAt: string | null
-      topPosters: Array<{ name: string; wikidotId: number | null; postCount: number }>
+      topPosters: Array<{ name: string; wikidotId: number | null; postCount: number; authorExists?: boolean; displayName?: string | null }>
     }>('/forums/stats')
   }
 

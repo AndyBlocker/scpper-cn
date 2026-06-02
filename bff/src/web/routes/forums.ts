@@ -326,14 +326,18 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
           `),
         ]);
 
-        // Top posters
+        // Top posters：LEFT JOIN User 取当前显示名 + 是否可关联到本站用户（#117 死链守卫 /
+        // #118 改名漂移）。u 由 wikidotId 唯一决定，故用 MAX 聚合不放大行数。
         const { rows: topPosters } = await readPool.query(`
-          SELECT "createdByName" AS name, "createdByWikidotId" AS "wikidotId",
-                 COUNT(*)::int AS "postCount"
-          FROM "ForumPost"
-          WHERE "isDeleted" = false AND "createdByName" IS NOT NULL
-          GROUP BY "createdByName", "createdByWikidotId"
-          ORDER BY "postCount" DESC, "createdByWikidotId" DESC NULLS LAST, "createdByName"
+          SELECT p."createdByName" AS name, p."createdByWikidotId" AS "wikidotId",
+                 COUNT(*)::int AS "postCount",
+                 (MAX(u.id) IS NOT NULL) AS "authorExists",
+                 COALESCE(MAX(u."displayName"), p."createdByName") AS "displayName"
+          FROM "ForumPost" p
+          LEFT JOIN "User" u ON u."wikidotId" = p."createdByWikidotId"
+          WHERE p."isDeleted" = false AND p."createdByName" IS NOT NULL
+          GROUP BY p."createdByName", p."createdByWikidotId"
+          ORDER BY "postCount" DESC, p."createdByWikidotId" DESC NULLS LAST, p."createdByName"
           LIMIT 10
         `);
 
