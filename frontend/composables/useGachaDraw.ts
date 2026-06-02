@@ -766,18 +766,18 @@ export function useGachaDraw(page: GachaPageContext) {
       }
       tickets.value = normalizeTickets(res.tickets)
       lastReforgeResult.value = res.result ?? null
-      // 与 confirmReforge 一致：本地乐观增量 + 去抖对账，替代全量重拉。
+      // 与 confirmReforge 一致：本地乐观增量，替代全量重拉；对账统一在 finally 兜底排程。
       if (res.result) {
         const nextKey = applyReforgeResultLocally(res.result)
         reforgeCardId.value = nextKey ?? ''
-        scheduleReforgeReconcile()
-      } else {
-        await refreshReforgeCardOptions(true)
       }
     } catch (error: unknown) {
       emitError(normalizeError(error, '使用改造券失败'))
     } finally {
       endReforgeMutation()
+      // 无论成功/失败/无 result，都排一次尾部对账：补回 begin 时被清掉的上一次对账、
+      // 以及失败路径下被 seq/in-flight 守卫丢弃的刷新，避免刷新被饿死。
+      scheduleReforgeReconcile()
       ticketAction.value = null
     }
   }
@@ -817,17 +817,19 @@ export function useGachaDraw(page: GachaPageContext) {
       lastReforgeResult.value = res.result ?? null
       reforgeModalPhase.value = 'result'
       // 本地乐观增量（瞬时返回），并把选中项切到新词条以支持"再来一次"链式改造；
-      // 不再同步全量重拉库存（重库存用户此处曾卡数秒）。停手 1.5s 后再做一次服务端对账。
+      // 不再同步全量重拉库存（重库存用户此处曾卡数秒）。对账统一在 finally 兜底排程。
       if (res.result) {
         const nextKey = applyReforgeResultLocally(res.result)
         reforgeCardId.value = nextKey ?? ''
-        scheduleReforgeReconcile()
       }
     } catch (error: unknown) {
       emitError(normalizeError(error, '使用改造券失败'))
       reforgeModalOpen.value = false
     } finally {
       endReforgeMutation()
+      // 无论成功/失败，都排一次尾部对账：补回 begin 时被清掉的上一次对账、以及失败路径下
+      // 被 seq/in-flight 守卫丢弃的刷新，避免刷新被饿死。
+      scheduleReforgeReconcile()
       reforgeConfirming.value = false
     }
   }
