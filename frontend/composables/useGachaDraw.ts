@@ -93,6 +93,9 @@ export function useGachaDraw(page: GachaPageContext) {
   // 本地 patch 叠加成双重计数。故 in-flight 期间的刷新一律放弃、交由改造完成后的对账补刷
   // （拦住"刷新启动时改造已在飞行"的情形，与序号守卫互补闭合竞态）。
   let reforgeMutationInFlight = 0
+  // 当一次刷新因有刷新在飞而被排入队列时，记住其是否 force。否则 finally 的 retry 会丢失 force
+  // 语义，被 freshness check 跳过——而被 seq 守卫丢弃的刷新并未更新 reforgeLoadedAt，是"假新鲜"。
+  let reforgeOptionsReloadForce = false
   const lastReforgeResult = ref<{
     cardId: string
     title: string
@@ -419,11 +422,13 @@ export function useGachaDraw(page: GachaPageContext) {
     }
     if (reforgeOptionsLoading.value) {
       reforgeOptionsReloadQueued.value = true
+      reforgeOptionsReloadForce = reforgeOptionsReloadForce || force
       return
     }
     reforgeOptionsLoading.value = true
     reforgeOptionsFullyLoaded.value = false
     reforgeOptionsReloadQueued.value = false
+    reforgeOptionsReloadForce = false
     const requestedAffixFilter = currentFilter
     // 捕获起始序号：若 fetch 期间发生任何改造（序号变化），落地时丢弃这次（可能已陈旧）的全量结果，
     // 保留更准的本地 patch；后续对账会再刷一次。
@@ -558,7 +563,10 @@ export function useGachaDraw(page: GachaPageContext) {
       const activeAffixFilter = reforgeAffixFilter.value || ''
       if (reforgeOptionsReloadQueued.value || activeAffixFilter !== requestedAffixFilter) {
         reforgeOptionsReloadQueued.value = false
-        refreshReforgeCardOptions().catch((error) => {
+        // 保留入队时记下的 force（如尾部对账），否则"假新鲜"会让 retry 被 freshness 跳过。
+        const retryForce = reforgeOptionsReloadForce
+        reforgeOptionsReloadForce = false
+        refreshReforgeCardOptions(retryForce).catch((error) => {
           console.warn('[gacha] reforge options refresh retry failed', error)
         })
       }
