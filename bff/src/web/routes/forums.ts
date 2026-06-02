@@ -506,7 +506,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
             WHERE p."createdByWikidotId" = $1
               AND p."isDeleted" = false
               AND t."isDeleted" = false
-            ORDER BY p."createdAt" DESC NULLS LAST
+            ORDER BY p."createdAt" DESC NULLS LAST, p.id DESC
             LIMIT $2 OFFSET $3
           `, [wikidotId, limit, offset]),
           readPool.query(`
@@ -559,7 +559,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
           WHERE p."isDeleted" = false
             AND t."isDeleted" = false
             AND (p."textHtml" ILIKE $1 OR p.title ILIKE $1 OR t.title ILIKE $1)
-          ORDER BY p."createdAt" DESC NULLS LAST
+          ORDER BY p."createdAt" DESC NULLS LAST, p.id DESC
           LIMIT $2 OFFSET $3
         `, [searchPattern, limit, offset]),
         readPool.query(`

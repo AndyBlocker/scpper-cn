@@ -102,7 +102,7 @@ const btnClass = 'px-3 py-1.5 rounded-lg text-sm border border-[rgb(var(--panel-
           <component
             :is="poster.wikidotId ? NuxtLinkComp : 'span'"
             v-for="poster in stats.topPosters.slice(0, 8)"
-            :key="poster.wikidotId ?? poster.name"
+            :key="poster.wikidotId != null ? `wid:${poster.wikidotId}:${poster.name}` : `name:${poster.name}`"
             :to="poster.wikidotId ? `/user/${poster.wikidotId}` : undefined"
             class="inline-flex items-center gap-1.5 rounded-full bg-[rgb(var(--panel)_/_0.5)] border border-[rgb(var(--panel-border)_/_0.25)] px-2 py-1 text-xs text-[rgb(var(--muted-strong))] transition"
             :class="poster.wikidotId ? 'hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)]' : ''"
