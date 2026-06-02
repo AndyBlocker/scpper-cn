@@ -176,10 +176,10 @@ export class UserSocialAnalysisJob {
     console.log('  🔁 Rebuilding all tag preference data...');
 
     await this.prisma.$transaction([
-      // #90：与增量社交分析(用 pg_advisory_lock(hashtext('user_social_analysis')))互斥，
-      // 防止周期全量重算(scpper-social-rebuild cron)与 sync 增量并发写 UTP 导致唯一冲突/覆盖。
-      // xact 级锁与 session 级锁同 key 共享锁空间，提交即释放，且与 deleteMany/INSERT 同事务同连接。
-      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis'))`,
+      // #90：写级事务锁，key 'user_social_analysis_write' 专用于"全量重算 vs 增量写"的写互斥
+      // （与任务级 session 去重锁 hashtext(taskName)【不同 key】，避免增量先持 session 锁再在
+      // 另一连接申请同 key xact 锁的自阻塞）。同事务同连接持有、提交即释放，防止并发写 UTP 撞唯一约束/覆盖。
+      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis_write'))`,
       this.prisma.userTagPreference.deleteMany({}),
       this.prisma.$executeRaw`
         WITH latest_vote_candidates AS (
@@ -417,8 +417,8 @@ export class UserSocialAnalysisJob {
     console.log('  🔁 Rebuilding all vote interaction data...');
 
     await this.prisma.$transaction([
-      // #90：同 rebuildAllUserTagPreferences，acquire 同一把 advisory lock 与增量社交分析互斥。
-      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis'))`,
+      // #90：同 rebuildAllUserTagPreferences，写级事务锁('user_social_analysis_write')与增量写互斥。
+      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis_write'))`,
       this.prisma.userVoteInteraction.deleteMany({}),
       this.prisma.$executeRaw`
         WITH effective_attributions AS (
