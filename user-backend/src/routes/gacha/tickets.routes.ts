@@ -164,90 +164,68 @@ export function registerTicketsRoutes(router: Router) {
         const wallet = await h.ensureWallet(tx, userId);
         await h.consumeTicketBalance(tx, wallet, userId, { drawTicket: 0, draw10Ticket: 0, affixReforgeTicket: 1 }, 'AFFIX_REFORGE');
 
-        const inventoryCandidates = payload.cardId
-          ? await tx.gachaInventory.findMany({
-            where: {
-              userId,
-              cardId: payload.cardId,
-              count: { gt: 0 }
-            },
-            include: { card: true },
-            take: 1
-          })
-          : await tx.gachaInventory.findMany({
-            where: {
-              userId,
-              count: { gt: 0 }
-            },
-            include: { card: true }
-          });
-
-        if (!inventoryCandidates.length) {
-          throw Object.assign(new Error(payload.cardId ? '未找到可改造的卡片实例' : '暂无可改造卡片'), { status: 400 });
-        }
-
-        // Batch-load free instances for candidate cards
-        const candidateCardIds = Array.from(new Set(
-          inventoryCandidates.map((item) => item.cardId).filter(Boolean)
-        ));
-        const allFreeForReforge = candidateCardIds.length > 0
-          ? await tx.gachaCardInstance.findMany({
-            where: {
-              userId,
-              cardId: { in: candidateCardIds },
-              tradeListingId: null,
-              buyRequestId: null
-            },
-            orderBy: { obtainedAt: 'asc' }
-          })
-          : [];
-        const freeByCard = new Map<string, typeof allFreeForReforge>();
-        for (const inst of allFreeForReforge) {
-          const list = freeByCard.get(inst.cardId) ?? [];
-          list.push(inst);
-          freeByCard.set(inst.cardId, list);
-        }
-
-        type CandidateForReforge = {
-          inventory: NonNullable<typeof inventoryCandidates[number]> & { card: NonNullable<typeof inventoryCandidates[number]['card']> };
-          freeInstances: typeof allFreeForReforge;
-          totalCount: number;
+        // #97：未指定卡时原实现全量载入用户库存 + 全部自由实例(重库存用户单次操作放大锁/内存),
+        // 仅为随机挑一张改造。改为:按卡【聚合】可改造(未交易/未求购[+指定 sig])实例数 → 加权随机
+        // 选卡(权重=该卡可改造数,与原分布等价) → 只取该卡最早一条可改造实例。指定卡时按卡计数即可。
+        // 不再把全部实例拉进内存与长事务。可改造口径沿用原 allFreeForReforge:仅排除交易/求购
+        // (含 locked/placed/showcased,reforge 允许)。
+        const eligibleWhere: Prisma.GachaCardInstanceWhereInput = {
+          userId,
+          tradeListingId: null,
+          buyRequestId: null,
+          ...(requestedSignature ? { affixSignature: requestedSignature } : {})
         };
-        const candidateStates: CandidateForReforge[] = [];
-        for (const item of inventoryCandidates) {
-          if (!item.card) continue;
-          const freeInstances = (freeByCard.get(item.cardId) ?? []).filter((inst) => (
-            !requestedSignature || inst.affixSignature === requestedSignature
-          ));
-          if (freeInstances.length <= 0) continue;
-          candidateStates.push({
-            inventory: item as NonNullable<typeof inventoryCandidates[number]> & { card: NonNullable<typeof inventoryCandidates[number]['card']> },
-            freeInstances,
-            totalCount: freeInstances.length
+
+        let selectedCardId: string;
+        if (payload.cardId) {
+          const ownedCount = await tx.gachaInventory.count({ where: { userId, cardId: payload.cardId, count: { gt: 0 } } });
+          if (ownedCount <= 0) {
+            throw Object.assign(new Error('未找到可改造的卡片实例'), { status: 400 });
+          }
+          const eligibleCount = await tx.gachaCardInstance.count({ where: { ...eligibleWhere, cardId: payload.cardId } });
+          if (eligibleCount <= 0) {
+            throw Object.assign(new Error(requestedSignature ? `该卡片暂无词条 ${requestedSignature} 可改造实例` : '该卡片暂无可改造变体'), { status: 400 });
+          }
+          selectedCardId = payload.cardId;
+        } else {
+          const groups = await tx.gachaCardInstance.groupBy({
+            by: ['cardId'],
+            where: eligibleWhere,
+            _count: { _all: true }
           });
-        }
-
-        if (!candidateStates.length) {
-          throw Object.assign(
-            new Error(payload.cardId
-              ? (requestedSignature ? `该卡片暂无词条 ${requestedSignature} 可改造实例` : '该卡片暂无可改造变体')
-              : (requestedSignature ? `暂无词条 ${requestedSignature} 可改造实例` : '暂无可改造卡片')),
-            { status: 400 }
-          );
-        }
-
-        let selected = candidateStates[0]!;
-        if (!payload.cardId) {
-          const totalAll = candidateStates.reduce((sum, item) => sum + item.totalCount, 0);
+          if (!groups.length) {
+            throw Object.assign(new Error(requestedSignature ? `暂无词条 ${requestedSignature} 可改造实例` : '暂无可改造卡片'), { status: 400 });
+          }
+          // 加权随机：每卡权重 = 其可改造实例数（与原实现一致的分布）。
+          const totalAll = groups.reduce((sum, g) => sum + g._count._all, 0);
           let pick = Math.floor(Math.random() * totalAll);
-          for (const item of candidateStates) {
-            if (pick < item.totalCount) {
-              selected = item;
-              break;
-            }
-            pick -= item.totalCount;
+          selectedCardId = groups[0]!.cardId;
+          for (const g of groups) {
+            if (pick < g._count._all) { selectedCardId = g.cardId; break; }
+            pick -= g._count._all;
           }
         }
+
+        // 取选中卡的库存(含卡定义)与最早一条可改造实例。
+        const selectedInventory = await tx.gachaInventory.findFirst({
+          where: { userId, cardId: selectedCardId, count: { gt: 0 } },
+          include: { card: true }
+        });
+        const firstEligible = await tx.gachaCardInstance.findFirst({
+          where: { ...eligibleWhere, cardId: selectedCardId },
+          orderBy: { obtainedAt: 'asc' }
+        });
+        if (!selectedInventory || !selectedInventory.card || !firstEligible) {
+          // 卡定义缺失/并发改动等极端情形(原实现会跳过该卡),按"暂无可改造"处理。
+          throw Object.assign(new Error(payload.cardId
+            ? (requestedSignature ? `该卡片暂无词条 ${requestedSignature} 可改造实例` : '该卡片暂无可改造变体')
+            : '暂无可改造卡片'), { status: 400 });
+        }
+
+        const selected = {
+          inventory: selectedInventory as typeof selectedInventory & { card: NonNullable<typeof selectedInventory.card> },
+          freeInstances: [firstEligible]
+        };
 
         // Pick the first free instance to reforge
         const targetInstance = selected.freeInstances[0];
