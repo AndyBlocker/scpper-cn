@@ -1331,7 +1331,6 @@ ORDER BY period;
           FROM "UserTagPreference" utp
           JOIN "User" u ON u.id = utp."userId"
           WHERE u."wikidotId" = $1
-            AND utp."tag" <> '原创'
           ORDER BY ${orderClause}
           LIMIT $2::int OFFSET $3::int
         `;
