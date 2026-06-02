@@ -170,10 +170,15 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
                    t."createdByWikidotId", t."createdAt", t."postCount",
                    t."categoryId", t."pageId",
                    p."wikidotId" AS "pageWikidotId",
-                   c.title AS "categoryTitle"
+                   c.title AS "categoryTitle",
+                   -- #118：优先展示作者当前显示名（快照随用户改名漂移）。
+                   -- #117：authorExists 标记该 wikidotId 能否关联到本站用户，前端据此决定是否出链接。
+                   COALESCE(u."displayName", t."createdByName") AS "authorDisplayName",
+                   (u.id IS NOT NULL) AS "authorExists"
             FROM "ForumThread" t
             LEFT JOIN "ForumCategory" c ON c.id = t."categoryId"
             LEFT JOIN "Page" p ON p.id = t."pageId"
+            LEFT JOIN "User" u ON u."wikidotId" = t."createdByWikidotId"
             WHERE t.id = $1 AND t."isDeleted" = false
           `, [threadId]),
           // floor：线程内全局楼层号（按时间序，#1=最早），用窗口函数对【整个线程】计算后再分页，
@@ -203,9 +208,13 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
                    fp."createdByWikidotId", fp."createdByType", fp."createdAt", fp."editedAt", fp."isDeleted",
                    pg.floor,
                    pg."parentCreatedByName",
-                   pg."parentFloor"
+                   pg."parentFloor",
+                   -- #117/#118：每帖作者的当前显示名 + 是否可关联到本站用户。
+                   COALESCE(u."displayName", fp."createdByName") AS "authorDisplayName",
+                   (u.id IS NOT NULL) AS "authorExists"
             FROM page pg
             JOIN "ForumPost" fp ON fp.id = pg.id
+            LEFT JOIN "User" u ON u."wikidotId" = fp."createdByWikidotId"
             ORDER BY fp."createdAt" ${order} NULLS LAST, fp.id ${order}
           `, [threadId, limit, offset]),
           readPool.query(`
