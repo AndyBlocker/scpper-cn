@@ -280,7 +280,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
                   AND LOWER(BTRIM(t.title)) = ANY($3::text[])
                 )
               )
-            ORDER BY t."createdAt" DESC NULLS LAST
+            ORDER BY t."createdAt" DESC NULLS LAST, t.id DESC
           `, [pageId, PAGE_DISCUSSION_CATEGORY_ID, slugCandidates])
           : readPool.query(`
             SELECT t.id, t.title, t."createdByName", t."createdByWikidotId", t."createdAt",
@@ -289,7 +289,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
             FROM "ForumThread" t
             LEFT JOIN "ForumCategory" c ON c.id = t."categoryId"
             WHERE t."pageId" = $1 AND t."isDeleted" = false
-            ORDER BY t."createdAt" DESC NULLS LAST
+            ORDER BY t."createdAt" DESC NULLS LAST, t.id DESC
           `, [pageId]);
 
         const { rows: threads } = await threadQuery;
@@ -324,7 +324,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "ForumPost"
           WHERE "isDeleted" = false AND "createdByName" IS NOT NULL
           GROUP BY "createdByName", "createdByWikidotId"
-          ORDER BY "postCount" DESC
+          ORDER BY "postCount" DESC, "createdByWikidotId" DESC NULLS LAST, "createdByName"
           LIMIT 10
         `);
 
@@ -357,7 +357,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
           FROM "ForumThread" t
           LEFT JOIN "ForumCategory" c ON c.id = t."categoryId"
           WHERE t."isDeleted" = false
-          ORDER BY t."createdAt" DESC NULLS LAST
+          ORDER BY t."createdAt" DESC NULLS LAST, t.id DESC
           LIMIT $1
         `, [limit]);
 
@@ -390,7 +390,7 @@ export function forumsRouter(pool: Pool, redis: RedisClientType | null) {
             JOIN "ForumThread" t ON t.id = p."threadId"
             LEFT JOIN "ForumCategory" c ON c.id = t."categoryId"
             WHERE p."isDeleted" = false AND t."isDeleted" = false
-            ORDER BY p."createdAt" DESC NULLS LAST
+            ORDER BY p."createdAt" DESC NULLS LAST, p.id DESC
             LIMIT $1 OFFSET $2
           `, [limit, offset]),
           readPool.query(`

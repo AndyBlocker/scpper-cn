@@ -2,6 +2,9 @@
 import { useForumsApi } from '~/composables/api/forums'
 import ForumRecentPostCard from '~/components/forums/ForumRecentPostCard.vue'
 
+// 用于活跃用户列表按是否有 wikidotId 在 NuxtLink / span 间切换（#117 死链守卫）。
+const NuxtLinkComp = resolveComponent('NuxtLink')
+
 definePageMeta({ key: route => route.fullPath })
 
 type ForumTab = 'recent' | 'categories'
@@ -95,11 +98,14 @@ const btnClass = 'px-3 py-1.5 rounded-lg text-sm border border-[rgb(var(--panel-
       <div v-if="stats.topPosters?.length" class="pt-3 border-t border-[rgb(var(--panel-border)_/_0.25)]">
         <div class="text-xs text-[rgb(var(--muted))] mb-2">活跃用户</div>
         <div class="flex flex-wrap gap-2">
-          <NuxtLink
+          <!-- 作者 wikidotId 缺失时(约 45% 论坛作者无标识)渲染为纯文本而非 /user/null 死链(#117)。 -->
+          <component
+            :is="poster.wikidotId ? NuxtLinkComp : 'span'"
             v-for="poster in stats.topPosters.slice(0, 8)"
-            :key="poster.wikidotId"
-            :to="`/user/${poster.wikidotId}`"
-            class="inline-flex items-center gap-1.5 rounded-full bg-[rgb(var(--panel)_/_0.5)] border border-[rgb(var(--panel-border)_/_0.25)] px-2 py-1 text-xs text-[rgb(var(--muted-strong))] hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] transition"
+            :key="poster.wikidotId ?? poster.name"
+            :to="poster.wikidotId ? `/user/${poster.wikidotId}` : undefined"
+            class="inline-flex items-center gap-1.5 rounded-full bg-[rgb(var(--panel)_/_0.5)] border border-[rgb(var(--panel-border)_/_0.25)] px-2 py-1 text-xs text-[rgb(var(--muted-strong))] transition"
+            :class="poster.wikidotId ? 'hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)]' : ''"
           >
             <UserAvatar
               :wikidot-id="poster.wikidotId"
@@ -108,7 +114,7 @@ const btnClass = 'px-3 py-1.5 rounded-lg text-sm border border-[rgb(var(--panel-
             />
             {{ poster.name }}
             <span class="text-[10px] text-[rgb(var(--muted)_/_0.7)]">{{ poster.postCount }}</span>
-          </NuxtLink>
+          </component>
         </div>
       </div>
     </div>
