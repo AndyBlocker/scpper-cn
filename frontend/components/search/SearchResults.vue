@@ -42,6 +42,7 @@
             <UserCard
               v-for="u in userResults"
               :key="u.wikidotId || u.id"
+              class="[content-visibility:auto] [contain-intrinsic-size:auto_180px]"
               size="md"
               :wikidot-id="u.wikidotId"
               :display-name="u.displayName"
@@ -76,7 +77,7 @@
           </div>
           <div v-else>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <PageCard size="md" v-for="p in pageResults" :key="p.wikidotId || p.id" :p="p" />
+              <PageCard size="md" class="[content-visibility:auto] [contain-intrinsic-size:auto_180px]" v-for="p in pageResults" :key="p.wikidotId || p.id" :p="p" />
             </div>
           </div>
           <div v-if="pageLoadingMore" class="flex items-center justify-center text-xs text-neutral-500 dark:text-neutral-400">
@@ -112,7 +113,7 @@
               v-for="post in forumResults"
               :key="post.postId || `${post.threadId}-${post.createdAt}`"
               :to="forumPostLink(post)"
-              class="block rounded-lg border border-neutral-200 bg-white p-4 shadow-sm transition hover:border-[var(--g-accent-border)] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700"
+              class="[content-visibility:auto] [contain-intrinsic-size:auto_140px] block rounded-lg border border-neutral-200 bg-white p-4 shadow-sm transition hover:border-[var(--g-accent-border)] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700"
             >
               <div class="flex items-start gap-3">
                 <UserAvatar
