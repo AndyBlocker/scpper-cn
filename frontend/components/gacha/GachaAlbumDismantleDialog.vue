@@ -500,7 +500,7 @@ function handleOpenChange(nextOpen: boolean) {
                 v-if="renderTruncated"
                 class="mt-2 px-3 py-2 text-center text-[11px] text-neutral-500 dark:text-neutral-400"
               >
-                已渲染前 {{ RENDER_HARD_CAP }} 项（共 {{ filteredCandidates.length }} 项）。请用上方稀有度/词条筛选缩小范围，或直接「全选」分解（选择不受渲染上限影响）。
+                已渲染 {{ visibleCandidates.length }} 项（共 {{ filteredCandidates.length }} 项，上限 {{ RENDER_HARD_CAP }}）。请用上方稀有度/词条筛选缩小范围，或直接「全选」分解（选择不受渲染上限影响）。
               </p>
             </div>
             <p v-else class="px-3 py-8 text-center text-sm text-neutral-500 dark:text-neutral-400">
