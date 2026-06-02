@@ -86,6 +86,10 @@ export function useGachaDraw(page: GachaPageContext) {
   let reforgeLoadedAt = 0
   let reforgeLoadedFilter = ''
   let reforgeReconcileTimer: ReturnType<typeof setTimeout> | null = null
+  // 改造 mutation 的单调序号：在每次改造【开始】时自增（见 beginReforgeMutation）。
+  // 全量刷新捕获起始序号，落地前比对——若期间有改造开始则丢弃该快照，避免旧快照覆盖更新的
+  // 本地 patch、或与随后到达的本地 patch 叠加成双重计数。
+  let reforgeMutationSeq = 0
   const lastReforgeResult = ref<{
     cardId: string
     title: string
@@ -300,11 +304,21 @@ export function useGachaDraw(page: GachaPageContext) {
     })
   }
 
+  // 改造开始时调用：自增序号（让飞行中的全量刷新落地前能识别"期间发生了改造"并丢弃旧快照），
+  // 并取消尚未触发的对账（避免它在本次改造进行中触发）。
+  function beginReforgeMutation() {
+    reforgeMutationSeq++
+    if (reforgeReconcileTimer) {
+      clearTimeout(reforgeReconcileTimer)
+      reforgeReconcileTimer = null
+    }
+  }
+
   // 改造后本地乐观增量：改造把一张卡的一个实例从 before 词条变成 after 词条（服务端 -1/+1）。
   // 不再为反映这一处变化而全量重拉 + 重聚合整库存（重库存用户单次数秒），直接 patch 本地分组：
-  // before 分组 -1（归零则移除），after 分组 +1（不存在则用 before 的卡面元数据克隆一份）。
+  // before 分组 -1（归零则移除），after 分组 +1（不存在则用同卡的卡面元数据克隆一份）。
   // 产生的 stackKey 与全量刷新完全一致（reforgeStackKey = cardId::resolveAffixSignatureFromSource）。
-  // 返回新选中项的 stackKey（用于"再来一次"链式改造）；若 after 词条不符合当前筛选则返回 null。
+  // 返回新选中项的 stackKey（用于"再来一次"链式改造）；若 after 未并入列表（不符筛选或无模板）则返回 null。
   function applyReforgeResultLocally(result: NonNullable<TicketUseResult['result']>): string | null {
     const cardId = result.cardId
     if (!cardId) return null
@@ -312,12 +326,20 @@ export function useGachaDraw(page: GachaPageContext) {
     const afterSig = resolveAffixSignatureFromSource({ affixSignature: result.after.affixSignature })
     const beforeKey = `${cardId}::${beforeSig}`
     const afterKey = `${cardId}::${afterSig}`
+    // 改造命中已放置实例时（placementUpdated），后端同步更新了放置槽词条，placedCount 需随之迁移。
+    const placedDelta = result.placementUpdated ? 1 : 0
     const list = reforgeCardOptions.value.slice()
 
     const beforeIdx = list.findIndex((o) => o.stackKey === beforeKey)
-    const template = beforeIdx >= 0 ? list[beforeIdx] : null
+    // 克隆 after 新项所需的卡面元数据（与词条无关）：优先用 before 项，否则退回同 cardId 的任意变体。
+    const template = beforeIdx >= 0 ? list[beforeIdx] : (list.find((o) => o.cardId === cardId) ?? null)
     if (beforeIdx >= 0) {
-      const next = { ...list[beforeIdx], count: list[beforeIdx].count - 1 }
+      const prev = list[beforeIdx]
+      const next = {
+        ...prev,
+        count: prev.count - 1,
+        placedCount: Math.max(0, prev.placedCount - placedDelta)
+      }
       if (next.count <= 0) list.splice(beforeIdx, 1)
       else list[beforeIdx] = next
     }
@@ -327,30 +349,34 @@ export function useGachaDraw(page: GachaPageContext) {
     const filter = reforgeAffixFilter.value || ''
     const afterMatchesFilter = !filter
       || afterSig === resolveAffixSignatureFromSource({ affixSignature: filter })
+    let afterPresent = false
     if (afterMatchesFilter) {
       const afterIdx = list.findIndex((o) => o.stackKey === afterKey)
       if (afterIdx >= 0) {
-        list[afterIdx] = { ...list[afterIdx], count: list[afterIdx].count + 1 }
+        const prev = list[afterIdx]
+        list[afterIdx] = { ...prev, count: prev.count + 1, placedCount: prev.placedCount + placedDelta }
+        afterPresent = true
       } else if (template) {
         list.push({
           ...template,
           stackKey: afterKey,
           count: 1,
-          placedCount: 0,
+          placedCount: placedDelta,
           affixSignature: afterSig,
-          // panel 仅用 affixStyles[0] 渲染视觉样式；完整数组由停手后的对账刷新补全。
+          // panel 仅用 affixStyles[0] 渲染视觉样式；完整数组由后续对账刷新补全。
           affixStyles: [result.after.affixVisualStyle],
           affixStyleCounts: undefined
         })
+        afterPresent = true
       }
     }
 
     reforgeCardOptions.value = sortReforgeOptions(list)
-    return afterMatchesFilter ? afterKey : null
+    return afterPresent ? afterKey : null
   }
 
-  // 停手 1.5s 后做一次服务端对账，纠正本地增量可能的细微漂移（如多端并发、placement 联动）。
-  // 用尾部去抖而非每次改造都后台刷新，避免连点时旧快照覆盖更新的本地 patch 造成计数闪烁。
+  // 停手 1.5s 后做一次服务端对账，纠正本地增量可能的细微漂移（如多端并发、affixStyles 完整数组）。
+  // 用尾部去抖 + 序号守卫而非每次改造都后台刷新，避免连点时旧快照覆盖更新的本地 patch 造成计数闪烁。
   function scheduleReforgeReconcile() {
     if (reforgeReconcileTimer) clearTimeout(reforgeReconcileTimer)
     reforgeReconcileTimer = setTimeout(() => {
@@ -384,6 +410,9 @@ export function useGachaDraw(page: GachaPageContext) {
     reforgeOptionsFullyLoaded.value = false
     reforgeOptionsReloadQueued.value = false
     const requestedAffixFilter = currentFilter
+    // 捕获起始序号：若 fetch 期间发生任何改造（序号变化），落地时丢弃这次（可能已陈旧）的全量结果，
+    // 保留更准的本地 patch；后续对账会再刷一次。
+    const seqAtStart = reforgeMutationSeq
     try {
       // Fetch placement data in parallel for placedCount marking
       const placementPromise = gacha.getPlacement().then((res) => {
@@ -497,12 +526,15 @@ export function useGachaDraw(page: GachaPageContext) {
         }
       }
       const nextOptions = sortReforgeOptions(grouped.values())
-      reforgeCardOptions.value = nextOptions
-      if (reforgeCardId.value && !nextOptions.some((item) => item.stackKey === reforgeCardId.value)) {
-        reforgeCardId.value = ''
+      // 期间发生过改造 → 本地 patch 已更新且更准，丢弃这次全量结果，避免旧快照覆盖。
+      if (reforgeMutationSeq === seqAtStart) {
+        reforgeCardOptions.value = nextOptions
+        if (reforgeCardId.value && !nextOptions.some((item) => item.stackKey === reforgeCardId.value)) {
+          reforgeCardId.value = ''
+        }
+        reforgeLoadedAt = Date.now()
+        reforgeLoadedFilter = requestedAffixFilter
       }
-      reforgeLoadedAt = Date.now()
-      reforgeLoadedFilter = requestedAffixFilter
     } catch (error: unknown) {
       emitError(normalizeError(error, '加载改造候选卡片失败'))
     } finally {
@@ -706,6 +738,7 @@ export function useGachaDraw(page: GachaPageContext) {
   async function handleAffixReforgeTicketUse() {
     if (ticketAction.value) return
     ticketAction.value = 'reforge'
+    beginReforgeMutation()
     try {
       const selected = selectedReforgeCardOption.value
       const res = await gacha.useAffixReforgeTicket(
@@ -752,6 +785,7 @@ export function useGachaDraw(page: GachaPageContext) {
   async function confirmReforge() {
     if (reforgeConfirming.value) return
     reforgeConfirming.value = true
+    beginReforgeMutation()
     try {
       const selected = selectedReforgeCardOption.value
       const res = await gacha.useAffixReforgeTicket(
