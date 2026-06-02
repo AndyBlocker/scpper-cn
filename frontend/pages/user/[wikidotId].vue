@@ -355,11 +355,13 @@ const { data: haterTags, pending: haterTagsPending } = await useAsyncData(
   }
 );
 
-// Picks for UI (page by API sorting); filter out '原创'
+// Picks for UI (page by API sorting)。原"过滤掉原创"会与 #144 恢复原创入库后撞车：BFF 现按
+// 偏好排序返回 5 个(原创通常居首)，前端再把原创滤掉只剩 4，且使原创在唯一的标签偏好视图里
+// 始终不可见(与 #144 让原创回到标签分析的本意矛盾)。故不再前端过滤原创，让其正常入榜、计数回到 5。
 const favAuthors = computed(() => (Array.isArray(likerAuthors.value) ? likerAuthors.value : []))
 const fanAuthors = computed(() => (Array.isArray(fanAuthorsData.value) ? fanAuthorsData.value : []))
-const favTags = computed(() => (Array.isArray(likerTags.value) ? likerTags.value.filter((t:any)=> t && t.tag !== '原创').map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
-const hateTags = computed(() => (Array.isArray(haterTags.value) ? haterTags.value.filter((t:any)=> t && t.tag !== '原创').map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
+const favTags = computed(() => (Array.isArray(likerTags.value) ? likerTags.value.filter((t:any)=> t && t.tag).map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
+const hateTags = computed(() => (Array.isArray(haterTags.value) ? haterTags.value.filter((t:any)=> t && t.tag).map((t:any)=>({ tag: t.tag, uv: Number(t.uv||t.upvoteCount||0), dv: Number(t.dv||t.downvoteCount||0) })) : []))
 
 // Has more flags & pager actions
 const hasMoreFavAuthors = computed(() => {
