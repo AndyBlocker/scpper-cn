@@ -23,6 +23,7 @@
     "repair:user-vote-stats": "node --import tsx/esm src/cli/index.ts repair-user-vote-stats",
     "repair:forum-page-links": "node --import tsx/esm src/cli/index.ts repair-forum-page-links",
     "repair:forum-stuck-threads": "node --import tsx/esm src/cli/index.ts repair-forum-stuck-threads",
+    "repair:forum-post-counts": "node --import tsx/esm src/cli/index.ts repair-forum-post-counts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",

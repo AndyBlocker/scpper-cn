@@ -31,6 +31,7 @@ import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
 import { runRepairForumPageLinks } from './repair-forum-page-links.js';
 import { runRepairForumStuckThreads } from './repair-forum-stuck-threads.js';
+import { runRepairForumPostCounts } from './repair-forum-post-counts.js';
 
 const program = new Command();
 
@@ -270,6 +271,19 @@ program
         }
       }
       await runRepairForumStuckThreads(prisma, { apply: Boolean(options.apply), threadIds });
+    } finally {
+      await disconnectPrisma();
+    }
+  });
+
+program
+  .command('repair-forum-post-counts')
+  .description('校正线程 postCount 为真实未删帖子数(#116;仅改展示计数,不触碰水位 postCountAtSync;默认 dry-run,--apply 落库)')
+  .option('--apply', '实际落库校正(默认仅 dry-run 统计)')
+  .action(async (options) => {
+    const prisma = getPrismaClient();
+    try {
+      await runRepairForumPostCounts(prisma, { apply: Boolean(options.apply) });
     } finally {
       await disconnectPrisma();
     }
