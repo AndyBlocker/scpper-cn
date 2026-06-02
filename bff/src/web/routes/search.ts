@@ -1975,40 +1975,43 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
       }
       
       const searchQuery = query.trim();
-      
-      // 搜索匹配的标签，按使用频率排序
-      const sql = `
-        WITH tag_stats AS (
-          SELECT 
-            tag,
-            COUNT(*) as usage_count,
-            COUNT(DISTINCT pv."pageId") as page_count
+      const limitInt = Math.min(100, Math.max(1, Number(limit) || 20));
+
+      // #107：全站不同标签仅约 1200+ 个，但原实现每次按 query 对全部当前版本 UNNEST(tags) +
+      // ILIKE + GROUP BY（约 21 万 version-tag 对，实测 ~407ms），autocomplete 每击键触发太慢。
+      // 改为：把"全量标签→使用/页面计数"聚合缓存 1h（既有 BFF 缓存层），每次搜索在内存里对这
+      // ~1200 行做子串过滤（<1ms）。那条重聚合每小时只跑一次。
+      const allTags = await cache.remember('tags:usage:all', 3600, async () => {
+        const { rows } = await readPool.query(`
+          SELECT tag,
+                 COUNT(*)::int AS usage_count,
+                 COUNT(DISTINCT pv."pageId")::int AS page_count
           FROM "PageVersion" pv
           CROSS JOIN LATERAL UNNEST(pv.tags) AS t(tag)
           WHERE pv."validTo" IS NULL
-            AND t.tag ILIKE '%' || $1 || '%'
           GROUP BY tag
-        )
-        SELECT 
-          tag,
-          usage_count,
-          page_count
-        FROM tag_stats
-        ORDER BY 
-          CASE WHEN LOWER(tag) = LOWER($1) THEN 0 ELSE 1 END,
-          usage_count DESC,
-          tag ASC
-        LIMIT $2::int
-      `;
-      
-      const { rows } = await readPool.query(sql, [searchQuery, limit]);
-      
-      const results = rows.map((row: any) => ({
-        tag: row.tag,
-        usageCount: Number(row.usage_count || 0),
-        pageCount: Number(row.page_count || 0)
-      }));
-      
+        `);
+        return rows as Array<{ tag: string; usage_count: number; page_count: number }>;
+      });
+
+      const q = searchQuery.toLowerCase();
+      const results = allTags
+        .filter((r) => r.tag.toLowerCase().includes(q))
+        .sort((a, b) => {
+          // 与原 SQL ORDER BY 一致：完全匹配优先 → 使用频率降序 → 标签名升序。
+          const ax = a.tag.toLowerCase() === q ? 0 : 1;
+          const bx = b.tag.toLowerCase() === q ? 0 : 1;
+          if (ax !== bx) return ax - bx;
+          if (b.usage_count !== a.usage_count) return b.usage_count - a.usage_count;
+          return a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0;
+        })
+        .slice(0, limitInt)
+        .map((r) => ({
+          tag: r.tag,
+          usageCount: Number(r.usage_count || 0),
+          pageCount: Number(r.page_count || 0)
+        }));
+
       res.json({ results });
     } catch (err) {
       next(err);
