@@ -8,7 +8,8 @@ import type {
   HistoryItem,
   InventoryItem,
   Rarity,
-  TicketBalance
+  TicketBalance,
+  TicketUseResult
 } from '~/types/gacha'
 import {
   normalizeTickets,
@@ -84,6 +85,17 @@ export function useGachaDraw(page: GachaPageContext) {
   const drawAuthorQueue = new Set<number>()
   let reforgeLoadedAt = 0
   let reforgeLoadedFilter = ''
+  let reforgeReconcileTimer: ReturnType<typeof setTimeout> | null = null
+  // 改造 mutation 的单调序号：在每次改造【开始】时自增（见 beginReforgeMutation）。
+  // 全量刷新捕获起始序号，落地前比对——若 fetch 期间有改造开始则丢弃该快照（拦住"中途开始"的改造）。
+  let reforgeMutationSeq = 0
+  // 进行中的改造数：改造期间任何全量刷新都可能读到"已提交但本地 patch 未到"的中间态，落地后再被
+  // 本地 patch 叠加成双重计数。故 in-flight 期间的刷新一律放弃、交由改造完成后的对账补刷
+  // （拦住"刷新启动时改造已在飞行"的情形，与序号守卫互补闭合竞态）。
+  let reforgeMutationInFlight = 0
+  // 当一次刷新因有刷新在飞而被排入队列时，记住其是否 force。否则 finally 的 retry 会丢失 force
+  // 语义，被 freshness check 跳过——而被 seq 守卫丢弃的刷新并未更新 reforgeLoadedAt，是"假新鲜"。
+  let reforgeOptionsReloadForce = false
   const lastReforgeResult = ref<{
     cardId: string
     title: string
@@ -298,12 +310,107 @@ export function useGachaDraw(page: GachaPageContext) {
     })
   }
 
+  // 改造开始时调用：自增序号（让 fetch 中途启动的全量刷新落地时识别"期间发生了改造"并丢弃），
+  // 标记 in-flight（让此刻已在飞行的全量刷新放弃落地），并取消尚未触发的对账。
+  function beginReforgeMutation() {
+    reforgeMutationSeq++
+    reforgeMutationInFlight++
+    if (reforgeReconcileTimer) {
+      clearTimeout(reforgeReconcileTimer)
+      reforgeReconcileTimer = null
+    }
+  }
+
+  // 改造结束时调用（成功或失败的 finally）。
+  function endReforgeMutation() {
+    reforgeMutationInFlight = Math.max(0, reforgeMutationInFlight - 1)
+  }
+
+  // 改造后本地乐观增量：改造把一张卡的一个实例从 before 词条变成 after 词条（服务端 -1/+1）。
+  // 不再为反映这一处变化而全量重拉 + 重聚合整库存（重库存用户单次数秒），直接 patch 本地分组：
+  // before 分组 -1（归零则移除），after 分组 +1（不存在则用同卡的卡面元数据克隆一份）。
+  // 产生的 stackKey 与全量刷新完全一致（reforgeStackKey = cardId::resolveAffixSignatureFromSource）。
+  // 返回新选中项的 stackKey（用于"再来一次"链式改造）；若 after 未并入列表（不符筛选或无模板）则返回 null。
+  function applyReforgeResultLocally(result: NonNullable<TicketUseResult['result']>): string | null {
+    const cardId = result.cardId
+    if (!cardId) return null
+    const beforeSig = resolveAffixSignatureFromSource({ affixSignature: result.before.affixSignature })
+    const afterSig = resolveAffixSignatureFromSource({ affixSignature: result.after.affixSignature })
+    const beforeKey = `${cardId}::${beforeSig}`
+    const afterKey = `${cardId}::${afterSig}`
+    // 改造命中已放置实例时（placementUpdated），后端同步更新了放置槽词条，placedCount 需随之迁移。
+    const placedDelta = result.placementUpdated ? 1 : 0
+    const list = reforgeCardOptions.value.slice()
+
+    const beforeIdx = list.findIndex((o) => o.stackKey === beforeKey)
+    // 克隆 after 新项所需的卡面元数据（与词条无关）：优先用 before 项，否则退回同 cardId 的任意变体。
+    const template = beforeIdx >= 0 ? list[beforeIdx] : (list.find((o) => o.cardId === cardId) ?? null)
+    if (beforeIdx >= 0) {
+      const prev = list[beforeIdx]
+      const next = {
+        ...prev,
+        count: prev.count - 1,
+        placedCount: Math.max(0, prev.placedCount - placedDelta)
+      }
+      if (next.count <= 0) list.splice(beforeIdx, 1)
+      else list[beforeIdx] = next
+    }
+
+    // 仅当 after 词条符合当前筛选时才并入列表：筛选 'NONE' 时列表只含无词条变体，而改造必产出有词条
+    // 变体，故不并入（与全量刷新在该筛选下的结果一致）。
+    const filter = reforgeAffixFilter.value || ''
+    const afterMatchesFilter = !filter
+      || afterSig === resolveAffixSignatureFromSource({ affixSignature: filter })
+    let afterPresent = false
+    if (afterMatchesFilter) {
+      const afterIdx = list.findIndex((o) => o.stackKey === afterKey)
+      if (afterIdx >= 0) {
+        const prev = list[afterIdx]
+        list[afterIdx] = { ...prev, count: prev.count + 1, placedCount: prev.placedCount + placedDelta }
+        afterPresent = true
+      } else if (template) {
+        list.push({
+          ...template,
+          stackKey: afterKey,
+          count: 1,
+          placedCount: placedDelta,
+          affixSignature: afterSig,
+          // panel 仅用 affixStyles[0] 渲染视觉样式；完整数组由后续对账刷新补全。
+          affixStyles: [result.after.affixVisualStyle],
+          affixStyleCounts: undefined
+        })
+        afterPresent = true
+      }
+    }
+
+    reforgeCardOptions.value = sortReforgeOptions(list)
+    return afterPresent ? afterKey : null
+  }
+
+  // 停手 1.5s 后做一次服务端对账，纠正本地增量可能的细微漂移（如多端并发、affixStyles 完整数组）。
+  // 用尾部去抖 + 序号守卫而非每次改造都后台刷新，避免连点时旧快照覆盖更新的本地 patch 造成计数闪烁。
+  function scheduleReforgeReconcile() {
+    if (reforgeReconcileTimer) clearTimeout(reforgeReconcileTimer)
+    reforgeReconcileTimer = setTimeout(() => {
+      reforgeReconcileTimer = null
+      refreshReforgeCardOptions(true).catch((error) => {
+        console.warn('[gacha] reforge reconcile failed', error)
+      })
+    }, 1500)
+  }
+
   async function refreshReforgeCardOptions(force = false) {
     if (!activated.value) {
       reforgeCardOptions.value = []
       reforgeCardId.value = ''
       reforgeOptionsReloadQueued.value = false
       reforgeOptionsFullyLoaded.value = true
+      return
+    }
+    // 改造进行中：放弃这次全量刷新（其快照可能与随后到达的本地 patch 叠加成双重计数），
+    // 改由改造完成后的对账补刷。覆盖"刷新启动时已有改造在飞行"的竞态（与落地处的序号守卫互补）。
+    if (reforgeMutationInFlight > 0) {
+      scheduleReforgeReconcile()
       return
     }
     // Freshness check: skip reload if data was loaded recently with same filter
@@ -315,12 +422,17 @@ export function useGachaDraw(page: GachaPageContext) {
     }
     if (reforgeOptionsLoading.value) {
       reforgeOptionsReloadQueued.value = true
+      reforgeOptionsReloadForce = reforgeOptionsReloadForce || force
       return
     }
     reforgeOptionsLoading.value = true
     reforgeOptionsFullyLoaded.value = false
     reforgeOptionsReloadQueued.value = false
+    reforgeOptionsReloadForce = false
     const requestedAffixFilter = currentFilter
+    // 捕获起始序号：若 fetch 期间发生任何改造（序号变化），落地时丢弃这次（可能已陈旧）的全量结果，
+    // 保留更准的本地 patch；后续对账会再刷一次。
+    const seqAtStart = reforgeMutationSeq
     try {
       // Fetch placement data in parallel for placedCount marking
       const placementPromise = gacha.getPlacement().then((res) => {
@@ -434,12 +546,15 @@ export function useGachaDraw(page: GachaPageContext) {
         }
       }
       const nextOptions = sortReforgeOptions(grouped.values())
-      reforgeCardOptions.value = nextOptions
-      if (reforgeCardId.value && !nextOptions.some((item) => item.stackKey === reforgeCardId.value)) {
-        reforgeCardId.value = ''
+      // 期间发生过改造 → 本地 patch 已更新且更准，丢弃这次全量结果，避免旧快照覆盖。
+      if (reforgeMutationSeq === seqAtStart) {
+        reforgeCardOptions.value = nextOptions
+        if (reforgeCardId.value && !nextOptions.some((item) => item.stackKey === reforgeCardId.value)) {
+          reforgeCardId.value = ''
+        }
+        reforgeLoadedAt = Date.now()
+        reforgeLoadedFilter = requestedAffixFilter
       }
-      reforgeLoadedAt = Date.now()
-      reforgeLoadedFilter = requestedAffixFilter
     } catch (error: unknown) {
       emitError(normalizeError(error, '加载改造候选卡片失败'))
     } finally {
@@ -448,7 +563,10 @@ export function useGachaDraw(page: GachaPageContext) {
       const activeAffixFilter = reforgeAffixFilter.value || ''
       if (reforgeOptionsReloadQueued.value || activeAffixFilter !== requestedAffixFilter) {
         reforgeOptionsReloadQueued.value = false
-        refreshReforgeCardOptions().catch((error) => {
+        // 保留入队时记下的 force（如尾部对账），否则"假新鲜"会让 retry 被 freshness 跳过。
+        const retryForce = reforgeOptionsReloadForce
+        reforgeOptionsReloadForce = false
+        refreshReforgeCardOptions(retryForce).catch((error) => {
           console.warn('[gacha] reforge options refresh retry failed', error)
         })
       }
@@ -643,6 +761,7 @@ export function useGachaDraw(page: GachaPageContext) {
   async function handleAffixReforgeTicketUse() {
     if (ticketAction.value) return
     ticketAction.value = 'reforge'
+    beginReforgeMutation()
     try {
       const selected = selectedReforgeCardOption.value
       const res = await gacha.useAffixReforgeTicket(
@@ -655,10 +774,18 @@ export function useGachaDraw(page: GachaPageContext) {
       }
       tickets.value = normalizeTickets(res.tickets)
       lastReforgeResult.value = res.result ?? null
-      await refreshReforgeCardOptions(true)
+      // 与 confirmReforge 一致：本地乐观增量，替代全量重拉；对账统一在 finally 兜底排程。
+      if (res.result) {
+        const nextKey = applyReforgeResultLocally(res.result)
+        reforgeCardId.value = nextKey ?? ''
+      }
     } catch (error: unknown) {
       emitError(normalizeError(error, '使用改造券失败'))
     } finally {
+      endReforgeMutation()
+      // 无论成功/失败/无 result，都排一次尾部对账：补回 begin 时被清掉的上一次对账、
+      // 以及失败路径下被 seq/in-flight 守卫丢弃的刷新，避免刷新被饿死。
+      scheduleReforgeReconcile()
       ticketAction.value = null
     }
   }
@@ -682,6 +809,7 @@ export function useGachaDraw(page: GachaPageContext) {
   async function confirmReforge() {
     if (reforgeConfirming.value) return
     reforgeConfirming.value = true
+    beginReforgeMutation()
     try {
       const selected = selectedReforgeCardOption.value
       const res = await gacha.useAffixReforgeTicket(
@@ -696,18 +824,20 @@ export function useGachaDraw(page: GachaPageContext) {
       tickets.value = normalizeTickets(res.tickets)
       lastReforgeResult.value = res.result ?? null
       reforgeModalPhase.value = 'result'
-      // Update reforgeCardId to track the new affix so selection survives refresh.
-      // Must use resolveAffixSignatureFromSource to normalise/sort the signature
-      // the same way reforgeStackKey does, otherwise the key won't match.
-      if (res.result?.cardId) {
-        const normSig = resolveAffixSignatureFromSource({ affixSignature: res.result.after.affixSignature })
-        reforgeCardId.value = `${res.result.cardId}::${normSig}`
+      // 本地乐观增量（瞬时返回），并把选中项切到新词条以支持"再来一次"链式改造；
+      // 不再同步全量重拉库存（重库存用户此处曾卡数秒）。对账统一在 finally 兜底排程。
+      if (res.result) {
+        const nextKey = applyReforgeResultLocally(res.result)
+        reforgeCardId.value = nextKey ?? ''
       }
-      await refreshReforgeCardOptions(true)
     } catch (error: unknown) {
       emitError(normalizeError(error, '使用改造券失败'))
       reforgeModalOpen.value = false
     } finally {
+      endReforgeMutation()
+      // 无论成功/失败，都排一次尾部对账：补回 begin 时被清掉的上一次对账、以及失败路径下
+      // 被 seq/in-flight 守卫丢弃的刷新，避免刷新被饿死。
+      scheduleReforgeReconcile()
       reforgeConfirming.value = false
     }
   }
@@ -812,6 +942,10 @@ export function useGachaDraw(page: GachaPageContext) {
       if (drawAuthorQueueTimer) {
         clearTimeout(drawAuthorQueueTimer)
         drawAuthorQueueTimer = null
+      }
+      if (reforgeReconcileTimer) {
+        clearTimeout(reforgeReconcileTimer)
+        reforgeReconcileTimer = null
       }
       drawAuthorQueue.clear()
     },

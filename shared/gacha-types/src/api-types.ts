@@ -413,6 +413,9 @@ export interface TicketUseResult {
     title: string;
     before: { affixSignature: string; affixVisualStyle: AffixVisualStyle; affixLabel: string };
     after: { affixSignature: string; affixVisualStyle: AffixVisualStyle; affixLabel: string };
+    // 改造命中已放置实例时为 true：后端同步更新了该卡放置槽的词条，前端据此把 placedCount
+    // 从 before 变体迁到 after 变体。
+    placementUpdated?: boolean;
   };
   wallet?: Wallet | null;
 }
