@@ -103,6 +103,9 @@ interface PostItem {
   floor?: number | null
   parentCreatedByName?: string | null
   parentFloor?: number | null
+  // 作者当前显示名（#118）+ 是否可关联到本站用户（#117）。
+  authorDisplayName?: string | null
+  authorExists?: boolean
   sourceThreadUrl?: string | null
   sourcePostUrl?: string | null
   _dbIndex: number // original position in API response
@@ -368,21 +371,23 @@ function copyFloorLink(floor: number) {
         </h1>
 
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[rgb(var(--muted))]">
-          <span v-if="data.thread?.createdByName" class="inline-flex items-center gap-1.5">
+          <span v-if="data.thread?.authorDisplayName || data.thread?.createdByName" class="inline-flex items-center gap-1.5">
             <UserAvatar
               v-if="data.thread.createdByWikidotId"
               :wikidot-id="data.thread.createdByWikidotId"
-              :name="data.thread.createdByName"
+              :name="data.thread.authorDisplayName || data.thread.createdByName"
               :size="18"
             />
+            <!-- #117：仅当作者能关联到本站用户时才出链接，否则纯文本，避免 /user/ 死链。
+                 #118：用当前显示名 authorDisplayName，回退到创建时快照名。 -->
             <NuxtLink
-              v-if="data.thread.createdByWikidotId"
+              v-if="data.thread.createdByWikidotId && data.thread.authorExists"
               :to="`/user/${data.thread.createdByWikidotId}`"
               class="hover:text-[var(--g-accent)] transition-colors"
             >
-              {{ data.thread.createdByName }}
+              {{ data.thread.authorDisplayName || data.thread.createdByName }}
             </NuxtLink>
-            <span v-else>{{ data.thread.createdByName }}</span>
+            <span v-else>{{ data.thread.authorDisplayName || data.thread.createdByName }}</span>
           </span>
           <span v-if="data.thread?.createdAt" class="inline-flex items-center gap-1">
             <LucideIcon name="Calendar" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
@@ -489,18 +494,19 @@ function copyFloorLink(floor: number) {
               <UserAvatar
                 v-if="item.post.createdByWikidotId"
                 :wikidot-id="item.post.createdByWikidotId"
-                :name="item.post.createdByName"
+                :name="item.post.authorDisplayName || item.post.createdByName"
                 :size="22"
               />
+              <!-- #117：仅作者可关联到本站用户时出链接（否则纯文本，避免死链）。#118：用当前显示名。 -->
               <NuxtLink
-                v-if="item.post.createdByWikidotId && item.post.createdByName"
+                v-if="item.post.createdByWikidotId && item.post.authorExists && (item.post.authorDisplayName || item.post.createdByName)"
                 :to="`/user/${item.post.createdByWikidotId}`"
                 class="font-medium text-[rgb(var(--muted-strong))] hover:text-[var(--g-accent)] transition-colors"
               >
-                {{ item.post.createdByName }}
+                {{ item.post.authorDisplayName || item.post.createdByName }}
               </NuxtLink>
-              <span v-else-if="item.post.createdByName" class="font-medium text-[rgb(var(--muted-strong))]">
-                {{ item.post.createdByName }}
+              <span v-else-if="item.post.authorDisplayName || item.post.createdByName" class="font-medium text-[rgb(var(--muted-strong))]">
+                {{ item.post.authorDisplayName || item.post.createdByName }}
               </span>
               <span v-else class="italic">匿名用户</span>
 

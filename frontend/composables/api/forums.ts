@@ -32,6 +32,9 @@ export function useForumsApi() {
         pageWikidotId: number | null
         categoryTitle: string | null
         sourceThreadUrl: string | null
+        // 作者当前显示名（防改名漂移 #118）+ 是否可关联到本站用户（决定是否出链接 #117）。
+        authorDisplayName: string | null
+        authorExists: boolean
       }
       posts: Array<{
         id: number
@@ -48,6 +51,8 @@ export function useForumsApi() {
         floor: number | null
         parentCreatedByName: string | null
         parentFloor: number | null
+        authorDisplayName: string | null
+        authorExists: boolean
         sourceThreadUrl: string | null
         sourcePostUrl: string | null
       }>
@@ -79,7 +84,7 @@ export function useForumsApi() {
       threadsCount: number
       postsCount: number
       lastPostAt: string | null
-      topPosters: Array<{ name: string; wikidotId: number | null; postCount: number }>
+      topPosters: Array<{ name: string; wikidotId: number | null; postCount: number; authorExists?: boolean; displayName?: string | null }>
     }>('/forums/stats')
   }
 
