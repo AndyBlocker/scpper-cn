@@ -11,10 +11,9 @@ CREATE INDEX IF NOT EXISTS idx_pageversion_content_pgroonga
 ON "PageVersion" 
 USING pgroonga ("textContent");
 
--- 3. 组合全文索引（标题 + 内容）- 用于统一搜索
-CREATE INDEX IF NOT EXISTS idx_pageversion_fulltext_pgroonga 
-ON "PageVersion" 
-USING pgroonga ((COALESCE(title, '') || ' ' || COALESCE("textContent", '')));
+-- 3. 组合全文索引（标题 + 内容）- 已废弃 (#108)：该全表索引无人查询、写入开销大，已 DROP。
+--    统一搜索改用当前版本分区索引 idx_pv_search_text_current_pgroonga（见 #130 迁移）。
+--    保留注释以记录历史；不再创建。
 
 -- 4. 标签索引（用于过滤，不是全文搜索）
 -- 使用 GIN 索引而不是 PGroonga，因为标签是数组类型
