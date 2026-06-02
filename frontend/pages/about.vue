@@ -56,8 +56,11 @@
         <!-- 赞助者的话-->
         <div class="rounded-lg p-5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
           <h2 class="text-base font-semibold text-neutral-800 dark:text-neutral-100">赞助者的话</h2>
+          <p class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            SCPPER-CN现在可通过爱发电赞助：<a href="https://afdian.com/a/andyblocker/" target="_blank" rel="noopener noreferrer" class="underline hover:text-[var(--g-accent)]">https://afdian.com/a/andyblocker/</a>。如果你有想附上的赞助者的话，请联系我。感谢大家对SCPPER-CN的支持！
+          </p>
           <!-- Small UserCard + 一句话-->
-          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+          <div class="mt-3 text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8584266" :display-name="'DVA24'" bare />
             ：加个赞助者就行了，没必要写太多。 -- 2025.9.17 
           </div>
@@ -104,6 +107,10 @@
           <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="3290685" :display-name="'Rye Travis'" bare />
             ：大猫和小猫相比，那我还是觉得我们中猫牛批 -- 2026.4.23
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="10060406" :display-name="'Aoerfeshi'" bare />
+            ：原来不是捐一次钱推一次文吗？？ -- 2026.6.2
           </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
@@ -180,4 +187,3 @@ useHead({
   ]
 })
 </script>
-
