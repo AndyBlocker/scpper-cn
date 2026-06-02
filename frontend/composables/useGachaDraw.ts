@@ -8,7 +8,8 @@ import type {
   HistoryItem,
   InventoryItem,
   Rarity,
-  TicketBalance
+  TicketBalance,
+  TicketUseResult
 } from '~/types/gacha'
 import {
   normalizeTickets,
@@ -84,6 +85,7 @@ export function useGachaDraw(page: GachaPageContext) {
   const drawAuthorQueue = new Set<number>()
   let reforgeLoadedAt = 0
   let reforgeLoadedFilter = ''
+  let reforgeReconcileTimer: ReturnType<typeof setTimeout> | null = null
   const lastReforgeResult = ref<{
     cardId: string
     title: string
@@ -296,6 +298,67 @@ export function useGachaDraw(page: GachaPageContext) {
       if (titleDiff !== 0) return titleDiff
       return a.stackKey.localeCompare(b.stackKey, 'zh-CN')
     })
+  }
+
+  // 改造后本地乐观增量：改造把一张卡的一个实例从 before 词条变成 after 词条（服务端 -1/+1）。
+  // 不再为反映这一处变化而全量重拉 + 重聚合整库存（重库存用户单次数秒），直接 patch 本地分组：
+  // before 分组 -1（归零则移除），after 分组 +1（不存在则用 before 的卡面元数据克隆一份）。
+  // 产生的 stackKey 与全量刷新完全一致（reforgeStackKey = cardId::resolveAffixSignatureFromSource）。
+  // 返回新选中项的 stackKey（用于"再来一次"链式改造）；若 after 词条不符合当前筛选则返回 null。
+  function applyReforgeResultLocally(result: NonNullable<TicketUseResult['result']>): string | null {
+    const cardId = result.cardId
+    if (!cardId) return null
+    const beforeSig = resolveAffixSignatureFromSource({ affixSignature: result.before.affixSignature })
+    const afterSig = resolveAffixSignatureFromSource({ affixSignature: result.after.affixSignature })
+    const beforeKey = `${cardId}::${beforeSig}`
+    const afterKey = `${cardId}::${afterSig}`
+    const list = reforgeCardOptions.value.slice()
+
+    const beforeIdx = list.findIndex((o) => o.stackKey === beforeKey)
+    const template = beforeIdx >= 0 ? list[beforeIdx] : null
+    if (beforeIdx >= 0) {
+      const next = { ...list[beforeIdx], count: list[beforeIdx].count - 1 }
+      if (next.count <= 0) list.splice(beforeIdx, 1)
+      else list[beforeIdx] = next
+    }
+
+    // 仅当 after 词条符合当前筛选时才并入列表：筛选 'NONE' 时列表只含无词条变体，而改造必产出有词条
+    // 变体，故不并入（与全量刷新在该筛选下的结果一致）。
+    const filter = reforgeAffixFilter.value || ''
+    const afterMatchesFilter = !filter
+      || afterSig === resolveAffixSignatureFromSource({ affixSignature: filter })
+    if (afterMatchesFilter) {
+      const afterIdx = list.findIndex((o) => o.stackKey === afterKey)
+      if (afterIdx >= 0) {
+        list[afterIdx] = { ...list[afterIdx], count: list[afterIdx].count + 1 }
+      } else if (template) {
+        list.push({
+          ...template,
+          stackKey: afterKey,
+          count: 1,
+          placedCount: 0,
+          affixSignature: afterSig,
+          // panel 仅用 affixStyles[0] 渲染视觉样式；完整数组由停手后的对账刷新补全。
+          affixStyles: [result.after.affixVisualStyle],
+          affixStyleCounts: undefined
+        })
+      }
+    }
+
+    reforgeCardOptions.value = sortReforgeOptions(list)
+    return afterMatchesFilter ? afterKey : null
+  }
+
+  // 停手 1.5s 后做一次服务端对账，纠正本地增量可能的细微漂移（如多端并发、placement 联动）。
+  // 用尾部去抖而非每次改造都后台刷新，避免连点时旧快照覆盖更新的本地 patch 造成计数闪烁。
+  function scheduleReforgeReconcile() {
+    if (reforgeReconcileTimer) clearTimeout(reforgeReconcileTimer)
+    reforgeReconcileTimer = setTimeout(() => {
+      reforgeReconcileTimer = null
+      refreshReforgeCardOptions(true).catch((error) => {
+        console.warn('[gacha] reforge reconcile failed', error)
+      })
+    }, 1500)
   }
 
   async function refreshReforgeCardOptions(force = false) {
@@ -655,7 +718,14 @@ export function useGachaDraw(page: GachaPageContext) {
       }
       tickets.value = normalizeTickets(res.tickets)
       lastReforgeResult.value = res.result ?? null
-      await refreshReforgeCardOptions(true)
+      // 与 confirmReforge 一致：本地乐观增量 + 去抖对账，替代全量重拉。
+      if (res.result) {
+        const nextKey = applyReforgeResultLocally(res.result)
+        reforgeCardId.value = nextKey ?? ''
+        scheduleReforgeReconcile()
+      } else {
+        await refreshReforgeCardOptions(true)
+      }
     } catch (error: unknown) {
       emitError(normalizeError(error, '使用改造券失败'))
     } finally {
@@ -696,14 +766,13 @@ export function useGachaDraw(page: GachaPageContext) {
       tickets.value = normalizeTickets(res.tickets)
       lastReforgeResult.value = res.result ?? null
       reforgeModalPhase.value = 'result'
-      // Update reforgeCardId to track the new affix so selection survives refresh.
-      // Must use resolveAffixSignatureFromSource to normalise/sort the signature
-      // the same way reforgeStackKey does, otherwise the key won't match.
-      if (res.result?.cardId) {
-        const normSig = resolveAffixSignatureFromSource({ affixSignature: res.result.after.affixSignature })
-        reforgeCardId.value = `${res.result.cardId}::${normSig}`
+      // 本地乐观增量（瞬时返回），并把选中项切到新词条以支持"再来一次"链式改造；
+      // 不再同步全量重拉库存（重库存用户此处曾卡数秒）。停手 1.5s 后再做一次服务端对账。
+      if (res.result) {
+        const nextKey = applyReforgeResultLocally(res.result)
+        reforgeCardId.value = nextKey ?? ''
+        scheduleReforgeReconcile()
       }
-      await refreshReforgeCardOptions(true)
     } catch (error: unknown) {
       emitError(normalizeError(error, '使用改造券失败'))
       reforgeModalOpen.value = false
@@ -812,6 +881,10 @@ export function useGachaDraw(page: GachaPageContext) {
       if (drawAuthorQueueTimer) {
         clearTimeout(drawAuthorQueueTimer)
         drawAuthorQueueTimer = null
+      }
+      if (reforgeReconcileTimer) {
+        clearTimeout(reforgeReconcileTimer)
+        reforgeReconcileTimer = null
       }
       drawAuthorQueue.clear()
     },
