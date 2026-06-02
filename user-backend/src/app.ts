@@ -1,6 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import pinoHttp from 'pino-http';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
@@ -13,6 +14,10 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
+  // gzip 响应。大 JSON（如重库存用户 /gacha/inventory 全量 6.5MB）原先未压缩，跨 BFF/openresty
+  // 透传到客户端需数秒传输。compression 用 zlib 流在线程池压缩（不阻塞主事件循环），高重复 JSON
+  // 可压到 ~10-15%。BFF http-proxy 与 openresty 均透传上游 Content-Encoding: gzip。
+  app.use(compression());
   app.use(helmet());
   const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   app.use(cors({
