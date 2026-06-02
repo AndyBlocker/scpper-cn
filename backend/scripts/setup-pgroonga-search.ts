@@ -22,12 +22,8 @@ async function setupPGroongaSearch() {
         sql: `CREATE INDEX IF NOT EXISTS idx_pageversion_content_pgroonga 
               ON "PageVersion" USING pgroonga ("textContent")`
       },
-      {
-        name: 'PageVersion 全文组合索引',
-        sql: `CREATE INDEX IF NOT EXISTS idx_pageversion_fulltext_pgroonga 
-              ON "PageVersion" 
-              USING pgroonga ((COALESCE(title, '') || ' ' || COALESCE("textContent", '')))`
-      },
+      // #108：PageVersion 全文组合索引 idx_pageversion_fulltext_pgroonga 已废弃并 DROP——
+      // 全表索引、无人查询、写入开销大；统一搜索改用当前版本分区索引 idx_pv_search_text_current_pgroonga。
       {
         name: 'PageVersion tags GIN 索引',
         sql: `CREATE INDEX IF NOT EXISTS idx_pageversion_tags_gin 
