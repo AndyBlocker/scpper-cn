@@ -176,6 +176,10 @@ export class UserSocialAnalysisJob {
     console.log('  🔁 Rebuilding all tag preference data...');
 
     await this.prisma.$transaction([
+      // #90：与增量社交分析(用 pg_advisory_lock(hashtext('user_social_analysis')))互斥，
+      // 防止周期全量重算(scpper-social-rebuild cron)与 sync 增量并发写 UTP 导致唯一冲突/覆盖。
+      // xact 级锁与 session 级锁同 key 共享锁空间，提交即释放，且与 deleteMany/INSERT 同事务同连接。
+      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis'))`,
       this.prisma.userTagPreference.deleteMany({}),
       this.prisma.$executeRaw`
         WITH latest_vote_candidates AS (
@@ -413,6 +417,8 @@ export class UserSocialAnalysisJob {
     console.log('  🔁 Rebuilding all vote interaction data...');
 
     await this.prisma.$transaction([
+      // #90：同 rebuildAllUserTagPreferences，acquire 同一把 advisory lock 与增量社交分析互斥。
+      this.prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('user_social_analysis'))`,
       this.prisma.userVoteInteraction.deleteMany({}),
       this.prisma.$executeRaw`
         WITH effective_attributions AS (
