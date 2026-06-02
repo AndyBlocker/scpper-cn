@@ -87,9 +87,12 @@ export function useGachaDraw(page: GachaPageContext) {
   let reforgeLoadedFilter = ''
   let reforgeReconcileTimer: ReturnType<typeof setTimeout> | null = null
   // 改造 mutation 的单调序号：在每次改造【开始】时自增（见 beginReforgeMutation）。
-  // 全量刷新捕获起始序号，落地前比对——若期间有改造开始则丢弃该快照，避免旧快照覆盖更新的
-  // 本地 patch、或与随后到达的本地 patch 叠加成双重计数。
+  // 全量刷新捕获起始序号，落地前比对——若 fetch 期间有改造开始则丢弃该快照（拦住"中途开始"的改造）。
   let reforgeMutationSeq = 0
+  // 进行中的改造数：改造期间任何全量刷新都可能读到"已提交但本地 patch 未到"的中间态，落地后再被
+  // 本地 patch 叠加成双重计数。故 in-flight 期间的刷新一律放弃、交由改造完成后的对账补刷
+  // （拦住"刷新启动时改造已在飞行"的情形，与序号守卫互补闭合竞态）。
+  let reforgeMutationInFlight = 0
   const lastReforgeResult = ref<{
     cardId: string
     title: string
@@ -304,14 +307,20 @@ export function useGachaDraw(page: GachaPageContext) {
     })
   }
 
-  // 改造开始时调用：自增序号（让飞行中的全量刷新落地前能识别"期间发生了改造"并丢弃旧快照），
-  // 并取消尚未触发的对账（避免它在本次改造进行中触发）。
+  // 改造开始时调用：自增序号（让 fetch 中途启动的全量刷新落地时识别"期间发生了改造"并丢弃），
+  // 标记 in-flight（让此刻已在飞行的全量刷新放弃落地），并取消尚未触发的对账。
   function beginReforgeMutation() {
     reforgeMutationSeq++
+    reforgeMutationInFlight++
     if (reforgeReconcileTimer) {
       clearTimeout(reforgeReconcileTimer)
       reforgeReconcileTimer = null
     }
+  }
+
+  // 改造结束时调用（成功或失败的 finally）。
+  function endReforgeMutation() {
+    reforgeMutationInFlight = Math.max(0, reforgeMutationInFlight - 1)
   }
 
   // 改造后本地乐观增量：改造把一张卡的一个实例从 before 词条变成 after 词条（服务端 -1/+1）。
@@ -393,6 +402,12 @@ export function useGachaDraw(page: GachaPageContext) {
       reforgeCardId.value = ''
       reforgeOptionsReloadQueued.value = false
       reforgeOptionsFullyLoaded.value = true
+      return
+    }
+    // 改造进行中：放弃这次全量刷新（其快照可能与随后到达的本地 patch 叠加成双重计数），
+    // 改由改造完成后的对账补刷。覆盖"刷新启动时已有改造在飞行"的竞态（与落地处的序号守卫互补）。
+    if (reforgeMutationInFlight > 0) {
+      scheduleReforgeReconcile()
       return
     }
     // Freshness check: skip reload if data was loaded recently with same filter
@@ -762,6 +777,7 @@ export function useGachaDraw(page: GachaPageContext) {
     } catch (error: unknown) {
       emitError(normalizeError(error, '使用改造券失败'))
     } finally {
+      endReforgeMutation()
       ticketAction.value = null
     }
   }
@@ -811,6 +827,7 @@ export function useGachaDraw(page: GachaPageContext) {
       emitError(normalizeError(error, '使用改造券失败'))
       reforgeModalOpen.value = false
     } finally {
+      endReforgeMutation()
       reforgeConfirming.value = false
     }
   }
