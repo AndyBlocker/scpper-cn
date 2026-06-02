@@ -38,5 +38,24 @@ module.exports = {
       },
       watch: false,
     },
+    {
+      // #90：增量社交分析对"撤票"产生的陈旧/孤立互动行不会删除（只 DELETE+INSERT 它处理到的
+      // 配对），长期缓慢累积。全量重算(repair --social-only)是事务化的(deleteMany+INSERT 同一
+      // $transaction，读者无空白窗口)、安全且自愈。用独立 pm2 cron 进程每周跑一次自动清理，
+      // 与关键 sync 守护进程隔离；autorestart:false 表示每个 cron tick 只跑一次后退出。
+      name: 'scpper-social-rebuild',
+      cwd: __dirname,
+      script: '/bin/bash',
+      args: ['-lc', 'exec node --max-old-space-size=1024 --import tsx/esm src/cli/index.ts repair-user-vote-stats --social-only'],
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: false,
+      cron_restart: '30 4 * * 1',
+      time: true,
+      env: {
+        NODE_ENV: 'production',
+      },
+      watch: false,
+    },
   ],
 }
