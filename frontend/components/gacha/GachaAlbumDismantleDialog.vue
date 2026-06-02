@@ -61,6 +61,10 @@ const pageAuthors = usePageAuthors()
 
 const RENDER_LIMIT = 40
 const RENDER_BATCH = 20
+// #98：即便渐进式渲染,"显示全部"最终仍会把全部候选(可达上万)塞进 DOM,导致滚动/内存卡顿。
+// 硬上限封顶单次 DOM 规模;超出部分通过稀有度/词条筛选缩小,或直接"全选"(选择基于全部 filtered,
+// 不受渲染上限影响)分解。
+const RENDER_HARD_CAP = 1000
 const showAll = ref(false)
 const confirmPending = ref(false)
 
@@ -74,7 +78,7 @@ function startProgressiveRender() {
   cancelProgressiveRender()
   function step() {
     const target = showAll.value
-      ? filteredCandidates.value.length
+      ? Math.min(filteredCandidates.value.length, RENDER_HARD_CAP)
       : Math.min(filteredCandidates.value.length, RENDER_LIMIT)
     if (renderBudget.value < target) {
       renderBudget.value = Math.min(renderBudget.value + RENDER_BATCH, target)
@@ -221,10 +225,14 @@ const selectedCardCount = computed(() => selectedRows.value.reduce((s, r) => s +
 const selectedRewardEstimate = computed(() => selectedRows.value.reduce((s, r) => s + r.estimatedReward, 0))
 
 const visibleCandidates = computed(() => {
-  const limit = showAll.value ? renderBudget.value : Math.min(renderBudget.value, RENDER_LIMIT)
+  const limit = showAll.value
+    ? Math.min(renderBudget.value, RENDER_HARD_CAP)
+    : Math.min(renderBudget.value, RENDER_LIMIT)
   return filteredCandidates.value.slice(0, limit)
 })
 const hasMore = computed(() => !showAll.value && filteredCandidates.value.length > RENDER_LIMIT)
+// 显示全部后仍有超出硬上限未渲染的候选：提示用筛选缩小或直接全选（选择不受渲染上限影响）。
+const renderTruncated = computed(() => showAll.value && filteredCandidates.value.length > RENDER_HARD_CAP)
 
 // ─── 操作函数 ────────────────────────────────────────────
 
@@ -488,6 +496,12 @@ function handleOpenChange(nextOpen: boolean) {
               >
                 加载更多 ({{ filteredCandidates.length - RENDER_LIMIT }} 项)
               </button>
+              <p
+                v-if="renderTruncated"
+                class="mt-2 px-3 py-2 text-center text-[11px] text-neutral-500 dark:text-neutral-400"
+              >
+                已渲染前 {{ RENDER_HARD_CAP }} 项（共 {{ filteredCandidates.length }} 项）。请用上方稀有度/词条筛选缩小范围，或直接「全选」分解（选择不受渲染上限影响）。
+              </p>
             </div>
             <p v-else class="px-3 py-8 text-center text-sm text-neutral-500 dark:text-neutral-400">
               当前过滤条件下没有可分解候选。
