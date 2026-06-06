@@ -933,6 +933,25 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
     const scoreExprSql = 'pgroonga_score(pv.tableoid, pv.ctid) AS score';
     const eTitleMatchSql = 'e.title &@~ pgroonga_query_escape($1)';
     const eAltMatchSql = 'e."alternateTitle" &@~ pgroonga_query_escape($1)';
+    // ── relevance 排序的匹配档位 ──────────────────────────
+    // 3 = 导航意图：slug/URL/标题/备用标题与查询精确相等（"搜什么得什么"）
+    // 2 = 标题或备用标题命中（部分匹配）
+    // 1 = 仅正文命中（探索意图）
+    // 档位之间：在档页优先于已删除页；档位 >=2 内评分优先于词频分，
+    // 避免已删除竞赛稿等高词频低质量页面压过真正的目标页面。
+    const matchTierSql = `CASE
+            WHEN lower(split_part(e.url, '/', 4)) = lower($1)
+              OR lower(e.url) = lower($1)
+              OR (e.title IS NOT NULL AND lower(e.title) = lower($1))
+              OR (e."alternateTitle" IS NOT NULL AND lower(e."alternateTitle") = lower($1))
+            THEN 3
+            WHEN (e.title IS NOT NULL AND ${eTitleMatchSql})
+              OR (e."alternateTitle" IS NOT NULL AND ${eAltMatchSql})
+            THEN 2
+            ELSE 1
+          END`;
+    // 仅在 relevance 模式参与排序；其他 orderBy 模式下这些列为 NULL（排序 no-op）
+    const relevanceGateSql = `($9::text IS NULL OR $9::text = 'relevance')`;
 
     const cteFilters = buildCteInlineFilters(false);
     const cteFiltersWithDate = buildCteInlineFilters(true);
@@ -1130,14 +1149,22 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           CASE WHEN lower(e.url) = lower($1) THEN 1 ELSE 0 END AS exact_url,
           CASE WHEN e.title IS NOT NULL AND lower(e.title) = lower($1) THEN 1 ELSE 0 END AS exact_title,
           CASE WHEN e.title IS NOT NULL AND ${eTitleMatchSql} THEN 1 ELSE 0 END AS title_hit,
-          CASE WHEN e."alternateTitle" IS NOT NULL AND ${eAltMatchSql} THEN 1 ELSE 0 END AS alt_hit
+          CASE WHEN e."alternateTitle" IS NOT NULL AND ${eAltMatchSql} THEN 1 ELSE 0 END AS alt_hit,
+          CASE WHEN ${relevanceGateSql} THEN ${matchTierSql} END AS relevance_tier,
+          CASE WHEN ${relevanceGateSql} THEN (CASE WHEN e."isDeleted" THEN 1 ELSE 0 END) END AS relevance_deleted_rank,
+          CASE WHEN ${relevanceGateSql} THEN (CASE WHEN ${matchTierSql} >= 2 THEN e.rating END) END AS relevance_rating_rank
         FROM enriched e
         ORDER BY
           CASE WHEN $9 IN ('rating', 'rating_asc', 'wilson95', 'wilson95_asc', 'controversy', 'controversy_asc', 'comment_count', 'comment_count_asc', 'vote_count', 'vote_count_asc') THEN NULL END,
           CASE WHEN $9 IN ('recent', 'recent_asc') THEN NULL END,
+          relevance_tier DESC NULLS LAST,
+          relevance_deleted_rank ASC NULLS LAST,
+          -- 档位内细分（有意置于 rating 之前）：tier 3 内 slug 相等 > URL 相等 > 标题相等，
+          -- 导航精度优先于评分；tier 1/2 行这三个旗标全为 0，不影响其组内次序
           host_match DESC NULLS LAST,
           exact_url DESC NULLS LAST,
           exact_title DESC NULLS LAST,
+          relevance_rating_rank DESC NULLS LAST,
           title_hit DESC NULLS LAST,
           alt_hit DESC NULLS LAST,
           has_url DESC NULLS LAST,
@@ -1363,6 +1390,9 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
         exact_title,
         title_hit,
         alt_hit,
+        relevance_tier,
+        relevance_deleted_rank,
+        relevance_rating_rank,
         search_preview: searchPreview,
         ...rest
       } = row;
