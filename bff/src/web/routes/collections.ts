@@ -544,7 +544,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
           await client.query(
             `
               UPDATE "UserCollection"
-              SET "isDefault" = FALSE
+              SET "isDefault" = FALSE,
+                  "updatedAt" = NOW()
               WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
             `,
             [ownerId, result.rows[0].id]
@@ -712,7 +713,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
           await client.query(
             `
               UPDATE "UserCollection"
-              SET "isDefault" = FALSE
+              SET "isDefault" = FALSE,
+                  "updatedAt" = NOW()
               WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
             `,
             [ownerId, id]

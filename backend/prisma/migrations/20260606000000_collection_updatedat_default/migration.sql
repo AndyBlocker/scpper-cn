@@ -10,10 +10,22 @@
 --      成为 schema 的一部分，未来 drift 对齐不会再次移除
 --
 -- 本迁移为纯加固（非破坏性、可重复执行），SET DEFAULT 只影响后续 INSERT，不回填存量数据。
-ALTER TABLE "UserCollection" ALTER COLUMN "updatedAt" SET DEFAULT now();
-ALTER TABLE "UserCollectionItem" ALTER COLUMN "updatedAt" SET DEFAULT now();
+--
+-- 注意：UserCollection / UserCollectionItem 的建表 SQL 位于 backend/sql/20251212_user_collections.sql
+-- （迁移目录之外），prisma migrate deploy 不会执行它。为兼容空库重放（CI / 新环境 / shadow
+-- database，否则 migrate dev 无法创建新迁移），用 to_regclass 守卫表存在性；混合大小写表名
+-- 必须带双引号传入 to_regclass。
+DO $$
+BEGIN
+  IF to_regclass('public."UserCollection"') IS NOT NULL THEN
+    ALTER TABLE "UserCollection" ALTER COLUMN "updatedAt" SET DEFAULT NOW();
+  END IF;
+  IF to_regclass('public."UserCollectionItem"') IS NOT NULL THEN
+    ALTER TABLE "UserCollectionItem" ALTER COLUMN "updatedAt" SET DEFAULT NOW();
+  END IF;
+END $$;
 
 -- SiteOverviewDaily 同款预防性加固（Codex review 发现）：其建表迁移 20250825000005 手工带
 -- DEFAULT now() 且线上健在，但 schema 此前是裸 @updatedAt，与迁移历史矛盾，存在被未来
 -- drift 对齐删除的同等风险。schema 已同步改为 @default(now()) @updatedAt，此处重申默认值（幂等）。
-ALTER TABLE "SiteOverviewDaily" ALTER COLUMN "updatedAt" SET DEFAULT now();
+ALTER TABLE "SiteOverviewDaily" ALTER COLUMN "updatedAt" SET DEFAULT NOW();
