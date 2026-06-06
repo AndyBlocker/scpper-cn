@@ -12,3 +12,8 @@
 -- 本迁移为纯加固（非破坏性、可重复执行），SET DEFAULT 只影响后续 INSERT，不回填存量数据。
 ALTER TABLE "UserCollection" ALTER COLUMN "updatedAt" SET DEFAULT now();
 ALTER TABLE "UserCollectionItem" ALTER COLUMN "updatedAt" SET DEFAULT now();
+
+-- SiteOverviewDaily 同款预防性加固（Codex review 发现）：其建表迁移 20250825000005 手工带
+-- DEFAULT now() 且线上健在，但 schema 此前是裸 @updatedAt，与迁移历史矛盾，存在被未来
+-- drift 对齐删除的同等风险。schema 已同步改为 @default(now()) @updatedAt，此处重申默认值（幂等）。
+ALTER TABLE "SiteOverviewDaily" ALTER COLUMN "updatedAt" SET DEFAULT now();

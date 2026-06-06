@@ -274,12 +274,12 @@ final AS (
         INSERT INTO "SiteOverviewDaily" (
           date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
           "pagesTotal", "pagesOriginals", "pagesTranslations",
-          "votesUp", "votesDown", "revisionsTotal"
+          "votesUp", "votesDown", "revisionsTotal", "updatedAt"
         )
         SELECT
           date, "usersTotal", "usersActive", "usersContributors", "usersAuthors",
           "pagesTotal", "pagesOriginals", "pagesTranslations",
-          "votesUp", "votesDown", "revisionsTotal"
+          "votesUp", "votesDown", "revisionsTotal", NOW()
         FROM final
         ON CONFLICT (date) DO UPDATE SET
           "usersTotal"        = EXCLUDED."usersTotal",
@@ -291,7 +291,8 @@ final AS (
           "pagesTranslations" = EXCLUDED."pagesTranslations",
           "votesUp"           = EXCLUDED."votesUp",
           "votesDown"         = EXCLUDED."votesDown",
-          "revisionsTotal"    = EXCLUDED."revisionsTotal"
+          "revisionsTotal"    = EXCLUDED."revisionsTotal",
+          "updatedAt"         = NOW()
       `);
     }
   }

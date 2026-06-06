@@ -882,7 +882,7 @@ model SiteOverviewDaily {
   // Revisions (daily increments)
   revisionsTotal     Int      @default(0)
   createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  updatedAt          DateTime @default(now()) @updatedAt
 
 }
 
