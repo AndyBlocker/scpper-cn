@@ -526,7 +526,7 @@ model UserCollection {
   isDefault      Boolean               @default(false)
   publishedAt    DateTime?
   createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+  updatedAt      DateTime              @default(now()) @updatedAt
   owner          User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   items          UserCollectionItem[]
 
@@ -543,7 +543,7 @@ model UserCollectionItem {
   order        Float           @default(0)
   pinned       Boolean         @default(false)
   createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  updatedAt    DateTime        @default(now()) @updatedAt
   collection   UserCollection  @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   page         Page            @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
