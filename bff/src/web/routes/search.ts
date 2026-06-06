@@ -1152,13 +1152,15 @@ export function searchRouter(pool: Pool, redis: RedisClientType | null) {
           CASE WHEN e."alternateTitle" IS NOT NULL AND ${eAltMatchSql} THEN 1 ELSE 0 END AS alt_hit,
           CASE WHEN ${relevanceGateSql} THEN ${matchTierSql} END AS relevance_tier,
           CASE WHEN ${relevanceGateSql} THEN (CASE WHEN e."isDeleted" THEN 1 ELSE 0 END) END AS relevance_deleted_rank,
-          CASE WHEN ${relevanceGateSql} AND ${matchTierSql} >= 2 THEN e.rating END AS relevance_rating_rank
+          CASE WHEN ${relevanceGateSql} THEN (CASE WHEN ${matchTierSql} >= 2 THEN e.rating END) END AS relevance_rating_rank
         FROM enriched e
         ORDER BY
           CASE WHEN $9 IN ('rating', 'rating_asc', 'wilson95', 'wilson95_asc', 'controversy', 'controversy_asc', 'comment_count', 'comment_count_asc', 'vote_count', 'vote_count_asc') THEN NULL END,
           CASE WHEN $9 IN ('recent', 'recent_asc') THEN NULL END,
           relevance_tier DESC NULLS LAST,
           relevance_deleted_rank ASC NULLS LAST,
+          -- 档位内细分（有意置于 rating 之前）：tier 3 内 slug 相等 > URL 相等 > 标题相等，
+          -- 导航精度优先于评分；tier 1/2 行这三个旗标全为 0，不影响其组内次序
           host_match DESC NULLS LAST,
           exact_url DESC NULLS LAST,
           exact_title DESC NULLS LAST,
