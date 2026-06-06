@@ -525,14 +525,14 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
           supportsTransforms
             ? `
               INSERT INTO "UserCollection"
-              ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "coverImageOffsetX", "coverImageOffsetY", "coverImageScale", "isDefault", "publishedAt")
-              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, $8, $9, $10, NULL)
+              ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "coverImageOffsetX", "coverImageOffsetY", "coverImageScale", "isDefault", "publishedAt", "updatedAt")
+              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, $8, $9, $10, NULL, NOW())
               RETURNING *
             `
             : `
               INSERT INTO "UserCollection"
-              ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "isDefault", "publishedAt")
-              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, NULL)
+              ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "isDefault", "publishedAt", "updatedAt")
+              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, NULL, NOW())
               RETURNING *
             `,
           supportsTransforms
@@ -544,7 +544,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
           await client.query(
             `
               UPDATE "UserCollection"
-              SET "isDefault" = FALSE
+              SET "isDefault" = FALSE,
+                  "updatedAt" = NOW()
               WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
             `,
             [ownerId, result.rows[0].id]
@@ -712,7 +713,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
           await client.query(
             `
               UPDATE "UserCollection"
-              SET "isDefault" = FALSE
+              SET "isDefault" = FALSE,
+                  "updatedAt" = NOW()
               WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
             `,
             [ownerId, id]
@@ -791,8 +793,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const inserted = await pool.query<any>(
         `
           INSERT INTO "UserCollectionItem"
-          ("collectionId", "pageId", annotation, "order", pinned)
-          VALUES ($1, $2, $3, $4, $5)
+          ("collectionId", "pageId", annotation, "order", pinned, "updatedAt")
+          VALUES ($1, $2, $3, $4, $5, NOW())
           ON CONFLICT ("collectionId", "pageId") DO UPDATE
           SET annotation = EXCLUDED.annotation,
               pinned = EXCLUDED.pinned,
