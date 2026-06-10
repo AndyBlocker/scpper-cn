@@ -882,6 +882,23 @@ model SuspectedAltPair {
   @@index([status])
 }
 
+/// 读取图谱：登录用户浏览过的页面(由 PageViewEvent⋈UserPixelEvent 按 clientHash+时间窗重建)。
+/// 见 backend/sql/20260611_tracking_read_graph.sql；FK 在 SQL 层,Prisma 不声明关系。
+model UserPageView {
+  id            BigInt   @id @default(autoincrement())
+  userId        Int
+  wikidotId     Int?
+  pageId        Int
+  firstViewedAt DateTime
+  lastViewedAt  DateTime
+  viewCount     Int      @default(1)
+  updatedAt     DateTime @default(now())
+
+  @@unique([userId, pageId])
+  @@index([pageId])
+  @@index([lastViewedAt])
+}
+
 model UserDailyStats {
   id           Int       @id @default(autoincrement())
   userId       Int
