@@ -11,6 +11,8 @@ import { runDailySiteOverview } from '../jobs/DailySiteOverviewJob.js';
 import { TrackingRetentionJob } from '../jobs/TrackingRetentionJob.js';
 import { AltAccountDetectionJob } from '../jobs/AltAccountDetectionJob.js';
 import { TrackingSignalBackfillJob } from '../jobs/TrackingSignalBackfillJob.js';
+import { ReadGraphJob } from '../jobs/ReadGraphJob.js';
+import { TrackingAnomalyCheckJob } from '../jobs/TrackingAnomalyCheckJob.js';
 import { disconnectPrisma, getPrismaClient } from '../utils/db-connection.js';
 import { validateUserStats } from '../jobs/ValidationJob.js';
 import { Logger } from '../utils/Logger.js';
@@ -356,6 +358,40 @@ program
     await job.run({
       dryRun: Boolean(options.dryRun),
       batchSize: Number.isFinite(parsedBatch) && parsedBatch > 0 ? parsedBatch : undefined,
+    });
+    await disconnectPrisma();
+  });
+
+program
+  .command('analyze-read-graph')
+  .description('重建读取图谱: PageViewEvent⋈UserPixelEvent 按 clientHash+时间窗 → UserPageView(谁读了哪页)')
+  .option('--hours <n>', '处理近 N 小时的用户像素, 默认 26', '26')
+  .option('--full', '全量重建(忽略 --hours)')
+  .option('--dry-run', '仅预览可产出对数, 不写入')
+  .action(async (options) => {
+    const job = new ReadGraphJob();
+    const parsedHours = Number.parseInt(String(options.hours ?? ''), 10);
+    const result = await job.run({
+      hours: Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : undefined,
+      full: Boolean(options.full),
+      dryRun: Boolean(options.dryRun),
+    });
+    Logger.info(`[read-graph] 完成: upsert ${result.upserted} (window ${result.window})`);
+    await disconnectPrisma();
+  });
+
+program
+  .command('check-tracking-anomalies')
+  .description('追踪反作弊/数据质量只读检查: 缓存投毒 + 看后投票(需先 analyze-read-graph)')
+  .option('--days <n>', '检查窗口天数, 默认 30', '30')
+  .option('--top <n>', '每项报告 top N, 默认 20', '20')
+  .action(async (options) => {
+    const job = new TrackingAnomalyCheckJob();
+    const parsedDays = Number.parseInt(String(options.days ?? ''), 10);
+    const parsedTop = Number.parseInt(String(options.top ?? ''), 10);
+    await job.run({
+      days: Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : undefined,
+      topN: Number.isFinite(parsedTop) && parsedTop > 0 ? parsedTop : undefined,
     });
     await disconnectPrisma();
   });
