@@ -15,8 +15,10 @@ module.exports = {
         REDIS_URL: process.env.REDIS_URL,
         HTML_SNIPPET_PUBLIC_BASE: process.env.HTML_SNIPPET_PUBLIC_BASE || 'https://scpper.mer.run',
         CSS_PROXY_CACHE_CONTROL: process.env.CSS_PROXY_CACHE_CONTROL || 'public, max-age=3600, s-maxage=7200',
-        ENABLE_TRACKING_DEBUG: process.env.ENABLE_TRACKING_DEBUG || 'false',
-        TRACKING_DEBUG_SAMPLE_RATE: process.env.TRACKING_DEBUG_SAMPLE_RATE || '0'
+        // 硬编码关闭:debug 表存完整请求头+原始 IP,曾因 shell env 透传漂移以 100% 采样
+        // 常开数月(2026-06-10 审计)。需要临时开 debug 时改这里并走部署流程,不走 env。
+        ENABLE_TRACKING_DEBUG: 'false',
+        TRACKING_DEBUG_SAMPLE_RATE: '0'
       }
     }
   ]

@@ -404,7 +404,12 @@ function buildPairOverlaps(events: OverlapEvent[], votes: OverlapVote[]): PairOv
   return results.slice(0, MAX_PAIR_DISPLAY);
 }
 
+// IP 地理查询会把真实用户 IP 明文 HTTP 外发第三方(ip-api.com),默认关闭;
+// 仅在显式 TRACKING_HEALTH_IP_GEO=true 时启用(2026-06-10 审计 P0-7)。
+const IP_GEO_ENABLED = String(process.env.TRACKING_HEALTH_IP_GEO || '').toLowerCase() === 'true';
+
 async function fetchIpGeo(ip: string, timeoutMs = 2000): Promise<string | null> {
+  if (!IP_GEO_ENABLED) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
