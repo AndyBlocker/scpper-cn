@@ -65,9 +65,11 @@ export class ReadGraphJob {
 
     if (dryRun) return { upserted: 0, window: full ? 'full' : `${hours}h` };
 
-    // 聚合 upsert：firstViewedAt 取最小、lastViewedAt 取最大、viewCount 累加(去重到 voter 像素事件计数)。
-    // 冲突(已存在该 user-page)：扩展首末次区间、累加次数。幂等：重跑同窗只会刷新区间/次数(不重复累计因
-    // 我们以"匹配事件对"为计数源，且窗口固定→重跑结果一致地覆盖)。
+    // 聚合 upsert：firstViewedAt 取 min、lastViewedAt 取 max、viewCount 取 GREATEST。
+    // viewCount 语义=该窗内匹配事件对数；**--full 模式给生命周期准确总数(全量 agg 即总计,
+    // GREATEST 与已存量取大即等于总计)；增量模式仅作单调下界/近期刷新(不跨窗累加,不会减小)**。
+    // 全量 join 仅 ~7.5 万对(秒级)，需准确 viewCount 时跑 --full。幂等：同窗重跑结果一致。
+    // first/last 区间在增量下也始终正确扩展(LEAST/GREATEST 时间戳)。
     const affected = await this.prisma.$executeRawUnsafe(`
       WITH up AS (
         SELECT "clientHash", "userId", "wikidotId", "createdAt"

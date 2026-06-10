@@ -49,15 +49,23 @@ export class TrackingAnomalyCheckJob {
 
   /** 缓存投毒：单 wikidotId 跨异常多 /24 且每子网≈1 次。 */
   private async checkCachePoisoning(days: number, topN: number): Promise<void> {
+    // 仅 IPv4(实测流量 100% IPv4)。IPv6 用 split_part /24 会把隐私地址轮换误判成投毒,故排除;
+    // 子网在 CTE 算一次(避免 SELECT/HAVING/ORDER 三处重复求值)。
     const rows = await this.prisma.$queryRawUnsafe<any[]>(`
-      SELECT username, "wikidotId", count(*) ev,
-             count(DISTINCT split_part("clientIp",'.',1)||'.'||split_part("clientIp",'.',2)||'.'||split_part("clientIp",'.',3)) subnets,
-             round(count(*)::numeric / NULLIF(count(DISTINCT split_part("clientIp",'.',1)||'.'||split_part("clientIp",'.',2)||'.'||split_part("clientIp",'.',3)),0), 2) ev_per_subnet
-      FROM "UserPixelEvent"
-      WHERE "createdAt" > now() - INTERVAL '${days} days' AND "clientIp" IS NOT NULL
+      WITH base AS (
+        SELECT username, "wikidotId",
+               split_part("clientIp",'.',1)||'.'||split_part("clientIp",'.',2)||'.'||split_part("clientIp",'.',3) AS subnet
+        FROM "UserPixelEvent"
+        WHERE "createdAt" > now() - INTERVAL '${days} days'
+          AND "clientIp" ~ '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$'
+      )
+      SELECT username, "wikidotId", count(*)::int ev,
+             count(DISTINCT subnet)::int subnets,
+             round(count(*)::numeric / NULLIF(count(DISTINCT subnet),0), 2)::float8 ev_per_subnet
+      FROM base
       GROUP BY username, "wikidotId"
-      HAVING count(DISTINCT split_part("clientIp",'.',1)||'.'||split_part("clientIp",'.',2)||'.'||split_part("clientIp",'.',3)) >= ${POISON_MIN_SUBNETS}
-         AND count(*)::numeric / NULLIF(count(DISTINCT split_part("clientIp",'.',1)||'.'||split_part("clientIp",'.',2)||'.'||split_part("clientIp",'.',3)),0) < ${POISON_MAX_EV_PER_SUBNET}
+      HAVING count(DISTINCT subnet) >= ${POISON_MIN_SUBNETS}
+         AND count(*)::numeric / NULLIF(count(DISTINCT subnet),0) < ${POISON_MAX_EV_PER_SUBNET}
       ORDER BY subnets DESC LIMIT ${topN}
     `);
     if (rows.length === 0) {
@@ -79,15 +87,14 @@ export class TrackingAnomalyCheckJob {
       component_pages AS (         -- 有 PageViewEvent 数据 = 该页带组件(像素触发过)
         SELECT DISTINCT "pageId" FROM "PageViewEvent"
       ),
-      latest_votes AS (            -- 用户在带组件页的当前有效 upvote/downvote(按 voter,page 取最新)
-        SELECT "userId", "pageId" FROM (
-          SELECT v."userId", pv."pageId", v.direction,
+      latest_votes AS (            -- 当前有效票: 先按(voter,page)取最新再过滤方向+时间(时间过滤必须在
+        SELECT "userId", "pageId" FROM (   -- 去重之后,否则会把非最新票当当前票;窗口内是因读取图谱依赖
+          SELECT v."userId", pv."pageId", v.direction, v.timestamp ts,  -- UserPixelEvent(~75天保留)
                  row_number() OVER (PARTITION BY v."userId", pv."pageId" ORDER BY v.timestamp DESC, v.id DESC) rn
           FROM "Vote" v JOIN "PageVersion" pv ON pv.id = v."pageVersionId"
           WHERE v."userId" IN (SELECT "userId" FROM known_users)
             AND pv."pageId" IN (SELECT "pageId" FROM component_pages)
-            AND v.timestamp > now() - INTERVAL '${days} days'
-        ) z WHERE rn = 1 AND direction <> 0
+        ) z WHERE rn = 1 AND direction <> 0 AND ts > now() - INTERVAL '${days} days'
       ),
       per_user AS (
         SELECT lv."userId",
@@ -97,8 +104,8 @@ export class TrackingAnomalyCheckJob {
         LEFT JOIN "UserPageView" upv ON upv."userId" = lv."userId" AND upv."pageId" = lv."pageId"
         GROUP BY lv."userId"
       )
-      SELECT u.username, u."wikidotId", pu.component_votes, pu.votes_without_view,
-             round(100.0 * pu.votes_without_view / NULLIF(pu.component_votes,0)) pct_no_view
+      SELECT u.username, u."wikidotId", pu.component_votes::int component_votes, pu.votes_without_view::int votes_without_view,
+             round(100.0 * pu.votes_without_view / NULLIF(pu.component_votes,0))::int pct_no_view
       FROM per_user pu JOIN "User" u ON u.id = pu."userId"
       WHERE pu.component_votes >= ${VWV_MIN_COMPONENT_VOTES}
       ORDER BY pct_no_view DESC, pu.votes_without_view DESC

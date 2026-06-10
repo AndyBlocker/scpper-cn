@@ -371,13 +371,16 @@ program
   .action(async (options) => {
     const job = new ReadGraphJob();
     const parsedHours = Number.parseInt(String(options.hours ?? ''), 10);
-    const result = await job.run({
-      hours: Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : undefined,
-      full: Boolean(options.full),
-      dryRun: Boolean(options.dryRun),
-    });
-    Logger.info(`[read-graph] 完成: upsert ${result.upserted} (window ${result.window})`);
-    await disconnectPrisma();
+    try {
+      const result = await job.run({
+        hours: Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : undefined,
+        full: Boolean(options.full),
+        dryRun: Boolean(options.dryRun),
+      });
+      Logger.info(`[read-graph] 完成: upsert ${result.upserted} (window ${result.window})`);
+    } finally {
+      await disconnectPrisma();
+    }
   });
 
 program
@@ -389,11 +392,14 @@ program
     const job = new TrackingAnomalyCheckJob();
     const parsedDays = Number.parseInt(String(options.days ?? ''), 10);
     const parsedTop = Number.parseInt(String(options.top ?? ''), 10);
-    await job.run({
-      days: Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : undefined,
-      topN: Number.isFinite(parsedTop) && parsedTop > 0 ? parsedTop : undefined,
-    });
-    await disconnectPrisma();
+    try {
+      await job.run({
+        days: Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : undefined,
+        topN: Number.isFinite(parsedTop) && parsedTop > 0 ? parsedTop : undefined,
+      });
+    } finally {
+      await disconnectPrisma();
+    }
   });
 
 program
