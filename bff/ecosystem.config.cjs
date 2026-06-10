@@ -18,7 +18,10 @@ module.exports = {
         // 硬编码关闭:debug 表存完整请求头+原始 IP,曾因 shell env 透传漂移以 100% 采样
         // 常开数月(2026-06-10 审计)。需要临时开 debug 时改这里并走部署流程,不走 env。
         ENABLE_TRACKING_DEBUG: 'false',
-        TRACKING_DEBUG_SAMPLE_RATE: '0'
+        TRACKING_DEBUG_SAMPLE_RATE: '0',
+        // 启用 ETag 缓存型持久访客标识(站方决定开启,2026-06-10)。像素响应改 no-cache+ETag,
+        // 浏览器每次条件请求回送 If-None-Match→恢复 token,命中自动 304 不丢计数。
+        TRACKING_VISITOR_TOKEN: 'true'
       }
     }
   ]

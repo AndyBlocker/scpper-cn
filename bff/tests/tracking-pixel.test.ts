@@ -422,8 +422,8 @@ describe('Tracking pixel endpoint', () => {
     expect(p?.[9]).toBe('Windows');
     expect(p?.[10]).toBe('Microsoft Edge 136'); // GREASE 占位被剔除, 取真实品牌
     expect(p?.[11]).toBe('Edge/Windows');
-    expect(typeof p?.[12]).toBe('string');
-    expect((p?.[12] as string).length).toBe(24); // softprint 24 hex
+    // softprint 现为可读复合键(纯数据,不哈希): /24|UA族|品牌|平台|语言
+    expect(p?.[12]).toBe('203.0.113.0/24|Edge/Windows|Microsoft Edge 136|Windows|zh-CN,zh;q=0.9,en-US;q=0.8');
     expect(p?.[13]).toBeNull(); // visitorToken 默认关
   });
 
@@ -447,6 +447,41 @@ describe('Tracking pixel endpoint', () => {
     await run('zh-CN,zh;q=0.9'); // 与第一次相同输入 → 软指纹应一致
     expect(softprints[0]).not.toBe(softprints[1]); // 同 IP+UA 不同语言 = 不同人
     expect(softprints[0]).toBe(softprints[2]);      // 相同输入 = 确定性一致
+  });
+
+  test('softprint folds same /24 across different last octet (de-fragmentation)', async () => {
+    const sp: string[] = [];
+    for (const ip of ['114.5.1.9', '114.5.1.250']) {
+      queryMock.mockReset();
+      mockPageHappyPath();
+      await request(createTrackingTestServer())
+        .get('/tracking/pixel')
+        .set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0) Chrome/136.0.0.0')
+        .set('Accept-Language', 'zh-CN')
+        .set('X-Forwarded-For', ip)
+        .query({ wikidotId: '1' })
+        .expect(200);
+      sp.push(pageInsertParams()?.[12] as string);
+    }
+    expect(sp[0]).toBe(sp[1]); // 同 /24 不同末位 → 同一软指纹(合并移动 IP 漂移)
+    expect(sp[0]).toContain('114.5.1.0/24');
+  });
+
+  test('captures full raw TLS fingerprint header (not truncated at 256)', async () => {
+    mockPageHappyPath();
+    // 模拟 openresty 注入的原始 ClientHello 信号(>256 字符,曲线列表在尾部)
+    const longFp = 'TLSv1.3|TLS_AES_256_GCM_SHA384|' + Array.from({ length: 30 }, (_, i) => `ECDHE-CIPHER-${i}`).join(':') + '|X25519:secp256r1:secp384r1';
+    await request(createTrackingTestServer())
+      .get('/tracking/pixel')
+      .set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0) Chrome/136.0.0.0')
+      .set('X-Forwarded-For', '203.0.113.21')
+      .set('X-TLS-Fingerprint', longFp)
+      .query({ wikidotId: '1' })
+      .expect(200);
+    const tls = pageInsertParams()?.[14] as string;
+    expect(tls).toBe(longFp);                 // 全量存储,不截断
+    expect(tls.length).toBeGreaterThan(256);  // 确认超过旧上限仍完整
+    expect(tls).toContain('X25519:secp256r1'); // 尾部曲线列表保留
   });
 });
 
