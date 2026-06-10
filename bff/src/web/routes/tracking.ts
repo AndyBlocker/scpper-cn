@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
+import { createHash, randomBytes } from 'crypto';
 import type { Pool } from 'pg';
 import type { IncomingHttpHeaders } from 'http';
 import type { Request, Response } from 'express';
@@ -10,6 +11,14 @@ const MAX_COMPONENT_LENGTH = 64;
 const MAX_SOURCE_LENGTH = 64;
 const MAX_USER_AGENT_LENGTH = 1024;
 const MAX_REFERER_LENGTH = 255;
+const MAX_SIGNAL_LENGTH = 256;
+// 软指纹盐:防外部用已知字段反推聚类。未设置时仍可聚类(仅降隐私),设置后更稳。
+const SOFTPRINT_SALT = process.env.TRACKING_SOFTPRINT_SALT || '';
+// ETag 缓存型持久访客标识(image-only 无 cookie 持久 ID)。默认关,部署评审后开。
+const VISITOR_TOKEN_ENABLED = String(process.env.TRACKING_VISITOR_TOKEN || '').toLowerCase() === 'true';
+const VISITOR_TOKEN_RE = /^[0-9a-f]{32}$/;
+// openresty/nginx 在 TLS 终止层注入的 JA3/JA4 指纹头名(连接层,抗改 UA)。默认读 x-tls-fingerprint。
+const TLS_FP_HEADER = (process.env.TRACKING_TLS_FP_HEADER || 'x-tls-fingerprint').toLowerCase();
 const MAX_DEBUG_HEADER_VALUE = 2048;
 const DEBUG_HEADERS = [
   'user-agent',
@@ -52,16 +61,103 @@ const WIKIDOT_HTTP_BASE = 'http://scp-wiki-cn.wikidot.com';
 
 type PixelHeaders = Record<string, string>;
 
-function sendPixel(res: Response, extraHeaders: PixelHeaders = {}) {
-  res.set({
+function sendPixel(res: Response, extraHeaders: PixelHeaders = {}, visitorToken?: string | null) {
+  const base: PixelHeaders = {
     'Content-Type': 'image/gif',
     'Content-Length': String(PIXEL_BUFFER.length),
     'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
     Pragma: 'no-cache',
-    Expires: '0',
-    ...extraHeaders
-  });
+    Expires: '0'
+  };
+  if (visitorToken) {
+    // ETag 持久标识:用 no-cache(私有)让浏览器缓存响应但每次使用前必发条件请求,
+    // 我们每次都收到 If-None-Match 回送 token、仍每次命中服务器(不丢计数),并稳定回显同一 ETag。
+    base['Cache-Control'] = 'private, no-cache, max-age=0';
+    base.Pragma = 'no-cache';
+    base.ETag = `"${visitorToken}"`;
+  }
+  res.set({ ...base, ...extraHeaders });
   res.status(200).send(PIXEL_BUFFER);
+}
+
+// ── 身份信号采集(image-only:仅来自被动请求头/IP/TLS,无 JS/cookie) ──
+
+function deriveUaFamily(ua: string): string | null {
+  if (!ua || ua === 'unknown-ua') return null;
+  const os =
+    /Android/i.test(ua) ? 'Android' :
+    /iPhone|iPad|iOS/i.test(ua) ? 'iOS' :
+    /Windows/i.test(ua) ? 'Windows' :
+    /Mac OS X|Macintosh/i.test(ua) ? 'macOS' :
+    /Linux/i.test(ua) ? 'Linux' : 'Other';
+  const browser =
+    /Edg[A-Z]?\//i.test(ua) ? 'Edge' :
+    /OPR\/|Opera/i.test(ua) ? 'Opera' :
+    /HuaweiBrowser/i.test(ua) ? 'Huawei' :
+    /QuarkPC|Quark/i.test(ua) ? 'Quark' :
+    /Firefox\//i.test(ua) ? 'Firefox' :
+    /Chrome\//i.test(ua) ? 'Chrome' :
+    /Version\/.*Safari/i.test(ua) ? 'Safari' :
+    /Safari/i.test(ua) ? 'Safari' : 'Other';
+  return `${browser}/${os}`;
+}
+
+// 从 sec-ch-ua 取"有意义品牌+大版本",剔除 GREASE 占位(Not.A/Brand)。
+function parseSecChUaBrandMajor(value: string | null): string | null {
+  if (!value) return null;
+  const entries: Array<{ brand: string; v: string }> = [];
+  const re = /"([^"]+)";v="([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(value)) !== null) entries.push({ brand: m[1], v: m[2] });
+  if (entries.length === 0) return null;
+  const real = entries.filter((e) => !/not.?a.?brand/i.test(e.brand));
+  const prefer = real.find((e) => !/^chromium$/i.test(e.brand)) || real[0] || entries[0];
+  return `${prefer.brand} ${prefer.v}`.slice(0, MAX_SIGNAL_LENGTH);
+}
+
+function unquoteHint(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const t = value.trim().replace(/^"+|"+$/g, '').trim();
+  return t ? t.slice(0, MAX_SIGNAL_LENGTH) : null;
+}
+
+function ipSubnet24(ip: string): string {
+  const parts = ip.split('.');
+  if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
+  return ip; // IPv6/异常:整段参与
+}
+
+type IdentitySignals = {
+  acceptLanguage: string | null;
+  uaPlatform: string | null;
+  uaBrandMajor: string | null;
+  uaFamily: string | null;
+  softprint: string | null;
+  tlsFingerprint: string | null;
+};
+
+function collectIdentitySignals(req: Request, clientIp: string, userAgent: string): IdentitySignals {
+  const acceptLanguage = truncateValue(req.get('accept-language'), MAX_SIGNAL_LENGTH);
+  const uaPlatform = unquoteHint(req.get('sec-ch-ua-platform'));
+  const uaBrandMajor = parseSecChUaBrandMajor(req.get('sec-ch-ua') || null);
+  const uaFamily = deriveUaFamily(userAgent);
+  const tlsFingerprint = truncateValue(req.headers[TLS_FP_HEADER] as string | undefined, MAX_SIGNAL_LENGTH);
+  // 软指纹:/24 子网 + 语言 + 品牌大版本 + 平台 + UA 族,salted 不可逆。
+  // 比 ip|ua 更稳(抗版本漂移/移动末位变动)且能拆开 VPN 碰撞(语言不同=不同人)。
+  const material = [ipSubnet24(clientIp), acceptLanguage || '', uaBrandMajor || '', uaPlatform || '', uaFamily || ''].join('|');
+  const softprint = createHash('sha256').update(`${SOFTPRINT_SALT}|${material}`).digest('hex').slice(0, 24);
+  return { acceptLanguage, uaPlatform, uaBrandMajor, uaFamily, softprint, tlsFingerprint };
+}
+
+// ETag 持久访客 token:复用 If-None-Match 回送的合法 token,否则签发新随机 token。
+function resolveVisitorToken(req: Request): string | null {
+  if (!VISITOR_TOKEN_ENABLED) return null;
+  const inm = req.get('if-none-match');
+  if (inm) {
+    const candidate = inm.trim().replace(/^W\//, '').replace(/^"+|"+$/g, '').trim().toLowerCase();
+    if (VISITOR_TOKEN_RE.test(candidate)) return candidate;
+  }
+  return randomBytes(16).toString('hex');
 }
 
 // 像素专属限流:超限也必须回 200+GIF(而非全局限流的 429 JSON),否则会在嵌入方页面
@@ -303,6 +399,8 @@ async function trackPageView(
   const clientFingerprint = buildClientFingerprint(clientIp, userAgent);
   const refererHost = extractRefererHost(req);
   const countableReferer = isCountableReferer(refererHost);
+  const sig = collectIdentitySignals(req, clientIp, userAgent);
+  const visitorToken = resolveVisitorToken(req);
 
   let counted = false;
   if (countableReferer) {
@@ -321,8 +419,9 @@ async function trackPageView(
 
   await pool.query(
     `INSERT INTO "PageViewEvent"
-       ("pageId", "wikidotId", "clientHash", "clientIp", "userAgent", "component", "source", "refererHost", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+       ("pageId", "wikidotId", "clientHash", "clientIp", "userAgent", "component", "source", "refererHost",
+        "acceptLanguage", "uaPlatform", "uaBrandMajor", "uaFamily", "softprint", "visitorToken", "tlsFingerprint", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())`,
     [
       pageId,
       wikidotId,
@@ -331,7 +430,14 @@ async function trackPageView(
       userAgent,
       component,
       source,
-      refererHost
+      refererHost,
+      sig.acceptLanguage,
+      sig.uaPlatform,
+      sig.uaBrandMajor,
+      sig.uaFamily,
+      sig.softprint,
+      visitorToken,
+      sig.tlsFingerprint
     ]
   );
 
@@ -373,7 +479,7 @@ async function trackPageView(
       console.error('tracking_debug_log_failed', err);
     }
   }
-  sendPixel(res, extraHeaders);
+  sendPixel(res, extraHeaders, visitorToken);
 }
 
 async function trackUserPixel(
@@ -397,6 +503,8 @@ async function trackUserPixel(
   const clientIp = clientIpRaw && clientIpRaw.trim() ? clientIpRaw.trim() : 'unknown-ip';
   const clientFingerprint = buildClientFingerprint(clientIp, userAgent);
   const refererHost = extractRefererHost(req);
+  const sig = collectIdentitySignals(req, clientIp, userAgent);
+  const visitorToken = resolveVisitorToken(req);
 
   const dedupeRes = await pool.query(
     `SELECT 1
@@ -412,8 +520,9 @@ async function trackUserPixel(
 
   await pool.query(
     `INSERT INTO "UserPixelEvent"
-       ("userId", "wikidotId", username, "clientHash", "clientIp", "userAgent", "component", "source", "refererHost", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+       ("userId", "wikidotId", username, "clientHash", "clientIp", "userAgent", "component", "source", "refererHost",
+        "acceptLanguage", "uaPlatform", "uaBrandMajor", "uaFamily", "softprint", "visitorToken", "tlsFingerprint", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())`,
     [
       userId,
       Number.isFinite(wikidotId) ? wikidotId : null,
@@ -423,7 +532,14 @@ async function trackUserPixel(
       userAgent,
       component,
       source,
-      refererHost
+      refererHost,
+      sig.acceptLanguage,
+      sig.uaPlatform,
+      sig.uaBrandMajor,
+      sig.uaFamily,
+      sig.softprint,
+      visitorToken,
+      sig.tlsFingerprint
     ]
   );
 
@@ -453,7 +569,7 @@ async function trackUserPixel(
       console.error('tracking_debug_log_failed', err);
     }
   }
-  sendPixel(res, extraHeaders);
+  sendPixel(res, extraHeaders, visitorToken);
 }
 
 export function trackingRouter(pool: Pool) {
