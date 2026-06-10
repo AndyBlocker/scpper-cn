@@ -10,6 +10,7 @@ import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 import { runDailySiteOverview } from '../jobs/DailySiteOverviewJob.js';
 import { TrackingRetentionJob } from '../jobs/TrackingRetentionJob.js';
 import { AltAccountDetectionJob } from '../jobs/AltAccountDetectionJob.js';
+import { TrackingSignalBackfillJob } from '../jobs/TrackingSignalBackfillJob.js';
 import { disconnectPrisma, getPrismaClient } from '../utils/db-connection.js';
 import { validateUserStats } from '../jobs/ValidationJob.js';
 import { Logger } from '../utils/Logger.js';
@@ -340,6 +341,21 @@ program
       retentionDays: Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : undefined,
       batchSize: Number.isFinite(parsedBatch) && parsedBatch > 0 ? parsedBatch : undefined,
       dryRun: Boolean(options.dryRun)
+    });
+    await disconnectPrisma();
+  });
+
+program
+  .command('tracking-backfill-signals')
+  .description('从 debug 表回填历史事件的 Accept-Language / 平台（仅填 NULL，幂等）')
+  .option('--dry-run', '仅统计待回填行数，不写入')
+  .option('--batch <n>', '单批 id 跨度，默认 20000', '20000')
+  .action(async (options) => {
+    const job = new TrackingSignalBackfillJob();
+    const parsedBatch = Number.parseInt(String(options.batch ?? ''), 10);
+    await job.run({
+      dryRun: Boolean(options.dryRun),
+      batchSize: Number.isFinite(parsedBatch) && parsedBatch > 0 ? parsedBatch : undefined,
     });
     await disconnectPrisma();
   });
