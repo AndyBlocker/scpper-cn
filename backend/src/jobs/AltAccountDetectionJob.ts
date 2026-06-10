@@ -128,12 +128,13 @@ export class AltAccountDetectionJob {
       ),
       ru AS ( SELECT ua uid FROM pair_agg UNION SELECT ub FROM pair_agg ),
       lv AS (
+        -- 先按 (voter,page) 取最新一票, 再过滤方向: 撤票/改票后旧票不得被当作当前票。
         SELECT "userId", "pageId", direction, ts FROM (
           SELECT v."userId", pv."pageId", v.direction, v.timestamp ts,
                  row_number() OVER (PARTITION BY v."userId", pv."pageId" ORDER BY v.timestamp DESC, v.id DESC) rn
           FROM "Vote" v JOIN "PageVersion" pv ON pv.id=v."pageVersionId"
-          WHERE v."userId" IN (SELECT uid FROM ru) AND v.direction <> 0
-        ) z WHERE rn=1
+          WHERE v."userId" IN (SELECT uid FROM ru)
+        ) z WHERE rn=1 AND direction <> 0
       ),
       tot AS ( SELECT "userId", count(*) n FROM lv GROUP BY "userId" ),
       co AS (
@@ -179,13 +180,13 @@ export class AltAccountDetectionJob {
     const promo = await this.prisma.$queryRawUnsafe<any[]>(`
       WITH ids(uid) AS (SELECT unnest($1::int[])),
       lv AS (
+        -- 同 lv 口径: 先取最新票再过滤, 只保留当前仍为 upvote 的页。
         SELECT "userId", "pageId" FROM (
-          SELECT v."userId", pv."pageId",
-                 row_number() OVER (PARTITION BY v."userId", pv."pageId" ORDER BY v.timestamp DESC, v.id DESC) rn,
-                 v.direction
+          SELECT v."userId", pv."pageId", v.direction,
+                 row_number() OVER (PARTITION BY v."userId", pv."pageId" ORDER BY v.timestamp DESC, v.id DESC) rn
           FROM "Vote" v JOIN "PageVersion" pv ON pv.id=v."pageVersionId"
-          WHERE v."userId" IN (SELECT uid FROM ids) AND v.direction = 1
-        ) z WHERE rn=1
+          WHERE v."userId" IN (SELECT uid FROM ids)
+        ) z WHERE rn=1 AND direction = 1
       ),
       authored AS (
         SELECT DISTINCT a."userId", pv."pageId"

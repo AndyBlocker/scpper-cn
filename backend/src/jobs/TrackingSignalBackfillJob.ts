@@ -81,25 +81,32 @@ export class TrackingSignalBackfillJob {
     let updated = 0;
     while (lo <= hi) {
       const upperExclusive = lo + batch;
+      // LATERAL 不能引用 UPDATE 目标表别名,故先在子查询里以普通 FROM 项 e 做 JOIN LATERAL 匹配,
+      // 再按 id 回写 UPDATE 目标 ev。
       const res = await this.prisma.$executeRawUnsafe(
         `UPDATE "${t.table}" ev SET
-            "acceptLanguage" = d.al,
-            "uaPlatform" = COALESCE(ev."uaPlatform", d.platform)
-         FROM LATERAL (
-           SELECT btrim(de.headers->>'accept-language') al,
-                  btrim(btrim(de.headers->>'sec-ch-ua-platform'), '"') platform
-             FROM "${DEBUG_TABLE}" de
-            WHERE de.kind = $3
-              AND de.client_hash = ev."clientHash"
-              AND de.${t.idCol} = ev."${t.evIdCol}"
-              AND de.created_at BETWEEN ev."createdAt" - INTERVAL '1 hour' AND ev."createdAt" + INTERVAL '1 hour'
-              AND de.headers ? 'accept-language'
-            ORDER BY abs(extract(epoch FROM de.created_at - ev."createdAt")) ASC
-            LIMIT 1
-         ) d
-         WHERE ev.id >= $1 AND ev.id < $2
-           AND ev."acceptLanguage" IS NULL
-           AND d.al IS NOT NULL AND d.al <> ''`,
+            "acceptLanguage" = m.al,
+            "uaPlatform" = COALESCE(ev."uaPlatform", m.platform)
+         FROM (
+           SELECT e.id, d.al, d.platform
+             FROM "${t.table}" e
+             JOIN LATERAL (
+               SELECT btrim(de.headers->>'accept-language') al,
+                      btrim(btrim(de.headers->>'sec-ch-ua-platform'), '"') platform
+                 FROM "${DEBUG_TABLE}" de
+                WHERE de.kind = $3
+                  AND de.client_hash = e."clientHash"
+                  AND de.${t.idCol} = e."${t.evIdCol}"
+                  AND de.created_at BETWEEN e."createdAt" - INTERVAL '1 hour' AND e."createdAt" + INTERVAL '1 hour'
+                  AND de.headers ? 'accept-language'
+                ORDER BY abs(extract(epoch FROM de.created_at - e."createdAt")) ASC
+                LIMIT 1
+             ) d ON true
+            WHERE e.id >= $1 AND e.id < $2
+              AND e."acceptLanguage" IS NULL
+              AND d.al IS NOT NULL AND d.al <> ''
+         ) m
+         WHERE ev.id = m.id`,
         lo, upperExclusive, t.kind
       );
       const n = num(res);
