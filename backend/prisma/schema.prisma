@@ -809,6 +809,14 @@ model PageViewEvent {
   source      String?
   refererHost String?
   createdAt   DateTime @default(now())
+  // 身份信号增强（2026-06 backend/sql/20260610_tracking_identity_signals.sql，全部可空回填）
+  acceptLanguage String?
+  uaPlatform     String?
+  uaBrandMajor   String?
+  uaFamily       String?
+  softprint      String?
+  visitorToken   String?
+  tlsFingerprint String?
   page        Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@index([pageId, createdAt])
@@ -829,11 +837,49 @@ model UserPixelEvent {
   source      String?
   refererHost String?
   createdAt   DateTime @default(now())
+  // 身份信号增强（同上迁移）
+  acceptLanguage String?
+  uaPlatform     String?
+  uaBrandMajor   String?
+  uaFamily       String?
+  softprint      String?
+  visitorToken   String?
+  tlsFingerprint String?
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([userId, clientHash, createdAt])
   @@index([userId, clientIp, userAgent, createdAt])
+}
+
+/// 小号嫌疑账号对：analyze-alt-accounts 检测 Job 的输出，供站务复核（不自动处置）。
+model SuspectedAltPair {
+  id               Int      @id @default(autoincrement())
+  userIdA          Int
+  userIdB          Int
+  usernameA        String
+  usernameB        String
+  sharedHashes     Int      @default(0)
+  sharedSubnets    Int      @default(0)
+  sharedSoftprints Int      @default(0)
+  sharedTokens     Int      @default(0)
+  coVotes          Int      @default(0)
+  sameDir          Int      @default(0)
+  oppDir           Int      @default(0)
+  sameHour         Int      @default(0)
+  agreePct         Int?
+  shadowPct        Int?
+  selfPromoAtoB    Int      @default(0)
+  selfPromoBtoA    Int      @default(0)
+  score            Decimal  @default(0)
+  status           String   @default("candidate")
+  evidence         Json?
+  firstDetectedAt  DateTime @default(now())
+  updatedAt        DateTime @default(now())
+
+  @@unique([userIdA, userIdB])
+  @@index([score])
+  @@index([status])
 }
 
 model UserDailyStats {

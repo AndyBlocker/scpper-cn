@@ -387,4 +387,139 @@ describe('Tracking pixel endpoint', () => {
     expect(res.headers['content-type']).toBe('image/gif');
     expect(res.headers['x-tracking-error']).toBe('rate_limited');
   });
+
+  // ── 身份信号采集（image-only，被动请求头） ──
+
+  function pageInsertParams(): unknown[] | undefined {
+    const call = queryMock.mock.calls.find(([sql]: [string]) => sql.includes('INSERT INTO "PageViewEvent"'));
+    return call?.[1] as unknown[] | undefined;
+  }
+
+  function mockPageHappyPath() {
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes('FROM "Page" WHERE "wikidotId"')) return Promise.resolve({ rows: [{ id: 42 }] });
+      if (sql.includes('FROM "PageViewEvent"') && sql.includes('"clientIp"')) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [] });
+    });
+  }
+
+  test('captures Accept-Language / sec-ch-ua / softprint / uaFamily into the event row', async () => {
+    mockPageHappyPath();
+    const app = createTrackingTestServer();
+    await request(app)
+      .get('/tracking/pixel')
+      .set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0')
+      .set('Accept-Language', 'zh-CN,zh;q=0.9,en-US;q=0.8')
+      .set('Sec-CH-UA', '"Chromium";v="136", "Microsoft Edge";v="136", "Not/A)Brand";v="99"')
+      .set('Sec-CH-UA-Platform', '"Windows"')
+      .set('X-Forwarded-For', '203.0.113.20')
+      .query({ wikidotId: '123456' })
+      .expect(200);
+
+    const p = pageInsertParams();
+    // 顺序: ...refererHost(idx7), acceptLanguage(8), uaPlatform(9), uaBrandMajor(10), uaFamily(11), softprint(12), visitorToken(13), tlsFingerprint(14)
+    expect(p?.[8]).toBe('zh-CN,zh;q=0.9,en-US;q=0.8');
+    expect(p?.[9]).toBe('Windows');
+    expect(p?.[10]).toBe('Microsoft Edge 136'); // GREASE 占位被剔除, 取真实品牌
+    expect(p?.[11]).toBe('Edge/Windows');
+    expect(typeof p?.[12]).toBe('string');
+    expect((p?.[12] as string).length).toBe(24); // softprint 24 hex
+    expect(p?.[13]).toBeNull(); // visitorToken 默认关
+  });
+
+  test('softprint discriminates same IP+UA but different Accept-Language (kills VPN collision)', async () => {
+    const softprints: string[] = [];
+    const run = async (lang: string) => {
+      queryMock.mockReset();
+      mockPageHappyPath();
+      const app = createTrackingTestServer();
+      await request(app)
+        .get('/tracking/pixel')
+        .set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0) Chrome/136.0.0.0')
+        .set('Accept-Language', lang)
+        .set('X-Forwarded-For', '198.51.100.7')
+        .query({ wikidotId: '1' })
+        .expect(200);
+      softprints.push(pageInsertParams()?.[12] as string);
+    };
+    await run('zh-CN,zh;q=0.9');
+    await run('en-US,en;q=0.9');
+    await run('zh-CN,zh;q=0.9'); // 与第一次相同输入 → 软指纹应一致
+    expect(softprints[0]).not.toBe(softprints[1]); // 同 IP+UA 不同语言 = 不同人
+    expect(softprints[0]).toBe(softprints[2]);      // 相同输入 = 确定性一致
+  });
+});
+
+describe('Tracking pixel with ETag visitor token enabled', () => {
+  const INTERNAL_KEY = 'test-internal-key';
+  let etagRouter: any;
+  const tokenQueryMock = jest.fn();
+
+  beforeAll(() => {
+    process.env.BFF_INTERNAL_API_KEY = INTERNAL_KEY;
+    process.env.TRACKING_VISITOR_TOKEN = 'true';
+    jest.isolateModules(() => {
+      // 在 env 设好后重新加载模块, 使 VISITOR_TOKEN_ENABLED 读到 true
+      etagRouter = require('../src/web/routes/tracking').trackingRouter;
+    });
+  });
+  afterAll(() => {
+    delete process.env.BFF_INTERNAL_API_KEY;
+    delete process.env.TRACKING_VISITOR_TOKEN;
+  });
+  beforeEach(() => tokenQueryMock.mockReset());
+
+  function server() {
+    const app = express();
+    app.set('trust proxy', 1);
+    app.use('/tracking', etagRouter({ query: tokenQueryMock } as any));
+    return app;
+  }
+  function mockHappy() {
+    tokenQueryMock.mockImplementation((sql: string) => {
+      if (sql.includes('FROM "Page" WHERE "wikidotId"')) return Promise.resolve({ rows: [{ id: 42 }] });
+      return Promise.resolve({ rows: [] });
+    });
+  }
+  const pveInsert = () => tokenQueryMock.mock.calls.find(([sql]: [string]) => sql.includes('INSERT INTO "PageViewEvent"'));
+
+  test('issues an ETag token and recovers it from If-None-Match', async () => {
+    mockHappy();
+    const app = server();
+    const first = await request(app)
+      .get('/tracking/pixel')
+      .set('X-Forwarded-For', '203.0.113.30')
+      .query({ wikidotId: '1' })
+      .expect(200);
+    const etag = first.headers['etag'];
+    expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(first.headers['cache-control']).toContain('no-cache');
+    const token = etag.replace(/"/g, '');
+    expect((pveInsert()?.[1] as unknown[])?.[13]).toBe(token); // 新 token 写入事件行
+
+    tokenQueryMock.mockReset();
+    mockHappy();
+    // 命中 If-None-Match → Express 自动回 304(省带宽), 但我们的 INSERT/计数在 send 前已执行
+    const second = await request(app)
+      .get('/tracking/pixel')
+      .set('X-Forwarded-For', '203.0.113.30')
+      .set('If-None-Match', `"${token}"`)
+      .query({ wikidotId: '1' })
+      .expect(304);
+    expect(second.headers['etag']).toBe(`"${token}"`);          // 恢复同一 token
+    expect((pveInsert()?.[1] as unknown[])?.[13]).toBe(token);  // 仍计入事件(不丢计数)
+  });
+
+  test('rejects forged non-hex If-None-Match and mints a fresh token', async () => {
+    mockHappy();
+    const app = server();
+    const res = await request(app)
+      .get('/tracking/pixel')
+      .set('X-Forwarded-For', '203.0.113.31')
+      .set('If-None-Match', '"not-a-valid-token"')
+      .query({ wikidotId: '1' })
+      .expect(200);
+    expect(res.headers['etag']).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(res.headers['etag']).not.toBe('"not-a-valid-token"');
+  });
 });
