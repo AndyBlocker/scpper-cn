@@ -467,6 +467,27 @@ describe('Tracking pixel endpoint', () => {
     expect(sp[0]).toContain('114.5.1.0/24');
   });
 
+  test('softprint keeps Accept-Language even when sec-ch-ua brand is abusively long', async () => {
+    const sp: string[] = [];
+    const longBrand = '"' + 'X'.repeat(300) + '";v="9"'; // 构造超长品牌名
+    for (const lang of ['zh-CN', 'en-US']) {
+      queryMock.mockReset();
+      mockPageHappyPath();
+      await request(createTrackingTestServer())
+        .get('/tracking/pixel')
+        .set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0) Chrome/136.0.0.0')
+        .set('Accept-Language', lang)
+        .set('Sec-CH-UA', longBrand)
+        .set('X-Forwarded-For', '198.51.100.9')
+        .query({ wikidotId: '1' })
+        .expect(200);
+      sp.push(pageInsertParams()?.[12] as string);
+    }
+    // 即便品牌串恶意超长, 末尾语言仍进入键 → 不同语言仍区分(不被截断挤掉)
+    expect(sp[0]).not.toBe(sp[1]);
+    expect(sp[0].endsWith('|zh-CN')).toBe(true);
+  });
+
   test('captures full raw TLS fingerprint header (not truncated at 256)', async () => {
     mockPageHappyPath();
     // 模拟 openresty 注入的原始 ClientHello 信号(>256 字符,曲线列表在尾部)
