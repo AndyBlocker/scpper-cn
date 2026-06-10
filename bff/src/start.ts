@@ -6,6 +6,7 @@ import pinoHttp from 'pino-http';
 import rateLimit from 'express-rate-limit';
 import { createClient } from 'redis';
 import { buildRouter } from './web/router.js';
+import { pixelRateLimiter } from './web/routes/tracking.js';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { initPools } from './web/utils/dbPool.js';
 
@@ -50,7 +51,9 @@ export async function createServer() {
   // vote-status, stats, etc.), so 120 was too tight for normal browsing
   // across 3-4 navigations per minute.
   // Skip healthz (monitoring), /internal (authenticated server-to-server),
-  // and /avatar (proxied to avatar-agent which has its own limits).
+  // /avatar (proxied to avatar-agent which has its own limits), and
+  // /tracking/pixel (dedicated limiter below — must answer 200+GIF, not 429 JSON,
+  // and must not let embedded pixels drain the shared per-IP budget).
   const globalLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 600,
@@ -59,10 +62,12 @@ export async function createServer() {
     message: { error: 'too_many_requests' },
     skip: (req) => {
       const p = req.path;
-      return p === '/healthz' || p.startsWith('/internal') || p.startsWith('/avatar');
+      return p === '/healthz' || p.startsWith('/internal') || p.startsWith('/avatar')
+        || p.startsWith('/tracking/pixel');
     }
   });
   app.use(globalLimiter);
+  app.use('/tracking/pixel', pixelRateLimiter());
 
   // Proxy avatar to avatar-agent early to avoid interference
   // Important: include '/avatar' in target so that Express mount path truncation is compensated.

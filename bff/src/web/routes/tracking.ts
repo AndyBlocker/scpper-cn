@@ -1,10 +1,11 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import type { Pool } from 'pg';
 import type { IncomingHttpHeaders } from 'http';
 import type { Request, Response } from 'express';
 
 const PIXEL_BUFFER = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
-const DEDUPE_WINDOW_MS = 12 * 60 * 60 * 1000;
+const DEDUPE_WINDOW_HOURS = 12;
 const MAX_COMPONENT_LENGTH = 64;
 const MAX_SOURCE_LENGTH = 64;
 const MAX_USER_AGENT_LENGTH = 1024;
@@ -30,7 +31,17 @@ const DEBUG_HEADERS = [
   'accept'
 ];
 const DEBUG_ENABLED = String(process.env.ENABLE_TRACKING_DEBUG || '').toLowerCase() === 'true';
-const DEBUG_SAMPLE_RATE = Math.max(0, Math.min(1, Number(process.env.TRACKING_DEBUG_SAMPLE_RATE ?? '0')));
+// 生产环境采样率硬上限 5%:tracking_debug_event 存完整请求头+原始 IP,曾因 PM2 env 漂移
+// 以 100% 采样常开累积 504MB 无清理(2026-06-10 审计),clamp 兜住同类配置事故。
+const DEBUG_SAMPLE_RATE_CAP = process.env.NODE_ENV === 'production' ? 0.05 : 1;
+const DEBUG_SAMPLE_RATE = Math.max(0, Math.min(DEBUG_SAMPLE_RATE_CAP, Number(process.env.TRACKING_DEBUG_SAMPLE_RATE ?? '0')));
+// 计数白名单:referer 主机在名单内(或无 referer,如直访/strict-origin 策略)才允许给
+// PageDailyStats.views +1;名单外站点嵌像素仍记录事件行但不污染计数。
+const COUNT_REFERER_ALLOWLIST = (process.env.TRACKING_COUNT_REFERER_ALLOWLIST
+  || 'scp-wiki-cn.wikidot.com,scp-wiki-cn.wikidot.mer.run')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
 const DEBUG_TABLE_NAME = 'tracking_debug_event' as const;
 // Safety assertion: table name must be a valid SQL identifier
 if (!/^[a-z_][a-z0-9_]*$/i.test(DEBUG_TABLE_NAME)) {
@@ -51,6 +62,30 @@ function sendPixel(res: Response, extraHeaders: PixelHeaders = {}) {
     ...extraHeaders
   });
   res.status(200).send(PIXEL_BUFFER);
+}
+
+// 像素专属限流:超限也必须回 200+GIF(而非全局限流的 429 JSON),否则会在嵌入方页面
+// 留下裂图;被限流的请求不写库。
+export function pixelRateLimiter(options: { windowMs?: number; max?: number } = {}) {
+  return rateLimit({
+    windowMs: options.windowMs ?? 60 * 1000,
+    max: options.max ?? 120,
+    standardHeaders: false,
+    legacyHeaders: false,
+    handler: (_req, res) => sendPixel(res, { 'X-Tracking-Error': 'rate_limited' })
+  });
+}
+
+function isInternalDebugRequest(req: Request): boolean {
+  const expectedKey = (process.env.BFF_INTERNAL_API_KEY || '').trim();
+  const providedKey = String(req.get('x-internal-key') || '').trim();
+  return Boolean(expectedKey && providedKey && providedKey === expectedKey);
+}
+
+function isCountableReferer(refererHost: string | null): boolean {
+  if (!refererHost) return true;
+  const host = refererHost.toLowerCase();
+  return COUNT_REFERER_ALLOWLIST.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
 }
 
 function sanitizeParam(value: unknown, maxLength: number): string | null {
@@ -142,8 +177,10 @@ function sanitizeQueryParams(rawQuery: Record<string, unknown>): Record<string, 
 
 function shouldLogDebug(req: Request): boolean {
   if (!DEBUG_ENABLED) return false;
+  // ?debug 强制开关仅对持有 x-internal-key 的内部请求生效:debug 行包含完整请求头与
+  // 原始 IP,公网可控的写放大入口必须收口。
   const flag = (req.query as Record<string, unknown>).debug;
-  if (flag !== undefined && flag !== null) {
+  if (flag !== undefined && flag !== null && isInternalDebugRequest(req)) {
     const normalized = Array.isArray(flag) ? flag.join(',') : String(flag);
     const lowered = normalized.trim().toLowerCase();
     if (lowered === '1' || lowered === 'true' || lowered === 'yes' || lowered === 'on') {
@@ -265,26 +302,27 @@ async function trackPageView(
   const clientIp = clientIpRaw && clientIpRaw.trim() ? clientIpRaw.trim() : 'unknown-ip';
   const clientFingerprint = buildClientFingerprint(clientIp, userAgent);
   const refererHost = extractRefererHost(req);
+  const countableReferer = isCountableReferer(refererHost);
 
-  const now = new Date();
-  const lookback = new Date(now.getTime() - DEDUPE_WINDOW_MS);
-
-  const dedupeRes = await pool.query(
-    `SELECT 1
-       FROM "PageViewEvent"
-      WHERE "pageId" = $1
-        AND "clientIp" = $2
-        AND "userAgent" = $3
-        AND "createdAt" >= $4
-      LIMIT 1`,
-    [pageId, clientIp, userAgent, lookback]
-  );
-  const counted = dedupeRes.rows.length === 0;
+  let counted = false;
+  if (countableReferer) {
+    const dedupeRes = await pool.query(
+      `SELECT 1
+         FROM "PageViewEvent"
+        WHERE "pageId" = $1
+          AND "clientIp" = $2
+          AND "userAgent" = $3
+          AND "createdAt" >= NOW() - INTERVAL '${DEDUPE_WINDOW_HOURS} hours'
+        LIMIT 1`,
+      [pageId, clientIp, userAgent]
+    );
+    counted = dedupeRes.rows.length === 0;
+  }
 
   await pool.query(
     `INSERT INTO "PageViewEvent"
        ("pageId", "wikidotId", "clientHash", "clientIp", "userAgent", "component", "source", "refererHost", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
     [
       pageId,
       wikidotId,
@@ -293,22 +331,26 @@ async function trackPageView(
       userAgent,
       component,
       source,
-      refererHost,
-      now
+      refererHost
     ]
   );
 
   if (counted) {
+    // 显式按 Asia/Shanghai 切日,与读侧 stats.ts 的 todayViews 口径逐字一致;
+    // 不再依赖 DB 会话 timezone GUC 恰好是上海这一隐性耦合。
     await pool.query(
       `INSERT INTO "PageDailyStats" ("pageId", date, views)
-       VALUES ($1, CURRENT_DATE, 1)
+       VALUES ($1, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date, 1)
        ON CONFLICT ("pageId", date)
        DO UPDATE SET views = "PageDailyStats".views + EXCLUDED.views`,
       [pageId]
     );
   }
 
-  extraHeaders['X-Tracking-Counted'] = counted ? '1' : '0';
+  // 计数结果只回显给内部请求:公开回显会成为刷量者校准去重窗口的 oracle。
+  if (isInternalDebugRequest(req)) {
+    extraHeaders['X-Tracking-Counted'] = counted ? '1' : '0';
+  }
   if (debugRequested) {
     try {
       await recordDebugEvent(pool, req, 'page', {
@@ -356,24 +398,22 @@ async function trackUserPixel(
   const clientFingerprint = buildClientFingerprint(clientIp, userAgent);
   const refererHost = extractRefererHost(req);
 
-  const now = new Date();
-  const lookback = new Date(now.getTime() - DEDUPE_WINDOW_MS);
   const dedupeRes = await pool.query(
     `SELECT 1
        FROM "UserPixelEvent"
       WHERE "userId" = $1
         AND "clientIp" = $2
         AND "userAgent" = $3
-        AND "createdAt" >= $4
+        AND "createdAt" >= NOW() - INTERVAL '${DEDUPE_WINDOW_HOURS} hours'
       LIMIT 1`,
-    [userId, clientIp, userAgent, lookback]
+    [userId, clientIp, userAgent]
   );
   const counted = dedupeRes.rows.length === 0;
 
   await pool.query(
     `INSERT INTO "UserPixelEvent"
        ("userId", "wikidotId", username, "clientHash", "clientIp", "userAgent", "component", "source", "refererHost", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
     [
       userId,
       Number.isFinite(wikidotId) ? wikidotId : null,
@@ -383,12 +423,13 @@ async function trackUserPixel(
       userAgent,
       component,
       source,
-      refererHost,
-      now
+      refererHost
     ]
   );
 
-  extraHeaders['X-Tracking-Counted'] = counted ? '1' : '0';
+  if (isInternalDebugRequest(req)) {
+    extraHeaders['X-Tracking-Counted'] = counted ? '1' : '0';
+  }
   if (debugRequested) {
     try {
       await recordDebugEvent(pool, req, 'user', {
@@ -436,7 +477,7 @@ export function trackingRouter(pool: Pool) {
 
       const pageRes = await pool.query('SELECT id FROM "Page" WHERE "wikidotId" = $1::int LIMIT 1', [wikidotId]);
       if (pageRes.rows.length === 0) {
-        extraHeaders['X-Tracking-Error'] = 'page_not_found';
+        extraHeaders['X-Tracking-Error'] = 'not_tracked';
         return sendPixel(res, extraHeaders);
       }
       const pageId = Number(pageRes.rows[0].id);
@@ -468,25 +509,60 @@ export function trackingRouter(pool: Pool) {
       const canonicalHttp = `${base}${normalizedPath}`;
       const canonicalHttps = canonicalHttp.replace(/^http:/i, 'https:');
       const candidateUrls = Array.from(new Set([canonicalHttp.toLowerCase(), canonicalHttps.toLowerCase()]));
-      const pageRes = await pool.query(
+      // 三段短路:原 OR + EXISTS(unnest) 单查询的子计划会让规划器放弃索引整表过滤
+      // (实测 p50 189ms,占像素延迟 97%)。绝大多数真实流量在第一段命中
+      // (在档页 + lower("currentUrl") 精确匹配,走 idx_page_lower_currenturl,
+      // 见 backend/sql/20260610_tracking_pixel_page_url_index.sql);后两段保持原查询
+      // 的优先级语义: 在档 > currentUrl 命中 > urlHistory 命中 > 已删页兜底。
+      let pageRes = await pool.query(
         `SELECT id, "wikidotId"
            FROM "Page"
-          WHERE lower("currentUrl") = ANY($1)
-             OR EXISTS (
-               SELECT 1
-               FROM unnest("urlHistory") AS hist(url)
-               WHERE lower(hist.url) = ANY($1)
-             )
-          ORDER BY "isDeleted" ASC,
-                   CASE WHEN lower("currentUrl") = ANY($1) THEN 0 ELSE 1 END ASC,
-                   "updatedAt" DESC,
+          WHERE "isDeleted" = false
+            AND lower("currentUrl") = ANY($1)
+          ORDER BY "updatedAt" DESC,
                    id DESC
           LIMIT 1`,
         [candidateUrls]
       );
+      if (pageRes.rows.length === 0) {
+        pageRes = await pool.query(
+          `SELECT id, "wikidotId"
+             FROM "Page"
+            WHERE "isDeleted" = false
+              AND EXISTS (
+                SELECT 1
+                FROM unnest("urlHistory") AS hist(url)
+                WHERE lower(hist.url) = ANY($1)
+              )
+            ORDER BY "updatedAt" DESC,
+                     id DESC
+            LIMIT 1`,
+          [candidateUrls]
+        );
+      }
+      if (pageRes.rows.length === 0) {
+        // 无在档页命中才扫已删页(罕见路径,保留原合并查询及其排序)
+        pageRes = await pool.query(
+          `SELECT id, "wikidotId"
+             FROM "Page"
+            WHERE lower("currentUrl") = ANY($1)
+               OR EXISTS (
+                 SELECT 1
+                 FROM unnest("urlHistory") AS hist(url)
+                 WHERE lower(hist.url) = ANY($1)
+               )
+            ORDER BY "isDeleted" ASC,
+                     CASE WHEN lower("currentUrl") = ANY($1) THEN 0 ELSE 1 END ASC,
+                     "updatedAt" DESC,
+                     id DESC
+            LIMIT 1`,
+          [candidateUrls]
+        );
+      }
 
       if (pageRes.rows.length === 0) {
-        extraHeaders['X-Tracking-Error'] = 'page_not_found';
+        // 统一为 not_tracked:具体的 not_found 区分会泄漏页面/用户存在性,且对嵌入方无意义。
+        extraHeaders['X-Tracking-Error'] = 'not_tracked';
         return sendPixel(res, extraHeaders);
       }
 
@@ -494,7 +570,7 @@ export function trackingRouter(pool: Pool) {
       const pageId = Number(row.id);
       const wikidotId = Number(row.wikidotId);
       if (!Number.isFinite(pageId) || !Number.isFinite(wikidotId)) {
-        extraHeaders['X-Tracking-Error'] = 'page_not_found';
+        extraHeaders['X-Tracking-Error'] = 'not_tracked';
         return sendPixel(res, extraHeaders);
       }
 
@@ -536,14 +612,14 @@ export function trackingRouter(pool: Pool) {
       );
 
       if (userRes.rows.length === 0) {
-        extraHeaders['X-Tracking-Error'] = 'user_not_found';
+        extraHeaders['X-Tracking-Error'] = 'not_tracked';
         return sendPixel(res, extraHeaders);
       }
 
       const row = userRes.rows[0];
       const userId = Number(row.id);
       if (!Number.isFinite(userId) || userId <= 0) {
-        extraHeaders['X-Tracking-Error'] = 'user_not_found';
+        extraHeaders['X-Tracking-Error'] = 'not_tracked';
         return sendPixel(res, extraHeaders);
       }
 
