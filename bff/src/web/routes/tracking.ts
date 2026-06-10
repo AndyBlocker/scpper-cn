@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { createHash, randomBytes } from 'crypto';
+import { randomBytes } from 'crypto';
 import type { Pool } from 'pg';
 import type { IncomingHttpHeaders } from 'http';
 import type { Request, Response } from 'express';
@@ -12,9 +12,12 @@ const MAX_SOURCE_LENGTH = 64;
 const MAX_USER_AGENT_LENGTH = 1024;
 const MAX_REFERER_LENGTH = 255;
 const MAX_SIGNAL_LENGTH = 256;
-// 软指纹盐:防外部用已知字段反推聚类。未设置时仍可聚类(仅降隐私),设置后更稳。
-const SOFTPRINT_SALT = process.env.TRACKING_SOFTPRINT_SALT || '';
-// ETag 缓存型持久访客标识(image-only 无 cookie 持久 ID)。默认关,部署评审后开。
+// TLS 指纹(openresty 注入的原始 ClientHello 密码套件/曲线列表)较长,单独放宽上限存全量。
+const MAX_TLS_FP_LENGTH = 1024;
+// ETag 缓存型访客标识(image-only 无 cookie)。语义重要: HTTP 缓存按 URL 分键,故 token 是
+// "同一像素 URL 的复访信号"(同浏览器对 /pixel/by-url?url=X 复访得稳定 token),而非跨页/跨账号
+// 的全局浏览器 ID——不同像素 URL 会得到不同 token。因此不能用它做跨账号小号关联(检测 Job 的
+// sharedTokens 对 by-username 不同 wikidotId 恒为 0),它的价值是页面级"独立复访者"计量。
 const VISITOR_TOKEN_ENABLED = String(process.env.TRACKING_VISITOR_TOKEN || '').toLowerCase() === 'true';
 const VISITOR_TOKEN_RE = /^[0-9a-f]{32}$/;
 // openresty/nginx 在 TLS 终止层注入的 JA3/JA4 指纹头名(连接层,抗改 UA)。默认读 x-tls-fingerprint。
@@ -122,9 +125,15 @@ function unquoteHint(value: string | null | undefined): string | null {
 }
 
 function ipSubnet24(ip: string): string {
-  const parts = ip.split('.');
+  let v = (ip || '').trim();
+  // IPv4-mapped IPv6 (::ffff:1.2.3.4) → 取内嵌 IPv4,与普通 IPv4 归一到同一 /24
+  const mapped = v.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+  if (mapped) v = mapped[1];
+  const parts = v.split('.');
   if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
-  return ip; // IPv6/异常:整段参与
+  // 真实 IPv6: 取前 4 个 hextet 作为 /64 粗前缀(去碎片化, 长度有界), 其余忽略
+  if (v.includes(':')) return v.split(':').slice(0, 4).join(':') + '::/64';
+  return v.slice(0, 45);
 }
 
 type IdentitySignals = {
@@ -141,11 +150,18 @@ function collectIdentitySignals(req: Request, clientIp: string, userAgent: strin
   const uaPlatform = unquoteHint(req.get('sec-ch-ua-platform'));
   const uaBrandMajor = parseSecChUaBrandMajor(req.get('sec-ch-ua') || null);
   const uaFamily = deriveUaFamily(userAgent);
-  const tlsFingerprint = truncateValue(req.headers[TLS_FP_HEADER] as string | undefined, MAX_SIGNAL_LENGTH);
-  // 软指纹:/24 子网 + 语言 + 品牌大版本 + 平台 + UA 族,salted 不可逆。
-  // 比 ip|ua 更稳(抗版本漂移/移动末位变动)且能拆开 VPN 碰撞(语言不同=不同人)。
-  const material = [ipSubnet24(clientIp), acceptLanguage || '', uaBrandMajor || '', uaPlatform || '', uaFamily || ''].join('|');
-  const softprint = createHash('sha256').update(`${SOFTPRINT_SALT}|${material}`).digest('hex').slice(0, 24);
+  // TLS 指纹存原始 ClientHello 信号(协议|协商套件|客户端套件列表|曲线列表),纯数据可审计,放宽上限。
+  const tlsFingerprint = truncateValue(req.headers[TLS_FP_HEADER] as string | undefined, MAX_TLS_FP_LENGTH);
+  // 软指纹:可读复合键(纯数据,不哈希),便于审计;= /24 子网 | UA族 | 品牌大版本 | 平台 | 语言。
+  // 比 ip|ua 更稳(抗版本漂移/移动末位变动)且能拆开 VPN 碰撞(语言不同=不同人);各原始分量另有独立列。
+  // 给前四项各设硬预算,保证末尾的"语言"永不被整体 256 上限挤掉(否则同/24+长品牌串会假碰撞)。
+  const softprint = [
+    ipSubnet24(clientIp),
+    (uaFamily || '').slice(0, 24),
+    (uaBrandMajor || '').slice(0, 48),
+    (uaPlatform || '').slice(0, 24),
+    acceptLanguage || ''
+  ].join('|').slice(0, MAX_SIGNAL_LENGTH);
   return { acceptLanguage, uaPlatform, uaBrandMajor, uaFamily, softprint, tlsFingerprint };
 }
 
