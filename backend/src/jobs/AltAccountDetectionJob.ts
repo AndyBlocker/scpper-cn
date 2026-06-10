@@ -105,19 +105,24 @@ export class AltAccountDetectionJob {
         GROUP BY 1
       ),
       pairs AS (
+        -- 携带 a/b 两侧的 softprint/token,共享=两侧都有且相等(单侧多样性不算共享)。
+        -- 注:clientHash 为明文 ip|ua,故同 ch 的 a/b 必同 IP 同 subnet;b 侧 infra 过滤为防御性冗余。
         SELECT a."userId" ua, a.username una, b."userId" ub, b.username unb,
-               a."clientHash" ch, a.subnet24, a."softprint" sp, a."visitorToken" tok
+               a."clientHash" ch, a.subnet24,
+               a."softprint" sp_a, b."softprint" sp_b,
+               a."visitorToken" tok_a, b."visitorToken" tok_b
         FROM base a
         JOIN base b ON a."clientHash"=b."clientHash" AND a."userId" < b."userId"
         JOIN hash_small h ON h."clientHash"=a."clientHash"
-        JOIN ip_breadth ib ON ib.subnet24=a.subnet24 AND ib.ip_users <= ${INFRA_IP_USER_CAP}
+        JOIN ip_breadth iba ON iba.subnet24=a.subnet24 AND iba.ip_users <= ${INFRA_IP_USER_CAP}
+        JOIN ip_breadth ibb ON ibb.subnet24=b.subnet24 AND ibb.ip_users <= ${INFRA_IP_USER_CAP}
       ),
       pair_agg AS (
         SELECT ua, una, ub, unb,
                count(distinct ch) shared_hashes,
                count(distinct subnet24) shared_subnets,
-               count(distinct sp) FILTER (WHERE sp IS NOT NULL) shared_softprints,
-               count(distinct tok) FILTER (WHERE tok IS NOT NULL) shared_tokens
+               count(distinct sp_a) FILTER (WHERE sp_a IS NOT NULL AND sp_a = sp_b) shared_softprints,
+               count(distinct tok_a) FILTER (WHERE tok_a IS NOT NULL AND tok_a = tok_b) shared_tokens
         FROM pairs GROUP BY ua, una, ub, unb
         HAVING count(distinct ch) >= 1
       ),
