@@ -9,6 +9,7 @@ import { query } from './query.js';
 import { analyzeIncremental } from '../jobs/IncrementalAnalyzeJob.js';
 import { runDailySiteOverview } from '../jobs/DailySiteOverviewJob.js';
 import { TrackingRetentionJob } from '../jobs/TrackingRetentionJob.js';
+import { AltAccountDetectionJob } from '../jobs/AltAccountDetectionJob.js';
 import { disconnectPrisma, getPrismaClient } from '../utils/db-connection.js';
 import { validateUserStats } from '../jobs/ValidationJob.js';
 import { Logger } from '../utils/Logger.js';
@@ -340,6 +341,22 @@ program
       batchSize: Number.isFinite(parsedBatch) && parsedBatch > 0 ? parsedBatch : undefined,
       dryRun: Boolean(options.dryRun)
     });
+    await disconnectPrisma();
+  });
+
+program
+  .command('analyze-alt-accounts')
+  .description('小号检测：基于像素信标网络共享+投票共现+自我推广，写入 SuspectedAltPair 供站务复核')
+  .option('--dry-run', '仅打印 Top 候选，不写入 SuspectedAltPair')
+  .option('--min-score <n>', '最低可疑度阈值，默认 4', '4')
+  .action(async (options) => {
+    const job = new AltAccountDetectionJob();
+    const parsedMin = Number.parseFloat(String(options.minScore ?? ''));
+    const result = await job.run({
+      dryRun: Boolean(options.dryRun),
+      minScore: Number.isFinite(parsedMin) ? parsedMin : undefined,
+    });
+    Logger.info(`[alt-detect] 完成：候选 ${result.candidates} / 写入 ${result.written}`);
     await disconnectPrisma();
   });
 
