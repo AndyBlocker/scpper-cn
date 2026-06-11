@@ -77,6 +77,12 @@ const SCORE_CLAMP = 3.2;
 // 子类信号减去 1.0×OVERALL：子类指数只表达"品类相对全站"的份额变化，
 // 全站潮汐（含活动量长期趋势）仅由 OVERALL 承载（v3 前为 0.5，半剔除）
 const INFLATION_ALPHA = 1.0;
+const LEGACY_INFLATION_ALPHA = 0.5;
+// tick 口径版本：v2 = score 公式 v3（INFLATION_ALPHA=1.0、drift 引用 raw、
+// 收盘剔除 drag/micro、软锚点）。投票 T+1 截止规则本身未变。
+// drift 历史加载时依据该标记把旧口径子类 raw 换算到新口径。
+const LEGACY_TICK_RULE_VERSION = 'utc8-t+1-v1';
+const TICK_RULE_VERSION = 'utc8-t+1-v2';
 
 const DRIFT_WINDOW_WEEKS = 26;
 const DRIFT_MIN_HISTORY_WEEKS = 8;
@@ -499,8 +505,17 @@ export class CategoryIndexTickJob {
               asOfTs: { lte: weekStart }
             },
             orderBy: { asOfTs: 'desc' },
-            select: { indexMark: true }
+            select: { asOfTs: true, indexMark: true }
           });
+          if (latestAtWeekStart
+            && new Date(latestAtWeekStart.asOfTs).getTime() < weekStart.getTime() - HOUR_MS) {
+            // 回填窗口截断等原因导致上周收盘 tick 缺失，跨周复利链在此断裂，
+            // 退化为以最近可用 tick 作开盘。保持生成（市场不停摆）但需告警人工核查。
+            console.warn(
+              `[CategoryIndexTickJob] ⚠️ week open chain broken for ${category}: `
+              + `weekStart=${weekStart.toISOString()}, nearest tick=${new Date(latestAtWeekStart.asOfTs).toISOString()}`
+            );
+          }
           indexOpen = latestAtWeekStart?.indexMark ? Number(latestAtWeekStart.indexMark) : INDEX_BASE;
           weekOpenCache.set(weekKey, indexOpen);
         }
@@ -512,7 +527,12 @@ export class CategoryIndexTickJob {
           ? (offsetBucket / WEEK_CLOSE_OFFSET) * ANCHOR_PHI_WEEKLY * Math.log(INDEX_BASE / indexOpen)
           : 0;
         const baseIndexMark = indexOpen * Math.exp(INDEX_K * scoreProvisional + anchorTerm);
-        const noise = this.deterministicNoise(category, asOfTs, NOISE_AMPLITUDE);
+        // 周一 00:00 禁用 noise：score=0 且 anchorTerm=0，indexMark 必须严格等于
+        // 上周收盘，否则"下周开盘=本周收盘"约束被噪声破坏（后续小时的进程会以
+        // 带噪的周一 tick 作为本周开盘）。
+        const noise = asOfTs.getTime() === weekStart.getTime()
+          ? 0
+          : this.deterministicNoise(category, asOfTs, NOISE_AMPLITUDE);
         const indexMark = Number((baseIndexMark * (1 + noise)).toFixed(6));
         const voteCutoffDate = utcDateOnlyFromUtc8Day(startOfUtc8Day(addUtc8Days(asOfTs, -1)));
 
@@ -523,7 +543,7 @@ export class CategoryIndexTickJob {
               asOfTs,
               watermarkTs,
               voteCutoffDate,
-              voteRuleVersion: 'utc8-t+1-v1',
+              voteRuleVersion: TICK_RULE_VERSION,
               scoreSignalRaw: new Prisma.Decimal(scoreSignalRaw.toFixed(8)),
               scoreRef: new Prisma.Decimal(scoreRef.toFixed(8)),
               scoreProvisional: new Prisma.Decimal(scoreProvisional.toFixed(8)),
@@ -539,19 +559,21 @@ export class CategoryIndexTickJob {
           if (!lastGenerated || asOfTs.getTime() > lastGenerated.getTime()) {
             lastGenerated = asOfTs;
           }
+
+          // drift 历史窗口与 loadScoreHistoryByOffset 同口径：存修正前的 raw 信号。
+          // 仅在 create 成功后推进——P2002（该小时已有 tick）时 DB 行已在加载时
+          // 计入历史，再 push 会造成同一小时重复样本。
+          offsetHistory.push(scoreSignalRaw);
+          if (offsetHistory.length > SCORE_HISTORY_WINDOW_PER_OFFSET) {
+            offsetHistory.splice(0, offsetHistory.length - SCORE_HISTORY_WINDOW_PER_OFFSET);
+          }
+          categoryHistory.set(offsetBucket, offsetHistory);
+          scoreHistory.set(category, categoryHistory);
         } catch (error) {
           if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
             throw error;
           }
         }
-
-        // drift 历史窗口与 loadScoreHistoryByOffset 同口径：存修正前的 raw 信号
-        offsetHistory.push(scoreSignalRaw);
-        if (offsetHistory.length > SCORE_HISTORY_WINDOW_PER_OFFSET) {
-          offsetHistory.splice(0, offsetHistory.length - SCORE_HISTORY_WINDOW_PER_OFFSET);
-        }
-        categoryHistory.set(offsetBucket, offsetHistory);
-        scoreHistory.set(category, categoryHistory);
       }
     }
 
@@ -655,30 +677,65 @@ export class CategoryIndexTickJob {
    * v3 前取的是 scoreProvisional（修正后值），自引用导致稳态残余偏差为
    * b/(1+β) 而非 (1-β)·b —— OVERALL β=0.95 实际只消掉约一半偏差，是
    * 2026-02~06 全线长跌的主因之一。
+   *
+   * 口径换算：旧版（LEGACY_TICK_RULE_VERSION）子类行的 raw 按旧
+   * INFLATION_ALPHA=0.5 写入，换算到新口径为
+   *   raw_v3 = raw_old − (1.0−0.5) × overall_raw(同时刻)
+   * （OVERALL 自身无 alpha 项，新旧口径一致，可直接作参照）。
+   * 缺少同时刻 OVERALL 参照的旧行无法换算，丢弃该样本。
    */
   private async loadScoreHistoryByOffset() {
     const output = new Map<MarketCategory, CategoryOffsetHistory>();
     const totalTake = DRIFT_WINDOW_WEEKS * 7 * 24;
+    const pushSample = (byOffset: Map<number, number[]>, ts: Date, value: number) => {
+      const bucket = weeklyOffsetBucket(ts);
+      const values = byOffset.get(bucket) ?? [];
+      values.push(value);
+      if (values.length > SCORE_HISTORY_WINDOW_PER_OFFSET) {
+        values.splice(0, values.length - SCORE_HISTORY_WINDOW_PER_OFFSET);
+      }
+      byOffset.set(bucket, values);
+    };
+
+    const overallRows = await this.prisma.categoryIndexTick.findMany({
+      where: { category: 'OVERALL' },
+      select: { asOfTs: true, scoreSignalRaw: true },
+      orderBy: { asOfTs: 'desc' },
+      take: totalTake
+    });
+    const overallRawByTs = new Map<number, number>();
+    {
+      const byOffset = new Map<number, number[]>();
+      for (const row of overallRows.reverse()) {
+        const value = Number(row.scoreSignalRaw);
+        if (!Number.isFinite(value)) continue;
+        const ts = new Date(row.asOfTs);
+        overallRawByTs.set(ts.getTime(), value);
+        pushSample(byOffset, ts, value);
+      }
+      output.set('OVERALL', byOffset);
+    }
 
     for (const category of CATEGORY_LIST) {
+      if (category === 'OVERALL') continue;
       const rows = await this.prisma.categoryIndexTick.findMany({
         where: { category },
-        select: { asOfTs: true, scoreSignalRaw: true },
+        select: { asOfTs: true, scoreSignalRaw: true, voteRuleVersion: true },
         orderBy: { asOfTs: 'desc' },
         take: totalTake
       });
 
       const byOffset = new Map<number, number[]>();
       for (const row of rows.reverse()) {
-        const value = Number(row.scoreSignalRaw);
+        let value = Number(row.scoreSignalRaw);
         if (!Number.isFinite(value)) continue;
-        const bucket = weeklyOffsetBucket(new Date(row.asOfTs));
-        const values = byOffset.get(bucket) ?? [];
-        values.push(value);
-        if (values.length > SCORE_HISTORY_WINDOW_PER_OFFSET) {
-          values.splice(0, values.length - SCORE_HISTORY_WINDOW_PER_OFFSET);
+        const ts = new Date(row.asOfTs);
+        if (row.voteRuleVersion === LEGACY_TICK_RULE_VERSION) {
+          const overallRaw = overallRawByTs.get(ts.getTime());
+          if (overallRaw == null) continue;
+          value -= (INFLATION_ALPHA - LEGACY_INFLATION_ALPHA) * overallRaw;
         }
-        byOffset.set(bucket, values);
+        pushSample(byOffset, ts, value);
       }
       output.set(category, byOffset);
     }
