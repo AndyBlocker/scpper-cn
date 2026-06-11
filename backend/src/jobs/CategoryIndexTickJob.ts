@@ -74,13 +74,30 @@ const HOUR_MS = 60 * 60 * 1000;
 const INDEX_BASE = 100;
 const INDEX_K = 0.1;
 const SCORE_CLAMP = 3.2;
-const INFLATION_ALPHA = 0.5;
+// 子类信号减去 1.0×OVERALL：子类指数只表达"品类相对全站"的份额变化，
+// 全站潮汐（含活动量长期趋势）仅由 OVERALL 承载（v3 前为 0.5，半剔除）
+const INFLATION_ALPHA = 1.0;
 
 const DRIFT_WINDOW_WEEKS = 26;
 const DRIFT_MIN_HISTORY_WEEKS = 8;
 const DRIFT_BETA_OVERALL = 0.95;
 const DRIFT_BETA_TRANSLATION = 0.7;
-const DRIFT_BETA_OTHERS = 0.2;
+const DRIFT_BETA_OTHERS = 0.65;
+// drift ref 的小时桶样本不足 DRIFT_MIN_HISTORY_WEEKS 时，回退到该类目全部桶
+// 池化中位数（池化样本需达到该阈值），消除上线初期/新桶的修正空窗
+const DRIFT_FALLBACK_MIN_SAMPLES = 192;
+
+// ─── 周锚点与跨周携带（v3）───
+// 每周以 ANCHOR_PHI_WEEKLY 的比例把指数的对数偏差拉回 INDEX_BASE：
+// anchorTerm = (周内小时/167) × φ × ln(INDEX_BASE/周开盘)，随周内时间线性放大，
+// 周日 23:00 满额、周一 00:00 为 0，因此"下周开盘 = 本周收盘"约束天然保持，无周一跳价。
+// φ=0.06 ⇒ 对数偏差半衰期约 11.5 周；锚力表现为周内连续微漂移（深跌时每小时约 +0.04%）。
+const ANCHOR_PHI_WEEKLY = 0.06;
+// 跨周携带 clamp：周收盘 tick 的 score 决定整周复利因子，单独收紧上限
+// （周内 tick 仍用 SCORE_CLAMP=±3.2），±2.0 ⇒ 单周跨周携带最多 ±22%
+const CARRY_CLAMP = 2.0;
+// 周日 23:00 (UTC+8) 的 weekly offset bucket
+const WEEK_CLOSE_OFFSET = 7 * 24 - 1;
 
 const VOTE_K = 360;
 const SENTIMENT_ALPHA = 2;
@@ -426,7 +443,20 @@ export class CategoryIndexTickJob {
 
         const categoryHistory = scoreHistory.get(category) ?? new Map<number, number[]>();
         const offsetHistory = categoryHistory.get(offsetBucket) ?? [];
-        const scoreRef = offsetHistory.length >= DRIFT_MIN_HISTORY_WEEKS ? median(offsetHistory) : 0;
+        let scoreRef = 0;
+        if (offsetHistory.length >= DRIFT_MIN_HISTORY_WEEKS) {
+          scoreRef = median(offsetHistory);
+        } else {
+          // 该小时桶样本不足时，回退到该类目全部桶的池化中位数，
+          // 避免上线初期出现长达数周的"零修正"空窗
+          const pooled: number[] = [];
+          for (const values of categoryHistory.values()) {
+            pooled.push(...values);
+          }
+          if (pooled.length >= DRIFT_FALLBACK_MIN_SAMPLES) {
+            scoreRef = median(pooled);
+          }
+        }
         const driftBeta = category === 'OVERALL'
           ? DRIFT_BETA_OVERALL
           : category === 'TRANSLATION'
@@ -448,9 +478,17 @@ export class CategoryIndexTickJob {
         );
 
         const scoreWithMicro = rawScoreWithDrag + microScore;
+        // 周日 23:00 的收盘 tick 决定整周跨周复利因子：
+        // 只保留周度信号（raw − β×ref），剔除 crowdDrag 与 micro 这两个
+        // 日内/持仓信号（v3 前它们被永久积分进价格，形成可被集体押注
+        // 方向套利的价格税），并用更紧的 CARRY_CLAMP 限制单周携带幅度。
+        // crowd_drag 列仍照实记录观测值，仅不参与收盘 score。
+        const isWeekClose = offsetBucket === WEEK_CLOSE_OFFSET;
         const scoreProvisional = asOfTs.getTime() === weekStart.getTime()
           ? 0
-          : clamp(scoreWithMicro, -SCORE_CLAMP, SCORE_CLAMP);
+          : isWeekClose
+            ? clamp(scoreSignalRaw - driftBeta * scoreRef, -CARRY_CLAMP, CARRY_CLAMP)
+            : clamp(scoreWithMicro, -SCORE_CLAMP, SCORE_CLAMP);
         const weekKey = `${category}:${weekStart.toISOString()}`;
 
         let indexOpen = weekOpenCache.get(weekKey);
@@ -467,7 +505,13 @@ export class CategoryIndexTickJob {
           weekOpenCache.set(weekKey, indexOpen);
         }
 
-        const baseIndexMark = indexOpen * Math.exp(INDEX_K * scoreProvisional);
+        // 软锚点：以周内线性 ramp 的形式把对数偏差按 φ/周 拉回 INDEX_BASE。
+        // offsetBucket=0（周一 00:00）时为 0，保证 indexOpen(next)=indexClose(prev)
+        // 强约束不被破坏；收盘 tick 携带满额锚力进入下周开盘。
+        const anchorTerm = indexOpen > 0
+          ? (offsetBucket / WEEK_CLOSE_OFFSET) * ANCHOR_PHI_WEEKLY * Math.log(INDEX_BASE / indexOpen)
+          : 0;
+        const baseIndexMark = indexOpen * Math.exp(INDEX_K * scoreProvisional + anchorTerm);
         const noise = this.deterministicNoise(category, asOfTs, NOISE_AMPLITUDE);
         const indexMark = Number((baseIndexMark * (1 + noise)).toFixed(6));
         const voteCutoffDate = utcDateOnlyFromUtc8Day(startOfUtc8Day(addUtc8Days(asOfTs, -1)));
@@ -501,7 +545,8 @@ export class CategoryIndexTickJob {
           }
         }
 
-        offsetHistory.push(scoreProvisional);
+        // drift 历史窗口与 loadScoreHistoryByOffset 同口径：存修正前的 raw 信号
+        offsetHistory.push(scoreSignalRaw);
         if (offsetHistory.length > SCORE_HISTORY_WINDOW_PER_OFFSET) {
           offsetHistory.splice(0, offsetHistory.length - SCORE_HISTORY_WINDOW_PER_OFFSET);
         }
@@ -605,6 +650,12 @@ export class CategoryIndexTickJob {
     return new Date(Math.min(...timestamps));
   }
 
+  /**
+   * Drift ref 历史必须取 scoreSignalRaw（修正前的原始信号）。
+   * v3 前取的是 scoreProvisional（修正后值），自引用导致稳态残余偏差为
+   * b/(1+β) 而非 (1-β)·b —— OVERALL β=0.95 实际只消掉约一半偏差，是
+   * 2026-02~06 全线长跌的主因之一。
+   */
   private async loadScoreHistoryByOffset() {
     const output = new Map<MarketCategory, CategoryOffsetHistory>();
     const totalTake = DRIFT_WINDOW_WEEKS * 7 * 24;
@@ -612,14 +663,14 @@ export class CategoryIndexTickJob {
     for (const category of CATEGORY_LIST) {
       const rows = await this.prisma.categoryIndexTick.findMany({
         where: { category },
-        select: { asOfTs: true, scoreProvisional: true },
+        select: { asOfTs: true, scoreSignalRaw: true },
         orderBy: { asOfTs: 'desc' },
         take: totalTake
       });
 
       const byOffset = new Map<number, number[]>();
       for (const row of rows.reverse()) {
-        const value = Number(row.scoreProvisional);
+        const value = Number(row.scoreSignalRaw);
         if (!Number.isFinite(value)) continue;
         const bucket = weeklyOffsetBucket(new Date(row.asOfTs));
         const values = byOffset.get(bucket) ?? [];
