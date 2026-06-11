@@ -4536,11 +4536,13 @@ export function buildMarketCandles(
     let high = open;
     let low = open;
 
-    // Use step-function semantics:
-    // - open: last price at bucket start
-    // - close: last price at bucket end (inclusive)
-    // - high/low: extrema touched within [bucketStart, bucketEnd]
-    while (index < normalizedTicks.length && normalizedTicks[index]!.ts <= bucketEnd) {
+    // Use step-function semantics with half-open buckets [bucketStart, bucketEnd):
+    // - open: last price before bucket start
+    // - close: last price within the bucket
+    // 整点 tick 属于它所开启的桶；旧的 `<= bucketEnd` 闭区间会把整点 tick
+    // 吃进上一桶，导致每根蜡烛 close 实为下一小时价格、且尾部出现连续
+    // 相同值的假平蜡烛。
+    while (index < normalizedTicks.length && normalizedTicks[index]!.ts < bucketEnd) {
       const price = normalizedTicks[index]!.price;
       lastPrice = price;
       if (price > high) high = price;
