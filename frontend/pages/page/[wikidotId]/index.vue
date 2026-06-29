@@ -221,69 +221,6 @@
         @update:jump-page="voteJumpPage = $event"
       />
 
-      <!-- Related Pages -->
-      <section id="related" class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 bg-white dark:bg-neutral-900 shadow-sm">
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <div class="flex items-center gap-2">
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">相关页面</h3>
-            <button
-              type="button"
-              class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
-              @click="copyAnchorLink('related')"
-              :title="copiedAnchorId === 'related' ? '已复制链接' : '复制该段落链接'"
-            >
-              <LucideIcon v-if="copiedAnchorId === 'related'" name="Check" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
-              <LucideIcon v-else name="Link" class="w-3.5 h-3.5" stroke-width="2" aria-hidden="true" />
-            </button>
-          </div>
-          <button
-            type="button"
-            class="hidden sm:inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1 text-xs text-neutral-500 hover:text-[var(--g-accent)] hover:border-[var(--g-accent-border)] dark:text-neutral-400 dark:hover:text-[var(--g-accent)]"
-            @click="refreshRelatedPages()"
-            title="刷新推荐"
-          >
-            <LucideIcon name="RefreshCcw" class="h-3.5 w-3.5" stroke-width="1.8" />
-            刷新
-          </button>
-        </div>
-        <div v-if="relatedPending" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div v-for="i in 3" :key="`skeleton-${i}`" class="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-neutral-900/60 animate-pulse">
-            <div class="h-4 w-3/4 bg-neutral-200 dark:bg-neutral-800 rounded mb-3"></div>
-            <div class="flex gap-2 mb-3">
-              <div class="h-3 w-16 bg-neutral-200 dark:bg-neutral-800 rounded"></div>
-              <div class="h-3 w-12 bg-neutral-200 dark:bg-neutral-800 rounded"></div>
-              <div class="h-3 w-10 bg-neutral-200 dark:bg-neutral-800 rounded"></div>
-            </div>
-            <div class="h-20 w-full bg-neutral-200/70 dark:bg-neutral-800/70 rounded"></div>
-          </div>
-        </div>
-        <div v-else-if="relatedError" class="rounded-lg border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-900/60 p-6 text-sm text-neutral-600 dark:text-neutral-400">
-          加载推荐失败。
-          <button type="button" class="ml-2 inline-flex items-center gap-1 text-[var(--g-accent)] hover:underline" @click="refreshRelatedPages()">重试</button>
-        </div>
-        <div v-else-if="relatedPages && relatedPages.length > 0" class="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <PageCard
-            v-for="rp in relatedPages.slice(0, 3)"
-            :key="rp.wikidotId"
-            size="md"
-            :to="`/page/${rp.wikidotId}`"
-            :wikidot-id="rp.wikidotId"
-            :title="rp.title"
-            :snippet-html="(rp as any).snippet || null"
-            :tags="orderTags(Array.isArray(rp.tags) ? rp.tags : [])"
-            :rating="Number(rp.rating ?? 0)"
-            :comments="Number(rp.commentCount ?? rp.revisionCount ?? 0)"
-            :wilson95="typeof rp.wilson95 === 'number' ? rp.wilson95 : undefined"
-            :controversy="typeof rp.controversy === 'number' ? rp.controversy : 0"
-            :date-iso="rp.createdAt || ''"
-            :authors="Array.isArray((rp as any).authors_full) ? (rp as any).authors_full.map((a:any) => ({ name: a?.displayName || '', url: a?.wikidotId ? `/user/${a.wikidotId}` : undefined })) : []"
-          />
-        </div>
-        <div v-else class="text-center py-4 text-neutral-500 dark:text-neutral-400">
-          暂无推荐
-        </div>
-      </section>
-
       <!-- Page Images -->
       <PageImages
         :images="pageImages"
@@ -318,12 +255,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, watchEffect, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import { definePageMeta, useAsyncData, useHead, useNuxtApp, useRoute, useRuntimeConfig } from '#imports'
 import { orderTags } from '~/composables/useTagOrder'
 import { onBeforeRouteUpdate } from 'vue-router'
 import { useAuth } from '~/composables/useAuth'
-import { useViewerVotes } from '~/composables/useViewerVotes'
 import { formatDateUtc8, formatDateIsoUtc8, diffUtc8CalendarDays } from '~/utils/timezone'
 import CollectionPicker from '~/components/collections/CollectionPicker.vue'
 import PageMetrics from '~/components/page/PageMetrics.vue'
@@ -338,7 +274,6 @@ const route = useRoute();
 const {$bff} = useNuxtApp();
 const runtimeConfig = useRuntimeConfig();
 const { user: authUser, isAuthenticated } = useAuth()
-const { hydratePages: hydrateViewerVotes } = useViewerVotes()
 const PAGE_ANCHOR_KEY = '__page__'
 const copiedAnchorId = ref<string | null>(null)
 let anchorCopyTimer: ReturnType<typeof setTimeout> | null = null
@@ -351,7 +286,6 @@ const viewerLinkedId = computed(() => {
   const numeric = Number(id)
   return Number.isFinite(numeric) ? numeric : null
 })
-
 
 const bffBase = normalizeBffBase((runtimeConfig?.public as any)?.bffBase);
 
@@ -605,22 +539,6 @@ const { data: voteDistribution, pending: voteDistributionPending } = await useAs
   () => `vote-dist-${wikidotId.value}`,
   () => $bff(`/pages/${wikidotId.value}/vote-distribution`),
   { watch: [() => route.params.wikidotId], server: false, lazy: true }
-)
-
-const { data: relatedPages, pending: relatedPending, error: relatedError, refresh: refreshRelatedPages } = useAsyncData(
-  () => `related-pages-${wikidotId.value}`,
-  () => $bff(`/pages/${wikidotId.value}/recommendations`, { params: { limit: 6, strategy: 'both', diversity: 'simple' } }),
-  { watch: [() => route.params.wikidotId], server: false, lazy: true }
-)
-
-watch(
-  () => relatedPages.value,
-  (pages) => {
-    if (!isClient) return
-    if (!Array.isArray(pages) || pages.length === 0) return
-    void hydrateViewerVotes(pages as any[])
-  },
-  { immediate: true, flush: 'post' }
 )
 
 const votePageSize = ref(10)
