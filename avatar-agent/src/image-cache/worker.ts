@@ -63,10 +63,25 @@ function backoffDelay(attempts: number): number {
 function resolveHost(url: string): string | null {
   try {
     const u = new URL(url);
-    return u.host.toLowerCase();
+    // hostname (not host) so allow/block matching is port-insensitive:
+    // otherwise a blocked host could be bypassed via an explicit port (e.g. cdn.mer.run:443).
+    return u.hostname.toLowerCase();
   } catch {
     return null;
   }
+}
+
+function hostMatchesPattern(host: string, pattern: string): boolean {
+  if (pattern === '*') return true;
+  if (pattern.startsWith('*.')) {
+    // "*.example.com" matches example.com and any subdomain of it
+    return host === pattern.slice(2) || host.endsWith(pattern.slice(1));
+  }
+  return host === pattern;
+}
+
+function hostMatchesAny(host: string, patterns: string[]): boolean {
+  return patterns.some(pattern => hostMatchesPattern(host, pattern));
 }
 
 function isAllowedImageHost(url: string): boolean {
@@ -77,7 +92,10 @@ function isAllowedImageHost(url: string): boolean {
   }
   const host = resolveHost(url);
   if (!host) return false;
-  return allowed.includes(host);
+  // Blocklist takes precedence: e.g. our own CDN (cdn.mer.run) is already served, no need to re-cache.
+  if (hostMatchesAny(host, cfg.imageCache.blockedHosts)) return false;
+  // "*" allows all; explicit hosts and "*.suffix" patterns are also honored.
+  return hostMatchesAny(host, allowed);
 }
 
 function sha256(buffer: Buffer): string {
