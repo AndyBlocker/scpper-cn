@@ -1224,7 +1224,10 @@ async function fetchPages(params: Record<string, any> | null = null, options: { 
         offset,
         includeTotal,
         includeSnippet: true,
-        includeDate: includeTotal
+        // 每一页结果都需要展示创建日期（firstRevisionAt）。此前误写成 includeTotal，
+        // 导致 offset>0 的"加载更多"请求 includeDate=false，BFF 会剥离 firstRevisionAt，
+        // 前端回退到 validFrom（当前版本生效时间，常为批量同步日期）→ 新加载页面创建日期全变成同一天。
+        includeDate: true
       }
     })
     const rowsRaw = Array.isArray(resp?.results) ? resp.results : (Array.isArray(resp) ? resp : [])
