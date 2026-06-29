@@ -87,6 +87,10 @@ export const cfg = {
       .split(",")
       .map(s => s.trim().toLowerCase())
       .filter(Boolean),
+    blockedHosts: str("PAGE_IMAGE_BLOCKED_HOSTS", "")
+      .split(",")
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean),
     variantEnabled: bool("PAGE_IMAGE_VARIANT_ENABLED", true),
     variantMaxWidth: num("PAGE_IMAGE_VARIANT_MAX_WIDTH", 640),
     variantQuality: num("PAGE_IMAGE_VARIANT_QUALITY", 72)
