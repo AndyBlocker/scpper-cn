@@ -377,6 +377,15 @@ export class CategoryIndexTickJob {
   }
 
   async run(options: { forceFullBackfill?: boolean } = {}): Promise<TickRunSummary> {
+    // V4 私盐 fail-fast：随机增量是 (盐, category, 时刻) 的纯函数；若用公开默认盐，
+    // 任何人都能据 category/时刻 复现未来随机增量并 front-run（Codex review P2）。
+    if (V4_ENABLED && !(process.env.ORACLE_SEED_SALT || '').trim()) {
+      throw new Error(
+        '[CategoryIndexTickJob] V4_ORACLE_INCREMENT 已启用但未设置 ORACLE_SEED_SALT：'
+        + '随机层将使用公开默认盐，未来随机增量可被逆向 front-run。'
+        + '请先在生产环境设置一个保密的 ORACLE_SEED_SALT 再启用 V4。'
+      );
+    }
     const sourceWatermark = await this.resolveSourceWatermark();
     const nowAsOf = floorToUtc8Hour(new Date());
     const latestTick = await this.prisma.categoryIndexTick.findFirst({
@@ -571,8 +580,20 @@ export class CategoryIndexTickJob {
             ? median(offsetHistory) - levelRef
             : 0;
           const betaSeas = category === 'OVERALL' ? V4_BETA_SEAS_OVERALL : V4_BETA_SEAS_OTHER;
-          // early-week blend：周初用上周收盘 raw ramp-in，消周一信号空窗
-          const prevCloseRaw = lastCloseRawByCategory.get(category) ?? 0;
+          // early-week blend：周初用上周收盘 raw ramp-in，消周一信号空窗。
+          // prevCloseRaw 懒加载：正常 hourly run 通常只生成当前小时、不会生成上周收盘 tick，
+          // 故内存 Map 多为空，须从 DB 读 (< 本周一的最近 tick 的 genuine score_signal_raw)，
+          // 否则每周前 72h 被错误地拉向 0（Codex review P2）。
+          let prevCloseRaw = lastCloseRawByCategory.get(category);
+          if (prevCloseRaw == null) {
+            const prevWeekClose = await this.prisma.categoryIndexTick.findFirst({
+              where: { category, asOfTs: { lt: weekStart } },
+              orderBy: { asOfTs: 'desc' },
+              select: { scoreSignalRaw: true }
+            });
+            prevCloseRaw = prevWeekClose?.scoreSignalRaw != null ? Number(prevWeekClose.scoreSignalRaw) : 0;
+            lastCloseRawByCategory.set(category, prevCloseRaw);
+          }
           const weekProgress = clamp(offsetBucket / V4_EARLY_WEEK_HOURS, 0, 1);
           const rawEff = weekProgress * scoreSignalRaw + (1 - weekProgress) * prevCloseRaw;
           const scoreCorrected = clamp(
@@ -596,8 +617,12 @@ export class CategoryIndexTickJob {
           // 弱公允值锚增量：F 随基本面浮动，仅在价格远离公允值时温和回拉
           const fairValue = Math.log(INDEX_BASE) + V4_FAIR_GAMMA * levelRef;
           const anchorIncr = (V4_ANCHOR_LAMBDA / (7 * 24)) * (fairValue - Math.log(lastIndex));
-          // 价格（增量驱动）：基本面 drift + 随机增量 + 弱锚增量
-          const dlog = V4_K_FUND * scoreCorrected + stochIncr + anchorIncr;
+          // 价格（增量驱动）：基本面 drift + 随机增量 + 弱锚增量。
+          // 周一 00:00（offsetBucket=0）强制 dlog=0 → 严格保持"下周开盘=本周收盘"不变量，
+          // 与 v3 周起零化语义一致，杜绝跨周人为缺口（Codex review P2；丢弃该小时增量，影响 1/168 无感）。
+          const dlog = offsetBucket === 0
+            ? 0
+            : V4_K_FUND * scoreCorrected + stochIncr + anchorIncr;
           storeIndexMark = Number((lastIndex * Math.exp(dlog)).toFixed(6));
           storeScoreRef = betaSeas * seasonalRef + V4_BETA_LEVEL * levelRef;
           storeScoreProvisional = scoreCorrected;
