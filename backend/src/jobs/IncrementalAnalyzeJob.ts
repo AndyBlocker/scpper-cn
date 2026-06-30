@@ -229,6 +229,14 @@ export class IncrementalAnalyzeJob {
               // （如 v4 上线后历史含 v1/v2/v3），重算会改写历史、冲掉存续合约 entryIndex 参考价。
               // 除非显式放行，否则拒绝。
               const v4On = ['1', 'true', 'yes', 'on'].includes((process.env.V4_ORACLE_INCREMENT || '').trim().toLowerCase());
+              // V4 salt 前置检查：必须在 deleteMany 之前，否则会先删光历史 tick、
+              // 随后 TickJob.run() 才因缺 salt fail-fast（历史已无法挽回，Codex review P2）。
+              if (v4On && !(process.env.ORACLE_SEED_SALT || '').trim()) {
+                throw new Error(
+                  '❌ 拒绝 rebuild 股市 Tick：V4_ORACLE_INCREMENT 已启用但未设置 ORACLE_SEED_SALT。'
+                  + '若放行会先删光历史 tick、随后生成阶段才 fail-fast。请先设置保密的 ORACLE_SEED_SALT。'
+                );
+              }
               const willGenerate = v4On ? 'utc8-t+1-v3' : 'utc8-t+1-v2';
               const versions = await this.prisma.categoryIndexTick.findMany({
                 distinct: ['voteRuleVersion'],

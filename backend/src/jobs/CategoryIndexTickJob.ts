@@ -618,16 +618,18 @@ export class CategoryIndexTickJob {
           const fairValue = Math.log(INDEX_BASE) + V4_FAIR_GAMMA * levelRef;
           const anchorIncr = (V4_ANCHOR_LAMBDA / (7 * 24)) * (fairValue - Math.log(lastIndex));
           // 价格（增量驱动）：基本面 drift + 随机增量 + 弱锚增量。
-          // 周一 00:00（offsetBucket=0）强制 dlog=0 → 严格保持"下周开盘=本周收盘"不变量，
-          // 与 v3 周起零化语义一致，杜绝跨周人为缺口（Codex review P2；丢弃该小时增量，影响 1/168 无感）。
-          const dlog = offsetBucket === 0
+          // 周一 00:00（offsetBucket=0，周开盘）强制 dlog=0 → 严格保持"下周开盘=本周收盘"不变量，
+          // 与 v3 周起零化语义一致；并把 score/noise 一并置 0，使审计列与 ForecastJob 口径一致
+          // （Codex review P2：价格未动则 score/noise 也应为 0；丢弃该小时增量，影响 1/168 无感）。
+          const isWeekOpen = offsetBucket === 0;
+          const dlog = isWeekOpen
             ? 0
             : V4_K_FUND * scoreCorrected + stochIncr + anchorIncr;
           storeIndexMark = Number((lastIndex * Math.exp(dlog)).toFixed(6));
           storeScoreRef = betaSeas * seasonalRef + V4_BETA_LEVEL * levelRef;
-          storeScoreProvisional = scoreCorrected;
+          storeScoreProvisional = isWeekOpen ? 0 : scoreCorrected;
           storeCrowdDrag = 0; // v4 P0：crowd_drag 不计入价格
-          storeNoise = stochIncr;
+          storeNoise = isWeekOpen ? 0 : stochIncr;
         } else {
           // ─── v3 原逻辑（开关关时行为完全不变） ───
           const rawScoreProvisional = clamp(scoreSignalRaw - driftBeta * scoreRef, -SCORE_CLAMP, SCORE_CLAMP);
