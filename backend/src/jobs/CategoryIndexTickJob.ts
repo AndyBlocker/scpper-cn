@@ -414,8 +414,9 @@ export class CategoryIndexTickJob {
     const marginSnapshot = await this.loadCrowdMarginSnapshot();
     const microBaselines = await this.loadMicroBaselines();
     const weekOpenCache = new Map<string, number>();
-    // v4 链式增量状态（仅 V4_ENABLED 用）：上一 tick 价格 + 上周收盘 genuine raw
+    // v4 链式增量状态（仅 V4_ENABLED 用）：上一 tick 价格 + 其时刻 + 上周收盘 genuine raw
     const lastIndexByCategory = new Map<string, number>();
+    const lastIndexTsByCategory = new Map<string, number>();
     const lastCloseRawByCategory = new Map<string, number>();
     let generated = 0;
     let firstGenerated: Date | null = null;
@@ -602,15 +603,28 @@ export class CategoryIndexTickJob {
           );
           // 链式：上一 tick 价格（首值懒加载自 DB 中 < asOfTs 的最近 tick；只读，不重写历史）
           let lastIndex = lastIndexByCategory.get(category);
+          let lastIndexTs = lastIndexTsByCategory.get(category);
           if (lastIndex == null) {
             const prev = await this.prisma.categoryIndexTick.findFirst({
               where: { category, asOfTs: { lt: asOfTs } },
               orderBy: { asOfTs: 'desc' },
-              select: { indexMark: true }
+              select: { indexMark: true, asOfTs: true }
             });
             lastIndex = prev?.indexMark ? Number(prev.indexMark) : INDEX_BASE;
+            lastIndexTs = prev?.asOfTs ? new Date(prev.asOfTs).getTime() : undefined;
           }
           if (!(lastIndex > 0)) lastIndex = INDEX_BASE;
+          // gap 检测：上一价格须恰为 asOfTs-1h；否则（job 中断/回填窗截断导致链断）本 tick 视为
+          // 重启锚点（dlog=0、价格保持上一收盘），并告警；缺口不回填——gap 期间无数据可生成，
+          // 强行用单小时增量链接会把数天跨度压成一步、产生 stale 价格（Codex review P2）。
+          const isRestart = !(lastIndexTs != null && lastIndexTs === asOfTs.getTime() - HOUR_MS);
+          if (isRestart) {
+            console.warn(
+              `[CategoryIndexTickJob] ⚠️ v4 chain restart for ${category}: prev tick ts=`
+              + `${lastIndexTs != null ? new Date(lastIndexTs).toISOString() : 'none'} ≠ `
+              + `${new Date(asOfTs.getTime() - HOUR_MS).toISOString()}；价格保持上一收盘，缺口未回填。`
+            );
+          }
           // 随机层：OU 卷积纯函数的逐时增量（连续、无周一跳、可复现）
           const absHour = Math.floor(asOfTs.getTime() / HOUR_MS);
           const stochIncr = v4OuLevel(category, absHour) - v4OuLevel(category, absHour - 1);
@@ -618,18 +632,19 @@ export class CategoryIndexTickJob {
           const fairValue = Math.log(INDEX_BASE) + V4_FAIR_GAMMA * levelRef;
           const anchorIncr = (V4_ANCHOR_LAMBDA / (7 * 24)) * (fairValue - Math.log(lastIndex));
           // 价格（增量驱动）：基本面 drift + 随机增量 + 弱锚增量。
-          // 周一 00:00（offsetBucket=0，周开盘）强制 dlog=0 → 严格保持"下周开盘=本周收盘"不变量，
-          // 与 v3 周起零化语义一致；并把 score/noise 一并置 0，使审计列与 ForecastJob 口径一致
-          // （Codex review P2：价格未动则 score/noise 也应为 0；丢弃该小时增量，影响 1/168 无感）。
+          // 周一 00:00（周开盘）或链重启（gap）时强制 dlog=0 → 价格保持上一收盘，严格保持
+          // "下周开盘=本周收盘"不变量；score/noise 同置 0 使审计列与 ForecastJob 口径一致
+          // （Codex review P2：价格未动则 score/noise 也应为 0；周开盘丢弃该小时增量，影响 1/168 无感）。
           const isWeekOpen = offsetBucket === 0;
-          const dlog = isWeekOpen
+          const zeroMove = isWeekOpen || isRestart;
+          const dlog = zeroMove
             ? 0
             : V4_K_FUND * scoreCorrected + stochIncr + anchorIncr;
           storeIndexMark = Number((lastIndex * Math.exp(dlog)).toFixed(6));
           storeScoreRef = betaSeas * seasonalRef + V4_BETA_LEVEL * levelRef;
-          storeScoreProvisional = isWeekOpen ? 0 : scoreCorrected;
+          storeScoreProvisional = zeroMove ? 0 : scoreCorrected;
           storeCrowdDrag = 0; // v4 P0：crowd_drag 不计入价格
-          storeNoise = isWeekOpen ? 0 : stochIncr;
+          storeNoise = zeroMove ? 0 : stochIncr;
         } else {
           // ─── v3 原逻辑（开关关时行为完全不变） ───
           const rawScoreProvisional = clamp(scoreSignalRaw - driftBeta * scoreRef, -SCORE_CLAMP, SCORE_CLAMP);
@@ -733,6 +748,7 @@ export class CategoryIndexTickJob {
           // v4：链式状态推进（成功落库后才更新，与 P2002 跳过语义一致）
           if (V4_ENABLED) {
             lastIndexByCategory.set(category, storeIndexMark);
+            lastIndexTsByCategory.set(category, asOfTs.getTime());
             if (offsetBucket === WEEK_CLOSE_OFFSET) lastCloseRawByCategory.set(category, scoreSignalRaw);
           }
 
@@ -751,7 +767,10 @@ export class CategoryIndexTickJob {
           }
           // v4：该 tick 已存在（backfill 重叠），清除链式缓存 → 下一小时从 DB 重新读取真实上一价格，
           // 避免把"跳过的小时"误当作链式前值。绝不覆盖已存在 tick。
-          if (V4_ENABLED) lastIndexByCategory.delete(category);
+          if (V4_ENABLED) {
+            lastIndexByCategory.delete(category);
+            lastIndexTsByCategory.delete(category);
+          }
         }
       }
     }
