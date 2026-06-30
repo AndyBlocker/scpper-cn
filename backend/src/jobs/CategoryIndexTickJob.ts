@@ -149,6 +149,84 @@ const FALLBACK_BACKFILL_HOURS = 24;
 const MAX_BACKFILL_HOURS = 24 * 14;
 const SCORE_HISTORY_WINDOW_PER_OFFSET = DRIFT_WINDOW_WEEKS;
 
+// ════════ v4 增量驱动重设计（灰度开关；默认关 = 完全保持 v3 行为）════════
+// 设计与回测：docs/gacha-market-oracle-v4-{proposals,backtest}-2026-06-30.md
+// 价格改「基本面增量驱动」：Δln(price)=K·scoreCorrected + 随机增量 + 弱锚增量（链式连续，
+// 天然满足"下周开盘=本周收盘"）。随机层用 OU 卷积纯函数（均值回复+方差有界+无运行状态），
+// 是 (category, 绝对小时) 的纯函数 → 可逐位复现，满足"绝不改历史 tick"的前提。
+function v4ParseBool(v: string | undefined): boolean {
+  if (v == null) return false;
+  const n = v.trim().toLowerCase();
+  return n === '1' || n === 'true' || n === 'yes' || n === 'on';
+}
+const V4_ENABLED = v4ParseBool(process.env.V4_ORACLE_INCREMENT);
+const V4_TICK_RULE_VERSION = 'utc8-t+1-v3';
+const V4_SEED_SALT = (process.env.ORACLE_SEED_SALT || 'scpper-oracle-v4-default').trim();
+const V4_K_FUND = Number(process.env.V4_K_FUND ?? '0.0013') || 0.0013;             // 基本面增量驱动系数
+const V4_SIGMA_TARGET = Number(process.env.V4_SIGMA_TARGET ?? '0.0055') || 0.0055; // OU 增量目标小时 std（中等波动档）
+const V4_OU_KAPPA = 0.06;            // 随机位移均值回复速率
+const V4_OU_WINDOW = 200;            // 卷积窗（(1-κ)^200≈3e-6，足够截断）
+const V4_VOL_WEEK_AMP = 0.6;         // 周级冷热 regime 幅度
+const V4_JUMP_LAMBDA = 0.006;        // 泊松跳跃概率/小时（~1/周）
+const V4_JUMP_MIN = 0.03;
+const V4_JUMP_MAG = 0.05;            // 跳幅 ±3~8%
+const V4_INCR_CLAMP = 0.15;          // 单 tick 增量硬顶（防极端针 → 防清算级联）
+const V4_ANCHOR_LAMBDA = Number(process.env.V4_ANCHOR_LAMBDA ?? '0.25') || 0.25;   // 弱公允值锚（防长期漂移）
+const V4_FAIR_GAMMA = 0.18;          // 公允值随基本面浮动：F=ln(100)+γ·levelRef
+const V4_BETA_SEAS_OVERALL = 0.9;    // drift 季节项系数
+const V4_BETA_SEAS_OTHER = 0.8;
+const V4_BETA_LEVEL = 0.05;          // drift 趋势项系数（≈0，几乎保留品类自身趋势）
+const V4_SCORE_CLAMP = 3.6;
+const V4_EARLY_WEEK_HOURS = 72;      // 周初 blend，消周一信号空窗
+
+function v4Hash32(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function v4Mul32(a: number): number {
+  a |= 0; a = (a + 0x6D2B79F5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function v4Uniform(category: string, week: number, tag: string, t: number): number {
+  return v4Mul32(v4Hash32(`${V4_SEED_SALT}|${category}|${week}|${tag}|${t}`));
+}
+function v4Normal(category: string, week: number, tag: string, t: number): number {
+  let s = 0;
+  for (let k = 0; k < 12; k++) s += v4Mul32(v4Hash32(`${V4_SEED_SALT}|${category}|${week}|${tag}|${t}|${k}`));
+  return s - 6; // Irwin-Hall ≈ N(0,1)，纯整数+加法、跨平台逐位一致
+}
+const v4IncrCache = new Map<string, number>();
+// 绝对小时 h 的随机 log 增量（纯函数）：周级 vol regime × Irwin-Hall 正态 + 低频泊松跳跃
+function v4IncrAt(category: string, h: number): number {
+  const key = category + '|' + h;
+  const cached = v4IncrCache.get(key);
+  if (cached !== undefined) return cached;
+  const week = startOfUtc8Week(new Date(h * HOUR_MS)).getTime();
+  const volWeek = 1 + V4_VOL_WEEK_AMP * (v4Uniform(category, week, 'vol', 0) - 0.5) * 2;
+  let incr = V4_SIGMA_TARGET * volWeek * v4Normal(category, week, 'ou', h);
+  if (v4Uniform(category, week, 'jump', h) < V4_JUMP_LAMBDA) {
+    const sgn = v4Uniform(category, week, 'js', h) < 0.5 ? -1 : 1;
+    incr += sgn * (V4_JUMP_MIN + V4_JUMP_MAG * v4Uniform(category, week, 'jm', h));
+  }
+  incr = clamp(incr, -V4_INCR_CLAMP, V4_INCR_CLAMP);
+  v4IncrCache.set(key, incr);
+  return incr;
+}
+const v4OuCache = new Map<string, number>();
+// OU 闭式解 S[h]=Σ (1-κ)^j·incr[h-j]：均值回复、方差有界、纯函数（无运行状态、可逐位复现）
+function v4OuLevel(category: string, h: number): number {
+  const key = category + '|' + h;
+  const cached = v4OuCache.get(key);
+  if (cached !== undefined) return cached;
+  let s = 0, w = 1; const decay = 1 - V4_OU_KAPPA;
+  for (let j = 0; j < V4_OU_WINDOW; j++) { s += w * v4IncrAt(category, h - j); w *= decay; if (w < 1e-6) break; }
+  v4OuCache.set(key, s);
+  return s;
+}
+
 function addUtc8Offset(date: Date) {
   return new Date(date.getTime() + UTC8_OFFSET_MS);
 }
@@ -327,6 +405,9 @@ export class CategoryIndexTickJob {
     const marginSnapshot = await this.loadCrowdMarginSnapshot();
     const microBaselines = await this.loadMicroBaselines();
     const weekOpenCache = new Map<string, number>();
+    // v4 链式增量状态（仅 V4_ENABLED 用）：上一 tick 价格 + 上周收盘 genuine raw
+    const lastIndexByCategory = new Map<string, number>();
+    const lastCloseRawByCategory = new Map<string, number>();
     let generated = 0;
     let firstGenerated: Date | null = null;
     let lastGenerated: Date | null = null;
@@ -468,72 +549,134 @@ export class CategoryIndexTickJob {
           : category === 'TRANSLATION'
             ? DRIFT_BETA_TRANSLATION
             : DRIFT_BETA_OTHERS;
-        const rawScoreProvisional = clamp(scoreSignalRaw - driftBeta * scoreRef, -SCORE_CLAMP, SCORE_CLAMP);
 
-        // Crowd drag: reduce price push when one side is over-concentrated
-        const crowdDrag = this.computeCrowdDrag(category, marginSnapshot);
-        const rawScoreWithDrag = clamp(rawScoreProvisional - crowdDrag, -SCORE_CLAMP, SCORE_CLAMP);
+        // 这些列在两套口径下都要写：scoreRef=实际扣减量；scoreProvisional=进价格的 score；
+        // crowdDrag=观测/0；noise=随机增量/确定性噪声；indexMark=最终价格。
+        let storeScoreRef: number;
+        let storeScoreProvisional: number;
+        let storeIndexMark: number;
+        let storeCrowdDrag: number;
+        let storeNoise: number;
 
-        // Micro signal: intra-day price movement from real-time activity
-        const microScore = this.computeMicroSignal(
-          asOfTs, category,
-          revWindow.get(category) ?? 0,
-          recentForumCount,
-          microBaselines,
-          rawSignal.dVotesTotal
-        );
-
-        const scoreWithMicro = rawScoreWithDrag + microScore;
-        // 周日 23:00 的收盘 tick 决定整周跨周复利因子：
-        // 只保留周度信号（raw − β×ref），剔除 crowdDrag 与 micro 这两个
-        // 日内/持仓信号（v3 前它们被永久积分进价格，形成可被集体押注
-        // 方向套利的价格税），并用更紧的 CARRY_CLAMP 限制单周携带幅度。
-        // crowd_drag 列仍照实记录观测值，仅不参与收盘 score。
-        const isWeekClose = offsetBucket === WEEK_CLOSE_OFFSET;
-        const scoreProvisional = asOfTs.getTime() === weekStart.getTime()
-          ? 0
-          : isWeekClose
-            ? clamp(scoreSignalRaw - driftBeta * scoreRef, -CARRY_CLAMP, CARRY_CLAMP)
-            : clamp(scoreWithMicro, -SCORE_CLAMP, SCORE_CLAMP);
-        const weekKey = `${category}:${weekStart.toISOString()}`;
-
-        let indexOpen = weekOpenCache.get(weekKey);
-        if (indexOpen == null) {
-          const latestAtWeekStart = await this.prisma.categoryIndexTick.findFirst({
-            where: {
-              category,
-              asOfTs: { lte: weekStart }
-            },
-            orderBy: { asOfTs: 'desc' },
-            select: { asOfTs: true, indexMark: true }
-          });
-          if (latestAtWeekStart
-            && new Date(latestAtWeekStart.asOfTs).getTime() < weekStart.getTime() - HOUR_MS) {
-            // 回填窗口截断等原因导致上周收盘 tick 缺失，跨周复利链在此断裂，
-            // 退化为以最近可用 tick 作开盘。保持生成（市场不停摆）但需告警人工核查。
-            console.warn(
-              `[CategoryIndexTickJob] ⚠️ week open chain broken for ${category}: `
-              + `weekStart=${weekStart.toISOString()}, nearest tick=${new Date(latestAtWeekStart.asOfTs).toISOString()}`
-            );
+        if (V4_ENABLED) {
+          // ─── v4 增量驱动（链式连续） ───
+          // drift 季节/趋势分解：只去周内季节形态，几乎保留品类自身水平/趋势
+          let levelRef = 0;
+          {
+            const pooled: number[] = [];
+            for (const values of categoryHistory.values()) pooled.push(...values);
+            if (pooled.length >= DRIFT_FALLBACK_MIN_SAMPLES) levelRef = median(pooled);
           }
-          indexOpen = latestAtWeekStart?.indexMark ? Number(latestAtWeekStart.indexMark) : INDEX_BASE;
-          weekOpenCache.set(weekKey, indexOpen);
+          const seasonalRef = offsetHistory.length >= DRIFT_MIN_HISTORY_WEEKS
+            ? median(offsetHistory) - levelRef
+            : 0;
+          const betaSeas = category === 'OVERALL' ? V4_BETA_SEAS_OVERALL : V4_BETA_SEAS_OTHER;
+          // early-week blend：周初用上周收盘 raw ramp-in，消周一信号空窗
+          const prevCloseRaw = lastCloseRawByCategory.get(category) ?? 0;
+          const weekProgress = clamp(offsetBucket / V4_EARLY_WEEK_HOURS, 0, 1);
+          const rawEff = weekProgress * scoreSignalRaw + (1 - weekProgress) * prevCloseRaw;
+          const scoreCorrected = clamp(
+            rawEff - betaSeas * seasonalRef - V4_BETA_LEVEL * levelRef,
+            -V4_SCORE_CLAMP, V4_SCORE_CLAMP
+          );
+          // 链式：上一 tick 价格（首值懒加载自 DB 中 < asOfTs 的最近 tick；只读，不重写历史）
+          let lastIndex = lastIndexByCategory.get(category);
+          if (lastIndex == null) {
+            const prev = await this.prisma.categoryIndexTick.findFirst({
+              where: { category, asOfTs: { lt: asOfTs } },
+              orderBy: { asOfTs: 'desc' },
+              select: { indexMark: true }
+            });
+            lastIndex = prev?.indexMark ? Number(prev.indexMark) : INDEX_BASE;
+          }
+          if (!(lastIndex > 0)) lastIndex = INDEX_BASE;
+          // 随机层：OU 卷积纯函数的逐时增量（连续、无周一跳、可复现）
+          const absHour = Math.floor(asOfTs.getTime() / HOUR_MS);
+          const stochIncr = v4OuLevel(category, absHour) - v4OuLevel(category, absHour - 1);
+          // 弱公允值锚增量：F 随基本面浮动，仅在价格远离公允值时温和回拉
+          const fairValue = Math.log(INDEX_BASE) + V4_FAIR_GAMMA * levelRef;
+          const anchorIncr = (V4_ANCHOR_LAMBDA / (7 * 24)) * (fairValue - Math.log(lastIndex));
+          // 价格（增量驱动）：基本面 drift + 随机增量 + 弱锚增量
+          const dlog = V4_K_FUND * scoreCorrected + stochIncr + anchorIncr;
+          storeIndexMark = Number((lastIndex * Math.exp(dlog)).toFixed(6));
+          storeScoreRef = betaSeas * seasonalRef + V4_BETA_LEVEL * levelRef;
+          storeScoreProvisional = scoreCorrected;
+          storeCrowdDrag = 0; // v4 P0：crowd_drag 不计入价格
+          storeNoise = stochIncr;
+        } else {
+          // ─── v3 原逻辑（开关关时行为完全不变） ───
+          const rawScoreProvisional = clamp(scoreSignalRaw - driftBeta * scoreRef, -SCORE_CLAMP, SCORE_CLAMP);
+
+          // Crowd drag: reduce price push when one side is over-concentrated
+          const crowdDrag = this.computeCrowdDrag(category, marginSnapshot);
+          const rawScoreWithDrag = clamp(rawScoreProvisional - crowdDrag, -SCORE_CLAMP, SCORE_CLAMP);
+
+          // Micro signal: intra-day price movement from real-time activity
+          const microScore = this.computeMicroSignal(
+            asOfTs, category,
+            revWindow.get(category) ?? 0,
+            recentForumCount,
+            microBaselines,
+            rawSignal.dVotesTotal
+          );
+
+          const scoreWithMicro = rawScoreWithDrag + microScore;
+          // 周日 23:00 的收盘 tick 决定整周跨周复利因子：
+          // 只保留周度信号（raw − β×ref），剔除 crowdDrag 与 micro 这两个
+          // 日内/持仓信号（v3 前它们被永久积分进价格，形成可被集体押注
+          // 方向套利的价格税），并用更紧的 CARRY_CLAMP 限制单周携带幅度。
+          // crowd_drag 列仍照实记录观测值，仅不参与收盘 score。
+          const isWeekClose = offsetBucket === WEEK_CLOSE_OFFSET;
+          const scoreProvisional = asOfTs.getTime() === weekStart.getTime()
+            ? 0
+            : isWeekClose
+              ? clamp(scoreSignalRaw - driftBeta * scoreRef, -CARRY_CLAMP, CARRY_CLAMP)
+              : clamp(scoreWithMicro, -SCORE_CLAMP, SCORE_CLAMP);
+          const weekKey = `${category}:${weekStart.toISOString()}`;
+
+          let indexOpen = weekOpenCache.get(weekKey);
+          if (indexOpen == null) {
+            const latestAtWeekStart = await this.prisma.categoryIndexTick.findFirst({
+              where: {
+                category,
+                asOfTs: { lte: weekStart }
+              },
+              orderBy: { asOfTs: 'desc' },
+              select: { asOfTs: true, indexMark: true }
+            });
+            if (latestAtWeekStart
+              && new Date(latestAtWeekStart.asOfTs).getTime() < weekStart.getTime() - HOUR_MS) {
+              // 回填窗口截断等原因导致上周收盘 tick 缺失，跨周复利链在此断裂，
+              // 退化为以最近可用 tick 作开盘。保持生成（市场不停摆）但需告警人工核查。
+              console.warn(
+                `[CategoryIndexTickJob] ⚠️ week open chain broken for ${category}: `
+                + `weekStart=${weekStart.toISOString()}, nearest tick=${new Date(latestAtWeekStart.asOfTs).toISOString()}`
+              );
+            }
+            indexOpen = latestAtWeekStart?.indexMark ? Number(latestAtWeekStart.indexMark) : INDEX_BASE;
+            weekOpenCache.set(weekKey, indexOpen);
+          }
+
+          // 软锚点：以周内线性 ramp 的形式把对数偏差按 φ/周 拉回 INDEX_BASE。
+          // offsetBucket=0（周一 00:00）时为 0，保证 indexOpen(next)=indexClose(prev)
+          // 强约束不被破坏；收盘 tick 携带满额锚力进入下周开盘。
+          const anchorTerm = indexOpen > 0
+            ? (offsetBucket / WEEK_CLOSE_OFFSET) * ANCHOR_PHI_WEEKLY * Math.log(INDEX_BASE / indexOpen)
+            : 0;
+          const baseIndexMark = indexOpen * Math.exp(INDEX_K * scoreProvisional + anchorTerm);
+          // 周一 00:00 禁用 noise：score=0 且 anchorTerm=0，indexMark 必须严格等于
+          // 上周收盘，否则"下周开盘=本周收盘"约束被噪声破坏（后续小时的进程会以
+          // 带噪的周一 tick 作为本周开盘）。
+          const noise = asOfTs.getTime() === weekStart.getTime()
+            ? 0
+            : this.deterministicNoise(category, asOfTs, NOISE_AMPLITUDE);
+          storeIndexMark = Number((baseIndexMark * (1 + noise)).toFixed(6));
+          storeScoreRef = scoreRef;
+          storeScoreProvisional = scoreProvisional;
+          storeCrowdDrag = crowdDrag;
+          storeNoise = noise;
         }
 
-        // 软锚点：以周内线性 ramp 的形式把对数偏差按 φ/周 拉回 INDEX_BASE。
-        // offsetBucket=0（周一 00:00）时为 0，保证 indexOpen(next)=indexClose(prev)
-        // 强约束不被破坏；收盘 tick 携带满额锚力进入下周开盘。
-        const anchorTerm = indexOpen > 0
-          ? (offsetBucket / WEEK_CLOSE_OFFSET) * ANCHOR_PHI_WEEKLY * Math.log(INDEX_BASE / indexOpen)
-          : 0;
-        const baseIndexMark = indexOpen * Math.exp(INDEX_K * scoreProvisional + anchorTerm);
-        // 周一 00:00 禁用 noise：score=0 且 anchorTerm=0，indexMark 必须严格等于
-        // 上周收盘，否则"下周开盘=本周收盘"约束被噪声破坏（后续小时的进程会以
-        // 带噪的周一 tick 作为本周开盘）。
-        const noise = asOfTs.getTime() === weekStart.getTime()
-          ? 0
-          : this.deterministicNoise(category, asOfTs, NOISE_AMPLITUDE);
-        const indexMark = Number((baseIndexMark * (1 + noise)).toFixed(6));
         const voteCutoffDate = utcDateOnlyFromUtc8Day(startOfUtc8Day(addUtc8Days(asOfTs, -1)));
 
         try {
@@ -543,13 +686,13 @@ export class CategoryIndexTickJob {
               asOfTs,
               watermarkTs,
               voteCutoffDate,
-              voteRuleVersion: TICK_RULE_VERSION,
+              voteRuleVersion: V4_ENABLED ? V4_TICK_RULE_VERSION : TICK_RULE_VERSION,
               scoreSignalRaw: new Prisma.Decimal(scoreSignalRaw.toFixed(8)),
-              scoreRef: new Prisma.Decimal(scoreRef.toFixed(8)),
-              scoreProvisional: new Prisma.Decimal(scoreProvisional.toFixed(8)),
-              indexMark: new Prisma.Decimal(indexMark.toFixed(6)),
-              crowdDrag: new Prisma.Decimal(crowdDrag.toFixed(8)),
-              noise: new Prisma.Decimal(noise.toFixed(8))
+              scoreRef: new Prisma.Decimal(storeScoreRef.toFixed(8)),
+              scoreProvisional: new Prisma.Decimal(storeScoreProvisional.toFixed(8)),
+              indexMark: new Prisma.Decimal(storeIndexMark.toFixed(6)),
+              crowdDrag: new Prisma.Decimal(storeCrowdDrag.toFixed(8)),
+              noise: new Prisma.Decimal(storeNoise.toFixed(8))
             }
           });
           generated += 1;
@@ -558,6 +701,12 @@ export class CategoryIndexTickJob {
           }
           if (!lastGenerated || asOfTs.getTime() > lastGenerated.getTime()) {
             lastGenerated = asOfTs;
+          }
+
+          // v4：链式状态推进（成功落库后才更新，与 P2002 跳过语义一致）
+          if (V4_ENABLED) {
+            lastIndexByCategory.set(category, storeIndexMark);
+            if (offsetBucket === WEEK_CLOSE_OFFSET) lastCloseRawByCategory.set(category, scoreSignalRaw);
           }
 
           // drift 历史窗口与 loadScoreHistoryByOffset 同口径：存修正前的 raw 信号。
@@ -573,6 +722,9 @@ export class CategoryIndexTickJob {
           if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
             throw error;
           }
+          // v4：该 tick 已存在（backfill 重叠），清除链式缓存 → 下一小时从 DB 重新读取真实上一价格，
+          // 避免把"跳过的小时"误当作链式前值。绝不覆盖已存在 tick。
+          if (V4_ENABLED) lastIndexByCategory.delete(category);
         }
       }
     }

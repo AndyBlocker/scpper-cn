@@ -224,6 +224,24 @@ export class IncrementalAnalyzeJob {
             // 全量重算会清空整段历史价格并用当前公式/数据重算，导致存续合约参考价剧变。
             // 仅在显式 rebuildIndexTicks 时才清空重建。
             if (opts.rebuildIndexTicks) {
+              // ── 跨版本 rebuild 护栏（防止以当前公式静默改写历史价格）──
+              // rebuild 会清空并用"当前生成版本"重算整段历史。若表内存在不同公式版本的 tick
+              // （如 v4 上线后历史含 v1/v2/v3），重算会改写历史、冲掉存续合约 entryIndex 参考价。
+              // 除非显式放行，否则拒绝。
+              const v4On = ['1', 'true', 'yes', 'on'].includes((process.env.V4_ORACLE_INCREMENT || '').trim().toLowerCase());
+              const willGenerate = v4On ? 'utc8-t+1-v3' : 'utc8-t+1-v2';
+              const versions = await this.prisma.categoryIndexTick.findMany({
+                distinct: ['voteRuleVersion'],
+                select: { voteRuleVersion: true }
+              });
+              const conflicting = versions.map((v) => v.voteRuleVersion).filter((v) => v !== willGenerate);
+              if (conflicting.length > 0 && (process.env.ORACLE_ALLOW_CROSS_VERSION_REBUILD || '').trim() !== '1') {
+                throw new Error(
+                  `❌ 拒绝 rebuild 股市 Tick：表内存在不同公式版本的历史 tick [${conflicting.join(', ')}]，`
+                  + `当前将以 ${willGenerate} 重算会改写历史价格并冲掉存续合约 entryIndex 参考价。`
+                  + `如确需重建，请显式设置环境变量 ORACLE_ALLOW_CROSS_VERSION_REBUILD=1。`
+                );
+              }
               await this.prisma.categoryIndexTick.deleteMany({});
               console.log('  ✓ Category index ticks cleared (rebuildIndexTicks)');
             } else {
