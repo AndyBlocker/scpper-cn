@@ -159,11 +159,18 @@ function v4ParseBool(v: string | undefined): boolean {
   const n = v.trim().toLowerCase();
   return n === '1' || n === 'true' || n === 'yes' || n === 'on';
 }
+// 注意：用 Number.isFinite 而非 `Number(v) || def`，否则 env 显式设 0 会被当 falsy 吞掉、
+// 无法把某一层参数关成 0（Claude review #6）。
+function v4NumEnv(v: string | undefined, def: number): number {
+  if (v == null || v.trim() === '') return def;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
 const V4_ENABLED = v4ParseBool(process.env.V4_ORACLE_INCREMENT);
 const V4_TICK_RULE_VERSION = 'utc8-t+1-v3';
 const V4_SEED_SALT = (process.env.ORACLE_SEED_SALT || 'scpper-oracle-v4-default').trim();
-const V4_K_FUND = Number(process.env.V4_K_FUND ?? '0.0013') || 0.0013;             // 基本面增量驱动系数
-const V4_SIGMA_TARGET = Number(process.env.V4_SIGMA_TARGET ?? '0.0055') || 0.0055; // OU 增量目标小时 std（中等波动档）
+const V4_K_FUND = v4NumEnv(process.env.V4_K_FUND, 0.0013);             // 基本面增量驱动系数
+const V4_SIGMA_TARGET = v4NumEnv(process.env.V4_SIGMA_TARGET, 0.0055); // OU 增量目标小时 std（中等波动档）
 const V4_OU_KAPPA = 0.06;            // 随机位移均值回复速率
 const V4_OU_WINDOW = 200;            // 卷积窗（(1-κ)^200≈3e-6，足够截断）
 const V4_VOL_WEEK_AMP = 0.6;         // 周级冷热 regime 幅度
@@ -171,7 +178,7 @@ const V4_JUMP_LAMBDA = 0.006;        // 泊松跳跃概率/小时（~1/周）
 const V4_JUMP_MIN = 0.03;
 const V4_JUMP_MAG = 0.05;            // 跳幅 ±3~8%
 const V4_INCR_CLAMP = 0.15;          // 单 tick 增量硬顶（防极端针 → 防清算级联）
-const V4_ANCHOR_LAMBDA = Number(process.env.V4_ANCHOR_LAMBDA ?? '0.25') || 0.25;   // 弱公允值锚（防长期漂移）
+const V4_ANCHOR_LAMBDA = v4NumEnv(process.env.V4_ANCHOR_LAMBDA, 0.25);   // 弱公允值锚（防长期漂移）
 const V4_FAIR_GAMMA = 0.18;          // 公允值随基本面浮动：F=ln(100)+γ·levelRef
 const V4_BETA_SEAS_OVERALL = 0.9;    // drift 季节项系数
 const V4_BETA_SEAS_OTHER = 0.8;
@@ -770,6 +777,8 @@ export class CategoryIndexTickJob {
           if (V4_ENABLED) {
             lastIndexByCategory.delete(category);
             lastIndexTsByCategory.delete(category);
+            // 该 tick 已存在：上周收盘 raw 缓存也清除，避免下周前 72h blend 用到过期值（Claude review）
+            if (offsetBucket === WEEK_CLOSE_OFFSET) lastCloseRawByCategory.delete(category);
           }
         }
       }
