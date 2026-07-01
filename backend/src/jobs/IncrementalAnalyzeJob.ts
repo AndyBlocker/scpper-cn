@@ -224,6 +224,33 @@ export class IncrementalAnalyzeJob {
             // 全量重算会清空整段历史价格并用当前公式/数据重算，导致存续合约参考价剧变。
             // 仅在显式 rebuildIndexTicks 时才清空重建。
             if (opts.rebuildIndexTicks) {
+              // ── 跨版本 rebuild 护栏（仅 V4 启用时生效）──
+              // 只有 v4 增量公式重算历史才不可逆、会冲掉存续合约 entryIndex 参考价，故仅在
+              // V4_ORACLE_INCREMENT 开启时拦截"表内存在非 v4 历史 tick"的重建。
+              // V4 关闭时保持本 PR 之前的既有 rebuild 行为（v1/v2/v3 均为水平式、重算是用户显式
+              // 预期），不引入任何新拦截——保证"开关关时行为不变"（Claude review #4）。
+              const v4On = ['1', 'true', 'yes', 'on'].includes((process.env.V4_ORACLE_INCREMENT || '').trim().toLowerCase());
+              if (v4On) {
+                // salt 前置检查：必须在 deleteMany 之前，否则会先删光历史、随后 TickJob 才 fail-fast。
+                if (!(process.env.ORACLE_SEED_SALT || '').trim()) {
+                  throw new Error(
+                    '❌ 拒绝 rebuild 股市 Tick：V4_ORACLE_INCREMENT 已启用但未设置 ORACLE_SEED_SALT。'
+                    + '若放行会先删光历史 tick、随后生成阶段才 fail-fast。请先设置保密的 ORACLE_SEED_SALT。'
+                  );
+                }
+                const versions = await this.prisma.categoryIndexTick.findMany({
+                  distinct: ['voteRuleVersion'],
+                  select: { voteRuleVersion: true }
+                });
+                const conflicting = versions.map((v) => v.voteRuleVersion).filter((v) => v !== 'utc8-t+1-v3');
+                if (conflicting.length > 0 && (process.env.ORACLE_ALLOW_CROSS_VERSION_REBUILD || '').trim() !== '1') {
+                  throw new Error(
+                    `❌ 拒绝 rebuild 股市 Tick：V4 启用且表内存在非 v4 历史 tick [${conflicting.join(', ')}]，`
+                    + `用 v4 增量公式重算会改写历史价格并冲掉存续合约 entryIndex 参考价。`
+                    + `如确需重建，请显式设置环境变量 ORACLE_ALLOW_CROSS_VERSION_REBUILD=1。`
+                  );
+                }
+              }
               await this.prisma.categoryIndexTick.deleteMany({});
               console.log('  ✓ Category index ticks cleared (rebuildIndexTicks)');
             } else {
