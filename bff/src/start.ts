@@ -9,6 +9,7 @@ import { buildRouter } from './web/router.js';
 import { pixelRateLimiter } from './web/routes/tracking.js';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { initPools } from './web/utils/dbPool.js';
+import { clientRateLimitKey, intEnv, rateLimitHandler } from './web/utils/rateLimit.js';
 
 export async function createServer() {
   const app = express();
@@ -46,20 +47,23 @@ export async function createServer() {
     }
   }));
 
-  // Global rate limit: 600 requests per minute per IP.
+  // Global rate limit: default 900 requests per minute per client signature.
   // The frontend fires ~25-30 requests per page load (alerts, relations,
-  // vote-status, stats, etc.), so 120 was too tight for normal browsing
-  // across 3-4 navigations per minute.
+  // vote-status, stats, etc.).  The key includes IP plus coarse browser/TLS
+  // signals so several real users behind one NAT do not consume one shared
+  // per-IP budget as quickly.
   // Skip healthz (monitoring), /internal (authenticated server-to-server),
   // /avatar (proxied to avatar-agent which has its own limits), and
   // /tracking/pixel (dedicated limiter below — must answer 200+GIF, not 429 JSON,
   // and must not let embedded pixels drain the shared per-IP budget).
   const globalLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 600,
+    max: intEnv('BFF_GLOBAL_RATE_LIMIT_PER_MINUTE', 900),
+    keyGenerator: clientRateLimitKey,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'too_many_requests' },
+    handler: rateLimitHandler('global'),
     skip: (req) => {
       const p = req.path;
       return p === '/healthz' || p.startsWith('/internal') || p.startsWith('/avatar')

@@ -90,9 +90,14 @@ const DEFAULT_CACHE_CONTROL =
   process.env.CSS_PROXY_CACHE_CONTROL || 'public, max-age=3600, s-maxage=7200';
 const MAX_REDIRECTS = 5;
 const MAX_RESPONSE_SIZE = 2 * 1024 * 1024; // 2 MB
-const RATE_WINDOW_MS = 60_000;
-const RATE_MAX_PER_IP = 60;
-const RATE_BUCKETS_MAX_SIZE = 10_000;
+function intEnv(name: string, fallback: number, min = 1): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.floor(parsed));
+}
+const RATE_WINDOW_MS = intEnv('CSS_PROXY_RATE_WINDOW_MS', 60_000);
+const RATE_MAX_PER_IP = intEnv('CSS_PROXY_RATE_MAX_PER_MINUTE', 180);
+const RATE_BUCKETS_MAX_SIZE = intEnv('CSS_PROXY_RATE_BUCKETS_MAX_SIZE', 10_000, 100);
 
 // Simple in-memory per-IP rate limiter
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -300,12 +305,6 @@ export function cssProxyRouter() {
   const router = Router();
 
   router.get(['/css-proxy', '/api/css-proxy'], async (req, res) => {
-    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
-    if (isRateLimited(clientIp)) {
-      setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-      return res.status(429).send('Too many requests');
-    }
-
     const queryValue = Array.isArray(req.query.url) ? req.query.url[0] : req.query.url;
     const url = String(queryValue || '');
     const proxyPath = proxyPathForRequest(req);
@@ -326,6 +325,14 @@ export function cssProxyRouter() {
     if (cached) {
       setHeaders(res, cached.contentType, DEFAULT_CACHE_CONTROL);
       return res.status(200).send(cached.body);
+    }
+
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (isRateLimited(clientIp)) {
+      // eslint-disable-next-line no-console
+      console.warn('[rate-limit]', { scope: 'css-proxy-upstream', path: req.path, ip: clientIp });
+      setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
+      return res.status(429).send('Too many requests');
     }
 
     try {

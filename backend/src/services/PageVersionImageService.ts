@@ -11,6 +11,7 @@ const HTTP_PREFIX = /^http:\/\//i;
 const HTTPS_PREFIX = /^https?:\/\//i;
 const LOCAL_FILES_PREFIX = /^local--files\//i;
 const IMAGE_EXTENSION_REGEX = new RegExp(`\\.(?:jpe?g|png|gif|webp|bmp|tiff?|ico|svgz?|avif|apng|heic|heif|jfif|pjpeg)$`, 'i');
+const KNOWN_NON_IMAGE_EXTENSION_REGEX = new RegExp(`\\.(?:css|js|mjs|json|html?|txt|xml|pdf|mp3|ogg|wav|flac|mp4|webm|mov|avi|zip|rar|7z|tar|gz)$`, 'i');
 const DATA_URI_PREFIX = /^data:image\//i;
 
 const PageVersionImageStatus = {
@@ -58,8 +59,54 @@ function sanitizeToken(token: string): string {
   return trimmed;
 }
 
+function parseAbsoluteUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function rewriteWikidotLocalFilesUrl(value: string): string {
+  const parsed = parseAbsoluteUrl(value);
+  if (!parsed) return value;
+  const host = parsed.hostname.toLowerCase();
+  if (host.endsWith('.wikidot.com') && /^\/local--files\//i.test(parsed.pathname)) {
+    parsed.hostname = `${host.slice(0, -'.wikidot.com'.length)}.wdfiles.com`;
+    parsed.protocol = 'https:';
+    return parsed.href;
+  }
+  return value;
+}
+
+function isKnownNonRawImagePage(value: string): boolean {
+  const parsed = parseAbsoluteUrl(value);
+  if (!parsed) return false;
+  const host = parsed.hostname.toLowerCase();
+  const decodedPath = decodeURIComponent(parsed.pathname);
+  if (
+    (host === 'commons.wikimedia.org' || host === 'commons.m.wikimedia.org' || host.endsWith('.wikipedia.org'))
+    && /^\/wiki\/(?:file|image|文件):/i.test(decodedPath)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function pathHasImageExtension(value: string): boolean {
+  const parsed = parseAbsoluteUrl(value);
+  const target = parsed?.pathname || value;
+  return IMAGE_EXTENSION_REGEX.test(target);
+}
+
+function pathHasKnownNonImageExtension(value: string): boolean {
+  const parsed = parseAbsoluteUrl(value);
+  const target = parsed?.pathname || value;
+  return KNOWN_NON_IMAGE_EXTENSION_REGEX.test(target);
+}
+
 function toNormalizedUrl(sanitized: string): { normalizedUrl: string; displayUrl: string } | null {
-  const canonicalDisplay = normalizeForDisplay(sanitized);
+  let canonicalDisplay = normalizeForDisplay(sanitized);
   const baseForKey = sanitized.replace(FRAGMENT_OR_QUERY, '').replace(TRAILING_PUNCTUATION, '').toLowerCase();
 
   let canonical = baseForKey;
@@ -81,10 +128,17 @@ function toNormalizedUrl(sanitized: string): { normalizedUrl: string; displayUrl
   }
 
   if (!canonical) return null;
+  canonical = rewriteWikidotLocalFilesUrl(canonical);
+  canonicalDisplay = rewriteWikidotLocalFilesUrl(canonicalDisplay);
 
+  if (isKnownNonRawImagePage(canonical)) {
+    return null;
+  }
+
+  const isLocalFile = canonical.includes('local--files/');
   if (
-    !canonical.includes('local--files/') &&
-    !IMAGE_EXTENSION_REGEX.test(canonical)
+    !pathHasImageExtension(canonical) &&
+    (!isLocalFile || pathHasKnownNonImageExtension(canonical))
   ) {
     return null;
   }

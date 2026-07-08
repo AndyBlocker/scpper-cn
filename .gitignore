@@ -110,6 +110,10 @@ index.html
 
 # BFF 缓存数据
 bff/data/
+bff/cache/
+
+# Local analysis artifacts
+analysis/
 
 # 年度总结生成的数据文件
 frontend/public/annual-summary/

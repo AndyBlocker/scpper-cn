@@ -6,6 +6,14 @@ function toNumber(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toBoolean(value: string | undefined, fallback: boolean) {
+  if (value == null || value.trim() === '') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
 export const config = {
   port: toNumber(process.env.USER_BACKEND_PORT, 4455),
   verification: {
@@ -23,7 +31,7 @@ export const config = {
     cookieName: process.env.USER_SESSION_COOKIE || 'scpper_session',
     ttlHours: toNumber(process.env.USER_SESSION_TTL_HOURS, 24 * 7),
     sameSite: (process.env.USER_SESSION_SAMESITE as 'lax' | 'strict' | 'none' | undefined) || 'lax',
-    secure: process.env.USER_SESSION_SECURE === 'true',
+    secure: toBoolean(process.env.USER_SESSION_SECURE, process.env.NODE_ENV === 'production'),
     secret: (() => {
       const secret = process.env.USER_SESSION_SECRET;
       if (!secret && process.env.NODE_ENV === 'production') {

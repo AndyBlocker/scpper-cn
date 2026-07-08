@@ -29,17 +29,22 @@ import { cssProxyRouter } from './routes/css-proxy.js';
 import { pagePreviewRouter } from './routes/page-preview.js';
 import { annualSummaryRouter } from './routes/annual-summary.js';
 import { embedRouter } from './routes/embed.js';
+import { clientRateLimitKey, intEnv, rateLimitHandler } from './utils/rateLimit.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
 
-  // Stricter rate limit for expensive endpoints (search, random page)
+  // Stricter rate limit for expensive endpoints (search, random page).  Use
+  // a client signature rather than only IP so normal users behind one NAT do
+  // not block each other during active searching.
   const expensiveLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 30,
+    max: intEnv('BFF_EXPENSIVE_RATE_LIMIT_PER_MINUTE', 90),
+    keyGenerator: clientRateLimitKey,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'too_many_requests' }
+    message: { error: 'too_many_requests' },
+    handler: rateLimitHandler('expensive')
   });
 
   const avatarAgentBase = (process.env.AVATAR_AGENT_BASE_URL || 'http://127.0.0.1:3200').replace(/\/$/, '');
