@@ -38,8 +38,12 @@ const resolveSchema = z.object({
 
 const completeSchema = z.object({
   taskId: z.string().min(1, '任务 ID 不能为空'),
-  revisionId: z.number().optional(),
-  timestamp: z.string().optional()
+  wikidotUserId: z.number().int().positive('Wikidot ID 必须是正整数'),
+  verificationCode: z.string().regex(/^SCPPER-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/, '验证码格式错误'),
+  createdAt: z.string().datetime({ offset: true }),
+  expiresAt: z.string().datetime({ offset: true }),
+  revisionId: z.number().int().positive('Revision ID 必须是正整数'),
+  timestamp: z.string().datetime({ offset: true })
 });
 
 const expireSchema = z.object({
@@ -84,6 +88,11 @@ function createErrorResponse(error: unknown) {
 export function wikidotBindingRouter() {
   const router = Router();
 
+  router.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+
   // Start a new binding task
   router.post('/start', requireAuth, async (req, res) => {
     try {
@@ -111,8 +120,9 @@ export function wikidotBindingRouter() {
           targetPage: 'https://scp-wiki-cn.wikidot.com/andyblocker',
           step1: '访问上方链接打开验证页面',
           step2: '点击页面右下角的「编辑」按钮',
-          step3: '在「本次编辑的简要说明:」框中填入验证码，注意请不要修改页面源代码',
-          step4: '保存页面，等待系统自动验证（通常需要数小时）'
+          step3: '在「本次编辑的简要说明:」框中填入验证码（不要把验证码写入源代码）',
+          step4: '按验证页面说明，在隐藏 DIV 内做一处无影响的小改动，确保产生修订记录',
+          step5: '保存页面，等待系统自动验证（通常需要数小时）'
         }
       });
     } catch (error) {
@@ -204,6 +214,11 @@ export function wikidotBindingRouter() {
 export function wikidotBindingInternalRouter() {
   const router = Router();
 
+  router.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+
   // Validate internal API key on all internal routes
   router.use((req, res, next) => {
     const expectedKey = (process.env.INTERNAL_API_KEY || '').trim();
@@ -232,11 +247,14 @@ export function wikidotBindingInternalRouter() {
   router.post('/complete', async (req, res) => {
     try {
       const payload = completeSchema.parse(req.body ?? {});
-      const revisionInfo = payload.revisionId
-        ? { revisionId: payload.revisionId, timestamp: payload.timestamp ? new Date(payload.timestamp) : new Date() }
-        : undefined;
-
-      const success = await completeBindingTask(payload.taskId, revisionInfo);
+      const success = await completeBindingTask(payload.taskId, {
+        wikidotUserId: payload.wikidotUserId,
+        verificationCode: payload.verificationCode,
+        createdAt: new Date(payload.createdAt),
+        expiresAt: new Date(payload.expiresAt),
+        revisionId: payload.revisionId,
+        timestamp: new Date(payload.timestamp)
+      });
 
       if (!success) {
         return res.status(400).json({ error: '任务不存在或已完成' });

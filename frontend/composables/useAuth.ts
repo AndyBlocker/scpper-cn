@@ -87,8 +87,8 @@ export function useAuth() {
         console.debug('[auth] fetchCurrentUser 401 (unauthenticated)')
       } else {
         console.warn('[auth] failed to fetch current user:', error)
-        user.value = null
-        status.value = 'unauthenticated'
+        // A temporary BFF/network failure is not evidence that the session ended.
+        // Keep the last trustworthy auth snapshot; only an explicit 401 clears it.
       }
     } finally {
       loading.value = false

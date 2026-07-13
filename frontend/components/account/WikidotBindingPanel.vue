@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useWikidotBinding } from '~/composables/useWikidotBinding'
 import { normalizeBffBase, resolveAssetUrl } from '~/utils/assetUrl'
 
@@ -7,6 +7,8 @@ const {
   currentTask,
   instructions,
   loading,
+  refreshing,
+  statusKnown,
   error,
   resolveUsers,
   isPending,
@@ -28,14 +30,90 @@ const selectedUser = ref<{ wikidotId: number; displayName: string | null; userna
 const resolving = ref(false)
 const resolveError = ref<string | null>(null)
 let resolveTimer: ReturnType<typeof setTimeout> | null = null
+let resolveRequestId = 0
 
 const copied = ref(false)
+const nowMs = ref(Date.now())
+const STATUS_POLL_INTERVAL_MS = 30_000
+const CLOCK_INTERVAL_MS = 30_000
+let statusPollTimer: ReturnType<typeof setTimeout> | null = null
+let clockTimer: ReturnType<typeof setInterval> | null = null
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+let componentMounted = false
+
+const verificationPageUrl = computed(() => instructions.value?.targetPage || 'https://scp-wiki-cn.wikidot.com/andyblocker')
+const timeRemainingLabel = computed(() => {
+  const remaining = getTimeRemaining(nowMs.value)
+  if (!remaining || remaining === '已过期') return remaining
+  return `${remaining} 后过期`
+})
+
+function clearStatusPoll() {
+  if (!statusPollTimer) return
+  clearTimeout(statusPollTimer)
+  statusPollTimer = null
+}
+
+function scheduleStatusPoll() {
+  clearStatusPoll()
+  if (!componentMounted || !isPending.value || loading.value || document.hidden) return
+
+  statusPollTimer = setTimeout(() => {
+    statusPollTimer = null
+    if (loading.value) return
+    void refreshStatusAndSchedule()
+  }, STATUS_POLL_INTERVAL_MS)
+}
+
+async function refreshStatusAndSchedule() {
+  try {
+    await fetchStatus()
+  } finally {
+    nowMs.value = Date.now()
+    scheduleStatusPoll()
+  }
+}
+
+async function handleRefreshStatus() {
+  await refreshStatusAndSchedule()
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    clearStatusPoll()
+    return
+  }
+  if (isPending.value && !loading.value) {
+    void refreshStatusAndSchedule()
+  }
+}
 
 onMounted(() => {
-  fetchStatus()
+  componentMounted = true
+  clockTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, CLOCK_INTERVAL_MS)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  void refreshStatusAndSchedule()
+})
+
+onBeforeUnmount(() => {
+  componentMounted = false
+  resolveRequestId++
+  if (resolveTimer) clearTimeout(resolveTimer)
+  if (clockTimer) clearInterval(clockTimer)
+  if (copiedTimer) clearTimeout(copiedTimer)
+  clearStatusPoll()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+})
+
+watch([isPending, loading], ([pending, busy]) => {
+  if (pending && !busy) scheduleStatusPoll()
+  else clearStatusPoll()
 })
 
 watch(query, (value) => {
+  const requestId = ++resolveRequestId
   const trimmed = value.trim()
   resolveError.value = null
   selectedUser.value = null
@@ -52,8 +130,11 @@ watch(query, (value) => {
   }
 
   resolveTimer = setTimeout(async () => {
+    resolveTimer = null
     resolving.value = true
     const res = await resolveUsers(trimmed, 8)
+    if (requestId !== resolveRequestId) return
+
     if (res.ok) {
       candidates.value = res.users
       if (res.users.length === 1) {
@@ -101,11 +182,16 @@ async function handleRetry() {
   await cancelBinding()
 }
 
-function copyCode() {
+async function copyCode() {
   if (!currentTask.value?.verificationCode) return
-  navigator.clipboard.writeText(currentTask.value.verificationCode)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
+  try {
+    await navigator.clipboard.writeText(currentTask.value.verificationCode)
+    copied.value = true
+    if (copiedTimer) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => { copied.value = false }, 2000)
+  } catch {
+    error.value = '复制失败，请手动选择验证码复制'
+  }
 }
 
 function selectCandidate(user: { wikidotId: number; displayName: string | null; username: string | null }) {
@@ -121,8 +207,34 @@ function clearSelection() {
 
 <template>
   <div class="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-4 dark:border-neutral-700 dark:bg-neutral-800">
-    <!-- No task: Show start form -->
-    <template v-if="!hasTask">
+    <div v-if="error" class="rounded-xl bg-red-50 border border-red-200 p-3 dark:bg-red-900/20 dark:border-red-800">
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex items-start gap-2">
+          <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div class="text-sm text-red-700 dark:text-red-300">{{ error }}</div>
+        </div>
+        <button
+          v-if="!hasTask"
+          type="button"
+          @click="handleRefreshStatus"
+          :disabled="loading || refreshing"
+          class="shrink-0 text-xs text-red-700 hover:underline disabled:opacity-50 dark:text-red-300"
+        >
+          {{ refreshing ? '检查中...' : '重新检查' }}
+        </button>
+      </div>
+    </div>
+
+    <template v-if="!hasTask && !statusKnown">
+      <div class="py-4 text-center text-sm text-neutral-500 dark:text-neutral-400">
+        {{ refreshing ? '正在检查现有绑定任务...' : '尚未确认绑定状态，请先重新检查。' }}
+      </div>
+    </template>
+
+    <!-- No task: Show start form only after the server confirms there is no task. -->
+    <template v-else-if="!hasTask">
       <form @submit.prevent="handleStartBinding" class="space-y-3">
         <div>
           <label class="text-xs font-semibold text-neutral-600 dark:text-neutral-400">Wikidot 用户</label>
@@ -131,7 +243,7 @@ function clearSelection() {
             type="text"
             placeholder="输入 Wikidot 用户名/昵称，或 Wikidot ID（数字）"
             class="w-full mt-1 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-700"
-            :disabled="loading || resolving"
+            :disabled="loading || refreshing || resolving"
           />
           <div class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
             建议从下方选单选择（可通过头像判断），并使用 Wikidot ID 绑定更准确。
@@ -200,21 +312,12 @@ function clearSelection() {
           </div>
         </div>
 
-        <!-- Error message with better styling -->
-        <div v-if="error" class="rounded-xl bg-red-50 border border-red-200 p-3 dark:bg-red-900/20 dark:border-red-800">
-          <div class="flex items-start gap-2">
-            <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div class="text-sm text-red-700 dark:text-red-300">{{ error }}</div>
-          </div>
-        </div>
         <button
           type="submit"
-          :disabled="(!query.trim() && !selectedUser) || loading || resolving"
+          :disabled="(!query.trim() && !selectedUser) || loading || refreshing || resolving"
           class="rounded-full bg-[var(--g-accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {{ loading ? '处理中...' : (resolving ? '搜索中...' : '开始绑定') }}
+          {{ refreshing ? '检查绑定状态...' : (loading ? '处理中...' : (resolving ? '搜索中...' : '开始绑定')) }}
         </button>
       </form>
     </template>
@@ -222,10 +325,16 @@ function clearSelection() {
     <!-- Pending task: Show verification code and instructions -->
     <template v-else-if="isPending">
       <div class="space-y-4">
-        <div class="flex items-center justify-between">
-          <span class="text-sm font-semibold dark:text-neutral-200">验证进行中</span>
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-sm font-semibold dark:text-neutral-200">验证进行中</div>
+            <div class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              目标：{{ currentTask?.wikidotUsername || `Wikidot 用户 #${currentTask?.wikidotUserId}` }}
+              <span class="font-mono">（ID: {{ currentTask?.wikidotUserId }}）</span>
+            </div>
+          </div>
           <span class="text-xs text-neutral-500">
-            {{ getTimeRemaining() }} 后过期
+            {{ timeRemainingLabel }}
           </span>
         </div>
 
@@ -234,7 +343,7 @@ function clearSelection() {
           <div class="font-mono text-lg font-bold text-amber-900 select-all dark:text-amber-200">
             {{ currentTask?.verificationCode }}
           </div>
-          <button @click="copyCode" class="text-xs text-amber-700 hover:underline dark:text-amber-400">
+          <button type="button" @click="copyCode" class="text-xs text-amber-700 hover:underline dark:text-amber-400">
             {{ copied ? '已复制!' : '点击复制' }}
           </button>
         </div>
@@ -245,7 +354,7 @@ function clearSelection() {
             <li>
               访问
               <a
-                href="https://scp-wiki-cn.wikidot.com/andyblocker"
+                :href="verificationPageUrl"
                 target="_blank"
                 rel="noopener"
                 class="text-[var(--g-accent)] hover:underline"
@@ -254,10 +363,8 @@ function clearSelection() {
               </a>
             </li>
             <li>点击页面右下角的「编辑」按钮</li>
-            <li>
-              在「本次编辑的简要说明:」框中填入验证码，注意需要在源代码中做一定修改。请按照页面指令修改内容。
-              <code class="bg-neutral-200 dark:bg-neutral-600 px-1 rounded">{{ currentTask?.verificationCode }}</code>
-            </li>
+            <li>按照验证页面的说明，仅在指定的隐藏 DIV 内小幅修改源码，以确保生成新的 Revision；不要把验证码写进源码</li>
+            <li>在「本次编辑的简要说明:」框中填入验证码：<code class="bg-neutral-200 dark:bg-neutral-600 px-1 rounded">{{ currentTask?.verificationCode }}</code></li>
             <li>保存页面</li>
             <li>等待系统自动验证（通常需要数小时，最长 48 小时）</li>
           </ol>
@@ -270,13 +377,24 @@ function clearSelection() {
               · 上次：{{ formatLastChecked() }}
             </span>
           </span>
-          <button
-            @click="handleCancel"
-            :disabled="loading"
-            class="text-xs text-red-500 hover:underline disabled:opacity-50"
-          >
-            取消绑定
-          </button>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="handleRefreshStatus"
+              :disabled="loading || refreshing"
+              class="text-xs text-[var(--g-accent)] hover:underline disabled:opacity-50"
+            >
+              {{ refreshing ? '刷新中...' : '立即刷新' }}
+            </button>
+            <button
+              type="button"
+              @click="handleCancel"
+              :disabled="loading || refreshing"
+              class="text-xs text-red-500 hover:underline disabled:opacity-50"
+            >
+              取消绑定
+            </button>
+          </div>
         </div>
       </div>
     </template>
@@ -285,12 +403,37 @@ function clearSelection() {
     <template v-else-if="isExpired">
       <div class="text-center py-4">
         <div class="text-amber-600 dark:text-amber-400 mb-2">验证任务已过期</div>
+        <div class="flex items-center justify-center gap-4">
+          <button
+            type="button"
+            @click="handleRefreshStatus"
+            :disabled="loading || refreshing"
+            class="text-neutral-500 hover:underline text-sm disabled:opacity-50 dark:text-neutral-400"
+          >
+            {{ refreshing ? '刷新中...' : '刷新状态' }}
+          </button>
+          <button
+            type="button"
+            @click="handleRetry"
+            :disabled="loading || refreshing"
+            class="text-[var(--g-accent)] hover:underline text-sm disabled:opacity-50"
+          >
+            重新发起绑定
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <template v-else>
+      <div class="space-y-3 py-3 text-center">
+        <div class="text-sm text-neutral-600 dark:text-neutral-300">绑定任务状态已更新，请刷新确认。</div>
         <button
-          @click="handleRetry"
-          :disabled="loading"
-          class="text-[var(--g-accent)] hover:underline text-sm"
+          type="button"
+          @click="handleRefreshStatus"
+          :disabled="loading || refreshing"
+          class="text-[var(--g-accent)] hover:underline text-sm disabled:opacity-50"
         >
-          重新发起绑定
+          {{ refreshing ? '刷新中...' : '刷新状态' }}
         </button>
       </div>
     </template>

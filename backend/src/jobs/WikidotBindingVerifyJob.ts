@@ -2,10 +2,20 @@ import { PrismaClient } from '@prisma/client';
 
 const USER_BACKEND_URL = process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455';
 const INTERNAL_API_KEY = (process.env.INTERNAL_API_KEY || '').trim();
-const TARGET_PAGE_URL = '/andyblocker'; // The page where users add verification code (must end with /andyblocker)
+const TARGET_PAGE_PATH = '/andyblocker';
+const TARGET_PAGE_URLS = [
+  `http://scp-wiki-cn.wikidot.com${TARGET_PAGE_PATH}`,
+  `https://scp-wiki-cn.wikidot.com${TARGET_PAGE_PATH}`
+];
+const VERIFICATION_CODE_PATTERN = /^SCPPER-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
+const COMMENT_EDGE_WHITESPACE_PATTERN = /^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g;
 const USER_BACKEND_FETCH_TIMEOUT_MS = Math.max(
   1000,
   Math.floor(Number(process.env.USER_BACKEND_FETCH_TIMEOUT_MS ?? '5000') || 5000)
+);
+const USER_BACKEND_POST_TIMEOUT_MS = Math.max(
+  1000,
+  Math.floor(Number(process.env.USER_BACKEND_POST_TIMEOUT_MS ?? '5000') || 5000)
 );
 const NO_MATCH_LOG_EVERY_N_CHECKS = Math.max(
   1,
@@ -16,11 +26,16 @@ const NO_MATCH_LOG_EVERY_N_CHECKS = Math.max(
 // /andyblocker right after starting a binding task gets their (correct) revision
 // timestamp recorded *before* task.createdAt and is filtered out forever.
 // verificationCode is already a 6-char base31 unique key, so a generous backstop
-// has effectively zero forgery risk.
-const TASK_TIMESTAMP_SLACK_MS = Math.max(
-  0,
-  Math.floor(Number(process.env.WIKIDOT_BINDING_TIMESTAMP_SLACK_MS ?? '300000') || 300000)
+// has effectively zero forgery risk. The user-backend independently enforces the
+// same five-minute maximum; clamp local tuning so the producer can never accept
+// a proof that the stricter consumer will reject forever.
+const MAX_TASK_TIMESTAMP_SLACK_MS = 5 * 60 * 1000;
+const configuredTaskTimestampSlackMs = Number(
+  process.env.WIKIDOT_BINDING_TIMESTAMP_SLACK_MS ?? MAX_TASK_TIMESTAMP_SLACK_MS
 );
+const TASK_TIMESTAMP_SLACK_MS = Number.isFinite(configuredTaskTimestampSlackMs)
+  ? Math.min(MAX_TASK_TIMESTAMP_SLACK_MS, Math.max(0, Math.floor(configuredTaskTimestampSlackMs)))
+  : MAX_TASK_TIMESTAMP_SLACK_MS;
 // Surface stuck tasks so we don't silently burn 500 checks again before noticing.
 const STUCK_TASK_WARN_THRESHOLD = Math.max(
   1,
@@ -68,16 +83,29 @@ export class WikidotBindingVerifyJob {
 
       console.log(`📋 Found ${tasks.length} pending binding tasks.`);
 
-      // 2. Find the target page
-      const targetPage = await this.findTargetPage();
-      if (!targetPage) {
-        console.log(`⚠️ Target page "${TARGET_PAGE_URL}" not found in database.`);
-        return;
+      // 2. Find every incarnation of the target page. Wikidot can delete and
+      // recreate a page at the same URL, leaving multiple Page rows behind.
+      const targetPages = await this.findTargetPages();
+      if (targetPages.length === 0) {
+        throw new Error(`Target page "${TARGET_PAGE_PATH}" not found in database.`);
       }
+      if (targetPages.length > 1) {
+        const activeCount = targetPages.filter(page => !page.isDeleted).length;
+        console.warn(
+          `⚠️ Found ${targetPages.length} target page incarnations (${activeCount} active); checking all of them.`
+        );
+      }
+      const targetPageIds = targetPages.map(page => page.id);
 
-      // 3. Process each task
+      // 3. Process each task, but keep the cycle visibly failed if any internal
+      // state transition could not be persisted. This prevents a broken
+      // producer/consumer contract from looking healthy for months.
+      let failedTasks = 0;
       for (const task of tasks) {
-        await this.processTask(task, targetPage.id);
+        if (!await this.processTask(task, targetPageIds)) failedTasks += 1;
+      }
+      if (failedTasks > 0) {
+        throw new Error(`Failed to persist verification state for ${failedTasks}/${tasks.length} binding tasks.`);
       }
 
       console.log('✅ Wikidot binding verification job completed.');
@@ -104,14 +132,7 @@ export class WikidotBindingVerifyJob {
       });
 
       if (!response.ok) {
-        let bodyPreview = '';
-        try {
-          const raw = await response.text();
-          bodyPreview = raw ? ` ${raw.slice(0, 180)}` : '';
-        } catch {
-          bodyPreview = '';
-        }
-        throw new Error(`pending API returned ${response.status}.${bodyPreview}`.trim());
+        throw new Error(`pending API returned HTTP ${response.status}`);
       }
 
       const data = await response.json() as PendingTasksResponse;
@@ -127,25 +148,36 @@ export class WikidotBindingVerifyJob {
     }
   }
 
-  private async findTargetPage(): Promise<{ id: number } | null> {
-    const page = await this.prisma.page.findFirst({
+  private async findTargetPages(): Promise<Array<{ id: number; isDeleted: boolean }>> {
+    return this.prisma.page.findMany({
       where: {
-        currentUrl: { endsWith: TARGET_PAGE_URL }
+        currentUrl: { in: TARGET_PAGE_URLS }
       },
-      select: { id: true }
+      select: { id: true, isDeleted: true },
+      orderBy: [
+        { isDeleted: 'asc' },
+        { updatedAt: 'desc' },
+        { id: 'desc' }
+      ]
     });
-    return page;
   }
 
-  private async processTask(task: PendingTask, pageId: number): Promise<void> {
-    console.log(`🔍 Checking task ${task.id} for user ${task.wikidotUserId}...`);
+  private async processTask(task: PendingTask, pageIds: number[]): Promise<boolean> {
+    console.log(`🔍 Checking task ${task.id}...`);
 
     try {
       // Check if task is expired
       if (new Date(task.expiresAt) < new Date()) {
         console.log(`⏰ Task ${task.id} has expired, marking as expired.`);
-        await this.expireTask(task.id);
-        return;
+        return this.expireTask(task.id);
+      }
+
+      if (
+        typeof task.verificationCode !== 'string'
+        || !VERIFICATION_CODE_PATTERN.test(task.verificationCode)
+      ) {
+        console.warn(`⚠️ Binding task ${task.id} has an invalid verification code format.`);
+        return this.updateTaskCheck(task.id);
       }
 
       // Find the user in backend database
@@ -155,18 +187,21 @@ export class WikidotBindingVerifyJob {
       });
 
       if (!user) {
-        console.log(`⚠️ User with wikidotId ${task.wikidotUserId} not found in database.`);
-        await this.updateTaskCheck(task.id);
-        return;
+        console.log(`⚠️ Wikidot user for task ${task.id} not found in database.`);
+        return this.updateTaskCheck(task.id);
       }
 
       // Apply slack on task.createdAt to absorb wikidot↔PG clock skew.
       const lowerBound = new Date(new Date(task.createdAt).getTime() - TASK_TIMESTAMP_SLACK_MS);
+      const upperBound = new Date(task.expiresAt);
       const revisions = await this.prisma.revision.findMany({
         where: {
-          pageVersion: { pageId },
+          pageVersion: { pageId: { in: pageIds } },
           userId: user.id,
-          timestamp: { gte: lowerBound }
+          timestamp: {
+            gte: lowerBound,
+            lte: upperBound
+          }
         },
         select: {
           id: true,
@@ -176,14 +211,18 @@ export class WikidotBindingVerifyJob {
         orderBy: { timestamp: 'desc' }
       });
 
-      // Check if any revision comment contains the verification code
+      // Wikidot may preserve incidental surrounding whitespace in edit comments,
+      // but the normalized comment must contain only the canonical task code.
       const matchingRevision = revisions.find(rev =>
-        rev.comment?.includes(task.verificationCode)
+        typeof rev.comment === 'string'
+        && rev.comment.replace(COMMENT_EDGE_WHITESPACE_PATTERN, '') === task.verificationCode
       );
 
       if (matchingRevision) {
         console.log(`✅ Verification code found in revision ${matchingRevision.id} for task ${task.id}`);
-        await this.completeTask(task.id, matchingRevision.id, matchingRevision.timestamp);
+        const completed = await this.completeTask(task, matchingRevision.id, matchingRevision.timestamp);
+        if (!completed) await this.updateTaskCheck(task.id);
+        return completed;
       } else {
         const checkCount = Number.isInteger(task.checkCount) ? Number(task.checkCount) : 0;
         const shouldLogNoMatch = (
@@ -201,43 +240,58 @@ export class WikidotBindingVerifyJob {
           && checkCount % STUCK_TASK_WARN_INTERVAL === 0
         ) {
           console.warn(
-            `⚠️ Wikidot binding task ${task.id} stuck after ${checkCount} checks (wikidotUserId=${task.wikidotUserId}, code=${task.verificationCode}).`
+            `⚠️ Wikidot binding task ${task.id} stuck after ${checkCount} checks.`
           );
         }
-        await this.updateTaskCheck(task.id);
+        return this.updateTaskCheck(task.id);
       }
     } catch (error) {
       console.error(`⚠️ Error processing task ${task.id}:`, error);
       await this.updateTaskCheck(task.id);
+      return false;
     }
   }
 
-  private async postInternal(path: string, body: Record<string, unknown>, label: string): Promise<void> {
+  private async postInternal(path: string, body: Record<string, unknown>, label: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), USER_BACKEND_POST_TIMEOUT_MS);
     try {
       const response = await fetch(`${USER_BACKEND_URL}${path}`, {
         method: 'POST',
         headers: this.internalHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
       });
       if (!response.ok) {
         console.warn(`⚠️ ${label}: HTTP ${response.status}`);
+        return false;
       }
+      return true;
     } catch (error) {
       console.warn(`⚠️ ${label}:`, error);
+      return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  private async completeTask(taskId: string, revisionId: number, timestamp: Date): Promise<void> {
-    await this.postInternal('/internal/wikidot-binding/complete', {
-      taskId, revisionId, timestamp: timestamp.toISOString()
-    }, `Failed to complete task ${taskId}`);
+  private async completeTask(task: PendingTask, revisionId: number, timestamp: Date): Promise<boolean> {
+    return this.postInternal('/internal/wikidot-binding/complete', {
+      taskId: task.id,
+      revisionId,
+      timestamp: timestamp.toISOString(),
+      wikidotUserId: task.wikidotUserId,
+      verificationCode: task.verificationCode,
+      createdAt: task.createdAt,
+      expiresAt: task.expiresAt
+    }, `Failed to complete task ${task.id}`);
   }
 
-  private async updateTaskCheck(taskId: string): Promise<void> {
-    await this.postInternal('/internal/wikidot-binding/update-check', { taskId }, `Failed to update task check for ${taskId}`);
+  private async updateTaskCheck(taskId: string): Promise<boolean> {
+    return this.postInternal('/internal/wikidot-binding/update-check', { taskId }, `Failed to update task check for ${taskId}`);
   }
 
-  private async expireTask(taskId: string): Promise<void> {
-    await this.postInternal('/internal/wikidot-binding/expire', { taskId }, `Failed to expire task ${taskId}`);
+  private async expireTask(taskId: string): Promise<boolean> {
+    return this.postInternal('/internal/wikidot-binding/expire', { taskId }, `Failed to expire task ${taskId}`);
   }
 }
