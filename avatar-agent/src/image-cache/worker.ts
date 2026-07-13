@@ -71,12 +71,20 @@ function resolveHost(url: string): string | null {
 
 function isAllowedImageHost(url: string): boolean {
   const allowed = cfg.imageCache.allowedHosts;
-  if (!allowed || allowed.length === 0) {
-    log.warn({ url }, 'PAGE_IMAGE_ALLOWED_HOSTS not configured, rejecting all image URLs');
-    return false;
-  }
+  const blocked = cfg.imageCache.blockedHosts;
   const host = resolveHost(url);
   if (!host) return false;
+
+  // Blocklist takes priority: reject if host matches or is a subdomain of a blocked entry
+  if (blocked && blocked.length > 0) {
+    for (const pattern of blocked) {
+      if (host === pattern || host.endsWith(`.${pattern}`)) return false;
+    }
+  }
+
+  // Wildcard or empty allowlist = allow all non-blocked hosts
+  if (!allowed || allowed.length === 0 || allowed.includes('*')) return true;
+
   return allowed.includes(host);
 }
 
