@@ -106,6 +106,21 @@ export class PageVersionStore {
       Logger.warn(`Failed to sync URL for wikidotId ${data.wikidotId}: ${(e as any)?.message ?? e}`);
     }
 
+    // Phase B 收到存活内容说明页面在远端存在；若实体级删除标记仍为 true
+    // （改名竞态误删或删除后恢复），需要在此复位，否则该标记没有其他复位路径
+    if (page.isDeleted) {
+      try {
+        await db.page.update({
+          where: { id: page.id },
+          data: { isDeleted: false, updatedAt: new Date() }
+        });
+        page = { ...page, isDeleted: false };
+        Logger.info(`✅ Cleared stale isDeleted flag for wikidotId ${data.wikidotId} (page is live upstream)`);
+      } catch (e) {
+        Logger.warn(`Failed to clear isDeleted flag for wikidotId ${data.wikidotId}: ${(e as any)?.message ?? e}`);
+      }
+    }
+
     const currentVersion = page.versions[0];
     let targetVersionId: number;
     if (!currentVersion) {

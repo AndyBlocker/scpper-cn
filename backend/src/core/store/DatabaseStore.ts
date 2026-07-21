@@ -143,6 +143,14 @@ export class DatabaseStore {
         
         Logger.info(`✅ Marked page as deleted: ${data.url} (wikidotId: ${wikidotId})`);
       } else if (!data.isDeleted) {
+        // 页面在远端存活；若实体级删除标记仍为 true（误删或删除后恢复），在此复位
+        if (page.isDeleted) {
+          await tx.page.update({
+            where: { id: page.id },
+            data: { isDeleted: false, updatedAt: new Date() }
+          });
+          Logger.info(`✅ Cleared stale isDeleted flag: ${data.url} (wikidotId: ${wikidotId})`);
+        }
         // 创建或更新版本
         await this.updatePageVersionInTransaction(tx, page.id, data);
       }
@@ -521,10 +529,18 @@ export class DatabaseStore {
       return { unseenCount: 0, urlReusedCount: 0 };
     }
 
+    // 除了 isDeleted=false 的页面外，还要覆盖"实体级已标删除但仍有开口存活版本"的
+    // 不一致页面：它们若真从远端消失，需要在这里补墓碑，否则存活版本会永远保持 open
     const unseenPages = await this.prisma.$queryRaw<Array<{ id: number; wikidotId: number; currentUrl: string }>>`
       SELECT p.id, p."wikidotId", p."currentUrl"
       FROM "Page" p
-      WHERE p."isDeleted" = false
+      WHERE (
+          p."isDeleted" = false
+          OR EXISTS (
+            SELECT 1 FROM "PageVersion" pv
+            WHERE pv."pageId" = p.id AND pv."validTo" IS NULL AND pv."isDeleted" = false
+          )
+        )
         AND (p."currentUrl" ~ '^https?://scp-wiki-cn\\.wikidot\\.com/' OR p."url" ~ '^https?://scp-wiki-cn\\.wikidot\\.com/')
         AND NOT EXISTS (
           SELECT 1 FROM "PageMetaStaging" s WHERE s."wikidotId" = p."wikidotId"

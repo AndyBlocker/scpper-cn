@@ -109,11 +109,11 @@ export class DirtyQueueStore {
    */
   private async preloadLookups() {
     const allPages = await this.prisma.page.findMany({
-      select: { id: true, wikidotId: true, currentUrl: true }
+      select: { id: true, wikidotId: true, currentUrl: true, isDeleted: true }
     });
     Logger.info(`preloadLookups: loaded ${allPages.length} pages`);
 
-    const pageMap = new Map<number, { id: number; wikidotId: number; currentUrl: string }>();
+    const pageMap = new Map<number, { id: number; wikidotId: number; currentUrl: string; isDeleted: boolean }>();
     const pageIds: number[] = [];
     for (const p of allPages) {
       pageMap.set(p.wikidotId, p);
@@ -277,7 +277,7 @@ export class DirtyQueueStore {
    */
   private processStagingPage(
     staging: any,
-    page: { id: number; wikidotId: number; currentUrl: string } | null,
+    page: { id: number; wikidotId: number; currentUrl: string; isDeleted: boolean } | null,
     currentVersion: any | null
   ) {
     let needPhaseB = false;
@@ -306,6 +306,13 @@ export class DirtyQueueStore {
       if (staging.url && page.currentUrl && staging.url !== page.currentUrl) {
         needPhaseB = true;
         reasons.push('url_changed');
+      }
+
+      // 本地实体级标记已删除，但本轮快照仍能看到该页：
+      // 入队 Phase B 由 upsertPageContent 复位陈旧的删除标记
+      if (page.isDeleted && !staging.isDeleted) {
+        needPhaseB = true;
+        reasons.push('page_revived');
       }
 
       if (!currentVersion && !staging.isDeleted) {
