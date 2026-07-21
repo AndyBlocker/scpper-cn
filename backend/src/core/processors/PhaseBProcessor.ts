@@ -242,7 +242,10 @@ export class PhaseBProcessor {
             const pageData = alias ? res[alias] : undefined;
             const flaggedByStaging = page.stagingIsDeleted === true;
             const flaggedByReason = page.reasons.includes('page_deleted');
-            const flaggedByLocalDelete = page.pageIsDeleted === true;
+            // page_revived 条目的本地删除标记本就是待复位的陈旧状态，
+            // 取不到远端数据时不能作为删除确认依据
+            const flaggedByRevival = page.reasons.includes('page_revived');
+            const flaggedByLocalDelete = page.pageIsDeleted === true && !flaggedByRevival;
 
             if (!pageData) {
               if (flaggedByStaging || flaggedByReason || flaggedByLocalDelete) {
@@ -299,7 +302,8 @@ export class PhaseBProcessor {
             const pageData = alias ? res[alias] : undefined;
             const flaggedByStaging = page.stagingIsDeleted === true;
             const flaggedByReason = page.reasons.includes('page_deleted');
-            const flaggedByLocalDelete = page.pageIsDeleted === true;
+            const flaggedByRevival = page.reasons.includes('page_revived');
+            const flaggedByLocalDelete = page.pageIsDeleted === true && !flaggedByRevival;
 
             if (!pageData) {
               if (flaggedByStaging || flaggedByReason || flaggedByLocalDelete) {
