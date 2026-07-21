@@ -18,13 +18,16 @@ export function shouldCreateNewVersion(currentVersion: any | null | undefined, n
   if (!currentVersion) return true;
 
   try {
+    // 调用方只在页面远端存活时走到这里；当前版本若是删除墓碑，
+    // 即使内容完全相同也必须开新的存活版本，否则删除态无法解除
+    const revivedFromDeleted = currentVersion.isDeleted === true;
     const titleChanged = currentVersion.title !== newData.title && newData.title !== undefined;
     const categoryChanged = (currentVersion.category ?? null) !== (newData.category ?? null) && newData.category !== undefined;
     const tagsChanged = newData.tags !== undefined && !arraysEqual(currentVersion.tags ?? [], newData.tags ?? []);
     const sourceChanged = newData.source !== undefined && currentVersion.source !== newData.source;
     const textChanged = newData.textContent !== undefined && currentVersion.textContent !== newData.textContent;
 
-    return Boolean(titleChanged || categoryChanged || tagsChanged || sourceChanged || textChanged);
+    return Boolean(revivedFromDeleted || titleChanged || categoryChanged || tagsChanged || sourceChanged || textChanged);
   } catch (e) {
     // Be safe: if we cannot determine, do not create a new version by default
     Logger.warn('shouldCreateNewVersion failed to compare; defaulting to no new version');
