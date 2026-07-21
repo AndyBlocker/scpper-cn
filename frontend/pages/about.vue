@@ -112,6 +112,14 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="10060406" :display-name="'Aoerfeshi'" bare />
             ：原来不是捐一次钱推一次文吗？？ -- 2026.6.2
           </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="8547270" :display-name="'FA_UAC'" bare />
+            ：希望SCPPER能够顺利的运行下去 以及，来玩《绝地潜兵2》谢谢喵😋 -- 2026.6.24
+          </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="2996561" :display-name="'miku393'" bare />
+            ：以上资金用于赞助奶茶以增加Andy的体重（bushi） -- 2026.7.19
+          </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
