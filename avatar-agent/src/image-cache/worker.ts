@@ -63,10 +63,23 @@ function backoffDelay(attempts: number): number {
 function resolveHost(url: string): string | null {
   try {
     const u = new URL(url);
-    return u.host.toLowerCase();
+    // hostname (not host) so allow/block matching is port-insensitive.
+    return u.hostname.toLowerCase();
   } catch {
     return null;
   }
+}
+
+function hostMatchesPattern(host: string, pattern: string): boolean {
+  if (pattern === '*') return true;
+  if (pattern.startsWith('*.')) {
+    return host === pattern.slice(2) || host.endsWith(pattern.slice(1));
+  }
+  return host === pattern;
+}
+
+function hostMatchesAny(host: string, patterns: string[]): boolean {
+  return patterns.some(pattern => hostMatchesPattern(host, pattern));
 }
 
 function isAllowedImageHost(url: string): boolean {
@@ -77,7 +90,8 @@ function isAllowedImageHost(url: string): boolean {
   }
   const host = resolveHost(url);
   if (!host) return false;
-  return allowed.includes(host);
+  if (hostMatchesAny(host, cfg.imageCache.blockedHosts)) return false;
+  return hostMatchesAny(host, allowed);
 }
 
 function sha256(buffer: Buffer): string {
@@ -92,6 +106,19 @@ function pickExtension(contentType: string | null, fallbackUrl: string): string 
   const parsed = path.parse(new URLSafePath(fallbackUrl).pathname);
   if (parsed.ext) return parsed.ext.replace(/^\./, '');
   return 'bin';
+}
+
+function sniffImageContentType(buffer: Buffer): string | null {
+  try {
+    const info = imageSize(buffer);
+    const type = String(info?.type || '').toLowerCase();
+    if (!type) return null;
+    if (type === 'jpg') return 'image/jpeg';
+    if (type === 'svg') return 'image/svg+xml';
+    return `image/${type}`;
+  } catch {
+    return null;
+  }
 }
 
 async function loadSharp(): Promise<SharpFactory | null> {
@@ -304,7 +331,8 @@ async function downloadImage(url: string): Promise<DownloadResult> {
     const normalizedContentType = contentTypeHeader
       ? contentTypeHeader.split(';')[0].trim().toLowerCase()
       : '';
-    if (!normalizedContentType.startsWith('image/')) {
+    const canSniffImage = !normalizedContentType || normalizedContentType === 'application/octet-stream';
+    if (!normalizedContentType.startsWith('image/') && !canSniffImage) {
       throw fatalError(`Non-image content-type: ${contentTypeHeader ?? 'unknown'}`, resp.status);
     }
 
@@ -314,9 +342,16 @@ async function downloadImage(url: string): Promise<DownloadResult> {
       throw fatalError(`Image exceeds max bytes (${buffer.length} > ${cfg.imageCache.maxBytes})`, 413);
     }
 
+    const contentType = normalizedContentType.startsWith('image/')
+      ? normalizedContentType
+      : sniffImageContentType(buffer);
+    if (!contentType) {
+      throw fatalError(`Non-image content-type: ${contentTypeHeader ?? 'unknown'}`, resp.status);
+    }
+
     return {
       buffer,
-      contentType: normalizedContentType,
+      contentType,
       finalUrl: resp.url || url,
       status: resp.status
     };
@@ -583,10 +618,12 @@ export class ImageCacheWorker {
           await wait(cfg.imageCache.fetchDelayMs);
         } catch (err) {
           const errorObject = err instanceof Error ? err : new Error('Unknown error');
-          const halt = (errorObject as TaggedError).halt === true;
+          const attemptsExhausted = job.attempts >= Math.max(1, cfg.imageCache.maxAttempts);
+          const halt = (errorObject as TaggedError).halt === true || attemptsExhausted;
           const status = (errorObject as TaggedError).status;
           const metadata: Record<string, unknown> = {};
           if (typeof status === 'number') metadata.httpStatus = status;
+          if (attemptsExhausted) metadata.attemptsExhausted = true;
           const logPayload = { workerId, imageId: job.pageVersionImageId, err: errorObject, halt };
           if (halt) {
             log.warn(logPayload, 'page image fetch failed permanently');
