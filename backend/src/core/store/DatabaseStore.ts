@@ -143,6 +143,14 @@ export class DatabaseStore {
         
         Logger.info(`✅ Marked page as deleted: ${data.url} (wikidotId: ${wikidotId})`);
       } else if (!data.isDeleted) {
+        // 页面在远端存活；若实体级删除标记仍为 true（误删或删除后恢复），在此复位
+        if (page.isDeleted) {
+          await tx.page.update({
+            where: { id: page.id },
+            data: { isDeleted: false, updatedAt: new Date() }
+          });
+          Logger.info(`✅ Cleared stale isDeleted flag: ${data.url} (wikidotId: ${wikidotId})`);
+        }
         // 创建或更新版本
         await this.updatePageVersionInTransaction(tx, page.id, data);
       }
