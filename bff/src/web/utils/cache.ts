@@ -12,6 +12,15 @@ export type CacheHandle = {
   remember<T>(key: string, ttlSeconds: number, loader: Loader<T>, options?: RememberOptions): Promise<T>;
   getJSON<T>(key: string): Promise<T | null>;
   setJSON(key: string, value: unknown, ttlSeconds: number): Promise<void>;
+  /** 删除单个 key（幂等，key 不存在也不报错） */
+  del(key: string): Promise<void>;
+  /**
+   * 按前缀批量失效。用于「一次写操作影响一族缓存键」的场景，
+   * 例如提醒列表的 key 形如 alerts:{wikidotId}:{metric}:{limit}:{offset}，
+   * 标记已读后必须把该用户名下所有分页/指标组合一并失效，否则未读数会回弹（最长一个 TTL）。
+   * Redis 侧用 SCAN 游标遍历而非 KEYS —— KEYS 是 O(N) 且会阻塞整个实例。
+   */
+  delByPrefix(keyPrefix: string): Promise<void>;
 };
 
 const DEFAULT_PREFIX = 'scpcn:bff:';
@@ -113,6 +122,21 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
           // 存归一化形态，使内存后端的 getJSON 与 Redis(JSON 往返)口径一致（#124）。
           memorySet(store, maxSize, `${prefix}${key}`, jsonClone(value), ttlSeconds);
         }
+      },
+      async del(key: string): Promise<void> {
+        const fullKey = `${prefix}${key}`;
+        store.delete(fullKey);
+        // 同时丢弃在途 loader，避免它稍后把陈旧结果写回缓存。
+        inflight.delete(fullKey);
+      },
+      async delByPrefix(keyPrefix: string): Promise<void> {
+        const fullPrefix = `${prefix}${keyPrefix}`;
+        for (const k of Array.from(store.keys())) {
+          if (k.startsWith(fullPrefix)) store.delete(k);
+        }
+        for (const k of Array.from(inflight.keys())) {
+          if (k.startsWith(fullPrefix)) inflight.delete(k);
+        }
       }
     };
   }
@@ -176,10 +200,49 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
     return promise as Promise<T>;
   }
 
+  async function del(key: string): Promise<void> {
+    const fullKey = namespaced(key);
+    inflight.delete(fullKey);
+    try {
+      await client.del(fullKey);
+    } catch (error) {
+      console.warn('[cache] del failed', key, error);
+    }
+  }
+
+  async function delByPrefix(keyPrefix: string): Promise<void> {
+    const fullPrefix = namespaced(keyPrefix);
+    for (const k of Array.from(inflight.keys())) {
+      if (k.startsWith(fullPrefix)) inflight.delete(k);
+    }
+    try {
+      // scanIterator 内部管理游标：不阻塞实例，对并发写入安全
+      // （可能重复返回同一 key，但 DEL 是幂等的，无妨）。
+      // MATCH 里的 glob 元字符必须转义，否则 key 前缀中的 [ ? * 会被当成通配符，
+      // 造成误删其他用户的缓存。
+      const pattern = `${fullPrefix.replace(/[\\*?[\]^]/g, (ch) => `\\${ch}`)}*`;
+      let batch: string[] = [];
+      for await (const key of client.scanIterator({ MATCH: pattern, COUNT: 200 })) {
+        batch.push(key);
+        if (batch.length >= 200) {
+          await client.del(batch);
+          batch = [];
+        }
+      }
+      if (batch.length > 0) {
+        await client.del(batch);
+      }
+    } catch (error) {
+      console.warn('[cache] delByPrefix failed', keyPrefix, error);
+    }
+  }
+
   return {
     enabled: true,
     remember,
     getJSON,
-    setJSON
+    setJSON,
+    del,
+    delByPrefix
   };
 }

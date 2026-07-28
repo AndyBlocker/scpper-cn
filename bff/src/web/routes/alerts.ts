@@ -290,6 +290,13 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
   // 读写分离：读操作使用从库，写操作使用主库
   const readPool = getReadPoolSync(pool);
 
+  // GET / 的响应（含 unreadCount 与每条的 acknowledgedAt）缓存 30 秒，
+  // 而 key 里带了 metric/limit/offset，因此任何标记已读的写操作都必须整族失效，
+  // 否则用户点完已读再刷新，未读数会在一个 TTL 内反复回弹。
+  const invalidateAlertsCache = async (wikidotId: number) => {
+    await cache.delByPrefix(`alerts:${wikidotId}:`);
+  };
+
   router.get('/', async (req, res, next) => {
     try {
       const authUser = await fetchAuthUser(req);
@@ -716,6 +723,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
         return res.status(404).json({ ok: false, error: 'not_found' });
       }
       const acknowledgedAt = result.rows[0]?.acknowledgedAt ?? null;
+      await invalidateAlertsCache(authUser.linkedWikidotId);
       res.json({ ok: true, id: alertId, acknowledgedAt });
     } catch (error) {
       next(error);
@@ -742,6 +750,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
         RETURNING pa.id
       `;
       const result = await pool.query<{ id: number }>(sql, [authUser.linkedWikidotId, metric]);
+      await invalidateAlertsCache(authUser.linkedWikidotId);
       res.json({ ok: true, updated: result.rowCount });
     } catch (error) {
       next(error);
@@ -911,6 +920,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
       );
 
       const updatedIds = result.rows.map(r => r.id);
+      await invalidateAlertsCache(authUser.linkedWikidotId);
       res.json({ ok: true, updated: updatedIds.length, ids: updatedIds });
     } catch (error) {
       next(error);

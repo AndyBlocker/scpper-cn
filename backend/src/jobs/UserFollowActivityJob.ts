@@ -176,8 +176,11 @@ export class UserFollowActivityJob {
           `);
           updated += 1;
         } else {
-          // Insert only if this (follow, revision) not already recorded
-          await this.prisma.$executeRaw(Prisma.sql`
+          // Insert only if this (follow, revision) not already recorded.
+          // RETURNING id 让同批次内后续命中同一 (follow, page) 的事件能拿到真实主键去做合并；
+          // 早先这里写死 -1 占位，而 -1 是 truthy，会走上面的 UPDATE ... WHERE id = -1，
+          // 影响 0 行，导致同页多次修订时第二条起被静默丢弃。
+          const inserted = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
             INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "revisionId", "pageVersionId", "detectedAt", "createdAt")
             SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'REVISION', ${e.revisionId}, ${e.pageVersionId}, ${now}, ${now}
             WHERE NOT EXISTS (
@@ -185,10 +188,15 @@ export class UserFollowActivityJob {
               WHERE "followId" = ${f.id} AND type = 'REVISION' AND ("revisionId" = ${e.revisionId} OR "pageVersionId" = ${e.pageVersionId})
             )
             ON CONFLICT DO NOTHING
+            RETURNING id
           `);
-          created += 1;
-          // Mark as existing for subsequent events in same batch
-          existingRevMap.set(key, -1); // placeholder to avoid multiple inserts in same batch
+          const insertedId = inserted[0]?.id;
+          if (insertedId != null) {
+            created += 1;
+            // 记下真实 id，供同批次后续事件合并
+            existingRevMap.set(key, Number(insertedId));
+          }
+          // 未插入说明该 revision 已被记录过（或已读行占据了去重键），本轮不计数、不缓存
         }
       }
     }

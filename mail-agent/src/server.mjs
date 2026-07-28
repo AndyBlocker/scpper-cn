@@ -1,4 +1,5 @@
 import http from 'http';
+import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.mjs';
 import { createMailer } from './lib/mailer.mjs';
 import { RateLimiterManager } from './lib/rateLimiter.mjs';
@@ -76,6 +77,19 @@ function normalizeType(value) {
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+/**
+ * 常数时间比较内部密钥。
+ * 原先是裸 `provided !== expectedKey`：字符串比较会在首个不同字节处短路，
+ * 攻击者可用响应耗时逐字节爆破出密钥。timingSafeEqual 要求等长入参，
+ * 长度不等时直接判否（长度本身会泄露，这是该原语的固有取舍，可接受）。
+ */
+function safeKeyEquals(provided, expected) {
+  const a = Buffer.from(String(provided), 'utf8');
+  const b = Buffer.from(String(expected), 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 function createRateKey(type, email) {
@@ -195,7 +209,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (expectedKey) {
       const provided = (req.headers['x-internal-key'] || '').trim();
-      if (provided !== expectedKey) {
+      if (!safeKeyEquals(provided, expectedKey)) {
         sendJson(res, 403, { error: 'Forbidden' });
         return;
       }
@@ -216,8 +230,14 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: '未找到对应的接口' });
 });
 
-server.listen(config.http.port, () => {
+// 只监听回环：mail-agent 的唯一调用方 user-backend 与它同机，没有跨机需求。
+// 此前裸 listen(port) 会绑到 0.0.0.0，把一个「凭 x-internal-key 即可代发邮件」的接口
+// 暴露在公网可达面上（实测 ss 输出为 LISTEN *:3110）。
+// 如确需跨机调用，应通过反向代理 + IP 白名单，而不是放开绑定地址。
+const bindHost = (process.env.MAIL_AGENT_BIND_HOST || '127.0.0.1').trim();
+server.listen(config.http.port, bindHost, () => {
   logger.info('mail-agent listening', {
+    host: bindHost,
     port: config.http.port,
     rateLimit: config.rateLimit
   });
