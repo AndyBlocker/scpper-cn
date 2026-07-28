@@ -120,9 +120,17 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn('[notify] 读取 QQ 绑定失败：', message);
-    // 返回上一次的缓存而不是空数组：用户库短暂不可用不应表现为「所有人都取消了绑定」，
-    // 那会让本轮静默跳过全部投递且毫无线索。
-    return cache?.targets ?? [];
+    // 短暂不可用时可以用上一份缓存兜一下，但**不能无限用下去** ——
+    // 用户解绑后若用户库恰好长时间不可用，过期缓存会让我们一直往一个
+    // 已撤销的 QQ 号发私信。超过一个宽限期就 fail closed（本轮不投递），
+    // 宁可漏发也不能发给已经解绑的人。
+    const GRACE_MS = CACHE_TTL_MS * 3;
+    if (cache && Date.now() - cache.at < GRACE_MS) {
+      console.warn('[notify] 用户库暂时不可用，沿用上一份绑定快照（宽限期内）');
+      return cache.targets;
+    }
+    console.error('[notify] 用户库不可用且缓存已超出宽限期，本轮不投递任何人（fail closed）');
+    return [];
   } finally {
     await client.$disconnect?.();
   }

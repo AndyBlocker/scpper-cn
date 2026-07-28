@@ -67,6 +67,10 @@ export function useAlerts() {
   const { $bff } = useNuxtApp();
   const { user, status } = useAuth();
   const { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error } = useAlertsState();
+  // 请求世代：force 刷新会绕过 loading 门禁，于是同一 metric 可能有两个请求在飞。
+  // 若旧的那个后返回，会用陈旧数据覆盖新结果（未读数与列表一起回退）。
+  // 每次发起 +1，回来时比对，不是最新的就丢弃。
+  const epochs = new Map<AlertMetric, number>();
   // Persist last used metric for better UX across sessions
   if (typeof window !== 'undefined') {
     try {
@@ -119,11 +123,15 @@ export function useAlerts() {
     }
 
     loading.value[targetMetric] = true;
+    const myEpoch = (epochs.get(targetMetric) ?? 0) + 1;
+    epochs.set(targetMetric, myEpoch);
     try {
       const res = await $bff<AlertsResponse>('/alerts', {
         method: 'GET',
         params: { metric: METRIC_QUERY_MAP[targetMetric] }
       });
+      // 在途期间又发起了更新的请求 → 本次结果作废
+      if (epochs.get(targetMetric) !== myEpoch) return alerts.value[targetMetric];
       if (res?.ok) {
         alerts.value[targetMetric] = Array.isArray(res.alerts) ? res.alerts : [];
         // 用 Number() 而非 Number.isFinite(原值)：PostgreSQL 的 COUNT 经 pg 驱动
@@ -139,7 +147,9 @@ export function useAlerts() {
       }
     } catch (err) {
       console.warn('[alerts] fetch failed', err);
-      error.value[targetMetric] = '网络异常，未能刷新提醒';
+      if (epochs.get(targetMetric) === myEpoch) {
+        error.value[targetMetric] = '网络异常，未能刷新提醒';
+      }
     } finally {
       loading.value[targetMetric] = false;
     }

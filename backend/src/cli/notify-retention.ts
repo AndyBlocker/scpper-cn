@@ -100,9 +100,15 @@ export async function runNotifyRetention(options: RetentionOptions): Promise<voi
   // 绑定挑战：每次「发起绑定」都会新建一行，终态行不清理就会无限增长
   // （migration 里那个 (status, expiresAt) 索引本来就是为清理留的）。
   const challengeCutoff = new Date(now - options.challengeDays * 86400_000);
+  // 除了终态，还要收掉「PENDING 但早已过 expiresAt」的：
+  // 没有任何任务把它们转成 EXPIRED（status 读取只是过滤掉而已），
+  // 于是每个生成了验证码却没回来的用户都会留下一行永远删不掉。
   const challengeWhere = {
-    status: { in: ['VERIFIED', 'EXPIRED', 'CANCELLED', 'FAILED'] as Array<'VERIFIED' | 'EXPIRED' | 'CANCELLED' | 'FAILED'> },
-    createdAt: { lt: challengeCutoff }
+    createdAt: { lt: challengeCutoff },
+    OR: [
+      { status: { in: ['VERIFIED', 'EXPIRED', 'CANCELLED', 'FAILED'] as Array<'VERIFIED' | 'EXPIRED' | 'CANCELLED' | 'FAILED'> } },
+      { status: 'PENDING' as const, expiresAt: { lt: challengeCutoff } }
+    ]
   };
   const userDb = await loadUserBackendClient();
   if (userDb) {

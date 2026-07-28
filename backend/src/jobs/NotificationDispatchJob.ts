@@ -46,8 +46,15 @@ function parseAllowlist(): Set<number> | null {
   if (!raw) return null;
   const set = new Set<number>();
   for (const part of raw.split(',')) {
-    const n = Number.parseInt(part.trim(), 10);
-    if (Number.isFinite(n)) set.add(n);
+    const t = part.trim();
+    if (!t) continue;
+    // 必须整条都是正整数。parseInt('123abc') 会得到 123、parseInt('1e3') 得到 1，
+    // 把畸形条目当成合法 wikidotId 意味着把私人通知推给一个无关的人。
+    if (!/^[1-9][0-9]*$/.test(t)) {
+      console.error(`[notify] NOTIFY_QQ_ALLOWLIST 含非法条目「${t}」，已忽略该条`);
+      continue;
+    }
+    set.add(Number(t));
   }
   if (set.size === 0) {
     console.error('[notify] NOTIFY_QQ_ALLOWLIST 已配置但解析不出任何 wikidotId，本轮不投递任何人');
@@ -214,7 +221,34 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
 
   if (candidates.length > CIRCUIT_GLOBAL_MAX) {
     const reason = `单轮候选 ${candidates.length} 条超过全局上限 ${CIRCUIT_GLOBAL_MAX}`;
+    if (options.resetCircuit) {
+      // --reset-circuit 时必须**消化掉**触发跳闸的那批积压，否则复位后立刻重新扫到
+      // 同一批候选、再次跳闸 —— 熔断从此永远恢复不了，除非等它们过了回看窗口
+      // 或运维手动改上限。这里把它们标成 SUPPRESSED（不是失败，是主动放弃），
+      // 并把闸门推进到最新一条之后，让下一轮从干净状态开始。
+      const newest = candidates.reduce((a, c) => (c.detectedAt > a ? c.detectedAt : a), candidates[0].detectedAt);
+      const byUser = new Map<number, Candidate[]>();
+      for (const c of candidates) {
+        const list = byUser.get(c.userId) ?? [];
+        list.push(c);
+        byUser.set(c.userId, list);
+      }
+      for (const [uid, items] of byUser) {
+        await recordAll(prisma, items, uid, 'SUPPRESSED', 'circuit_reset_drop', false);
+      }
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 },
+        data: { cutoffAt: newest, circuitTrippedAt: null, circuitReason: null }
+      });
+      summary.suppressed += candidates.length;
+      console.warn(
+        `[notify] 复位时消化了 ${candidates.length} 条积压（标记 SUPPRESSED，不会发送），`
+        + `闸门推进到 ${newest.toISOString()}。下一轮起恢复正常投递。`
+      );
+      return summary;
+    }
     console.error(`[notify] 全局熔断跳闸：${reason}。本轮不发送任何消息。`);
+    console.error('[notify] 复位方式：notify-dispatch --once --reset-circuit（会把这批积压标记为已抑制，不补发）');
     await prisma.notificationDispatchState.update({
       where: { id: 1 },
       data: { circuitTrippedAt: new Date(), circuitReason: reason }
@@ -276,7 +310,15 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 原先是先发后记账：若机器人已经收下但响应丢失、或进程在 recordAll 前退出，
     // 这批候选下轮仍会被扫到，等机器人那 15 分钟去重窗口一过就会重复推送给用户。
     const keys = items.map((c) => c.dedupeKey);
-    await recordAll(prisma, items, userId, 'PENDING', null, false);
+    // createMany 的 skipDuplicates 会静默跳过别人已抢到的 key，但**不会**告诉我们跳了哪些。
+    // 手动 PM2 轮次与 --once 手工轮次重叠时，两边都可能扫到同一批候选，
+    // 输的那一方仍会把完整摘要发出去 → 用户收到两条一样的消息。
+    // 这里比对「插入前后本轮 key 的归属」，只在确实是自己抢到时才发送。
+    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false);
+    if (claimed === 0) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 的候选已被另一轮抢占，本轮跳过`);
+      continue;
+    }
 
     const dedupeKey = `digest:${userId}:${shown[shown.length - 1].dedupeKey}`;
     const result = await pushQqMessage({ qq: target.address, message, dedupeKey });
@@ -294,6 +336,9 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       });
       summary.failed += items.length;
       console.warn(`[notify] 用户 ${target.wikidotId} 永久失败：${result.error}（不再重试）`);
+      // 把永久失败回报给绑定方。不报的话：绑定一直是 ACTIVE、界面显示健康，
+      // 而每条新告警都有新的 dedupeKey，于是对着一个已经删了机器人的用户永远重试下去。
+      await reportChannelFailure(target.accountId, result.error ?? 'unknown');
     } else {
       // 可重试：撤销刚才的占位，让候选下轮重新被扫到。
       // 留着 PENDING 会让 dedupeKey 把重试也挡掉。
@@ -311,6 +356,32 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   return summary;
 }
 
+/**
+ * 向 user-backend 回报渠道投递失败，由它累计 failureCount 并在阈值处暂停渠道。
+ * 失败只记日志不抛 —— 回报不上不该影响本轮其余用户的投递。
+ */
+async function reportChannelFailure(accountId: string, code: string): Promise<void> {
+  const base = (process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455').replace(/\/$/, '');
+  const key = (process.env.NOTIFY_INTERNAL_KEY || '').trim();
+  if (!key) return;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    try {
+      await fetch(`${base}/internal/notifications/report-delivery`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
+        body: JSON.stringify({ accountId, channel: 'QQ', outcome: 'failed', code })
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    console.warn('[notify] 回报渠道失败状态失败：', error instanceof Error ? error.message : error);
+  }
+}
+
 async function recordAll(
   prisma: PrismaClient,
   items: Candidate[],
@@ -318,10 +389,10 @@ async function recordAll(
   state: 'PENDING' | 'SENT' | 'FAILED' | 'SUPPRESSED',
   error: string | null,
   dryRun?: boolean
-): Promise<void> {
-  if (dryRun) return;
+): Promise<number> {
+  if (dryRun) return 0;
   const now = new Date();
-  await prisma.notificationDelivery.createMany({
+  const created = await prisma.notificationDelivery.createMany({
     data: items.map((c) => ({
       userId,
       channel: 'QQ' as const,
@@ -334,6 +405,7 @@ async function recordAll(
     })),
     skipDuplicates: true
   });
+  return created.count;
 }
 
 function renderDigest(items: Candidate[], overflow: number): string {

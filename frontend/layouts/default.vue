@@ -419,6 +419,7 @@ import { useThemeSettings } from '~/composables/useThemeSettings'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useForumInteractionAlerts, type ForumInteractionAlertItem, type ForumInteractionAlertType } from '~/composables/useForumInteractionAlerts'
 import { useFollowAlerts, type FollowAlertItem } from '~/composables/useFollowAlerts'
+import { useFollows } from '~/composables/useFollows'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
   script: [
@@ -518,8 +519,11 @@ const {
   unreadCount: followUnreadCount,
   fetchAlerts: fetchFollowAlertsForBell,
   markRead: markFollowAlertRead,
-  markAllRead: markAllFollowAlertsRead
+  markAllRead: markAllFollowAlertsRead,
+  resetState: resetFollowAlertsState
 } = useFollowAlerts()
+// 关注列表同样是共享状态，换账号时 isFollowing 会用上一个人的数据回答
+const { resetState: resetFollowsState } = useFollows()
 
 // 三个来源都要计入。旧版漏了关注提醒：关注的作者发布新修订时铃铛徽标恒为 0，
 // 下拉里也找不到，用户只有进 /account 的「关注」tab 才看得到。
@@ -1051,22 +1055,35 @@ onBeforeUnmount(() => {
   document.body.style.overflow = '';
 });
 
+/**
+ * 提醒状态是通过 useState 全局共享的。身份一变必须先清空再取：
+ * A 登出、B 在同一标签页登录时，若不清空，B 会看到 A 的未读数**和通知标题**
+ * —— 这是跨账号的信息泄露，不只是显示不准。
+ * 关注提醒是本次新接入的第三个来源，同样要清（原先只清了页面与论坛）。
+ */
+function resetAllAlertState() {
+  resetAlertsState()
+  resetFollowAlertsState()
+  resetFollowsState()
+  forumAlerts.value = []
+  forumUnreadCount.value = 0
+  isAlertsDropdownOpen.value = false
+}
+
 watch([
   () => authStatus.value,
   () => authUser.value?.linkedWikidotId
 ], ([nextStatus, nextLinked]) => {
+  // 无论切到哪个身份都先清干净，再拉当前用户的数据
+  resetAllAlertState()
   if (nextStatus === 'authenticated' && nextLinked) {
     Promise.all([
       fetchAll(true),
-      fetchForumAlerts(true, 20, 0)
+      fetchForumAlerts(true, 20, 0),
+      fetchFollowAlertsForBell(true, 20, 0)
     ]).catch((err) => {
       console.warn('[layout] alerts fetch on auth change failed', err)
     })
-  } else {
-    resetAlertsState()
-    forumAlerts.value = []
-    forumUnreadCount.value = 0
-    isAlertsDropdownOpen.value = false
   }
 });
 

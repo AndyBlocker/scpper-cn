@@ -310,6 +310,18 @@ function onTabKeydown(e: KeyboardEvent) {
 }
 const route = useRoute()
 
+// 切 tab 时同步 ?tab=，否则刷新/复制链接/浏览器后退都会回到默认 tab。
+// 这个 watch 在上一版清理生命周期时被连带删掉了，属于回归。
+watch(activeTab, (tab) => {
+  if (!isClient) return
+  const current = resolveTabFromQuery(route.query.tab) ?? 'overview'
+  if (current === tab) return
+  const query: Record<string, string | string[]> = { ...route.query } as Record<string, string | string[]>
+  if (tab === 'overview') delete query.tab
+  else query.tab = tab
+  void navigateTo({ path: route.path, query }, { replace: true })
+})
+
 const resolveTabFromQuery = (value: unknown): AccountTab | null => {
   const raw = Array.isArray(value) ? value[0] : value
   if (typeof raw !== 'string') return null
