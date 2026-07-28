@@ -490,8 +490,15 @@ model UserFollow {
 /// 两点与生产保持一致、不要「顺手规范化」：
 /// 1. `type` 在生产是 text 而非 enum。改成 enum 需要一次带数据转换的迁移，
 ///    不属于本次范围；此处如实建模为 String。
-/// 2. `revisionId` / `attributionId` 在生产**没有**外键约束（那份手工脚本里声明了，
-///    但实际未建），因此这里也不声明 relation，否则 Prisma 会生成 ADD CONSTRAINT。
+/// 2. 生产库上本表**只有两个**外键，已用 pg_constraint 逐条核对：
+///      UserActivityAlert_followId_fkey → UserFollow(id)
+///      UserActivityAlert_pageId_fkey   → Page(id)
+///    而 backend/sql/20251018_user_follow_alerts.sql 里还声明了
+///    followerId/targetUserId → User、revisionId → Revision、
+///    attributionId → Attribution、pageVersionId → PageVersion —— 这些在生产**从未建成**。
+///    因此这里也不声明对应 relation：声明了会让 Prisma 生成 ADD CONSTRAINT，
+///    在本就存在孤儿行的表上可能直接失败，而且是在「收编是为了消除漂移」的改动里
+///    反过来制造新漂移。本模型的目标是忠实反映生产结构，不是反映那份已漂移的脚本。
 ///
 /// 另有两个 Prisma **无法表达**的部分索引，由原始 SQL 维护，勿在 schema 中重复声明
 /// （声明会退化成非部分索引，产生真实的结构变更）：

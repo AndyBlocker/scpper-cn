@@ -82,6 +82,20 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
   // In-flight loader deduplication (singleflight) to prevent thundering herd
   const inflight = new Map<string, Promise<unknown>>();
 
+  // 失效世代号。仅仅从 inflight 里删掉条目挡不住已经在跑的 loader ——
+  // 它稍后仍会调用 memorySet/setJSON 把**失效前**的旧值写回缓存，
+  // 于是「标记已读 → 未读数回弹」在一次并发读写下依然会发生。
+  // loader 启动时抓一份世代号，写回前比对：不一致就丢弃结果。
+  // 同理，loader 的 finally 也只能删自己那次登记的 promise，
+  // 否则会误删后来者新建的 inflight 条目。
+  let generation = 0;
+  const keyGeneration = new Map<string, number>();
+  const bumpGeneration = (fullKey: string) => {
+    generation += 1;
+    keyGeneration.set(fullKey, generation);
+  };
+  const generationOf = (fullKey: string) => keyGeneration.get(fullKey) ?? 0;
+
   const maxSize = options.maxMemorySize ?? MAX_MEMORY_CACHE_SIZE;
 
   if (!redis) {
@@ -98,6 +112,9 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
         const existing = inflight.get(fullKey);
         if (existing) return existing as Promise<T>;
 
+        const startedGeneration = generationOf(fullKey);
+        // 用容器持有自身引用：直接在 promise 的 finally 里引用 `promise` 会撞 TDZ
+        const self: { p?: Promise<T> } = {};
         const promise = (async () => {
           try {
             const result = await loader();
@@ -105,12 +122,17 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
             if (result === null && opts?.cacheNull !== true) return result;
             // 存储并返回归一化形态，使内存后端的命中/未命中与 Redis 后端口径一致（#124）。
             const normalized = jsonClone(result);
-            memorySet(store, maxSize, fullKey, normalized, ttl);
+            // 期间被失效过就不写回，否则会把陈旧的未读数再撑 TTL 秒
+            if (generationOf(fullKey) === startedGeneration) {
+              memorySet(store, maxSize, fullKey, normalized, ttl);
+            }
             return normalized;
           } finally {
-            inflight.delete(fullKey);
+            // 只删自己登记的那个 promise，不误删后来者的
+            if (inflight.get(fullKey) === self.p) inflight.delete(fullKey);
           }
         })();
+        self.p = promise as Promise<T>;
         inflight.set(fullKey, promise);
         return promise as Promise<T>;
       },
@@ -126,7 +148,8 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
       async del(key: string): Promise<void> {
         const fullKey = `${prefix}${key}`;
         store.delete(fullKey);
-        // 同时丢弃在途 loader，避免它稍后把陈旧结果写回缓存。
+        // 提升世代号：在途 loader 稍后写回时会发现世代已变而丢弃结果
+        bumpGeneration(fullKey);
         inflight.delete(fullKey);
       },
       async delByPrefix(keyPrefix: string): Promise<void> {
@@ -135,7 +158,12 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
           if (k.startsWith(fullPrefix)) store.delete(k);
         }
         for (const k of Array.from(inflight.keys())) {
-          if (k.startsWith(fullPrefix)) inflight.delete(k);
+          if (k.startsWith(fullPrefix)) { bumpGeneration(k); inflight.delete(k); }
+        }
+        // 在途但尚未登记过世代的 key 也要覆盖到：直接给整个前缀记一个新世代
+        bumpGeneration(fullPrefix);
+        for (const k of Array.from(keyGeneration.keys())) {
+          if (k.startsWith(fullPrefix)) bumpGeneration(k);
         }
       }
     };
@@ -184,24 +212,32 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
     const existing = inflight.get(fullKey);
     if (existing) return existing as Promise<T>;
 
+    const startedGeneration = generationOf(fullKey);
+    // 同上：容器持有自身引用，避免 TDZ
+    const self: { p?: Promise<T> } = {};
     const promise = (async () => {
       try {
         const result = await loader();
         if (result === undefined) return result;
         if (result === null && options?.cacheNull !== true) return result;
-        await setJSON(key, result, ttlSeconds);
+        // 期间被失效过就不写回（理由同内存分支）
+        if (generationOf(fullKey) === startedGeneration) {
+          await setJSON(key, result, ttlSeconds);
+        }
         // 未命中也返回 JSON 归一化形态，与后续命中（getJSON→JSON.parse）口径一致（#124）。
         return jsonClone(result);
       } finally {
-        inflight.delete(fullKey);
+        if (inflight.get(fullKey) === self.p) inflight.delete(fullKey);
       }
     })();
+    self.p = promise as Promise<T>;
     inflight.set(fullKey, promise);
     return promise as Promise<T>;
   }
 
   async function del(key: string): Promise<void> {
     const fullKey = namespaced(key);
+    bumpGeneration(fullKey);
     inflight.delete(fullKey);
     try {
       await client.del(fullKey);
@@ -213,7 +249,11 @@ export function createCache(redis: RedisClientType | null, prefix = DEFAULT_PREF
   async function delByPrefix(keyPrefix: string): Promise<void> {
     const fullPrefix = namespaced(keyPrefix);
     for (const k of Array.from(inflight.keys())) {
-      if (k.startsWith(fullPrefix)) inflight.delete(k);
+      if (k.startsWith(fullPrefix)) { bumpGeneration(k); inflight.delete(k); }
+    }
+    bumpGeneration(fullPrefix);
+    for (const k of Array.from(keyGeneration.keys())) {
+      if (k.startsWith(fullPrefix)) bumpGeneration(k);
     }
     try {
       // scanIterator 内部管理游标：不阻塞实例，对并发写入安全

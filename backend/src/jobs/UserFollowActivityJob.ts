@@ -22,6 +22,11 @@ export class UserFollowActivityJob {
       FROM "Revision" r
       JOIN "PageVersion" pv ON pv.id = r."pageVersionId"
       WHERE r."userId" IS NOT NULL AND r."pageVersionId" = ANY(${pageVersionIds}::int[])
+      -- 必须有序：同一 (follow, page) 在一个批次里有多条修订时，下面的合并逻辑
+      -- 是「后处理的覆盖先处理的」。没有 ORDER BY 时 PostgreSQL 可以任意顺序返回，
+      -- 最终告警可能指向**较旧**的那条修订，却带着当前的 detectedAt。
+      -- 升序排列后最后写入的就是最新一条。
+      ORDER BY r."timestamp" ASC, r.id ASC
     `;
     
     // Prepare attribution diff: current vs previous version

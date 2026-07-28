@@ -85,4 +85,35 @@ describe('cache delByPrefix / del', () => {
     await cache.delByPrefix('k');
     expect(await cache.getJSON('k')).toBeNull();
   });
+
+  it('在途 loader 若期间被失效，其结果不得写回缓存（Codex review P2）', async () => {
+    const cache = makeCache();
+    let release: (v: { unreadCount: number }) => void = () => {};
+    const slow = new Promise<{ unreadCount: number }>((resolve) => { release = resolve; });
+
+    // 用户打开提醒页 → GET /alerts 开始加载（返回 3 条未读）
+    const pending = cache.remember('alerts:1:COMMENT_COUNT:20:0', 60, () => slow);
+
+    // 加载还没回来，用户点了「全部已读」→ 失效缓存
+    await cache.delByPrefix('alerts:1:');
+
+    // 此时那次加载才返回，带的是**失效前**的旧未读数
+    release({ unreadCount: 3 });
+    await pending;
+
+    // 关键断言：旧值不得被写回。否则用户刷新会看到未读数回弹，
+    // 且要等满一个 TTL 才恢复正确 —— 正是本 PR 要修的那个现象。
+    expect(await cache.getJSON('alerts:1:COMMENT_COUNT:20:0')).toBeNull();
+  });
+
+  it('失效后新发起的加载可以正常写入（世代号不会永久封锁该 key）', async () => {
+    const cache = makeCache();
+    await cache.setJSON('k', { v: 1 }, 60);
+    await cache.delByPrefix('k');
+
+    const fresh = await cache.remember('k', 60, async () => ({ v: 2 }));
+    expect(fresh).toEqual({ v: 2 });
+    // 这一次是失效**之后**才启动的，必须被缓存下来
+    expect(await cache.getJSON('k')).toEqual({ v: 2 });
+  });
 });
