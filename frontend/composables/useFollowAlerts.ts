@@ -157,6 +157,9 @@ export function useFollowAlerts() {
         // 先取出再展开：直接写 { ...alerts.value[idx] } 在
         // noUncheckedIndexedAccess 下类型是 T | undefined，展开后所有字段变可选
         const current = idx >= 0 ? alerts.value[idx] : undefined;
+        // 只有本来未读才算「新读了一条」。铃铛下拉里也会展示已读条目，
+        // 点开它们同样会调这个幂等接口，无条件递减会把徽标越点越少。
+        const wasUnread = Boolean(current && !current.acknowledgedAt);
         if (current) alerts.value[idx] = { ...current, acknowledgedAt };
         combined.value = combined.value.map(group => ({
           ...group,
@@ -164,7 +167,7 @@ export function useFollowAlerts() {
         }));
         // 递减而非按本地列表重算：列表只有最近 20 条，服务端可能有 100 条未读，
         // 重算会把徽标直接砍到 ≤19。
-        unreadCount.value = Math.max(0, Number(unreadCount.value || 0) - 1);
+        if (wasUnread) unreadCount.value = Math.max(0, Number(unreadCount.value || 0) - 1);
       }
     } catch (e) {
       console.warn('[follow-alerts] mark read failed', e);

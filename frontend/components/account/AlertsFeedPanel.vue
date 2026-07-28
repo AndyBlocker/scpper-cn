@@ -52,6 +52,27 @@ async function handleMarkOne(key: string, item: Parameters<typeof markRead>[0]) 
   try { await markRead(item) } finally { markingKey.value = null }
 }
 
+/**
+ * 勾选「显示已读」要重新取数：首次请求带了 unreadOnly=1，
+ * 本地状态里压根没有已读条目，只改本地过滤会什么都显示不出来。
+ */
+async function handleShowReadChange() {
+  if (busy.value) return
+  busy.value = true
+  try { await refresh(true) } finally { busy.value = false }
+}
+
+/**
+ * 点开通知即视为已读 —— 旧版账号页就是这个行为。
+ * 不这么做的话，用户点进去看完回来，条目和铃铛计数都还是未读，
+ * 必须再点一次那个小小的「已读」才行。
+ * 不 await：跳转不该等这个请求。
+ */
+function handleOpen(item: Parameters<typeof markRead>[0]) {
+  if (item.read) return
+  void markRead(item)
+}
+
 let stopVis: (() => void) | null = null
 
 onMounted(async () => {
@@ -99,7 +120,12 @@ onBeforeUnmount(() => { stopVis?.() })
 
       <div class="ml-auto flex items-center gap-3">
         <label class="flex cursor-pointer items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
-          <input v-model="showRead" type="checkbox" class="h-3.5 w-3.5 rounded border-[rgb(var(--input-border))]">
+          <input
+            v-model="showRead"
+            type="checkbox"
+            class="h-3.5 w-3.5 rounded border-[rgb(var(--input-border))]"
+            @change="handleShowReadChange"
+          >
           显示已读
         </label>
         <button
@@ -192,6 +218,7 @@ onBeforeUnmount(() => { stopVis?.() })
             v-bind="item.href ? { to: item.href } : {}"
             class="mt-1 block text-sm text-[rgb(var(--fg))]"
             :class="[item.read ? '' : 'font-medium', item.href ? 'hover:text-[var(--g-accent)]' : '']"
+            @click="handleOpen(item)"
           >
             {{ item.title }}
           </component>

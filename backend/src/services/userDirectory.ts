@@ -30,6 +30,9 @@ function ensureUserBackendEnv(): void {
   if (userEnvLoaded) return;
   const candidate = path.resolve(__dirname, '../../../user-backend/.env');
   if (fs.existsSync(candidate)) {
+    // 若当前值是空串（.env.example 抄来的空占位），override:false 不会替换它，
+    // 先删掉再加载，让 user-backend/.env 里的真实值能生效。
+    if (!(process.env.USER_DATABASE_URL || '').trim()) delete process.env.USER_DATABASE_URL;
     dotenv.config({ path: candidate, override: false });
   }
   userEnvLoaded = true;
@@ -69,7 +72,11 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
   }
 
   ensureUserBackendEnv();
-  const userDbUrl = process.env.USER_DATABASE_URL || process.env.USER_BACKEND_DATABASE_URL;
+  // 用 trim() 判空：backend/.env 里若留了 `USER_DATABASE_URL=` 空占位，
+  // dotenv 的 override:false 不会用 user-backend/.env 的真实值替换它，
+  // 于是每轮都取不到目标却毫无线索。
+  const userDbUrl = (process.env.USER_DATABASE_URL || '').trim()
+    || (process.env.USER_BACKEND_DATABASE_URL || '').trim();
   if (!userDbUrl) {
     console.warn('[notify] USER_DATABASE_URL 未配置，无法读取 QQ 绑定，本轮跳过投递');
     return [];

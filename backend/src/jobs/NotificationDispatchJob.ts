@@ -98,6 +98,14 @@ async function resolveCutoff(prisma: PrismaClient, persisted: Date | null): Prom
 
 const PROCESS_START = new Date();
 
+/**
+ * 本次进程的运行标识，写进 payload.runId。
+ * 用于「部分抢占后退让」时只删自己登记的占位 —— 无差别删除会把胜出方的
+ * 占位也删掉，胜出方随后发送成功却更新到 0 行，那批候选于是又变回可投递，
+ * 稍后会被重复发送。
+ */
+const RUN_ID = `${process.pid}-${PROCESS_START.getTime()}`;
+
 interface Candidate {
   source: 'page_metric' | 'follow_activity' | 'forum';
   dedupeKey: string;
@@ -330,7 +338,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
       // 下一轮由唯一的胜出者完整处理。
       await prisma.notificationDelivery.deleteMany({
-        where: { dedupeKey: { in: keys }, state: 'PENDING' }
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } }
       });
       console.warn(
         `[notify] 用户 ${target.wikidotId} 的候选被另一轮部分抢占`
@@ -344,7 +352,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
 
     if (result.ok) {
       await prisma.notificationDelivery.updateMany({
-        where: { dedupeKey: { in: keys }, state: 'PENDING' },
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
         data: { state: 'SENT', sentAt: new Date(), lastError: null }
       });
       summary.sent += items.length;
@@ -353,7 +361,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       await reportChannelOutcome(target.accountId, 'sent', null);
     } else if (isPermanentFailure(result.error)) {
       await prisma.notificationDelivery.updateMany({
-        where: { dedupeKey: { in: keys }, state: 'PENDING' },
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
         data: { state: 'FAILED', lastError: result.error ?? 'unknown' }
       });
       summary.failed += items.length;
@@ -365,7 +373,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 可重试：撤销刚才的占位，让候选下轮重新被扫到。
       // 留着 PENDING 会让 dedupeKey 把重试也挡掉。
       await prisma.notificationDelivery.deleteMany({
-        where: { dedupeKey: { in: keys }, state: 'PENDING' }
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } }
       });
       summary.failed += items.length;
       console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（下轮重试）`);
@@ -408,7 +416,9 @@ async function reportChannelOutcome(
         method: 'POST',
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
-        body: JSON.stringify({ accountId, channel: 'QQ', outcome, code })
+        // code 为 null 时必须**省略**该字段：接收侧 schema 是 z.string().optional()，
+        // 传 null 会 400，而我们又忽略响应状态 → 成功回报静默失效、failureCount 永不清零
+        body: JSON.stringify({ accountId, channel: 'QQ', outcome, ...(code ? { code } : {}) })
       });
     } finally {
       clearTimeout(timer);
@@ -437,7 +447,7 @@ async function recordAll(
       attemptCount: 1,
       lastError: error,
       sentAt: state === 'SENT' ? now : null,
-      payload: { source: c.source, line: c.line, detectedAt: c.detectedAt.toISOString() }
+      payload: { source: c.source, line: c.line, detectedAt: c.detectedAt.toISOString(), runId: RUN_ID }
     })),
     skipDuplicates: true
   });
@@ -494,7 +504,9 @@ async function collectCandidates(
     const delta = diff != null ? `${diff > 0 ? '+' : ''}${diff}` : '';
     out.push({
       source: 'page_metric',
-      dedupeKey: `pma:${r.id}:${r.newValue ?? 'n'}`,
+      // 键里带 detectedAt：PageMetricAlert 是就地更新的，只带 newValue 的话
+      // 「20→40→20→40」这种来回变动，最后那次 40 会撞到早先 40 的键而被当成已投递。
+      dedupeKey: `pma:${r.id}:${r.newValue ?? 'n'}:${new Date(String(r.detectedAt)).getTime()}`,
       userId: Number(r.userId),
       detectedAt: new Date(String(r.detectedAt)),
       line: `你的《${pageLabel(r)}》${label}有变化 ${delta}  ${pageUrl(r)}`

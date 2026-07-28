@@ -334,8 +334,10 @@ if (initialTab && initialTab !== activeTab.value) {
 }
 
 watch(() => route.query.tab, (next) => {
-  const resolved = resolveTabFromQuery(next)
-  if (resolved && resolved !== activeTab.value) {
+  // query 消失（浏览器后退到 /account）时要回落到 overview，
+  // 否则 URL 显示默认页而界面仍停在「提醒」面板。
+  const resolved = resolveTabFromQuery(next) ?? 'overview'
+  if (resolved !== activeTab.value) {
     activeTab.value = resolved
   }
 })

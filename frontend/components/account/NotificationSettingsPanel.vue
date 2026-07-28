@@ -43,6 +43,13 @@ watch(preferences, (p) => {
 
 const qqBound = computed(() => Boolean(user.value?.qqBinding?.bound))
 const qqMask = computed(() => user.value?.qqBinding?.addressMask ?? null)
+/**
+ * 只有 ACTIVE 才算真的能收 —— 投递器只加载 ACTIVE 的绑定。
+ * PAUSED（连续投递失败被自动暂停）时 bound 仍是 true，
+ * 照着 bound 画绿点会让用户完全看不出「为什么收不到了」。
+ */
+const qqActive = computed(() => user.value?.qqBinding?.status === 'ACTIVE')
+const qqPaused = computed(() => qqBound.value && !qqActive.value)
 
 function flashSaved() {
   savedHint.value = true
@@ -187,12 +194,15 @@ onMounted(() => { void fetchPreferences() })
           <div class="flex items-center gap-2 text-sm">
             <span
               class="inline-block h-2 w-2 rounded-full"
-              :class="qqBound ? 'bg-[rgb(var(--success))]' : 'bg-[rgb(var(--slate-400))]'"
+              :class="qqActive ? 'bg-[rgb(var(--success))]' : qqPaused ? 'bg-[rgb(var(--warning))]' : 'bg-[rgb(var(--slate-400))]'"
               aria-hidden="true"
             />
             <span class="text-[rgb(var(--fg))]">QQ 私信</span>
             <span v-if="qqBound" class="font-mono text-xs text-[rgb(var(--muted))]">{{ qqMask }}</span>
-            <span v-else class="text-xs text-[rgb(var(--muted))]">未绑定</span>
+            <span v-if="qqPaused" class="text-xs text-[rgb(var(--warning-strong))]">
+              已暂停（连续投递失败，请确认机器人仍是好友后重新绑定）
+            </span>
+            <span v-else-if="!qqBound" class="text-xs text-[rgb(var(--muted))]">未绑定</span>
             <NuxtLink
               v-if="!qqBound"
               to="/account?tab=overview"
