@@ -720,6 +720,31 @@ POST /scpper/qq/push/batch
 
 ## 5. 绑定流程时序
 
+> **2026-07-28 修订（阶段 1 实施时定稿）**：验证码改为填在**好友申请的验证消息**里，
+> 而不是「先无条件加好友、再让用户私聊发码」。
+>
+> 变更理由：
+> 1. 用户从两个动作（加好友 → 再发消息）压缩为一个动作；
+> 2. 好友列表里只会出现真正在绑定的人。这不只是整洁问题——**每次推送前都要用
+>    `get_friend_list` 校验好友关系**，列表被无关加好友请求撑大会直接拖慢推送链路，
+>    而无条件自动同意必然招来这类请求。
+>
+> 对应的三种结局（`friend_request.py` 已按此实现）：
+> - 码有效 → 同意好友 + 私聊回执（绑定此时已在 user-backend 侧完成）
+> - 码无效/缺失 → **拒绝**。用户能看到「对方拒绝了好友请求」，可拿正确的码重来；
+>   留着不处理的话用户只会一直等，不知道错在哪
+> - 校验服务不可用 → **不处理**，留在待处理列表。这是我们的故障不该让用户背，
+>   服务恢复后用户或管理员仍有补救余地
+>
+> 私聊发码的路径（`qq_verify.py`）**保留但降级为次要路径**：已经是好友的用户
+> （历史遗留、或因其他原因先加了好友）发不出好友申请，只能走私聊。
+>
+> ⚠️ **前置条件**：机器人 QQ 账号的加好友设置必须是「需要验证信息」。
+> 若设为「允许任何人添加」，QQ 不会收集验证消息，`event.comment` 为空 →
+> 所有申请都会被拒。上线前需在 NapCat WebUI 或手机端确认该设置。
+>
+> 下表第 5–8 步据此调整；其余步骤不变。
+
 ### 5.1 主时序（Happy Path）
 
 | # | 参与方 | 动作 | 用户可见 |
@@ -727,11 +752,11 @@ POST /scpper/qq/push/batch
 | 1 | 前端 | `/account` → 「账号绑定」→ QQ 卡 → 【开始绑定】 | 按钮转 loading |
 | 2 | BFF→user-backend | `POST /qq-binding/start` | — |
 | 3 | user-backend | 限流 → fail-fast 已绑检查 → Serializable(lockAccount → 作废旧 PENDING → 生成码 → 存 codeHash/codeHint → create challenge, TTL 15min) | — |
-| 4 | 前端 | 渲染三步向导 | 「① 添加机器人好友 QQ **1248393597**（验证信息可直接粘贴下面的码）② 通过后把验证码私聊发给它 ③ 本页会自动确认」+ 大号等宽验证码 `SCPPER-AB3DKM7PQR2X` + 【复制】+ 倒计时 `14:32` + ⚠️「验证码只显示一次，刷新页面后需重新生成」 |
-| 5 | 用户 | 加好友 | — |
-| 6 | qqbot `friend_request.py` | `event.approve(bot)` → 失效好友缓存 → sleep 1.5s → 主动私聊引导语 | QQ 收到：「你好，我是 SCPPER-CN 通知助手。请把网站生成的 12 位验证码（形如 SCPPER-AB3DKM7PQR2X）直接发给我即可完成绑定。」 |
-| 7 | 用户 | 私聊发码 | — |
-| 8 | qqbot `qq_verify.py` | `sub_type=='friend'` 检查 → 节流 → 查好友缓存 → `POST /internal/qq-binding/verify` | — |
+| 4 | 前端 | 渲染两步向导 | 「① 添加机器人好友 QQ **1248393597**，**把下面的验证码填进好友验证消息** ② 本页会自动确认」+ 大号等宽验证码 `SCPPER-AB3DKM7PQR2X` + 【复制】+ 倒计时 `14:32` + ⚠️「验证码只显示一次，刷新页面后需重新生成」 |
+| 5 | 用户 | 加好友，验证消息里粘贴验证码 | — |
+| 6 | qqbot `friend_request.py` | `extract_code(event.comment)`（兼容「回答问题」式的 `问题：…\n回答：…`、大小写、用户顺手打的空格/连字符）→ `POST /internal/qq-binding/verify` | — |
+| 7 | qqbot | 码有效 → `event.approve(bot)` → 失效好友缓存 → sleep 2s → 私聊回执<br>码无效 → `event.reject(bot)`（注意：适配器的 `approve()` 签名是 `(bot, remark="")`，**没有 approve 参数**，拒绝必须走 `reject()`）<br>校验不可用 → 不处理，留待重试 | 成功：QQ 收到成功文案<br>失败：用户看到「对方拒绝了好友请求」 |
+| 8 | *(次要路径)* qqbot `qq_verify.py` | 已是好友的用户改走私聊发码：`sub_type=='friend'` 检查 → 节流 → `POST /internal/qq-binding/verify` | — |
 | 9 | user-backend | Serializable(lockAccount → lockChallenge → 校验链 → 条件插 binding → challenge=VERIFIED → 计算 resolvedMatrix) → 事务外 `invalidateAuthCache` | — |
 | 10 | qqbot | 把 `reply` 原样私聊回给用户 | QQ 收到成功文案 |
 | 11 | user-backend | 事务外调 `services/qqPush.ts` 发绑定成功回执（失败只记日志） | QQ 收到「通知渠道已就绪」 |
