@@ -10,6 +10,15 @@ export interface AuthUser {
   displayName: string | null
   linkedWikidotId: number | null
   lastLoginAt: string | null
+  /**
+   * QQ 通知渠道绑定摘要。addressMask 形如 1234***7 ——
+   * user-backend 不会把完整 QQ 号发出来，前端拿不到也不需要它。
+   */
+  qqBinding: {
+    bound: boolean
+    addressMask: string | null
+    status: string | null
+  }
 }
 
 interface ApiResponse<T> {
@@ -31,7 +40,14 @@ function normalizeUser(payload: any): AuthUser {
     email: String(payload?.email || ''),
     displayName: payload?.displayName ?? null,
     linkedWikidotId: payload?.linkedWikidotId != null ? Number(payload.linkedWikidotId) : null,
-    lastLoginAt: payload?.lastLoginAt ? String(payload.lastLoginAt) : null
+    lastLoginAt: payload?.lastLoginAt ? String(payload.lastLoginAt) : null,
+    // 老版本 user-backend 不返回该字段，给出安全默认值而不是 undefined，
+    // 免得模板里到处写 ?. 还漏掉一处就报错
+    qqBinding: {
+      bound: Boolean(payload?.qqBinding?.bound),
+      addressMask: payload?.qqBinding?.addressMask ?? null,
+      status: payload?.qqBinding?.status ?? null
+    }
   }
 }
 

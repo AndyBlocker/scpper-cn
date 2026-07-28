@@ -109,6 +109,22 @@
           </div>
           <!-- Not linked: show binding panel -->
           <WikidotBindingPanel v-else />
+
+          <!-- QQ 通知渠道绑定。与 Wikidot 绑定并列，同属「账号绑定」一栏：
+               用户找绑定入口一定先来「资料」页，放这里比塞进提醒设置里好找。 -->
+          <div class="flex items-center justify-between pt-2">
+            <div>
+              <div class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">QQ 绑定</div>
+              <p class="text-[11px] text-neutral-500 dark:text-neutral-500">绑定后可通过 QQ 私信接收站点通知。</p>
+            </div>
+            <div v-if="user?.qqBinding?.bound" class="rounded-full border border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--g-accent)]">
+              已绑定
+            </div>
+            <div v-else class="rounded-full border border-neutral-200 px-3 py-1 text-xs text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+              未绑定
+            </div>
+          </div>
+          <QqBindingPanel />
         </div>
       </div>
     </section>
