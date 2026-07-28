@@ -31,6 +31,8 @@ import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { runSyncHourlyScheduler } from './sync-hourly.js';
 import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
 import { runNotifyDispatchLoop, runNotifyDispatchOnce } from './notify-dispatch.js';
+import { runNotifyRetention, parseRetentionOptions } from './notify-retention.js';
+import { runNotifyInspect } from './notify-inspect.js';
 import { runVoteResyncAudit } from './voteResyncAudit.js';
 import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
@@ -90,6 +92,29 @@ program
     await runWikidotBindingVerifyLoop({
       intervalSeconds,
       runImmediately: Boolean(options.runImmediately)
+    });
+  });
+
+program
+  .command('notify-retention')
+  .description('Report (and optionally delete) old notification rows')
+  .option('--apply', 'Actually delete. Without this flag the command only reports counts.')
+  .option('--delivery-days <n>', 'Keep terminal-state deliveries for N days', '30')
+  .option('--alert-days <n>', 'Keep acknowledged alerts for N days', '180')
+  .action(async (options) => {
+    await runNotifyRetention(parseRetentionOptions(options as Record<string, unknown>));
+  });
+
+program
+  .command('notify-inspect')
+  .description('Show notification dispatcher health and recent delivery outcomes')
+  .option('--hours <n>', 'Look back N hours', '24')
+  .option('--failed', 'Also list individual failures')
+  .action(async (options) => {
+    const hours = Number.parseInt(String(options.hours ?? '24'), 10);
+    await runNotifyInspect({
+      hours: Number.isFinite(hours) && hours > 0 ? hours : 24,
+      failedOnly: Boolean(options.failed)
     });
   });
 
