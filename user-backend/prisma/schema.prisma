@@ -76,6 +76,26 @@ enum WikidotBindingStatus {
   CANCELLED
 }
 
+/// 通知投递渠道。QQ 只是第一个外部渠道，加新渠道时这里加枚举值即可，
+/// 不需要动 UserAccount 的表结构（对比 linkedWikidotId 那种「一个渠道一列」的做法）。
+enum NotificationChannel {
+  QQ
+}
+
+enum ChannelBindingStatus {
+  ACTIVE
+  PAUSED
+  REVOKED
+}
+
+enum ChannelChallengeStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  CANCELLED
+  FAILED
+}
+
 model UserAccount {
   id               String              @id @default(cuid())
   email            String              @unique
@@ -108,6 +128,8 @@ model UserAccount {
   createdEvents    CalendarEvent[]
   ftmlProjects     FtmlProject[]
   wikidotBindingTasks WikidotBindingTask[]
+  channelBindings  NotificationChannelBinding[]
+  channelChallenges ChannelBindingChallenge[]
 }
 
 model VerificationToken {
@@ -448,6 +470,70 @@ model WikidotBindingTask {
   @@index([userId, status])
   @@index([status, expiresAt])
   @@index([wikidotUserId])
+}
+
+/// 已生效的通知渠道绑定（一个账号一个渠道一条）。
+///
+/// 为什么 QQ 号存明文：需要等值查询（推送时按 userId 取号）与唯一约束（一个 QQ 只能绑一个账号），
+/// 加密列会同时破坏这两点，得再引 HMAC 索引列 + 密文列 + 密钥管理三件套。
+/// 取而代之的防护是：**主库永不存 QQ 号**（qqbot 自己也直连主库）、所有对外 API 一律只返回
+/// 掩码（1234***9）、BFF 全链路拿不到完整号、qqbot 用只读角色且被禁止连本库。
+model NotificationChannelBinding {
+  id              String               @id @default(cuid())
+  userId          String
+  channel         NotificationChannel
+  /// 渠道内的地址。QQ 渠道即 QQ 号；存字符串而非 Int，避免将来接入非数字地址的渠道时改类型。
+  address         String
+  /// 绑定时的昵称快照，仅用于界面展示，不作为身份依据
+  displayName     String?
+  status          ChannelBindingStatus @default(ACTIVE)
+  verifiedAt      DateTime
+  lastSentAt      DateTime?
+  /// 连续投递失败计数；达阈值自动转 PAUSED 并邮件告知，避免对着失效渠道一直重试
+  failureCount    Int                  @default(0)
+  lastFailureCode String?
+  suspendedUntil  DateTime?
+  /// 由三级偏好继承解析出的「事件类型 × 是否推送」矩阵，物化在这里。
+  /// 投递侧本来就要读本行取地址，顺手拿到矩阵即可，不必再建跨库投影表。
+  resolvedMatrix  Json?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  user            UserAccount          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 一个账号在一个渠道上只能有一条绑定
+  @@unique([userId, channel])
+  /// 一个 QQ 号只能绑一个账号 —— 与 UserAccount.linkedWikidotId 的唯一性语义对称
+  @@unique([channel, address])
+  @@index([channel, status])
+}
+
+/// 绑定验证码。一次「发起绑定」产生一条，用户把码填进好友验证消息或私聊发回来时核销。
+///
+/// 验证码**只存哈希**：services/AGENTS.md 明令「验证码以明文落库或日志输出」是反模式，
+/// 而 WikidotBindingTask.verificationCode 存明文有其特殊性（那个码本来就要公开写进
+/// wikidot 修订注释）。QQ 的码是私聊传递的准秘密，没有存明文的理由。
+model ChannelBindingChallenge {
+  id            String                 @id @default(cuid())
+  userId        String
+  channel       NotificationChannel
+  /// sha256(明文)，唯一 —— 机器人回调时按哈希 O(1) 反查，无需遍历
+  codeHash      String                 @unique
+  /// 明文的末 4 位，仅用于「你刚才那个码是 …7PQR」这类提示，不足以反推完整码
+  codeHint      String
+  status        ChannelChallengeStatus @default(PENDING)
+  expiresAt     DateTime
+  verifiedAt    DateTime?
+  /// 校验失败次数，达上限即作废，防止拿一个码反复试
+  attemptCount  Int                    @default(0)
+  /// 核销成功时记录来源地址，便于事后追溯「这条绑定是从哪个 QQ 验过来的」
+  boundAddress  String?
+  failureReason String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  user          UserAccount            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, channel, status])
+  @@index([status, expiresAt])
 }
 
 model GachaCardInstance {

@@ -141,6 +141,23 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
         }
       }
     }));
+    // QQ 绑定：与 /wikidot-binding 同构。刻意不代理 /internal/qq-binding ——
+    // 那是给 qqbot 直连 user-backend 的内部接口，经 BFF 暴露等于把它开到公网。
+    router.use('/qq-binding', createProxyMiddleware<Request, Response>({
+      target: normalizedTarget,
+      changeOrigin: true,
+      xfwd: true,
+      pathRewrite: rewrite('/qq-binding'),
+      on: {
+        proxyReq: forwardJsonBody,
+        proxyRes: (proxyRes) => {
+          // 响应里含验证码与绑定状态，任何中间层都不得缓存
+          proxyRes.headers['cache-control'] = 'no-store, no-cache, must-revalidate, max-age=0';
+          delete proxyRes.headers.etag;
+          delete proxyRes.headers['last-modified'];
+        }
+      }
+    }));
     router.use('/gacha', createProxyMiddleware<Request, Response>({
       target: normalizedTarget,
       changeOrigin: true,

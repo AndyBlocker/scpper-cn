@@ -3,6 +3,14 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { parseCookieHeader } from '../utils/cookies.js';
 import { extractUserId, verifyAuthToken } from '../utils/auth-token.js';
+import { maskQqNumber } from '../services/qqBindingProof.js';
+
+/** 通知渠道绑定摘要。**只含掩码**，完整地址不出 user-backend 的投递路径。 */
+export interface AuthChannelBinding {
+  bound: boolean;
+  addressMask: string | null;
+  status: string | null;
+}
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -12,6 +20,7 @@ declare module 'express-serve-static-core' {
       displayName: string | null;
       linkedWikidotId: number | null;
       lastLoginAt: Date | null;
+      qqBinding: AuthChannelBinding;
     };
   }
 }
@@ -27,6 +36,7 @@ interface CachedUser {
   lastLoginAt: Date | null;
   status: string;
   passwordHash: string | null;
+  qqBinding: AuthChannelBinding;
   cachedAt: number;
 }
 
@@ -59,10 +69,21 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
         linkedWikidotId: true,
         lastLoginAt: true,
         status: true,
-        passwordHash: true
+        passwordHash: true,
+        // 一并取出通知渠道绑定：这个查询本来就有 30 秒缓存，且绑定变更时会
+        // invalidateAuthCache，所以代价是「每次缓存未命中多一个 join」而不是每请求一次。
+        // 放在这里的另一个好处是 BFF 的 fetchAuthUser 走 /auth/me 就能拿到，不必再加一跳。
+        channelBindings: {
+          where: { channel: 'QQ' },
+          select: { address: true, status: true }
+        }
       }
     });
     if (!user) return null;
+    const qq = user.channelBindings[0];
+    const qqBinding: AuthChannelBinding = qq && qq.status !== 'REVOKED'
+      ? { bound: true, addressMask: maskQqNumber(qq.address), status: qq.status }
+      : { bound: false, addressMask: null, status: null };
     const cached: CachedUser = {
       id: user.id,
       email: user.email,
@@ -71,6 +92,7 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
       lastLoginAt: user.lastLoginAt ?? null,
       status: user.status,
       passwordHash: user.passwordHash,
+      qqBinding,
       cachedAt: Date.now()
     };
     userCache.set(userId, cached);
@@ -128,7 +150,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       email: user.email,
       displayName: user.displayName ?? null,
       linkedWikidotId: user.linkedWikidotId ?? null,
-      lastLoginAt: user.lastLoginAt ?? null
+      lastLoginAt: user.lastLoginAt ?? null,
+      qqBinding: user.qqBinding
     };
     next();
   } catch (error) {

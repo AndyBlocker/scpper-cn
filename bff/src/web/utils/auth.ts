@@ -7,6 +7,16 @@ export interface AuthUserPayload {
   displayName: string | null;
   linkedWikidotId: number | null;
   lastLoginAt: string | null;
+  /**
+   * 通知渠道绑定摘要。**只有掩码**（1234***7）——
+   * user-backend 刻意不把完整 QQ 号发到 BFF，所以 BFF 全链路（含前端）都拿不到它。
+   * 完整号只在 user-backend 的投递路径与 backend dispatcher 的跨库只读查询里出现。
+   */
+  qqBinding?: {
+    bound: boolean;
+    addressMask: string | null;
+    status: string | null;
+  };
 }
 
 const USER_BACKEND_DEFAULT = 'http://127.0.0.1:4455';
