@@ -60,17 +60,19 @@ function useAlertsState() {
   const lastFetchedAt = useState<AlertsRecord<string | null>>('alerts/lastFetchedAt', () => createAlertsRecord(() => null));
   const activeMetric = useState<AlertMetric>('alerts/activeMetric', () => 'COMMENT_COUNT');
   const error = useState<AlertsRecord<string | null>>('alerts/error', () => createAlertsRecord(() => null));
-  return { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error };
+  // 请求世代必须**跨组件共享**：每个 useAlerts() 调用各自新建一个 Map 的话，
+  // layout 里 resetState 递增的世代号影响不到面板里那份，守卫等于没有。
+  const epochs = useState<AlertsRecord<number>>('alerts/epochs', () => createAlertsRecord(() => 0));
+  return { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error, epochs };
 }
 
 export function useAlerts() {
   const { $bff } = useNuxtApp();
   const { user, status } = useAuth();
-  const { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error } = useAlertsState();
-  // 请求世代：force 刷新会绕过 loading 门禁，于是同一 metric 可能有两个请求在飞。
-  // 若旧的那个后返回，会用陈旧数据覆盖新结果（未读数与列表一起回退）。
-  // 每次发起 +1，回来时比对，不是最新的就丢弃。
-  const epochs = new Map<AlertMetric, number>();
+  // 请求世代：force 刷新会绕过 loading 门禁，于是同一 metric 可能有两个请求在飞；
+  // 换账号时 A 的请求也可能在 B 登录后才返回。两种情况都会用陈旧/他人的数据
+  // 覆盖共享状态。每次发起 +1，回来时比对，不是最新的就整个丢弃。
+  const { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error, epochs } = useAlertsState();
   // Persist last used metric for better UX across sessions
   if (typeof window !== 'undefined') {
     try {
@@ -84,6 +86,9 @@ export function useAlerts() {
   }
 
   function resetState() {
+    // 作废所有在途请求：A 的响应若在 B 登录后才回来，会把 A 的数据
+    // 写进 B 看到的共享状态（跨账号信息泄露）。
+    for (const m of ALERT_METRICS) epochs.value[m] += 1;
     alerts.value = createAlertsRecord(() => []);
     unreadCount.value = createAlertsRecord(() => 0);
     lastFetchedAt.value = createAlertsRecord(() => null);
@@ -92,7 +97,7 @@ export function useAlerts() {
     activeMetric.value = 'COMMENT_COUNT';
   }
 
-  async function fetchAlerts(metric?: AlertMetric, force = false) {
+  async function fetchAlerts(metric?: AlertMetric, force = false, unreadOnly = false) {
     const authStatus = status.value;
     const currentUser = user.value;
     if (!currentUser || authStatus !== 'authenticated' || !currentUser.linkedWikidotId) {
@@ -123,15 +128,15 @@ export function useAlerts() {
     }
 
     loading.value[targetMetric] = true;
-    const myEpoch = (epochs.get(targetMetric) ?? 0) + 1;
-    epochs.set(targetMetric, myEpoch);
+    const myEpoch = epochs.value[targetMetric] + 1;
+    epochs.value[targetMetric] = myEpoch;
     try {
       const res = await $bff<AlertsResponse>('/alerts', {
         method: 'GET',
-        params: { metric: METRIC_QUERY_MAP[targetMetric] }
+        params: { metric: METRIC_QUERY_MAP[targetMetric], ...(unreadOnly ? { unreadOnly: '1' } : {}) }
       });
       // 在途期间又发起了更新的请求 → 本次结果作废
-      if (epochs.get(targetMetric) !== myEpoch) return alerts.value[targetMetric];
+      if (epochs.value[targetMetric] !== myEpoch) return alerts.value[targetMetric];
       if (res?.ok) {
         alerts.value[targetMetric] = Array.isArray(res.alerts) ? res.alerts : [];
         // 用 Number() 而非 Number.isFinite(原值)：PostgreSQL 的 COUNT 经 pg 驱动
@@ -147,7 +152,7 @@ export function useAlerts() {
       }
     } catch (err) {
       console.warn('[alerts] fetch failed', err);
-      if (epochs.get(targetMetric) === myEpoch) {
+      if (epochs.value[targetMetric] === myEpoch) {
         error.value[targetMetric] = '网络异常，未能刷新提醒';
       }
     } finally {
@@ -163,18 +168,19 @@ export function useAlerts() {
     const list = alerts.value[metric] ?? [];
     const target = list.find(item => item.id === id);
     const prevAck = target?.acknowledgedAt ?? null;
-    if (target) {
-      target.acknowledgedAt = target.acknowledgedAt ?? new Date().toISOString();
-      const remaining = (alerts.value[metric] ?? []).filter(item => !item.acknowledgedAt).length;
-      unreadCount.value[metric] = remaining;
+    // 递减而非按本地列表重算：列表只有最近 20 条，服务端可能有更多未读，
+    // 重算会把徽标直接砍到本页未读数。
+    const prevUnread = Number(unreadCount.value[metric] || 0);
+    if (target && !target.acknowledgedAt) {
+      target.acknowledgedAt = new Date().toISOString();
+      unreadCount.value[metric] = Math.max(0, prevUnread - 1);
     }
     try {
       const res = await $bff<{ ok: boolean; acknowledgedAt: string | null }>(`/alerts/${id}/read`, { method: 'POST' });
       if (!res?.ok && target) {
-        // rollback on failure
+        // 回滚到请求前的服务端计数，而不是按本页重算
         target.acknowledgedAt = prevAck;
-        const remaining = (alerts.value[metric] ?? []).filter(item => !item.acknowledgedAt).length;
-        unreadCount.value[metric] = remaining;
+        unreadCount.value[metric] = prevUnread;
       } else if (res?.ok && target) {
         target.acknowledgedAt = res.acknowledgedAt ?? target.acknowledgedAt;
       }
@@ -182,8 +188,7 @@ export function useAlerts() {
       console.warn('[alerts] mark read failed', error);
       if (target) {
         target.acknowledgedAt = prevAck;
-        const remaining = (alerts.value[metric] ?? []).filter(item => !item.acknowledgedAt).length;
-        unreadCount.value[metric] = remaining;
+        unreadCount.value[metric] = prevUnread;
       }
     }
   }
@@ -208,8 +213,8 @@ export function useAlerts() {
   }
 
   // Fetch all metrics (in parallel) for a unified, fresh view
-  async function fetchAll(force = false) {
-    await Promise.all(ALERT_METRICS.map(m => fetchAlerts(m, force)));
+  async function fetchAll(force = false, unreadOnly = false) {
+    await Promise.all(ALERT_METRICS.map(m => fetchAlerts(m, force, unreadOnly)));
     return true;
   }
 
@@ -243,6 +248,11 @@ export function useAlerts() {
   const currentError = computed(() => error.value[activeMetric.value] ?? null);
   /** 任一指标出错即为真，供「加载失败，重试」这类整体提示使用 */
   const hasError = computed(() => ALERT_METRICS.some((m) => Boolean(error.value[m])));
+  /** 任一指标的错误文案。fetchAll 会打三个请求，只看当前指标会漏报其余两个。 */
+  const anyError = computed<string | null>(() => {
+    for (const m of ALERT_METRICS) { const e = error.value[m]; if (e) return e; }
+    return null;
+  });
 
   function setActiveMetric(metric: AlertMetric) {
     if (activeMetric.value !== metric) {
@@ -293,6 +303,7 @@ export function useAlerts() {
     error: currentError,
     errorByMetric: error,
     hasError,
+    anyError,
     fetchAlerts,
     fetchAll,
     markAlertRead,

@@ -52,8 +52,14 @@ export function useForumInteractionAlerts() {
   const loading = useState<boolean>('forumAlerts/loading', () => false);
   const lastFetchedAt = useState<string | null>('forumAlerts/lastFetchedAt', () => null);
   const error = useState<string | null>('forumAlerts/error', () => null);
+  /**
+   * 身份世代号。A 登出、B 登录时若 A 的请求还在飞，
+   * 它回来会把 A 的通知标题与未读数写进 B 看到的共享状态 —— 跨账号信息泄露。
+   * resetState 时 +1，在途响应回来比对，不一致就整个丢弃。
+   */
+  const identityEpoch = useState<number>('forumAlerts/epoch', () => 0);
 
-  async function fetchAlerts(force = false, limit = 20, offset = 0) {
+  async function fetchAlerts(force = false, limit = 20, offset = 0, unreadOnly = false) {
     if (loading.value && !force) return alerts.value;
 
     if (!force && lastFetchedAt.value) {
@@ -62,12 +68,15 @@ export function useForumInteractionAlerts() {
     }
 
     loading.value = true;
+    const myEpoch = identityEpoch.value;
     try {
       const res = await $bff<ForumAlertsResponse>('/alerts/forum', {
         method: 'GET',
-        params: { limit, offset }
+        params: { limit, offset, ...(unreadOnly ? { unreadOnly: '1' } : {}) }
       });
 
+      // 期间换过身份 → 本次结果作废，绝不写回共享状态
+      if (identityEpoch.value !== myEpoch) return alerts.value;
       if (res?.ok) {
         alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
         const parsed = Number(res.unreadCount);
@@ -96,6 +105,9 @@ export function useForumInteractionAlerts() {
     // 直接展开会让所有字段变成可选，赋回去就不再满足 ForumInteractionAlertItem
     const target = idx >= 0 ? alerts.value[idx] : undefined;
     const prev = target?.acknowledgedAt ?? null;
+    // 失败回滚要还原**回滚前的服务端计数**。按本地列表重算会把 100 砍到 ≤20
+    // （列表只有一页），而且要等下次刷新才恢复。
+    let prevUnread = Number(unreadCount.value || 0);
 
     if (target && !target.acknowledgedAt) {
       alerts.value[idx] = {
@@ -103,7 +115,8 @@ export function useForumInteractionAlerts() {
         acknowledgedAt: new Date().toISOString()
       };
       // 同 useFollowAlerts：递减而非按截断到 20 条的本地列表重算
-      unreadCount.value = Math.max(0, Number(unreadCount.value || 0) - 1);
+      prevUnread = Number(unreadCount.value || 0);
+      unreadCount.value = Math.max(0, prevUnread - 1);
     }
 
     try {
@@ -123,9 +136,20 @@ export function useForumInteractionAlerts() {
           ...rollback,
           acknowledgedAt: prev
         };
-        unreadCount.value = alerts.value.filter((item) => !item.acknowledgedAt).length;
+        // 还原保存下来的服务端计数，而不是按本地列表重算 ——
+        // 列表只有一页（≤20 条），重算会把 100 直接砍成 ≤20，且要等下次刷新才恢复
+        unreadCount.value = prevUnread;
       }
     }
+  }
+
+  /** 换账号时必须清空并作废在途请求，否则 B 会看到 A 的通知 */
+  function resetState() {
+    identityEpoch.value += 1;
+    alerts.value = [];
+    unreadCount.value = 0;
+    lastFetchedAt.value = null;
+    error.value = null;
   }
 
   async function markAllRead() {
@@ -155,6 +179,7 @@ export function useForumInteractionAlerts() {
     fetchAlerts,
     markRead,
     markAllRead,
-    error
+    error,
+    resetState
   };
 }

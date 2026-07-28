@@ -280,7 +280,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     grouped.set(c.userId, list);
   }
 
-  for (const [userId, items] of grouped) {
+  for (const [userId, group] of grouped) {
+    let items = group;
     const target = targetByUserId.get(userId);
     if (!target) continue;
 
@@ -289,13 +290,22 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     const sentToday = await prisma.notificationDelivery.count({
       where: { userId, state: 'SENT', createdAt: { gt: dayAgo } }
     });
-    if (sentToday >= DAILY_LIMIT) {
+    const remaining = DAILY_LIMIT - sentToday;
+    if (remaining <= 0) {
       await recordAll(prisma, items, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
       summary.suppressed += items.length;
       continue;
     }
 
     items.sort((a, b) => a.detectedAt.getTime() - b.detectedAt.getTime());
+    // 限额要作用到**本批**：原先只在批前比一次，39 条已发 + 20 条新批会直接超到 59。
+    // 超出配额的部分标记 SUPPRESSED，不发也不再重试。
+    if (items.length > remaining) {
+      const overflowItems = items.slice(remaining);
+      await recordAll(prisma, overflowItems, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
+      summary.suppressed += overflowItems.length;
+      items = items.slice(0, remaining);
+    }
     const shown = items.slice(0, CIRCUIT_USER_MAX);
     const overflow = items.length - shown.length;
     const message = renderDigest(shown, overflow);
@@ -315,8 +325,17 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 输的那一方仍会把完整摘要发出去 → 用户收到两条一样的消息。
     // 这里比对「插入前后本轮 key 的归属」，只在确实是自己抢到时才发送。
     const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false);
-    if (claimed === 0) {
-      console.warn(`[notify] 用户 ${target.wikidotId} 的候选已被另一轮抢占，本轮跳过`);
+    if (claimed < items.length) {
+      // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
+      // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
+      // 下一轮由唯一的胜出者完整处理。
+      await prisma.notificationDelivery.deleteMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING' }
+      });
+      console.warn(
+        `[notify] 用户 ${target.wikidotId} 的候选被另一轮部分抢占`
+        + `（${claimed}/${items.length}），本轮整批退让`
+      );
       continue;
     }
 
@@ -329,6 +348,9 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         data: { state: 'SENT', sentAt: new Date(), lastError: null }
       });
       summary.sent += items.length;
+      // 成功要清零 failureCount，否则一次永久失败之后，日后**不连续**的偶发失败
+      // 会累加到阈值，把一个正常渠道误暂停。
+      await reportChannelOutcome(target.accountId, 'sent', null);
     } else if (isPermanentFailure(result.error)) {
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: keys }, state: 'PENDING' },
@@ -338,7 +360,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       console.warn(`[notify] 用户 ${target.wikidotId} 永久失败：${result.error}（不再重试）`);
       // 把永久失败回报给绑定方。不报的话：绑定一直是 ACTIVE、界面显示健康，
       // 而每条新告警都有新的 dedupeKey，于是对着一个已经删了机器人的用户永远重试下去。
-      await reportChannelFailure(target.accountId, result.error ?? 'unknown');
+      await reportChannelOutcome(target.accountId, 'failed', result.error ?? 'unknown');
     } else {
       // 可重试：撤销刚才的占位，让候选下轮重新被扫到。
       // 留着 PENDING 会让 dedupeKey 把重试也挡掉。
@@ -360,10 +382,24 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
  * 向 user-backend 回报渠道投递失败，由它累计 failureCount 并在阈值处暂停渠道。
  * 失败只记日志不抛 —— 回报不上不该影响本轮其余用户的投递。
  */
-async function reportChannelFailure(accountId: string, code: string): Promise<void> {
+let warnedMissingNotifyKey = false;
+
+async function reportChannelOutcome(
+  accountId: string,
+  outcome: 'sent' | 'failed',
+  code: string | null
+): Promise<void> {
   const base = (process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455').replace(/\/$/, '');
   const key = (process.env.NOTIFY_INTERNAL_KEY || '').trim();
-  if (!key) return;
+  if (!key) {
+    // 静默跳过等于「渠道健康度永远不更新、坏掉的绑定永远不会自动暂停」。
+    // 至少要吵一次，别让漏配变成看不见的功能缺失。
+    if (!warnedMissingNotifyKey) {
+      warnedMissingNotifyKey = true;
+      console.error('[notify] 未配置 NOTIFY_INTERNAL_KEY —— 渠道健康度不会更新，失效绑定不会自动暂停');
+    }
+    return;
+  }
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
@@ -372,13 +408,13 @@ async function reportChannelFailure(accountId: string, code: string): Promise<vo
         method: 'POST',
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
-        body: JSON.stringify({ accountId, channel: 'QQ', outcome: 'failed', code })
+        body: JSON.stringify({ accountId, channel: 'QQ', outcome, code })
       });
     } finally {
       clearTimeout(timer);
     }
   } catch (error) {
-    console.warn('[notify] 回报渠道失败状态失败：', error instanceof Error ? error.message : error);
+    console.warn('[notify] 回报渠道状态失败：', error instanceof Error ? error.message : error);
   }
 }
 

@@ -83,6 +83,9 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       const limit = Math.max(1, Math.min(Number.parseInt(String(req.query.limit ?? '20'), 10) || 20, 50));
       const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
       const alertType = normalizeAlertType(req.query.type);
+      // 同 /alerts 与 /alerts/follow：只取未读，避免客户端过滤造成
+      // 「徽标有数字但列表为空且翻不到」
+      const unreadOnly = String(req.query.unreadOnly ?? '') === '1';
 
       const alertsQuery = `
         SELECT
@@ -111,6 +114,7 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         LEFT JOIN "PageVersion" pv ON pv."pageId" = a."pageId" AND pv."validTo" IS NULL
         WHERE a."recipientUserId" = $1
           AND ($2::text IS NULL OR a.type = CAST($2 AS "ForumInteractionAlertType"))
+          ${unreadOnly ? 'AND a."acknowledgedAt" IS NULL' : ''}
         ORDER BY a."detectedAt" DESC
         LIMIT $3 OFFSET $4
       `;

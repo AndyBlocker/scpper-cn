@@ -326,9 +326,13 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
       const offsetParam = Number.parseInt(String(req.query.offset ?? '0'), 10);
       const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 50)) : 20;
       const offset = Number.isFinite(offsetParam) ? Math.max(0, offsetParam) : 0;
+      // 只要未读。没有它的话，前端拿到最近 20 条后再在客户端过滤已读，
+      // 一旦最新 20 条都读过、更早的未读还在，界面就会显示「没有未读」
+      // 而徽标仍有数字，且无从翻到那些未读。
+      const unreadOnly = String(req.query.unreadOnly ?? '') === '1';
 
       // 缓存 30 秒 - 减少 sync 期间的数据库压力，同时保持数据较新
-      const cacheKey = `alerts:${authUser.linkedWikidotId}:${metric}:${limit}:${offset}`;
+      const cacheKey = `alerts:${authUser.linkedWikidotId}:${metric}:${limit}:${offset}:${unreadOnly ? 'u' : 'a'}`;
       const result = await cache.remember(cacheKey, 30, async () => {
         const alertsQuery = `
           SELECT
@@ -352,6 +356,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
           LEFT JOIN "PageVersion" pv ON pv."pageId" = pa."pageId" AND pv."validTo" IS NULL
           WHERE u."wikidotId" = $1
             AND pa."metric" = $2::"PageMetricType"
+            ${unreadOnly ? 'AND pa."acknowledgedAt" IS NULL' : ''}
           ORDER BY pa."detectedAt" DESC
           LIMIT $3 OFFSET $4
         `;

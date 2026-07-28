@@ -40,18 +40,27 @@ export function useFollowAlerts() {
   const combinedLoading = useState<boolean>('followAlerts/combinedLoading', () => false);
   const combinedLastFetchedAt = useState<string | null>('followAlerts/combinedLastFetchedAt', () => null);
   const error = useState<string | null>('followAlerts/error', () => null);
+  /**
+   * 身份世代号。A 登出、B 登录时若 A 的请求还在飞，
+   * 它回来会把 A 的通知标题与未读数写进 B 看到的共享状态 —— 跨账号信息泄露。
+   * resetState 时 +1，在途响应回来比对，不一致就整个丢弃。
+   */
+  const identityEpoch = useState<number>('followAlerts/epoch', () => 0);
 
-  async function fetchAlerts(force = false, limit = 20, offset = 0) {
+  async function fetchAlerts(force = false, limit = 20, offset = 0, unreadOnly = false) {
     if (loading.value && !force) return alerts.value;
     if (!force && lastFetchedAt.value) {
       const last = new Date(lastFetchedAt.value).getTime();
       if (Date.now() - last < 60_000) return alerts.value;
     }
     loading.value = true;
+    const myEpoch = identityEpoch.value;
     try {
       const res = await $bff<{ ok: boolean; alerts: FollowAlertItem[]; unreadCount: number }>(
-        '/alerts/follow', { method: 'GET', params: { limit, offset } }
+        '/alerts/follow', { method: 'GET', params: { limit, offset, ...(unreadOnly ? { unreadOnly: '1' } : {}) } }
       );
+      // 期间换过身份 → 本次结果作废，绝不写回共享状态
+      if (identityEpoch.value !== myEpoch) return alerts.value;
       if (res?.ok) {
         alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
         // Number() 而非 Number.isFinite(原值)：COUNT 经 pg 驱动可能是字符串，
@@ -76,6 +85,7 @@ export function useFollowAlerts() {
   }
 
   function resetState() {
+    identityEpoch.value += 1;
     alerts.value = [];
     unreadCount.value = 0;
     lastFetchedAt.value = null;

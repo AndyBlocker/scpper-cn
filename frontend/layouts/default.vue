@@ -507,7 +507,8 @@ const {
   unreadCount: forumUnreadCount,
   fetchAlerts: fetchForumAlerts,
   markRead: markForumAlertRead,
-  markAllRead: markAllForumAlertsRead
+  markAllRead: markAllForumAlertsRead,
+  resetState: resetForumAlertsState
 } = useForumInteractionAlerts()
 
 const isAlertsDropdownOpen = ref(false)
@@ -1062,11 +1063,12 @@ onBeforeUnmount(() => {
  * 关注提醒是本次新接入的第三个来源，同样要清（原先只清了页面与论坛）。
  */
 function resetAllAlertState() {
+  // 每个 composable 的 resetState 都会递增自己的身份世代号，
+  // 让 A 的在途请求回来时被丢弃，而不是写进 B 看到的共享状态。
   resetAlertsState()
   resetFollowAlertsState()
+  resetForumAlertsState()
   resetFollowsState()
-  forumAlerts.value = []
-  forumUnreadCount.value = 0
   isAlertsDropdownOpen.value = false
 }
 

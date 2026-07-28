@@ -69,7 +69,7 @@ export function useNotificationFeed() {
 
   /** 类型筛选。null = 全部 */
   const kindFilter = ref<FeedKind | null>(null)
-  /** 是否显示已读条目 */
+  /** 是否显示已读条目。切换会改变向服务端请求的口径，故需重新取数。 */
   const showRead = ref(false)
 
   const pageItems = computed<FeedItem[]>(() =>
@@ -174,16 +174,23 @@ export function useNotificationFeed() {
     Boolean(pageAlerts.loading.value || followAlerts.loading.value || forumAlerts.loading.value)
   )
 
-  /** 任一来源出错就暴露出来，让 UI 能渲染「加载失败，重试」而不是假装「暂无提醒」 */
+  /**
+   * 任一来源出错就暴露出来，让 UI 能渲染「加载失败，重试」而不是假装「暂无提醒」。
+   * 页面提醒用 anyError 而非 error：fetchAll 会打三个指标的请求，
+   * 只看当前选中指标会漏掉另外两个的失败，界面看起来「加载完整」但少了一类。
+   */
   const error = computed<string | null>(() =>
-    pageAlerts.error.value || followAlerts.error.value || forumAlerts.error.value || null
+    pageAlerts.anyError.value || followAlerts.error.value || forumAlerts.error.value || null
   )
 
   async function refresh(force = true) {
+    // 不看已读时直接向服务端要未读，而不是取最近 20 条再在客户端筛。
+    // 后者会让「最新 20 条都读过、更早的未读还在」的用户看到空列表而徽标仍有数字。
+    const unreadOnly = !showRead.value
     await Promise.all([
-      pageAlerts.fetchAll(force),
-      followAlerts.fetchAlerts(force),
-      forumAlerts.fetchAlerts(force)
+      pageAlerts.fetchAll(force, unreadOnly),
+      followAlerts.fetchAlerts(force, 20, 0, unreadOnly),
+      forumAlerts.fetchAlerts(force, 20, 0, unreadOnly)
     ])
   }
 
