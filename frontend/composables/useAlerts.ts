@@ -2,7 +2,16 @@ import { useNuxtApp } from 'nuxt/app';
 import { computed } from 'vue';
 import { useAuth } from './useAuth';
 
-export type AlertMetric = 'COMMENT_COUNT' | 'VOTE_COUNT' | 'RATING' | 'REVISION_COUNT' | 'SCORE';
+/**
+ * 会真正产生数据的指标。
+ *
+ * schema 的 PageMetricType 里还有 RATING 与 SCORE，但 PageMetricMonitorJob 从不产生它们
+ * （生产库 GROUP BY metric 实测 0 行），BFF 的 MUTABLE_METRICS 也只有这三个。
+ * 之前前端按 5 个来，每次 fetchAll 白发两个必空请求 —— 而每个请求都要经 BFF
+ * 打一次 user-backend 做鉴权。
+ */
+export const ALERT_METRICS = ['COMMENT_COUNT', 'VOTE_COUNT', 'REVISION_COUNT'] as const;
+export type AlertMetric = (typeof ALERT_METRICS)[number];
 
 export interface AlertItem {
   id: number;
@@ -31,9 +40,7 @@ interface AlertsResponse {
 const METRIC_QUERY_MAP: Record<AlertMetric, string> = {
   COMMENT_COUNT: 'comment',
   VOTE_COUNT: 'vote',
-  RATING: 'rating',
-  REVISION_COUNT: 'revision',
-  SCORE: 'score'
+  REVISION_COUNT: 'revision'
 };
 
 type AlertsRecord<T> = Record<AlertMetric, T>;
@@ -42,9 +49,7 @@ function createAlertsRecord<T>(factory: () => T): AlertsRecord<T> {
   return {
     COMMENT_COUNT: factory(),
     VOTE_COUNT: factory(),
-    RATING: factory(),
-    REVISION_COUNT: factory(),
-    SCORE: factory()
+    REVISION_COUNT: factory()
   };
 }
 
@@ -54,18 +59,19 @@ function useAlertsState() {
   const loading = useState<AlertsRecord<boolean>>('alerts/loading', () => createAlertsRecord(() => false));
   const lastFetchedAt = useState<AlertsRecord<string | null>>('alerts/lastFetchedAt', () => createAlertsRecord(() => null));
   const activeMetric = useState<AlertMetric>('alerts/activeMetric', () => 'COMMENT_COUNT');
-  return { alerts, unreadCount, loading, lastFetchedAt, activeMetric };
+  const error = useState<AlertsRecord<string | null>>('alerts/error', () => createAlertsRecord(() => null));
+  return { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error };
 }
 
 export function useAlerts() {
   const { $bff } = useNuxtApp();
   const { user, status } = useAuth();
-  const { alerts, unreadCount, loading, lastFetchedAt, activeMetric } = useAlertsState();
+  const { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error } = useAlertsState();
   // Persist last used metric for better UX across sessions
   if (typeof window !== 'undefined') {
     try {
       const saved = window.localStorage.getItem('alerts:lastMetric');
-      if (saved && (['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'] as AlertMetric[]).includes(saved as AlertMetric)) {
+      if (saved && (ALERT_METRICS as readonly string[]).includes(saved)) {
         activeMetric.value = saved as AlertMetric;
       }
     } catch {
@@ -78,6 +84,7 @@ export function useAlerts() {
     unreadCount.value = createAlertsRecord(() => 0);
     lastFetchedAt.value = createAlertsRecord(() => null);
     loading.value = createAlertsRecord(() => false);
+    error.value = createAlertsRecord(() => null);
     activeMetric.value = 'COMMENT_COUNT';
   }
 
@@ -97,7 +104,9 @@ export function useAlerts() {
         }
       }
     }
-    if (loading.value[targetMetric]) {
+    // 注意顺序：loading 门禁必须在 force 之后。原先写在前面，导致 force=true 的
+    // 「刷新」在已有请求在飞时被静默吞掉，界面既不报错也不转圈。
+    if (!force && loading.value[targetMetric]) {
       return alerts.value[targetMetric];
     }
     const lastFetchedTs = lastFetchedAt.value[targetMetric];
@@ -117,18 +126,20 @@ export function useAlerts() {
       });
       if (res?.ok) {
         alerts.value[targetMetric] = Array.isArray(res.alerts) ? res.alerts : [];
-        unreadCount.value[targetMetric] = Number.isFinite(res.unreadCount) ? res.unreadCount : 0;
+        // 用 Number() 而非 Number.isFinite(原值)：PostgreSQL 的 COUNT 经 pg 驱动
+        // 可能返回字符串，isFinite('3') 为 false 会把未读数静默判成 0 —— 这正是
+        // 「未读数不同步」最容易复发的坑，且不抛错、不告警。
+        const parsed = Number(res.unreadCount);
+        unreadCount.value[targetMetric] = Number.isFinite(parsed) ? parsed : 0;
         lastFetchedAt.value[targetMetric] = new Date().toISOString();
+        error.value[targetMetric] = null;
       } else {
-        alerts.value[targetMetric] = [];
-        unreadCount.value[targetMetric] = 0;
-        lastFetchedAt.value[targetMetric] = null;
+        // 保留已有数据：清空会让用户看到「暂无提醒」，误以为提醒被清掉了
+        error.value[targetMetric] = res?.error || '加载提醒失败';
       }
-    } catch (error) {
-      console.warn('[alerts] fetch failed', error);
-      alerts.value[targetMetric] = [];
-      unreadCount.value[targetMetric] = 0;
-      lastFetchedAt.value[targetMetric] = null;
+    } catch (err) {
+      console.warn('[alerts] fetch failed', err);
+      error.value[targetMetric] = '网络异常，未能刷新提醒';
     } finally {
       loading.value[targetMetric] = false;
     }
@@ -188,16 +199,14 @@ export function useAlerts() {
 
   // Fetch all metrics (in parallel) for a unified, fresh view
   async function fetchAll(force = false) {
-    const metrics: AlertMetric[] = ['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'];
-    await Promise.all(metrics.map(m => fetchAlerts(m, force)));
+    await Promise.all(ALERT_METRICS.map(m => fetchAlerts(m, force)));
     return true;
   }
 
   // Mark all as read for a specific metric or across all
   async function markAllRead(target: AlertMetric | 'ALL') {
     if (target === 'ALL') {
-      const metrics: AlertMetric[] = ['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'];
-      await Promise.all(metrics.map(async (m) => markAllAlertsRead(m)));
+      await Promise.all(ALERT_METRICS.map(async (m) => markAllAlertsRead(m)));
       return;
     }
     await markAllAlertsRead(target);
@@ -207,7 +216,7 @@ export function useAlerts() {
   const alertsAll = computed(() => {
     const buckets = alerts.value;
     const flat: Array<AlertItem & { sourceMetric: AlertMetric } > = [];
-    (['COMMENT_COUNT','VOTE_COUNT','RATING','REVISION_COUNT','SCORE'] as AlertMetric[])
+    ALERT_METRICS
       .forEach((key) => {
         for (const item of (buckets[key] ?? [])) {
           flat.push({ ...item, sourceMetric: key });
@@ -221,6 +230,9 @@ export function useAlerts() {
   const currentAlerts = computed(() => alerts.value[activeMetric.value] ?? []);
   const currentUnreadCount = computed(() => unreadCount.value[activeMetric.value] ?? 0);
   const currentLoading = computed(() => Boolean(loading.value[activeMetric.value]));
+  const currentError = computed(() => error.value[activeMetric.value] ?? null);
+  /** 任一指标出错即为真，供「加载失败，重试」这类整体提示使用 */
+  const hasError = computed(() => ALERT_METRICS.some((m) => Boolean(error.value[m])));
 
   function setActiveMetric(metric: AlertMetric) {
     if (activeMetric.value !== metric) {
@@ -268,6 +280,9 @@ export function useAlerts() {
     lastFetchedAt,
     totalUnread,
     activeMetric,
+    error: currentError,
+    errorByMetric: error,
+    hasError,
     fetchAlerts,
     fetchAll,
     markAlertRead,

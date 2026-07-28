@@ -51,6 +51,7 @@ export function useForumInteractionAlerts() {
   const unreadCount = useState<number>('forumAlerts/unread', () => 0);
   const loading = useState<boolean>('forumAlerts/loading', () => false);
   const lastFetchedAt = useState<string | null>('forumAlerts/lastFetchedAt', () => null);
+  const error = useState<string | null>('forumAlerts/error', () => null);
 
   async function fetchAlerts(force = false, limit = 20, offset = 0) {
     if (loading.value && !force) return alerts.value;
@@ -69,18 +70,17 @@ export function useForumInteractionAlerts() {
 
       if (res?.ok) {
         alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
-        unreadCount.value = Number.isFinite(res.unreadCount) ? res.unreadCount : 0;
+        const parsed = Number(res.unreadCount);
+        unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
         lastFetchedAt.value = new Date().toISOString();
+        error.value = null;
       } else {
-        alerts.value = [];
-        unreadCount.value = 0;
-        lastFetchedAt.value = null;
+        // 保留已有数据，只记录错误
+        error.value = '加载论坛提醒失败';
       }
-    } catch (error) {
-      console.warn('[forum-alerts] fetch failed', error);
-      alerts.value = [];
-      unreadCount.value = 0;
-      lastFetchedAt.value = null;
+    } catch (e) {
+      console.warn('[forum-alerts] fetch failed', e);
+      error.value = '网络异常，未能刷新论坛提醒';
     } finally {
       loading.value = false;
     }
@@ -92,11 +92,14 @@ export function useForumInteractionAlerts() {
     if (!Number.isFinite(id)) return;
 
     const idx = alerts.value.findIndex((item) => item.id === id);
-    const prev = idx >= 0 ? alerts.value[idx].acknowledgedAt : null;
+    // 先取出再用：alerts.value[idx] 在 noUncheckedIndexedAccess 下是 T | undefined，
+    // 直接展开会让所有字段变成可选，赋回去就不再满足 ForumInteractionAlertItem
+    const target = idx >= 0 ? alerts.value[idx] : undefined;
+    const prev = target?.acknowledgedAt ?? null;
 
-    if (idx >= 0 && !alerts.value[idx].acknowledgedAt) {
+    if (target && !target.acknowledgedAt) {
       alerts.value[idx] = {
-        ...alerts.value[idx],
+        ...target,
         acknowledgedAt: new Date().toISOString()
       };
       unreadCount.value = alerts.value.filter((item) => !item.acknowledgedAt).length;
@@ -104,17 +107,19 @@ export function useForumInteractionAlerts() {
 
     try {
       const res = await $bff<MarkReadResponse>(`/alerts/forum/${id}/read`, { method: 'POST' });
-      if (res?.ok && idx >= 0) {
+      const after = idx >= 0 ? alerts.value[idx] : undefined;
+      if (res?.ok && after) {
         alerts.value[idx] = {
-          ...alerts.value[idx],
-          acknowledgedAt: res.acknowledgedAt ?? alerts.value[idx].acknowledgedAt
+          ...after,
+          acknowledgedAt: res.acknowledgedAt ?? after.acknowledgedAt
         };
       }
     } catch (error) {
       console.warn('[forum-alerts] mark read failed', error);
-      if (idx >= 0) {
+      const rollback = idx >= 0 ? alerts.value[idx] : undefined;
+      if (rollback) {
         alerts.value[idx] = {
-          ...alerts.value[idx],
+          ...rollback,
           acknowledgedAt: prev
         };
         unreadCount.value = alerts.value.filter((item) => !item.acknowledgedAt).length;
@@ -148,6 +153,7 @@ export function useForumInteractionAlerts() {
     hasUnread,
     fetchAlerts,
     markRead,
-    markAllRead
+    markAllRead,
+    error
   };
 }

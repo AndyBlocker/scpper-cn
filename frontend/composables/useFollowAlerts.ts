@@ -14,6 +14,9 @@ export interface FollowAlertItem {
   pageTitle: string | null;
   pageAlternateTitle: string | null;
   targetUserId: number;
+  /** 被关注者的展示名。BFF 此前不返回，前端只能显示「你关注的作者」 */
+  targetDisplayName: string | null;
+  targetWikidotId: number | null;
 }
 
 export interface FollowCombinedGroup {
@@ -36,6 +39,7 @@ export function useFollowAlerts() {
   const combined = useState<FollowCombinedGroup[]>('followAlerts/combined', () => []);
   const combinedLoading = useState<boolean>('followAlerts/combinedLoading', () => false);
   const combinedLastFetchedAt = useState<string | null>('followAlerts/combinedLastFetchedAt', () => null);
+  const error = useState<string | null>('followAlerts/error', () => null);
 
   async function fetchAlerts(force = false, limit = 20, offset = 0) {
     if (loading.value && !force) return alerts.value;
@@ -50,28 +54,34 @@ export function useFollowAlerts() {
       );
       if (res?.ok) {
         alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
-        unreadCount.value = Number.isFinite(res.unreadCount) ? res.unreadCount : 0;
+        // Number() 而非 Number.isFinite(原值)：COUNT 经 pg 驱动可能是字符串，
+        // isFinite('3') 为 false 会把未读数静默判成 0
+        const parsed = Number(res.unreadCount);
+        unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
         lastFetchedAt.value = new Date().toISOString();
         combined.value = buildCombinedGroups(alerts.value);
         combinedLastFetchedAt.value = new Date().toISOString();
+        error.value = null;
       } else {
-        alerts.value = [];
-        unreadCount.value = 0;
-        lastFetchedAt.value = null;
-        combined.value = [];
-        combinedLastFetchedAt.value = null;
+        // 保留已有数据：清空会让用户看到「暂无提醒」，误以为提醒被清掉了
+        error.value = '加载关注提醒失败';
       }
     } catch (e) {
       console.warn('[follow-alerts] fetch failed', e);
-      alerts.value = [];
-      unreadCount.value = 0;
-      lastFetchedAt.value = null;
-      combined.value = [];
-      combinedLastFetchedAt.value = null;
+      error.value = '网络异常，未能刷新关注提醒';
     } finally {
       loading.value = false;
     }
     return alerts.value;
+  }
+
+  function resetState() {
+    alerts.value = [];
+    unreadCount.value = 0;
+    lastFetchedAt.value = null;
+    combined.value = [];
+    combinedLastFetchedAt.value = null;
+    error.value = null;
   }
 
   function buildCombinedGroups(list: FollowAlertItem[]): FollowCombinedGroup[] {
@@ -134,7 +144,10 @@ export function useFollowAlerts() {
       if (res?.ok) {
         const acknowledgedAt = res.acknowledgedAt ?? new Date().toISOString();
         const idx = alerts.value.findIndex(a => a.id === id);
-        if (idx >= 0) alerts.value[idx] = { ...alerts.value[idx], acknowledgedAt };
+        // 先取出再展开：直接写 { ...alerts.value[idx] } 在
+        // noUncheckedIndexedAccess 下类型是 T | undefined，展开后所有字段变可选
+        const current = idx >= 0 ? alerts.value[idx] : undefined;
+        if (current) alerts.value[idx] = { ...current, acknowledgedAt };
         combined.value = combined.value.map(group => ({
           ...group,
           alerts: group.alerts.map(alert => alert.id === id ? { ...alert, acknowledgedAt } : alert)
@@ -178,6 +191,8 @@ export function useFollowAlerts() {
     combined,
     combinedLoading,
     fetchCombined,
-    combinedUnread
+    combinedUnread,
+    error,
+    resetState
   };
 }

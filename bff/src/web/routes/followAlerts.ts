@@ -43,10 +43,15 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT a.id, a.type, a."detectedAt", a."acknowledgedAt", a."pageId",
                p."wikidotId" AS "pageWikidotId", p."currentUrl" AS "pageUrl",
                pv.title AS "pageTitle", pv."alternateTitle" AS "pageAlternateTitle",
-               a."targetUserId"
+               a."targetUserId",
+               -- 被关注者的名字：此前只返回 targetUserId，前端只能显示「你关注的作者」，
+               -- 用户看不出到底是谁动了什么，关注多个作者时这条提醒几乎没有信息量
+               tu."displayName" AS "targetDisplayName",
+               tu."wikidotId" AS "targetWikidotId"
         FROM "UserActivityAlert" a
         JOIN "Page" p ON p.id = a."pageId"
         LEFT JOIN "PageVersion" pv ON pv."pageId" = a."pageId" AND pv."validTo" IS NULL
+        LEFT JOIN "User" tu ON tu.id = a."targetUserId"
         WHERE a."followerId" = $1
           ${alertsTypeClause}
         ORDER BY a."detectedAt" DESC

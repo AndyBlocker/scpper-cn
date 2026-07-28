@@ -1,29 +1,38 @@
 <template>
   <div class="space-y-8 py-10">
-    <div class="flex flex-wrap items-center gap-2">
+    <!-- 无障碍 tablist：旧版是一排裸 button，屏幕阅读器读不出这是一组标签页，
+         切换时也不做焦点管理。role/aria-selected/aria-controls + 方向键导航是标配。 -->
+    <div
+      class="flex flex-wrap items-center gap-2"
+      role="tablist"
+      aria-label="账号设置"
+      @keydown="onTabKeydown"
+    >
       <button
-        v-for="tab in accountTabs"
+        v-for="(tab, i) in accountTabs"
+        :id="`tab-${tab.key}`"
         :key="tab.key"
+        ref="tabButtons"
         type="button"
+        role="tab"
+        :aria-selected="activeTab === tab.key"
+        :aria-controls="`panel-${tab.key}`"
+        :tabindex="activeTab === tab.key ? 0 : -1"
         class="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-semibold transition"
         :class="activeTab === tab.key
           ? 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] shadow-sm'
-          : 'border-neutral-200 bg-white/70 text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-300'"
-        @click="activeTab = tab.key"
+          : 'border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] text-[rgb(var(--muted))] hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)]'"
+        @click="selectTab(tab.key, i)"
       >
         <span>{{ tab.label }}</span>
         <span
           v-if="tab.key === 'alerts' && alertsBadgeCount > 0"
           class="inline-flex min-w-[1.6rem] justify-center rounded-full bg-[var(--g-accent)] px-2 py-0.5 text-[11px] font-semibold text-white"
         >{{ alertsBadgeCount > 99 ? '99+' : alertsBadgeCount }}</span>
-        <span
-          v-else-if="tab.key === 'follows' && followBadgeCount > 0"
-          class="inline-flex min-w-[1.6rem] justify-center rounded-full bg-[var(--g-accent)] px-2 py-0.5 text-[11px] font-semibold text-white"
-        >{{ followBadgeCount > 99 ? '99+' : followBadgeCount }}</span>
       </button>
     </div>
 
-    <div v-show="activeTab === 'overview'" class="space-y-10">
+    <div v-if="activeTab === 'overview'" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" class="space-y-10">
     <section class="flex flex-col gap-4 rounded-lg border border-white/60 bg-white/80 p-8 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow">
       <header class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
@@ -171,7 +180,7 @@
 
     </div>
 
-    <section v-show="activeTab === 'collections'" class="space-y-4">
+    <section v-if="activeTab === 'collections'" id="panel-collections" role="tabpanel" aria-labelledby="tab-collections" class="space-y-4">
       <div
         v-if="hasFavorites"
         class="rounded-lg border border-amber-200/70 bg-amber-50/80 px-5 py-4 text-sm text-amber-700 shadow-sm dark:border-amber-800/70 dark:bg-amber-900/25 dark:text-amber-200"
@@ -181,693 +190,38 @@
       <CollectionManager />
     </section>
 
-    <div v-show="activeTab === 'appearance'">
+    <div v-if="activeTab === 'appearance'" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
       <AppearanceSettings />
     </div>
 
-    <section v-show="activeTab === 'alerts'" class="rounded-lg border border-white/60 bg-white/80 p-8 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow">
-      <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div class="space-y-1">
-          <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">提醒</h2>
-          <p class="text-sm text-neutral-600 dark:text-neutral-400">查看页面动态、关注作者活动与论坛互动提醒。</p>
-        </div>
-        <div class="flex items-center gap-3">
-          <!-- source toggle -->
-          <div class="inline-flex rounded-full border border-neutral-200 bg-white/80 p-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-900/70">
-            <button
-              type="button"
-              class="rounded-full px-3 py-1 font-semibold transition"
-              :class="alertSource === 'page' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-600 dark:text-neutral-300'"
-              @click="alertSource = 'page'"
-            >
-              页面
-              <span
-                v-if="combinedTotalUnread > 0"
-                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--g-accent)] align-middle"
-                aria-label="页面有未读"
-              />
-            </button>
-            <button
-              type="button"
-              class="rounded-full px-3 py-1 font-semibold transition"
-              :class="alertSource === 'follow' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-600 dark:text-neutral-300'"
-              @click="handleSwitchToFollow"
-            >
-              关注
-              <span
-                v-if="followCombinedUnread > 0"
-                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--g-accent)] align-middle"
-                aria-label="关注有未读"
-              />
-            </button>
-            <button
-              type="button"
-              class="rounded-full px-3 py-1 font-semibold transition"
-              :class="alertSource === 'forum' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-600 dark:text-neutral-300'"
-              @click="handleSwitchToForum"
-            >
-              论坛
-              <span
-                v-if="forumUnreadCount > 0"
-                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--g-accent)] align-middle"
-                aria-label="论坛有未读"
-              />
-            </button>
-          </div>
-          <!-- page view mode toggle -->
-          <div
-            v-if="alertSource === 'page'"
-            class="inline-flex rounded-full border border-neutral-200 bg-white/80 p-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-900/70"
-          >
-            <button
-              type="button"
-              class="rounded-full px-3 py-1 font-semibold transition"
-              :class="viewMode === 'metric' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-600 dark:text-neutral-300'"
-              @click="viewMode = 'metric'"
-            >按指标</button>
-            <button
-              type="button"
-              class="rounded-full px-3 py-1 font-semibold transition"
-              :class="viewMode === 'combined' ? 'bg-[var(--g-accent-soft)] text-[var(--g-accent)]' : 'text-neutral-600 dark:text-neutral-300'"
-              @click="handleSwitchToCombined"
-            >按页面</button>
-          </div>
-          <!-- unread counters based on source -->
-          <div
-            v-if="alertSource === 'page' && alertsHasUnread && viewMode === 'metric'"
-            class="inline-flex items-center rounded-full bg-[var(--g-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--g-accent)]"
-          >未读 {{ alertsUnreadCount > 99 ? '99+' : alertsUnreadCount }}</div>
-          <div
-            v-else-if="alertSource === 'page' && combinedTotalUnread > 0 && viewMode === 'combined'"
-            class="inline-flex items-center rounded-full bg-[var(--g-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--g-accent)]"
-          >未读 {{ combinedTotalUnread > 99 ? '99+' : combinedTotalUnread }}</div>
-          <div
-            v-else-if="alertSource === 'follow' && followCombinedUnread > 0"
-            class="inline-flex items-center rounded-full bg-[var(--g-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--g-accent)]"
-          >未读 {{ followCombinedUnread > 99 ? '99+' : followCombinedUnread }}</div>
-          <div
-            v-else-if="alertSource === 'forum' && forumUnreadCount > 0"
-            class="inline-flex items-center rounded-full bg-[var(--g-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--g-accent)]"
-          >未读 {{ forumUnreadCount > 99 ? '99+' : forumUnreadCount }}</div>
-        </div>
-      </header>
-      <div v-if="!hasLinkedWikidot" class="mt-4 rounded-lg border border-dashed border-neutral-200 bg-white/70 px-4 py-6 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-        {{ alertSource === 'page'
-          ? '绑定 Wikidot 账号后，即可自动跟踪自己页面的评论变动并接收提醒。'
-          : (alertSource === 'follow'
-            ? '绑定 Wikidot 账号后，即可关注作者并接收提醒。'
-            : '绑定 Wikidot 账号后，即可接收论坛回复与 @ 提醒。') }}
+    <section v-if="activeTab === 'alerts'" :id="`panel-alerts`" role="tabpanel" aria-labelledby="tab-alerts" class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-6 shadow-sm">
+      <div class="mb-4">
+        <h2 class="text-base font-semibold text-[rgb(var(--fg))]">提醒</h2>
+        <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">
+          站点上与你有关的动态。要调整接收哪些内容，请到
+          <button type="button" class="text-[var(--g-accent)] hover:underline" @click="activeTab = 'notifications'">通知设置</button>。
+        </p>
       </div>
-      <div v-else class="mt-4 space-y-5">
-        <!-- Follow alerts view -->
-        <template v-if="alertSource === 'follow'">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">最近 20 条关注提醒，按页面聚合展示。</div>
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
-                :disabled="followCombinedLoading"
-                @click="() => fetchFollowCombined(true,20,0)"
-              >{{ followCombinedLoading ? '刷新中…' : '刷新' }}</button>
-              <button
-                v-if="followCombinedUnread > 0"
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full bg-[var(--g-accent)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="followCombinedLoading"
-                @click="markAllFollowRead"
-              >全部已读</button>
-            </div>
-          </div>
-          <div v-if="followCombinedLoading" class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-            正在加载提醒…
-          </div>
-          <ul v-else-if="followCombined.length > 0" class="space-y-4">
-            <li
-              v-for="group in followCombined"
-              :key="group.pageId"
-              :class="[
-                'rounded-lg border p-5 shadow-sm transition',
-                followGroupUnreadCount(group) > 0
-                  ? 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] hover:border-[rgb(var(--accent)_/_0.6)] dark:border-[rgb(var(--accent)_/_0.55)] dark:bg-[var(--g-accent-medium)] dark:hover:border-[rgb(var(--accent)_/_0.7)]'
-                  : 'border-neutral-200 bg-white/80 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-600'
-              ]"
-            >
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div class="space-y-2">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <NuxtLink
-                      v-if="group.pageWikidotId"
-                      :to="`/page/${group.pageWikidotId}`"
-                      class="text-sm font-semibold text-neutral-900 transition hover:text-[var(--g-accent)] dark:text-neutral-100 dark:hover:text-[var(--g-accent)]"
-                    >
-                      {{ group.pageTitle || '未知页面' }}
-                    </NuxtLink>
-                    <span
-                      v-else
-                      class="text-sm font-semibold text-neutral-900 dark:text-neutral-100"
-                    >
-                      {{ group.pageTitle || group.pageUrl || '未知页面' }}
-                    </span>
-                    <span
-                      v-if="group.pageWikidotId"
-                      class="inline-flex items-center rounded-full border border-neutral-200 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
-                    >
-                      Wikidot #{{ group.pageWikidotId }}
-                    </span>
-                  </div>
-                  <div v-if="group.pageAlternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    {{ group.pageAlternateTitle }}
-                  </div>
-                </div>
-                <div class="flex flex-col items-end gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                  <span>{{ formatAlertTime(group.updatedAt) }}</span>
-                  <span
-                    class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                    :class="followGroupUnreadCount(group) > 0
-                      ? 'bg-[var(--g-accent-strong)] text-[var(--g-accent)]'
-                      : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-300'"
-                  >
-                    {{ followGroupUnreadCount(group) > 0 ? `未读 ${followGroupUnreadCount(group)}` : '已全部阅读' }}
-                  </span>
-                </div>
-              </div>
-              <div class="mt-4 space-y-2">
-                <div
-                  v-for="alert in group.alerts"
-                  :key="alert.id"
-                  class="rounded-xl border px-3 py-2"
-                  :class="alert.acknowledgedAt
-                    ? 'border-transparent bg-neutral-100/70 text-neutral-600 dark:bg-neutral-900/60 dark:text-neutral-300'
-                    : 'border-[var(--g-accent-border)] bg-white/90 text-neutral-700 shadow-sm dark:border-[rgb(var(--accent)_/_0.55)] dark:bg-neutral-900/80 dark:text-neutral-100'"
-                >
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span
-                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold"
-                      :class="followAlertTypeAccentClass[alert.type]"
-                    >
-                      {{ followAlertTypeLabels[alert.type] ?? '提醒' }}
-                    </span>
-                    <span class="text-xs text-neutral-600 dark:text-neutral-300">
-                      <NuxtLink
-                        v-if="followAuthorLink(alert.targetUserId)"
-                        :to="followAuthorLink(alert.targetUserId) || ''"
-                        class="font-medium text-neutral-800 transition hover:text-[var(--g-accent)] dark:text-neutral-100 dark:hover:text-[var(--g-accent)]"
-                      >
-                        {{ followAuthorName(alert.targetUserId) }}
-                      </NuxtLink>
-                      <span v-else class="font-medium text-neutral-800 dark:text-neutral-100">{{ followAuthorName(alert.targetUserId) }}</span>
-                      <span class="text-neutral-500 dark:text-neutral-300"> {{ followAlertActionText[alert.type] }}</span>
-                    </span>
-                  </div>
-                  <div class="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
-                    <span>提醒时间：{{ formatAlertTime(alert.detectedAt) }}</span>
-                    <span
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
-                      :class="alert.acknowledgedAt
-                        ? 'bg-neutral-200/70 text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300'
-                        : 'bg-[var(--g-accent-strong)] text-[var(--g-accent)]'"
-                    >
-                      {{ followAlertStatusText(alert) }}
-                    </span>
-                    <span v-if="alert.acknowledgedAt">标记时间：{{ formatAlertTime(alert.acknowledgedAt) }}</span>
-                  </div>
-                </div>
-              </div>
-              <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400">
-                <div class="flex flex-wrap items-center gap-3">
-                  <NuxtLink
-                    v-if="group.pageWikidotId"
-                    :to="`/page/${group.pageWikidotId}`"
-                    class="inline-flex items-center gap-1 font-medium text-[var(--g-accent)] hover:underline"
-                  >
-                    查看页面
-                  </NuxtLink>
-                  <a
-                    v-else-if="group.pageUrl"
-                    :href="group.pageUrl"
-                    target="_blank"
-                    rel="noopener"
-                    class="inline-flex items-center gap-1 font-medium text-[var(--g-accent)] hover:underline"
-                  >
-                    打开原链接
-                  </a>
-                  <span v-else>暂无页面链接</span>
-                </div>
-                <span class="text-[11px]">最近更新 · {{ formatAlertTime(group.updatedAt) }}</span>
-              </div>
-            </li>
-          </ul>
-          <div v-else class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-            暂无提醒，去关注喜欢的作者吧～
-          </div>
-        </template>
-        <!-- Forum interaction alerts view -->
-        <template v-else-if="alertSource === 'forum'">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">最近 20 条论坛互动提醒（回复你 / 提及你 / 页面讨论回复）。</div>
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
-                :disabled="forumAlertsLoading"
-                @click="handleForumAlertsRefresh"
-              >{{ forumAlertsLoading ? '刷新中…' : '刷新' }}</button>
-              <button
-                v-if="forumUnreadCount > 0"
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full bg-[var(--g-accent)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="forumAlertsLoading"
-                @click="handleMarkAllForumAlerts"
-              >全部已读</button>
-            </div>
-          </div>
-          <div v-if="forumAlertsLoading" class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-            正在加载提醒…
-          </div>
-          <ul v-else-if="forumAlerts.length > 0" class="space-y-4">
-            <li
-              v-for="item in forumAlerts"
-              :key="item.id"
-              :class="[
-                'rounded-lg border p-5 shadow-sm transition',
-                item.acknowledgedAt
-                  ? 'border-neutral-200 bg-white/80 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-600'
-                  : 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] hover:border-[rgb(var(--accent)_/_0.6)] dark:border-[rgb(var(--accent)_/_0.55)] dark:bg-[var(--g-accent-medium)] dark:hover:border-[rgb(var(--accent)_/_0.7)]'
-              ]"
-            >
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div class="space-y-2">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span
-                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold"
-                      :class="forumAlertTypeAccentClass[item.type]"
-                    >
-                      {{ forumAlertTypeLabels[item.type] ?? '论坛提醒' }}
-                    </span>
-                    <span class="text-xs text-neutral-600 dark:text-neutral-300">
-                      <NuxtLink
-                        v-if="forumActorLink(item)"
-                        :to="forumActorLink(item) || ''"
-                        class="font-medium text-neutral-800 transition hover:text-[var(--g-accent)] dark:text-neutral-100 dark:hover:text-[var(--g-accent)]"
-                      >
-                        {{ forumActorName(item) }}
-                      </NuxtLink>
-                      <span v-else class="font-medium text-neutral-800 dark:text-neutral-100">{{ forumActorName(item) }}</span>
-                      <span class="text-neutral-500 dark:text-neutral-300"> {{ forumAlertActionSentence(item) }}</span>
-                    </span>
-                  </div>
-                  <div class="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                    {{ item.pageTitle || item.threadTitle || item.postTitle || '论坛帖子' }}
-                  </div>
-                  <div v-if="item.postExcerpt" class="text-xs text-neutral-600 dark:text-neutral-300 line-clamp-3">
-                    {{ item.postExcerpt }}
-                  </div>
-                  <div class="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    讨论串 #{{ item.threadId }} · 帖子 #{{ item.postId }}
-                  </div>
-                </div>
-                <div class="flex flex-col items-end gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                  <span>{{ formatAlertTime(item.detectedAt) }}</span>
-                  <span
-                    class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                    :class="item.acknowledgedAt
-                      ? 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-300'
-                      : 'bg-[var(--g-accent-strong)] text-[var(--g-accent)]'"
-                  >
-                    {{ item.acknowledgedAt ? '已读' : '未读' }}
-                  </span>
-                </div>
-              </div>
-              <div class="mt-4 flex items-center justify-between text-xs">
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1 font-medium text-[var(--g-accent)] hover:underline"
-                  @click="handleForumAlertNavigate(item)"
-                >
-                  查看讨论
-                </button>
-                <button
-                  v-if="!item.acknowledgedAt"
-                  type="button"
-                  class="text-neutral-500 hover:text-[var(--g-accent)] dark:text-neutral-400"
-                  @click="markForumAlertRead(item.id)"
-                >标记已读</button>
-              </div>
-            </li>
-          </ul>
-          <div v-else class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-            暂无论坛互动提醒～
-          </div>
-        </template>
-        <!-- Metric-based view -->
-        <template v-else-if="alertSource === 'page' && viewMode === 'metric'">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="option in availableAlertMetrics"
-              :key="option.metric"
-              type="button"
-              @click="handleMetricChange(option.metric)"
-              class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition"
-              :class="alertsActiveMetric === option.metric
-                ? 'border-[var(--g-accent-border)] bg-white/90 text-[var(--g-accent)] dark:border-[var(--g-accent-border)] dark:bg-neutral-900/80'
-                : 'border-neutral-200 bg-white/60 text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/50 dark:text-neutral-300'"
-            >
-              <span>{{ option.label }}</span>
-              <span
-                v-if="(unreadByMetric[option.metric] ?? 0) > 0"
-                class="inline-flex min-w-[1.75rem] justify-center rounded-full bg-[var(--g-accent)] px-2 py-0.5 text-[10px] font-semibold text-white"
-              >
-                {{ (unreadByMetric[option.metric] ?? 0) > 99 ? '99+' : unreadByMetric[option.metric] }}
-              </span>
-            </button>
-          </div>
-          <div class="flex flex-wrap items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-            <span>展示最近 20 条提醒</span>
-            <span
-              v-if="alertsTotalUnread > 0"
-              class="inline-flex items-center rounded-full bg-[var(--g-accent-soft)] px-2 py-0.5 font-semibold text-[var(--g-accent)]"
-            >全部未读 {{ alertsTotalUnread > 99 ? '99+' : alertsTotalUnread }}</span>
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-semibold transition"
-                :class="activeMetricMuted
-                  ? 'border-neutral-200 bg-white/60 text-neutral-500 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-400'
-                  : 'border-[var(--g-accent-border)] bg-[var(--g-accent-soft)] text-[var(--g-accent)] hover:border-[rgb(var(--accent)_/_0.55)] dark:border-[var(--g-accent-border)] dark:bg-neutral-900/70 dark:text-[var(--g-accent)]'"
-                :disabled="alertPreferencesLoading || alertPreferencesSaving || metricMutePending"
-                @click="handleToggleMetricMute"
-              >{{ metricMutePending ? '处理中…' : (activeMetricMuted ? '开启提醒' : '关闭提醒') }}</button>
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
-                :disabled="alertsLoading"
-                @click="handleRefreshAlerts"
-              >{{ alertsLoading ? '刷新中…' : '刷新' }}</button>
-              <button
-                v-if="alertsHasUnread"
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full bg-[var(--g-accent)] px-3 py-1.5 font-semibold text-white shadow-sm hover:-translate-y-0.5 transition disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="alertsLoading"
-                @click="handleMarkAllAlerts"
-              >全部已读</button>
-            </div>
-          </div>
-        </div>
-        <p class="text-sm text-neutral-600 dark:text-neutral-400">{{ activeMetricOption.description }}</p>
-        <p
-          v-if="activeMetricMuted"
-          class="text-xs text-amber-600 dark:text-amber-400"
-        >当前提醒已关闭，重新开启后才会生成新的提醒。</p>
-
-        <div
-          v-if="alertSource === 'page' && (alertsActiveMetric === 'VOTE_COUNT' || alertsActiveMetric === 'REVISION_COUNT')"
-          class="rounded-lg border border-dashed border-neutral-200 bg-white/70 p-4 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
-        >
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">提醒设置</h3>
-            <span v-if="alertPreferencesLoading" class="text-xs text-neutral-500 dark:text-neutral-400">加载设置中…</span>
-          </div>
-          <p v-if="alertPreferencesError" class="mt-2 text-xs text-red-500 dark:text-red-400">{{ alertPreferencesError }}</p>
-          <div class="mt-4 grid gap-4 md:grid-cols-2">
-            <!-- vote threshold only for VOTE_COUNT -->
-            <form v-if="alertsActiveMetric === 'VOTE_COUNT'" class="space-y-2" @submit.prevent="handleSaveVoteThreshold">
-              <label class="text-xs font-semibold text-neutral-600 dark:text-neutral-300">投票阈值</label>
-              <div class="flex items-center gap-2">
-                <input
-                  v-model.number="voteThresholdInput"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  class="w-full rounded-full border border-neutral-200 bg-white/85 px-4 py-2 text-sm text-neutral-800 shadow-sm focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
-                  :disabled="voteSaving || alertPreferencesLoading"
-                >
-                <button
-                  type="submit"
-                  class="inline-flex items-center rounded-full bg-neutral-900 px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
-                  :disabled="voteSaving || alertPreferencesLoading"
-                >{{ voteSaving ? '保存中…' : '保存' }}</button>
-              </div>
-              <p class="text-xs text-neutral-500 dark:text-neutral-400">仅当投票数变化达到或超过该值时触发提醒（范围 1–1000）。</p>
-            </form>
-            <!-- revision filter only for REVISION_COUNT -->
-            <form v-if="alertsActiveMetric === 'REVISION_COUNT'" class="space-y-3" @submit.prevent="handleSaveRevisionSettings">
-              <label class="text-xs font-semibold text-neutral-600 dark:text-neutral-300">修订提醒范围</label>
-              <div class="flex items-center gap-2">
-                <select
-                  v-model="revisionFilterValue"
-                  class="w-full rounded-full border border-neutral-200 bg-white/85 px-4 py-2 text-sm text-neutral-800 shadow-sm focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
-                  :disabled="revisionSaving || alertPreferencesLoading"
-                >
-                  <option
-                    v-for="option in revisionFilterOptions"
-                    :key="option.value"
-                    :value="option.value"
-                  >{{ option.label }}</option>
-                </select>
-                <button
-                  type="submit"
-                  class="inline-flex items-center rounded-full bg-neutral-900 px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
-                  :disabled="revisionSaving || alertPreferencesLoading"
-                >{{ revisionSaving ? '保存中…' : '保存' }}</button>
-              </div>
-              <label class="inline-flex items-start gap-2 rounded-lg border border-neutral-200/80 bg-white/80 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-                <input
-                  v-model="ignoreLinkedWikidotSelfRevisionValue"
-                  type="checkbox"
-                  class="mt-0.5 h-4 w-4 rounded border-neutral-300 text-[var(--g-accent)] focus:ring-[var(--g-accent)] dark:border-neutral-600"
-                  :disabled="revisionSaving || alertPreferencesLoading"
-                >
-                <span>忽略我绑定的 Wikidot 账号发起的修订（默认开启）。</span>
-              </label>
-              <p class="text-xs text-neutral-500 dark:text-neutral-400">{{ revisionFilterHint }}</p>
-            </form>
-          </div>
-        </div>
-
-        <div v-if="alertsLoading" class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-          正在加载提醒…
-        </div>
-        <ul v-else-if="alertItems.length > 0" class="space-y-4">
-          <li
-            v-for="item in alertItems"
-            :key="item.id"
-            class="rounded-lg border border-neutral-200 bg-white/80 p-4 shadow-sm transition hover:border-[var(--g-accent-border)] hover:shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-[var(--g-accent-border)]"
-          >
-            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div class="space-y-1">
-                <div class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                  {{ item.pageTitle || '未知页面' }}
-                </div>
-                <div class="text-xs text-neutral-600 dark:text-neutral-300">
-                  {{ metricLabel(item.metric) }}变动
-                  <span
-                    v-if="formatAlertDelta(item)"
-                    class="ml-1 font-semibold"
-                    :class="{
-                      'text-green-600 dark:text-green-400': (item.diffValue || 0) > 0,
-                      'text-red-500 dark:text-red-400': (item.diffValue || 0) < 0
-                    }"
-                  >{{ formatAlertDelta(item) }}</span>
-                  <span v-if="item.newValue != null" class="ml-2">当前：{{ Math.round(Number(item.newValue)) }}</span>
-                </div>
-                <div v-if="item.pageAlternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
-                  {{ item.pageAlternateTitle }}
-                </div>
-              </div>
-              <div class="text-right text-xs text-neutral-500 dark:text-neutral-400 space-y-1">
-                <div>{{ formatAlertTime(item.detectedAt) }}</div>
-                <div v-if="!item.acknowledgedAt" class="inline-flex items-center justify-center rounded-full bg-[var(--g-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--g-accent)]">
-                  未读
-                </div>
-              </div>
-            </div>
-            <div class="mt-3 flex items-center justify-between text-xs">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 font-medium text-[var(--g-accent)] hover:underline"
-                @click="handleAlertNavigate(item)"
-              >
-                查看页面
-              </button>
-              <button
-                v-if="!item.acknowledgedAt"
-                type="button"
-                class="text-neutral-500 hover:text-[var(--g-accent)] dark:text-neutral-400"
-                @click="markAlertRead(item.id)"
-              >标记已读</button>
-            </div>
-          </li>
-        </ul>
-        <div v-else class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-          暂无提醒，持续关注也许能带来惊喜～
-        </div>
-        </template>
-
-        <!-- Combined view (page alerts) -->
-        <template v-else>
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="text-xs text-neutral-500 dark:text-neutral-400">按页面聚合最近未读提醒</div>
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
-                :disabled="combinedLoading"
-                @click="handleCombinedRefresh"
-              >{{ combinedLoading ? '刷新中…' : '刷新' }}</button>
-              <button
-                v-if="combinedTotalUnread > 0"
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full bg-[var(--g-accent)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:-translate-y-0.5 transition disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="combinedLoading"
-                @click="handleCombinedMarkAll"
-              >全部已读</button>
-            </div>
-          </div>
-          <div v-if="combinedLoading" class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-            正在加载提醒…
-          </div>
-          <ul v-else-if="combinedGroups.length > 0" class="space-y-4">
-            <li
-              v-for="group in combinedGroups"
-              :key="group.pageId"
-              class="rounded-lg border border-neutral-200 bg-white/80 p-4 shadow-sm transition hover:border-[var(--g-accent-border)] hover:shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-[var(--g-accent-border)]"
-            >
-              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div class="space-y-1">
-                  <div class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                    {{ group.pageTitle || '未知页面' }}
-                  </div>
-                  <div v-if="group.pageAlternateTitle" class="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    {{ group.pageAlternateTitle }}
-                  </div>
-                  <div class="mt-2 flex flex-wrap gap-2">
-                    <span
-                      v-for="alert in group.alerts"
-                      :key="alert.id"
-                      class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/70 px-2 py-1 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300"
-                    >
-                      <span>{{ metricLabel(alert.metric as AlertMetric) }}</span>
-                      <span v-if="formatAlertDelta(alert)" :class="{ 'text-green-600 dark:text-green-400': (alert.diffValue || 0) > 0, 'text-red-500 dark:text-red-400': (alert.diffValue || 0) < 0 }">{{ formatAlertDelta(alert) }}</span>
-                      <span v-if="alert.newValue != null">当前：{{ Math.round(Number(alert.newValue)) }}</span>
-                    </span>
-                  </div>
-                </div>
-                <div class="text-right text-xs text-neutral-500 dark:text-neutral-400 space-y-1">
-                  <div>{{ formatAlertTime(group.updatedAt) }}</div>
-                  <div class="inline-flex items-center justify-center rounded-full bg-[var(--g-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--g-accent)]">
-                    未读 {{ group.alerts.filter(a => !a.acknowledgedAt).length }}
-                  </div>
-                </div>
-              </div>
-              <div class="mt-3 flex items-center justify-between text-xs">
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1 font-medium text-[var(--g-accent)] hover:underline"
-                  @click="handleCombinedNavigate(group)"
-                >
-                  查看页面
-                </button>
-                <button
-                  type="button"
-                  class="text-neutral-500 hover:text-[var(--g-accent)] dark:text-neutral-400"
-                  @click="handleCombinedMarkGroup(group)"
-                >标记已读</button>
-              </div>
-            </li>
-          </ul>
-          <div v-else class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-            暂无提醒，持续关注也许能带来惊喜～
-          </div>
-        </template>
-      </div>
+      <AlertsFeedPanel />
     </section>
 
-    <section v-show="activeTab === 'follows'" class="rounded-lg border border-white/60 bg-white/80 p-8 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow">
-      <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div class="space-y-1">
-          <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">关注作者</h2>
-          <p class="text-sm text-neutral-600 dark:text-neutral-400">管理已关注的 Wikidot 作者，及时查看他们的最新动态。</p>
-        </div>
-        <div class="flex items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
-          <span v-if="hasFollowEntries">已关注 {{ totalFollows }} 位作者</span>
-          <span v-else-if="followsLoaded">暂未关注任何作者</span>
-        </div>
-      </header>
-      <div v-if="!hasLinkedWikidot" class="mt-4 rounded-lg border border-dashed border-neutral-200 bg-white/70 px-4 py-6 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-        绑定 Wikidot 账号后即可关注作者并在此管理关注列表。
+    <section v-if="activeTab === 'notifications'" :id="`panel-notifications`" role="tabpanel" aria-labelledby="tab-notifications" class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-6 shadow-sm">
+      <div class="mb-4">
+        <h2 class="text-base font-semibold text-[rgb(var(--fg))]">通知设置</h2>
+        <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">控制接收哪些提醒、什么条件下触发、以及通过哪些渠道送达。</p>
       </div>
-      <div v-else class="mt-4 space-y-4">
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p class="text-xs text-neutral-500 dark:text-neutral-400">刷新即可同步最新的关注列表，取消关注后可随时再次添加。</p>
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
-              :disabled="followsLoading"
-              @click="handleRefreshFollows"
-            >{{ followsLoading ? '刷新中…' : '刷新' }}</button>
-          </div>
-        </div>
-        <div v-if="followsInitialLoading" class="rounded-lg border border-neutral-200 bg-white/80 py-8 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300">
-          正在加载关注列表…
-        </div>
-        <ul v-else-if="hasFollowEntries" class="space-y-3">
-          <li
-            v-for="follow in followsDisplayList"
-            :key="follow.id"
-            class="rounded-lg border border-neutral-200 bg-white/80 p-4 shadow-sm transition hover:border-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-[var(--g-accent-border)]"
-          >
-            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <component
-                :is="follow.wikidotId ? 'NuxtLink' : 'div'"
-                v-bind="follow.wikidotId ? { to: `/user/${follow.wikidotId}` } : {}"
-                class="flex items-center gap-3 min-w-0"
-              >
-                <UserAvatar
-                  :wikidot-id="follow.wikidotId"
-                  :name="follow.displayName || `作者 #${follow.wikidotId ?? follow.targetUserId}`"
-                  :size="44"
-                  class="ring-1 ring-neutral-200 dark:ring-neutral-800"
-                />
-                <div class="min-w-0 space-y-1">
-                  <div class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                    {{ follow.displayName || `作者 #${follow.wikidotId ?? follow.targetUserId}` }}
-                  </div>
-                  <div class="text-xs text-neutral-500 dark:text-neutral-400">
-                    <span v-if="follow.wikidotId">Wikidot ID：{{ follow.wikidotId }}</span>
-                    <span v-else>内部 ID：{{ follow.targetUserId }}</span>
-                  </div>
-                </div>
-              </component>
-              <div class="flex items-center gap-2 shrink-0">
-                <NuxtLink
-                  v-if="follow.wikidotId"
-                  :to="`/user/${follow.wikidotId}`"
-                  class="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-800/80 dark:text-neutral-300"
-                >查看主页</NuxtLink>
-                <span
-                  v-else
-                  class="inline-flex items-center justify-center rounded-full border border-dashed border-neutral-300 px-3 py-1.5 text-[11px] font-medium text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
-                >暂无法跳转</span>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1 rounded-full bg-rose-500/90 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="followsLoading || !follow.wikidotId"
-                  @click="handleUnfollowFromAccount(follow.wikidotId)"
-                >取消关注</button>
-              </div>
-            </div>
-          </li>
-        </ul>
-        <div v-else-if="showFollowsEmpty" class="rounded-lg border border-dashed border-neutral-300 bg-neutral-50/70 px-4 py-12 text-center text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-300">
-          关注作者后可在此快速管理，去用户页面点击“关注”试试看～
-        </div>
-      </div>
+      <NotificationSettingsPanel />
     </section>
 
-    <section v-show="activeTab === 'security'" class="rounded-lg border border-white/60 bg-white/80 p-8 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow">
+    <section v-if="activeTab === 'follows'" :id="`panel-follows`" role="tabpanel" aria-labelledby="tab-follows" class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-6 shadow-sm">
+      <div class="mb-4">
+        <h2 class="text-base font-semibold text-[rgb(var(--fg))]">关注</h2>
+        <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">关注作者后，他们发布或编辑页面时会出现在「提醒」里。</p>
+      </div>
+      <FollowsPanel />
+    </section>
+
+    <section v-if="activeTab === 'security'" id="panel-security" role="tabpanel" aria-labelledby="tab-security" class="rounded-lg border border-white/60 bg-white/80 p-8 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow">
       <header class="space-y-1">
         <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">安全设置</h2>
         <p class="text-sm text-neutral-600 dark:text-neutral-400">修改密码后需要重新登录，请妥善保管账户信息。</p>
@@ -889,7 +243,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { navigateTo } from 'nuxt/app'
 import { useRoute } from 'vue-router'
 import UserAvatar from '~/components/UserAvatar.vue'
@@ -908,59 +262,48 @@ import { useViewerVotes } from '~/composables/useViewerVotes'
 import { orderTags } from '~/composables/useTagOrder'
 
 const { user, fetchCurrentUser, updateProfile, changePassword, status, logout } = useAuth()
-const {
-  alerts: alertItems,
-  unreadCount: alertsUnreadCount,
-  unreadByMetric,
-  loading: alertsLoading,
-  hasUnread: alertsHasUnread,
-  totalUnread: alertsTotalUnread,
-  activeMetric: alertsActiveMetric,
-  fetchAlerts,
-  markAlertRead,
-  markAllAlertsRead,
-  setActiveMetric: setAlertsMetric
-} = useAlerts()
-
-const {
-  preferences: alertPreferences,
-  loading: alertPreferencesLoading,
-  saving: alertPreferencesSaving,
-  error: alertPreferencesError,
-  fetchPreferences: fetchAlertPreferences,
-  updatePreferences: updateAlertPreferences,
-  setMetricMuted: setAlertMetricMuted
-} = useAlertSettings()
-
-// Combined (page-aggregated) alerts
-const { groups: combinedGroups, loading: combinedLoading, fetchCombined: fetchCombinedAlerts, markBatchRead: markCombinedBatch, totalUnread: combinedTotalUnread } = useCombinedAlerts()
-
-// Follow alerts (author activity)
-const { combined: followCombined, combinedLoading: followCombinedLoading, combinedUnread: followCombinedUnread, fetchCombined: fetchFollowCombined, markAllRead: markAllFollowRead } = useFollowAlerts()
-const {
-  alerts: forumAlerts,
-  unreadCount: forumUnreadCount,
-  loading: forumAlertsLoading,
-  fetchAlerts: fetchForumAlerts,
-  markRead: markForumAlertRead,
-  markAllRead: markAllForumAlertsRead
-} = useForumInteractionAlerts()
 
 const { favoritePages, removePageFavorite } = useFavorites()
 const { hydratePages: hydrateViewerVotes } = useViewerVotes()
-const { follows, loading: followsLoading, fetchFollows, unfollowUser } = useFollows()
 const isClient = typeof window !== 'undefined'
 
-type AccountTab = 'overview' | 'collections' | 'appearance' | 'alerts' | 'follows' | 'security'
+type AccountTab = 'overview' | 'collections' | 'appearance' | 'alerts' | 'notifications' | 'follows' | 'security'
+// 「提醒」与「通知设置」刻意拆成两个 tab：旧版把阈值、修订过滤这些偏好控件
+// 直接嵌在提醒列表中间，且只在选中特定指标时才出现 —— 消息和设置混在一起，
+// 两边都难用。
 const accountTabs: Array<{ key: AccountTab; label: string }> = [
   { key: 'overview', label: '资料' },
+  { key: 'alerts', label: '提醒' },
+  { key: 'notifications', label: '通知设置' },
+  { key: 'follows', label: '关注' },
   { key: 'collections', label: '收藏夹' },
   { key: 'appearance', label: '主题' },
-  { key: 'alerts', label: '提醒' },
-  { key: 'follows', label: '关注' },
   { key: 'security', label: '安全' }
 ]
 const activeTab = ref<AccountTab>('overview')
+const tabButtons = ref<HTMLButtonElement[]>([])
+
+function selectTab(key: AccountTab, index?: number) {
+  activeTab.value = key
+  if (typeof index === 'number') {
+    // 焦点跟随选中项，方向键导航才有意义
+    void nextTick(() => tabButtons.value?.[index]?.focus())
+  }
+}
+
+/** 方向键在标签间移动（WAI-ARIA tabs 模式），Home/End 跳首尾 */
+function onTabKeydown(e: KeyboardEvent) {
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+  if (!keys.includes(e.key)) return
+  e.preventDefault()
+  const cur = accountTabs.findIndex((t) => t.key === activeTab.value)
+  let next = cur
+  if (e.key === 'ArrowLeft') next = (cur - 1 + accountTabs.length) % accountTabs.length
+  else if (e.key === 'ArrowRight') next = (cur + 1) % accountTabs.length
+  else if (e.key === 'Home') next = 0
+  else next = accountTabs.length - 1
+  selectTab(accountTabs[next].key, next)
+}
 const route = useRoute()
 
 const resolveTabFromQuery = (value: unknown): AccountTab | null => {
@@ -995,40 +338,12 @@ const favoritePageCards = computed(() => favoritePages.value.map((p) => ({
 const hasFavorites = computed(() => favoritePageCards.value.length > 0)
 const favoritePagePreview = computed(() => favoritePageCards.value.slice(0, 9))
 const favoritePageOverflow = computed(() => Math.max(0, favoritePageCards.value.length - favoritePagePreview.value.length))
-const alertsBadgeCount = computed(() => Math.max(
-  Number(alertsTotalUnread.value || 0),
-  Number(combinedTotalUnread.value || 0),
-  Number(followCombinedUnread.value || 0),
-  Number(forumUnreadCount.value || 0)
-))
-const followBadgeCount = computed(() => Math.max(0, Number(followCombinedUnread.value || 0)))
-const followsLoaded = ref(false)
-const followsDisplayList = computed(() => {
-  const list = Array.isArray(follows.value) ? [...follows.value] : []
-  return list.sort((a, b) => {
-    const nameA = (a.displayName || '').trim()
-    const nameB = (b.displayName || '').trim()
-    if (nameA && nameB && nameA !== nameB) {
-      return nameA.localeCompare(nameB, 'zh-Hans-CN', { sensitivity: 'base' })
-    }
-    if (nameA && !nameB) return -1
-    if (!nameA && nameB) return 1
-    const idA = Number(a.wikidotId ?? a.targetUserId ?? 0)
-    const idB = Number(b.wikidotId ?? b.targetUserId ?? 0)
-    return idA - idB
-  })
-})
-const followAuthorMap = computed(() => {
-  const map = new Map<number, { displayName: string | null; wikidotId: number | null }>()
-  for (const entry of followsDisplayList.value) {
-    map.set(entry.targetUserId, { displayName: entry.displayName, wikidotId: entry.wikidotId })
-  }
-  return map
-})
-const totalFollows = computed(() => followsDisplayList.value.length)
-const hasFollowEntries = computed(() => totalFollows.value > 0)
-const followsInitialLoading = computed(() => followsLoading.value && !followsLoaded.value)
-const showFollowsEmpty = computed(() => followsLoaded.value && !followsLoading.value && !hasFollowEntries.value)
+// 求和而非 Math.max：旧版取三者最大值，3 条页面提醒 + 2 条论坛 + 1 条关注
+// 会显示成 3 而不是 6，系统性少报。
+// 另外「关注」tab 不再挂未读徽标 —— 它现在只管关注列表，提醒统一在「提醒」tab，
+// 旧版两个 tab 对同一批未读重复计数。
+const notificationFeed = useNotificationFeed()
+const alertsBadgeCount = computed(() => Number(notificationFeed.totalUnread.value) || 0)
 
 watch(
   () => favoritePageCards.value,
@@ -1040,506 +355,29 @@ watch(
   { immediate: true, flush: 'post' }
 )
 
-const viewMode = ref<'metric' | 'combined'>('combined')
-const alertSource = ref<'page' | 'follow' | 'forum'>('page')
 
-const hasLinkedWikidot = computed(() => Boolean(user.value?.linkedWikidotId))
-const metricLabelMap: Record<AlertMetric, string> = {
-  COMMENT_COUNT: '评论数',
-  VOTE_COUNT: '投票数',
-  RATING: '评分',
-  REVISION_COUNT: '修订数',
-  SCORE: '得分'
-}
-
-const followAlertTypeLabels: Record<FollowAlertType, string> = {
-  REVISION: '修订更新',
-  ATTRIBUTION: '新增署名',
-  ATTRIBUTION_REMOVED: '署名移除'
-}
-
-const followAlertTypeAccentClass: Record<FollowAlertType, string> = {
-  REVISION: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200',
-  ATTRIBUTION: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200',
-  ATTRIBUTION_REMOVED: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200'
-}
-
-const followAlertActionText: Record<FollowAlertType, string> = {
-  REVISION: '发布了新的修订内容',
-  ATTRIBUTION: '被加入到页面署名',
-  ATTRIBUTION_REMOVED: '从页面署名中移除'
-}
-
-const forumAlertTypeLabels: Record<ForumInteractionAlertType, string> = {
-  PAGE_REPLY: '页面讨论',
-  DIRECT_REPLY: '回复你',
-  MENTION: '@ 提醒'
-}
-
-const forumAlertTypeAccentClass: Record<ForumInteractionAlertType, string> = {
-  PAGE_REPLY: 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-200',
-  DIRECT_REPLY: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200',
-  MENTION: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-500/40 dark:bg-fuchsia-500/10 dark:text-fuchsia-200'
-}
-
-function resolveFollowAuthor(targetUserId: number) {
-  const meta = followAuthorMap.value.get(targetUserId)
-  const wikidotId = meta?.wikidotId ?? null
-  const displayName = meta?.displayName?.trim()
-  if (displayName) {
-    return { name: displayName, wikidotId }
-  }
-  if (wikidotId) {
-    return { name: `作者 #${wikidotId}`, wikidotId }
-  }
-  return { name: `作者 #${targetUserId}`, wikidotId: null }
-}
-
-function followAuthorName(targetUserId: number): string {
-  return resolveFollowAuthor(targetUserId).name
-}
-
-function followAuthorLink(targetUserId: number): string | null {
-  const meta = resolveFollowAuthor(targetUserId)
-  return meta.wikidotId != null ? `/user/${meta.wikidotId}` : null
-}
-
-function followGroupUnreadCount(group: FollowCombinedGroup): number {
-  return group.alerts.reduce((count, alert) => count + (alert.acknowledgedAt ? 0 : 1), 0)
-}
-
-function followAlertStatusText(alert: FollowAlertItem): string {
-  if (alert.acknowledgedAt) return '已读'
-  return '未读'
-}
-
-function forumActorName(alert: ForumInteractionAlertItem): string {
-  const actorName = alert.actorName?.trim()
-  if (actorName) return actorName
-  if (alert.actorWikidotId) return `用户 #${alert.actorWikidotId}`
-  return '未知用户'
-}
-
-function forumActorLink(alert: ForumInteractionAlertItem): string | null {
-  return alert.actorWikidotId ? `/user/${alert.actorWikidotId}` : null
-}
-
-function forumAlertTargetTitle(alert: ForumInteractionAlertItem): string | null {
-  const pageTitle = alert.pageTitle?.trim()
-  if (pageTitle) return pageTitle
-  const threadTitle = alert.threadTitle?.trim()
-  if (threadTitle) return threadTitle
-  return null
-}
-
-function forumAlertDetailText(alert: ForumInteractionAlertItem): string | null {
-  const postTitle = alert.postTitle?.trim()
-  if (postTitle) return postTitle
-  const excerpt = alert.postExcerpt?.trim()
-  if (!excerpt) return null
-  if (excerpt.length <= 64) return excerpt
-  return `${excerpt.slice(0, 63)}…`
-}
-
-function forumAlertActionSentence(alert: ForumInteractionAlertItem): string {
-  const target = forumAlertTargetTitle(alert)
-  const detail = forumAlertDetailText(alert)
-
-  if (alert.type === 'PAGE_REPLY') {
-    if (target && detail) return `回复了你的「${target}」页面：${detail}`
-    if (target) return `回复了你的「${target}」页面`
-    if (detail) return `回复了你的页面讨论：${detail}`
-    return '回复了你的页面讨论'
-  }
-
-  if (alert.type === 'DIRECT_REPLY') {
-    if (detail) return `回复了你：${detail}`
-    return '回复了你'
-  }
-
-  if (detail) return `提及了你：${detail}`
-  return '提及了你'
-}
-
-const availableAlertMetrics: Array<{ metric: AlertMetric; label: string; description: string }> = [
-  {
-    metric: 'COMMENT_COUNT',
-    label: '评论提醒',
-    description: '追踪拥有页面的评论动态，任意评论变化都会触发提醒。'
-  },
-  {
-    metric: 'VOTE_COUNT',
-    label: '投票提醒',
-    description: '监控投票总数的显著变化，可自定义阈值后再触发提醒。'
-  },
-  {
-    metric: 'REVISION_COUNT',
-    label: '修订提醒',
-    description: '关注页面修订，可筛选他人或非署名修订以便及时响应。'
-  }
-]
-
-const activeMetricOption = computed(() => availableAlertMetrics.find(item => item.metric === alertsActiveMetric.value) ?? availableAlertMetrics[0])
-const activeMetricMuted = computed(() => Boolean(alertPreferences.value.mutedMetrics?.[alertsActiveMetric.value]))
-
-const voteThresholdInput = ref(alertPreferences.value.voteCountThreshold)
-const revisionFilterValue = ref<RevisionFilterOption>(alertPreferences.value.revisionFilter)
-const ignoreLinkedWikidotSelfRevisionValue = ref(alertPreferences.value.ignoreLinkedWikidotSelfRevision)
-const voteSaving = ref(false)
-const revisionSaving = ref(false)
-const metricMutePending = ref(false)
-
-watch(alertPreferences, (next) => {
-  voteThresholdInput.value = next.voteCountThreshold || 1
-  revisionFilterValue.value = next.revisionFilter || 'ANY'
-  ignoreLinkedWikidotSelfRevisionValue.value = next.ignoreLinkedWikidotSelfRevision !== false
-}, { immediate: true })
-
-const alertTimeFormatter = typeof Intl !== 'undefined'
-  ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-  : null
-
-function metricLabel(metric: AlertMetric): string {
-  return metricLabelMap[metric] ?? '指标'
-}
-
-function formatAlertDelta(item: AlertItem): string | null {
-  if (item.diffValue == null) return null
-  const diff = Number(item.diffValue)
-  if (!Number.isFinite(diff)) return null
-  const rounded = Math.round(diff)
-  if (rounded === 0) return '0'
-  const sign = rounded > 0 ? '+' : ''
-  return `${sign}${rounded}`
-}
-
-function formatAlertTime(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  if (alertTimeFormatter) return alertTimeFormatter.format(date)
-  return date.toISOString()
-}
-
-function handleMetricChange(metric: AlertMetric) {
-  setAlertsMetric(metric)
-  fetchAlerts(metric).catch((err) => {
-    console.warn('[account] alerts fetch on metric change failed', err)
-  })
-}
 
 function handleRemoveFavoritePage(id: number) {
   removePageFavorite(id)
 }
 
-async function ensureFollows(force = false) {
-  if (!hasLinkedWikidot.value) return
-  if (followsLoaded.value && !force) return
-  try {
-    await fetchFollows(true)
-    followsLoaded.value = true
-  } catch (err) {
-    console.warn('[account] fetch follows failed', err)
-  }
-}
-
-async function handleRefreshFollows() {
-  await ensureFollows(true)
-}
-
-async function handleUnfollowFromAccount(wikidotId?: number | null) {
-  if (!wikidotId) return
-  try {
-    await unfollowUser(wikidotId)
-    await ensureFollows(true)
-  } catch (err) {
-    console.warn('[account] unfollow failed', err)
-  }
-}
-
-function handleRefreshAlerts() {
-  fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
-    console.warn('[account] alerts refresh failed', err)
-  })
-}
-
-function handleSwitchToCombined() {
-  viewMode.value = 'combined'
-  fetchCombinedAlerts(20, 0, true).catch((err) => {
-    console.warn('[account] combined alerts fetch failed', err)
-  })
-}
-
-function handleSwitchToFollow() {
-  alertSource.value = 'follow'
-  fetchFollowCombined(true, 20, 0).catch((err) => {
-    console.warn('[account] follow combined alerts fetch on switch failed', err)
-  })
-}
-
-function handleSwitchToForum() {
-  alertSource.value = 'forum'
-  fetchForumAlerts(true, 20, 0).catch((err) => {
-    console.warn('[account] forum alerts fetch on switch failed', err)
-  })
-}
-
-function handleCombinedRefresh() {
-  fetchCombinedAlerts(20, 0, true).catch((err) => {
-    console.warn('[account] combined alerts refresh failed', err)
-  })
-}
-
-function handleCombinedMarkGroup(group: CombinedAlertGroup) {
-  const ids = group.alerts.map(a => a.id)
-  if (ids.length === 0) return
-  markCombinedBatch(ids).catch((err) => {
-    console.warn('[account] combined mark group read failed', err)
-  })
-}
-
-function handleCombinedMarkAll() {
-  const ids = combinedGroups.value.flatMap(g => g.alerts.map(a => a.id))
-  if (ids.length === 0) return
-  markCombinedBatch(ids).catch((err) => {
-    console.warn('[account] combined mark all read failed', err)
-  })
-}
-
-function handleCombinedNavigate(group: CombinedAlertGroup) {
-  if (group.pageWikidotId) {
-    navigateTo(`/page/${group.pageWikidotId}`)
-  } else if (group.pageUrl && isClient) {
-    window.open(group.pageUrl, '_blank', 'noopener')
-  }
-}
-
-function handleToggleMetricMute() {
-  if (!hasLinkedWikidot.value) return
-  if (alertPreferencesLoading.value || alertPreferencesSaving.value || metricMutePending.value) return
-  metricMutePending.value = true
-  setAlertMetricMuted(alertsActiveMetric.value, !activeMetricMuted.value).catch((err) => {
-    console.warn('[account] toggle alert mute failed', err)
-  }).finally(() => {
-    metricMutePending.value = false
-  })
-}
-
-const revisionFilterOptions: Array<{ value: RevisionFilterOption; label: string }> = [
-  { value: 'ANY', label: '所有修订' },
-  { value: 'NON_OWNER', label: '他人修订' },
-  { value: 'NON_OWNER_NO_ATTR', label: '非本人且未署名修订' }
-]
-
-const revisionFilterDescriptions: Record<RevisionFilterOption, string> = {
-  ANY: '包含所有修订；若勾选下方选项，将自动忽略你绑定账号发起的修订。',
-  NON_OWNER: '仅提醒由他人发起的修订，便于第一时间查看变化。',
-  NON_OWNER_NO_ATTR: '仅提醒既不是你，也不在页面署名中的用户发起的修订。'
-}
-
-const revisionFilterHint = computed(() => revisionFilterDescriptions[revisionFilterValue.value] ?? revisionFilterDescriptions.ANY)
-
-async function handleSaveVoteThreshold() {
-  if (voteSaving.value || alertPreferencesSaving.value) return
-  const value = Number(voteThresholdInput.value)
-  if (!Number.isFinite(value) || value <= 0) {
-    voteThresholdInput.value = 1
-    return
-  }
-  voteSaving.value = true
-  try {
-    const clamped = Math.max(1, Math.min(1000, Math.round(value)))
-    voteThresholdInput.value = clamped
-    await updateAlertPreferences({ voteCountThreshold: clamped })
-    if (alertsActiveMetric.value === 'VOTE_COUNT') {
-      await fetchAlerts('VOTE_COUNT', true)
-    }
-  } catch (err) {
-    console.warn('[account] update vote threshold failed', err)
-  } finally {
-    voteSaving.value = false
-  }
-}
-
-async function handleSaveRevisionSettings() {
-  if (revisionSaving.value || alertPreferencesSaving.value) return
-  revisionSaving.value = true
-  try {
-    await updateAlertPreferences({
-      revisionFilter: revisionFilterValue.value,
-      ignoreLinkedWikidotSelfRevision: Boolean(ignoreLinkedWikidotSelfRevisionValue.value)
-    })
-    await fetchAlerts('REVISION_COUNT', true)
-  } catch (err) {
-    console.warn('[account] update revision settings failed', err)
-  } finally {
-    revisionSaving.value = false
-  }
-}
-
-function handleAlertNavigate(item: AlertItem) {
-  markAlertRead(item.id).catch((err) => {
-    console.warn('[account] mark alert read failed', err)
-  })
-  if (item.pageWikidotId) {
-    navigateTo(`/page/${item.pageWikidotId}`)
-  } else if (item.pageUrl && isClient) {
-    window.open(item.pageUrl, '_blank', 'noopener')
-  }
-}
-
-function handleMarkAllAlerts() {
-  markAllAlertsRead(alertsActiveMetric.value).catch((err) => {
-    console.warn('[account] mark all alerts failed', err)
-  })
-}
-
-function handleForumAlertsRefresh() {
-  fetchForumAlerts(true, 20, 0).catch((err) => {
-    console.warn('[account] forum alerts refresh failed', err)
-  })
-}
-
-function handleForumAlertNavigate(item: ForumInteractionAlertItem) {
-  markForumAlertRead(item.id).catch((err) => {
-    console.warn('[account] forum mark read failed', err)
-  })
-  navigateTo(`/forums/t/${item.threadId}?postId=${item.postId}`)
-}
-
-function handleMarkAllForumAlerts() {
-  markAllForumAlertsRead().catch((err) => {
-    console.warn('[account] forum mark all read failed', err)
-  })
-}
-
 onMounted(() => {
+  // 只负责登录态与重定向；各 tab 的数据由对应面板在挂载时自行获取。
+  // 旧版在这里一次性预取 5 份数据（提醒偏好、指标提醒、聚合提醒、关注提醒、论坛提醒），
+  // 而默认只有「资料」tab 可见，其余四份当场作废；status 与 linkedWikidotId 的两个
+  // watch 还会各自再打一轮。
   if (status.value === 'unknown') {
-    fetchCurrentUser().then(() => {
-      if (user.value?.linkedWikidotId) {
-        fetchAlertPreferences(true).catch((err) => {
-          console.warn('[account] initial alert preferences load failed', err)
-        })
-        fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
-          console.warn('[account] initial alerts fetch failed', err)
-        })
-        fetchCombinedAlerts(20, 0, true).catch((err) => {
-          console.warn('[account] initial combined alerts fetch failed', err)
-        })
-        fetchFollowCombined(true, 20, 0).catch((err) => {
-          console.warn('[account] initial follow combined alerts fetch failed', err)
-        })
-        fetchForumAlerts(true, 20, 0).catch((err) => {
-          console.warn('[account] initial forum alerts fetch failed', err)
-        })
-        void ensureFollows()
-      } else if (activeTab.value === 'follows') {
-        void ensureFollows()
-      }
-    }).catch((err) => {
+    fetchCurrentUser().catch((err) => {
       console.warn('[account] fetchCurrentUser failed', err)
     })
   } else if (status.value === 'unauthenticated') {
     navigateTo('/auth/login', { replace: true })
-  } else if (status.value === 'authenticated') {
-    if (user.value?.linkedWikidotId) {
-      fetchAlertPreferences(true).catch((err) => {
-        console.warn('[account] alert preferences load failed', err)
-      })
-      fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
-        console.warn('[account] initial alerts fetch failed', err)
-      })
-      fetchCombinedAlerts(20, 0, true).catch((err) => {
-        console.warn('[account] initial combined alerts fetch failed', err)
-      })
-      fetchFollowCombined(true, 20, 0).catch((err) => {
-        console.warn('[account] initial follow combined alerts fetch failed', err)
-      })
-      fetchForumAlerts(true, 20, 0).catch((err) => {
-        console.warn('[account] initial forum alerts fetch failed', err)
-      })
-      void ensureFollows()
-    } else if (activeTab.value === 'follows') {
-      void ensureFollows()
-    }
   }
 })
 
 watch(status, (next) => {
   if (next === 'unauthenticated') {
     navigateTo('/auth/login', { replace: true })
-  } else if (next === 'authenticated') {
-    fetchFollowCombined(true, 20, 0).catch((err) => {
-      console.warn('[account] follow combined alerts fetch on status change failed', err)
-    })
-    fetchForumAlerts(true, 20, 0).catch((err) => {
-      console.warn('[account] forum alerts fetch on status change failed', err)
-    })
-    if (activeTab.value === 'follows') {
-      void ensureFollows()
-    }
-  }
-})
-
-watch(() => user.value?.linkedWikidotId, (next, prev) => {
-  if (next && next !== prev) {
-    fetchAlertPreferences(true).catch((err) => {
-      console.warn('[account] alert preferences reload failed', err)
-    })
-    fetchAlerts(alertsActiveMetric.value, true).catch((err) => {
-      console.warn('[account] alerts fetch on link change failed', err)
-    })
-    fetchCombinedAlerts(20, 0, true).catch((err) => {
-      console.warn('[account] combined alerts fetch on link change failed', err)
-    })
-    fetchFollowCombined(true, 20, 0).catch((err) => {
-      console.warn('[account] follow combined alerts fetch on link change failed', err)
-    })
-    fetchForumAlerts(true, 20, 0).catch((err) => {
-      console.warn('[account] forum alerts fetch on link change failed', err)
-    })
-    void ensureFollows(true)
-  }
-  if (!next) {
-    followsLoaded.value = false
-    follows.value = []
-  }
-})
-
-watch(alertsActiveMetric, (metric, previous) => {
-  if (!metric || metric === previous) return
-  if (!hasLinkedWikidot.value) return
-  fetchAlerts(metric).catch((err) => {
-    console.warn('[account] alerts fetch on active metric change failed', err)
-  })
-})
-
-watch(activeTab, (tab) => {
-  if (isClient) {
-    const current = resolveTabFromQuery(route.query.tab) ?? 'overview'
-    if (current !== tab) {
-      const query = { ...route.query } as Record<string, any>
-      if (tab === 'overview') {
-        delete query.tab
-      } else {
-        query.tab = tab
-      }
-      void navigateTo({ path: route.path, query }, { replace: true })
-    }
-  }
-
-  if (tab === 'alerts' && hasLinkedWikidot.value) {
-    fetchAlerts(alertsActiveMetric.value).catch((err) => {
-      console.warn('[account] alerts fetch on tab change failed', err)
-    })
-    fetchCombinedAlerts(20, 0, true).catch((err) => {
-      console.warn('[account] combined alerts fetch on tab change failed', err)
-    })
-    fetchForumAlerts(false, 20, 0).catch((err) => {
-      console.warn('[account] forum alerts fetch on tab change failed', err)
-    })
-  }
-  if (tab === 'follows') {
-    void ensureFollows()
   }
 })
 

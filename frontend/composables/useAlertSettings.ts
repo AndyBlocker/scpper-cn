@@ -23,12 +23,13 @@ interface AlertPreferences {
   mutedMetrics: Record<AlertMetric, boolean>;
 }
 
+// RATING / SCORE 已从 AlertMetric 移除：PageMetricMonitorJob 从不产生它们
+// （生产库 0 行），BFF 的 MUTABLE_METRICS 也只认这三个 —— 之前渲染出来的
+// 那两个静音开关一旦被点，后端会直接 400。
 const DEFAULT_MUTED_METRICS: Record<AlertMetric, boolean> = {
   COMMENT_COUNT: false,
   VOTE_COUNT: false,
-  RATING: false,
-  REVISION_COUNT: false,
-  SCORE: false
+  REVISION_COUNT: false
 };
 
 function createDefaultPreferences(): AlertPreferences {

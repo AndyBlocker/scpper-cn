@@ -222,7 +222,7 @@
                     </li>
                   </ul>
                   <NuxtLink
-                    to="/account"
+                    to="/account?tab=alerts"
                     class="mt-4 block text-center text-xs font-medium text-[var(--g-accent)] hover:underline"
                     @click="isAlertsDropdownOpen = false"
                   >前往账户中心查看全部</NuxtLink>
@@ -414,6 +414,7 @@ import { useAuth } from '~/composables/useAuth'
 import { useThemeSettings } from '~/composables/useThemeSettings'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useForumInteractionAlerts, type ForumInteractionAlertItem, type ForumInteractionAlertType } from '~/composables/useForumInteractionAlerts'
+import { useFollowAlerts } from '~/composables/useFollowAlerts'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
   script: [
@@ -508,7 +509,19 @@ const isAlertsDropdownOpen = ref(false)
 const alertsActiveTab = ref<'ALL' | AlertMetric>('ALL')
 const isAllTab = computed(() => alertsActiveTab.value === 'ALL')
 const isMetricTab = computed(() => alertsActiveTab.value !== 'ALL')
-const combinedUnreadCount = computed(() => Number(totalUnreadCount.value || 0) + Number(forumUnreadCount.value || 0))
+const {
+  unreadCount: followUnreadCount,
+  fetchAlerts: fetchFollowAlertsForBell,
+  markAllRead: markAllFollowAlertsRead
+} = useFollowAlerts()
+
+// 三个来源都要计入。旧版漏了关注提醒：关注的作者发布新修订时铃铛徽标恒为 0，
+// 下拉里也找不到，用户只有进 /account 的「关注」tab 才看得到。
+const combinedUnreadCount = computed(() =>
+  Number(totalUnreadCount.value || 0)
+  + Number(forumUnreadCount.value || 0)
+  + Number(followUnreadCount.value || 0)
+)
 const currentScopeUnread = computed(() => {
   if (isAllTab.value) return combinedUnreadCount.value
   return unreadByMetricVal.value?.[alertsActiveTab.value as AlertMetric] || 0
@@ -643,6 +656,7 @@ const toggleAlertsDropdown = () => {
     // Preload all metrics and revalidate
     void fetchAll(false);
     void fetchForumAlerts(false, 20, 0);
+    void fetchFollowAlertsForBell(false, 20, 0);
     // reset keyboard index
     selectedAlertIndex.value = -1;
   }
@@ -671,9 +685,12 @@ const handleAlertNavigate = (item: DropdownAlertItem) => {
 
 const handleMarkAllAlerts = () => {
   if (isAllTab.value) {
+    // 三套都要清。旧版只清了页面与论坛，点完「全部已读」铃铛归零，
+    // 但进 /account?tab=alerts 切到关注仍是一堆未读。
     void Promise.all([
       markAllRead('ALL'),
-      markAllForumAlertsRead()
+      markAllForumAlertsRead(),
+      markAllFollowAlertsRead()
     ]);
   } else {
     void markAllRead(alertsActiveTab.value as AlertMetric);
@@ -748,7 +765,8 @@ onMounted(() => {
       if (authUser.value?.linkedWikidotId) {
         return Promise.all([
           fetchAll(true),
-          fetchForumAlerts(true, 20, 0)
+          fetchForumAlerts(true, 20, 0),
+          fetchFollowAlertsForBell(true, 20, 0)
         ]).catch((err) => {
           console.warn('[layout] alerts fetch after auth load failed', err)
         })
@@ -760,7 +778,8 @@ onMounted(() => {
   } else if (authStatus.value === 'authenticated' && authUser.value?.linkedWikidotId) {
     Promise.all([
       fetchAll(false),
-      fetchForumAlerts(false, 20, 0)
+      fetchForumAlerts(false, 20, 0),
+      fetchFollowAlertsForBell(false, 20, 0)
     ]).catch((err) => {
       console.warn('[layout] initial alerts fetch failed', err)
     })

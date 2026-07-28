@@ -1,0 +1,212 @@
+import { computed, ref } from 'vue'
+import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
+import { useFollowAlerts, type FollowAlertItem } from '~/composables/useFollowAlerts'
+import { useForumInteractionAlerts, type ForumInteractionAlertItem } from '~/composables/useForumInteractionAlerts'
+import { formatDateTimeUtc8 } from '~/utils/timezone'
+
+/**
+ * 把三套互不相通的提醒合成**一条时间线**。
+ *
+ * 重设计的动机：原来的账号页把「页面/关注/论坛」三个来源做成一组 pill，
+ * 又叠了「按指标/按页面」第二组 pill，用户要在 3×2 的组合里找自己的消息，
+ * 而每种组合的空态文案、已读按钮、渲染结构都不一样。
+ * 这里改为：一条按时间倒序的流 + 一组类型筛选，所有条目结构一致。
+ *
+ * 本文件只做**读侧聚合与写侧分发**，不自己发请求 ——
+ * 三个来源各自的取数、缓存与错误状态仍归各自的 composable。
+ */
+
+export type FeedKind = 'page' | 'follow' | 'forum'
+
+export interface FeedItem {
+  /** v-for 的 key，也是标记已读时定位来源的依据 */
+  key: string
+  kind: FeedKind
+  id: number
+  /** page 类型才有，用于「按指标标记已读」 */
+  metric?: AlertMetric
+  /** 主文案 */
+  title: string
+  /** 次要说明（可空） */
+  detail: string | null
+  /** 点击跳转目标 */
+  href: string | null
+  detectedAt: string
+  /** 本地化后的时间，统一 UTC+8 且带年份 */
+  timeLabel: string
+  read: boolean
+}
+
+const KIND_LABEL: Record<FeedKind, string> = {
+  page: '我的页面',
+  follow: '关注的人',
+  forum: '论坛'
+}
+
+const METRIC_VERB: Record<AlertMetric, string> = {
+  COMMENT_COUNT: '收到新评论',
+  VOTE_COUNT: '投票有变化',
+  REVISION_COUNT: '被编辑'
+}
+
+function pageTitleOf(a: { pageTitle: string | null; pageAlternateTitle: string | null; pageUrl: string | null }): string {
+  const t = a.pageTitle?.trim()
+  const alt = a.pageAlternateTitle?.trim()
+  if (t && alt) return `${t}（${alt}）`
+  return t || alt || a.pageUrl || '未知页面'
+}
+
+function signed(n: number | null | undefined): string {
+  const v = Number(n)
+  if (!Number.isFinite(v) || v === 0) return ''
+  return v > 0 ? `+${v}` : String(v)
+}
+
+export function useNotificationFeed() {
+  const pageAlerts = useAlerts()
+  const followAlerts = useFollowAlerts()
+  const forumAlerts = useForumInteractionAlerts()
+
+  /** 类型筛选。null = 全部 */
+  const kindFilter = ref<FeedKind | null>(null)
+  /** 是否显示已读条目 */
+  const showRead = ref(false)
+
+  const pageItems = computed<FeedItem[]>(() =>
+    (pageAlerts.alertsAll.value as Array<AlertItem & { sourceMetric: AlertMetric }>).map((a) => {
+      const delta = signed(a.diffValue)
+      return {
+        key: `page:${a.id}`,
+        kind: 'page' as const,
+        id: a.id,
+        metric: a.sourceMetric,
+        title: `《${pageTitleOf(a)}》${METRIC_VERB[a.sourceMetric] ?? '有变化'}`,
+        detail: delta ? `${delta}（现为 ${a.newValue ?? '—'}）` : null,
+        href: a.pageWikidotId ? `/page/${a.pageWikidotId}` : null,
+        detectedAt: a.detectedAt,
+        timeLabel: formatDateTimeUtc8(a.detectedAt),
+        read: Boolean(a.acknowledgedAt)
+      }
+    })
+  )
+
+  const followItems = computed<FeedItem[]>(() =>
+    (followAlerts.alerts.value as FollowAlertItem[]).map((a) => {
+      const who = a.targetDisplayName || `用户 ${a.targetWikidotId ?? a.targetUserId}`
+      const verb = a.type === 'REVISION' ? '编辑了' : a.type === 'ATTRIBUTION' ? '发布了' : '不再署名于'
+      return {
+        key: `follow:${a.id}`,
+        kind: 'follow' as const,
+        id: a.id,
+        title: `${who} ${verb}《${pageTitleOf(a)}》`,
+        detail: null,
+        href: a.pageWikidotId ? `/page/${a.pageWikidotId}` : null,
+        detectedAt: a.detectedAt,
+        timeLabel: formatDateTimeUtc8(a.detectedAt),
+        read: Boolean(a.acknowledgedAt)
+      }
+    })
+  )
+
+  const forumItems = computed<FeedItem[]>(() =>
+    (forumAlerts.alerts.value as ForumInteractionAlertItem[]).map((a) => {
+      const actor = a.actorName || '有人'
+      const verb = a.type === 'MENTION' ? '提到了你' : a.type === 'DIRECT_REPLY' ? '回复了你' : '在讨论中发言'
+      return {
+        key: `forum:${a.id}`,
+        kind: 'forum' as const,
+        id: a.id,
+        title: `${actor} ${verb}${a.postTitle ? `：${a.postTitle}` : ''}`,
+        detail: a.postExcerpt || null,
+        href: a.threadId ? `/forums/t-${a.threadId}` : null,
+        detectedAt: a.detectedAt,
+        timeLabel: formatDateTimeUtc8(a.detectedAt),
+        read: Boolean(a.acknowledgedAt)
+      }
+    })
+  )
+
+  /** 合流并按时间倒序。ISO 字符串可直接比较，无需 new Date。 */
+  const allItems = computed<FeedItem[]>(() =>
+    [...pageItems.value, ...followItems.value, ...forumItems.value]
+      .sort((a, b) => String(b.detectedAt).localeCompare(String(a.detectedAt)))
+  )
+
+  const items = computed<FeedItem[]>(() =>
+    allItems.value.filter((it) => {
+      if (kindFilter.value && it.kind !== kindFilter.value) return false
+      if (!showRead.value && it.read) return false
+      return true
+    })
+  )
+
+  const unreadByKind = computed<Record<FeedKind, number>>(() => ({
+    // 未读数取各 composable 的服务端计数，而不是数当前列表 ——
+    // 列表只有最近 20 条，数它会系统性少报。
+    page: Number(pageAlerts.totalUnread.value) || 0,
+    follow: Number(followAlerts.unreadCount.value) || 0,
+    forum: Number(forumAlerts.unreadCount.value) || 0
+  }))
+
+  /**
+   * 总未读。原实现用 Math.max 取三者最大值，系统性少报
+   * （3+2+1 会显示成 3）；这里改为求和。
+   */
+  const totalUnread = computed(() =>
+    unreadByKind.value.page + unreadByKind.value.follow + unreadByKind.value.forum
+  )
+
+  const loading = computed(() =>
+    Boolean(pageAlerts.loading.value || followAlerts.loading.value || forumAlerts.loading.value)
+  )
+
+  /** 任一来源出错就暴露出来，让 UI 能渲染「加载失败，重试」而不是假装「暂无提醒」 */
+  const error = computed<string | null>(() =>
+    pageAlerts.error.value || followAlerts.error.value || forumAlerts.error.value || null
+  )
+
+  async function refresh(force = true) {
+    await Promise.all([
+      pageAlerts.fetchAll(force),
+      followAlerts.fetchAlerts(force),
+      forumAlerts.fetchAlerts(force)
+    ])
+  }
+
+  /** 单条已读：按 kind 分发到对应 composable。三套的接口签名不同，这里收口。 */
+  async function markRead(item: FeedItem): Promise<void> {
+    if (item.read) return
+    if (item.kind === 'page') {
+      await pageAlerts.markAlertRead(item.id, item.metric)
+    } else if (item.kind === 'follow') {
+      await followAlerts.markRead(item.id)
+    } else {
+      await forumAlerts.markRead(item.id)
+    }
+  }
+
+  /** 全部已读：三套都要清，缺一个就会出现「铃铛归零但列表还有未读」 */
+  async function markAllRead(): Promise<void> {
+    await Promise.all([
+      pageAlerts.markAllRead('ALL'),
+      followAlerts.markAllRead(),
+      forumAlerts.markAllRead()
+    ])
+    await refresh(true)
+  }
+
+  return {
+    items,
+    allItems,
+    kindFilter,
+    showRead,
+    unreadByKind,
+    totalUnread,
+    loading,
+    error,
+    refresh,
+    markRead,
+    markAllRead,
+    KIND_LABEL
+  }
+}
