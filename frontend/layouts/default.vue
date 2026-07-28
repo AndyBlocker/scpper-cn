@@ -171,7 +171,7 @@
                   <ul v-else class="mt-3 space-y-3">
                     <li
                       v-for="(item, idx) in visibleDropdownItems"
-                      :key="`${item.source}-${item.id}-${item.source === 'forum' ? item.type : ((item as any).sourceMetric || item.metric)}`"
+                      :key="`${item.source}-${item.id}`"
                       class="rounded-xl border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.88)] transition hover:border-[var(--g-accent-border)] hover:bg-[rgb(var(--panel)_/_0.95)]"
                     >
                       <button
@@ -196,7 +196,11 @@
                             <span class="mr-1 rounded px-1 py-0.5 text-[10px] border border-[rgb(var(--panel-border)_/_0.45)]">{{ forumTypeLabelMap[item.type] }}</span>
                             {{ forumActorName(item) }}{{ forumActionText(item) }}
                           </template>
-                          <template v-else>
+                          <template v-else-if="isFollowDropdownItem(item)">
+                            <span class="mr-1 rounded px-1 py-0.5 text-[10px] border border-[rgb(var(--panel-border)_/_0.45)]">关注</span>
+                            {{ followDropdownAction(item) }}
+                          </template>
+                          <template v-else-if="isPageDropdownItem(item)">
                             <template v-if="isAllTab">
                               <span class="mr-1 rounded px-1 py-0.5 text-[10px] border border-[rgb(var(--panel-border)_/_0.45)]">{{ metricLabel(item.metric) }}</span>
                             </template>
@@ -212,7 +216,7 @@
                             <span v-if="item.newValue != null" class="ml-2 text-[11px] text-[rgb(var(--muted)_/_0.8)]">当前：{{ Math.round(Number(item.newValue)) }}</span>
                           </template>
                         </div>
-                        <div v-if="!isForumDropdownItem(item) && item.pageAlternateTitle" class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.8)] truncate">
+                        <div v-if="isPageDropdownItem(item) && item.pageAlternateTitle" class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.8)] truncate">
                           {{ item.pageAlternateTitle }}
                         </div>
                         <div v-else-if="isForumDropdownItem(item) && item.postExcerpt" class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.8)] line-clamp-2">
@@ -414,7 +418,7 @@ import { useAuth } from '~/composables/useAuth'
 import { useThemeSettings } from '~/composables/useThemeSettings'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useForumInteractionAlerts, type ForumInteractionAlertItem, type ForumInteractionAlertType } from '~/composables/useForumInteractionAlerts'
-import { useFollowAlerts } from '~/composables/useFollowAlerts'
+import { useFollowAlerts, type FollowAlertItem } from '~/composables/useFollowAlerts'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
   script: [
@@ -510,8 +514,10 @@ const alertsActiveTab = ref<'ALL' | AlertMetric>('ALL')
 const isAllTab = computed(() => alertsActiveTab.value === 'ALL')
 const isMetricTab = computed(() => alertsActiveTab.value !== 'ALL')
 const {
+  alerts: followAlertsForBell,
   unreadCount: followUnreadCount,
   fetchAlerts: fetchFollowAlertsForBell,
+  markRead: markFollowAlertRead,
   markAllRead: markAllFollowAlertsRead
 } = useFollowAlerts()
 
@@ -535,7 +541,8 @@ let stopOnline: (() => void) | undefined
 
 type ForumDropdownItem = ForumInteractionAlertItem & { source: 'forum' }
 type PageDropdownItem = AlertItem & { source: 'page' }
-type DropdownAlertItem = ForumDropdownItem | PageDropdownItem
+type FollowDropdownItem = FollowAlertItem & { source: 'follow' }
+type DropdownAlertItem = ForumDropdownItem | PageDropdownItem | FollowDropdownItem
 
 const avatarIdHeader = computed(() => {
   const id = authUser.value?.linkedWikidotId
@@ -553,12 +560,12 @@ const themeToggleLabel = computed(() =>
 const iconButtonBaseClass =
   'inline-flex h-10 w-10 items-center justify-center rounded-full border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.9)] text-[rgb(var(--muted-strong))] shadow-sm transition hover:border-[var(--g-accent-border)] hover:shadow-sm hover:text-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] focus:ring-offset-0';
 
+// RATING / SCORE 已从 AlertMetric 移除（Job 从不产生、生产库 0 行）。
+// 留着会让这个对象字面量违反 Record<AlertMetric, string> 的多余属性检查。
 const metricLabelMap: Record<AlertMetric, string> = {
   COMMENT_COUNT: '评论数',
   VOTE_COUNT: '投票数',
-  RATING: '评分',
-  REVISION_COUNT: '修订数',
-  SCORE: '得分'
+  REVISION_COUNT: '修订数'
 };
 
 const alertTimeFormatter = typeof Intl !== 'undefined'
@@ -609,6 +616,20 @@ function forumActionText(item: ForumInteractionAlertItem): string {
   return '提及了你'
 }
 
+function isFollowDropdownItem(item: DropdownAlertItem): item is FollowDropdownItem {
+  return item.source === 'follow'
+}
+
+function isPageDropdownItem(item: DropdownAlertItem): item is PageDropdownItem {
+  return item.source === 'page'
+}
+
+function followDropdownAction(item: FollowDropdownItem): string {
+  if (item.type === 'REVISION') return '编辑了页面'
+  if (item.type === 'ATTRIBUTION') return '发布了页面'
+  return '取消了署名'
+}
+
 function isForumDropdownItem(item: DropdownAlertItem): item is ForumDropdownItem {
   return item.source === 'forum'
 }
@@ -616,6 +637,10 @@ function isForumDropdownItem(item: DropdownAlertItem): item is ForumDropdownItem
 function dropdownItemTitle(item: DropdownAlertItem): string {
   if (isForumDropdownItem(item)) {
     return item.pageTitle || item.threadTitle || item.postTitle || '论坛帖子'
+  }
+  if (isFollowDropdownItem(item)) {
+    const who = item.targetDisplayName || `用户 ${item.targetWikidotId ?? item.targetUserId}`
+    return `${who}：${item.pageTitle || '未知页面'}`
   }
   return item.pageTitle || '未知页面'
 }
@@ -629,7 +654,14 @@ const allDropdownItems = computed<DropdownAlertItem[]>(() => {
     ...item,
     source: 'forum' as const
   }))
-  return [...pageItems, ...forumItems].sort((a, b) => {
+  // 关注提醒也要进下拉：徽标已经把它算进去了，只算不显示的话，
+  // 用户只有关注类通知时会看到「有 N 条」但菜单空空，且「全部已读」会清掉
+  // 他从没看见过的东西。
+  const followItems: FollowDropdownItem[] = (followAlertsForBell.value || []).map((item) => ({
+    ...item,
+    source: 'follow' as const
+  }))
+  return [...pageItems, ...forumItems, ...followItems].sort((a, b) => {
     const ta = new Date(a.detectedAt).getTime() || 0
     const tb = new Date(b.detectedAt).getTime() || 0
     return tb - ta
@@ -667,6 +699,15 @@ const handleAlertNavigate = (item: DropdownAlertItem) => {
     void markForumAlertRead(item.id);
     isAlertsDropdownOpen.value = false;
     navigateTo(`/forums/t/${item.threadId}?postId=${item.postId}`);
+    return;
+  }
+
+  // 关注提醒走自己的已读接口与跳转，不能落到页面提醒的分支
+  if (isFollowDropdownItem(item)) {
+    void markFollowAlertRead(item.id);
+    isAlertsDropdownOpen.value = false;
+    if (item.pageWikidotId) navigateTo(`/page/${item.pageWikidotId}`);
+    else navigateTo('/account?tab=alerts');
     return;
   }
 

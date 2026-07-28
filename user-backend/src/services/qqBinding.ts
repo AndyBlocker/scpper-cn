@@ -280,15 +280,21 @@ export async function verifyQqBinding(params: {
     // 该 QQ 是否已被别人绑走
     const addressOwner = await tx.notificationChannelBinding.findUnique({
       where: { channel_address: { channel: NotificationChannel.QQ, address } },
-      select: { userId: true, status: true }
+      select: { id: true, userId: true, status: true }
     });
-    if (addressOwner && addressOwner.userId !== found.userId && addressOwner.status !== ChannelBindingStatus.REVOKED) {
-      await bumpAttempt(tx, challenge.id, challenge.attemptCount, 'address_taken');
-      return {
-        matched: false,
-        reason: 'address_taken',
-        reply: '这个 QQ 已经绑定到另一个站点账号了。如需换绑，请先在原账号解绑。'
-      };
+    if (addressOwner && addressOwner.userId !== found.userId) {
+      if (addressOwner.status !== ChannelBindingStatus.REVOKED) {
+        await bumpAttempt(tx, challenge.id, challenge.attemptCount, 'address_taken');
+        return {
+          matched: false,
+          reason: 'address_taken',
+          reply: '这个 QQ 已经绑定到另一个站点账号了。如需换绑，请先在原账号解绑。'
+        };
+      }
+      // 原账号已解绑（REVOKED），但那行仍占着 (channel, address) 唯一索引 ——
+      // 光放行会让下面的 upsert 撞唯一键抛 500，「先在原账号解绑再换绑」这条
+      // 我们自己写在提示里的路径反而走不通。这里在同一事务里把它腾开。
+      await tx.notificationChannelBinding.delete({ where: { id: addressOwner.id } });
     }
 
     // 该账号是否已绑了别的 QQ

@@ -34,20 +34,23 @@ function useAuthState() {
   return { user, status, loading }
 }
 
-function normalizeUser(payload: any): AuthUser {
+function normalizeUser(payload: any, previous?: AuthUser | null): AuthUser {
   return {
     id: String(payload?.id || ''),
     email: String(payload?.email || ''),
     displayName: payload?.displayName ?? null,
     linkedWikidotId: payload?.linkedWikidotId != null ? Number(payload.linkedWikidotId) : null,
     lastLoginAt: payload?.lastLoginAt ? String(payload.lastLoginAt) : null,
-    // 老版本 user-backend 不返回该字段，给出安全默认值而不是 undefined，
-    // 免得模板里到处写 ?. 还漏掉一处就报错
-    qqBinding: {
-      bound: Boolean(payload?.qqBinding?.bound),
-      addressMask: payload?.qqBinding?.addressMask ?? null,
-      status: payload?.qqBinding?.status ?? null
-    }
+    // /auth/login 与 /auth/profile 返回的是 formatUser 的形状，**不含** qqBinding。
+    // 直接取 payload 会把已绑定用户的状态抹成 bound:false，界面随即报「未绑定」，
+    // 直到下一次强制 /auth/me 才恢复。字段缺失时保留上一份快照。
+    qqBinding: payload?.qqBinding
+      ? {
+          bound: Boolean(payload.qqBinding.bound),
+          addressMask: payload.qqBinding.addressMask ?? null,
+          status: payload.qqBinding.status ?? null
+        }
+      : (previous?.qqBinding ?? { bound: false, addressMask: null, status: null })
   }
 }
 
@@ -85,7 +88,7 @@ export function useAuth() {
       })
       const res = await $bff<ApiResponse<AuthUser>>('/auth/me', requestOptions)
       if (res && res.ok && res.user) {
-        user.value = normalizeUser(res.user)
+        user.value = normalizeUser(res.user, user.value)
         status.value = 'authenticated'
         console.debug('[auth] fetchCurrentUser success', {
           id: user.value.id,
@@ -123,7 +126,7 @@ export function useAuth() {
         body: { email, password }
       })
       if (res && res.ok && res.user) {
-        user.value = normalizeUser(res.user)
+        user.value = normalizeUser(res.user, user.value)
         status.value = 'authenticated'
         return { ok: true as const }
       }
@@ -163,7 +166,7 @@ export function useAuth() {
         body: { displayName: trimmed }
       })
       if (res && res.ok && res.user) {
-        user.value = normalizeUser(res.user)
+        user.value = normalizeUser(res.user, user.value)
         status.value = 'authenticated'
         return { ok: true as const }
       }

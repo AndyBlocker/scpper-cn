@@ -34,7 +34,13 @@ const DAILY_LIMIT = Math.max(1, Number(process.env.NOTIFY_DAILY_LIMIT ?? '40') |
 
 const SITE_BASE = (process.env.NOTIFY_SITE_BASE || 'https://scp-cn.wiki').replace(/\/$/, '');
 
-/** 灰度名单：逗号分隔的 wikidotId。为空表示不限制。 */
+/**
+ * 灰度名单：逗号分隔的 wikidotId。**未配置**才表示不限制。
+ *
+ * 关键区别：配了但一个都解析不出来（比如写成分号分隔、或全是拼错的值）时
+ * 返回**空集合**而不是 null —— 原实现返回 null，调用方当成「不限制」，
+ * 于是一个笔误就把灰度发布变成了全量群发。宁可一条不发也不能发错人。
+ */
 function parseAllowlist(): Set<number> | null {
   const raw = (process.env.NOTIFY_QQ_ALLOWLIST || '').trim();
   if (!raw) return null;
@@ -43,20 +49,43 @@ function parseAllowlist(): Set<number> | null {
     const n = Number.parseInt(part.trim(), 10);
     if (Number.isFinite(n)) set.add(n);
   }
-  return set.size > 0 ? set : null;
+  if (set.size === 0) {
+    console.error('[notify] NOTIFY_QQ_ALLOWLIST 已配置但解析不出任何 wikidotId，本轮不投递任何人');
+  }
+  return set;
 }
 
 /**
- * 冷启动闸门。未设置时**默认取进程启动时刻**而不是「不限制」——
- * 漏配一个环境变量的代价是给全站用户群发历史告警，这个默认值必须是安全的那一侧。
+ * 冷启动闸门。
+ *
+ * 两个要同时满足的目标：
+ *  1. 首次上线不能把库里约 3.5 万条历史告警群发出去 —— 所以未配置时不能是「不限制」；
+ *  2. 闸门**不能随每次重启前移** —— 否则投递器停机（部署、崩溃、熔断复位）期间
+ *     产生的告警会落到窗口之外，既不重试也不记录，等于静默丢失。
+ *
+ * 做法：首轮把闸门值落库（NotificationDispatchState.cutoffAt），之后一律读库里的。
+ * 显式配置了 NOTIFY_DISPATCH_START_AT 时以环境变量为准并同步回库，
+ * 便于运维需要时前移或回拨。
  */
-function resolveStartAt(): Date {
+async function resolveCutoff(prisma: PrismaClient, persisted: Date | null): Promise<Date> {
   const raw = (process.env.NOTIFY_DISPATCH_START_AT || '').trim();
   if (raw) {
     const parsed = new Date(raw);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-    console.warn(`[notify] NOTIFY_DISPATCH_START_AT 无法解析（${raw}），回退为进程启动时刻`);
+    if (!Number.isNaN(parsed.getTime())) {
+      if (!persisted || persisted.getTime() !== parsed.getTime()) {
+        await prisma.notificationDispatchState.update({ where: { id: 1 }, data: { cutoffAt: parsed } });
+      }
+      return parsed;
+    }
+    console.warn(`[notify] NOTIFY_DISPATCH_START_AT 无法解析（${raw}），改用已落库的闸门`);
   }
+  if (persisted) return persisted;
+  // 首次运行且未显式配置：落一个进程启动时刻，此后不再变动
+  await prisma.notificationDispatchState.update({ where: { id: 1 }, data: { cutoffAt: PROCESS_START } });
+  console.warn(
+    `[notify] 未配置 NOTIFY_DISPATCH_START_AT，已把冷启动闸门固定为 ${PROCESS_START.toISOString()} 并落库。`
+    + ' 如需调整请设置该环境变量。'
+  );
   return PROCESS_START;
 }
 
@@ -160,9 +189,19 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   if (userIds.length === 0) return summary;
 
   const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
-  const startAt = resolveStartAt();
+  const startAt = await resolveCutoff(prisma, state.cutoffAt ?? null);
   // 取两者更晚的：冷启动闸门优先于回看窗口
   const floor = since > startAt ? since : startAt;
+
+  // 清理崩溃遗留的占位：进程若在「占位」与「转终态」之间退出，那批 PENDING
+  // 会永久挡住这些候选。超过 10 分钟仍是 PENDING 的一定是这种情况（正常路径是秒级）。
+  const staleCutoff = new Date(Date.now() - 10 * 60 * 1000);
+  const stale = await prisma.notificationDelivery.deleteMany({
+    where: { state: 'PENDING', createdAt: { lt: staleCutoff } }
+  });
+  if (stale.count > 0) {
+    console.warn(`[notify] 清理了 ${stale.count} 条陈旧 PENDING 占位（上一轮异常退出），这些候选将重新入选`);
+  }
 
   const candidates = await collectCandidates(prisma, userIds, floor);
   summary.candidates = candidates.length;
@@ -233,20 +272,34 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       continue;
     }
 
-    // 先落 PENDING 再发：进程若在发送后崩溃，dedupeKey 会挡住重复推送
+    // 发送**之前**先把这批 dedupeKey 以 PENDING 占住。
+    // 原先是先发后记账：若机器人已经收下但响应丢失、或进程在 recordAll 前退出，
+    // 这批候选下轮仍会被扫到，等机器人那 15 分钟去重窗口一过就会重复推送给用户。
+    const keys = items.map((c) => c.dedupeKey);
+    await recordAll(prisma, items, userId, 'PENDING', null, false);
+
     const dedupeKey = `digest:${userId}:${shown[shown.length - 1].dedupeKey}`;
     const result = await pushQqMessage({ qq: target.address, message, dedupeKey });
 
     if (result.ok) {
-      await recordAll(prisma, items, userId, 'SENT', null, false);
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING' },
+        data: { state: 'SENT', sentAt: new Date(), lastError: null }
+      });
       summary.sent += items.length;
     } else if (isPermanentFailure(result.error)) {
-      await recordAll(prisma, items, userId, 'FAILED', result.error ?? 'unknown', false);
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING' },
+        data: { state: 'FAILED', lastError: result.error ?? 'unknown' }
+      });
       summary.failed += items.length;
       console.warn(`[notify] 用户 ${target.wikidotId} 永久失败：${result.error}（不再重试）`);
     } else {
-      // 可重试：**不落任何行**，让候选留到下一轮重新被扫到。
-      // 落 PENDING 行反而会让 dedupeKey 挡住下一轮的重试。
+      // 可重试：撤销刚才的占位，让候选下轮重新被扫到。
+      // 留着 PENDING 会让 dedupeKey 把重试也挡掉。
+      await prisma.notificationDelivery.deleteMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING' }
+      });
       summary.failed += items.length;
       console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（下轮重试）`);
     }
@@ -262,7 +315,7 @@ async function recordAll(
   prisma: PrismaClient,
   items: Candidate[],
   userId: number,
-  state: 'SENT' | 'FAILED' | 'SUPPRESSED',
+  state: 'PENDING' | 'SENT' | 'FAILED' | 'SUPPRESSED',
   error: string | null,
   dryRun?: boolean
 ): Promise<void> {

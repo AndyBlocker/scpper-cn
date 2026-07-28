@@ -118,7 +118,9 @@ export function useNotificationFeed() {
         id: a.id,
         title: `${actor} ${verb}${a.postTitle ? `：${a.postTitle}` : ''}`,
         detail: a.postExcerpt || null,
-        href: a.threadId ? `/forums/t-${a.threadId}` : null,
+        // 路由是 pages/forums/t/[id].vue，且要带 postId 才能定位到具体楼层。
+        // 写成 /forums/t-<id> 会直接 404（layouts/default.vue:669 与 search.vue 用的都是这个格式）
+        href: a.threadId ? `/forums/t/${a.threadId}${a.postId ? `?postId=${a.postId}` : ''}` : null,
         detectedAt: a.detectedAt,
         timeLabel: formatDateTimeUtc8(a.detectedAt),
         read: Boolean(a.acknowledgedAt)
@@ -138,6 +140,18 @@ export function useNotificationFeed() {
       if (!showRead.value && it.read) return false
       return true
     })
+  )
+
+  /**
+   * 「服务端说还有未读，但当前这一页里一条未读都没有」。
+   *
+   * 三个来源各自只返回最近 20 条（不分已读未读），而未读过滤是在这之后做的。
+   * 用户把最新 20 条逐条读完、更早的未读还在时，就会看到徽标有数字、
+   * 列表却说「没有未读提醒」且无处翻页。UI 据此提示用户勾选「显示已读」，
+   * 而不是让他对着矛盾的界面发愣。
+   */
+  const hasHiddenUnread = computed(() =>
+    !showRead.value && items.value.length === 0 && totalUnread.value > 0
   )
 
   const unreadByKind = computed<Record<FeedKind, number>>(() => ({
@@ -202,6 +216,7 @@ export function useNotificationFeed() {
     showRead,
     unreadByKind,
     totalUnread,
+    hasHiddenUnread,
     loading,
     error,
     refresh,

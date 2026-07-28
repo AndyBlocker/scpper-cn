@@ -529,6 +529,10 @@ model NotificationDelivery {
 /// 而真正的问题（比如 analyze --full 导致的告警洪水）还在。
 model NotificationDispatchState {
   id               Int       @id @default(1)
+  /// 冷启动水位线：首轮把 NOTIFY_DISPATCH_START_AT（或进程启动时刻）落库，
+  /// 之后一律以库里这个值为准。不这么做的话，未配环境变量时闸门会随每次重启前移，
+  /// 投递器停机期间产生的告警会永久落到窗口之外、既不重试也不记录。
+  cutoffAt         DateTime?
   lastRunAt        DateTime?
   lastSuccessAt    DateTime?
   circuitTrippedAt DateTime?

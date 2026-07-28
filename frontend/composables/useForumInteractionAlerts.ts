@@ -102,7 +102,8 @@ export function useForumInteractionAlerts() {
         ...target,
         acknowledgedAt: new Date().toISOString()
       };
-      unreadCount.value = alerts.value.filter((item) => !item.acknowledgedAt).length;
+      // 同 useFollowAlerts：递减而非按截断到 20 条的本地列表重算
+      unreadCount.value = Math.max(0, Number(unreadCount.value || 0) - 1);
     }
 
     try {

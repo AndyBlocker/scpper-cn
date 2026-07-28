@@ -152,7 +152,9 @@ export function useFollowAlerts() {
           ...group,
           alerts: group.alerts.map(alert => alert.id === id ? { ...alert, acknowledgedAt } : alert)
         }));
-        unreadCount.value = alerts.value.filter(a => !a.acknowledgedAt).length;
+        // 递减而非按本地列表重算：列表只有最近 20 条，服务端可能有 100 条未读，
+        // 重算会把徽标直接砍到 ≤19。
+        unreadCount.value = Math.max(0, Number(unreadCount.value || 0) - 1);
       }
     } catch (e) {
       console.warn('[follow-alerts] mark read failed', e);

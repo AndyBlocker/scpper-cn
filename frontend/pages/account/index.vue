@@ -32,7 +32,10 @@
       </button>
     </div>
 
-    <div v-if="activeTab === 'overview'" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" class="space-y-10">
+    <!-- 概览面板用 v-show 而非 v-if：QqBindingPanel 里的明文验证码只存在于组件内存
+         （服务端只有哈希），组件一销毁就找不回来，而挑战仍是 PENDING —— 用户切个 tab
+         回来就得重新生成，可能让已经发出去的好友申请作废。其余面板仍用 v-if。 -->
+    <div v-show="activeTab === 'overview'" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" class="space-y-10">
     <section class="flex flex-col gap-4 rounded-lg border border-white/60 bg-white/80 p-8 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow">
       <header class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
@@ -302,7 +305,8 @@ function onTabKeydown(e: KeyboardEvent) {
   else if (e.key === 'ArrowRight') next = (cur + 1) % accountTabs.length
   else if (e.key === 'Home') next = 0
   else next = accountTabs.length - 1
-  selectTab(accountTabs[next].key, next)
+  const target = accountTabs[next]
+  if (target) selectTab(target.key, next)
 }
 const route = useRoute()
 

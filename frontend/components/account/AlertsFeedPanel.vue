@@ -12,7 +12,7 @@ import { useNotificationFeed, type FeedKind } from '~/composables/useNotificatio
 
 const feed = useNotificationFeed()
 const {
-  items, kindFilter, showRead, unreadByKind, totalUnread,
+  items, kindFilter, showRead, unreadByKind, totalUnread, hasHiddenUnread,
   loading, error, refresh, markRead, markAllRead
 } = feed
 
@@ -145,7 +145,16 @@ onBeforeUnmount(() => { stopVis?.() })
     </div>
 
     <div v-else-if="isEmpty" class="py-10 text-center text-sm text-[rgb(var(--muted))]">
-      {{ emptyText }}
+      <p>{{ emptyText }}</p>
+      <!-- 每个来源只返回最近 20 条，未读过滤在截断之后。徽标有数字而这里为空时，
+           说明未读条目在更早的位置，提示用户怎么看到它们，而不是让界面自相矛盾。 -->
+      <p v-if="hasHiddenUnread" class="mt-2 text-xs">
+        还有 {{ totalUnread }} 条未读在更早的记录里，
+        <button type="button" class="text-[var(--g-accent)] hover:underline" @click="showRead = true">
+          显示已读
+        </button>
+        后可一并查看。
+      </p>
     </div>
 
     <ul v-else class="divide-y divide-[rgb(var(--panel-border))]">
