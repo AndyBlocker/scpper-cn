@@ -131,6 +131,7 @@ model Page {
   metricAlerts          PageMetricAlert[]
   forumThreads          ForumThread[]
   forumInteractionAlerts ForumInteractionAlert[]
+  userActivityAlerts    UserActivityAlert[]
 
   @@index([currentUrl])
   @@index([isDeleted])
@@ -443,6 +444,8 @@ model User {
   voteInteractionsTo               UserVoteInteraction[]   @relation("UserVoteInteractionTo")
   forumAlertsReceived              ForumInteractionAlert[] @relation("ForumInteractionAlertRecipient")
   forumAlertsTriggered             ForumInteractionAlert[] @relation("ForumInteractionAlertActor")
+  following                        UserFollow[]            @relation("UserFollowFollower")
+  followers                        UserFollow[]            @relation("UserFollowTarget")
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
@@ -460,6 +463,67 @@ model UserMetricPreference {
   user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, metric], map: "uniq_user_metric_preference")
+}
+
+/// 用户关注关系（关注对象只有「用户」）。
+///
+/// 收编说明：本表与 UserActivityAlert 长期只存在于 backend/sql/20251018_user_follow_alerts.sql
+/// 这份手工脚本里，从未进入 schema.prisma。后果是 Prisma 视角下它们「不存在」，
+/// 任何 migrate diff / db push 都可能生成针对它们的 DROP。2026-07-28 按生产库
+/// 实际结构（\d 输出）收编，字段类型一律以生产为准而非以那份脚本为准 ——
+/// 两者已经漂移（脚本声明 TIMESTAMPTZ 与 enum，生产是 timestamp(3) 与 text）。
+model UserFollow {
+  id           Int                 @id @default(autoincrement())
+  followerId   Int
+  targetUserId Int
+  createdAt    DateTime            @default(now()) @db.Timestamp(3)
+  follower     User                @relation("UserFollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  target       User                @relation("UserFollowTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  alerts       UserActivityAlert[]
+
+  @@unique([followerId, targetUserId])
+  @@index([targetUserId])
+}
+
+/// 被关注用户的活动告警（REVISION / ATTRIBUTION / ATTRIBUTION_REMOVED）。
+///
+/// 两点与生产保持一致、不要「顺手规范化」：
+/// 1. `type` 在生产是 text 而非 enum。改成 enum 需要一次带数据转换的迁移，
+///    不属于本次范围；此处如实建模为 String。
+/// 2. 生产库上本表**只有两个**外键，已用 pg_constraint 逐条核对：
+///      UserActivityAlert_followId_fkey → UserFollow(id)
+///      UserActivityAlert_pageId_fkey   → Page(id)
+///    而 backend/sql/20251018_user_follow_alerts.sql 里还声明了
+///    followerId/targetUserId → User、revisionId → Revision、
+///    attributionId → Attribution、pageVersionId → PageVersion —— 这些在生产**从未建成**。
+///    因此这里也不声明对应 relation：声明了会让 Prisma 生成 ADD CONSTRAINT，
+///    在本就存在孤儿行的表上可能直接失败，而且是在「收编是为了消除漂移」的改动里
+///    反过来制造新漂移。本模型的目标是忠实反映生产结构，不是反映那份已漂移的脚本。
+///
+/// 另有两个 Prisma **无法表达**的部分索引，由原始 SQL 维护，勿在 schema 中重复声明
+/// （声明会退化成非部分索引，产生真实的结构变更）：
+///   - UserActivityAlert_acknowledgedAt_idx        ON ("acknowledgedAt") WHERE "acknowledgedAt" IS NULL
+///   - UserActivityAlert_followId_type_pageVersionId_key UNIQUE ("followId", type, "pageVersionId")
+///                                                  WHERE "pageVersionId" IS NOT NULL
+/// 后者是 UserFollowActivityJob 的 attribution 分支 ON CONFLICT 依赖的目标，删掉会让该 Job 报错。
+model UserActivityAlert {
+  id             Int        @id @default(autoincrement())
+  followId       Int
+  followerId     Int
+  targetUserId   Int
+  pageId         Int
+  pageVersionId  Int?
+  type           String
+  revisionId     Int?
+  attributionId  Int?
+  detectedAt     DateTime   @default(now()) @db.Timestamp(3)
+  acknowledgedAt DateTime?  @db.Timestamp(3)
+  createdAt      DateTime   @default(now()) @db.Timestamp(3)
+  follow         UserFollow @relation(fields: [followId], references: [id], onDelete: Cascade)
+  page           Page       @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([followId, type])
+  @@index([followerId])
 }
 
 model UserStats {
@@ -568,7 +632,9 @@ model UserTagPreference {
   lastVoteAt    DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-  id            Int       @id @default(autoincrement())
+  /// 代理键，无外键引用、无 TS 读取方；因 ON CONFLICT upsert 每轮消耗全量序列值，
+  /// int4 号段已于 2026-07-28 耗尽，见迁移 20260728000000_widen_social_analysis_id_to_bigint
+  id            BigInt    @id @default(autoincrement())
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, tag])
@@ -583,7 +649,8 @@ model UserVoteInteraction {
   lastVoteAt    DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-  id            Int       @id @default(autoincrement())
+  /// 同 UserTagPreference.id：代理键，同一 Job 的同种 upsert 写法，序列已达 93%，预防性加宽
+  id            BigInt    @id @default(autoincrement())
   fromUser      User      @relation("UserVoteInteractionFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
   toUser        User      @relation("UserVoteInteractionTo", fields: [toUserId], references: [id], onDelete: Cascade)
 
