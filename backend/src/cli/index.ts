@@ -30,6 +30,7 @@ import { ForumSyncProcessor } from '../core/processors/ForumSyncProcessor.js';
 import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { runSyncHourlyScheduler } from './sync-hourly.js';
 import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
+import { runNotifyDispatchLoop, runNotifyDispatchOnce } from './notify-dispatch.js';
 import { runVoteResyncAudit } from './voteResyncAudit.js';
 import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
@@ -89,6 +90,30 @@ program
     await runWikidotBindingVerifyLoop({
       intervalSeconds,
       runImmediately: Boolean(options.runImmediately)
+    });
+  });
+
+program
+  .command('notify-dispatch')
+  .description('Dispatch site notifications to bound external channels (QQ)')
+  .option('--interval-seconds <n>', 'Seconds between cycles (minimum 15)', '60')
+  .option('--run-immediately', 'Run one cycle immediately on startup')
+  .option('--once', 'Run a single cycle then exit (for manual runs / drills)')
+  .option('--dry-run', 'Print what would be sent without sending or recording anything')
+  .option('--reset-circuit', 'Clear a tripped global circuit breaker (first cycle only)')
+  .action(async (options) => {
+    const dryRun = Boolean(options.dryRun);
+    const resetCircuit = Boolean(options.resetCircuit);
+    if (options.once) {
+      await runNotifyDispatchOnce({ dryRun, resetCircuit });
+      return;
+    }
+    const parsed = Number.parseInt(String(options.intervalSeconds ?? '60'), 10);
+    await runNotifyDispatchLoop({
+      intervalSeconds: Number.isFinite(parsed) ? parsed : 60,
+      runImmediately: Boolean(options.runImmediately),
+      dryRun,
+      resetCircuit
     });
   });
 

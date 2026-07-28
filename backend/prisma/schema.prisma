@@ -446,6 +446,7 @@ model User {
   forumAlertsTriggered             ForumInteractionAlert[] @relation("ForumInteractionAlertActor")
   following                        UserFollow[]            @relation("UserFollowFollower")
   followers                        UserFollow[]            @relation("UserFollowTarget")
+  notificationDeliveries           NotificationDelivery[]
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
@@ -463,6 +464,76 @@ model UserMetricPreference {
   user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, metric], map: "uniq_user_metric_preference")
+}
+
+/// 通知投递渠道。与 user-backend 的 NotificationChannel 同义，
+/// 但两个库各自独立演进，故不强求枚举值完全一致（跨库没有外键可依）。
+enum NotificationDeliveryChannel {
+  QQ
+  EMAIL
+}
+
+enum NotificationDeliveryState {
+  /// 待投递
+  PENDING
+  /// 因免打扰/摘要窗口推迟到 scheduledAt
+  SCHEDULED
+  SENDING
+  SENT
+  /// 永久失败（如 not_friend），不再重试
+  FAILED
+  /// 主动抑制（熔断、超日限额、偏好关闭），不算失败
+  SUPPRESSED
+  /// 用户已在站内读过，无需再推
+  CANCELLED
+}
+
+/// 站外通知投递账本。
+///
+/// 【为什么是旁路扫描而不是在告警产生时写 outbox】
+/// 三个告警 Job 跑在 scpper-sync 的关键路径上（有全局租约锁 + 15 分钟无进展看门狗），
+/// 且与「未读折叠」这个非平凡去重语义纠缠。改它们的插入语句风险远大于收益。
+/// 本表由独立进程按 24 小时回看窗口 + dedupeKey 反连接来发现「还没推过的告警」，
+/// producer 一行不改，出问题停掉一个 PM2 app 即可完全回滚。
+///
+/// 【id 用 BigInt】
+/// 2026-07-28 刚因 UserTagPreference 的 int4 序列耗尽导致 sync 每轮失败。
+/// 本表是纯追加且未来可能引入 ON CONFLICT，没有理由再赌 21 亿够用。
+model NotificationDelivery {
+  id           BigInt                      @id @default(autoincrement())
+  /// 主库 User.id（不是 user-backend 的 cuid）
+  userId       Int
+  channel      NotificationDeliveryChannel
+  /// 幂等键：来源表 + 来源主键 + 内容签名。
+  /// 带内容签名是因为 PageMetricAlert 是**就地合并**的 —— 同一行的 newValue 会被反复更新，
+  /// 只按行 id 去重会漏掉后续增量，只按行变更推送又会重复轰炸。
+  dedupeKey    String                      @unique
+  state        NotificationDeliveryState   @default(PENDING)
+  attemptCount Int                         @default(0)
+  lastError    String?
+  scheduledAt  DateTime?
+  sentAt       DateTime?
+  /// 渲染消息所需的最小快照，便于失败重放时不必回查已变动的源表
+  payload      Json?
+  createdAt    DateTime                    @default(now())
+  updatedAt    DateTime                    @updatedAt
+  user         User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([state, scheduledAt])
+  @@index([createdAt])
+}
+
+/// 投递器的单行状态表（id 恒为 1）。
+/// 熔断跳闸后需要人工复位，状态必须持久化 —— 否则进程一重启就"自愈"，
+/// 而真正的问题（比如 analyze --full 导致的告警洪水）还在。
+model NotificationDispatchState {
+  id               Int       @id @default(1)
+  lastRunAt        DateTime?
+  lastSuccessAt    DateTime?
+  circuitTrippedAt DateTime?
+  circuitReason    String?
+  updatedAt        DateTime  @updatedAt
 }
 
 /// 用户关注关系（关注对象只有「用户」）。
