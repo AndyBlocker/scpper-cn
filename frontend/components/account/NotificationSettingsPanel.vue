@@ -13,7 +13,7 @@ import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
  */
 
 const { preferences, loading, saving, error, fetchPreferences, updatePreferences, setMetricMuted } = useAlertSettings()
-const { user } = useAuth()
+const { user, fetchCurrentUser } = useAuth()
 
 const METRIC_LABEL: Record<AlertMetric, { title: string; hint: string }> = {
   COMMENT_COUNT: { title: '页面收到评论', hint: '你的作品下有新回复时提醒' },
@@ -66,12 +66,35 @@ async function saveGeneration() {
   if (!error.value) flashSaved()
 }
 
-async function toggleMuted(metric: AlertMetric, muted: boolean) {
-  await setMetricMuted(metric, muted)
-  if (!error.value) flashSaved()
+/**
+ * 切换「接收此类提醒」。
+ *
+ * 必须把 input 元素传进来：这里用的是 :checked 单向绑定，浏览器点击时
+ * 已经改了 DOM，而保存失败时 preferences 并没有变 —— Vue 的 vdom 认为
+ * :checked 的值没变化，就不会把 DOM patch 回去，勾选框于是一直显示成
+ * 「保存成功了」的样子，直到组件重新挂载。失败时得手动写回。
+ */
+async function toggleMuted(metric: AlertMetric, muted: boolean, el: HTMLInputElement) {
+  try {
+    await setMetricMuted(metric, muted)
+  } catch {
+    // setMetricMuted 会抛，错误文案由 error.value 呈现
+  }
+  if (error.value) {
+    // 以权威状态为准复原：checked 表示「接收」，即 muted 为 false
+    el.checked = !preferences.value.mutedMetrics[metric]
+    return
+  }
+  flashSaved()
 }
 
-onMounted(() => { void fetchPreferences() })
+onMounted(() => {
+  void fetchPreferences()
+  // 渠道健康度（ACTIVE / PAUSED）随投递结果在后端变化，只失效了服务端缓存，
+  // SPA 里的 user 对象不会自己更新 —— 长会话或直接导航进来时，
+  // 这里的绿点/黄点可能一直停在过期状态。强制刷新一次登录态。
+  void fetchCurrentUser(true)
+})
 </script>
 
 <template>
@@ -100,7 +123,7 @@ onMounted(() => { void fetchPreferences() })
               class="mt-0.5 h-4 w-4 rounded border-[rgb(var(--input-border))]"
               :checked="!preferences.mutedMetrics[m]"
               :disabled="saving"
-              @change="toggleMuted(m, !($event.target as HTMLInputElement).checked)"
+              @change="toggleMuted(m, !($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
             >
             <span class="min-w-0">
               <span class="block text-sm text-[rgb(var(--fg))]">{{ METRIC_LABEL[m].title }}</span>

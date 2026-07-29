@@ -452,7 +452,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 它们同属这一条私信，因此照常记为 SENT。
     const shown = items.slice(0, CIRCUIT_USER_MAX);
     const overflow = items.length - shown.length;
-    const message = renderDigest(shown, overflow);
+    let message = renderDigest(shown, overflow);
     // 一次摘要一个 key：既是 qqbot 侧的去重键，也是上面日限额的计数单位。
     const digestKey = `digest:${userId}:${shown[shown.length - 1].dedupeKey}`;
 
@@ -485,6 +485,33 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         + `（${claimed}/${items.length}），本轮整批退让`
       );
       continue;
+    }
+
+    // 发送前**再查一次已读**。
+    //
+    // collectCandidates 到这里之间隔着占位写入与（可能的）健康检查，
+    // 用户完全可能在这个窗口里于网页上把这些提醒读掉 ——
+    // 读完了还收到 QQ 推送是很突兀的体验。
+    // 重发路径早就做了这个检查，常规路径一直没有：同一件事只做了一半。
+    const ackedNow = await findAcknowledgedDedupeKeys(prisma, keys);
+    if (ackedNow.size > 0) {
+      const remaining = items.filter((c) => !ackedNow.has(c.dedupeKey));
+      await prisma.notificationDelivery.updateMany({
+        where: {
+          dedupeKey: { in: [...ackedNow] },
+          state: 'PENDING',
+          payload: { path: ['runId'], equals: RUN_ID }
+        },
+        data: { state: 'CANCELLED', lastError: 'acknowledged_on_site' }
+      });
+      summary.suppressed += ackedNow.size;
+      console.log(`[notify] 用户 ${target.wikidotId} 有 ${ackedNow.size} 条在发送前已被站内读掉，取消推送`);
+      if (remaining.length === 0) continue;
+      // 整批只剩一部分：重新渲染消息，digestKey 保持不变（机器人侧去重语义不变）
+      const reshown = remaining.slice(0, CIRCUIT_USER_MAX);
+      message = renderDigest(reshown, remaining.length - reshown.length);
+      keys.length = 0;
+      keys.push(...remaining.map((c) => c.dedupeKey));
     }
 
     const result = await pushQqMessage({ qq: target.address, message, dedupeKey: digestKey });

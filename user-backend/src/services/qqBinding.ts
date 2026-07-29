@@ -294,13 +294,30 @@ export async function verifyQqBinding(params: {
       if (decision.reason === 'code_consumed') {
         const existing = await tx.notificationChannelBinding.findUnique({
           where: { userId_channel: { userId: found.userId, channel: NotificationChannel.QQ } },
-          select: { address: true, status: true }
+          select: { id: true, address: true, status: true }
         });
         if (
           existing
           && existing.address === address
           && existing.status !== ChannelBindingStatus.REVOKED
         ) {
+          // 命中的若是**被自动暂停**的绑定，顺手把它恢复。
+          //
+          // 典型场景：用户把机器人删了 → 连续投递失败 → 自动暂停 →
+          // 用户重新加回好友并重放当初的验证码。重新加好友正是补救动作，
+          // 却只回一句「绑定成功」而不改状态的话，投递器只加载 ACTIVE 绑定，
+          // 他其实一条也收不到 —— 界面和回复都说成功了，唯独消息不来。
+          if (existing.status === ChannelBindingStatus.PAUSED) {
+            await tx.notificationChannelBinding.update({
+              where: { id: existing.id },
+              data: {
+                status: ChannelBindingStatus.ACTIVE,
+                failureCount: 0,
+                lastFailureCode: null,
+                suspendedUntil: null
+              }
+            });
+          }
           return {
             matched: true,
             reply: '绑定成功！之后 SCPper CN 的站点通知会通过这里发给你。\n可随时在网站「账号设置 → 通知」调整推送内容。'
