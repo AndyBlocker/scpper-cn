@@ -527,6 +527,9 @@ const {
 const { resetState: resetFollowsState } = useFollows()
 // 偏好设置也是全局共享状态，换账号时同样要作废在途请求
 const { resetState: resetAlertSettingsState } = useAlertSettings()
+// 通知偏好同样是全局共享状态：A 的请求在飞时换成 B 登录，
+// 不作废的话 A 的偏好会填进 B 的设置面板，B 一保存就写进了自己账号。
+const { resetState: resetNotifyPrefsState } = useNotifyPreferences()
 
 // 三个来源都要计入。旧版漏了关注提醒：关注的作者发布新修订时铃铛徽标恒为 0，
 // 下拉里也找不到，用户只有进 /account 的「关注」tab 才看得到。
@@ -1072,6 +1075,7 @@ function resetAllAlertState() {
   resetForumAlertsState()
   resetFollowsState()
   resetAlertSettingsState()
+  resetNotifyPrefsState()
   isAlertsDropdownOpen.value = false
 }
 

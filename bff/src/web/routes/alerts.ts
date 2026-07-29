@@ -443,8 +443,13 @@ interface NotifyChannelSetting {
 }
 
 /**
- * 与 backend 的 NOTIFY_DAILY_LIMIT 同源。
- * 两处读同一个环境变量，避免 BFF 说一套、投递器做一套。
+ * 全局每日上限，必须与 backend 的 NOTIFY_DAILY_LIMIT 保持一致。
+ *
+ * 【注意这不是自动同步的】
+ * BFF 与 backend 是两个独立进程，各读各的 .env —— 运维只在 backend/.env 里
+ * 调了这个值的话，BFF 仍按默认 40 回显，界面显示的「实际生效上限」就是错的。
+ * 因此 bff/.env 也必须显式配置同一个值（见 bff/.env.example），
+ * 且部署脚本会把两边一起写。
  */
 const GLOBAL_DAILY_LIMIT = Math.max(1, Number(process.env.NOTIFY_DAILY_LIMIT ?? '40') || 40);
 
@@ -549,21 +554,28 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
         }
       }
 
-      for (const row of rows) {
-        await pool.query(
-          `INSERT INTO "UserNotificationPreference" ("userId","type","siteEnabled","qqEnabled","updatedAt")
-           VALUES ($1, $2::"NotificationTypeKey", $3, $4, now())
-           ON CONFLICT ("userId","type")
-           DO UPDATE SET "siteEnabled" = EXCLUDED."siteEnabled",
-                         "qqEnabled"   = EXCLUDED."qqEnabled",
-                         "updatedAt"   = now()`,
-          [userId, row.type, row.siteEnabled, row.qqEnabled]
-        );
-      }
+      // 所有写入放进**同一个事务**：多行矩阵、或矩阵+渠道设置一起提交时，
+      // 逐条 pool.query 各自独立提交 —— 中途失败（连接断、死锁、被拒）会留下
+      // 前面已提交、后面没写成的半截状态，而接口返回的是失败。
+      // 这正是前面把校验前置想避免的情况，只是换了个触发方式。
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const row of rows) {
+          await client.query(
+            `INSERT INTO "UserNotificationPreference" ("userId","type","siteEnabled","qqEnabled","updatedAt")
+             VALUES ($1, $2::"NotificationTypeKey", $3, $4, now())
+             ON CONFLICT ("userId","type")
+             DO UPDATE SET "siteEnabled" = EXCLUDED."siteEnabled",
+                           "qqEnabled"   = EXCLUDED."qqEnabled",
+                           "updatedAt"   = now()`,
+            [userId, row.type, row.siteEnabled, row.qqEnabled]
+          );
+        }
 
       // ── 渠道级设置：三项都可选，只改传了的（校验已在上方统一完成）
-      if (hasChannel) {
-        await pool.query(
+        if (hasChannel) {
+          await client.query(
           `INSERT INTO "UserNotificationChannelSetting"
              ("userId","qqDailyLimit","qqMode","qqDigestHour","updatedAt")
            VALUES ($1, COALESCE($2, 20), COALESCE($3::"QqDeliveryMode", 'REALTIME'), COALESCE($4, 21), now())
@@ -573,7 +585,14 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
              "qqDigestHour" = COALESCE($4, "UserNotificationChannelSetting"."qqDigestHour"),
              "updatedAt"    = now()`,
           [userId, limit, c.qqMode ?? null, hour]
-        );
+          );
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        client.release();
       }
 
       // 站内开关会影响提醒列表的返回内容，整族缓存必须失效，

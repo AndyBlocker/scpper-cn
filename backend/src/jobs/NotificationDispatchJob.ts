@@ -412,6 +412,38 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     console.log(`[notify] 跳过 ${preBindingSkipped} 条产生于绑定生效之前的告警`);
   }
 
+  // ── 定时用户的资格判定必须在**熔断计数之前** ──────────────────
+  //
+  // 定时用户的候选会在一天里不断堆积，但其中只有「到点的那些人」本轮真会发出去。
+  // 若把全部堆积量计入熔断，几个不同时点的定时用户攒够量就能把全局熔断顶跳闸，
+  // 连带把实时用户也一起卡死 —— 而实际要发的量根本没超标。
+  // 所以先剔除本轮无资格的，再计数。
+  const digestDeferred: Candidate[] = [];
+  const eligible: Candidate[] = [];
+  const digestEligibility = new Map<number, boolean>();
+  for (const c of candidates) {
+    const prefs = prefsByUser.get(c.userId);
+    if (prefs?.mode !== 'DAILY_DIGEST') { eligible.push(c); continue; }
+    let ok = digestEligibility.get(c.userId);
+    if (ok === undefined) {
+      // 「到点或已过点」而非「正好等于该点」：投递器/数据库/机器人若在那个整点
+      // 整段不可用，严格相等会让这一天彻底跳过，而候选只回看 24 小时 ——
+      // 那批本该出现在汇总里的动态会永久过期。允许当天补发。
+      const reachedHour = currentHourUtc8() >= prefs.digestHour;
+      const already = reachedHour
+        ? (await countDigestsSentSince(prisma, c.userId, startOfUtc8Day())) > 0
+        : false;
+      ok = reachedHour && !already;
+      digestEligibility.set(c.userId, ok);
+    }
+    (ok ? eligible : digestDeferred).push(c);
+  }
+  if (digestDeferred.length > 0) {
+    console.log(`[notify] ${digestDeferred.length} 条属于定时用户且本轮未到点，留待其设定时段`);
+  }
+  candidates.length = 0;
+  candidates.push(...eligible);
+
   summary.candidates = candidates.length;
   if (candidates.length === 0) {
     // 重发因机器人不可用而被跳过时，这一轮**不算成功**。
@@ -542,16 +574,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 定时模式：只在用户指定的整点发，且当天只发一次。
     // 不到点就**留着**（不落库、不消耗任何配额），等到点那一轮再一起发 ——
     // 这正是「每日汇总」的意义：把一天的动静攒成一条。
-    if (prefs.mode === 'DAILY_DIGEST') {
-      const hour = currentHourUtc8();
-      if (hour !== prefs.digestHour) continue;
-      // 「今天发过没」必须按 UTC+8 **自然日**判断，不能用滚动 24 小时。
-      // 用滚动窗口时：昨天的汇总若发在该时段偏后，今天同一时段的每次轮询
-      // 都还能看到它而跳过；等它滑出窗口时那个整点可能已经过去，
-      // 于是今天整天都不发 —— 一个每天固定时间的功能会间歇性哑火。
-      const sentTodayCalendar = await countDigestsSentSince(prisma, userId, startOfUtc8Day());
-      if (sentTodayCalendar > 0) continue;
-    }
+    // 定时资格已在熔断计数之前统一判定过（含「过点补发」与自然日去重），
+    // 这里不再重复判断 —— 判两次容易两处口径不一致。
 
     // 日限额取用户设置（已在加载时与全局上限取过更小值）
     if (sentToday >= prefs.dailyLimit) {
@@ -1111,9 +1135,14 @@ async function resumeScheduledBatches(
     // 限额与定时同样按每人设置，两条投递路径的行为必须一致
     const effLimit = prefs?.dailyLimit ?? DAILY_LIMIT;
     if (prefs?.mode === 'DAILY_DIGEST') {
-      if (currentHourUtc8() !== prefs.digestHour || sentToday > 0) {
-        continue; // 不到点或今天已发过：保持 SCHEDULED，不消耗重试次数
-      }
+      // 与常规路径同口径：过点即可补发，且「今天发过没」按 UTC+8 自然日算。
+      // sentToday 是滚动 24 小时的计数，用在这里会让昨天晚些时候发出的汇总
+      // 一直挡住今天的重发，直到它滑出窗口 —— 那时批次可能已经过期。
+      const reachedHour = currentHourUtc8() >= prefs.digestHour;
+      const sentTodayCalendar = reachedHour
+        ? await countDigestsSentSince(prisma, first.userId, startOfUtc8Day())
+        : 0;
+      if (!reachedHour || sentTodayCalendar > 0) continue;
     }
     if (sentToday >= effLimit) {
       console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${effLimit}，批次 ${digestKey} 留待下轮`);

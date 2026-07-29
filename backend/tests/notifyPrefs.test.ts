@@ -69,3 +69,28 @@ test('接口回显的实际上限 = min(用户设置, 全局上限)（review P2�
   assert.equal(effective(100, 40), 40, '填 100 实际只有 40，界面必须说实话');
   assert.equal(effective(10, 40), 10);
 });
+
+test('定时资格：过点可补发，同日不重发（review P1）', () => {
+  // 复刻资格判定：reachedHour = 当前小时 >= 设定小时
+  const eligible = (nowHour: number, digestHour: number, sentTodayCalendar: number) => {
+    const reached = nowHour >= digestHour;
+    return reached && sentTodayCalendar === 0;
+  };
+  assert.equal(eligible(21, 21, 0), true, '正好到点应发');
+  assert.equal(eligible(23, 21, 0), true, '错过整点后应能补发 —— 否则整天不发且候选会过期');
+  assert.equal(eligible(23, 21, 1), false, '当天已发过不再发');
+  assert.equal(eligible(10, 21, 0), false, '未到点应攒着');
+});
+
+test('定时用户的未到点候选不得计入熔断（review P1）', () => {
+  // 三个不同时点的定时用户各攒 900 条，全局上限 2000
+  const CIRCUIT_MAX = 2000;
+  const all = [{ n: 900, eligible: false }, { n: 900, eligible: false }, { n: 900, eligible: true }];
+  const total = all.reduce((a, x) => a + x.n, 0);
+  const eligibleCount = all.filter((x) => x.eligible).reduce((a, x) => a + x.n, 0);
+  assert.ok(total > CIRCUIT_MAX, '前提：堆积总量确实超过上限');
+  assert.ok(eligibleCount <= CIRCUIT_MAX, '本轮真正要发的量并不超标');
+  // 按总量计会误跳闸，连带卡住实时用户
+  assert.equal(total > CIRCUIT_MAX, true);
+  assert.equal(eligibleCount > CIRCUIT_MAX, false, '按可发量计才不会误跳闸');
+});

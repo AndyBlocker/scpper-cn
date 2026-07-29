@@ -181,7 +181,7 @@ onMounted(() => {
                   type="checkbox"
                   class="h-4 w-4 rounded border-[rgb(var(--input-border))]"
                   :checked="row.siteEnabled"
-                  :disabled="prefsSaving"
+                  :disabled="prefsSaving || prefsLoading"
                   :aria-label="`${TYPE_LABEL[row.type].title} 的站内提醒`"
                   @change="toggleChannel(row.type, 'siteEnabled', ($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
                 >
@@ -191,7 +191,7 @@ onMounted(() => {
                   type="checkbox"
                   class="h-4 w-4 rounded border-[rgb(var(--input-border))] disabled:opacity-40"
                   :checked="row.qqEnabled"
-                  :disabled="prefsSaving || !qqBound"
+                  :disabled="prefsSaving || prefsLoading || !qqBound"
                   :aria-label="`${TYPE_LABEL[row.type].title} 的 QQ 推送`"
                   :title="qqBound ? '' : '绑定 QQ 后可用'"
                   @change="toggleChannel(row.type, 'qqEnabled', ($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
