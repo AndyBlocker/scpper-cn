@@ -64,29 +64,35 @@ export function useForumInteractionAlerts() {
    * 谁后到谁覆盖共享状态；旧的那份后到就会让未读列表退回「列表空、徽标有数字」。
    * 每次请求 +1，只有最新一次允许写回 —— 与 useAlerts 的做法一致。
    */
-  const requestGeneration = useState<number>('forumAlerts/reqGen', () => 0);
+  const requestGeneration = useState<{ all: number; unread: number }>(
+    'forumAlerts/reqGen', () => ({ all: 0, unread: 0 })
+  );
   /**
-   * 上一次取数用的 unreadOnly 口径，必须与数据存在一起。
-   * 铃铛要 unreadOnly=false、账号页提醒流要 true；只按 lastFetchedAt 判新鲜的话，
-   * 谁先取到谁的那份就会被另一方当成自己的直接复用 ——
-   * 最新 20 条都已读、更早处还有未读时，列表空着而徽标有数字。
+   * 未读口径的结果**单独存**。铃铛（含已读）与账号页提醒流（仅未读）是
+   * 同时存在的消费者，共用一个数组时无论谁写都在破坏对方 ——
+   * 靠新鲜度或世代号调停只能推迟覆盖，不能消除它。
    */
-  const lastFetchUnreadOnly = useState<boolean | null>('forumAlerts/lastFetchMode', () => null);
+  const unreadAlerts = useState<ForumInteractionAlertItem[]>('forumAlerts/unreadList', () => []);
+  const unreadLastFetchedAt = useState<string | null>('forumAlerts/unreadLastFetchedAt', () => null);
+  const unreadLoading = useState<boolean>('forumAlerts/unreadLoading', () => false);
 
   async function fetchAlerts(force = false, limit = 20, offset = 0, unreadOnly = false) {
-    if (loading.value && !force) return alerts.value;
+    const slot = unreadOnly ? 'unread' : 'all';
+    const list = unreadOnly ? unreadAlerts : alerts;
+    const stamp = unreadOnly ? unreadLastFetchedAt : lastFetchedAt;
+    const busy = unreadOnly ? unreadLoading : loading;
 
-    // 口径不同就不算新鲜：手上那份是另一种 unreadOnly 取来的
-    const sameMode = lastFetchUnreadOnly.value === unreadOnly;
-    if (!force && sameMode && lastFetchedAt.value) {
-      const last = new Date(lastFetchedAt.value).getTime();
-      if (Date.now() - last < 60_000) return alerts.value;
+    if (busy.value && !force) return list.value;
+
+    if (!force && stamp.value) {
+      const last = new Date(stamp.value).getTime();
+      if (Date.now() - last < 60_000) return list.value;
     }
 
-    loading.value = true;
+    busy.value = true;
     const myEpoch = identityEpoch.value;
-    const myRequest = requestGeneration.value + 1;
-    requestGeneration.value = myRequest;
+    const myRequest = requestGeneration.value[slot] + 1;
+    requestGeneration.value = { ...requestGeneration.value, [slot]: myRequest };
     try {
       const res = await $bff<ForumAlertsResponse>('/alerts/forum', {
         method: 'GET',
@@ -94,15 +100,14 @@ export function useForumInteractionAlerts() {
       });
 
       // 期间换过身份 → 本次结果作废，绝不写回共享状态
-      if (identityEpoch.value !== myEpoch) return alerts.value;
-      // 已有更新的请求发出 → 本次是旧数据，丢弃
-      if (requestGeneration.value !== myRequest) return alerts.value;
+      if (identityEpoch.value !== myEpoch) return list.value;
+      // 同口径已有更新的请求发出 → 本次是旧数据，丢弃
+      if (requestGeneration.value[slot] !== myRequest) return list.value;
       if (res?.ok) {
-        alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
+        list.value = Array.isArray(res.alerts) ? res.alerts : [];
         const parsed = Number(res.unreadCount);
         unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
-        lastFetchedAt.value = new Date().toISOString();
-        lastFetchUnreadOnly.value = unreadOnly;
+        stamp.value = new Date().toISOString();
         error.value = null;
       } else {
         // 保留已有数据，只记录错误
@@ -111,13 +116,13 @@ export function useForumInteractionAlerts() {
     } catch (e) {
       console.warn('[forum-alerts] fetch failed', e);
       // 旧请求的失败不该覆盖新请求正在做的事
-      if (requestGeneration.value === myRequest) error.value = '网络异常，未能刷新论坛提醒';
+      if (requestGeneration.value[slot] === myRequest) error.value = '网络异常，未能刷新论坛提醒';
     } finally {
       // 同理：旧请求结束不能把 loading 关掉，否则新请求还在飞就显示「已加载完」
-      if (requestGeneration.value === myRequest) loading.value = false;
+      if (requestGeneration.value[slot] === myRequest) busy.value = false;
     }
 
-    return alerts.value;
+    return list.value;
   }
 
   async function markRead(id: number) {
@@ -141,6 +146,9 @@ export function useForumInteractionAlerts() {
       prevUnread = Number(unreadCount.value || 0);
       unreadCount.value = Math.max(0, prevUnread - 1);
     }
+
+    // 未读口径那份只装未读，读掉一条就该移出去
+    unreadAlerts.value = unreadAlerts.value.filter((item) => item.id !== id);
 
     try {
       const res = await $bff<MarkReadResponse>(`/alerts/forum/${id}/read`, { method: 'POST' });
@@ -169,11 +177,15 @@ export function useForumInteractionAlerts() {
   /** 换账号时必须清空并作废在途请求，否则 B 会看到 A 的通知 */
   function resetState() {
     identityEpoch.value += 1;
-    requestGeneration.value += 1;
+    requestGeneration.value = {
+      all: requestGeneration.value.all + 1,
+      unread: requestGeneration.value.unread + 1
+    };
     alerts.value = [];
+    unreadAlerts.value = [];
     unreadCount.value = 0;
     lastFetchedAt.value = null;
-    lastFetchUnreadOnly.value = null;
+    unreadLastFetchedAt.value = null;
     error.value = null;
   }
 
@@ -186,6 +198,7 @@ export function useForumInteractionAlerts() {
           ...item,
           acknowledgedAt: item.acknowledgedAt ?? ackAt
         }));
+        unreadAlerts.value = [];
         unreadCount.value = 0;
       }
     } catch (error) {
@@ -197,6 +210,9 @@ export function useForumInteractionAlerts() {
 
   return {
     alerts,
+    /** 未读口径的结果，供账号页提醒流使用（与 alerts 是两份独立数据） */
+    unreadAlerts,
+    unreadLoading,
     unreadCount,
     loading,
     lastFetchedAt,

@@ -72,9 +72,26 @@ export function useNotificationFeed() {
   /** 是否显示已读条目。切换会改变向服务端请求的口径，故需重新取数。 */
   const showRead = ref(false)
 
+  /**
+   * 按当前口径选数据源。
+   *
+   * 三个 composable 各存两份：alerts（含已读，铃铛用）与 unreadAlerts（仅未读，这里用）。
+   * 铃铛常驻 layout 且随时可能刷新，两份合一时它一取数就会把提醒流的未读列表冲掉 ——
+   * 「列表空着但徽标有数字」正是这么来的。分开存之后，两边各读各的，互不影响。
+   */
+  const activePageAlerts = computed(() =>
+    showRead.value ? pageAlerts.alertsAll.value : pageAlerts.alertsAllUnread.value
+  )
+  const activeFollowAlerts = computed(() =>
+    showRead.value ? followAlerts.alerts.value : followAlerts.unreadAlerts.value
+  )
+  const activeForumAlerts = computed(() =>
+    showRead.value ? forumAlerts.alerts.value : forumAlerts.unreadAlerts.value
+  )
+
 
   const pageItems = computed<FeedItem[]>(() =>
-    (pageAlerts.alertsAll.value as Array<AlertItem & { sourceMetric: AlertMetric }>).map((a) => {
+    (activePageAlerts.value as Array<AlertItem & { sourceMetric: AlertMetric }>).map((a) => {
       const delta = signed(a.diffValue)
       return {
         key: `page:${a.id}`,
@@ -92,7 +109,7 @@ export function useNotificationFeed() {
   )
 
   const followItems = computed<FeedItem[]>(() =>
-    (followAlerts.alerts.value as FollowAlertItem[]).map((a) => {
+    (activeFollowAlerts.value as FollowAlertItem[]).map((a) => {
       const who = a.targetDisplayName || `用户 ${a.targetWikidotId ?? a.targetUserId}`
       const verb = a.type === 'REVISION' ? '编辑了' : a.type === 'ATTRIBUTION' ? '发布了' : '不再署名于'
       return {
@@ -110,7 +127,7 @@ export function useNotificationFeed() {
   )
 
   const forumItems = computed<FeedItem[]>(() =>
-    (forumAlerts.alerts.value as ForumInteractionAlertItem[]).map((a) => {
+    (activeForumAlerts.value as ForumInteractionAlertItem[]).map((a) => {
       const actor = a.actorName || '有人'
       const verb = a.type === 'MENTION' ? '提到了你' : a.type === 'DIRECT_REPLY' ? '回复了你' : '在讨论中发言'
       return {
@@ -174,9 +191,18 @@ export function useNotificationFeed() {
     unreadByKind.value.page + unreadByKind.value.follow + unreadByKind.value.forum
   )
 
-  const loading = computed(() =>
-    Boolean(pageAlerts.loading.value || followAlerts.loading.value || forumAlerts.loading.value)
-  )
+  const loading = computed(() => {
+    if (showRead.value) {
+      return Boolean(pageAlerts.loading.value || followAlerts.loading.value || forumAlerts.loading.value)
+    }
+    // 未读口径有自己的 loading：看含已读那份的话，铃铛在后台取数会让
+    // 提醒流平白转圈，而它自己其实早就加载完了
+    return Boolean(
+      Object.values(pageAlerts.unreadLoading.value).some(Boolean)
+      || followAlerts.unreadLoading.value
+      || forumAlerts.unreadLoading.value
+    )
+  })
 
   /**
    * 任一来源出错就暴露出来，让 UI 能渲染「加载失败，重试」而不是假装「暂无提醒」。
@@ -192,11 +218,11 @@ export function useNotificationFeed() {
     // 后者会让「最新 20 条都读过、更早的未读还在」的用户看到空列表而徽标仍有数字。
     const unreadOnly = !showRead.value
 
-    // 口径变化的判断放在**各来源自己内部**（lastFetchUnreadOnly），不在这里。
-    // 曾经在这一层记过一个 lastFetchMode，但铃铛是直接调用底层 composable 的，
-    // 绕过了这里：它取回一份含已读的数据后，这一层的 lastFetchMode 仍是上次的值，
-    // 于是下一次 refresh(false) 认为「口径没变」而复用了铃铛那份 —— 问题照旧。
-    // 新鲜度元数据只有和数据存在一起，才不会被某个调用方绕开。
+    // 两种口径各存各的数据、各有各的时间戳，这里只管按当前口径要数就行。
+    // 曾经试过在这一层记「上次用的是哪个口径」，但铃铛直接调底层 composable、
+    // 绕过了这一层；后来把口径记到数据旁边，仍然挡不住铃铛把提醒流的未读列表
+    // 整个覆盖掉 —— 只要两者共用一个数组，就总有一方在破坏另一方。
+    // 现在是两份独立数据，问题从根上消失了。
     await Promise.all([
       pageAlerts.fetchAll(force, unreadOnly),
       followAlerts.fetchAlerts(force, 20, 0, unreadOnly),

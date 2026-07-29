@@ -597,6 +597,19 @@ async function resumeScheduledBatches(
     groups.set(key, list);
   }
 
+  // 用户可能在这期间**在站内读掉了**这些告警。正常扫描会把已读的排除在外，
+  // 重发路径却只按投递状态取行、不回看来源 —— 于是「网页上早看过了，
+  // 过一会儿 QQ 又推一遍」。CANCELLED 这个状态本来就是为这种情况留的。
+  const acknowledged = await findAcknowledgedDedupeKeys(prisma, rows.map((r) => r.dedupeKey));
+
+  // 本轮最多重发多少条记录。重发同样受全局上限约束：
+  // 机器人健康但发送持续暂时失败时，队列会越积越多，
+  // 不设上限就会在恢复的那一刻一次性灌出去。
+  let replayBudget = CIRCUIT_GLOBAL_MAX;
+  // 每个用户当天已发的私信条数，边发边累加，避免重发绕过日限额
+  const sentTodayByUser = new Map<number, number>();
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+
   for (const [digestKey, batch] of groups) {
     const first = batch[0];
     if (!first) continue;
@@ -632,45 +645,142 @@ async function resumeScheduledBatches(
       continue;
     }
 
-    const shown = batch.slice(0, CIRCUIT_USER_MAX);
-    const overflow = batch.length - shown.length;
+    // 站内已读的那些直接取消，不再推送
+    const stillPending = batch.filter((r) => !acknowledged.has(r.dedupeKey));
+    const cancelledKeys = batch.filter((r) => acknowledged.has(r.dedupeKey)).map((r) => r.dedupeKey);
+    if (cancelledKeys.length > 0) {
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: cancelledKeys }, state: 'SCHEDULED' },
+          data: { state: 'CANCELLED', lastError: 'acknowledged_on_site' }
+        });
+      }
+      console.log(`[notify] 批次 ${digestKey} 有 ${cancelledKeys.length} 条已在站内读过，取消推送`);
+    }
+    if (stillPending.length === 0) {
+      // 整批都读过了，不必再发。digestKey 保持不变没有意义了，直接跳过。
+      continue;
+    }
+
+    // 日限额：重发同样算私信条数，否则「失败-重试」这条路径可以完全绕开限额
+    const userId = first.userId;
+    let sentToday = sentTodayByUser.get(userId);
+    if (sentToday === undefined) {
+      sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
+      sentTodayByUser.set(userId, sentToday);
+    }
+    if (sentToday >= DAILY_LIMIT) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${DAILY_LIMIT}，批次 ${digestKey} 留待下轮`);
+      continue; // 保持 SCHEDULED，不消耗重试次数
+    }
+    if (replayBudget <= 0) {
+      console.warn(`[notify] 本轮重发已达全局上限 ${CIRCUIT_GLOBAL_MAX} 条，其余批次留待下轮`);
+      break; // 其余保持 SCHEDULED
+    }
+    replayBudget -= stillPending.length;
+
+    const replayKeys = stillPending.map((r) => r.dedupeKey);
+    const shown = stillPending.slice(0, CIRCUIT_USER_MAX);
+    const overflow = stillPending.length - shown.length;
     const itemLines = shown.map((r) => {
       const payload = (r.payload ?? {}) as Record<string, unknown>;
       return typeof payload.line === 'string' ? payload.line : '(内容缺失)';
     });
+    // digestKey 保持不变：即使内容因取消已读而变短，机器人仍按 key 去重，
+    // 「上次其实已送达」的情况照样能被挡住。
     const message = renderDigestLines(itemLines, overflow);
 
     if (dryRun) {
-      console.log(`[notify][dry-run] 重发 → ${target.wikidotId}（${batch.length} 条，第 ${attempt} 次）\n${message}\n`);
-      summary.sent += batch.length;
+      console.log(`[notify][dry-run] 重发 → ${target.wikidotId}（${stillPending.length} 条，第 ${attempt} 次，今日第 ${sentToday + 1} 条）\n${message}\n`);
+      summary.sent += stillPending.length;
+      sentTodayByUser.set(userId, sentToday + 1);
       continue;
     }
 
     const result = await pushQqMessage({ qq: target.address, message, dedupeKey: digestKey });
     if (result.ok) {
       await prisma.notificationDelivery.updateMany({
-        where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+        where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
         data: { state: 'SENT', sentAt: new Date(), lastError: null, attemptCount: attempt }
       });
-      summary.sent += batch.length;
+      summary.sent += stillPending.length;
+      // 计入当日私信条数：同一轮里该用户还有别的批次时，限额要立刻生效
+      sentTodayByUser.set(userId, sentToday + 1);
       console.log(`[notify] 批次 ${digestKey} 重发成功${result.deduped ? '（机器人判定为重复，说明上次已送达）' : ''}`);
       await reportChannelOutcome(target.accountId, 'sent', null);
     } else if (isPermanentFailure(result.error)) {
       await prisma.notificationDelivery.updateMany({
-        where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+        where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
         data: { state: 'FAILED', lastError: result.error ?? 'unknown', attemptCount: attempt }
       });
-      summary.failed += batch.length;
+      summary.failed += stillPending.length;
       await reportChannelOutcome(target.accountId, 'failed', result.error ?? 'unknown');
     } else {
       await prisma.notificationDelivery.updateMany({
-        where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+        where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
         data: { lastError: result.error ?? 'unknown', attemptCount: attempt }
       });
-      summary.failed += batch.length;
+      summary.failed += stillPending.length;
       console.warn(`[notify] 批次 ${digestKey} 第 ${attempt} 次重发仍失败：${result.error}`);
     }
   }
+}
+
+/**
+ * 找出这些 dedupeKey 里，来源告警**已在站内被读掉**的那些。
+ *
+ * dedupeKey 的前缀就是来源表、第二段就是主键（见 collectCandidates）：
+ *   pma:<PageMetricAlert.id>:...  uaa:<UserActivityAlert.id>:...  fia:<ForumInteractionAlert.id>
+ * 正常扫描本来就会把已读的排除在外，重发路径也必须做同样的检查 ——
+ * 否则用户在网页上看完，过一会儿 QQ 还会再推一遍。
+ */
+async function findAcknowledgedDedupeKeys(
+  prisma: PrismaClient,
+  dedupeKeys: string[]
+): Promise<Set<string>> {
+  const acked = new Set<string>();
+  const byPrefix = { pma: new Map<number, string>(), uaa: new Map<number, string>(), fia: new Map<number, string>() };
+
+  for (const key of dedupeKeys) {
+    const [prefix, rawId] = key.split(':');
+    if (!prefix || !rawId) continue;
+    const id = Number.parseInt(rawId, 10);
+    if (!Number.isFinite(id)) continue;
+    if (prefix === 'pma') byPrefix.pma.set(id, key);
+    else if (prefix === 'uaa') byPrefix.uaa.set(id, key);
+    else if (prefix === 'fia') byPrefix.fia.set(id, key);
+  }
+
+  const lookups: Array<Promise<void>> = [];
+  if (byPrefix.pma.size > 0) {
+    lookups.push((async () => {
+      const rows = await prisma.pageMetricAlert.findMany({
+        where: { id: { in: [...byPrefix.pma.keys()] }, acknowledgedAt: { not: null } },
+        select: { id: true }
+      });
+      for (const r of rows) { const k = byPrefix.pma.get(r.id); if (k) acked.add(k); }
+    })());
+  }
+  if (byPrefix.uaa.size > 0) {
+    lookups.push((async () => {
+      const rows = await prisma.userActivityAlert.findMany({
+        where: { id: { in: [...byPrefix.uaa.keys()] }, acknowledgedAt: { not: null } },
+        select: { id: true }
+      });
+      for (const r of rows) { const k = byPrefix.uaa.get(r.id); if (k) acked.add(k); }
+    })());
+  }
+  if (byPrefix.fia.size > 0) {
+    lookups.push((async () => {
+      const rows = await prisma.forumInteractionAlert.findMany({
+        where: { id: { in: [...byPrefix.fia.keys()] }, acknowledgedAt: { not: null } },
+        select: { id: true }
+      });
+      for (const r of rows) { const k = byPrefix.fia.get(r.id); if (k) acked.add(k); }
+    })());
+  }
+  await Promise.all(lookups);
+  return acked;
 }
 
 /**

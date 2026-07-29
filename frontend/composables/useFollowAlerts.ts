@@ -46,52 +46,63 @@ export function useFollowAlerts() {
    * resetState 时 +1，在途响应回来比对，不一致就整个丢弃。
    */
   const identityEpoch = useState<number>('followAlerts/epoch', () => 0);
+
   /**
-   * 请求世代号。identityEpoch 只在换账号时变，**挡不住同一账号内的并发请求**：
-   * 常驻 layout 的铃铛以 unreadOnly=false 预取，账号页的提醒流以 unreadOnly=true
-   * 强制刷新，两者会重叠，谁后到谁覆盖共享状态。若旧的那份（含已读、截断在 20 条）
-   * 后到，未读列表就又退回「列表空、徽标却有数字」。
-   * 每次请求 +1 并记下自己的号，只有最新一次允许写回 —— 与 useAlerts 的做法一致。
+   * 未读口径的结果**单独存**，不与 alerts（含已读）共用一个数组。
+   *
+   * 为什么必须分开而不是靠新鲜度/世代号调停：铃铛常驻 layout，要 unreadOnly=false
+   * （它会把已读条目也列出来，只是弱化显示）；账号页提醒流要 unreadOnly=true。
+   * 两者是**同时存在**的消费者，共用一个数组时，无论谁写都在破坏对方 ——
+   * 前几轮先后试过「记住上次口径」「按口径判新鲜」，都只是让覆盖发生得晚一点：
+   * 只要铃铛真的重新取一次，提醒流的未读列表就没了，于是列表空着而徽标有数字。
+   * 两种口径是两份数据，就该有两个位置。
    */
-  const requestGeneration = useState<number>('followAlerts/reqGen', () => 0);
+  const unreadAlerts = useState<FollowAlertItem[]>('followAlerts/unreadList', () => []);
+  const unreadLastFetchedAt = useState<string | null>('followAlerts/unreadLastFetchedAt', () => null);
+  const unreadLoading = useState<boolean>('followAlerts/unreadLoading', () => false);
   /**
-   * 上一次取数用的 unreadOnly 口径，必须与数据存在一起。
-   * 铃铛要 unreadOnly=false、账号页提醒流要 true；只按 lastFetchedAt 判新鲜的话，
-   * 谁先取到谁的那份就会被另一方当成自己的直接复用 ——
-   * 最新 20 条都已读、更早处还有未读时，列表空着而徽标有数字。
+   * 请求世代号，**按口径各记一份**。共用一个的话，铃铛发起的请求会让
+   * 提醒流那次在途请求的写回被判为过期而整个丢弃 —— 它俩本来井水不犯河水。
    */
-  const lastFetchUnreadOnly = useState<boolean | null>('followAlerts/lastFetchMode', () => null);
+  const requestGeneration = useState<{ all: number; unread: number }>(
+    'followAlerts/reqGen', () => ({ all: 0, unread: 0 })
+  );
 
   async function fetchAlerts(force = false, limit = 20, offset = 0, unreadOnly = false) {
-    if (loading.value && !force) return alerts.value;
-    // 口径不同就不算新鲜：手上那份是另一种 unreadOnly 取来的
-    const sameMode = lastFetchUnreadOnly.value === unreadOnly;
-    if (!force && sameMode && lastFetchedAt.value) {
-      const last = new Date(lastFetchedAt.value).getTime();
-      if (Date.now() - last < 60_000) return alerts.value;
+    const slot = unreadOnly ? 'unread' : 'all';
+    const list = unreadOnly ? unreadAlerts : alerts;
+    const stamp = unreadOnly ? unreadLastFetchedAt : lastFetchedAt;
+    const busy = unreadOnly ? unreadLoading : loading;
+
+    if (busy.value && !force) return list.value;
+    if (!force && stamp.value) {
+      const last = new Date(stamp.value).getTime();
+      if (Date.now() - last < 60_000) return list.value;
     }
-    loading.value = true;
+    busy.value = true;
     const myEpoch = identityEpoch.value;
-    const myRequest = requestGeneration.value + 1;
-    requestGeneration.value = myRequest;
+    const myRequest = requestGeneration.value[slot] + 1;
+    requestGeneration.value = { ...requestGeneration.value, [slot]: myRequest };
     try {
       const res = await $bff<{ ok: boolean; alerts: FollowAlertItem[]; unreadCount: number }>(
         '/alerts/follow', { method: 'GET', params: { limit, offset, ...(unreadOnly ? { unreadOnly: '1' } : {}) } }
       );
       // 期间换过身份 → 本次结果作废，绝不写回共享状态
-      if (identityEpoch.value !== myEpoch) return alerts.value;
-      // 已有更新的请求发出 → 本次是旧数据，丢弃
-      if (requestGeneration.value !== myRequest) return alerts.value;
+      if (identityEpoch.value !== myEpoch) return list.value;
+      // 同口径已有更新的请求发出 → 本次是旧数据，丢弃
+      if (requestGeneration.value[slot] !== myRequest) return list.value;
       if (res?.ok) {
-        alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
+        list.value = Array.isArray(res.alerts) ? res.alerts : [];
         // Number() 而非 Number.isFinite(原值)：COUNT 经 pg 驱动可能是字符串，
         // isFinite('3') 为 false 会把未读数静默判成 0
         const parsed = Number(res.unreadCount);
         unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
-        lastFetchedAt.value = new Date().toISOString();
-        lastFetchUnreadOnly.value = unreadOnly;
-        combined.value = buildCombinedGroups(alerts.value);
-        combinedLastFetchedAt.value = new Date().toISOString();
+        stamp.value = new Date().toISOString();
+        // combined 只服务铃铛那套（含已读），不要被未读口径的结果改写
+        if (!unreadOnly) {
+          combined.value = buildCombinedGroups(alerts.value);
+          combinedLastFetchedAt.value = new Date().toISOString();
+        }
         error.value = null;
       } else {
         // 保留已有数据：清空会让用户看到「暂无提醒」，误以为提醒被清掉了
@@ -100,21 +111,25 @@ export function useFollowAlerts() {
     } catch (e) {
       console.warn('[follow-alerts] fetch failed', e);
       // 旧请求的失败不该覆盖新请求正在做的事
-      if (requestGeneration.value === myRequest) error.value = '网络异常，未能刷新关注提醒';
+      if (requestGeneration.value[slot] === myRequest) error.value = '网络异常，未能刷新关注提醒';
     } finally {
       // 同理：旧请求结束不能把 loading 关掉，否则新请求还在飞就显示「已加载完」
-      if (requestGeneration.value === myRequest) loading.value = false;
+      if (requestGeneration.value[slot] === myRequest) busy.value = false;
     }
-    return alerts.value;
+    return list.value;
   }
 
   function resetState() {
     identityEpoch.value += 1;
-    requestGeneration.value += 1;
+    requestGeneration.value = {
+      all: requestGeneration.value.all + 1,
+      unread: requestGeneration.value.unread + 1
+    };
     alerts.value = [];
+    unreadAlerts.value = [];
     unreadCount.value = 0;
     lastFetchedAt.value = null;
-    lastFetchUnreadOnly.value = null;
+    unreadLastFetchedAt.value = null;
     combined.value = [];
     combinedLastFetchedAt.value = null;
     error.value = null;
@@ -193,6 +208,9 @@ export function useFollowAlerts() {
         }));
         // 递减而非按本地列表重算：列表只有最近 20 条，服务端可能有 100 条未读，
         // 重算会把徽标直接砍到 ≤19。
+        // 未读口径那份也要同步：它本就只装未读，读掉一条就该移出去，
+        // 否则提醒流会一直显示一条已经读过的条目，直到下次重新取数。
+        unreadAlerts.value = unreadAlerts.value.filter(a => a.id !== id);
         if (wasUnread) unreadCount.value = Math.max(0, Number(unreadCount.value || 0) - 1);
       }
     } catch (e) {
@@ -210,6 +228,8 @@ export function useFollowAlerts() {
           ...group,
           alerts: group.alerts.map(alert => ({ ...alert, acknowledgedAt: alert.acknowledgedAt ?? nowIso }))
         }));
+        // 未读口径那份整体清空 —— 全部已读之后它按定义就是空的
+        unreadAlerts.value = [];
         unreadCount.value = 0;
       }
     } catch (e) {
@@ -223,6 +243,9 @@ export function useFollowAlerts() {
 
   return {
     alerts,
+    /** 未读口径的结果，供账号页提醒流使用（与 alerts 是两份独立数据） */
+    unreadAlerts,
+    unreadLoading,
     unreadCount,
     loading,
     lastFetchedAt,

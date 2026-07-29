@@ -59,21 +59,24 @@ function useAlertsState() {
   const loading = useState<AlertsRecord<boolean>>('alerts/loading', () => createAlertsRecord(() => false));
   const lastFetchedAt = useState<AlertsRecord<string | null>>('alerts/lastFetchedAt', () => createAlertsRecord(() => null));
   /**
-   * 上一次取数用的 unreadOnly 口径，**必须与数据存在一起**。
+   * 未读口径的结果**单独存一份**，不与 alerts（含已读）共用。
    *
-   * 两个调用方口径不同：常驻 layout 的铃铛要 unreadOnly=false（列出最近的，含已读），
-   * 账号页的提醒流要 unreadOnly=true。若只按 lastFetchedAt 判新鲜，铃铛刚取过的
-   * 「最近 20 条含已读」会被提醒流当成自己那份直接复用；当最新 20 条都已读、
-   * 更早处还有未读时，列表就空着而徽标仍有数字。
-   * 把口径记在数据旁边，谁写数据谁更新，就不会有调用方绕过它。
+   * 两个调用方口径不同且同时存在：常驻 layout 的铃铛要 unreadOnly=false
+   * （列出最近的，含已读，只是弱化显示），账号页提醒流要 unreadOnly=true。
+   * 共用一个数组时无论谁写都在破坏对方 —— 先后试过「记住上次口径」
+   * 「按口径判新鲜」，都只是让覆盖发生得晚一点：铃铛真的重新取一次，
+   * 提醒流的未读列表就没了，于是列表空着而徽标有数字。
+   * 两种口径是两份数据，就该有两个位置。
    */
-  const lastFetchUnreadOnly = useState<AlertsRecord<boolean | null>>('alerts/lastFetchMode', () => createAlertsRecord(() => null));
+  const unreadAlerts = useState<AlertsRecord<AlertItem[]>>('alerts/unreadItems', () => createAlertsRecord(() => []));
+  const unreadLastFetchedAt = useState<AlertsRecord<string | null>>('alerts/unreadLastFetchedAt', () => createAlertsRecord(() => null));
+  const unreadLoading = useState<AlertsRecord<boolean>>('alerts/unreadLoading', () => createAlertsRecord(() => false));
   const activeMetric = useState<AlertMetric>('alerts/activeMetric', () => 'COMMENT_COUNT');
   const error = useState<AlertsRecord<string | null>>('alerts/error', () => createAlertsRecord(() => null));
   // 请求世代必须**跨组件共享**：每个 useAlerts() 调用各自新建一个 Map 的话，
   // layout 里 resetState 递增的世代号影响不到面板里那份，守卫等于没有。
   const epochs = useState<AlertsRecord<number>>('alerts/epochs', () => createAlertsRecord(() => 0));
-  return { alerts, unreadCount, loading, lastFetchedAt, lastFetchUnreadOnly, activeMetric, error, epochs };
+  return { alerts, unreadAlerts, unreadCount, loading, unreadLoading, lastFetchedAt, unreadLastFetchedAt, activeMetric, error, epochs };
 }
 
 export function useAlerts() {
@@ -82,7 +85,7 @@ export function useAlerts() {
   // 请求世代：force 刷新会绕过 loading 门禁，于是同一 metric 可能有两个请求在飞；
   // 换账号时 A 的请求也可能在 B 登录后才返回。两种情况都会用陈旧/他人的数据
   // 覆盖共享状态。每次发起 +1，回来时比对，不是最新的就整个丢弃。
-  const { alerts, unreadCount, loading, lastFetchedAt, lastFetchUnreadOnly, activeMetric, error, epochs } = useAlertsState();
+  const { alerts, unreadAlerts, unreadCount, loading, unreadLoading, lastFetchedAt, unreadLastFetchedAt, activeMetric, error, epochs } = useAlertsState();
   // Persist last used metric for better UX across sessions
   if (typeof window !== 'undefined') {
     try {
@@ -102,7 +105,9 @@ export function useAlerts() {
     alerts.value = createAlertsRecord(() => []);
     unreadCount.value = createAlertsRecord(() => 0);
     lastFetchedAt.value = createAlertsRecord(() => null);
-    lastFetchUnreadOnly.value = createAlertsRecord(() => null);
+    unreadAlerts.value = createAlertsRecord(() => []);
+    unreadLastFetchedAt.value = createAlertsRecord(() => null);
+    unreadLoading.value = createAlertsRecord(() => false);
     loading.value = createAlertsRecord(() => false);
     error.value = createAlertsRecord(() => null);
     activeMetric.value = 'COMMENT_COUNT';
@@ -124,23 +129,26 @@ export function useAlerts() {
         }
       }
     }
+    // 未读口径与含已读口径各存各的，取数、时间戳、loading 全部按口径路由
+    const list = unreadOnly ? unreadAlerts : alerts;
+    const stamps = unreadOnly ? unreadLastFetchedAt : lastFetchedAt;
+    const busy = unreadOnly ? unreadLoading : loading;
+
     // 注意顺序：loading 门禁必须在 force 之后。原先写在前面，导致 force=true 的
     // 「刷新」在已有请求在飞时被静默吞掉，界面既不报错也不转圈。
-    if (!force && loading.value[targetMetric]) {
-      return alerts.value[targetMetric];
+    if (!force && busy.value[targetMetric]) {
+      return list.value[targetMetric];
     }
-    const lastFetchedTs = lastFetchedAt.value[targetMetric];
-    // 口径不同就不算新鲜：手上那份是另一种 unreadOnly 取来的，复用它会答非所问
-    const sameMode = lastFetchUnreadOnly.value[targetMetric] === unreadOnly;
-    if (!force && sameMode && lastFetchedTs) {
+    const lastFetchedTs = stamps.value[targetMetric];
+    if (!force && lastFetchedTs) {
       const lastFetched = new Date(lastFetchedTs).getTime();
       const now = Date.now();
       if (now - lastFetched < 60_000) {
-        return alerts.value[targetMetric];
+        return list.value[targetMetric];
       }
     }
 
-    loading.value[targetMetric] = true;
+    busy.value[targetMetric] = true;
     const myEpoch = epochs.value[targetMetric] + 1;
     epochs.value[targetMetric] = myEpoch;
     try {
@@ -149,16 +157,15 @@ export function useAlerts() {
         params: { metric: METRIC_QUERY_MAP[targetMetric], ...(unreadOnly ? { unreadOnly: '1' } : {}) }
       });
       // 在途期间又发起了更新的请求 → 本次结果作废
-      if (epochs.value[targetMetric] !== myEpoch) return alerts.value[targetMetric];
+      if (epochs.value[targetMetric] !== myEpoch) return list.value[targetMetric];
       if (res?.ok) {
-        alerts.value[targetMetric] = Array.isArray(res.alerts) ? res.alerts : [];
+        list.value[targetMetric] = Array.isArray(res.alerts) ? res.alerts : [];
         // 用 Number() 而非 Number.isFinite(原值)：PostgreSQL 的 COUNT 经 pg 驱动
         // 可能返回字符串，isFinite('3') 为 false 会把未读数静默判成 0 —— 这正是
         // 「未读数不同步」最容易复发的坑，且不抛错、不告警。
         const parsed = Number(res.unreadCount);
         unreadCount.value[targetMetric] = Number.isFinite(parsed) ? parsed : 0;
-        lastFetchedAt.value[targetMetric] = new Date().toISOString();
-        lastFetchUnreadOnly.value[targetMetric] = unreadOnly;
+        stamps.value[targetMetric] = new Date().toISOString();
         error.value[targetMetric] = null;
       } else {
         // 保留已有数据：清空会让用户看到「暂无提醒」，误以为提醒被清掉了
@@ -170,9 +177,9 @@ export function useAlerts() {
         error.value[targetMetric] = '网络异常，未能刷新提醒';
       }
     } finally {
-      loading.value[targetMetric] = false;
+      busy.value[targetMetric] = false;
     }
-    return alerts.value[targetMetric];
+    return list.value[targetMetric];
   }
 
   async function markAlertRead(id: number, metricOpt?: AlertMetric) {
@@ -189,8 +196,15 @@ export function useAlerts() {
       target.acknowledgedAt = new Date().toISOString();
       unreadCount.value[metric] = Math.max(0, prevUnread - 1);
     }
+    // 未读口径那份只装未读，读掉一条就该移出去；否则提醒流会继续显示
+    // 一条已经读过的条目，直到下一次重新取数
+    const prevUnreadList = unreadAlerts.value[metric] ?? [];
+    unreadAlerts.value[metric] = prevUnreadList.filter(item => item.id !== id);
     try {
       const res = await $bff<{ ok: boolean; acknowledgedAt: string | null }>(`/alerts/${id}/read`, { method: 'POST' });
+      if (!res?.ok) {
+        unreadAlerts.value[metric] = prevUnreadList;
+      }
       if (!res?.ok && target) {
         // 回滚到请求前的服务端计数，而不是按本页重算
         target.acknowledgedAt = prevAck;
@@ -200,6 +214,7 @@ export function useAlerts() {
       }
     } catch (error) {
       console.warn('[alerts] mark read failed', error);
+      unreadAlerts.value[metric] = prevUnreadList;
       if (target) {
         target.acknowledgedAt = prevAck;
         unreadCount.value[metric] = prevUnread;
@@ -219,6 +234,7 @@ export function useAlerts() {
           ...item,
           acknowledgedAt: item.acknowledgedAt ?? nowIso
         }));
+        unreadAlerts.value[metric] = [];
         unreadCount.value[metric] = 0;
       }
     } catch (error) {
@@ -251,6 +267,18 @@ export function useAlerts() {
           flat.push({ ...item, sourceMetric: key });
         }
       });
+    return flat.sort((a, b) => String(b.detectedAt).localeCompare(String(a.detectedAt)));
+  });
+
+  /** 与 alertsAll 同形，但取自未读口径那份数据，供账号页提醒流使用 */
+  const alertsAllUnread = computed(() => {
+    const buckets = unreadAlerts.value;
+    const flat: Array<AlertItem & { sourceMetric: AlertMetric } > = [];
+    ALERT_METRICS.forEach((key) => {
+      for (const item of (buckets[key] ?? [])) {
+        flat.push({ ...item, sourceMetric: key });
+      }
+    });
     return flat.sort((a, b) => String(b.detectedAt).localeCompare(String(a.detectedAt)));
   });
 
@@ -305,6 +333,9 @@ export function useAlerts() {
   return {
     alerts: currentAlerts,
     alertsAll,
+    alertsAllUnread,
+    unreadAlerts,
+    unreadLoading,
     alertsByMetric: alerts,
     unreadCount: currentUnreadCount,
     unreadByMetric: unreadCount,
