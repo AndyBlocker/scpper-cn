@@ -363,7 +363,14 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 于是「原批次重发」与「新告警组新批」互不干扰。
   // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
   // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
-  const replayResult = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget);
+  // 偏好必须在**重发之前**加载：重发路径同样要尊重「用户已关掉这个类型」
+  // 以及定时/限额设置。首次投递失败后用户去关掉了某类通知，
+  // 重试时还照发出去，等于设置根本没生效。
+  const prefsByUser = await loadNotifyPrefs(prisma, userIds);
+
+  const replayResult = await resumeScheduledBatches(
+    prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget, prefsByUser
+  );
   const replayedCount = replayResult.replayed;
   const replaySkipped = replayResult.skipped;
 
@@ -375,23 +382,31 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 不加这层过滤的话，用户绑完 QQ 的第一轮就会收到绑定**之前**最多 24 小时的积压 ——
   // 他授权的是今后的动态，不是过去一天的，观感上像是刚绑就被刷屏。
   // 这里只过滤不记账：这些候选会随回看窗口自然滑出，不必为它们写一堆抑制记录。
-  // 用户的 QQ 侧偏好：哪些类型要推、日限额多少、实时还是定时
-  const prefsByUser = await loadNotifyPrefs(prisma, userIds);
-
   const candidates: Candidate[] = [];
   let preBindingSkipped = 0;
-  let prefFiltered = 0;
+  const optedOut: Candidate[] = [];
   for (const c of collected) {
     const boundAt = targetByUserId.get(c.userId)?.verifiedAt ?? null;
     if (boundAt && c.detectedAt <= boundAt) { preBindingSkipped += 1; continue; }
     // 该用户把这个类型的 QQ 推送关掉了。
     // 注意这**不影响站内** —— 两个渠道各自独立，站内照常展示。
     // 缺省 true：没设置过的用户默认全收，绑定后立刻可用。
-    if (prefsByUser.get(c.userId)?.qqEnabled.get(c.notifyType) === false) { prefFiltered += 1; continue; }
+    if (prefsByUser.get(c.userId)?.qqEnabled.get(c.notifyType) === false) { optedOut.push(c); continue; }
     candidates.push(c);
   }
-  if (prefFiltered > 0) {
-    console.log(`[notify] 按用户偏好跳过 ${prefFiltered} 条（对应类型的 QQ 推送已关闭）`);
+  // 关闭期间的候选必须**落账为 SUPPRESSED**，不能只是丢掉。
+  // 只丢掉的话它们每轮都会被重新扫到，用户一旦在回看窗口内重新打开该类型，
+  // 关闭期间攒下的全部告警会一次性倒灌过去 —— 而他期望的是「从现在起开始收」。
+  if (optedOut.length > 0) {
+    const byUser = new Map<number, Candidate[]>();
+    for (const c of optedOut) {
+      const l = byUser.get(c.userId) ?? []; l.push(c); byUser.set(c.userId, l);
+    }
+    for (const [uid, items] of byUser) {
+      await recordAll(prisma, items, uid, 'SUPPRESSED', 'type_disabled', options.dryRun);
+    }
+    summary.suppressed += optedOut.length;
+    console.log(`[notify] 按用户偏好抑制 ${optedOut.length} 条（对应类型的 QQ 推送已关闭）`);
   }
   if (preBindingSkipped > 0) {
     console.log(`[notify] 跳过 ${preBindingSkipped} 条产生于绑定生效之前的告警`);
@@ -530,7 +545,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     if (prefs.mode === 'DAILY_DIGEST') {
       const hour = currentHourUtc8();
       if (hour !== prefs.digestHour) continue;
-      if (sentToday > 0) continue; // 今天已经发过这一封
+      // 「今天发过没」必须按 UTC+8 **自然日**判断，不能用滚动 24 小时。
+      // 用滚动窗口时：昨天的汇总若发在该时段偏后，今天同一时段的每次轮询
+      // 都还能看到它而跳过；等它滑出窗口时那个整点可能已经过去，
+      // 于是今天整天都不发 —— 一个每天固定时间的功能会间歇性哑火。
+      const sentTodayCalendar = await countDigestsSentSince(prisma, userId, startOfUtc8Day());
+      if (sentTodayCalendar > 0) continue;
     }
 
     // 日限额取用户设置（已在加载时与全局上限取过更小值）
@@ -746,6 +766,8 @@ async function recordAll(
         // 合并字段一并存下：重发时只有 payload，没有原始候选，
         // 不存的话同一批重发出来的格式会和首次不一致
         groupKey: c.groupKey,
+        // 重发时要据此判断「用户是否已关掉这个类型」，不存就无从判断
+        notifyType: c.notifyType,
         ...(c.mergeHead ? { mergeHead: c.mergeHead } : {}),
         ...(c.mergePart ? { mergePart: c.mergePart } : {}),
         ...(c.mergeTail ? { mergeTail: c.mergeTail } : {}),
@@ -796,7 +818,10 @@ export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): 
     })
   ]);
 
-  for (const uid of userIds) out.set(uid, { qqEnabled: new Map(), ...DEFAULT_PREFS });
+  // 默认值同样要钳制：运维把 NOTIFY_DAILY_LIMIT 调到 20 以下时，
+  // 没有设置行的用户若保留默认 20，就绕过了运维上限。
+  const defaults = { ...DEFAULT_PREFS, dailyLimit: Math.max(1, Math.min(DEFAULT_PREFS.dailyLimit, DAILY_LIMIT)) };
+  for (const uid of userIds) out.set(uid, { qqEnabled: new Map(), ...defaults });
   for (const r of rows) out.get(r.userId)?.qqEnabled.set(r.type as NotifyType, r.qqEnabled);
   for (const c of settings) {
     const p = out.get(c.userId);
@@ -810,6 +835,13 @@ export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): 
 }
 
 /** UTC+8 的当前小时。定时推送按用户所在时区（站点统一 UTC+8）解释。 */
+/** UTC+8 当天 0 点对应的 UTC 时刻。用于「今天发过没」这类自然日判断。 */
+export function startOfUtc8Day(): Date {
+  const shifted = new Date(Date.now() + 8 * 3600 * 1000);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - 8 * 3600 * 1000);
+}
+
 export function currentHourUtc8(): number {
   return new Date(Date.now() + 8 * 3600 * 1000).getUTCHours();
 }
@@ -892,7 +924,9 @@ async function resumeScheduledBatches(
   dryRun: boolean,
   shouldStop?: () => boolean,
   /** 发送前复验绑定（与常规投递共用同一份实现与缓存） */
-  revalidateTarget?: (t: QqTarget) => Promise<QqTarget | null>
+  revalidateTarget?: (t: QqTarget) => Promise<QqTarget | null>,
+  /** 与常规投递共用同一份偏好，保证两条路径行为一致 */
+  prefsByUser?: Map<number, UserNotifyPrefs>
 ): Promise<{ replayed: number; skipped: boolean }> {
   // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
   // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
@@ -1025,8 +1059,31 @@ async function resumeScheduledBatches(
       continue;
     }
 
+    // 用户在首次投递失败之后关掉了这个类型 → 取消，不再重发。
+    // 「我已经关掉了它，为什么还收到」是最直接的设置失效体感。
+    const prefs = prefsByUser?.get(first.userId);
+    const optedOut = new Set<string>();
+    if (prefs) {
+      for (const r of batch) {
+        const t = ((r.payload ?? {}) as Record<string, unknown>).notifyType;
+        if (typeof t === 'string' && prefs.qqEnabled.get(t as NotifyType) === false) {
+          optedOut.add(r.dedupeKey);
+        }
+      }
+    }
+    if (optedOut.size > 0) {
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: [...optedOut] }, state: 'SCHEDULED' },
+          data: { state: 'CANCELLED', lastError: 'type_disabled' }
+        });
+      }
+      summary.suppressed += optedOut.size;
+      console.log(`[notify] 批次 ${digestKey} 有 ${optedOut.size} 条的类型已被用户关闭，取消重发`);
+    }
+
     // 站内已读的那些直接取消，不再推送
-    const stillPending = batch.filter((r) => !acknowledged.has(r.dedupeKey));
+    const stillPending = batch.filter((r) => !acknowledged.has(r.dedupeKey) && !optedOut.has(r.dedupeKey));
     const cancelledKeys = batch.filter((r) => acknowledged.has(r.dedupeKey)).map((r) => r.dedupeKey);
     if (cancelledKeys.length > 0) {
       if (!dryRun) {
@@ -1051,9 +1108,16 @@ async function resumeScheduledBatches(
       sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
       sentTodayByUser.set(userId, sentToday);
     }
-    if (sentToday >= DAILY_LIMIT) {
-      console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${DAILY_LIMIT}，批次 ${digestKey} 留待下轮`);
-      continue; // 保持 SCHEDULED，不消耗重试次数
+    // 限额与定时同样按每人设置，两条投递路径的行为必须一致
+    const effLimit = prefs?.dailyLimit ?? DAILY_LIMIT;
+    if (prefs?.mode === 'DAILY_DIGEST') {
+      if (currentHourUtc8() !== prefs.digestHour || sentToday > 0) {
+        continue; // 不到点或今天已发过：保持 SCHEDULED，不消耗重试次数
+      }
+    }
+    if (sentToday >= effLimit) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${effLimit}，批次 ${digestKey} 留待下轮`);
+      continue;
     }
     // 必须在**发送前**确认额度够装下整批：原先只判 >0，
     // 于是剩 1 条额度也会把一整批（可能几十条）发出去，再把额度减成负数 ——

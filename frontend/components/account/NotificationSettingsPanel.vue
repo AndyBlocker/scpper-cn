@@ -56,12 +56,25 @@ watch(channel, (c) => {
  * 站内与 QQ **完全独立**：关掉站内不影响 QQ，反之亦然。
  * 这是刻意的 —— 「站内不看、只要 QQ 推」是常见诉求。
  */
-async function toggleChannel(type: NotifyType, key: 'siteEnabled' | 'qqEnabled', next: boolean) {
+async function toggleChannel(
+  type: NotifyType,
+  key: 'siteEnabled' | 'qqEnabled',
+  next: boolean,
+  el: HTMLInputElement
+) {
   const row = byType.value.get(type)
   if (!row) return
   const updated = { ...row, [key]: next }
   const ok = await saveNotifyPrefs({ matrix: [updated] })
-  if (ok) flashSaved()
+  if (!ok) {
+    // 这里用的是 :checked 单向绑定，浏览器点击时已经改了 DOM，
+    // 而保存失败时 matrix 没变 —— Vue 的 vdom 认为值没变化就不会 patch 回去，
+    // 勾选框会一直显示成「保存成功了」的样子，直到组件重新挂载。
+    // 必须按权威状态手动写回。
+    el.checked = row[key]
+    return
+  }
+  flashSaved()
 }
 
 async function saveChannelSetting() {
@@ -170,7 +183,7 @@ onMounted(() => {
                   :checked="row.siteEnabled"
                   :disabled="prefsSaving"
                   :aria-label="`${TYPE_LABEL[row.type].title} 的站内提醒`"
-                  @change="toggleChannel(row.type, 'siteEnabled', ($event.target as HTMLInputElement).checked)"
+                  @change="toggleChannel(row.type, 'siteEnabled', ($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
                 >
               </span>
               <span class="w-12 shrink-0 text-center">
@@ -181,7 +194,7 @@ onMounted(() => {
                   :disabled="prefsSaving || !qqBound"
                   :aria-label="`${TYPE_LABEL[row.type].title} 的 QQ 推送`"
                   :title="qqBound ? '' : '绑定 QQ 后可用'"
-                  @change="toggleChannel(row.type, 'qqEnabled', ($event.target as HTMLInputElement).checked)"
+                  @change="toggleChannel(row.type, 'qqEnabled', ($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
                 >
               </span>
             </div>
@@ -347,6 +360,12 @@ onMounted(() => {
                   :disabled="prefsSaving"
                 >
                 <span class="text-xs text-[rgb(var(--muted))]">条</span>
+                <span
+                  v-if="dailyLimitInput > channel.globalDailyLimit"
+                  class="text-xs text-[rgb(var(--warning-strong))]"
+                >
+                  超过站点上限，实际按 {{ channel.globalDailyLimit }} 条执行
+                </span>
               </div>
             </div>
 

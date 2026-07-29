@@ -745,7 +745,9 @@ export class PageMetricMonitorJob {
         where: {
           metric: PageMetricType.REVISION_COUNT,
           source: AUTO_WATCH_SOURCE,
-          mutedAt: null,
+          // 不再按 mutedAt 过滤（理由见类上方注释）——
+          // 只改了评论/投票两处而漏掉这里的话，迁移前静音过修订提醒的用户
+          // 即使在新设置页重新打开，也永远收不到修订提醒。
           pageId: { in: pageIdChunk }
         },
         select: {

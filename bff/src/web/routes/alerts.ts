@@ -427,7 +427,26 @@ const DELIVERY_MODES = ['REALTIME', 'DAILY_DIGEST'] as const;
 type DeliveryMode = (typeof DELIVERY_MODES)[number];
 
 interface NotifyMatrixRow { type: NotifyType; siteEnabled: boolean; qqEnabled: boolean }
-interface NotifyChannelSetting { qqDailyLimit: number; qqMode: DeliveryMode; qqDigestHour: number }
+interface NotifyChannelSetting {
+  qqDailyLimit: number;
+  qqMode: DeliveryMode;
+  qqDigestHour: number;
+  /**
+   * 实际生效的每日上限 = min(用户设置, 运维全局上限)。
+   *
+   * 不返回它的话，用户填 100、接口原样回显 100，而投递器按全局上限 40 执行 ——
+   * 设置页显示的数字根本不会生效，用户却毫无察觉。
+   */
+  effectiveDailyLimit: number;
+  /** 运维设定的全局上限，供界面提示 */
+  globalDailyLimit: number;
+}
+
+/**
+ * 与 backend 的 NOTIFY_DAILY_LIMIT 同源。
+ * 两处读同一个环境变量，避免 BFF 说一套、投递器做一套。
+ */
+const GLOBAL_DAILY_LIMIT = Math.max(1, Number(process.env.NOTIFY_DAILY_LIMIT ?? '40') || 40);
 
 /**
  * 读取通知偏好矩阵与渠道设置。
@@ -465,8 +484,11 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
     // NUMERIC/INTEGER 经 pg 驱动可能是字符串，必须 Number() —— 这个坑在本仓库反复出现
     qqDailyLimit: c ? Number(c.qqDailyLimit) : 20,
     qqMode: c && DELIVERY_MODES.includes(c.qqMode) ? (c.qqMode as DeliveryMode) : 'REALTIME',
-    qqDigestHour: c ? Number(c.qqDigestHour) : 21
+    qqDigestHour: c ? Number(c.qqDigestHour) : 21,
+    effectiveDailyLimit: 0,
+    globalDailyLimit: GLOBAL_DAILY_LIMIT
   };
+  channel.effectiveDailyLimit = Math.max(1, Math.min(channel.qqDailyLimit, GLOBAL_DAILY_LIMIT));
   return { matrix, channel };
 }
 
@@ -508,6 +530,25 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
           return res.status(400).json({ ok: false, error: 'invalid_flags' });
         }
       }
+      // ── 渠道设置的校验必须在**任何写入之前**完成。
+      //    否则「矩阵合法 + 渠道非法」的请求会先把矩阵写进去、再返回 400，
+      //    调用方以为整个请求失败了，实际已经改了一半 —— 之后两边状态对不上。
+      const c = body.channel ?? {};
+      const hasChannel = c.qqDailyLimit !== undefined || c.qqMode !== undefined || c.qqDigestHour !== undefined;
+      const limit = c.qqDailyLimit === undefined ? null : Number(c.qqDailyLimit);
+      const hour = c.qqDigestHour === undefined ? null : Number(c.qqDigestHour);
+      if (hasChannel) {
+        if (limit !== null && (!Number.isInteger(limit) || limit < 1 || limit > 200)) {
+          return res.status(400).json({ ok: false, error: 'invalid_daily_limit' });
+        }
+        if (hour !== null && (!Number.isInteger(hour) || hour < 0 || hour > 23)) {
+          return res.status(400).json({ ok: false, error: 'invalid_digest_hour' });
+        }
+        if (c.qqMode !== undefined && !DELIVERY_MODES.includes(c.qqMode)) {
+          return res.status(400).json({ ok: false, error: 'invalid_mode' });
+        }
+      }
+
       for (const row of rows) {
         await pool.query(
           `INSERT INTO "UserNotificationPreference" ("userId","type","siteEnabled","qqEnabled","updatedAt")
@@ -520,22 +561,8 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
         );
       }
 
-      // ── 渠道级设置：三项都可选，只改传了的
-      const c = body.channel ?? {};
-      const hasChannel = c.qqDailyLimit !== undefined || c.qqMode !== undefined || c.qqDigestHour !== undefined;
+      // ── 渠道级设置：三项都可选，只改传了的（校验已在上方统一完成）
       if (hasChannel) {
-        const limit = c.qqDailyLimit === undefined ? null : Number(c.qqDailyLimit);
-        const hour = c.qqDigestHour === undefined ? null : Number(c.qqDigestHour);
-        // 校验放在写库前：数据库虽有 CHECK 兜底，但那会抛 500 而不是给出可读的 400
-        if (limit !== null && (!Number.isInteger(limit) || limit < 1 || limit > 200)) {
-          return res.status(400).json({ ok: false, error: 'invalid_daily_limit' });
-        }
-        if (hour !== null && (!Number.isInteger(hour) || hour < 0 || hour > 23)) {
-          return res.status(400).json({ ok: false, error: 'invalid_digest_hour' });
-        }
-        if (c.qqMode !== undefined && !DELIVERY_MODES.includes(c.qqMode)) {
-          return res.status(400).json({ ok: false, error: 'invalid_mode' });
-        }
         await pool.query(
           `INSERT INTO "UserNotificationChannelSetting"
              ("userId","qqDailyLimit","qqMode","qqDigestHour","updatedAt")

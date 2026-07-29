@@ -25,6 +25,9 @@ export interface NotifyChannelSetting {
   qqDailyLimit: number
   qqMode: DeliveryMode
   qqDigestHour: number
+  /** 实际生效上限 = min(用户设置, 运维全局上限)。填得比它大不会生效。 */
+  effectiveDailyLimit: number
+  globalDailyLimit: number
 }
 
 interface NotifyPrefsResponse {
@@ -33,7 +36,10 @@ interface NotifyPrefsResponse {
   channel: NotifyChannelSetting
 }
 
-const DEFAULT_CHANNEL: NotifyChannelSetting = { qqDailyLimit: 20, qqMode: 'REALTIME', qqDigestHour: 21 }
+const DEFAULT_CHANNEL: NotifyChannelSetting = {
+  qqDailyLimit: 20, qqMode: 'REALTIME', qqDigestHour: 21,
+  effectiveDailyLimit: 20, globalDailyLimit: 40
+}
 
 export function useNotifyPreferences() {
   const { $bff } = useNuxtApp()
