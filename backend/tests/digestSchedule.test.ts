@@ -54,3 +54,33 @@ test('任意上次时刻都能得到严格晚于它的到期时刻（不变量�
       `offset=${offset}h 时到期时刻必须晚于上次截止线，否则会重复发送`);
   }
 });
+
+test('空周期也必须推进水位线，否则永久冻住（review P1）', () => {
+  const DAY = 24 * 3600 * 1000;
+  const hour = 21;
+  // 模拟：只在「发送成功」时推进 vs 「周期到期即推进」
+  const advanceOnSendOnly = (last: Date, sent: boolean) => (sent ? nextDigestDueAt(last, hour) : last);
+  const advanceOnDue = (last: Date) => nextDigestDueAt(last, hour);
+
+  let stuck = new Date(utc8HourToday(hour).getTime() - 3 * DAY);
+  const frozen = advanceOnSendOnly(stuck, false);   // 那天没内容
+  assert.equal(frozen.getTime(), stuck.getTime(), '旧逻辑：水位线原地不动');
+  // 于是之后每一条新告警都晚于这个陈旧边界 → 被无限推迟
+  const newAlert = new Date();
+  assert.ok(newAlert > frozen, '新告警晚于冻住的边界，会被判为「等下个周期」而永不发送');
+
+  const advanced = advanceOnDue(stuck);
+  assert.ok(advanced > stuck, '新逻辑：周期到期即推进');
+});
+
+test('水位线在任何完成路径上都必须严格前进（不变量）', () => {
+  const DAY = 24 * 3600 * 1000;
+  const base = utc8HourToday(21);
+  // 常规发送、空周期、重发成功 —— 三条路径都用同一个推进函数
+  for (const offset of [-3 * DAY, -2 * DAY, -DAY, -3600_000]) {
+    const last = new Date(base.getTime() + offset);
+    const next = nextDigestDueAt(last, 21);
+    assert.ok(next.getTime() > last.getTime(),
+      `offset=${offset}ms：推进后必须严格晚于原值，否则会卡在同一个周期`);
+  }
+});

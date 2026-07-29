@@ -761,6 +761,10 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     }
   }
 
+  // 本轮到期的定时周期一律推进水位线 —— 包括「没东西可发」的空周期。
+  // 只在发送成功时推进的话，一个空周期就能把水位线永久冻住。
+  await advanceDigestWatermarks(prisma, prefsByUser, Boolean(options.dryRun));
+
   if (!options.dryRun) {
     await prisma.notificationDispatchState.update({
       where: { id: 1 }, data: { lastSuccessAt: new Date() }
@@ -965,6 +969,38 @@ export function utc8HourToday(hour: number): Date {
 
 export function currentHourUtc8(): number {
   return new Date(Date.now() + 8 * 3600 * 1000).getUTCHours();
+}
+
+
+/**
+ * 推进定时用户的周期水位线。
+ *
+ * 【为什么不能只在「发送成功」时推进】
+ * 一个到期的周期完全可能没有任何内容（用户那天没动静），或者内容全被
+ * 站内读掉/被偏好抑制。这些情况下没有任何一次发送发生，水位线就停在原地 ——
+ * nextDigestDueAt 之后永远返回那个空周期的边界，而**每一条新告警都晚于它**，
+ * 于是被无限推迟，这个用户从此再也收不到汇总。
+ *
+ * 正确的语义是：**周期到期并被处理过**就推进，与是否真的发出消息无关。
+ * 内容若因暂时失败进了重发队列，那批自己带着 digestCutoff，不会丢。
+ */
+async function advanceDigestWatermarks(
+  prisma: PrismaClient,
+  prefsByUser: Map<number, UserNotifyPrefs>,
+  dryRun: boolean
+): Promise<void> {
+  if (dryRun) return;
+  const now = Date.now();
+  for (const [userId, prefs] of prefsByUser) {
+    if (prefs.mode !== 'DAILY_DIGEST') continue;
+    const due = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
+    if (now < due.getTime()) continue;          // 还没到期
+    if (prefs.lastDigestCutoffAt && due <= prefs.lastDigestCutoffAt) continue;
+    await prisma.userNotificationChannelSetting.updateMany({
+      where: { userId },
+      data: { lastDigestCutoffAt: due }
+    });
+  }
 }
 
 /** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
@@ -1263,24 +1299,32 @@ async function resumeScheduledBatches(
     }
     // 限额与定时同样按每人设置，两条投递路径的行为必须一致
     const effLimit = prefs?.dailyLimit ?? DAILY_LIMIT;
+    // 这批所属周期的截止线（仅定时模式有意义）；发送成功后据此推进水位线
+    let batchCutoff: Date | null = null;
     if (prefs?.mode === 'DAILY_DIGEST') {
       // 与常规路径同口径：过点即可补发，且「今天发过没」按 UTC+8 自然日算。
       // sentToday 是滚动 24 小时的计数，用在这里会让昨天晚些时候发出的汇总
       // 一直挡住今天的重发，直到它滑出窗口 —— 那时批次可能已经过期。
-      const reachedHour = currentHourUtc8() >= prefs.digestHour;
-      const sentTodayCalendar = reachedHour
-        ? await countDigestsSentSince(prisma, first.userId, startOfUtc8Day())
-        : 0;
-      if (!reachedHour || sentTodayCalendar > 0) continue;
-      // 与常规路径同样的截止线判断：批次里若有内容产生于今天的截止线之后，
-      // 就该等明天。用户可能是在实时模式下攒下这批、之后才切成定时的 ——
-      // 只看时钟而不看内容时间，等于绕过他刚选的节奏。
-      const cutoff = utc8HourToday(prefs.digestHour);
-      const anyAfterCutoff = batch.some((r) => {
-        const d = ((r.payload ?? {}) as Record<string, unknown>).detectedAt;
-        return typeof d === 'string' && new Date(d) >= cutoff;
-      });
-      if (anyAfterCutoff) continue;
+      // 资格看**这批自己的截止线**，不是「今天几点」。
+      //
+      // 一个待重发的定时批次，其截止线在它进入队列时就已经过去了 ——
+      // 它欠的是那个周期的账。若机器人在午夜后、今天设定时点之前恢复，
+      // 再按「今天几点」判断会把它压到今晚，期间最老的行可能已经过期。
+      // 批次自带 digestCutoff 时直接用它；没有的（实时模式下攒的、
+      // 之后才切成定时）退回按本周期的到期时刻判断。
+      const storedCutoff = ((batch[0]?.payload ?? {}) as Record<string, unknown>).digestCutoff;
+      batchCutoff = typeof storedCutoff === 'string'
+        ? new Date(storedCutoff)
+        : nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
+      if (Date.now() < batchCutoff!.getTime()) continue;   // 本周期还没到期
+      // 没有 digestCutoff 的批次（模式切换而来）还要确认内容不晚于截止线
+      if (typeof storedCutoff !== 'string') {
+        const anyAfterCutoff = batch.some((r) => {
+          const d = ((r.payload ?? {}) as Record<string, unknown>).detectedAt;
+          return typeof d === 'string' && new Date(d) >= batchCutoff!;
+        });
+        if (anyAfterCutoff) continue;
+      }
     }
     // 定时模式用自然日计数 —— 与上面的资格判定同口径。
     // 用滚动 24 小时的话，昨天 23:00 发出的汇总会把今天 21:00 的重发一直挡到 23:00，
@@ -1347,6 +1391,15 @@ async function resumeScheduledBatches(
         data: { state: 'SENT', sentAt: new Date(), lastError: null, attemptCount: attempt }
       });
       summary.sent += stillPending.length;
+      // 重发成功同样要推进水位线 —— 否则后续扫描仍盯着旧边界，
+      // 而这批行已是 SENT 被排除在外，更新的告警又全部晚于旧边界被推迟，
+      // 这个用户从此收不到任何汇总。
+      if (prefs?.mode === 'DAILY_DIGEST' && batchCutoff) {
+        await prisma.userNotificationChannelSetting.updateMany({
+          where: { userId: first.userId },
+          data: { lastDigestCutoffAt: batchCutoff }
+        });
+      }
       // 计入当日私信条数：同一轮里该用户还有别的批次时，限额要立刻生效
       sentTodayByUser.set(userId, sentToday + 1);
       console.log(`[notify] 批次 ${digestKey} 重发成功${result.deduped ? '（机器人判定为重复，说明上次已送达）' : ''}`);
