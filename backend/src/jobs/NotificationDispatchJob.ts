@@ -669,7 +669,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       console.log('[notify] 收到停止信号，本轮剩余收件人留待下次');
       break;
     }
-    const items = group;
+    let items = group;
     const target = targetByUserId.get(userId);
     if (!target) continue;
 
@@ -684,7 +684,32 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     //
     // 现在给同一次摘要里的所有行写同一个 digestKey，按 distinct digestKey 计数，
     // 「40 条/天」才真的是「每天最多 40 条私信」。
-    const prefs = prefsByUser.get(userId) ?? { qqEnabled: new Map(), ...DEFAULT_PREFS };
+    // 偏好要在**发送前**复验，不能只用开轮时的那份快照。
+    // 收件人是串行处理的，一轮可能跑上几分钟 —— 用户在 loadNotifyPrefs 之后、
+    // 轮到自己之前关掉某个类型或改了投递方式，拿快照去发就是
+    // 「我明明已经关掉了」。绑定身份都复验了，偏好这种同样会被用户当场
+    // 改动的东西没理由不验。位置在渲染之前：晚于此处过滤的话，
+    // 消息正文里已经写进了那几条。
+    const snapshotPrefs = prefsByUser.get(userId) ?? { qqEnabled: new Map(), ...DEFAULT_PREFS };
+    const freshPrefs = (await loadNotifyPrefs(prisma, [userId])).get(userId);
+    if (freshPrefs && (freshPrefs.mode !== snapshotPrefs.mode || freshPrefs.digestHour !== snapshotPrefs.digestHour)) {
+      // 投递方式变了，这一批的组织方式（实时逐条 / 汇总攒一封、攒到几点）
+      // 已经不对了。整批留到下一轮按新设置重新规划 ——
+      // 此时还没占任何名额或 dedupeKey，退让不留痕迹。
+      console.log(`[notify] 用户 ${target.wikidotId} 在本轮中途改了投递方式，本批留待下轮重新规划`);
+      continue;
+    }
+    const prefs = freshPrefs ?? snapshotPrefs;
+    const nowDisabled = items.filter((c) => prefs.qqEnabled.get(c.notifyType) === false);
+    if (nowDisabled.length > 0) {
+      // 记成 SUPPRESSED 而非静默丢弃：排查时能看出「是被偏好挡下的」
+      await recordAll(prisma, nowDisabled, userId, 'SUPPRESSED', 'type_disabled', options.dryRun);
+      summary.suppressed += nowDisabled.length;
+      const disabledKeys = new Set(nowDisabled.map((c) => c.dedupeKey));
+      items = items.filter((c) => !disabledKeys.has(c.dedupeKey));
+      console.log(`[notify] 用户 ${target.wikidotId} 有 ${nowDisabled.length} 条的类型在本轮中途被关闭，不再推送`);
+      if (items.length === 0) continue;
+    }
     const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
     const sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
 
@@ -724,6 +749,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 长轮次里这份目标快照可能已经过期，发送前复验一次
     const liveTarget = await revalidateTarget(target);
     if (!liveTarget) continue;
+
 
     // 发送**之前**先把这批 dedupeKey 以 PENDING 占住。
     // 原先是先发后记账：若机器人已经收下但响应丢失、或进程在 recordAll 前退出，
