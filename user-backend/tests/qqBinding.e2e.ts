@@ -13,14 +13,20 @@ import {
 
 // ─── 安全护栏 ────────────────────────────────────────────────────────────
 // 本测试会 deleteMany 掉整个账号表，绝不能连到生产库。
-// 只允许库名里带 shadow / test / e2e 的目标，否则直接退出。
+//
+// 必须是**锚定的**后缀匹配，不能用子串。原先写的是 /(shadow|test|e2e)/i，
+// 于是 contest、latest、attestation 这类完全正常的库名都会被当成影子库放行，
+// 紧接着被清空 —— 一次手滑的 USER_DATABASE_URL 就能抹掉一个生产库。
+// 宁可让影子库改个名字，也不能给误删留下任何缝隙。
 const DB_URL = process.env.USER_DATABASE_URL || '';
 const dbName = DB_URL.split('/').pop()?.split('?')[0] ?? '';
-if (!/(shadow|test|e2e)/i.test(dbName)) {
+const DISPOSABLE = /(^|_)(shadow|test|e2e)$/i;
+if (!DISPOSABLE.test(dbName)) {
   console.error(
-    `拒绝运行：目标库 "${dbName}" 看起来不是影子库。\n` +
+    `拒绝运行：目标库 "${dbName}" 不满足一次性数据库的命名要求。\n` +
     '本测试会清空 UserAccount / NotificationChannelBinding / ChannelBindingChallenge，\n' +
-    '请把 USER_DATABASE_URL 指向库名含 shadow/test/e2e 的一次性数据库。'
+    '库名必须以 _shadow / _test / _e2e 结尾（或就叫 shadow / test / e2e），\n' +
+    '例如：scpper_user_e2e。子串匹配不够安全 —— "contest" 里也有 "test"。'
   );
   process.exit(2);
 }

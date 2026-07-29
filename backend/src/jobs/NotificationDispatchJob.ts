@@ -257,11 +257,29 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     });
     if (staleCount > 0) console.warn(`[notify][dry-run] 有 ${staleCount} 条陈旧 PENDING 占位，真实运行会清理它们`);
   } else {
-    const stale = await prisma.notificationDelivery.deleteMany({
+    // 转 SCHEDULED 而不是删掉。
+    //
+    // 这些占位来自「机器人可能已经收下、进程却在记账前挂了」的场景。
+    // 删掉的话原始 digestKey 一并没了，下轮重新组批 —— 期间只要来一条新告警，
+    // 摘要就多一行、key 随之改变，等机器人 15 分钟去重窗口一过，
+    // 同样那几行会被再推一遍。保留原批次与原 key 才能让重发真正幂等。
+    // 没有 digestKey 的（更早版本写入的）保持删除，它们本来就重建不出原消息。
+    const staleWithDigest = await prisma.notificationDelivery.updateMany({
+      where: {
+        state: 'PENDING',
+        createdAt: { lt: staleCutoff },
+        NOT: { payload: { path: ['digestKey'], equals: Prisma.DbNull } }
+      },
+      data: { state: 'SCHEDULED', lastError: 'stale_claim_recovered' }
+    });
+    const staleWithoutDigest = await prisma.notificationDelivery.deleteMany({
       where: { state: 'PENDING', createdAt: { lt: staleCutoff } }
     });
-    if (stale.count > 0) {
-      console.warn(`[notify] 清理了 ${stale.count} 条陈旧 PENDING 占位（上一轮异常退出），这些候选将重新入选`);
+    if (staleWithDigest.count > 0) {
+      console.warn(`[notify] ${staleWithDigest.count} 条陈旧 PENDING 占位转为待重发（保留原 digestKey，重发即幂等）`);
+    }
+    if (staleWithoutDigest.count > 0) {
+      console.warn(`[notify] 清理了 ${staleWithoutDigest.count} 条无 digestKey 的陈旧占位，这些候选将重新入选`);
     }
   }
 
@@ -270,7 +288,9 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 于是「原批次重发」与「新告警组新批」互不干扰。
   // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
   // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
-  const replayedCount = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop);
+  const replayResult = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop);
+  const replayedCount = replayResult.replayed;
+  const replaySkipped = replayResult.skipped;
 
   const collected = await collectCandidates(prisma, userIds, floor);
 
@@ -293,11 +313,15 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
 
   summary.candidates = candidates.length;
   if (candidates.length === 0) {
-    if (!options.dryRun) {
+    // 重发因机器人不可用而被跳过时，这一轮**不算成功**。
+    // 照旧推进 lastSuccessAt 的话，notify-inspect 在整个宕机期间都显示
+    // 「刚刚成功过」，而队列里的投递一条都发不出去 —— 正好瞒住了要排查的问题。
+    if (!options.dryRun && !replaySkipped) {
       await prisma.notificationDispatchState.update({
         where: { id: 1 }, data: { lastSuccessAt: new Date() }
       });
     }
+    if (replaySkipped) summary.skippedReason = 'bot_unavailable';
     return summary;
   }
 
@@ -491,7 +515,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 新来的告警自己组成新的一批，互不干扰。
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
-        data: { state: 'SCHEDULED', lastError: result.error ?? 'unknown' }
+        // scheduledAt = 下次可重试的时刻，重发侧只捞到期的
+        data: { state: 'SCHEDULED', lastError: result.error ?? 'unknown', scheduledAt: nextRetryAt(1) }
       });
       summary.failed += items.length;
       console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（保留原批次，下轮以同一 digestKey 重发）`);
@@ -598,6 +623,20 @@ async function recordAll(
 const MAX_RESUME_ATTEMPTS = Math.max(1, Number(process.env.NOTIFY_MAX_RESUME_ATTEMPTS ?? '5') || 5);
 /** 目标已消失的 SCHEDULED 批次保留多久后判失败（默认 24 小时） */
 const ORPHAN_SCHEDULED_MAX_AGE_MS = 24 * 3600 * 1000;
+/**
+ * 重试退避基数（秒）。第 N 轮重发等 BASE * 2^(N-1)，上限 30 分钟。
+ *
+ * 不退避的话，暂时失败的批次每 60 秒就重试一次，默认 5 次上限五分钟就耗尽 ——
+ * 而 rate_limited 这类失败恰恰需要「等一会儿再说」，密集重试只会一直撞在同一堵墙上，
+ * 然后把一条本可以送达的通知判成永久失败。
+ */
+const RETRY_BACKOFF_BASE_SEC = Math.max(30, Number(process.env.NOTIFY_RETRY_BACKOFF_BASE_SEC ?? '120') || 120);
+const RETRY_BACKOFF_MAX_MS = 30 * 60 * 1000;
+
+function nextRetryAt(resumeRound: number): Date {
+  const ms = Math.min(RETRY_BACKOFF_BASE_SEC * 1000 * Math.pow(2, Math.max(0, resumeRound - 1)), RETRY_BACKOFF_MAX_MS);
+  return new Date(Date.now() + ms);
+}
 
 /**
  * 把超出回看窗口的 SCHEDULED 批次判失效。
@@ -657,16 +696,22 @@ async function resumeScheduledBatches(
   summary: DispatchSummary,
   dryRun: boolean,
   shouldStop?: () => boolean
-): Promise<number> {
+): Promise<{ replayed: number; skipped: boolean }> {
   // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
   // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
   await expireStaleScheduledBatches(prisma, dryRun);
 
+  const now = new Date();
   const rows = await prisma.notificationDelivery.findMany({
-    where: { state: 'SCHEDULED', channel: 'QQ' },
+    // 只捞已到重试时刻的（scheduledAt 为空的是旧数据，视为立即可重试）
+    where: {
+      state: 'SCHEDULED',
+      channel: 'QQ',
+      OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }]
+    },
     orderBy: { createdAt: 'asc' }
   });
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) return { replayed: 0, skipped: false };
 
   // 机器人离线时不要重发：每次失败都会 +1 attemptCount，
   // 一次几分钟的宕机就能把批次推到 MAX_RESUME_ATTEMPTS 而被误判为永久失败。
@@ -675,7 +720,7 @@ async function resumeScheduledBatches(
     const health = await checkHealth();
     if (!health.ok) {
       console.warn(`[notify] qqbot 不可用，${rows.length} 条待重发的记录留到下轮（不计入重试次数）`);
-      return 0;
+      return { replayed: 0, skipped: true };
     }
   }
 
@@ -861,15 +906,19 @@ async function resumeScheduledBatches(
       summary.failed += stillPending.length;
       await reportChannelOutcome(target.accountId, target.bindingId, 'failed', result.error ?? 'unknown');
     } else {
+      const retryAt = nextRetryAt(resumeRound + 1);
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
-        data: { lastError: result.error ?? 'unknown', attemptCount: attempt }
+        data: { lastError: result.error ?? 'unknown', attemptCount: attempt, scheduledAt: retryAt }
       });
       summary.failed += stillPending.length;
-      console.warn(`[notify] 批次 ${digestKey} 第 ${resumeRound} 轮重发仍失败：${result.error}`);
+      console.warn(
+        `[notify] 批次 ${digestKey} 第 ${resumeRound} 轮重发仍失败：${result.error}，`
+        + `下次重试 ${retryAt.toISOString()}`
+      );
     }
   }
-  return replayed;
+  return { replayed, skipped: false };
 }
 
 /**

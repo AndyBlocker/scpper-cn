@@ -72,16 +72,30 @@ export function internalNotificationsRouter() {
         return res.json({ ok: true, updated: true, paused: false });
       }
 
-      const next = binding.failureCount + 1;
-      const shouldPause = next >= FAILURE_THRESHOLD && binding.status === 'ACTIVE';
-      await prisma.notificationChannelBinding.update({
+      // 用原子自增拿到**真实**的累计值，不能「先读再算再写」。
+      //
+      // 同一绑定的两条失败回报重叠时（重发路径与常规路径可能同时回报），
+      // 两边会读到同一个 failureCount、算出同一个 next、互相覆盖 ——
+      // 少记一次失败，绑定就可能越过阈值仍不暂停。
+      // increment 由数据库保证串行，返回值就是自增后的结果。
+      const updated = await prisma.notificationChannelBinding.update({
         where: { id: binding.id },
         data: {
-          failureCount: next,
-          lastFailureCode: payload.code ?? null,
-          ...(shouldPause ? { status: 'PAUSED' as const, suspendedUntil: null } : {})
-        }
+          failureCount: { increment: 1 },
+          lastFailureCode: payload.code ?? null
+        },
+        select: { failureCount: true, status: true }
       });
+      const next = updated.failureCount;
+      const shouldPause = next >= FAILURE_THRESHOLD && updated.status === 'ACTIVE';
+      if (shouldPause) {
+        // 暂停单独一步：条件依据的是自增后的真实计数。
+        // 加 status 条件避免与另一条并发回报重复触发暂停副作用。
+        await prisma.notificationChannelBinding.updateMany({
+          where: { id: binding.id, status: 'ACTIVE' },
+          data: { status: 'PAUSED', suspendedUntil: null }
+        });
+      }
       if (shouldPause) {
         // 绑定态会经 /auth/me 带到前端，暂停后要让用户立刻看到
         invalidateAuthCache(payload.accountId);

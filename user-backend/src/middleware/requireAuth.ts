@@ -44,6 +44,20 @@ const userCache = new Map<string, CachedUser>();
 // Deduplicate concurrent in-flight lookups for the same userId
 const inflightLookups = new Map<string, Promise<CachedUser | null>>();
 
+/**
+ * 每用户的失效世代号。
+ *
+ * 光从两个 Map 里 delete 挡不住**已经在跑**的那次查询：它稍后仍会
+ * userCache.set 把失效**之前**读到的结果写回去，于是绑定刚完成的用户
+ * 在整个 TTL 内 /auth/me 都还报 bound:false，界面上像是没绑上。
+ * 查询开始时抓一份世代号，写回前比对，不一致就丢弃。
+ * 带时间戳是为了能清理：一个世代号只对「在它之前启动、之后才结束」的
+ * 查询有意义，超过缓存 TTL 就没有保留价值了。
+ */
+let generationCounter = 0;
+const cacheGeneration = new Map<string, { gen: number; at: number }>();
+const generationOf = (userId: string) => cacheGeneration.get(userId)?.gen ?? 0;
+
 function getCachedUser(userId: string): CachedUser | null {
   const entry = userCache.get(userId);
   if (!entry) return null;
@@ -59,6 +73,7 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
   const inflight = inflightLookups.get(userId);
   if (inflight) return inflight;
 
+  const startedGeneration = generationOf(userId);
   const promise = (async () => {
     const user = await prisma.userAccount.findUnique({
       where: { id: userId },
@@ -95,7 +110,8 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
       qqBinding,
       cachedAt: Date.now()
     };
-    userCache.set(userId, cached);
+    // 期间被失效过就不写回，否则会把失效前的旧状态再撑一个 TTL
+    if (generationOf(userId) === startedGeneration) userCache.set(userId, cached);
     return cached;
   })();
 
@@ -112,6 +128,8 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
  * Call after any operation that changes passwordHash, status, or linkedWikidotId.
  */
 export function invalidateAuthCache(userId: string) {
+  generationCounter += 1;
+  cacheGeneration.set(userId, { gen: generationCounter, at: Date.now() });
   userCache.delete(userId);
   inflightLookups.delete(userId);
 }
@@ -123,6 +141,10 @@ setInterval(() => {
     if (now - entry.cachedAt > AUTH_CACHE_TTL_MS) {
       userCache.delete(key);
     }
+  }
+  // 世代号同样要清理，否则会随用户数无限增长
+  for (const [key, entry] of cacheGeneration) {
+    if (now - entry.at > AUTH_CACHE_TTL_MS) cacheGeneration.delete(key);
   }
 }, 60_000).unref();
 
