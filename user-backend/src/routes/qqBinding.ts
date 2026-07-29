@@ -80,6 +80,16 @@ export function qqBindingRouter() {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
 
+      // 没配机器人 QQ 就别放行：会生成一个挑战、返回成功，
+      // 而界面只能告诉用户「添加（机器人账号）为好友」—— 一个他无从得知的号码。
+      // 用户既加不了好友，还白白消耗一次发起限流额度，验证码也只能等它过期。
+      // 这个检查必须在限流之前，配置缺失不该算到用户头上。
+      if (!QQ_BOT_SELF_ID) {
+        // eslint-disable-next-line no-console
+        console.error('[qq-binding] QQ_BOT_SELF_ID 未配置，拒绝发起绑定');
+        return res.status(503).json({ error: 'QQ 绑定暂不可用，请稍后再试' });
+      }
+
       const ip = req.ip || 'unknown';
       if (!startByUser.hit(req.authUser.id) || !startByIp.hit(ip)) {
         return res.status(429).json({ error: '操作过于频繁，请稍后再试' });

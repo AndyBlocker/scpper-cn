@@ -88,21 +88,29 @@ export function internalNotificationsRouter() {
       });
       const next = updated.failureCount;
       const shouldPause = next >= FAILURE_THRESHOLD && updated.status === 'ACTIVE';
+      let pausedNow = false;
       if (shouldPause) {
-        // 暂停单独一步：条件依据的是自增后的真实计数。
-        // 加 status 条件避免与另一条并发回报重复触发暂停副作用。
-        await prisma.notificationChannelBinding.updateMany({
-          where: { id: binding.id, status: 'ACTIVE' },
+        // 暂停条件里必须**同时**带上失败计数，不能只看 status。
+        // 自增与这一步之间，一条成功回报可能已经把 failureCount 清零了 ——
+        // 只判 status 的话，我们仍会把一个刚刚证明自己健康的绑定停掉，
+        // 用户于是莫名其妙收不到推送，还得自己去页面重新启用。
+        const paused = await prisma.notificationChannelBinding.updateMany({
+          where: {
+            id: binding.id,
+            status: 'ACTIVE',
+            failureCount: { gte: FAILURE_THRESHOLD }
+          },
           data: { status: 'PAUSED', suspendedUntil: null }
         });
+        pausedNow = paused.count > 0;
       }
-      if (shouldPause) {
+      if (pausedNow) {
         // 绑定态会经 /auth/me 带到前端，暂停后要让用户立刻看到
         invalidateAuthCache(payload.accountId);
         // eslint-disable-next-line no-console
         console.warn(`[notify] 账号 ${payload.accountId} 的 QQ 渠道连续失败 ${next} 次（${payload.code}），已自动暂停`);
       }
-      res.json({ ok: true, updated: true, paused: shouldPause, failureCount: next });
+      res.json({ ok: true, updated: true, paused: pausedNow, failureCount: next });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0]?.message || '参数错误' });

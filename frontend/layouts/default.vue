@@ -525,6 +525,8 @@ const {
 } = useFollowAlerts()
 // 关注列表同样是共享状态，换账号时 isFollowing 会用上一个人的数据回答
 const { resetState: resetFollowsState } = useFollows()
+// 偏好设置也是全局共享状态，换账号时同样要作废在途请求
+const { resetState: resetAlertSettingsState } = useAlertSettings()
 
 // 三个来源都要计入。旧版漏了关注提醒：关注的作者发布新修订时铃铛徽标恒为 0，
 // 下拉里也找不到，用户只有进 /account 的「关注」tab 才看得到。
@@ -1069,6 +1071,7 @@ function resetAllAlertState() {
   resetFollowAlertsState()
   resetForumAlertsState()
   resetFollowsState()
+  resetAlertSettingsState()
   isAlertsDropdownOpen.value = false
 }
 

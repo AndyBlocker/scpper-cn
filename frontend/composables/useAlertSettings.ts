@@ -81,13 +81,30 @@ export function useAlertSettings() {
   const loading = useState('alerts/preferencesLoading', () => false);
   const saving = useState('alerts/preferencesSaving', () => false);
   const error = ref<string | null>(null);
+  /**
+   * 身份世代号。三个提醒 composable 早就有这个守卫，唯独这里漏了 ——
+   * A 的偏好请求还在飞时用户登出、B 在同一标签页登录：
+   * 共享的 loading 让 B 跳过自己的取数，随后 A 的响应无守卫地写进
+   * 全局 preferences，于是 B 看到的是 A 的设置，一保存就把 A 的值
+   * 写进了自己的账号。
+   */
+  const identityEpoch = useState<number>('alerts/preferencesEpoch', () => 0);
+  /** 请求世代：同账号内的并发请求也要保证只有最新一次能写回 */
+  const requestGeneration = useState<number>('alerts/preferencesReqGen', () => 0);
 
   async function fetchPreferences(force = false) {
     if (loading.value && !force) return preferences.value;
     loading.value = true;
     error.value = null;
+    const myEpoch = identityEpoch.value;
+    const myRequest = requestGeneration.value + 1;
+    requestGeneration.value = myRequest;
     try {
       const res = await $bff<AlertPreferencesResponse>('/alerts/preferences', { method: 'GET' });
+      // 期间换过身份 / 已有更新的请求 → 本次结果作废，绝不写回共享状态
+      if (identityEpoch.value !== myEpoch || requestGeneration.value !== myRequest) {
+        return preferences.value;
+      }
       if (res?.ok && res.preferences) {
         preferences.value = normalisePreferences(res.preferences);
       } else {
@@ -95,11 +112,23 @@ export function useAlertSettings() {
       }
     } catch (err) {
       console.warn('[alerts] load preferences failed', err);
-      error.value = '加载提醒设置失败';
+      if (identityEpoch.value === myEpoch && requestGeneration.value === myRequest) {
+        error.value = '加载提醒设置失败';
+      }
     } finally {
-      loading.value = false;
+      if (requestGeneration.value === myRequest) loading.value = false;
     }
     return preferences.value;
+  }
+
+  /** 换账号时清空并作废在途请求，否则 B 会看到 A 的偏好 */
+  function resetState() {
+    identityEpoch.value += 1;
+    requestGeneration.value += 1;
+    preferences.value = createDefaultPreferences();
+    loading.value = false;
+    saving.value = false;
+    error.value = null;
   }
 
   async function updatePreferences(payload: Partial<AlertPreferencesResponse['preferences']>) {
@@ -151,6 +180,7 @@ export function useAlertSettings() {
     saving,
     error,
     fetchPreferences,
+    resetState,
     updatePreferences,
     setMetricMuted
   };

@@ -226,6 +226,11 @@ export function useQqBinding() {
             statusKnown.value = true
             stopPolling()
             stopClock()
+            // 和正常的 becameBound 路径一样刷新全局登录态：
+            // 只改本composable 的局部状态的话，导航栏、通知设置面板等
+            // 读全局 user.qqBinding 的地方会继续显示「未绑定」，
+            // 直到下一次强制 /auth/me 才纠正。
+            await fetchCurrentUser(true)
             error.value = '绑定已在取消前完成，当前已绑定'
             return false
           }

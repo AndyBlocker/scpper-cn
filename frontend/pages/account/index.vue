@@ -205,7 +205,10 @@
           <button type="button" class="text-[var(--g-accent)] hover:underline" @click="activeTab = 'notifications'">通知设置</button>。
         </p>
       </div>
-      <AlertsFeedPanel />
+      <div v-if="!hasLinkedWikidot" class="rounded-lg border border-dashed border-[rgb(var(--panel-border))] px-4 py-6 text-sm text-[rgb(var(--muted))]">
+        绑定 Wikidot 账号后，即可接收自己页面的评论/投票/编辑提醒，以及关注与论坛动态。
+      </div>
+      <AlertsFeedPanel v-else />
     </section>
 
     <section v-if="activeTab === 'notifications'" :id="`panel-notifications`" role="tabpanel" aria-labelledby="tab-notifications" class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-6 shadow-sm">
@@ -213,7 +216,11 @@
         <h2 class="text-base font-semibold text-[rgb(var(--fg))]">通知设置</h2>
         <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">控制接收哪些提醒、什么条件下触发、以及通过哪些渠道送达。</p>
       </div>
-      <NotificationSettingsPanel />
+      <div v-if="!hasLinkedWikidot" class="rounded-lg border border-dashed border-[rgb(var(--panel-border))] px-4 py-6 text-sm text-[rgb(var(--muted))]">
+        绑定 Wikidot 账号后即可配置提醒偏好。QQ 推送同样依赖该绑定 ——
+        所有提醒都按你的 Wikidot 身份产生。
+      </div>
+      <NotificationSettingsPanel v-else />
     </section>
 
     <section v-if="activeTab === 'follows'" :id="`panel-follows`" role="tabpanel" aria-labelledby="tab-follows" class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-6 shadow-sm">
@@ -221,7 +228,10 @@
         <h2 class="text-base font-semibold text-[rgb(var(--fg))]">关注</h2>
         <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">关注作者后，他们发布或编辑页面时会出现在「提醒」里。</p>
       </div>
-      <FollowsPanel />
+      <div v-if="!hasLinkedWikidot" class="rounded-lg border border-dashed border-[rgb(var(--panel-border))] px-4 py-6 text-sm text-[rgb(var(--muted))]">
+        绑定 Wikidot 账号后，即可关注作者并接收他们的更新提醒。
+      </div>
+      <FollowsPanel v-else />
     </section>
 
     <section v-if="activeTab === 'security'" id="panel-security" role="tabpanel" aria-labelledby="tab-security" class="rounded-lg border border-white/60 bg-white/80 p-8 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-neutral-950/65 dark:shadow">
@@ -284,6 +294,13 @@ const accountTabs: Array<{ key: AccountTab; label: string }> = [
   { key: 'security', label: '安全' }
 ]
 const activeTab = ref<AccountTab>('overview')
+
+/**
+ * 这些面板的数据全部按主库 User.id 索引，而 User 由 wikidotId 定义。
+ * 没绑 Wikidot 的账号在 BFF 侧会被判为未鉴权，面板挂上去只会一片报错横幅
+ * 加一堆点不动的控件 —— 旧版账号页本来有这个守卫，重做时漏掉了。
+ */
+const hasLinkedWikidot = computed(() => Boolean(user.value?.linkedWikidotId))
 const tabButtons = ref<HTMLButtonElement[]>([])
 
 function selectTab(key: AccountTab, index?: number) {
