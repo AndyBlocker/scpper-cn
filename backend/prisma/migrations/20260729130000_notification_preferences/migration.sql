@@ -80,3 +80,23 @@ ON CONFLICT ("userId", "type") DO NOTHING;
 -- 而不是从投递记录反推 —— 反推在跨午夜宕机、中途切换模式时必然出错。
 ALTER TABLE "UserNotificationChannelSetting"
   ADD COLUMN "lastDigestCutoffAt" TIMESTAMP(3);
+
+-- ── 「每个自然日一封汇总」的占位表 ────────────────────────────
+-- 主键 (userId, cutoffDay) 就是名额本身：ON CONFLICT DO NOTHING 让
+-- 「查槽位 → 占槽位」变成一次原子操作，重叠的两轮里只有一方能插入成功。
+--
+-- 单位是**周期边界所属的那一天**，不是消息发出去的那一天：
+--  · 跨午夜的补发属于前一天的周期，不占新一天的名额（否则用户被相位锁死在午夜）
+--  · 同一天内把时点从 10:00 改到 21:00，两个边界同属一天，只能发一封
+CREATE TABLE "DigestSlotClaim" (
+    "userId"    INTEGER NOT NULL,
+    "cutoffDay" DATE NOT NULL,
+    "cutoffAt"  TIMESTAMP(3) NOT NULL,
+    -- 占位者是哪一封。重发时用它区分「这个槽位是不是我自己的」
+    "digestKey" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "DigestSlotClaim_pkey" PRIMARY KEY ("userId", "cutoffDay")
+);
+CREATE INDEX "DigestSlotClaim_createdAt_idx" ON "DigestSlotClaim"("createdAt");
+ALTER TABLE "DigestSlotClaim" ADD CONSTRAINT "DigestSlotClaim_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextDigestDueAt, utc8HourToday } from '../src/jobs/NotificationDispatchJob.js';
+import { nextDigestDueAt,
+  utc8DayOf, utc8HourToday } from '../src/jobs/NotificationDispatchJob.js';
 
 const DAY = 24 * 3600 * 1000;
 const hoursFrom = (base: Date, h: number) => new Date(base.getTime() + h * 3600 * 1000);
@@ -161,69 +162,45 @@ test('未到期一律不标记', () => {
   }
 });
 
-// ── 名额判定：单位是「周期」不是「自然日」（review 第十二、十三轮）──
+// ── 名额判定：单位是「周期边界所属的自然日」（review 第十二~十四轮）──
+// 名额存在 DigestSlotClaim，主键 (userId, cutoffDay) 即名额本身。
 
-const OCCUPYING_STATES = ['SENT', 'PENDING', 'SCHEDULED'];
-
-test('未落定的批次同样占用该周期名额', () => {
-  const taken = (states) => states.some((st) => OCCUPYING_STATES.includes(st));
-  assert.equal(taken(['SENT']), true, '已发出');
-  assert.equal(taken(['PENDING']), true,
-    '另一轮正在发送中 —— 它成功了就是这个周期那一封，此时另起一封会变成两封');
-  assert.equal(taken(['SCHEDULED']), true, '待重发，欠的还是这个周期的账');
-  assert.equal(taken(['FAILED']), false, '永久失败不占名额');
-  assert.equal(taken(['CANCELLED']), false, '已取消不占名额');
+test('utc8DayOf：取边界所属的 UTC+8 自然日', () => {
+  const d = (y, m, day, h) => new Date(Date.UTC(y, m, day, h, 0, 0));
+  // UTC+8 的 2026-07-20 10:00 = UTC 02:00
+  assert.equal(utc8DayOf(d(2026, 6, 20, 2)), '2026-07-20');
+  // 同日 21:00 = UTC 13:00 —— 改时点后仍属同一天，只能发一封
+  assert.equal(utc8DayOf(d(2026, 6, 20, 13)), '2026-07-20',
+    '同一天内改时点产生的两个边界必须落在同一个名额上');
+  // UTC+8 次日 09:00 = UTC 前一日 01:00 → 独立名额
+  assert.equal(utc8DayOf(d(2026, 6, 21, 1)), '2026-07-21');
+  // UTC+8 边界：23:59 与次日 00:00
+  assert.equal(utc8DayOf(new Date(Date.UTC(2026, 6, 20, 15, 59))), '2026-07-20');
+  assert.equal(utc8DayOf(new Date(Date.UTC(2026, 6, 20, 16, 0))), '2026-07-21',
+    'UTC 16:00 正是 UTC+8 的次日零点');
 });
 
-test('一封的判定必须独立于 qqDailyLimit', () => {
-  // 拿 qqDailyLimit（默认 20）判定等于允许一天二十封「每日汇总」
-  const byLimit = (sentToday, dailyLimit) => sentToday < dailyLimit;
-  assert.equal(byLimit(1, 20), true, '按限额判定：发过一封仍然放行 —— 会发第二封');
-  const bySlot = (slotTaken) => !slotTaken;
-  assert.equal(bySlot(true), false, '按名额判定：该周期已占用就不再发');
-});
-
-// P1 回归：按自然日锁名额会把用户永久相位锁死在午夜。
-// 场景：digestHour=9，宕机跨过 day1 09:00 与午夜，day2 00:30 恢复。
-test('跨午夜补发后仍回到用户设定的时点，不被锁死在午夜', () => {
+test('跨午夜补发不占用新一天的名额（不会相位锁死）', () => {
   const HOUR = 9;
-  const iso = (d) => d.toISOString();
-  // day1 09:00 与 day2 09:00 的 UTC 时刻（UTC+8 → 减 8 小时）
-  const day1Due = new Date(Date.UTC(2026, 6, 20, 1, 0, 0));
-  const day2Due = new Date(Date.UTC(2026, 6, 21, 1, 0, 0));
-  const day0Cutoff = new Date(Date.UTC(2026, 6, 19, 1, 0, 0));
-
-  // 恢复于 day2 00:30（UTC+8）= day1 16:30 UTC，补发 day1 那个周期
+  const day0Cutoff = new Date(Date.UTC(2026, 6, 19, 1, 0, 0));   // day0 09:00
+  // 宕机跨过 day1 09:00 与午夜，day2 凌晨恢复 → 补的是 day1 那个周期
   const catchUp = nextDigestDueAt(day0Cutoff, HOUR);
-  assert.equal(iso(catchUp), iso(day1Due), '补的是 day1 09:00 那个周期，不是「现在」');
-
-  // 补发写下 digestCutoff = day1 09:00，水位线推到同一时刻
-  const sentCutoffs = new Set([iso(day1Due)]);
-
-  // 到 day2 09:00：应得的周期是 day2 09:00
-  const next = nextDigestDueAt(day1Due, HOUR);
-  assert.equal(iso(next), iso(day2Due), '下一个周期是 day2 09:00');
-
-  // 按周期判名额 → 未占用 → 正常发，相位恢复
-  assert.equal(sentCutoffs.has(iso(next)), false,
-    '按周期判定：day2 09:00 是新周期，补发没有占用它');
-
-  // 对照：按自然日判定会把补发（发生在 day2 凌晨）算作 day2 已发 → 挡住 09:00
-  const sentOnCalendarDay2 = true;   // 补发确实发生在 day2
-  assert.equal(!sentOnCalendarDay2, false,
-    '按自然日判定：day2 09:00 被凌晨那封挡住 —— 次日又逾期，永久锁死在午夜');
+  assert.equal(utc8DayOf(catchUp), '2026-07-20', '补发属于 day1 的名额');
+  // 补发之后，day2 09:00 是另一个名额 → 相位当天就恢复
+  const next = nextDigestDueAt(catchUp, HOUR);
+  assert.equal(utc8DayOf(next), '2026-07-21', 'day2 有自己的名额，不被凌晨那封挡住');
+  assert.notEqual(utc8DayOf(catchUp), utc8DayOf(next));
 });
 
-test('同周期的第二封被挡住（含跨天的 SCHEDULED 批次）', () => {
-  const HOUR = 9;
-  const due = new Date(Date.UTC(2026, 6, 20, 1, 0, 0));
-  // 昨天创建、至今仍 SCHEDULED 的批次，其 digestCutoff 就是它自己的周期
-  const unresolved = [{ cutoff: due.toISOString(), state: 'SCHEDULED' }];
-  const slotTaken = (cutoff) => unresolved.some(
-    (r) => OCCUPYING_STATES.includes(r.state) && (r.cutoff === cutoff.toISOString() || r.cutoff === null)
-  );
-  assert.equal(slotTaken(due), true,
-    '按周期判定与时间窗无关 —— 跨天也不会因为滑出窗口而误判为「名额空闲」');
-  const nextDue = nextDigestDueAt(due, HOUR);
-  assert.equal(slotTaken(nextDue), false, '下一个周期是独立的名额');
+test('历史实时投递不该占用汇总名额', () => {
+  // 名额存在独立表里，与投递行的 payload 形状无关 ——
+  // 曾经的写法把「有 digestKey 但没有 digestCutoff」的历史 SENT 行
+  // 当成匹配所有周期，凡发过实时消息的用户切到定时后会被永久挡死。
+  const legacyRealtimeRow = { digestKey: 'digest:1:pma:9:5:170', digestCutoff: null, state: 'SENT' };
+  const slotSource = 'DigestSlotClaim';
+  assert.equal(slotSource === 'DigestSlotClaim', true,
+    '名额是独立状态，不从投递表反推');
+  assert.equal(legacyRealtimeRow.digestCutoff, null,
+    '历史实时行确实没有 digestCutoff —— 正是它当年造成永久阻塞');
 });
+

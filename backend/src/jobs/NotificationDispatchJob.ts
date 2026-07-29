@@ -494,9 +494,10 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 只判「到期了没」是不够的：这个周期已收过、随后把时点改晚，
       // 那个更晚的边界会再次到期，于是同周期发第二封。
       // 日限额（默认 20）拦不住这个。
-      // 未落定的批次（PENDING / SCHEDULED）同样占用**这个周期**的名额
-      const slotTaken = await hasDigestSlotTaken(prisma, c.userId, cutoff);
-      ok = Date.now() >= cutoff.getTime() && !slotTaken;
+      // 这里只**读**；真正的占位在发送前那一步原子完成（见 claimDigestSlot）。
+      // 在资格判定里就占的话，最终没内容可发的用户会白占掉当天名额。
+      const slot = await readDigestSlot(prisma, c.userId, cutoff);
+      ok = Date.now() >= cutoff.getTime() && slot === null;
       digestEligibility.set(c.userId, ok);
       digestCutoffByUser.set(c.userId, cutoff);
     }
@@ -711,6 +712,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 没法顺手往 JSON 里合并字段，而日限额的计数正依赖它。
     // 定时模式把本次的截止线一并存下 —— 它是下一次收集的起点（见 lastDigestCutoff）
     const digestCutoff = prefs.mode === 'DAILY_DIGEST' ? digestCutoffByUser.get(userId) : undefined;
+    // 定时模式：先原子占住「这一天的汇总名额」，再去占各条 dedupeKey。
+    // 顺序不能反 —— 两轮的 key 集合可能不同，各自都能占到自己那批。
+    if (digestCutoff && !(await claimDigestSlot(prisma, userId, digestCutoff, digestKey))) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 当天的汇总名额已被占用，本轮退让`);
+      continue;
+    }
     const claimed = await recordAll(
       prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId, digestCutoff
     );
@@ -721,6 +728,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       await prisma.notificationDelivery.deleteMany({
         where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } }
       });
+      // 整批退让就要把名额还回去，否则这个用户当天再也发不出汇总
+      if (digestCutoff) await releaseDigestSlot(prisma, userId, digestCutoff, digestKey);
       console.warn(
         `[notify] 用户 ${target.wikidotId} 的候选被另一轮部分抢占`
         + `（${claimed}/${items.length}），本轮整批退让`
@@ -1064,46 +1073,64 @@ async function advanceDigestWatermarks(
 
 
 /**
- * 这个用户**某个周期**的汇总名额是否已被占用。
+ * 周期边界所属的 UTC+8 自然日（YYYY-MM-DD）—— 汇总名额的单位。
  *
- * 名额的单位是**周期（digestCutoff）**，不是自然日 —— 这点是血的教训：
- * 按自然日锁的话，跨午夜的补发会吃掉新一天的额度，于是当天设定时点被挡；
- * 到了次日那个边界又变成逾期、又在午夜后补发 …… 用户被**永久相位锁死在午夜**，
- * 再也回不到自己设的时点。周期才是这里真正的守恒量。
- *
- * 「占用」不等于「已送达」：
- *  - SENT       已发出
- *  - PENDING    另一轮已占位、正在发送中 —— 它成功了就是这个周期那一封
- *  - SCHEDULED  暂时失败待重发，欠的还是这个周期的账
- * 只数 SENT 的话，一条晚提交的告警会另起 digestKey 组成同周期的第二封；
- * 若原来那封其实已送达（只是响应超时），用户就收到两封。
- *
- * 另含 digestCutoff 为空的未落定批次：那是用户切成定时模式之前、
- * 实时模式下攒下的残留。对一个定时用户来说，未落定的东西加起来也只该是一条。
- * （这类批次不会永久占位 —— expireStaleScheduledBatches 按事件时间淘汰它们。）
- *
- * 这个判定必须**独立于 qqDailyLimit**：那个上限是给实时模式用的（默认 20），
- * 拿它来判定「这个周期发过没」等于允许一天发二十封「每日汇总」。
+ * 是**边界归属的那一天**，不是消息发出去的那一天。两个方向都踩过坑：
+ *  · 按「发出去那天」算：跨午夜的补发会吃掉新一天的额度 → 当天设定时点被挡 →
+ *    次日又逾期又在午夜后补发，用户被**永久相位锁死在午夜**。
+ *  · 按「单个边界」算：同一天里把时点从 10:00 改到 21:00，会产生两个不同的
+ *    边界，于是当天发两封 —— 而设置页承诺的是每天一封。
+ * 取「边界所属的自然日」两者都对。
  */
-async function hasDigestSlotTaken(
-  prisma: PrismaClient,
-  userId: number,
-  cutoff: Date,
-  /** 排除批次自己（重发路径用：它本就是 SCHEDULED，会数到自己） */
-  excludeDigestKey?: string
+export function utc8DayOf(cutoff: Date): string {
+  return new Date(cutoff.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * 读取该用户这一天的汇总名额占用情况。
+ *
+ * 名额记在专门的 DigestSlotClaim 上，而不是从投递表的 payload 形状反推 ——
+ * 后者试过，站不住：历史的实时投递行带着 digestKey 却没有 digestCutoff，
+ * 任何「视 null 为匹配所有周期」的写法都会把发过实时消息的用户永久挡死；
+ * 而反过来忽略它们又会漏掉模式切换前的残留。名额是独立的状态，就该独立存。
+ */
+async function readDigestSlot(
+  prisma: PrismaClient, userId: number, cutoff: Date
+): Promise<{ digestKey: string | null } | null> {
+  const rows = await prisma.$queryRaw<Array<{ digestKey: string | null }>>`
+    SELECT "digestKey" FROM "DigestSlotClaim"
+    WHERE "userId" = ${userId} AND "cutoffDay" = ${utc8DayOf(cutoff)}::date
+    LIMIT 1`;
+  return rows[0] ?? null;
+}
+
+/**
+ * 原子占住该用户这一天的汇总名额；已被占则返回 false。
+ *
+ * 「先查再占」两步之间存在窗口：两轮投递重叠时（PM2 常驻轮次 + 手工 --once），
+ * 双方都可能查到空槽。已有的 per-key 占位挡不住这个 —— 两轮的 dedupeKey 集合
+ * 可以不同（PageMetricAlert 是就地合并的，内容签名会变），于是各自抢到各自那批，
+ * 两封摘要都发出去。主键冲突把这两步压成一步。
+ */
+async function claimDigestSlot(
+  prisma: PrismaClient, userId: number, cutoff: Date, digestKey: string
 ): Promise<boolean> {
-  const iso = cutoff.toISOString();
-  const rows = await prisma.$queryRaw<Array<{ n: bigint }>>`
-    SELECT COUNT(DISTINCT payload->>'digestKey') AS n
-    FROM "NotificationDelivery"
-    WHERE "userId" = ${userId}
-      AND channel = 'QQ'
-      AND state IN ('SENT', 'PENDING', 'SCHEDULED')
-      AND payload->>'digestKey' IS NOT NULL
-      AND (payload->>'digestCutoff' = ${iso} OR payload->>'digestCutoff' IS NULL)
-      AND (${excludeDigestKey ?? null}::text IS NULL OR payload->>'digestKey' <> ${excludeDigestKey ?? null}::text)
-  `;
-  return Number(rows[0]?.n ?? 0) > 0;
+  const n = await prisma.$executeRaw`
+    INSERT INTO "DigestSlotClaim" ("userId","cutoffDay","cutoffAt","digestKey")
+    VALUES (${userId}, ${utc8DayOf(cutoff)}::date, ${cutoff}, ${digestKey})
+    ON CONFLICT ("userId","cutoffDay") DO NOTHING`;
+  return n > 0;
+}
+
+/** 占了名额但这批最终没发出去时归还，否则用户白丢一天的汇总。
+ *  带 digestKey 条件，保证只归还自己那一份。 */
+async function releaseDigestSlot(
+  prisma: PrismaClient, userId: number, cutoff: Date, digestKey: string
+): Promise<void> {
+  await prisma.$executeRaw`
+    DELETE FROM "DigestSlotClaim"
+    WHERE "userId" = ${userId} AND "cutoffDay" = ${utc8DayOf(cutoff)}::date
+      AND "digestKey" = ${digestKey}`;
 }
 
 /** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
@@ -1429,15 +1456,21 @@ async function resumeScheduledBatches(
         if (anyAfterCutoff) continue;
       }
     }
-    // 定时模式的「一周期一封」必须独立判定，不能拿 qqDailyLimit 比 ——
+    // 定时模式的「一天一封」必须独立判定，不能拿 qqDailyLimit 比 ——
     // 那个上限默认 20，用它判定等于允许一天发二十封「每日汇总」。
-    // 必须含 SCHEDULED：同周期若还并存着另一个待重发批次（例如切换模式前后
-    // 各留下一个），只看 SENT/PENDING 会让两个都发出去。排除自己即可 ——
-    // 本批本身就是 SCHEDULED，否则会数到自己而永远发不出。
-    if (prefs?.mode === 'DAILY_DIGEST' && batchCutoff
-        && await hasDigestSlotTaken(prisma, first.userId, batchCutoff, digestKey)) {
-      console.warn(`[notify] 用户 ${target.wikidotId} 该周期已有汇总，批次 ${digestKey} 跳过`);
-      continue;
+    if (prefs?.mode === 'DAILY_DIGEST' && batchCutoff) {
+      const slot = await readDigestSlot(prisma, first.userId, batchCutoff);
+      if (slot) {
+        // 槽位是别人的（当天已有另一封）就跳过；是自己的才继续重发
+        if (slot.digestKey !== digestKey) {
+          console.warn(`[notify] 用户 ${target.wikidotId} 当天已有另一封汇总，批次 ${digestKey} 跳过`);
+          continue;
+        }
+      } else if (!(await claimDigestSlot(prisma, first.userId, batchCutoff, digestKey))) {
+        // 没有槽位（模式切换前攒下的批次）则现占；抢不到说明有别人，退让
+        console.warn(`[notify] 用户 ${target.wikidotId} 当天的汇总名额已被占用，批次 ${digestKey} 跳过`);
+        continue;
+      }
     }
     const limitBaseline = sentToday;
     if (prefs?.mode !== 'DAILY_DIGEST' && limitBaseline >= effLimit) {

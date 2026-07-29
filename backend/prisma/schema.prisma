@@ -106,32 +106,32 @@ model SyncExecutionLock {
 }
 
 model Page {
-  id                    Int                @id @default(autoincrement())
-  wikidotId             Int                @unique
-  url                   String
-  currentUrl            String
-  urlHistory            String[]           @default([])
-  isDeleted             Boolean            @default(false)
-  firstPublishedAt      DateTime?
-  votingTimeSeriesCache Json?
-  votingCacheUpdatedAt  DateTime?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  contentRecords        ContentRecords[]
-  dirtyPages            DirtyPage[]
-  interestingFacts      InterestingFacts[]
-  pageDailyStats        PageDailyStats[]
-  pageViewEvents        PageViewEvent[]
-  versions              PageVersion[]
-  ratingRecords         RatingRecords[]
-  tagRecords            TagRecords[]
-  timeMilestones        TimeMilestones[]
-  userCollectionItems   UserCollectionItem[]
-  metricWatches         PageMetricWatch[]
-  metricAlerts          PageMetricAlert[]
-  forumThreads          ForumThread[]
+  id                     Int                     @id @default(autoincrement())
+  wikidotId              Int                     @unique
+  url                    String
+  currentUrl             String
+  urlHistory             String[]                @default([])
+  isDeleted              Boolean                 @default(false)
+  firstPublishedAt       DateTime?
+  votingTimeSeriesCache  Json?
+  votingCacheUpdatedAt   DateTime?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  contentRecords         ContentRecords[]
+  dirtyPages             DirtyPage[]
+  interestingFacts       InterestingFacts[]
+  pageDailyStats         PageDailyStats[]
+  pageViewEvents         PageViewEvent[]
+  versions               PageVersion[]
+  ratingRecords          RatingRecords[]
+  tagRecords             TagRecords[]
+  timeMilestones         TimeMilestones[]
+  userCollectionItems    UserCollectionItem[]
+  metricWatches          PageMetricWatch[]
+  metricAlerts           PageMetricAlert[]
+  forumThreads           ForumThread[]
   forumInteractionAlerts ForumInteractionAlert[]
-  userActivityAlerts    UserActivityAlert[]
+  userActivityAlerts     UserActivityAlert[]
 
   @@index([currentUrl])
   @@index([isDeleted])
@@ -177,7 +177,7 @@ model PageStats {
 }
 
 model PageVersion {
-  id               Int             @id @default(autoincrement())
+  id               Int                @id @default(autoincrement())
   pageId           Int
   wikidotId        Int?
   title            String?
@@ -187,19 +187,19 @@ model PageVersion {
   commentCount     Int?
   textContent      String?
   source           String?
-  searchText       String?         @map("search_text")
+  searchText       String?            @map("search_text")
   tags             String[]
   validFrom        DateTime
   validTo          DateTime?
-  isDeleted        Boolean         @default(false)
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  isDeleted        Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
   category         String?
   alternateTitle   String?
   attributionCount Int?
   attributions     Attribution[]
   stats            PageStats?
-  page             Page            @relation(fields: [pageId], references: [id])
+  page             Page               @relation(fields: [pageId], references: [id])
   revisions        Revision[]
   sourceVersions   SourceVersion[]
   votes            Vote[]
@@ -228,9 +228,9 @@ model PageReference {
   updatedAt      DateTime    @updatedAt
   pageVersion    PageVersion @relation(fields: [pageVersionId], references: [id], onDelete: Cascade)
 
+  @@unique([pageVersionId, linkType, targetPath, targetFragment], map: "PageReference_unique_path")
   @@index([pageVersionId])
   @@index([targetPath])
-  @@unique([pageVersionId, linkType, targetPath, targetFragment], map: "PageReference_unique_path")
 }
 
 model PageReferenceGraphSnapshot {
@@ -242,8 +242,8 @@ model PageReferenceGraphSnapshot {
 }
 
 model ImageAsset {
-  id             Int                  @id @default(autoincrement())
-  hashSha256     String?              @unique
+  id             Int                @id @default(autoincrement())
+  hashSha256     String?            @unique
   perceptualHash String?
   mimeType       String?
   width          Int?
@@ -251,33 +251,33 @@ model ImageAsset {
   bytes          Int?
   storagePath    String?
   canonicalUrl   String?
-  sourceHosts    String[]             @default([])
-  status         ImageAssetStatus     @default(PENDING)
-  firstSeenAt    DateTime             @default(now())
+  sourceHosts    String[]           @default([])
+  status         ImageAssetStatus   @default(PENDING)
+  firstSeenAt    DateTime           @default(now())
   lastFetchedAt  DateTime?
   errorMessage   String?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
   images         PageVersionImage[]
 }
 
 model PageVersionImage {
-  id               Int                    @id @default(autoincrement())
-  pageVersionId    Int
-  originUrl        String
-  normalizedUrl    String
-  displayUrl       String?
-  status           PageVersionImageStatus @default(PENDING)
-  imageAssetId     Int?
-  extractedAt      DateTime               @default(now())
-  lastQueuedAt     DateTime?
-  lastFetchedAt    DateTime?
-  failureCount     Int                    @default(0)
-  lastError        String?
-  metadata         Json?
-  pageVersion      PageVersion            @relation(fields: [pageVersionId], references: [id], onDelete: Cascade)
-  imageAsset       ImageAsset?            @relation(fields: [imageAssetId], references: [id])
-  ingestJob        ImageIngestJob?          @relation("ImageIngestJobForImage")
+  id            Int                    @id @default(autoincrement())
+  pageVersionId Int
+  originUrl     String
+  normalizedUrl String
+  displayUrl    String?
+  status        PageVersionImageStatus @default(PENDING)
+  imageAssetId  Int?
+  extractedAt   DateTime               @default(now())
+  lastQueuedAt  DateTime?
+  lastFetchedAt DateTime?
+  failureCount  Int                    @default(0)
+  lastError     String?
+  metadata      Json?
+  pageVersion   PageVersion            @relation(fields: [pageVersionId], references: [id], onDelete: Cascade)
+  imageAsset    ImageAsset?            @relation(fields: [imageAssetId], references: [id])
+  ingestJob     ImageIngestJob?        @relation("ImageIngestJobForImage")
 
   @@unique([pageVersionId, normalizedUrl])
   @@index([status])
@@ -285,18 +285,18 @@ model PageVersionImage {
 }
 
 model ImageIngestJob {
-  id                  Int                 @id @default(autoincrement())
-  pageVersionImageId  Int                 @unique
-  status              ImageIngestJobStatus @default(PENDING)
-  priority            Int                 @default(100)
-  attempts            Int                 @default(0)
-  nextRunAt           DateTime            @default(now())
-  lockedAt            DateTime?
-  lockedBy            String?
-  lastError           String?
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-  pageVersionImage    PageVersionImage    @relation("ImageIngestJobForImage", fields: [pageVersionImageId], references: [id], onDelete: Cascade)
+  id                 Int                  @id @default(autoincrement())
+  pageVersionImageId Int                  @unique
+  status             ImageIngestJobStatus @default(PENDING)
+  priority           Int                  @default(100)
+  attempts           Int                  @default(0)
+  nextRunAt          DateTime             @default(now())
+  lockedAt           DateTime?
+  lockedBy           String?
+  lastError          String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  pageVersionImage   PageVersionImage     @relation("ImageIngestJobForImage", fields: [pageVersionImageId], references: [id], onDelete: Cascade)
 
   @@index([status, nextRunAt])
   @@index([lockedAt])
@@ -390,7 +390,6 @@ model SiteStats {
   newVotesToday Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-
 }
 
 model SourceVersion {
@@ -415,8 +414,8 @@ model SourceVersion {
 }
 
 model User {
-  id                               Int                   @id @default(autoincrement())
-  wikidotId                        Int?                  @unique
+  id                               Int                             @id @default(autoincrement())
+  wikidotId                        Int?                            @unique
   displayName                      String?
   firstActivityAt                  DateTime?
   firstActivityType                String?
@@ -440,13 +439,14 @@ model User {
   collections                      UserCollection[]
   collectionAccountOwner           CollectionAccountOwner?
   tagPreferences                   UserTagPreference[]
-  voteInteractionsFrom             UserVoteInteraction[]   @relation("UserVoteInteractionFrom")
-  voteInteractionsTo               UserVoteInteraction[]   @relation("UserVoteInteractionTo")
-  forumAlertsReceived              ForumInteractionAlert[] @relation("ForumInteractionAlertRecipient")
-  forumAlertsTriggered             ForumInteractionAlert[] @relation("ForumInteractionAlertActor")
-  following                        UserFollow[]            @relation("UserFollowFollower")
-  followers                        UserFollow[]            @relation("UserFollowTarget")
+  voteInteractionsFrom             UserVoteInteraction[]           @relation("UserVoteInteractionFrom")
+  voteInteractionsTo               UserVoteInteraction[]           @relation("UserVoteInteractionTo")
+  forumAlertsReceived              ForumInteractionAlert[]         @relation("ForumInteractionAlertRecipient")
+  forumAlertsTriggered             ForumInteractionAlert[]         @relation("ForumInteractionAlertActor")
+  following                        UserFollow[]                    @relation("UserFollowFollower")
+  followers                        UserFollow[]                    @relation("UserFollowTarget")
   notificationDeliveries           NotificationDelivery[]
+  digestSlotClaims                 DigestSlotClaim[]
   notificationPreferences          UserNotificationPreference[]
   notificationChannelSetting       UserNotificationChannelSetting?
 
@@ -507,13 +507,13 @@ model UserNotificationPreference {
 
 /// 渠道级设置（不按类型区分），每个用户一行。
 model UserNotificationChannelSetting {
-  userId       Int            @id
+  userId             Int            @id
   /// 每日最多接收多少条 QQ 私信。上限受全局 NOTIFY_DAILY_LIMIT 约束，
   /// 取两者更小值 —— 用户可以调得更保守，但不能突破运维设定的上限。
-  qqDailyLimit Int            @default(20)
-  qqMode       QqDeliveryMode @default(REALTIME)
+  qqDailyLimit       Int            @default(20)
+  qqMode             QqDeliveryMode @default(REALTIME)
   /// DAILY_DIGEST 模式下的发送整点，0–23，按 UTC+8 解释
-  qqDigestHour Int            @default(21)
+  qqDigestHour       Int            @default(21)
   /// 上一次成功发出的汇总所对应的**截止线**（不是发送时刻）。
   ///
   /// 显式存下来，而不是从投递记录反推。反推的做法在跨午夜宕机、
@@ -522,9 +522,9 @@ model UserNotificationChannelSetting {
   /// 有了它，下次到期时刻 = 它之后的第一个 digestHour 边界，
   /// 逾期未发的汇总在恢复后会立刻补上，而不必等到明天同一时刻。
   lastDigestCutoffAt DateTime?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model UserMetricPreference {
@@ -724,23 +724,23 @@ model UserStats {
 }
 
 model UserCollection {
-  id             Int                   @id @default(autoincrement())
-  ownerId        Int
-  title          String
-  slug           String
-  visibility     CollectionVisibility  @default(PRIVATE)
-  description    String?               @db.Text
-  notes          String?               @db.Text
-  coverImageUrl      String?
-  coverImageOffsetX  Float             @default(0)
-  coverImageOffsetY  Float             @default(0)
-  coverImageScale    Float             @default(1)
-  isDefault      Boolean               @default(false)
-  publishedAt    DateTime?
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @default(now()) @updatedAt
-  owner          User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  items          UserCollectionItem[]
+  id                Int                  @id @default(autoincrement())
+  ownerId           Int
+  title             String
+  slug              String
+  visibility        CollectionVisibility @default(PRIVATE)
+  description       String?              @db.Text
+  notes             String?              @db.Text
+  coverImageUrl     String?
+  coverImageOffsetX Float                @default(0)
+  coverImageOffsetY Float                @default(0)
+  coverImageScale   Float                @default(1)
+  isDefault         Boolean              @default(false)
+  publishedAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @default(now()) @updatedAt
+  owner             User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  items             UserCollectionItem[]
 
   @@unique([ownerId, slug], map: "uniq_collection_owner_slug")
   @@index([ownerId, visibility], map: "idx_collection_owner_visibility")
@@ -748,16 +748,16 @@ model UserCollection {
 }
 
 model UserCollectionItem {
-  id           Int             @id @default(autoincrement())
+  id           Int            @id @default(autoincrement())
   collectionId Int
   pageId       Int
-  annotation   String?         @db.Text
-  order        Float           @default(0)
-  pinned       Boolean         @default(false)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @default(now()) @updatedAt
-  collection   UserCollection  @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  page         Page            @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  annotation   String?        @db.Text
+  order        Float          @default(0)
+  pinned       Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @default(now()) @updatedAt
+  collection   UserCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  page         Page           @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@unique([collectionId, pageId], map: "uniq_collection_item_page")
   @@index([collectionId, order], map: "idx_collection_item_order")
@@ -765,10 +765,10 @@ model UserCollectionItem {
 }
 
 model CollectionAccountOwner {
-  accountId String @id
-  userId    Int    @unique
+  accountId String   @id
+  userId    Int      @unique
   createdAt DateTime @default(now())
-  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model UserTagPreference {
@@ -958,37 +958,37 @@ model AnalysisWatermark {
 }
 
 model CategoryIndexTick {
-  id               Int      @id @default(autoincrement())
+  id               Int       @id @default(autoincrement())
   category         String
-  asOfTs           DateTime @map("as_of_ts")
+  asOfTs           DateTime  @map("as_of_ts")
   watermarkTs      DateTime? @map("watermark_ts")
-  voteCutoffDate   DateTime @map("vote_cutoff_date") @db.Date
-  voteRuleVersion  String   @default("utc8-t+1-v1") @map("vote_rule_version")
-  scoreSignalRaw   Decimal  @default(0) @map("score_signal_raw")
-  scoreRef         Decimal  @default(0) @map("score_ref")
-  scoreProvisional Decimal  @default(0) @map("score_provisional")
-  indexMark        Decimal  @map("index_mark")
-  crowdDrag        Decimal? @default(0) @map("crowd_drag")
-  noise            Decimal? @default(0) @map("noise")
-  createdAt        DateTime @default(now()) @map("created_at")
+  voteCutoffDate   DateTime  @map("vote_cutoff_date") @db.Date
+  voteRuleVersion  String    @default("utc8-t+1-v1") @map("vote_rule_version")
+  scoreSignalRaw   Decimal   @default(0) @map("score_signal_raw")
+  scoreRef         Decimal   @default(0) @map("score_ref")
+  scoreProvisional Decimal   @default(0) @map("score_provisional")
+  indexMark        Decimal   @map("index_mark")
+  crowdDrag        Decimal?  @default(0) @map("crowd_drag")
+  noise            Decimal?  @default(0) @map("noise")
+  createdAt        DateTime  @default(now()) @map("created_at")
 
   @@unique([category, asOfTs], map: "uniq_category_index_tick_category_as_of_ts")
   @@index([watermarkTs], map: "idx_category_index_tick_watermark_ts")
 }
 
 model CategoryIndexForecastTick {
-  id               Int      @id @default(autoincrement())
-  category         String
-  asOfTs           DateTime @map("as_of_ts")
-  settleDay        DateTime @map("settle_day") @db.Date
-  hourOffset       Int      @map("hour_offset")
-  forecastScore    Decimal  @map("forecast_score")
-  forecastIndex    Decimal  @map("forecast_index")
-  dayCloseScore    Decimal  @map("day_close_score")
-  dayCloseIndex    Decimal  @map("day_close_index")
-  prevDayCloseIndex Decimal @map("prev_day_close_index")
-  isStale          Boolean  @default(false) @map("is_stale")
-  createdAt        DateTime @default(now()) @map("created_at")
+  id                Int      @id @default(autoincrement())
+  category          String
+  asOfTs            DateTime @map("as_of_ts")
+  settleDay         DateTime @map("settle_day") @db.Date
+  hourOffset        Int      @map("hour_offset")
+  forecastScore     Decimal  @map("forecast_score")
+  forecastIndex     Decimal  @map("forecast_index")
+  dayCloseScore     Decimal  @map("day_close_score")
+  dayCloseIndex     Decimal  @map("day_close_index")
+  prevDayCloseIndex Decimal  @map("prev_day_close_index")
+  isStale           Boolean  @default(false) @map("is_stale")
+  createdAt         DateTime @default(now()) @map("created_at")
 
   @@unique([category, asOfTs], map: "uniq_category_index_fcst_category_as_of_ts")
   @@unique([category, settleDay, hourOffset], map: "uniq_category_index_fcst_day_hour")
@@ -1014,16 +1014,16 @@ model PageDailyStats {
 }
 
 model PageViewEvent {
-  id          Int      @id @default(autoincrement())
-  pageId      Int
-  wikidotId   Int
-  clientHash  String
-  clientIp    String?
-  userAgent   String?
-  component   String?
-  source      String?
-  refererHost String?
-  createdAt   DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  pageId         Int
+  wikidotId      Int
+  clientHash     String
+  clientIp       String?
+  userAgent      String?
+  component      String?
+  source         String?
+  refererHost    String?
+  createdAt      DateTime @default(now())
   // 身份信号增强（2026-06 backend/sql/20260610_tracking_identity_signals.sql，全部可空回填）
   acceptLanguage String?
   uaPlatform     String?
@@ -1032,7 +1032,7 @@ model PageViewEvent {
   softprint      String?
   visitorToken   String?
   tlsFingerprint String?
-  page        Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  page           Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@index([pageId, createdAt])
   @@index([pageId, clientHash, createdAt])
@@ -1041,17 +1041,17 @@ model PageViewEvent {
 }
 
 model UserPixelEvent {
-  id          Int      @id @default(autoincrement())
-  userId      Int
-  wikidotId   Int?
-  username    String
-  clientHash  String
-  clientIp    String?
-  userAgent   String?
-  component   String?
-  source      String?
-  refererHost String?
-  createdAt   DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  wikidotId      Int?
+  username       String
+  clientHash     String
+  clientIp       String?
+  userAgent      String?
+  component      String?
+  source         String?
+  refererHost    String?
+  createdAt      DateTime @default(now())
   // 身份信号增强（同上迁移）
   acceptLanguage String?
   uaPlatform     String?
@@ -1060,7 +1060,7 @@ model UserPixelEvent {
   softprint      String?
   visitorToken   String?
   tlsFingerprint String?
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([userId, clientHash, createdAt])
@@ -1143,38 +1143,37 @@ model LeaderboardCache {
 
 /// Daily site-wide overview snapshot (non-destructive addition)
 model SiteOverviewDaily {
-  id                 Int      @id @default(autoincrement())
-  date               DateTime @unique @db.Date
+  id                Int      @id @default(autoincrement())
+  date              DateTime @unique @db.Date
   // Users
-  usersTotal         Int      @default(0)
-  usersActive        Int      @default(0)
-  usersContributors  Int      @default(0)
-  usersAuthors       Int      @default(0)
+  usersTotal        Int      @default(0)
+  usersActive       Int      @default(0)
+  usersContributors Int      @default(0)
+  usersAuthors      Int      @default(0)
   // Pages
-  pagesTotal         Int      @default(0)
-  pagesOriginals     Int      @default(0)
-  pagesTranslations  Int      @default(0)
+  pagesTotal        Int      @default(0)
+  pagesOriginals    Int      @default(0)
+  pagesTranslations Int      @default(0)
   // Votes (daily increments)
-  votesUp            Int      @default(0)
-  votesDown          Int      @default(0)
+  votesUp           Int      @default(0)
+  votesDown         Int      @default(0)
   // Revisions (daily increments)
-  revisionsTotal     Int      @default(0)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @default(now()) @updatedAt
-
+  revisionsTotal    Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
 }
 
 /// 标签定义表 - 存储官方标签的中英文对照
 model TagDefinition {
-  id            Int       @id @default(autoincrement())
-  tagChinese    String    @unique // 中文标签名 (如 "故事")
-  tagEnglish    String?   // 英文标签名 (如 "tale")，可为空表示仅中文
-  description   String?   // 标签描述
-  sourcePageUrl String    // 来源页面URL (如 "tag-guide")
-  category      String?   // 标签类别 (如 "主要标签", "属性标签")
-  isOfficial    Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id            Int      @id @default(autoincrement())
+  tagChinese    String   @unique // 中文标签名 (如 "故事")
+  tagEnglish    String? // 英文标签名 (如 "tale")，可为空表示仅中文
+  description   String? // 标签描述
+  sourcePageUrl String // 来源页面URL (如 "tag-guide")
+  category      String? // 标签类别 (如 "主要标签", "属性标签")
+  isOfficial    Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([tagEnglish])
   @@index([sourcePageUrl])
@@ -1199,21 +1198,21 @@ model TagValidationCache {
 
 /// 标签指导页面同步状态跟踪
 model TagGuideSync {
-  id              Int       @id @default(autoincrement())
-  pageUrl         String    @unique   // 页面URL
-  pageVersionId   Int?                // 最后同步的PageVersion ID
-  tagsExtracted   Int       @default(0)  // 提取的标签数量
-  lastSyncedAt    DateTime?            // 最后同步时间
-  syncStatus      String    @default("pending") // pending, synced, failed
-  errorMessage    String?              // 失败原因
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id            Int       @id @default(autoincrement())
+  pageUrl       String    @unique // 页面URL
+  pageVersionId Int? // 最后同步的PageVersion ID
+  tagsExtracted Int       @default(0) // 提取的标签数量
+  lastSyncedAt  DateTime? // 最后同步时间
+  syncStatus    String    @default("pending") // pending, synced, failed
+  errorMessage  String? // 失败原因
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }
 
 // ─── Forum Models ────────────────────────────────────────────
 
 model ForumCategory {
-  id           Int           @id              // wikidot 原始 ID
+  id           Int           @id // wikidot 原始 ID
   title        String
   description  String?       @db.Text
   threadsCount Int           @default(0)
@@ -1225,24 +1224,24 @@ model ForumCategory {
 }
 
 model ForumThread {
-  id                 Int            @id           // wikidot 原始 ID
+  id                 Int                     @id // wikidot 原始 ID
   categoryId         Int
   title              String
-  description        String?        @db.Text
+  description        String?                 @db.Text
   createdByName      String?
   createdByWikidotId Int?
   createdAt          DateTime?
-  postCount          Int            @default(0)
-  postCountAtSync    Int            @default(0)   // 增量检测：上次同步时的 postCount
-  isDeleted          Boolean        @default(false)
+  postCount          Int                     @default(0)
+  postCountAtSync    Int                     @default(0) // 增量检测：上次同步时的 postCount
+  isDeleted          Boolean                 @default(false)
   lastSyncedAt       DateTime?
-  pageId             Int?                         // 页面讨论帖关联
-  category           ForumCategory  @relation(fields: [categoryId], references: [id])
-  page               Page?          @relation(fields: [pageId], references: [id])
+  pageId             Int? // 页面讨论帖关联
+  category           ForumCategory           @relation(fields: [categoryId], references: [id])
+  page               Page?                   @relation(fields: [pageId], references: [id])
   posts              ForumPost[]
   interactionAlerts  ForumInteractionAlert[]
-  syncedAt           DateTime       @default(now())
-  updatedFieldAt     DateTime       @updatedAt
+  syncedAt           DateTime                @default(now())
+  updatedFieldAt     DateTime                @updatedAt
 
   @@index([categoryId])
   @@index([pageId])
@@ -1251,20 +1250,20 @@ model ForumThread {
 }
 
 model ForumPost {
-  id                 Int          @id           // wikidot 原始 ID
-  threadId           Int
-  parentId           Int?                       // 楼中楼嵌套
-  title              String?
-  textHtml           String?      @db.Text
-  createdByName      String?
-  createdByWikidotId Int?
-  createdByType      String?                    // user/deleted/anonymous/guest
-  createdAt          DateTime?
-  editedAt           DateTime?
-  isDeleted          Boolean      @default(false)
-  syncedAt           DateTime     @default(now())
-  thread             ForumThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  interactionAlerts  ForumInteractionAlert[] @relation("ForumInteractionAlertPost")
+  id                      Int                     @id // wikidot 原始 ID
+  threadId                Int
+  parentId                Int? // 楼中楼嵌套
+  title                   String?
+  textHtml                String?                 @db.Text
+  createdByName           String?
+  createdByWikidotId      Int?
+  createdByType           String? // user/deleted/anonymous/guest
+  createdAt               DateTime?
+  editedAt                DateTime?
+  isDeleted               Boolean                 @default(false)
+  syncedAt                DateTime                @default(now())
+  thread                  ForumThread             @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  interactionAlerts       ForumInteractionAlert[] @relation("ForumInteractionAlertPost")
   parentInteractionAlerts ForumInteractionAlert[] @relation("ForumInteractionAlertParentPost")
 
   @@index([threadId])
@@ -1275,27 +1274,27 @@ model ForumPost {
 }
 
 model ForumInteractionAlert {
-  id               Int                       @id @default(autoincrement())
-  recipientUserId  Int
-  actorUserId      Int?
-  actorWikidotId   Int?
-  actorName        String?
-  type             ForumInteractionAlertType
-  postId           Int
-  parentPostId     Int?
-  threadId         Int
-  pageId           Int?
-  postTitle        String?
-  postExcerpt      String?                   @db.Text
-  detectedAt       DateTime                  @default(now())
-  acknowledgedAt   DateTime?
-  createdAt        DateTime                  @default(now())
-  recipientUser    User                      @relation("ForumInteractionAlertRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
-  actorUser        User?                     @relation("ForumInteractionAlertActor", fields: [actorUserId], references: [id], onDelete: SetNull)
-  post             ForumPost                 @relation("ForumInteractionAlertPost", fields: [postId], references: [id], onDelete: Cascade)
-  parentPost       ForumPost?                @relation("ForumInteractionAlertParentPost", fields: [parentPostId], references: [id], onDelete: SetNull)
-  thread           ForumThread               @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  page             Page?                     @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  id              Int                       @id @default(autoincrement())
+  recipientUserId Int
+  actorUserId     Int?
+  actorWikidotId  Int?
+  actorName       String?
+  type            ForumInteractionAlertType
+  postId          Int
+  parentPostId    Int?
+  threadId        Int
+  pageId          Int?
+  postTitle       String?
+  postExcerpt     String?                   @db.Text
+  detectedAt      DateTime                  @default(now())
+  acknowledgedAt  DateTime?
+  createdAt       DateTime                  @default(now())
+  recipientUser   User                      @relation("ForumInteractionAlertRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  actorUser       User?                     @relation("ForumInteractionAlertActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  post            ForumPost                 @relation("ForumInteractionAlertPost", fields: [postId], references: [id], onDelete: Cascade)
+  parentPost      ForumPost?                @relation("ForumInteractionAlertParentPost", fields: [parentPostId], references: [id], onDelete: SetNull)
+  thread          ForumThread               @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  page            Page?                     @relation(fields: [pageId], references: [id], onDelete: SetNull)
 
   @@unique([recipientUserId, type, postId], map: "uniq_forum_interaction_alert_recipient_type_post")
   @@index([recipientUserId, acknowledgedAt, detectedAt], map: "idx_forum_interaction_alert_recipient_ack_detected")
@@ -1306,7 +1305,7 @@ model ForumInteractionAlert {
 
 model ForumSyncState {
   id               Int       @id @default(autoincrement())
-  task             String    @unique    // 'full' | 'incremental'
+  task             String    @unique // 'full' | 'incremental'
   lastRunAt        DateTime?
   lastSuccessAt    DateTime?
   categoriesSynced Int       @default(0)
@@ -1314,4 +1313,19 @@ model ForumSyncState {
   postsSynced      Int       @default(0)
   errorMessage     String?
   updatedAt        DateTime  @updatedAt
+}
+
+/// 「每个自然日一封汇总」的占位表。主键即名额，靠唯一性做原子占位。
+model DigestSlotClaim {
+  userId    Int
+  /// 周期边界所属的 UTC+8 自然日 —— 是**边界**归属的那天，不是消息发出去的那天
+  cutoffDay DateTime @db.Date
+  cutoffAt  DateTime
+  /// 占位者是哪一封；重发时据此判断「这个槽位是不是我自己的」
+  digestKey String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, cutoffDay])
+  @@index([createdAt])
 }
