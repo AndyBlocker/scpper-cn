@@ -468,6 +468,16 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   const eligible: Candidate[] = [];
   const digestEligibility = new Map<number, boolean>();
   const digestCutoffByUser = new Map<number, Date>();
+  /**
+   * 周期内**存在但本轮没能发出**的内容。
+   *
+   * 「本轮没发出去」有三种，必须分开：
+   *   1. 周期内确实没内容           → 周期算过完，水位线该推进
+   *   2. 有内容但被优雅停机跳过      → 没过完，推进就等于丢弃
+   *   3. 有内容但被「每天一封」挡住   → 同上（多个逾期周期时会遇到）
+   * 只有第 1 种能预先标记为已处理。
+   */
+  const hasUnsentInPeriod = new Set<number>();
   /** 本轮处理完的用户 —— 只有他们的周期水位线可以推进 */
   const processedUserIds = new Set<number>();
   for (const c of candidates) {
@@ -489,6 +499,9 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       digestEligibility.set(c.userId, ok);
       digestCutoffByUser.set(c.userId, cutoff);
     }
+    // 属于本周期（早于截止线）却没资格发出去 —— 记下来，
+    // 这个用户的周期还没过完，水位线不能推进
+    if (!ok && cutoff && c.detectedAt < cutoff) hasUnsentInPeriod.add(c.userId);
     // 只收**截止线之前**产生的内容。补发补的是「到点时本该发却没发出去的那批」，
     // 不是「到点之后又新来的」—— 否则设定 21 点的用户会在半夜收到消息。
     if (ok && cutoff && c.detectedAt < cutoff) eligible.push(c);
@@ -505,10 +518,18 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 不把他们算作已处理的话，水位线停在那个空周期上，
   // 之后每一条新告警都晚于它而被无限推迟，这个用户从此收不到汇总。
   const nowMs = Date.now();
+  const usersWithEligible = new Set(candidates.map((c) => c.userId));
   for (const [userId, prefs] of prefsByUser) {
     if (prefs.mode !== 'DAILY_DIGEST') continue;
     const due = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
-    if (nowMs >= due.getTime()) processedUserIds.add(userId);
+    if (nowMs < due.getTime()) continue;
+    // 有待发内容的：等他在下面的循环里真正处理完再标记 ——
+    // 优雅停机可能让他根本轮不到，那时推进水位线会把内容永久丢掉。
+    if (usersWithEligible.has(userId)) continue;
+    // 周期内有内容但被挡住（每天一封 / 多个逾期周期）：周期没过完，不能推进。
+    if (hasUnsentInPeriod.has(userId)) continue;
+    // 到这里才是真正的空周期
+    processedUserIds.add(userId);
   }
 
   summary.candidates = candidates.length;

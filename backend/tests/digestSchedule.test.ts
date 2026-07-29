@@ -124,3 +124,39 @@ test('路径 H：同一自然日只发一封，改晚时点也不例外', () => 
     '今天已收过、随后把时点改晚：新边界当天到期，但不得发第二封');
   assert.equal(eligible(false, 0), false, '未到期');
 });
+
+// ── 「本轮没发出去」的三种情形必须区分开（review 第十一轮 P1）──────
+// 只有第 1 种能推进水位线；把后两种一并当成「已处理」会越过从未投递的内容。
+
+function shouldPreMark(opts: {
+  due: boolean;
+  hasEligible: boolean;      // 本轮有待发内容
+  hasUnsentInPeriod: boolean; // 周期内有内容但被挡住
+}): boolean {
+  if (!opts.due) return false;
+  if (opts.hasEligible) return false;       // 等真正处理完再标记
+  if (opts.hasUnsentInPeriod) return false; // 周期没过完
+  return true;
+}
+
+test('情形 1：周期内确实没内容 → 推进', () => {
+  assert.equal(shouldPreMark({ due: true, hasEligible: false, hasUnsentInPeriod: false }), true);
+});
+
+test('情形 2：有内容但可能被优雅停机跳过 → 不预先标记', () => {
+  assert.equal(shouldPreMark({ due: true, hasEligible: true, hasUnsentInPeriod: false }), false,
+    '有待发内容时必须等他真正处理完 —— 停机可能让他根本轮不到');
+});
+
+test('情形 3：有内容但被「每天一封」挡住 → 不推进', () => {
+  assert.equal(shouldPreMark({ due: true, hasEligible: false, hasUnsentInPeriod: true }), false,
+    '多个逾期周期时，后面那些周期的内容被挡住，推进会把它们永久丢掉');
+});
+
+test('未到期一律不标记', () => {
+  for (const hasEligible of [true, false]) {
+    for (const hasUnsent of [true, false]) {
+      assert.equal(shouldPreMark({ due: false, hasEligible, hasUnsentInPeriod: hasUnsent }), false);
+    }
+  }
+});
