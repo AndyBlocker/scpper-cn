@@ -152,3 +152,27 @@ test('放宽收集窗口不得越过冷启动闸门（review P1）', () => {
   const oldStart = now - 30 * 24 * 3600 * 1000;
   assert.equal(clamp(oldStart, floor), now - 2 * LOOKBACK, '闸门够早时按放宽窗口取');
 });
+
+test('定时批次的过期时限须放宽，否则失败一次即必死（review P1）', () => {
+  const LOOKBACK = 24;
+  // 定时汇总最老的内容在发出时本来就接近 24 小时
+  const oldestAgeHours = 23;
+  const expiredNormal = (age: number) => age >= LOOKBACK;
+  const expiredDigest = (age: number) => age >= 2 * LOOKBACK;
+  // 转 SCHEDULED 后又过了 2 小时才轮到重试
+  const ageAtRetry = oldestAgeHours + 2;
+  assert.equal(expiredNormal(ageAtRetry), true, '按常规时限，这批一转 SCHEDULED 就会被判死');
+  assert.equal(expiredDigest(ageAtRetry), false, '放宽后仍可重试');
+  assert.equal(expiredDigest(50), true, '放宽不等于永不过期');
+});
+
+test('起点需留安全重叠以容纳晚提交的告警（review P2）', () => {
+  const OVERLAP_MS = 15 * 60 * 1000;
+  const cutoff = 1_000_000_000_000;
+  const floorWithOverlap = cutoff - OVERLAP_MS;
+  // 一条 detectedAt 略早于截止线、但提交晚于本轮快照的告警
+  const lateCommitted = cutoff - 5 * 60 * 1000;
+  assert.equal(lateCommitted >= cutoff, false, '它早于截止线，本轮不会被纳入');
+  assert.equal(lateCommitted >= floorWithOverlap, true, '有重叠时下一轮还能扫到它');
+  assert.equal(lateCommitted >= cutoff, false, '若以截止线为起点则被永久排除');
+});

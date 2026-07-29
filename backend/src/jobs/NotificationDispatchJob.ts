@@ -399,8 +399,15 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     const prefs = prefsByUser.get(uid);
     if (prefs?.mode !== 'DAILY_DIGEST') { userFloor.set(uid, floor); continue; }
     const last = await lastDigestCutoff(prisma, uid);
-    // 同样不得早于闸门
-    const candidateFloor = last && last > collectFloor ? last : collectFloor;
+    // 起点往回留一段**安全重叠**。
+    //
+    // 截止线是墙上时钟，不是「已提交水位线」：一条 detectedAt 早于截止线的告警，
+    // 完全可能在 collectCandidates 取快照之后才提交 —— 本轮看不见它，
+    // 而截止线一旦被持久化，下一轮又因为「早于起点」被永久排除。
+    // 重扫是安全的：dedupeKey 会挡住已经推过的，重叠只是多查一点。
+    const OVERLAP_MS = 15 * 60 * 1000;
+    const anchored = last ? new Date(last.getTime() - OVERLAP_MS) : null;
+    const candidateFloor = anchored && anchored > collectFloor ? anchored : collectFloor;
     userFloor.set(uid, candidateFloor > startAt ? candidateFloor : startAt);
   }
 
@@ -986,6 +993,14 @@ function nextRetryAt(resumeRound: number): Date {
  */
 async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean): Promise<number> {
   const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
+  // 定时汇总的批次用**放宽一倍**的时限。
+  //
+  // 按来源事件时间判过期本身是对的（见下），但定时汇总攒的就是一整天的内容 ——
+  // 它最老的那几条在发出时本来就接近回看窗口上限。一旦这批暂时失败转为
+  // SCHEDULED，下一轮的过期清理会立刻把它们判死，于是**定时用户的批次
+  // 只要失败一次就再也重试不了**，补发场景下更是整批必死。
+  const digestCutoff = new Date(Date.now() - 2 * LOOKBACK_HOURS * 3600 * 1000);
+
   // 按**来源事件时间**判过期，不是按占位时间。
   // createdAt 记的是投递器什么时候认领了它，一条在窗口边缘才被认领的告警，
   // 按 createdAt 还能再苟一整个窗口期，实际送达时已经接近两倍于配置的时限。
@@ -993,9 +1008,20 @@ async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean
   // COALESCE 兜底：没有 detectedAt 的历史行退回 createdAt。
   const whereExpired = {
     state: 'SCHEDULED' as const,
-    OR: [
-      { payload: { path: ['detectedAt'], lt: cutoff.toISOString() } },
-      { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: cutoff } }] }
+    AND: [
+      {
+        OR: [
+          { payload: { path: ['detectedAt'], lt: cutoff.toISOString() } },
+          { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: cutoff } }] }
+        ]
+      },
+      {
+        // 带 digestCutoff 的是定时批次 —— 只有超过放宽后的时限才判死
+        OR: [
+          { payload: { path: ['digestCutoff'], equals: Prisma.DbNull } },
+          { payload: { path: ['detectedAt'], lt: digestCutoff.toISOString() } }
+        ]
+      }
     ]
   };
   if (dryRun) {
