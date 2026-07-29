@@ -50,3 +50,28 @@ ALTER TABLE "UserNotificationChannelSetting"
 ALTER TABLE "UserNotificationChannelSetting"
   ADD CONSTRAINT "UserNotificationChannelSetting_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- ── 回填既有的静音意图 ──────────────────────────────────────────────
+--
+-- 旧机制：UserMetricPreference.config->>'muted' 为 true 时，
+-- PageMetricMonitorJob 会给对应的 watch 打上 mutedAt，进而**不产生告警**。
+-- 新机制下告警一律产生（站内与 QQ 各自独立地决定要不要展示/推送），
+-- 若不回填，这些用户静音过的类型会突然重新出现在提醒流里 ——
+-- 他们没做任何操作，界面却变了，这是最容易招致投诉的一类回归。
+--
+-- 静音在旧语义下等于「完全不想收到」，因此两个渠道都置 false。
+INSERT INTO "UserNotificationPreference" ("userId", "type", "siteEnabled", "qqEnabled", "updatedAt")
+SELECT
+  ump."userId",
+  (CASE ump."metric"
+     WHEN 'COMMENT_COUNT'  THEN 'PAGE_COMMENT'
+     WHEN 'VOTE_COUNT'     THEN 'PAGE_VOTE'
+     WHEN 'REVISION_COUNT' THEN 'PAGE_REVISION'
+   END)::"NotificationTypeKey",
+  false,
+  false,
+  now()
+FROM "UserMetricPreference" ump
+WHERE (ump.config->>'muted') IN ('true', 'True', 'TRUE')
+  AND ump."metric" IN ('COMMENT_COUNT', 'VOTE_COUNT', 'REVISION_COUNT')
+ON CONFLICT ("userId", "type") DO NOTHING;

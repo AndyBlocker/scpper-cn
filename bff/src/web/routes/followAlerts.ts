@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { loadDisabledSiteTypes } from '../utils/notifyPrefs.js';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { getReadPoolSync } from '../utils/dbPool.js';
@@ -21,6 +22,13 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       if (!auth || auth.linkedWikidotId == null) return res.status(401).json({ ok: false, error: 'unauthenticated' });
       const followerId = await resolveFollowerId(readPool, auth.linkedWikidotId);
       if (followerId == null) return res.json({ ok: true, alerts: [], unreadCount: 0 });
+
+      // 用户关掉了「关注动态」的站内展示：列表与未读数一并置空。
+      // 两者必须一起，只清列表会留下一个消不掉的红点。
+      // 注意这不影响 QQ 推送 —— 两个渠道各自独立。
+      if ((await loadDisabledSiteTypes(readPool, followerId)).has('FOLLOW_ACTIVITY')) {
+        return res.json({ ok: true, alerts: [], unreadCount: 0 });
+      }
 
       const { type } = req.query as Record<string, string>;
       // 同 /alerts：不加这个参数，客户端过滤会让「最新 20 条已读完」的用户

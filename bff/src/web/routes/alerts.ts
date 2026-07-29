@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import { loadDisabledSiteTypes, METRIC_TO_NOTIFY_TYPE } from '../utils/notifyPrefs.js';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { fetchAuthUser, type AuthUserPayload } from '../utils/auth.js';
@@ -330,6 +331,19 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
       // 一旦最新 20 条都读过、更早的未读还在，界面就会显示「没有未读」
       // 而徽标仍有数字，且无从翻到那些未读。
       const unreadOnly = String(req.query.unreadOnly ?? '') === '1';
+
+      // 站内展示开关。放在缓存查询**之前**：偏好一改立刻生效，
+      // 不必等缓存过期；也不会把「空」写进缓存污染重新开启后的读取。
+      // 列表与未读数一起清空 —— 只清列表会留下一个用户消不掉的红点。
+      // 这不影响 QQ 推送，两个渠道各自独立。
+      const appUserId = await resolveAppUserId(pool, authUser);
+      if (appUserId != null) {
+        const disabled = await loadDisabledSiteTypes(pool, appUserId);
+        const notifyType = METRIC_TO_NOTIFY_TYPE[metric];
+        if (notifyType && disabled.has(notifyType)) {
+          return res.json({ ok: true, metric, alerts: [], unreadCount: 0 });
+        }
+      }
 
       // 缓存 30 秒 - 减少 sync 期间的数据库压力，同时保持数据较新
       const cacheKey = `alerts:${authUser.linkedWikidotId}:${metric}:${limit}:${offset}:${unreadOnly ? 'u' : 'a'}`;

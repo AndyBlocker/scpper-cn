@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { loadDisabledSiteTypes } from '../utils/notifyPrefs.js';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { fetchAuthUser } from '../utils/auth.js';
@@ -77,6 +78,11 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
 
       const recipientUserId = await resolveRecipientId(readPool, auth.linkedWikidotId);
       if (recipientUserId == null) {
+        return res.json({ ok: true, alerts: [], unreadCount: 0 });
+      }
+
+      // 同 followAlerts：站内关掉则列表与未读数一并置空，不影响 QQ 推送
+      if ((await loadDisabledSiteTypes(readPool, recipientUserId)).has('FORUM_INTERACTION')) {
         return res.json({ ok: true, alerts: [], unreadCount: 0 });
       }
 

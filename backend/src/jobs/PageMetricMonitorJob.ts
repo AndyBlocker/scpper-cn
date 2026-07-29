@@ -133,6 +133,18 @@ function parseMuted(config: Prisma.JsonValue | null | undefined): boolean | null
   return null;
 }
 
+/**
+ * 【为什么不再按 mutedAt 过滤】
+ *
+ * 旧语义：静音某个指标 = 不产生告警。这让「站内」和「QQ」无法独立 ——
+ * 告警都不存在了，QQ 自然也推不了。
+ * 新语义：告警一律产生，由 UserNotificationPreference 分别决定
+ * 站内是否展示、QQ 是否推送，两者互不影响。
+ * 老用户的静音意图已在 20260729130000 迁移里回填成
+ * siteEnabled=false + qqEnabled=false，界面不会因此变化。
+ *
+ * mutedAt 列保留不动（不做破坏性变更），只是不再作为产生条件。
+ */
 export class PageMetricMonitorJob {
   private prisma: PrismaClient;
 
@@ -423,7 +435,6 @@ export class PageMetricMonitorJob {
         JOIN "PageVersion" pv ON pv."pageId" = w."pageId" AND pv."validTo" IS NULL
         WHERE w.metric = 'COMMENT_COUNT'::"PageMetricType"
           AND w."source" = ${AUTO_WATCH_SOURCE}
-          AND (w."mutedAt" IS NULL)
           AND w."pageId" = ANY(${pageIdArray})
       `);
 
@@ -564,7 +575,6 @@ export class PageMetricMonitorJob {
         JOIN "PageVersion" pv ON pv."pageId" = w."pageId" AND pv."validTo" IS NULL
         WHERE w.metric = 'VOTE_COUNT'::"PageMetricType"
           AND w."source" = ${AUTO_WATCH_SOURCE}
-          AND (w."mutedAt" IS NULL)
           AND w."pageId" = ANY(${pageIdArray})
       `);
 
