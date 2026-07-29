@@ -1079,9 +1079,15 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
           WHERE u."wikidotId" = $1
             AND pa."acknowledgedAt" IS NULL
             AND pa."pageId" = ANY($2::int[])
+            ${exclusionClause(3)}
           ORDER BY pa."detectedAt" DESC
         `,
-        [authUser.linkedWikidotId, pageIds]
+        // 分组查询排除了被关掉的指标，明细也必须排除 ——
+        // 否则一个页面只要有一个启用的指标就会入选，
+        // 展开后里面仍然列着那条已经关掉的提醒。
+        disabledMetrics.length > 0
+          ? [authUser.linkedWikidotId, pageIds, disabledMetrics]
+          : [authUser.linkedWikidotId, pageIds]
       );
 
       const grouped = new Map<number, any>();

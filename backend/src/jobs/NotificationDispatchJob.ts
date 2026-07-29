@@ -436,7 +436,15 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       ok = reachedHour && !already;
       digestEligibility.set(c.userId, ok);
     }
-    (ok ? eligible : digestDeferred).push(c);
+    // 即使这个用户本轮有资格，也只收**截止线之前**产生的内容。
+    //
+    // 「补发」补的是「到点时本该发却没发出去的那批」，不是「到点之后又新来的」。
+    // 不加这条边界的话：设定 21 点的用户在 23 点产生一条动态，
+    // 因为「已过点且今天没发过」会被立刻推送 —— 用户选的是每天 21 点收一次，
+    // 结果半夜收到消息，比不补发更糟。这类内容应当等明天的汇总。
+    const cutoff = utc8HourToday(prefs.digestHour);
+    if (ok && c.detectedAt < cutoff) eligible.push(c);
+    else digestDeferred.push(c);
   }
   if (digestDeferred.length > 0) {
     console.log(`[notify] ${digestDeferred.length} 条属于定时用户且本轮未到点，留待其设定时段`);
@@ -577,11 +585,16 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 定时资格已在熔断计数之前统一判定过（含「过点补发」与自然日去重），
     // 这里不再重复判断 —— 判两次容易两处口径不一致。
 
-    // 日限额取用户设置（已在加载时与全局上限取过更小值）
-    if (sentToday >= prefs.dailyLimit) {
+    // 日限额：定时模式用**自然日**计数，与上面的资格判定同口径。
+    // 否则 qqDailyLimit=1 的定时用户会被昨天那条汇总卡住 ——
+    // 滚动 24 小时窗口里还能看到它，于是今天整批被记为 SUPPRESSED，永久丢失。
+    const limitBaseline = prefs.mode === 'DAILY_DIGEST'
+      ? await countDigestsSentSince(prisma, userId, startOfUtc8Day())
+      : sentToday;
+    if (limitBaseline >= prefs.dailyLimit) {
       await recordAll(prisma, items, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
       summary.suppressed += items.length;
-      console.warn(`[notify] 用户 ${target.wikidotId} 24 小时内已发 ${sentToday} 条，达其上限 ${prefs.dailyLimit}，本批抑制`);
+      console.warn(`[notify] 用户 ${target.wikidotId} 已发 ${limitBaseline} 条，达其上限 ${prefs.dailyLimit}，本批抑制`);
       continue;
     }
 
@@ -863,6 +876,13 @@ export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): 
 export function startOfUtc8Day(): Date {
   const shifted = new Date(Date.now() + 8 * 3600 * 1000);
   shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - 8 * 3600 * 1000);
+}
+
+/** UTC+8 今天 hour:00 对应的 UTC 时刻。用于「本次汇总收哪些内容」的截止线。 */
+export function utc8HourToday(hour: number): Date {
+  const shifted = new Date(Date.now() + 8 * 3600 * 1000);
+  shifted.setUTCHours(hour, 0, 0, 0);
   return new Date(shifted.getTime() - 8 * 3600 * 1000);
 }
 

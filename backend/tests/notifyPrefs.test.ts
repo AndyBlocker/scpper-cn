@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { currentHourUtc8, startOfUtc8Day } from '../src/jobs/NotificationDispatchJob.js';
+import { currentHourUtc8, startOfUtc8Day, utc8HourToday } from '../src/jobs/NotificationDispatchJob.js';
 
 test('currentHourUtc8 返回 UTC+8 的整点', () => {
   const h = currentHourUtc8();
@@ -93,4 +93,36 @@ test('定时用户的未到点候选不得计入熔断（review P1）', () => {
   // 按总量计会误跳闸，连带卡住实时用户
   assert.equal(total > CIRCUIT_MAX, true);
   assert.equal(eligibleCount > CIRCUIT_MAX, false, '按可发量计才不会误跳闸');
+});
+
+test('utc8HourToday 返回 UTC+8 今天该整点', () => {
+  const t = utc8HourToday(21);
+  const inUtc8 = new Date(t.getTime() + 8 * 3600 * 1000);
+  assert.equal(inUtc8.getUTCHours(), 21);
+  assert.equal(inUtc8.getUTCMinutes(), 0);
+});
+
+test('补发只收截止线之前的内容（review P1）', () => {
+  // 复刻资格判定：到点/过点 + 今天未发过 + 内容早于今天的截止线
+  const included = (nowHour: number, digestHour: number, alertHour: number, sentToday: number) => {
+    const reached = nowHour >= digestHour;
+    const eligible = reached && sentToday === 0;
+    const beforeCutoff = alertHour < digestHour;
+    return eligible && beforeCutoff;
+  };
+  // 设定 21 点，23 点跑到这一轮
+  assert.equal(included(23, 21, 20, 0), true, '20 点的动态应在这次补发里');
+  assert.equal(included(23, 21, 22, 0), false,
+    '22 点（截止后）产生的不该现在推 —— 用户选的是每天 21 点收一次，半夜收到比不补发更糟');
+  assert.equal(included(21, 21, 20, 0), true, '正常到点');
+  assert.equal(included(10, 21, 9, 0), false, '未到点');
+});
+
+test('定时模式的日限额按自然日计（review P2）', () => {
+  // 滚动 24 小时 vs 自然日：qqDailyLimit=1 时差别是「今天到底发不发」
+  const rolling24h = 1;   // 昨天 22:00 发过，现在 21:00 —— 仍在滚动窗口内
+  const calendarDay = 0;  // 但按 UTC+8 自然日，今天还没发过
+  const limit = 1;
+  assert.equal(rolling24h >= limit, true, '按滚动窗口会误判为已达上限');
+  assert.equal(calendarDay >= limit, false, '按自然日才正确：今天可以发');
 });

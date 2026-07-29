@@ -77,9 +77,16 @@ async function toggleChannel(
     // 三个 composable 都有 60 秒新鲜度门禁，非强制取数会被直接跳过 ——
     // 用户关掉某类提醒后，铃铛里那些条目和红点会继续挂着，像是没生效。
     // 强制重取对应的来源。
-    if (row.type === 'FOLLOW_ACTIVITY') await refreshFollowAlerts(true, 20, 0, false)
-    else if (row.type === 'FORUM_INTERACTION') await refreshForumAlerts(true, 20, 0, false)
-    else await refreshPageAlerts(true, false)
+    // **两种读取口径都要刷**：铃铛用 unreadOnly=false、提醒流用 true，
+    // 两份数据是分开存的。只刷一份的话，切到另一个界面时那 60 秒新鲜度门禁
+    // 会让它继续用旧数据，被关掉的类型还挂在那儿。
+    if (row.type === 'FOLLOW_ACTIVITY') {
+      await Promise.all([refreshFollowAlerts(true, 20, 0, false), refreshFollowAlerts(true, 20, 0, true)])
+    } else if (row.type === 'FORUM_INTERACTION') {
+      await Promise.all([refreshForumAlerts(true, 20, 0, false), refreshForumAlerts(true, 20, 0, true)])
+    } else {
+      await Promise.all([refreshPageAlerts(true, false), refreshPageAlerts(true, true)])
+    }
   }
   if (!ok) {
     // 这里用的是 :checked 单向绑定，浏览器点击时已经改了 DOM，
@@ -328,14 +335,14 @@ onMounted(() => {
               <span class="block text-sm text-[rgb(var(--fg))]">推送节奏</span>
               <div class="mt-2 space-y-1.5">
                 <label class="flex cursor-pointer items-start gap-2">
-                  <input v-model="modeInput" type="radio" value="REALTIME" class="mt-0.5 h-4 w-4" :disabled="prefsSaving">
+                  <input v-model="modeInput" type="radio" value="REALTIME" class="mt-0.5 h-4 w-4" :disabled="prefsSaving || prefsLoading || !prefsLoaded">
                   <span>
                     <span class="block text-sm text-[rgb(var(--fg))]">实时</span>
                     <span class="block text-xs text-[rgb(var(--muted))]">有新动态就推（仍按同步周期汇总，通常一小时内）</span>
                   </span>
                 </label>
                 <label class="flex cursor-pointer items-start gap-2">
-                  <input v-model="modeInput" type="radio" value="DAILY_DIGEST" class="mt-0.5 h-4 w-4" :disabled="prefsSaving">
+                  <input v-model="modeInput" type="radio" value="DAILY_DIGEST" class="mt-0.5 h-4 w-4" :disabled="prefsSaving || prefsLoading || !prefsLoaded">
                   <span>
                     <span class="block text-sm text-[rgb(var(--fg))]">每日汇总一次</span>
                     <span class="block text-xs text-[rgb(var(--muted))]">攒到指定时间一起推，当天只发一条</span>
@@ -351,7 +358,7 @@ onMounted(() => {
                   id="digest-hour"
                   v-model.number="digestHourInput"
                   class="rounded-lg border border-[rgb(var(--input-border))] bg-[rgb(var(--input-bg))] px-2 py-1.5 text-sm"
-                  :disabled="prefsSaving"
+                  :disabled="prefsSaving || prefsLoading || !prefsLoaded"
                 >
                   <option v-for="h in DIGEST_HOURS" :key="h" :value="h">{{ String(h).padStart(2, '0') }}:00</option>
                 </select>
@@ -372,7 +379,7 @@ onMounted(() => {
                   min="1"
                   max="200"
                   class="w-24 rounded-lg border border-[rgb(var(--input-border))] bg-[rgb(var(--input-bg))] px-2 py-1.5 text-sm"
-                  :disabled="prefsSaving"
+                  :disabled="prefsSaving || prefsLoading || !prefsLoaded"
                 >
                 <span class="text-xs text-[rgb(var(--muted))]">条</span>
                 <span
