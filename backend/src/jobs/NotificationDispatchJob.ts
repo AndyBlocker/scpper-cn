@@ -130,6 +130,27 @@ interface Candidate {
   userId: number;
   detectedAt: Date;
   line: string;
+  /**
+   * 合并键。同一页面的多条指标变动、同一话题的多条回复会被并成一行 ——
+   * 一次推送里把同一个页面列三遍（评论 +2 / 投票 +5 / 编辑 +1）
+   * 既占篇幅又难读。
+   */
+  groupKey: string;
+  /** 组头，如「你的《SCP-CN-1000》」。仅当组内可拼接时提供。 */
+  mergeHead?: string;
+  /** 组内片段，如「投票 +12」。同组的片段用「、」连起来。 */
+  mergePart?: string;
+  /** 组尾（页面链接） */
+  mergeTail?: string;
+}
+
+/** 渲染合并所需的最小信息。重发时从 payload 还原出来的也是这个形状。 */
+interface MergeItem {
+  line: string;
+  groupKey?: string;
+  mergeHead?: string;
+  mergePart?: string;
+  mergeTail?: string;
 }
 
 type Row = Record<string, unknown>;
@@ -687,6 +708,12 @@ async function recordAll(
       payload: {
         source: c.source,
         line: c.line,
+        // 合并字段一并存下：重发时只有 payload，没有原始候选，
+        // 不存的话同一批重发出来的格式会和首次不一致
+        groupKey: c.groupKey,
+        ...(c.mergeHead ? { mergeHead: c.mergeHead } : {}),
+        ...(c.mergePart ? { mergePart: c.mergePart } : {}),
+        ...(c.mergeTail ? { mergeTail: c.mergeTail } : {}),
         detectedAt: c.detectedAt.toISOString(),
         runId: RUN_ID,
         ...(digestKey ? { digestKey } : {}),
@@ -1109,18 +1136,55 @@ async function countDigestsSentSince(
 }
 
 function renderDigest(items: Candidate[], overflow: number): string {
-  return renderDigestLines(items.map((c) => c.line), overflow);
+  return renderMerged(items, overflow);
 }
 
 /**
- * 从纯文本行渲染摘要。重发 SCHEDULED 批次时用得上 ——
- * 那时手上只有 payload 里存下来的 line，没有原始 Candidate。
+ * 从纯文本行渲染摘要（兼容旧数据）。
+ * 重发路径若碰到没有合并字段的历史行，退回逐行展示。
  */
 function renderDigestLines(itemLines: string[], overflow: number): string {
-  const lines = ['【SCPper CN】你有新的站点动态：', ''];
-  for (const line of itemLines) lines.push(`· ${line}`);
+  return renderMerged(itemLines.map((line) => ({ line })), overflow);
+}
+
+/**
+ * 把候选合并后渲染成一条私信。
+ *
+ * 合并规则按 groupKey 分组，组内两种情况：
+ *  - 可拼接（页面指标）：同一页面的不同指标并成
+ *    「你的《X》投票 +12、评论 +3  链接」，而不是三行各说一遍同一个页面
+ *  - 不可拼接（关注/论坛）：同组只出一行，末尾标「（N 条）」
+ *
+ * 保持首次出现的顺序 —— 候选本身按 detectedAt 排序，合并不该打乱时间感。
+ */
+export function renderMerged(items: MergeItem[], overflow: number): string {
+  const groups = new Map<string, MergeItem[]>();
+  for (const [i, it] of items.entries()) {
+    // 没有 groupKey 的（历史数据）各自成组，行为与合并前一致
+    const key = it.groupKey ?? `__solo:${i}`;
+    const g = groups.get(key);
+    if (g) g.push(it); else groups.set(key, [it]);
+  }
+
+  const rendered: string[] = [];
+  for (const group of groups.values()) {
+    const first = group[0]!;
+    const parts = group.map((g) => g.mergePart).filter((x): x is string => Boolean(x));
+    if (first.mergeHead && parts.length === group.length) {
+      // 同一页面的多个指标：去重后按出现顺序拼接
+      const uniq = [...new Set(parts)];
+      const tail = first.mergeTail ? `  ${first.mergeTail}` : '';
+      rendered.push(`${first.mergeHead}${uniq.join('、')}${tail}`);
+    } else if (group.length > 1) {
+      rendered.push(`${first.line}（${group.length} 条）`);
+    } else {
+      rendered.push(first.line);
+    }
+  }
+
+  const lines = ['【scpper-cn】', ''];
+  for (const line of rendered) lines.push(`· ${line}`);
   if (overflow > 0) lines.push(`· …另有 ${overflow} 条`);
-  lines.push('', `查看全部：${SITE_BASE}/account?tab=alerts`);
   return lines.join('\n');
 }
 
@@ -1171,7 +1235,13 @@ async function collectCandidates(
       dedupeKey: `pma:${r.id}:${r.newValue ?? 'n'}:${new Date(String(r.detectedAt)).getTime()}`,
       userId: Number(r.userId),
       detectedAt: new Date(String(r.detectedAt)),
-      line: `你的《${pageLabel(r)}》${label}有变化 ${delta}  ${pageUrl(r)}`
+      // 同一页面的不同指标要能并成一行，所以按页面分组，指标本身作为可拼接片段
+      groupKey: `page:${r.pageWikidotId ?? r.pageUrl ?? r.pageId}`,
+      mergeHead: `你的《${pageLabel(r)}》`,
+      mergePart: `${label} ${delta}`.trim(),
+      mergeTail: pageUrl(r),
+      // 单条时的形态；与合并后保持一致的措辞
+      line: `你的《${pageLabel(r)}》${`${label} ${delta}`.trim()}  ${pageUrl(r)}`
     });
   }
 
@@ -1198,6 +1268,8 @@ async function collectCandidates(
       dedupeKey: `uaa:${r.id}:${r.revisionId ?? r.pageVersionId ?? 'n'}`,
       userId: Number(r.followerId),
       detectedAt: new Date(String(r.detectedAt)),
+      // 同一作者对同一页面的多次动作合并成一条，末尾标条数
+      groupKey: `follow:${r.targetUserId ?? who}:${r.pageWikidotId ?? r.pageId}`,
       line: `${who} ${what}《${pageLabel(r)}》  ${pageUrl(r)}`
     });
   }
@@ -1222,6 +1294,8 @@ async function collectCandidates(
       dedupeKey: `fia:${r.id}`,
       userId: Number(r.recipientUserId),
       detectedAt: new Date(String(r.detectedAt)),
+      // 同一话题里的多条互动合并成一条，末尾标条数
+      groupKey: `forum:${r.threadId ?? r.postId}`,
       line: `${actor} ${verb} ${title}`.trim()
     });
   }
