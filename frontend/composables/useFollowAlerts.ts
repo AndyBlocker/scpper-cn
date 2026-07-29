@@ -46,6 +46,14 @@ export function useFollowAlerts() {
    * resetState 时 +1，在途响应回来比对，不一致就整个丢弃。
    */
   const identityEpoch = useState<number>('followAlerts/epoch', () => 0);
+  /**
+   * 请求世代号。identityEpoch 只在换账号时变，**挡不住同一账号内的并发请求**：
+   * 常驻 layout 的铃铛以 unreadOnly=false 预取，账号页的提醒流以 unreadOnly=true
+   * 强制刷新，两者会重叠，谁后到谁覆盖共享状态。若旧的那份（含已读、截断在 20 条）
+   * 后到，未读列表就又退回「列表空、徽标却有数字」。
+   * 每次请求 +1 并记下自己的号，只有最新一次允许写回 —— 与 useAlerts 的做法一致。
+   */
+  const requestGeneration = useState<number>('followAlerts/reqGen', () => 0);
 
   async function fetchAlerts(force = false, limit = 20, offset = 0, unreadOnly = false) {
     if (loading.value && !force) return alerts.value;
@@ -55,12 +63,16 @@ export function useFollowAlerts() {
     }
     loading.value = true;
     const myEpoch = identityEpoch.value;
+    const myRequest = requestGeneration.value + 1;
+    requestGeneration.value = myRequest;
     try {
       const res = await $bff<{ ok: boolean; alerts: FollowAlertItem[]; unreadCount: number }>(
         '/alerts/follow', { method: 'GET', params: { limit, offset, ...(unreadOnly ? { unreadOnly: '1' } : {}) } }
       );
       // 期间换过身份 → 本次结果作废，绝不写回共享状态
       if (identityEpoch.value !== myEpoch) return alerts.value;
+      // 已有更新的请求发出 → 本次是旧数据，丢弃
+      if (requestGeneration.value !== myRequest) return alerts.value;
       if (res?.ok) {
         alerts.value = Array.isArray(res.alerts) ? res.alerts : [];
         // Number() 而非 Number.isFinite(原值)：COUNT 经 pg 驱动可能是字符串，
@@ -77,15 +89,18 @@ export function useFollowAlerts() {
       }
     } catch (e) {
       console.warn('[follow-alerts] fetch failed', e);
-      error.value = '网络异常，未能刷新关注提醒';
+      // 旧请求的失败不该覆盖新请求正在做的事
+      if (requestGeneration.value === myRequest) error.value = '网络异常，未能刷新关注提醒';
     } finally {
-      loading.value = false;
+      // 同理：旧请求结束不能把 loading 关掉，否则新请求还在飞就显示「已加载完」
+      if (requestGeneration.value === myRequest) loading.value = false;
     }
     return alerts.value;
   }
 
   function resetState() {
     identityEpoch.value += 1;
+    requestGeneration.value += 1;
     alerts.value = [];
     unreadCount.value = 0;
     lastFetchedAt.value = null;

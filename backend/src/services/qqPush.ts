@@ -22,7 +22,44 @@ export type PushErrorCode =
   | 'not_configured'
   | 'timeout'
   | 'transport_error'
-  | 'bad_response';
+  | 'bad_response'
+  /** 机器人回了一个本端不认识的错误码 —— 见 normalizePushError */
+  | 'unknown_error';
+
+/**
+ * 机器人 /scpper/qq/push 契约里**实际会返回**的错误码
+ * （qqbot external_api.py 的 _push_one，2026-07 核对）。
+ * 其余的由本端自己产生（超时、传输错误等）。
+ */
+const BOT_ERROR_CODES = new Set<string>([
+  'not_friend',
+  'rate_limited',
+  'friend_list_unavailable',
+  'send_failed'
+]);
+
+/**
+ * 把机器人回的 error 字段收敛成已知枚举。
+ *
+ * 原先是 `data.error as PushErrorCode` —— 一个无校验的强制转换：
+ * 机器人若新增一个错误码（升级、换实现），这里会原样放行，
+ * isPermanentFailure 认不出就一律判为「可重试」，于是
+ * 投递器每轮撤销占位、重发、再失败，永远循环，而绑定始终是 ACTIVE、
+ * 渠道健康计数一次都不涨 —— 用户界面上看一切正常，实际一条都收不到。
+ *
+ * 现在未知码统一收敛成 unknown_error 并显式告警：
+ * 仍按可重试处理（未知的东西更可能是暂时性的，直接判永久会误杀），
+ * 但它会出现在日志与 notify-inspect 的失败分布里，而不是无声打转。
+ */
+export function normalizePushError(raw: unknown): PushErrorCode {
+  if (typeof raw !== 'string' || raw.length === 0) return 'send_failed';
+  if (BOT_ERROR_CODES.has(raw)) return raw as PushErrorCode;
+  console.warn(
+    `[notify] qqbot 返回了未知错误码「${raw}」—— 本端按可重试处理。`
+    + ' 若它其实是永久性失败，请把它加入 BOT_ERROR_CODES 与 isPermanentFailure。'
+  );
+  return 'unknown_error';
+}
 
 export interface PushResult {
   ok: boolean;
@@ -111,7 +148,7 @@ export async function pushQqMessage(params: {
     if (status !== 200) return { ok: false, error: 'bad_response' };
     if (!data) return { ok: false, error: 'bad_response' };
     if (data.ok) return { ok: true, deduped: Boolean(data.deduped) };
-    return { ok: false, error: (data.error as PushErrorCode) || 'send_failed' };
+    return { ok: false, error: normalizePushError(data.error) };
   } catch (error) {
     const name = error instanceof Error ? error.name : '';
     return { ok: false, error: name === 'AbortError' ? 'timeout' : 'transport_error' };

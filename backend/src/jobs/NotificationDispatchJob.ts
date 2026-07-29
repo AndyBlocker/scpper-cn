@@ -74,13 +74,19 @@ function parseAllowlist(): Set<number> | null {
  * 显式配置了 NOTIFY_DISPATCH_START_AT 时以环境变量为准并同步回库，
  * 便于运维需要时前移或回拨。
  */
-async function resolveCutoff(prisma: PrismaClient, persisted: Date | null): Promise<Date> {
+async function resolveCutoff(prisma: PrismaClient, persisted: Date | null, dryRun = false): Promise<Date> {
   const raw = (process.env.NOTIFY_DISPATCH_START_AT || '').trim();
   if (raw) {
     const parsed = new Date(raw);
     if (!Number.isNaN(parsed.getTime())) {
       if (!persisted || persisted.getTime() !== parsed.getTime()) {
-        await prisma.notificationDispatchState.update({ where: { id: 1 }, data: { cutoffAt: parsed } });
+        // 演练不得改动闸门：它决定真实投递器会跳过哪些历史告警，
+        // 一次「只看看」的命令把它写死，影响会一直留在生产上。
+        if (dryRun) {
+          console.warn(`[notify][dry-run] 闸门将被写为 ${parsed.toISOString()}（本次未写入）`);
+        } else {
+          await prisma.notificationDispatchState.update({ where: { id: 1 }, data: { cutoffAt: parsed } });
+        }
       }
       return parsed;
     }
@@ -88,6 +94,13 @@ async function resolveCutoff(prisma: PrismaClient, persisted: Date | null): Prom
   }
   if (persisted) return persisted;
   // 首次运行且未显式配置：落一个进程启动时刻，此后不再变动
+  if (dryRun) {
+    console.warn(
+      `[notify][dry-run] 尚未落库过冷启动闸门；真实运行会把它固定为进程启动时刻`
+      + `（本次按 ${PROCESS_START.toISOString()} 试算，未写入）。`
+    );
+    return PROCESS_START;
+  }
   await prisma.notificationDispatchState.update({ where: { id: 1 }, data: { cutoffAt: PROCESS_START } });
   console.warn(
     `[notify] 未配置 NOTIFY_DISPATCH_START_AT，已把冷启动闸门固定为 ${PROCESS_START.toISOString()} 并落库。`
@@ -158,17 +171,27 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   };
 
   if (options.resetCircuit) {
-    await prisma.notificationDispatchState.update({
-      where: { id: 1 },
-      data: { circuitTrippedAt: null, circuitReason: null }
-    });
-    console.log('[notify] 全局熔断已人工复位');
+    // 这里是**最先**执行的一处熔断写操作，必须自己带 dry-run 判断 ——
+    // 后面那些分支的 dry-run 守卫根本轮不到执行。
+    // 漏掉的后果很实在：运维用 `--once --dry-run --reset-circuit` 想「看看复位会发生什么」，
+    // 结果熔断真被清掉，常驻的 PM2 投递器下一轮就开始把积压发出去。
+    if (options.dryRun) {
+      console.warn('[notify][dry-run] --reset-circuit 未执行：真实运行会清除熔断状态并恢复投递');
+    } else {
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 },
+        data: { circuitTrippedAt: null, circuitReason: null }
+      });
+      console.log('[notify] 全局熔断已人工复位');
+    }
   }
 
   const state = await prisma.notificationDispatchState.upsert({
     where: { id: 1 },
     create: { id: 1 },
-    update: { lastRunAt: new Date() }
+    // 演练不推进 lastRunAt：notify-inspect 用它判断投递器是否还活着，
+    // 让一次演练把「其实已经停了」伪装成「刚跑过」是帮倒忙。
+    update: options.dryRun ? {} : { lastRunAt: new Date() }
   });
   if (state.circuitTrippedAt && !options.resetCircuit) {
     summary.skippedReason = `全局熔断于 ${state.circuitTrippedAt.toISOString()} 跳闸（${state.circuitReason ?? '未知原因'}），需 notify-dispatch --reset-circuit 复位`;
@@ -204,26 +227,36 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   if (userIds.length === 0) return summary;
 
   const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
-  const startAt = await resolveCutoff(prisma, state.cutoffAt ?? null);
+  const startAt = await resolveCutoff(prisma, state.cutoffAt ?? null, options.dryRun);
   // 取两者更晚的：冷启动闸门优先于回看窗口
   const floor = since > startAt ? since : startAt;
 
   // 清理崩溃遗留的占位：进程若在「占位」与「转终态」之间退出，那批 PENDING
   // 会永久挡住这些候选。超过 10 分钟仍是 PENDING 的一定是这种情况（正常路径是秒级）。
+  // 演练只报数不删：删掉的是真实投递器的占位，可能让它把同一批重发一次。
   const staleCutoff = new Date(Date.now() - 10 * 60 * 1000);
-  const stale = await prisma.notificationDelivery.deleteMany({
-    where: { state: 'PENDING', createdAt: { lt: staleCutoff } }
-  });
-  if (stale.count > 0) {
-    console.warn(`[notify] 清理了 ${stale.count} 条陈旧 PENDING 占位（上一轮异常退出），这些候选将重新入选`);
+  if (options.dryRun) {
+    const staleCount = await prisma.notificationDelivery.count({
+      where: { state: 'PENDING', createdAt: { lt: staleCutoff } }
+    });
+    if (staleCount > 0) console.warn(`[notify][dry-run] 有 ${staleCount} 条陈旧 PENDING 占位，真实运行会清理它们`);
+  } else {
+    const stale = await prisma.notificationDelivery.deleteMany({
+      where: { state: 'PENDING', createdAt: { lt: staleCutoff } }
+    });
+    if (stale.count > 0) {
+      console.warn(`[notify] 清理了 ${stale.count} 条陈旧 PENDING 占位（上一轮异常退出），这些候选将重新入选`);
+    }
   }
 
   const candidates = await collectCandidates(prisma, userIds, floor);
   summary.candidates = candidates.length;
   if (candidates.length === 0) {
-    await prisma.notificationDispatchState.update({
-      where: { id: 1 }, data: { lastSuccessAt: new Date() }
-    });
+    if (!options.dryRun) {
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 }, data: { lastSuccessAt: new Date() }
+      });
+    }
     return summary;
   }
 
@@ -406,9 +439,11 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     }
   }
 
-  await prisma.notificationDispatchState.update({
-    where: { id: 1 }, data: { lastSuccessAt: new Date() }
-  });
+  if (!options.dryRun) {
+    await prisma.notificationDispatchState.update({
+      where: { id: 1 }, data: { lastSuccessAt: new Date() }
+    });
+  }
   return summary;
 }
 
