@@ -400,6 +400,13 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     const prefs = prefsByUser.get(uid);
     if (prefs?.mode !== 'DAILY_DIGEST') { userFloor.set(uid, floor); continue; }
     const last = prefs.lastDigestCutoffAt;
+    if (!last) {
+      // 从未发过汇总：没有「需要补回的历史周期」，就该用标准回看窗口。
+      // 用放宽后的 48 小时会让一个绑定已久的用户在**第一封**汇总里
+      // 收到 24–48 小时前的旧未读，而配置写的是 24 小时。
+      userFloor.set(uid, floor > startAt ? floor : startAt);
+      continue;
+    }
     // 起点往回留一段**安全重叠**。
     //
     // 截止线是墙上时钟，不是「已提交水位线」：一条 detectedAt 早于截止线的告警，
@@ -461,6 +468,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   const eligible: Candidate[] = [];
   const digestEligibility = new Map<number, boolean>();
   const digestCutoffByUser = new Map<number, Date>();
+  /** 本轮处理完的用户 —— 只有他们的周期水位线可以推进 */
+  const processedUserIds = new Set<number>();
   for (const c of candidates) {
     const prefs = prefsByUser.get(c.userId);
     if (prefs?.mode !== 'DAILY_DIGEST') { eligible.push(c); continue; }
@@ -471,7 +480,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 逾期未发的汇总（比如跨午夜宕机漏掉的那封）在恢复后第一轮就补上，
       // 且它的截止线仍是原定那个时刻，两次汇总的覆盖区间照样接得上。
       cutoff = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
-      ok = Date.now() >= cutoff.getTime();
+      // 「每天一封」是对用户的承诺，必须显式守住。
+      // 只判「到期了没」是不够的：今天已收过、随后把时点改晚，
+      // 那个更晚的边界当天就会到期，于是同一天发第二封；
+      // 补发多个逾期边界时同样会连发。日限额（默认 20）拦不住这个。
+      const sentThisDay = await countDigestsSentSince(prisma, c.userId, startOfUtc8Day());
+      ok = Date.now() >= cutoff.getTime() && sentThisDay === 0;
       digestEligibility.set(c.userId, ok);
       digestCutoffByUser.set(c.userId, cutoff);
     }
@@ -486,8 +500,21 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   candidates.length = 0;
   candidates.push(...eligible);
 
+  // 到期却没有任何可发内容的定时用户（空周期、内容全被站内读掉或被偏好抑制），
+  // 根本不会进入下面的收件人循环 —— 但他们的周期确实**已经过完了**。
+  // 不把他们算作已处理的话，水位线停在那个空周期上，
+  // 之后每一条新告警都晚于它而被无限推迟，这个用户从此收不到汇总。
+  const nowMs = Date.now();
+  for (const [userId, prefs] of prefsByUser) {
+    if (prefs.mode !== 'DAILY_DIGEST') continue;
+    const due = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
+    if (nowMs >= due.getTime()) processedUserIds.add(userId);
+  }
+
   summary.candidates = candidates.length;
   if (candidates.length === 0) {
+    // 空批次也要先推进水位线再返回 —— 否则「今天没内容」会把水位线永久冻住
+    await advanceDigestWatermarks(prisma, prefsByUser, Boolean(options.dryRun), processedUserIds);
     // 重发因机器人不可用而被跳过时，这一轮**不算成功**。
     // 照旧推进 lastSuccessAt 的话，notify-inspect 在整个宕机期间都显示
     // 「刚刚成功过」，而队列里的投递一条都发不出去 —— 正好瞒住了要排查的问题。
@@ -706,6 +733,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       keys.push(...remaining.map((c) => c.dedupeKey));
     }
 
+    processedUserIds.add(userId);
+
     // 统计口径必须是「本次真正参与投递的条数」。
     // 发送前的已读回查可能已经取消掉一部分（那部分已计入 suppressed），
     // 若这里仍按原始 items.length 计，同一条会被同时算进 suppressed 与 sent/failed，
@@ -763,7 +792,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
 
   // 本轮到期的定时周期一律推进水位线 —— 包括「没东西可发」的空周期。
   // 只在发送成功时推进的话，一个空周期就能把水位线永久冻住。
-  await advanceDigestWatermarks(prisma, prefsByUser, Boolean(options.dryRun));
+  await advanceDigestWatermarks(prisma, prefsByUser, Boolean(options.dryRun), processedUserIds);
 
   if (!options.dryRun) {
     await prisma.notificationDispatchState.update({
@@ -987,12 +1016,20 @@ export function currentHourUtc8(): number {
 async function advanceDigestWatermarks(
   prisma: PrismaClient,
   prefsByUser: Map<number, UserNotifyPrefs>,
-  dryRun: boolean
+  dryRun: boolean,
+  /**
+   * 本轮**真正处理完**的用户。优雅停机时循环会提前 break，
+   * 剩下的用户被明确留给下一轮 —— 给他们推进水位线等于宣称
+   * 「这个周期处理过了」，而下一轮的起点（水位线 - 15 分钟重叠）
+   * 会把他们那个周期的绝大部分内容直接丢掉。
+   */
+  processedUserIds: Set<number>
 ): Promise<void> {
   if (dryRun) return;
   const now = Date.now();
   for (const [userId, prefs] of prefsByUser) {
     if (prefs.mode !== 'DAILY_DIGEST') continue;
+    if (!processedUserIds.has(userId)) continue;
     const due = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
     if (now < due.getTime()) continue;          // 还没到期
     if (prefs.lastDigestCutoffAt && due <= prefs.lastDigestCutoffAt) continue;

@@ -583,6 +583,17 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
              "qqDailyLimit" = COALESCE($2, "UserNotificationChannelSetting"."qqDailyLimit"),
              "qqMode"       = COALESCE($3::"QqDeliveryMode", "UserNotificationChannelSetting"."qqMode"),
              "qqDigestHour" = COALESCE($4, "UserNotificationChannelSetting"."qqDigestHour"),
+             -- 从实时切回定时时，把陈旧的周期水位线清掉。
+             -- 保留旧值的话，nextDigestDueAt 会挑「那个陈旧日期之后的第一个边界」，
+             -- 而当前所有告警都晚于它、被判为「等下个周期」——
+             -- 配合空周期早退，水位线可能永远卡住，用户再也收不到汇总。
+             -- 置 null 等于「从现在重新开始」，语义正是用户刚做的选择。
+             "lastDigestCutoffAt" = CASE
+               WHEN $3::"QqDeliveryMode" = 'DAILY_DIGEST'
+                    AND "UserNotificationChannelSetting"."qqMode" <> 'DAILY_DIGEST'
+               THEN NULL
+               ELSE "UserNotificationChannelSetting"."lastDigestCutoffAt"
+             END,
              "updatedAt"    = now()`,
           [userId, limit, c.qqMode ?? null, hour]
           );
