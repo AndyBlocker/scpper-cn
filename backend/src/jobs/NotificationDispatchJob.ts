@@ -478,6 +478,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
    * 只有第 1 种能预先标记为已处理。
    */
   const hasUnsentInPeriod = new Set<number>();
+  /** 本轮被跨过的、已被占用的边界（水位线要推过它，否则下一轮原地打转） */
+  const skippedCutoffByUser = new Map<number, Date>();
   /** 本轮处理完的用户 —— 只有他们的周期水位线可以推进 */
   const processedUserIds = new Set<number>();
   for (const c of candidates) {
@@ -489,15 +491,24 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 到期时刻由「上次截止线」推算，而不是比较「今天几点」。
       // 逾期未发的汇总（比如跨午夜宕机漏掉的那封）在恢复后第一轮就补上，
       // 且它的截止线仍是原定那个时刻，两次汇总的覆盖区间照样接得上。
-      cutoff = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
-      // 「一个周期一封」是对用户的承诺，必须显式守住。
-      // 只判「到期了没」是不够的：这个周期已收过、随后把时点改晚，
-      // 那个更晚的边界会再次到期，于是同周期发第二封。
+      // 「一天一封」是对用户的承诺，必须显式守住 —— 这个自然日已经发过，
+      // 随后把时点改晚，那个更晚的边界当天就会到期，于是同一天发第二封。
       // 日限额（默认 20）拦不住这个。
-      // 这里只**读**；真正的占位在发送前那一步原子完成（见 claimDigestSlot）。
+      //
+      // 但「挡住」不等于「原地等」：已被占用的边界**永远**轮不到我们，
+      // 干等会把水位线钉死在它上面 —— 到期判定每轮都返回同一个边界，
+      // 期间的告警一直进不了任何一封汇总，直到滑出扫描窗口被静默丢弃。
+      // 正确做法是跨过它，让这些告警顺延到下一个还没被占的周期。
+      // 这里只**读**槽位；真正的占位在发送前那一步原子完成（见 claimDigestSlot）。
       // 在资格判定里就占的话，最终没内容可发的用户会白占掉当天名额。
-      const slot = await readDigestSlot(prisma, c.userId, cutoff);
-      ok = Date.now() >= cutoff.getTime() && slot === null;
+      const occupied = async (at: Date) => (await readDigestSlot(prisma, c.userId, at)) !== null;
+      const resolved = await resolveDigestCutoff(
+        occupied, prefs.lastDigestCutoffAt, prefs.digestHour, Date.now()
+      );
+      cutoff = resolved.cutoff;
+      // 跨过去之后要把水位线一并推过，否则下一轮又从那个被占的边界重新开始
+      if (resolved.skipped) skippedCutoffByUser.set(c.userId, resolved.skipped);
+      ok = Date.now() >= cutoff.getTime() && !(await occupied(cutoff));
       digestEligibility.set(c.userId, ok);
       digestCutoffByUser.set(c.userId, cutoff);
     }
@@ -514,6 +525,23 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   }
   candidates.length = 0;
   candidates.push(...eligible);
+
+  // 被占用的边界永远轮不到我们，必须把水位线推过它 ——
+  // 否则每一轮都从同一个边界重新算，期间的告警一直进不了任何一封汇总，
+  // 直到滑出扫描窗口被静默丢弃。
+  // 这一步与 processedUserIds / hasUnsentInPeriod 无关：那两者管的是
+  // 「周期还没处理完，别推进」，而这里的边界是**处理不了**，只能跨过。
+  if (!options.dryRun) {
+    for (const [userId, skipped] of skippedCutoffByUser) {
+      const prefs = prefsByUser.get(userId);
+      if (prefs?.lastDigestCutoffAt && skipped <= prefs.lastDigestCutoffAt) continue;
+      await prisma.userNotificationChannelSetting.updateMany({
+        where: { userId }, data: { lastDigestCutoffAt: skipped }
+      });
+      if (prefs) prefs.lastDigestCutoffAt = skipped;   // 本轮后续判定用同一份口径
+      console.log(`[notify] 用户 ${userId} 的 ${skipped.toISOString()} 边界已被占用，水位线跨过它`);
+    }
+  }
 
   // 到期却没有任何可发内容的定时用户（空周期、内容全被站内读掉或被偏好抑制），
   // 根本不会进入下面的收件人循环 —— 但他们的周期确实**已经过完了**。
@@ -714,26 +742,37 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     const digestCutoff = prefs.mode === 'DAILY_DIGEST' ? digestCutoffByUser.get(userId) : undefined;
     // 定时模式：先原子占住「这一天的汇总名额」，再去占各条 dedupeKey。
     // 顺序不能反 —— 两轮的 key 集合可能不同，各自都能占到自己那批。
-    if (digestCutoff && !(await claimDigestSlot(prisma, userId, digestCutoff, digestKey))) {
-      console.warn(`[notify] 用户 ${target.wikidotId} 当天的汇总名额已被占用，本轮退让`);
-      continue;
-    }
-    const claimed = await recordAll(
-      prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId, digestCutoff
-    );
-    if (claimed < items.length) {
-      // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
-      // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
-      // 下一轮由唯一的胜出者完整处理。
-      await prisma.notificationDelivery.deleteMany({
-        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } }
-      });
-      // 整批退让就要把名额还回去，否则这个用户当天再也发不出汇总
-      if (digestCutoff) await releaseDigestSlot(prisma, userId, digestCutoff, digestKey);
+    //
+    // 两步必须在**同一个事务**里：名额占住了、记账却因异常或进程退出没做成的话，
+    // 会留下一个没有任何投递行与之对应的孤儿名额，把这个用户当天的汇总白白吃掉。
+    // 事务让「占名额 / 占 key」要么都成立、要么都不留痕；
+    // 部分抢占时直接抛异常回滚，连带把名额还回去，不必手工补偿。
+    let claimed = 0;
+    let slotLost = false;
+    try {
+      claimed = await prisma.$transaction(async (tx) => {
+        if (digestCutoff && !(await claimDigestSlot(tx, userId, digestCutoff, digestKey))) {
+          slotLost = true;
+          return 0;
+        }
+        const n = await recordAll(
+          tx, items, userId, 'PENDING', null, false, digestKey, target.bindingId, digestCutoff
+        );
+        // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
+        // 被对方占住的那几条就会被发两次。整批退让，下一轮由胜出者完整处理。
+        if (n < items.length) throw new PartialPreemption(n);
+        return n;
+      }, { timeout: 15_000 });
+    } catch (e) {
+      if (!(e instanceof PartialPreemption)) throw e;
       console.warn(
         `[notify] 用户 ${target.wikidotId} 的候选被另一轮部分抢占`
-        + `（${claimed}/${items.length}），本轮整批退让`
+        + `（${e.claimed}/${items.length}），本轮整批退让（事务已回滚，名额未占用）`
       );
+      continue;
+    }
+    if (slotLost) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 当天的汇总名额已被占用，本轮退让`);
       continue;
     }
 
@@ -756,7 +795,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       });
       summary.suppressed += ackedNow.size;
       console.log(`[notify] 用户 ${target.wikidotId} 有 ${ackedNow.size} 条在发送前已被站内读掉，取消推送`);
-      if (remaining.length === 0) continue;
+      if (remaining.length === 0) {
+        // 整批都被读掉了，什么也不会发出去 —— 名额必须还回去，
+        // 否则这个用户当天再有新动态也发不出汇总（占了位却没有对应的投递行）。
+        if (digestCutoff) await releaseDigestSlot(prisma, userId, digestCutoff, digestKey);
+        continue;
+      }
       // 整批只剩一部分：重新渲染消息，digestKey 保持不变（机器人侧去重语义不变）
       const reshown = remaining.slice(0, CIRCUIT_USER_MAX);
       message = renderDigest(reshown, remaining.length - reshown.length);
@@ -885,7 +929,7 @@ async function reportChannelOutcome(
 }
 
 async function recordAll(
-  prisma: PrismaClient,
+  prisma: Db,
   items: Candidate[],
   userId: number,
   state: 'PENDING' | 'SENT' | 'FAILED' | 'SUPPRESSED',
@@ -1095,7 +1139,7 @@ export function utc8DayOf(cutoff: Date): string {
  * 而反过来忽略它们又会漏掉模式切换前的残留。名额是独立的状态，就该独立存。
  */
 async function readDigestSlot(
-  prisma: PrismaClient, userId: number, cutoff: Date
+  prisma: Db, userId: number, cutoff: Date
 ): Promise<{ digestKey: string | null } | null> {
   const rows = await prisma.$queryRaw<Array<{ digestKey: string | null }>>`
     SELECT "digestKey" FROM "DigestSlotClaim"
@@ -1113,7 +1157,7 @@ async function readDigestSlot(
  * 两封摘要都发出去。主键冲突把这两步压成一步。
  */
 async function claimDigestSlot(
-  prisma: PrismaClient, userId: number, cutoff: Date, digestKey: string
+  prisma: Db, userId: number, cutoff: Date, digestKey: string
 ): Promise<boolean> {
   const n = await prisma.$executeRaw`
     INSERT INTO "DigestSlotClaim" ("userId","cutoffDay","cutoffAt","digestKey")
@@ -1125,13 +1169,53 @@ async function claimDigestSlot(
 /** 占了名额但这批最终没发出去时归还，否则用户白丢一天的汇总。
  *  带 digestKey 条件，保证只归还自己那一份。 */
 async function releaseDigestSlot(
-  prisma: PrismaClient, userId: number, cutoff: Date, digestKey: string
+  prisma: Db, userId: number, cutoff: Date, digestKey: string
 ): Promise<void> {
   await prisma.$executeRaw`
     DELETE FROM "DigestSlotClaim"
     WHERE "userId" = ${userId} AND "cutoffDay" = ${utc8DayOf(cutoff)}::date
       AND "digestKey" = ${digestKey}`;
 }
+
+/** 单轮里最多跨过多少个已被占用的边界。
+ *  正常最多跨 1 个（同日改时点）；给足余量以防长期停机后堆积，
+ *  同时避免水位线异常时无限循环。 */
+/**
+ * 从水位线出发，定位本轮该用的截止线，并跨过所有「已被占用且已到期」的边界。
+ *
+ * 被占用的边界永远轮不到我们（那一天的名额已经给了更早的那封汇总）。
+ * 原地等的话水位线会被钉死：每一轮都返回同一个边界，期间的告警一直进不了
+ * 任何一封汇总，直到滑出扫描窗口被静默丢弃。跨过去，它们顺延到下一个周期。
+ *
+ * 取槽位的动作以回调注入，便于单测直接驱动这段逻辑。
+ * 返回的 skipped 是**最后一个**被跨过的边界 —— 水位线要推到它。
+ */
+export async function resolveDigestCutoff(
+  isOccupied: (cutoff: Date) => Promise<boolean>,
+  lastCutoff: Date | null,
+  digestHour: number,
+  now: number
+): Promise<{ cutoff: Date; skipped: Date | null }> {
+  let cutoff = nextDigestDueAt(lastCutoff, digestHour);
+  let skipped: Date | null = null;
+  for (let guard = 0; guard < MAX_CUTOFF_SKIP; guard++) {
+    if (now < cutoff.getTime()) break;              // 还没到期，正常等
+    if (!(await isOccupied(cutoff))) break;         // 这个边界可用
+    skipped = cutoff;                                // 被占 → 跨过去
+    cutoff = nextDigestDueAt(cutoff, digestHour);
+  }
+  return { cutoff, skipped };
+}
+
+/** 部分抢占 —— 用异常触发事务回滚，让名额与 key 占位一起撤销 */
+class PartialPreemption extends Error {
+  constructor(readonly claimed: number) { super('partial_preemption'); }
+}
+
+/** 既可以是普通客户端，也可以是事务客户端 —— 占位与记账必须能在同一个事务里做 */
+type Db = PrismaClient | Prisma.TransactionClient;
+
+const MAX_CUTOFF_SKIP = 400;
 
 /** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
 const MAX_RESUME_ATTEMPTS = Math.max(1, Number(process.env.NOTIFY_MAX_RESUME_ATTEMPTS ?? '5') || 5);

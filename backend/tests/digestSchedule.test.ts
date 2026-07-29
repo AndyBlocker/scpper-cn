@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nextDigestDueAt,
+  resolveDigestCutoff,
   utc8DayOf, utc8HourToday } from '../src/jobs/NotificationDispatchJob.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -204,3 +205,45 @@ test('历史实时投递不该占用汇总名额', () => {
     '历史实时行确实没有 digestCutoff —— 正是它当年造成永久阻塞');
 });
 
+
+// ── 被占用的边界要跨过去，不能原地等（review 第十五轮 P1）────────
+// 场景：10:00 收过汇总后把时点改到 21:00。当天 21:00 这个边界所属的
+// 自然日名额已被 10:00 那封占掉，永远轮不到 —— 若原地等，水位线被钉死，
+// 期间的告警一直进不了任何一封汇总，直到滑出扫描窗口被静默丢弃。
+
+/** 直接驱动生产实现：槽位查询以回调注入 */
+const resolveCutoff = (lastCutoff, hour, occupiedDays, now) =>
+  resolveDigestCutoff(async (c) => occupiedDays.has(utc8DayOf(c)), lastCutoff, hour, now);
+
+test('改晚时点后跨过当天已占用的边界，不把水位线钉死', async () => {
+  const at10 = new Date(Date.UTC(2026, 6, 20, 2, 0, 0));    // day1 10:00 UTC+8，已发
+  const occupied = new Set(['2026-07-20']);
+  const now = Date.UTC(2026, 6, 20, 14, 0, 0);              // day1 22:00 UTC+8
+
+  const r = await resolveCutoff(at10, 21, occupied, now);
+  assert.equal(utc8DayOf(r.skipped), '2026-07-20', '跨过的是当天 21:00 那个边界');
+  assert.equal(utc8DayOf(r.cutoff), '2026-07-21', '落到次日 21:00，告警顺延到下一个周期');
+  assert.ok(r.cutoff.getTime() > now, '次日边界尚未到期 —— 本轮不发，但水位线已经前进');
+
+  // 关键：水位线推过之后，下一轮不会再回到那个被占的边界
+  const r2 = await resolveCutoff(r.skipped, 21, occupied, now);
+  assert.equal(r2.skipped, null, '水位线已越过，不再重复跨越');
+  assert.equal(r2.cutoff.getTime(), r.cutoff.getTime(), '下一轮得到同一个可用边界');
+});
+
+test('边界未被占用时不跨越', async () => {
+  const at10 = new Date(Date.UTC(2026, 6, 20, 2, 0, 0));
+  const now = Date.UTC(2026, 6, 21, 14, 0, 0);
+  const r = await resolveCutoff(at10, 21, new Set(), now);
+  assert.equal(r.skipped, null, '没有占用就不该跳');
+  assert.equal(utc8DayOf(r.cutoff), '2026-07-20', '仍是水位线之后的第一个边界');
+});
+
+test('跨越有次数上限，异常水位线不会死循环', async () => {
+  const long = new Date(Date.UTC(2020, 0, 1, 1, 0, 0));   // 极旧的水位线
+  const allOccupied = { has: () => true };                 // 所有天都被占
+  const now = Date.UTC(2026, 6, 21, 14, 0, 0);
+  const r = await resolveCutoff(long, 9, allOccupied, now);
+  assert.ok(r.skipped !== null, '确实跨越了');
+  assert.ok(r.cutoff.getTime() > long.getTime(), '循环有界并正常返回');
+});
