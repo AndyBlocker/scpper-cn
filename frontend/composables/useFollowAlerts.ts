@@ -175,24 +175,32 @@ export function useFollowAlerts() {
       if (Date.now() - last < 60_000) return combined.value;
     }
     combinedLoading.value = true;
+    // 与 fetchAlerts 同样的守卫：换过账号就不写回共享状态
+    const epochAtStart = identityEpoch.value;
     try {
       const list = await fetchAlerts(force, limit, offset);
+      if (identityEpoch.value !== epochAtStart) return combined.value;
       combined.value = buildCombinedGroups(list);
       combinedLastFetchedAt.value = new Date().toISOString();
     } catch (e) {
       console.warn('[follow-alerts] combined fetch failed', e);
-      combined.value = [];
-      combinedLastFetchedAt.value = null;
+      if (identityEpoch.value === epochAtStart) {
+        combined.value = [];
+        combinedLastFetchedAt.value = null;
+      }
     } finally {
-      combinedLoading.value = false;
+      if (identityEpoch.value === epochAtStart) combinedLoading.value = false;
     }
     return combined.value;
   }
 
   async function markRead(id: number) {
+    // 成功写回也要守卫：A 的请求在 B 登录后才返回的话，
+    // 下面这些对共享状态的修改会落到 B 的界面上。
+    const epochAtStart = identityEpoch.value;
     try {
       const res = await $bff<{ ok: boolean; id: number; acknowledgedAt: string | null }>(`/alerts/follow/${id}/read`, { method: 'POST' });
-      if (res?.ok) {
+      if (res?.ok && identityEpoch.value === epochAtStart) {
         const acknowledgedAt = res.acknowledgedAt ?? new Date().toISOString();
         const idx = alerts.value.findIndex(a => a.id === id);
         // 先取出再展开：直接写 { ...alerts.value[idx] } 在
@@ -222,9 +230,10 @@ export function useFollowAlerts() {
   }
 
   async function markAllRead() {
+    const epochAtStart = identityEpoch.value;
     try {
       const res = await $bff<{ ok: boolean; updated: number }>('/alerts/follow/read-all', { method: 'POST' });
-      if (res?.ok) {
+      if (res?.ok && identityEpoch.value === epochAtStart) {
         const nowIso = new Date().toISOString();
         alerts.value = alerts.value.map(a => ({ ...a, acknowledgedAt: a.acknowledgedAt ?? nowIso }));
         combined.value = combined.value.map(group => ({

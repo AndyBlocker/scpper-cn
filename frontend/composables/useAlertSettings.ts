@@ -135,20 +135,23 @@ export function useAlertSettings() {
     if (!payload || Object.keys(payload).length === 0) return preferences.value;
     saving.value = true;
     error.value = null;
+    // 保存的响应同样是一次共享状态写入：A 的保存请求在 B 登录后才返回的话，
+    // 会把 A 的偏好显示在 B 的设置面板上。
+    const epochAtStart = identityEpoch.value;
     try {
       const res = await $bff<UpdatePreferencesResponse>('/alerts/preferences', {
         method: 'POST',
         body: payload
       });
-      if (res?.ok && res.preferences) {
+      if (res?.ok && res.preferences && identityEpoch.value === epochAtStart) {
         preferences.value = normalisePreferences(res.preferences);
       }
     } catch (err) {
       console.warn('[alerts] update preferences failed', err);
-      error.value = '保存提醒设置失败';
+      if (identityEpoch.value === epochAtStart) error.value = '保存提醒设置失败';
       throw err;
     } finally {
-      saving.value = false;
+      if (identityEpoch.value === epochAtStart) saving.value = false;
     }
     return preferences.value;
   }
@@ -156,20 +159,22 @@ export function useAlertSettings() {
   async function setMetricMuted(metric: AlertMetric, muted: boolean) {
     saving.value = true;
     error.value = null;
+    // 同 updatePreferences：换过账号就不要把结果写进共享状态
+    const epochAtStart = identityEpoch.value;
     try {
       const res = await $bff<UpdatePreferencesResponse>('/alerts/preferences/mute', {
         method: 'POST',
         body: { metric, muted }
       });
-      if (res?.ok && res.preferences) {
+      if (res?.ok && res.preferences && identityEpoch.value === epochAtStart) {
         preferences.value = normalisePreferences(res.preferences);
       }
     } catch (err) {
       console.warn('[alerts] update mute preference failed', err);
-      error.value = '保存提醒设置失败';
+      if (identityEpoch.value === epochAtStart) error.value = '保存提醒设置失败';
       throw err;
     } finally {
-      saving.value = false;
+      if (identityEpoch.value === epochAtStart) saving.value = false;
     }
     return preferences.value;
   }

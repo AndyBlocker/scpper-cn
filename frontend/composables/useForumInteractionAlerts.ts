@@ -127,6 +127,10 @@ export function useForumInteractionAlerts() {
 
   async function markRead(id: number) {
     if (!Number.isFinite(id)) return;
+    // 回滚也是一次写入，必须和取数受同样的身份守卫：
+    // A 的请求在飞时换成 B 登录，失败回滚会把 A 的未读列表恢复给 B 看。
+    const epochAtStart = identityEpoch.value;
+    const sameIdentity = () => identityEpoch.value === epochAtStart;
 
     const idx = alerts.value.findIndex((item) => item.id === id);
     // 先取出再用：alerts.value[idx] 在 noUncheckedIndexedAccess 下是 T | undefined，
@@ -163,7 +167,7 @@ export function useForumInteractionAlerts() {
     try {
       const res = await $bff<MarkReadResponse>(`/alerts/forum/${id}/read`, { method: 'POST' });
       const after = idx >= 0 ? alerts.value[idx] : undefined;
-      if (res?.ok && after) {
+      if (res?.ok && after && sameIdentity()) {
         alerts.value[idx] = {
           ...after,
           acknowledgedAt: res.acknowledgedAt ?? after.acknowledgedAt
@@ -171,7 +175,9 @@ export function useForumInteractionAlerts() {
       }
     } catch (error) {
       console.warn('[forum-alerts] mark read failed', error);
-      // 未读桶必须无条件还原 —— 它和 alerts 是两份数据，
+      // 换过身份就整个放弃回滚，否则会把上一个账号的通知写进当前界面
+      if (!sameIdentity()) return;
+      // 未读桶必须还原 —— 它和 alerts 是两份数据，
       // 只在 rollback 存在时还原的话，不在含已读缓存里的条目就永久消失了
       unreadAlerts.value = prevUnreadList;
       // 还原保存下来的服务端计数，而不是按本地列表重算 ——
@@ -205,9 +211,10 @@ export function useForumInteractionAlerts() {
   }
 
   async function markAllRead() {
+    const epochAtStart = identityEpoch.value;
     try {
       const res = await $bff<MarkAllReadResponse>('/alerts/forum/read-all', { method: 'POST' });
-      if (res?.ok) {
+      if (res?.ok && identityEpoch.value === epochAtStart) {
         const ackAt = new Date().toISOString();
         alerts.value = alerts.value.map((item) => ({
           ...item,

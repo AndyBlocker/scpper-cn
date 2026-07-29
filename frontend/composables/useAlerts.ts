@@ -197,6 +197,17 @@ export function useAlerts() {
     if (!Number.isFinite(id)) return;
     // optimistic update
     const metric = metricOpt ?? activeMetric.value;
+    /**
+     * 身份签名。resetState 会递增每个 metric 的两个世代号，
+     * 这里把它们记下来，回滚前比对。
+     *
+     * 不比对的话：A 的标记已读请求还在飞时 A 登出、B 登录，
+     * 请求失败的 catch 会把 **A 的未读列表和计数**原样恢复进共享状态 ——
+     * B 看到的是 A 的通知标题。乐观更新的回滚同样是一次写入，
+     * 该受和取数一样的守卫。
+     */
+    const identityAtStart = `${epochs.value[metric].all}:${epochs.value[metric].unread}`;
+    const sameIdentity = () => `${epochs.value[metric].all}:${epochs.value[metric].unread}` === identityAtStart;
     const list = alerts.value[metric] ?? [];
     const target = list.find(item => item.id === id);
     const prevAck = target?.acknowledgedAt ?? null;
@@ -223,20 +234,22 @@ export function useAlerts() {
     unreadAlerts.value[metric] = prevUnreadList.filter(item => item.id !== id);
     try {
       const res = await $bff<{ ok: boolean; acknowledgedAt: string | null }>(`/alerts/${id}/read`, { method: 'POST' });
-      if (!res?.ok) {
+      if (!res?.ok && sameIdentity()) {
         unreadAlerts.value[metric] = prevUnreadList;
         // 计数回滚不能挂在 target 上：一条较早的未读可能只存在于未读桶里
         // （含已读那份只有最近 20 条），此时 target 是 undefined，
         // 乐观递减过的计数就永远回不来了 —— 列表恢复了、红点却少了一个。
         if (wasUnread) unreadCount.value[metric] = prevUnread;
       }
-      if (!res?.ok && target) {
+      if (!res?.ok && target && sameIdentity()) {
         target.acknowledgedAt = prevAck;
-      } else if (res?.ok && target) {
+      } else if (res?.ok && target && sameIdentity()) {
         target.acknowledgedAt = res.acknowledgedAt ?? target.acknowledgedAt;
       }
     } catch (error) {
       console.warn('[alerts] mark read failed', error);
+      // 换过身份就不要回滚 —— 那会把上一个账号的数据写进当前用户的界面
+      if (!sameIdentity()) return;
       unreadAlerts.value[metric] = prevUnreadList;
       if (wasUnread) unreadCount.value[metric] = prevUnread;
       if (target) target.acknowledgedAt = prevAck;
@@ -244,12 +257,15 @@ export function useAlerts() {
   }
 
   async function markAllAlertsRead(metric: AlertMetric = 'COMMENT_COUNT') {
+    // 同 markAlertRead：成功后的写回若落在换账号之后，
+    // 会把 B 的未读数错误地清成 0（直到下次刷新才纠正）。
+    const identityAtStart = `${epochs.value[metric].all}:${epochs.value[metric].unread}`;
     try {
       const res = await $bff<{ ok: boolean; updated: number }>('/alerts/read-all', {
         method: 'POST',
         body: { metric: METRIC_QUERY_MAP[metric] }
       });
-      if (res?.ok) {
+      if (res?.ok && `${epochs.value[metric].all}:${epochs.value[metric].unread}` === identityAtStart) {
         const nowIso = new Date().toISOString();
         alerts.value[metric] = (alerts.value[metric] ?? []).map(item => ({
           ...item,
