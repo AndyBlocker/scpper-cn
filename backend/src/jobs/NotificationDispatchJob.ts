@@ -982,13 +982,24 @@ async function resumeScheduledBatches(
     const replayKeys = stillPending.map((r) => r.dedupeKey);
     const shown = stillPending.slice(0, CIRCUIT_USER_MAX);
     const overflow = stillPending.length - shown.length;
-    const itemLines = shown.map((r) => {
+    // 从 payload 还原**完整的**合并信息，而不是只取 line。
+    // 只取 line 的话，首次已经合并成一行的内容在重发时会重新摊回多行 ——
+    // 用户会看到「同一批通知第二次来的时候变样了」。
+    // 这些字段正是占位时特意存下来的，不用就白存了。
+    const asStr = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+    const items: MergeItem[] = shown.map((r) => {
       const payload = (r.payload ?? {}) as Record<string, unknown>;
-      return typeof payload.line === 'string' ? payload.line : '(内容缺失)';
+      return {
+        line: asStr(payload.line) ?? '(内容缺失)',
+        groupKey: asStr(payload.groupKey),
+        mergeHead: asStr(payload.mergeHead),
+        mergePart: asStr(payload.mergePart),
+        mergeTail: asStr(payload.mergeTail)
+      };
     });
     // digestKey 保持不变：即使内容因取消已读而变短，机器人仍按 key 去重，
     // 「上次其实已送达」的情况照样能被挡住。
-    const message = renderDigestLines(itemLines, overflow);
+    const message = renderMerged(items, overflow);
 
     if (dryRun) {
       console.log(`[notify][dry-run] 重发 → ${target.wikidotId}（${stillPending.length} 条，第 ${resumeRound} 轮重发，今日第 ${sentToday + 1} 条）\n${message}\n`);
@@ -1250,6 +1261,7 @@ async function collectCandidates(
     SELECT ua.id, ua.type, ua."detectedAt", ua."followerId", ua."revisionId", ua."pageVersionId",
            p."wikidotId" AS "pageWikidotId", p."currentUrl" AS "pageUrl",
            pv.title AS "pageTitle", pv."alternateTitle" AS "pageAlternateTitle",
+           ua."targetUserId" AS "targetUserId",
            tu."displayName" AS "targetName"
     FROM "UserActivityAlert" ua
     JOIN "Page" p ON p.id = ua."pageId"
@@ -1269,7 +1281,9 @@ async function collectCandidates(
       userId: Number(r.followerId),
       detectedAt: new Date(String(r.detectedAt)),
       // 同一作者对同一页面的多次动作合并成一条，末尾标条数
-      groupKey: `follow:${r.targetUserId ?? who}:${r.pageWikidotId ?? r.pageId}`,
+      // 必须用 targetUserId 而非显示名：两个被关注者若同名（或都没有显示名），
+      // 在同一页面上的动态会被误合并成一条，后一个人的动态直接消失。
+      groupKey: `follow:${r.targetUserId ?? 'unknown'}:${r.pageWikidotId ?? r.pageId}`,
       line: `${who} ${what}《${pageLabel(r)}》  ${pageUrl(r)}`
     });
   }

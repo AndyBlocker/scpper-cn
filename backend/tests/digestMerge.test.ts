@@ -51,3 +51,31 @@ test('溢出提示仍保留', () => {
   const out = renderMerged([{ line: 'x' }], 5);
   assert.match(out, /…另有 5 条/);
 });
+
+test('重发路径还原 payload 后应与首次渲染一致（review P2）', () => {
+  // 模拟首次：三条同页指标
+  const first = renderMerged([
+    { line: 'l1', groupKey: 'page:1', mergeHead: '你的《X》', mergePart: '投票 +1', mergeTail: 'u' },
+    { line: 'l2', groupKey: 'page:1', mergeHead: '你的《X》', mergePart: '评论 +2', mergeTail: 'u' }
+  ], 0);
+  // 模拟重发：从 payload 还原（这正是 resumeScheduledBatches 现在做的）
+  const payloads = [
+    { line: 'l1', groupKey: 'page:1', mergeHead: '你的《X》', mergePart: '投票 +1', mergeTail: 'u' },
+    { line: 'l2', groupKey: 'page:1', mergeHead: '你的《X》', mergePart: '评论 +2', mergeTail: 'u' }
+  ];
+  const replay = renderMerged(payloads, 0);
+  assert.equal(replay, first, '重发渲染必须与首次一致，否则用户会看到同一批通知第二次变样');
+  assert.equal(replay.split('\n').filter((l) => l.startsWith('· ')).length, 1);
+});
+
+test('同名被关注者的动态不得被合并（review P2）', () => {
+  // groupKey 用稳定 id 区分；若退回用显示名，两条会并成一条且丢掉后者
+  const out = renderMerged([
+    { line: 'A 编辑了《P》', groupKey: 'follow:1001:9' },
+    { line: 'B 编辑了《P》', groupKey: 'follow:1002:9' }
+  ], 0);
+  const body = out.split('\n').filter((l) => l.startsWith('· '));
+  assert.equal(body.length, 2, '不同被关注者应各占一行');
+  assert.ok(body.some((l) => l.includes('A 编辑了')));
+  assert.ok(body.some((l) => l.includes('B 编辑了')));
+});
