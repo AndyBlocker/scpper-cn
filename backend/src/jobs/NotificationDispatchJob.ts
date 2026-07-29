@@ -1251,6 +1251,21 @@ async function expireStaleScheduledBatches(
    *  用户可能是在批次转 SCHEDULED 之后才切换过来的。 */
   digestUserIds?: Set<number>
 ): Promise<number> {
+  // digestUserIds 来自 prefsByUser，而后者只装了**活跃目标** ——
+  // 被暂停、或不在灰度名单里的定时用户不在其中，于是他们待重发的批次
+  // 会按实时模式的 24 小时时限判过期。可一批日汇总本身就可能装着接近
+  // 24 小时前的事件，下一次清理就把它判死了，而目标可能马上就恢复。
+  // 直接按「待重发行里出现过的用户」查一次当前模式，与活跃与否无关。
+  const scheduledDigestUsers = await prisma.$queryRaw<Array<{ userId: number }>>`
+    SELECT DISTINCT d."userId"
+    FROM "NotificationDelivery" d
+    JOIN "UserNotificationChannelSetting" s ON s."userId" = d."userId"
+    WHERE d.state = 'SCHEDULED' AND d.channel = 'QQ' AND s."qqMode" = 'DAILY_DIGEST'`;
+  const digestUsers = new Set<number>([
+    ...(digestUserIds ?? []),
+    ...scheduledDigestUsers.map((r) => r.userId)
+  ]);
+
   const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
   // 定时汇总的批次用**放宽一倍**的时限。
   //
@@ -1279,11 +1294,11 @@ async function expireStaleScheduledBatches(
         // 按 userId 而非 payload 判断：用户可能在批次转 SCHEDULED 之后
         // 才切成定时模式，那时 payload 里根本没有 digestCutoff。
         OR: [
-          ...(digestUserIds && digestUserIds.size > 0
-            ? [{ userId: { notIn: [...digestUserIds] } }]
+          ...(digestUsers.size > 0
+            ? [{ userId: { notIn: [...digestUsers] } }]
             : []),
           { payload: { path: ['detectedAt'], lt: digestCutoff.toISOString() } },
-          ...(digestUserIds && digestUserIds.size > 0 ? [] : [{ userId: { gt: -1 } }])
+          ...(digestUsers.size > 0 ? [] : [{ userId: { gt: -1 } }])
         ]
       }
     ]
@@ -1505,7 +1520,11 @@ async function resumeScheduledBatches(
     const userId = first.userId;
     let sentToday = sentTodayByUser.get(userId);
     if (sentToday === undefined) {
-      sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
+      // 口径必须与常规投递一致：定时模式按 UTC+8 自然日，实时模式按滚动 24 小时。
+      // 定时模式若用滚动窗口，qqDailyLimit=1 的用户昨晚那封会把今天的重发
+      // 一直挡到整整 24 小时之后 —— 期间批次里最老的行可能已经逼近过期。
+      const since = prefs?.mode === 'DAILY_DIGEST' ? startOfUtc8Day() : dayAgo;
+      sentToday = await countDigestsSentSince(prisma, userId, since);
       sentTodayByUser.set(userId, sentToday);
     }
     // 限额与定时同样按每人设置，两条投递路径的行为必须一致
