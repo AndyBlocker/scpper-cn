@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
 import { useAuth } from '~/composables/useAuth'
 import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
+import { useNotifyPreferences, type NotifyType } from '~/composables/useNotifyPreferences'
 
 /**
  * 通知设置 —— 从提醒流里搬出来的所有偏好。
@@ -12,13 +13,66 @@ import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
  * 是整个账号页最难被发现的交互。现在集中在一处，按「接收什么」与「怎么接收」分组。
  */
 
-const { preferences, loading, saving, error, fetchPreferences, updatePreferences, setMetricMuted } = useAlertSettings()
+const { preferences, loading, saving, error, fetchPreferences, updatePreferences } = useAlertSettings()
+const {
+  matrix, byType, channel,
+  loading: prefsLoading, saving: prefsSaving, error: prefsError,
+  fetchPreferences: fetchNotifyPrefs, save: saveNotifyPrefs
+} = useNotifyPreferences()
 const { user, fetchCurrentUser } = useAuth()
 
 const METRIC_LABEL: Record<AlertMetric, { title: string; hint: string }> = {
   COMMENT_COUNT: { title: '页面收到评论', hint: '你的作品下有新回复时提醒' },
   VOTE_COUNT: { title: '页面票数变化', hint: '累计变化达到下方阈值时提醒' },
   REVISION_COUNT: { title: '页面被编辑', hint: '你的作品被修订时提醒' }
+}
+
+/** 五类通知的展示信息。与后端 NotificationTypeKey 一一对应。 */
+const TYPE_LABEL: Record<NotifyType, { title: string; hint: string }> = {
+  PAGE_COMMENT: { title: '页面收到评论', hint: '你的作品下有新回复' },
+  PAGE_VOTE: { title: '页面票数变化', hint: '累计变化达到触发条件' },
+  PAGE_REVISION: { title: '页面被编辑', hint: '你的作品被修订' },
+  FOLLOW_ACTIVITY: { title: '关注的作者有动态', hint: '发布或编辑了页面' },
+  FORUM_INTERACTION: { title: '论坛回复与提及', hint: '有人回复你或 @ 你' }
+}
+
+const DIGEST_HOURS = Array.from({ length: 24 }, (_, h) => h)
+
+/** 本地表单值：日限额与时点用 input 绑定，需要独立的 ref 才能在保存前校验 */
+const dailyLimitInput = ref(20)
+const digestHourInput = ref(21)
+const modeInput = ref<'REALTIME' | 'DAILY_DIGEST'>('REALTIME')
+
+watch(channel, (c) => {
+  if (!c) return
+  dailyLimitInput.value = c.qqDailyLimit
+  digestHourInput.value = c.qqDigestHour
+  modeInput.value = c.qqMode
+}, { immediate: true, deep: true })
+
+/**
+ * 切换某个类型在某个渠道上的开关。
+ *
+ * 站内与 QQ **完全独立**：关掉站内不影响 QQ，反之亦然。
+ * 这是刻意的 —— 「站内不看、只要 QQ 推」是常见诉求。
+ */
+async function toggleChannel(type: NotifyType, key: 'siteEnabled' | 'qqEnabled', next: boolean) {
+  const row = byType.value.get(type)
+  if (!row) return
+  const updated = { ...row, [key]: next }
+  const ok = await saveNotifyPrefs({ matrix: [updated] })
+  if (ok) flashSaved()
+}
+
+async function saveChannelSetting() {
+  const ok = await saveNotifyPrefs({
+    channel: {
+      qqDailyLimit: dailyLimitInput.value,
+      qqMode: modeInput.value,
+      qqDigestHour: digestHourInput.value
+    }
+  })
+  if (ok) flashSaved()
 }
 
 const REVISION_OPTIONS: Array<{ value: RevisionFilterOption; label: string; hint: string }> = [
@@ -67,29 +121,13 @@ async function saveGeneration() {
 }
 
 /**
- * 切换「接收此类提醒」。
- *
- * 必须把 input 元素传进来：这里用的是 :checked 单向绑定，浏览器点击时
- * 已经改了 DOM，而保存失败时 preferences 并没有变 —— Vue 的 vdom 认为
- * :checked 的值没变化，就不会把 DOM patch 回去，勾选框于是一直显示成
- * 「保存成功了」的样子，直到组件重新挂载。失败时得手动写回。
+ * 旧的 toggleMuted 已被上面的 toggleChannel 取代 —— 静音是单一开关，
+ * 现在每个类型有站内/QQ 两个独立开关，语义不同，不再复用。
  */
-async function toggleMuted(metric: AlertMetric, muted: boolean, el: HTMLInputElement) {
-  try {
-    await setMetricMuted(metric, muted)
-  } catch {
-    // setMetricMuted 会抛，错误文案由 error.value 呈现
-  }
-  if (error.value) {
-    // 以权威状态为准复原：checked 表示「接收」，即 muted 为 false
-    el.checked = !preferences.value.mutedMetrics[metric]
-    return
-  }
-  flashSaved()
-}
 
 onMounted(() => {
   void fetchPreferences()
+  void fetchNotifyPrefs()
   // 渠道健康度（ACTIVE / PAUSED）随投递结果在后端变化，只失效了服务端缓存，
   // SPA 里的 user 对象不会自己更新 —— 长会话或直接导航进来时，
   // 这里的绿点/黄点可能一直停在过期状态。强制刷新一次登录态。
@@ -106,31 +144,53 @@ onMounted(() => {
     <div v-if="loading" class="py-8 text-center text-sm text-[rgb(var(--muted))]">正在加载设置…</div>
 
     <template v-else>
-      <!-- ① 接收什么 -->
+      <!-- ① 接收什么 × 走哪个渠道 -->
       <section>
         <h3 class="text-sm font-semibold text-[rgb(var(--fg))]">接收哪些提醒</h3>
         <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">
-          关掉后将不再产生这类提醒，站内与 QQ 都不会收到。
+          两个渠道**互相独立**：关掉站内不影响 QQ 推送，反之亦然。
         </p>
-        <div class="mt-3 divide-y divide-[rgb(var(--panel-border))] rounded-lg border border-[rgb(var(--panel-border))]">
-          <label
-            v-for="m in ALERT_METRICS"
-            :key="m"
-            class="flex cursor-pointer items-start gap-3 p-3"
-          >
-            <input
-              type="checkbox"
-              class="mt-0.5 h-4 w-4 rounded border-[rgb(var(--input-border))]"
-              :checked="!preferences.mutedMetrics[m]"
-              :disabled="saving"
-              @change="toggleMuted(m, !($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
-            >
-            <span class="min-w-0">
-              <span class="block text-sm text-[rgb(var(--fg))]">{{ METRIC_LABEL[m].title }}</span>
-              <span class="block text-xs text-[rgb(var(--muted))]">{{ METRIC_LABEL[m].hint }}</span>
-            </span>
-          </label>
+
+        <div class="mt-3 overflow-hidden rounded-lg border border-[rgb(var(--panel-border))]">
+          <div class="flex items-center gap-3 border-b border-[rgb(var(--panel-border))] bg-[rgb(var(--panel-border))]/20 px-3 py-2 text-xs font-medium text-[rgb(var(--muted))]">
+            <span class="min-w-0 flex-1">类型</span>
+            <span class="w-12 shrink-0 text-center">站内</span>
+            <span class="w-12 shrink-0 text-center">QQ</span>
+          </div>
+          <div class="divide-y divide-[rgb(var(--panel-border))]">
+            <div v-for="row in matrix" :key="row.type" class="flex items-center gap-3 px-3 py-3">
+              <span class="min-w-0 flex-1">
+                <span class="block text-sm text-[rgb(var(--fg))]">{{ TYPE_LABEL[row.type].title }}</span>
+                <span class="block text-xs text-[rgb(var(--muted))]">{{ TYPE_LABEL[row.type].hint }}</span>
+              </span>
+              <span class="w-12 shrink-0 text-center">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-[rgb(var(--input-border))]"
+                  :checked="row.siteEnabled"
+                  :disabled="prefsSaving"
+                  :aria-label="`${TYPE_LABEL[row.type].title} 的站内提醒`"
+                  @change="toggleChannel(row.type, 'siteEnabled', ($event.target as HTMLInputElement).checked)"
+                >
+              </span>
+              <span class="w-12 shrink-0 text-center">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-[rgb(var(--input-border))] disabled:opacity-40"
+                  :checked="row.qqEnabled"
+                  :disabled="prefsSaving || !qqBound"
+                  :aria-label="`${TYPE_LABEL[row.type].title} 的 QQ 推送`"
+                  :title="qqBound ? '' : '绑定 QQ 后可用'"
+                  @change="toggleChannel(row.type, 'qqEnabled', ($event.target as HTMLInputElement).checked)"
+                >
+              </span>
+            </div>
+          </div>
         </div>
+        <p v-if="!qqBound" class="mt-2 text-xs text-[rgb(var(--muted))]">
+          QQ 一列需要先绑定 QQ 才能调整；这里的设置会在绑定后立即生效。
+        </p>
+        <p v-if="prefsError" class="mt-2 text-xs text-[rgb(var(--danger-strong))]" role="alert">{{ prefsError }}</p>
       </section>
 
       <!-- ② 触发条件 -->
@@ -234,8 +294,76 @@ onMounted(() => {
               去绑定 →
             </NuxtLink>
           </div>
-          <p class="pt-1 text-[11px] text-[rgb(var(--muted))]">
-            QQ 推送按整点同步周期汇总发送，通常在事件发生后一小时内送达。
+          <!-- QQ 渠道的推送节奏与用量上限 -->
+          <div v-if="qqBound" class="mt-3 space-y-4 border-t border-[rgb(var(--panel-border))] pt-4">
+            <div>
+              <span class="block text-sm text-[rgb(var(--fg))]">推送节奏</span>
+              <div class="mt-2 space-y-1.5">
+                <label class="flex cursor-pointer items-start gap-2">
+                  <input v-model="modeInput" type="radio" value="REALTIME" class="mt-0.5 h-4 w-4" :disabled="prefsSaving">
+                  <span>
+                    <span class="block text-sm text-[rgb(var(--fg))]">实时</span>
+                    <span class="block text-xs text-[rgb(var(--muted))]">有新动态就推（仍按同步周期汇总，通常一小时内）</span>
+                  </span>
+                </label>
+                <label class="flex cursor-pointer items-start gap-2">
+                  <input v-model="modeInput" type="radio" value="DAILY_DIGEST" class="mt-0.5 h-4 w-4" :disabled="prefsSaving">
+                  <span>
+                    <span class="block text-sm text-[rgb(var(--fg))]">每日汇总一次</span>
+                    <span class="block text-xs text-[rgb(var(--muted))]">攒到指定时间一起推，当天只发一条</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div v-if="modeInput === 'DAILY_DIGEST'">
+              <label for="digest-hour" class="block text-sm text-[rgb(var(--fg))]">发送时间</label>
+              <div class="mt-2 flex items-center gap-2">
+                <select
+                  id="digest-hour"
+                  v-model.number="digestHourInput"
+                  class="rounded-lg border border-[rgb(var(--input-border))] bg-[rgb(var(--input-bg))] px-2 py-1.5 text-sm"
+                  :disabled="prefsSaving"
+                >
+                  <option v-for="h in DIGEST_HOURS" :key="h" :value="h">{{ String(h).padStart(2, '0') }}:00</option>
+                </select>
+                <span class="text-xs text-[rgb(var(--muted))]">（UTC+8）</span>
+              </div>
+            </div>
+
+            <div>
+              <label for="qq-daily-limit" class="block text-sm text-[rgb(var(--fg))]">每日最多接收</label>
+              <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">
+                达到上限后当天剩余提醒不再推送（站内仍可查看）。
+              </p>
+              <div class="mt-2 flex items-center gap-2">
+                <input
+                  id="qq-daily-limit"
+                  v-model.number="dailyLimitInput"
+                  type="number"
+                  min="1"
+                  max="200"
+                  class="w-24 rounded-lg border border-[rgb(var(--input-border))] bg-[rgb(var(--input-bg))] px-2 py-1.5 text-sm"
+                  :disabled="prefsSaving"
+                >
+                <span class="text-xs text-[rgb(var(--muted))]">条</span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <button
+                type="button"
+                class="rounded-lg bg-[rgb(var(--accent))] px-4 py-1.5 text-sm text-white hover:bg-[rgb(var(--accent-strong))] disabled:opacity-50"
+                :disabled="prefsSaving"
+                @click="saveChannelSetting"
+              >
+                {{ prefsSaving ? '保存中…' : '保存推送设置' }}
+              </button>
+            </div>
+          </div>
+
+          <p v-else class="pt-1 text-[11px] text-[rgb(var(--muted))]">
+            绑定 QQ 后可设置推送节奏与每日上限。
           </p>
         </div>
       </section>
