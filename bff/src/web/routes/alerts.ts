@@ -426,6 +426,51 @@ const isNotifyType = (v: unknown): v is NotifyType =>
 const DELIVERY_MODES = ['REALTIME', 'DAILY_DIGEST'] as const;
 type DeliveryMode = (typeof DELIVERY_MODES)[number];
 
+/**
+ * 把某个通知类型此刻之前的未读一律标为已读。
+ *
+ * 站内开关切换时调用（两个方向）。见调用处对「为什么两个方向都要消费」的说明。
+ * 用 now() 作为边界而不是删除数据：告警本身还有别的用途（QQ 推送的来源、
+ * 历史查询），这里要的只是「不再算作未读」。
+ */
+async function consumeAlertsForType(
+  client: { query: (sql: string, params: unknown[]) => Promise<unknown> },
+  userId: number,
+  type: string
+): Promise<void> {
+  if (type === 'FOLLOW_ACTIVITY') {
+    await client.query(
+      `UPDATE "UserActivityAlert" SET "acknowledgedAt" = now()
+       WHERE "followerId" = $1 AND "acknowledgedAt" IS NULL`,
+      [userId]
+    );
+    return;
+  }
+  if (type === 'FORUM_INTERACTION') {
+    await client.query(
+      `UPDATE "ForumInteractionAlert" SET "acknowledgedAt" = now()
+       WHERE "recipientUserId" = $1 AND "acknowledgedAt" IS NULL`,
+      [userId]
+    );
+    return;
+  }
+  // 其余三个都是页面指标，按 metric 精确到那一种
+  const metric = NOTIFY_TYPE_TO_METRIC[type];
+  if (!metric) return;
+  await client.query(
+    `UPDATE "PageMetricAlert" pa SET "acknowledgedAt" = now()
+     FROM "PageMetricWatch" pw
+     WHERE pw.id = pa."watchId" AND pw."userId" = $1
+       AND pa."metric" = $2::"PageMetricType" AND pa."acknowledgedAt" IS NULL`,
+    [userId, metric]
+  );
+}
+
+/** 通知类型 → 页面指标（METRIC_TO_NOTIFY_TYPE 的反表） */
+const NOTIFY_TYPE_TO_METRIC: Record<string, string> = Object.fromEntries(
+  Object.entries(METRIC_TO_NOTIFY_TYPE).map(([metric, type]) => [type, metric])
+);
+
 interface NotifyMatrixRow { type: NotifyType; siteEnabled: boolean; qqEnabled: boolean }
 interface NotifyChannelSetting {
   qqDailyLimit: number;
@@ -561,6 +606,15 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // 站内开关**切换前**该类型的旧状态，用来判断是否需要消费积压
+        const prevSite = new Map<string, boolean>();
+        {
+          const { rows: prev } = await client.query(
+            'SELECT "type", "siteEnabled" FROM "UserNotificationPreference" WHERE "userId" = $1',
+            [userId]
+          );
+          for (const r of prev) prevSite.set(String(r.type), Boolean(r.siteEnabled));
+        }
         for (const row of rows) {
           await client.query(
             `INSERT INTO "UserNotificationPreference" ("userId","type","siteEnabled","qqEnabled","updatedAt")
@@ -571,6 +625,16 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
                            "updatedAt"   = now()`,
             [userId, row.type, row.siteEnabled, row.qqEnabled]
           );
+          // 站内开关一变（两个方向都算），就把该类型此刻之前的未读一次性消费掉。
+          //
+          // 关闭只是**遮蔽**：产出侧照旧在写告警。不消费的话，
+          //  · 重新开启的瞬间，关闭期间攒下的全部涌出来变成一大堆「新未读」；
+          //  · 一直关着的用户则积累一堆永远读不到、保留策略也删不掉的行
+          //    （retention 只删已读的）。
+          // 标记为已读的语义正是用户刚做的选择：「这类东西我不看 / 从现在开始重新看」。
+          if ((prevSite.get(row.type) ?? true) !== row.siteEnabled) {
+            await consumeAlertsForType(client, userId, row.type);
+          }
         }
 
       // ── 渠道级设置：三项都可选，只改传了的（校验已在上方统一完成）

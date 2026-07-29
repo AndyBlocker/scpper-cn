@@ -1131,8 +1131,15 @@ async function advanceDigestWatermarks(
     const due = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
     if (now < due.getTime()) continue;          // 还没到期
     if (prefs.lastDigestCutoffAt && due <= prefs.lastDigestCutoffAt) continue;
+    // 条件里再判一次「只前进不后退」，因为 prefs 是**开轮时的快照**：
+    // 本轮若跨过了被占用的边界并成功发出了更晚那一封，成功路径已经把水位线
+    // 推到了那个更晚的截止线；这里按快照重算出的 due 却是被跨过的那个较早边界，
+    // 无条件写入就会把它退回去 —— 之后每一轮都要重新扫一遍、重新跨一次。
     await prisma.userNotificationChannelSetting.updateMany({
-      where: { userId },
+      where: {
+        userId,
+        OR: [{ lastDigestCutoffAt: null }, { lastDigestCutoffAt: { lt: due } }]
+      },
       data: { lastDigestCutoffAt: due }
     });
   }
@@ -1365,6 +1372,11 @@ async function expireStaleScheduledBatches(
             ? [{ userId: { notIn: [...digestUsers] } }]
             : []),
           { payload: { path: ['detectedAt'], lt: digestCutoff.toISOString() } },
+          // 与上面那组同样需要 createdAt 兜底：没有 detectedAt 的历史行
+          // （本次改动之前写下的）在 JSON 比较里永远匹配不上，而定时用户
+          // 又被 notIn 排除在外 —— 两头不沾，这些行会越过放宽后的时限活下来，
+          // 日后被当作陈旧内容重发出去。
+          { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: digestCutoff } }] },
           ...(digestUsers.size > 0 ? [] : [{ userId: { gt: -1 } }])
         ]
       }
@@ -1550,7 +1562,11 @@ async function resumeScheduledBatches(
 
     // 用户在首次投递失败之后关掉了这个类型 → 取消，不再重发。
     // 「我已经关掉了它，为什么还收到」是最直接的设置失效体感。
-    const prefs = prefsByUser?.get(first.userId);
+    // 与常规投递同理：重发也是**串行**逐批处理的，一轮可能跑很久。
+    // 用户在开轮 loadNotifyPrefs 之后、轮到这一批之前改了偏好，
+    // 拿快照重发就是把刚关掉的通知又送出去一次。
+    const snapshotPrefs = prefsByUser?.get(first.userId);
+    const prefs = (await loadNotifyPrefs(prisma, [first.userId])).get(first.userId) ?? snapshotPrefs;
     const optedOut = new Set<string>();
     if (prefs) {
       // 上线时队列里的存量行没有 notifyType，先按 dedupeKey 补出来，
