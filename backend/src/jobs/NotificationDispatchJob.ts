@@ -494,8 +494,9 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 只判「到期了没」是不够的：今天已收过、随后把时点改晚，
       // 那个更晚的边界当天就会到期，于是同一天发第二封；
       // 补发多个逾期边界时同样会连发。日限额（默认 20）拦不住这个。
-      const sentThisDay = await countDigestsSentSince(prisma, c.userId, startOfUtc8Day());
-      ok = Date.now() >= cutoff.getTime() && sentThisDay === 0;
+      // 未落定的批次（PENDING / SCHEDULED）同样占用今天的名额
+      const slotTaken = await hasDigestSlotTakenToday(prisma, c.userId);
+      ok = Date.now() >= cutoff.getTime() && !slotTaken;
       digestEligibility.set(c.userId, ok);
       digestCutoffByUser.set(c.userId, cutoff);
     }
@@ -1061,6 +1062,35 @@ async function advanceDigestWatermarks(
   }
 }
 
+
+/**
+ * 今天（UTC+8 自然日）这个用户是否已经**占用**了汇总名额。
+ *
+ * 关键在于「占用」不等于「已送达」：
+ *  - SENT       已发出，显然占用
+ *  - PENDING    另一轮已经占位、正在发送中 —— 若它成功了就是今天那一封
+ *  - SCHEDULED  暂时失败待重发，它欠的还是今天这一封的账
+ * 只数 SENT 的话：一条晚提交的告警会另起一个 digestKey 组成第二封，
+ * 而原来那封若其实已经送达（响应超时而已），用户当天就收到两封 ——
+ * 「每天一封」是写在设置页上的承诺，不能被这类时序破坏。
+ *
+ * 这个判定必须**独立于 qqDailyLimit**：那个上限是给实时模式用的（默认 20），
+ * 拿它来判定「今天发过没」等于允许一天发二十封「每日汇总」。
+ */
+async function hasDigestSlotTakenToday(prisma: PrismaClient, userId: number): Promise<boolean> {
+  const since = startOfUtc8Day();
+  const rows = await prisma.$queryRaw<Array<{ n: bigint }>>`
+    SELECT COUNT(DISTINCT payload->>'digestKey') AS n
+    FROM "NotificationDelivery"
+    WHERE "userId" = ${userId}
+      AND state IN ('SENT', 'PENDING', 'SCHEDULED')
+      AND payload->>'digestKey' IS NOT NULL
+      AND payload->>'digestCutoff' IS NOT NULL
+      AND COALESCE("sentAt", "createdAt") >= ${since}
+  `;
+  return Number(rows[0]?.n ?? 0) > 0;
+}
+
 /** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
 const MAX_RESUME_ATTEMPTS = Math.max(1, Number(process.env.NOTIFY_MAX_RESUME_ATTEMPTS ?? '5') || 5);
 /** 目标已消失的 SCHEDULED 批次保留多久后判失败（默认 24 小时） */
@@ -1387,10 +1417,26 @@ async function resumeScheduledBatches(
     // 定时模式用自然日计数 —— 与上面的资格判定同口径。
     // 用滚动 24 小时的话，昨天 23:00 发出的汇总会把今天 21:00 的重发一直挡到 23:00，
     // 期间最老的那些行可能已经超出回看窗口而过期。
-    const limitBaseline = prefs?.mode === 'DAILY_DIGEST'
-      ? await countDigestsSentSince(prisma, first.userId, startOfUtc8Day())
-      : sentToday;
-    if (limitBaseline >= effLimit) {
+    // 定时模式的「一天一封」必须独立判定，不能拿 qqDailyLimit 比 ——
+    // 那个上限默认 20，用它判定等于允许一天发二十封「每日汇总」。
+    // 注意排除本批自己：它已是 SCHEDULED，会被 hasDigestSlotTakenToday 数到。
+    if (prefs?.mode === 'DAILY_DIGEST') {
+      const otherDigestToday = await prisma.$queryRaw<Array<{ n: bigint }>>`
+        SELECT COUNT(DISTINCT payload->>'digestKey') AS n
+        FROM "NotificationDelivery"
+        WHERE "userId" = ${first.userId}
+          AND state IN ('SENT', 'PENDING')
+          AND payload->>'digestKey' IS NOT NULL
+          AND payload->>'digestKey' <> ${digestKey}
+          AND COALESCE("sentAt", "createdAt") >= ${startOfUtc8Day()}
+      `;
+      if (Number(otherDigestToday[0]?.n ?? 0) > 0) {
+        console.warn(`[notify] 用户 ${target.wikidotId} 今天已有汇总，批次 ${digestKey} 留待明天`);
+        continue;
+      }
+    }
+    const limitBaseline = sentToday;
+    if (prefs?.mode !== 'DAILY_DIGEST' && limitBaseline >= effLimit) {
       console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${effLimit}，批次 ${digestKey} 留待下轮`);
       continue;
     }

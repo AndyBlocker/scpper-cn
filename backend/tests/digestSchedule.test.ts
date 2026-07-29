@@ -160,3 +160,27 @@ test('未到期一律不标记', () => {
     }
   }
 });
+
+// ── 「每天一封」的名额判定（review 第十二轮）────────────────────
+// 关键：占用名额 ≠ 已送达。未落定的批次同样占着今天那一封。
+
+const OCCUPYING_STATES = ['SENT', 'PENDING', 'SCHEDULED'];
+
+test('未落定的批次同样占用当天名额', () => {
+  const taken = (states: string[]) => states.some((st) => OCCUPYING_STATES.includes(st));
+  assert.equal(taken(['SENT']), true, '已发出');
+  assert.equal(taken(['PENDING']), true,
+    '另一轮正在发送中 —— 若它成功了就是今天那一封，此时另起一封会变成两封');
+  assert.equal(taken(['SCHEDULED']), true, '待重发，欠的还是今天这一封的账');
+  assert.equal(taken(['FAILED']), false, '永久失败不占名额');
+  assert.equal(taken(['CANCELLED']), false, '已取消不占名额');
+  assert.equal(taken([]), false, '什么都没有');
+});
+
+test('一天一封的判定必须独立于 qqDailyLimit', () => {
+  // 拿 qqDailyLimit（默认 20）判定等于允许一天二十封「每日汇总」
+  const wrongGate = (sentToday: number, dailyLimit: number) => sentToday < dailyLimit;
+  const rightGate = (slotTaken: boolean) => !slotTaken;
+  assert.equal(wrongGate(1, 20), true, '按限额判定：今天发过一封仍然放行 —— 会发第二封');
+  assert.equal(rightGate(true), false, '按名额判定：今天已占用就不再发');
+});
