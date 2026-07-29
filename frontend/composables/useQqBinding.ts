@@ -118,7 +118,16 @@ export function useQqBinding() {
         botQq.value = res.botQq
         statusKnown.value = true
         error.value = null
-        if (res.challenge) startClock()
+        if (res.challenge) {
+          startClock()
+        } else {
+          // 挑战过期或在别处被取消：状态里既无 challenge 也无 binding，
+          // 若不停轮询，账号页会每 5 秒发一次请求直到用户离开。
+          stopPolling()
+          stopClock()
+          plainCode.value = null
+          instructions.value = null
+        }
         if (becameBound) {
           // 绑定刚刚完成：清掉屏幕上的明文码，并刷新登录态让导航栏等处同步
           plainCode.value = null

@@ -29,8 +29,15 @@ const __dirname_ = path.dirname(fileURLToPath(import.meta.url));
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadUserBackendClient(): Promise<any | null> {
   const candidate = path.resolve(__dirname_, '../../../user-backend/.env');
-  if (fs.existsSync(candidate)) dotenv.config({ path: candidate, override: false });
-  const url = process.env.USER_DATABASE_URL || process.env.USER_BACKEND_DATABASE_URL;
+  if (fs.existsSync(candidate)) {
+    // 与 services/userDirectory.ts 同样的处理：backend/.env 里若留了
+    // `USER_DATABASE_URL=` 空占位，override:false 不会用真实值替换它，
+    // 挑战清理会被静默跳过。
+    if (!(process.env.USER_DATABASE_URL || '').trim()) delete process.env.USER_DATABASE_URL;
+    dotenv.config({ path: candidate, override: false });
+  }
+  const url = (process.env.USER_DATABASE_URL || '').trim()
+    || (process.env.USER_BACKEND_DATABASE_URL || '').trim();
   if (!url) return null;
   try {
     const localRequire = createRequire(import.meta.url);

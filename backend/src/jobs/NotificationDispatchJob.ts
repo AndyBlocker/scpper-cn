@@ -412,14 +412,22 @@ async function reportChannelOutcome(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
     try {
-      await fetch(`${base}/internal/notifications/report-delivery`, {
+      const response = await fetch(`${base}/internal/notifications/report-delivery`, {
         method: 'POST',
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
         // code 为 null 时必须**省略**该字段：接收侧 schema 是 z.string().optional()，
-        // 传 null 会 400，而我们又忽略响应状态 → 成功回报静默失效、failureCount 永不清零
+        // 传 null 会 400
         body: JSON.stringify({ accountId, channel: 'QQ', outcome, ...(code ? { code } : {}) })
       });
+      // fetch 对 4xx/5xx 也会 resolve。不查状态的话，密钥不一致（403）或
+      // 参数不合（400）都会被当成回报成功 —— failureCount 既不累加也不清零，
+      // 失效渠道永远不会自动暂停，而且毫无线索。
+      if (!response.ok) {
+        console.warn(
+          `[notify] 回报渠道状态被拒（${response.status}）：${await response.text().catch(() => '')}`
+        );
+      }
     } finally {
       clearTimeout(timer);
     }

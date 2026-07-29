@@ -56,6 +56,13 @@ async function handleMarkOne(key: string, item: Parameters<typeof markRead>[0]) 
  * 勾选「显示已读」要重新取数：首次请求带了 unreadOnly=1，
  * 本地状态里压根没有已读条目，只改本地过滤会什么都显示不出来。
  */
+/** 空态里的「显示已读」入口要和上面的勾选框走同一条路径，否则点了依然空白 */
+async function enableShowRead() {
+  if (showRead.value) return
+  showRead.value = true
+  await handleShowReadChange()
+}
+
 async function handleShowReadChange() {
   if (busy.value) return
   busy.value = true
@@ -176,7 +183,7 @@ onBeforeUnmount(() => { stopVis?.() })
            说明未读条目在更早的位置，提示用户怎么看到它们，而不是让界面自相矛盾。 -->
       <p v-if="hasHiddenUnread" class="mt-2 text-xs">
         还有 {{ totalUnread }} 条未读在更早的记录里，
-        <button type="button" class="text-[var(--g-accent)] hover:underline" @click="showRead = true">
+        <button type="button" class="text-[var(--g-accent)] hover:underline" @click="enableShowRead">
           显示已读
         </button>
         后可一并查看。

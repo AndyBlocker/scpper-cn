@@ -145,14 +145,17 @@ export function useNotificationFeed() {
   /**
    * 「服务端说还有未读，但当前这一页里一条未读都没有」。
    *
-   * 三个来源各自只返回最近 20 条（不分已读未读），而未读过滤是在这之后做的。
-   * 用户把最新 20 条逐条读完、更早的未读还在时，就会看到徽标有数字、
-   * 列表却说「没有未读提醒」且无处翻页。UI 据此提示用户勾选「显示已读」，
-   * 而不是让他对着矛盾的界面发愣。
+   * 每个来源只返回最近 20 条，用户把它们逐条读完、更早的未读还在时，
+   * 就会看到徽标有数字、列表却说「没有未读提醒」。UI 据此提示如何看到它们，
+   * 而不是让用户对着矛盾的界面发愣。
    */
-  const hasHiddenUnread = computed(() =>
-    !showRead.value && items.value.length === 0 && totalUnread.value > 0
-  )
+  const hasHiddenUnread = computed(() => {
+    if (showRead.value || items.value.length > 0) return false
+    // 有类型筛选时只看该类型的未读数。用全局总数的话，
+    // 「页面有未读、但筛选停在关注」会让面板谎称「关注还有更早的未读」。
+    const relevant = kindFilter.value ? unreadByKind.value[kindFilter.value] : totalUnread.value
+    return relevant > 0
+  })
 
   const unreadByKind = computed<Record<FeedKind, number>>(() => ({
     // 未读数取各 composable 的服务端计数，而不是数当前列表 ——

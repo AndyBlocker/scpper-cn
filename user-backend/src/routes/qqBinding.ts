@@ -25,6 +25,16 @@ const startByIp = new SlidingWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxHi
 // 机器人被绕过或被替换时，爆破防护不能只依赖调用方自觉。
 const verifyByAddress = new SlidingWindowRateLimiter({ windowMs: 10 * 60 * 1000, maxHits: 10 });
 const verifyGlobal = new SlidingWindowRateLimiter({ windowMs: 10 * 60 * 1000, maxHits: 300 });
+/**
+ * 解绑的密码校验限流。
+ *
+ * 这个接口要求密码正是为了防「会话被劫持后静默改推送目标」，
+ * 但不限流的话，拿到会话的人可以在这里无限次猜密码 —— 它就变成了
+ * 一个在线密码预言机；而且每次都会跑一遍 bcrypt（故意设计得很慢），
+ * 同时也是 CPU 消耗面。必须在调用 bcrypt **之前**就挡住。
+ */
+const unbindByUser = new SlidingWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxHits: 5 });
+const unbindByIp = new SlidingWindowRateLimiter({ windowMs: 15 * 60 * 1000, maxHits: 20 });
 
 const unbindSchema = z.object({
   password: z.string().min(1, QQ_BINDING_ERRORS.passwordRequired)
@@ -144,6 +154,13 @@ export function qqBindingRouter() {
   router.post('/unbind', requireAuth, async (req, res) => {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
+
+      // 限流必须在 bcrypt.compare 之前 —— 否则挡住的只是结果，CPU 已经被消耗掉了
+      const ip = req.ip || 'unknown';
+      if (!unbindByUser.hit(req.authUser.id) || !unbindByIp.hit(ip)) {
+        return res.status(429).json({ error: '尝试过于频繁，请稍后再试' });
+      }
+
       const payload = unbindSchema.parse(req.body ?? {});
       await unbindQq(req.authUser.id, async (hash) => {
         if (!hash) return false;
