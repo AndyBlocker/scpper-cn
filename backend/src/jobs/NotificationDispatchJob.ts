@@ -478,8 +478,6 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
    * 只有第 1 种能预先标记为已处理。
    */
   const hasUnsentInPeriod = new Set<number>();
-  /** 本轮被跨过的、已被占用的边界（水位线要推过它，否则下一轮原地打转） */
-  const skippedCutoffByUser = new Map<number, Date>();
   /** 本轮处理完的用户 —— 只有他们的周期水位线可以推进 */
   const processedUserIds = new Set<number>();
   for (const c of candidates) {
@@ -506,8 +504,16 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         occupied, prefs.lastDigestCutoffAt, prefs.digestHour, Date.now()
       );
       cutoff = resolved.cutoff;
-      // 跨过去之后要把水位线一并推过，否则下一轮又从那个被占的边界重新开始
-      if (resolved.skipped) skippedCutoffByUser.set(c.userId, resolved.skipped);
+      // 跨越结果**不落库**。lastDigestCutoffAt 同时是收集下限（userFloor 由它推出），
+      // 把跨过的边界写进去会把下限推到那个边界之前一点 —— 恰好把这批本该顺延的
+      // 告警筛掉，它们既没发出也没记录，就此消失。
+      // 而落库本来也不必要：跨越每轮都会从水位线重新走一遍，本身就是幂等的。
+      if (resolved.skipped) {
+        console.log(
+          `[notify] 用户 ${c.userId} 的 ${resolved.skipped.toISOString()} 边界已被占用，`
+          + `本轮内容顺延至 ${cutoff.toISOString()}`
+        );
+      }
       ok = Date.now() >= cutoff.getTime() && !(await occupied(cutoff));
       digestEligibility.set(c.userId, ok);
       digestCutoffByUser.set(c.userId, cutoff);
@@ -526,22 +532,6 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   candidates.length = 0;
   candidates.push(...eligible);
 
-  // 被占用的边界永远轮不到我们，必须把水位线推过它 ——
-  // 否则每一轮都从同一个边界重新算，期间的告警一直进不了任何一封汇总，
-  // 直到滑出扫描窗口被静默丢弃。
-  // 这一步与 processedUserIds / hasUnsentInPeriod 无关：那两者管的是
-  // 「周期还没处理完，别推进」，而这里的边界是**处理不了**，只能跨过。
-  if (!options.dryRun) {
-    for (const [userId, skipped] of skippedCutoffByUser) {
-      const prefs = prefsByUser.get(userId);
-      if (prefs?.lastDigestCutoffAt && skipped <= prefs.lastDigestCutoffAt) continue;
-      await prisma.userNotificationChannelSetting.updateMany({
-        where: { userId }, data: { lastDigestCutoffAt: skipped }
-      });
-      if (prefs) prefs.lastDigestCutoffAt = skipped;   // 本轮后续判定用同一份口径
-      console.log(`[notify] 用户 ${userId} 的 ${skipped.toISOString()} 边界已被占用，水位线跨过它`);
-    }
-  }
 
   // 到期却没有任何可发内容的定时用户（空周期、内容全被站内读掉或被偏好抑制），
   // 根本不会进入下面的收件人循环 —— 但他们的周期确实**已经过完了**。
@@ -589,7 +579,13 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 同一批候选、再次跳闸 —— 熔断从此永远恢复不了，除非等它们过了回看窗口
       // 或运维手动改上限。这里把它们标成 SUPPRESSED（不是失败，是主动放弃），
       // 并把闸门推进到最新一条之后，让下一轮从干净状态开始。
-      const newest = candidates.reduce((a, c) => (c.detectedAt > a ? c.detectedAt : a), candidates[0].detectedAt);
+      // 闸门要推过的是**全部**积压，不只是本轮有资格发的那部分。
+      // digestDeferred 里是定时用户尚未到点的内容：它们没进 candidates，
+      // 但如果其中有比 newest 更早的，闸门一推就跨过了它们 ——
+      // 既没有投递记录、也永远不会被再次扫到，静默消失。
+      // 复位的语义是「消化掉这批积压」，那就必须连它们一起消化。
+      const resetScope = [...candidates, ...digestDeferred];
+      const newest = resetScope.reduce((a, c) => (c.detectedAt > a ? c.detectedAt : a), resetScope[0].detectedAt);
 
       // dry-run 必须在这里彻底止步。原先这段无条件写库：
       //   * recordAll 硬编码 dryRun=false → 把整批积压永久标成 SUPPRESSED
@@ -598,15 +594,16 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 演练要能安全地回答「复位会发生什么」，就绝不能顺手把它做掉。
       if (options.dryRun) {
         console.warn(
-          `[notify][dry-run] 若执行 --reset-circuit：会把 ${candidates.length} 条积压标记为 SUPPRESSED`
-          + `（不发送、不补发），并把闸门推进到 ${newest.toISOString()}。本次未写入任何数据。`
+          `[notify][dry-run] 若执行 --reset-circuit：会把 ${resetScope.length} 条积压标记为 SUPPRESSED`
+          + `（其中 ${digestDeferred.length} 条是定时用户尚未到点的内容），`
+          + `不发送、不补发，并把闸门推进到 ${newest.toISOString()}。本次未写入任何数据。`
         );
         summary.circuitTripped = true;
         return summary;
       }
 
       const byUser = new Map<number, Candidate[]>();
-      for (const c of candidates) {
+      for (const c of resetScope) {
         const list = byUser.get(c.userId) ?? [];
         list.push(c);
         byUser.set(c.userId, list);
@@ -1550,14 +1547,23 @@ async function resumeScheduledBatches(
           console.warn(`[notify] 用户 ${target.wikidotId} 当天已有另一封汇总，批次 ${digestKey} 跳过`);
           continue;
         }
+      } else if (dryRun) {
+        // 演练绝不能写库。这条路径在后面那个 dry-run 分支**之前**，
+        // 不挡的话，一条自称只读的命令会留下真实的占位行，
+        // 把当天另一封（key 不同的）真实汇总挡掉。
+        console.log(`[notify][dry-run] 会为批次 ${digestKey} 占用当天汇总名额`);
       } else if (!(await claimDigestSlot(prisma, first.userId, batchCutoff, digestKey))) {
         // 没有槽位（模式切换前攒下的批次）则现占；抢不到说明有别人，退让
         console.warn(`[notify] 用户 ${target.wikidotId} 当天的汇总名额已被占用，批次 ${digestKey} 跳过`);
         continue;
       }
     }
+    // 日限额对定时模式**同样生效**。先前为了不让 qqDailyLimit 兼任「一天一封」
+    // 的判定而整个跳过了它，跳过头了：一天一封现在由 DigestSlotClaim 独立保证，
+    // 限额该回来管它本来该管的事 —— 否则宕机恢复时，几个不同周期的待重发批次
+    // 会在同一轮里全部发出，把用户设的 qqDailyLimit=1 直接架空。
     const limitBaseline = sentToday;
-    if (prefs?.mode !== 'DAILY_DIGEST' && limitBaseline >= effLimit) {
+    if (limitBaseline >= effLimit) {
       console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${effLimit}，批次 ${digestKey} 留待下轮`);
       continue;
     }

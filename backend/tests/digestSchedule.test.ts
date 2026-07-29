@@ -225,10 +225,21 @@ test('改晚时点后跨过当天已占用的边界，不把水位线钉死', as
   assert.equal(utc8DayOf(r.cutoff), '2026-07-21', '落到次日 21:00，告警顺延到下一个周期');
   assert.ok(r.cutoff.getTime() > now, '次日边界尚未到期 —— 本轮不发，但水位线已经前进');
 
-  // 关键：水位线推过之后，下一轮不会再回到那个被占的边界
-  const r2 = await resolveCutoff(r.skipped, 21, occupied, now);
-  assert.equal(r2.skipped, null, '水位线已越过，不再重复跨越');
-  assert.equal(r2.cutoff.getTime(), r.cutoff.getTime(), '下一轮得到同一个可用边界');
+  // 关键：跨越结果**不落库** —— 水位线保持在 at10（收集下限也就留在那里，
+  // 10:00–21:00 的告警不会被筛掉）。下一轮从同一个水位线重算，
+  // 会再跨一次并得到同一个可用边界，因此不需要持久化。
+  const r2 = await resolveCutoff(at10, 21, occupied, now);
+  assert.equal(r2.cutoff.getTime(), r.cutoff.getTime(), '重算得到同一个可用边界（幂等）');
+  assert.equal(utc8DayOf(r2.skipped), utc8DayOf(r.skipped), '跨越动作本身也是幂等的');
+
+  // 若把跨过的边界写回水位线，收集下限会推到它之前一点，
+  // 恰好把这批本该顺延的告警筛掉 —— 这正是不落库的原因。
+  const floorIfPersisted = r.skipped.getTime() - 15 * 60 * 1000;
+  const alertAt15 = Date.UTC(2026, 6, 20, 7, 0, 0);       // day1 15:00 UTC+8
+  assert.ok(alertAt15 < floorIfPersisted,
+    '15:00 的告警会落在「写回后的收集下限」之前 —— 落库就会把它静默丢掉');
+  assert.ok(alertAt15 > at10.getTime() - 15 * 60 * 1000,
+    '不落库时它仍在收集范围内，会被下一个周期带走');
 });
 
 test('边界未被占用时不跨越', async () => {
