@@ -69,7 +69,24 @@ export function internalNotificationsRouter() {
           where: { id: binding.id },
           data: { failureCount: 0, lastFailureCode: null, lastSentAt: new Date() }
         });
-        return res.json({ ok: true, updated: true, paused: false });
+        // 若此前已被**自动**暂停，成功投递就是它恢复健康的证明，应当解除暂停。
+        //
+        // 不解除的话会卡死：一条达到阈值的失败回报把绑定置为 PAUSED，
+        // 紧随其后的成功回报只清零计数、状态仍是 PAUSED；
+        // 而投递器只加载 ACTIVE 绑定 —— 一个刚刚成功送达过的渠道就此永久停用，
+        // 用户界面显示「已暂停」，却不知道为什么，也没有任何后续投递能救它。
+        // 条件限定 PAUSED：REVOKED（用户已解绑）绝不能被复活。
+        const resumed = await prisma.notificationChannelBinding.updateMany({
+          where: { id: binding.id, status: 'PAUSED' },
+          data: { status: 'ACTIVE', suspendedUntil: null }
+        });
+        if (resumed.count > 0) {
+          // 绑定态经 /auth/me 带到前端，恢复后要让用户立刻看到
+          invalidateAuthCache(payload.accountId);
+          // eslint-disable-next-line no-console
+          console.log(`[notify] 账号 ${payload.accountId} 的 QQ 渠道投递成功，已解除自动暂停`);
+        }
+        return res.json({ ok: true, updated: true, paused: false, resumed: resumed.count > 0 });
       }
 
       // 用原子自增拿到**真实**的累计值，不能「先读再算再写」。

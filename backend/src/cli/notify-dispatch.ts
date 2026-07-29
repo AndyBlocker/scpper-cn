@@ -116,6 +116,37 @@ export async function runNotifyDispatchLoop(options: LoopOptions): Promise<void>
 
 /** 单次运行（用于手工排查与 --dry-run 演练） */
 export async function runNotifyDispatchOnce(options: { dryRun: boolean; resetCircuit: boolean }): Promise<void> {
-  const summary = await runNotificationDispatch(options);
-  console.log(`[notify] ${formatSummary(summary)}`);
+  // --once 同样要受关停屏障保护。
+  //
+  // 它一样会走「占位 PENDING → 调机器人 → 记账」这条关键区，
+  // 在中间被 Ctrl-C 或 SIGTERM 打断的话，db-connection 的信号处理会
+  // disconnectPrisma 并立刻 process.exit —— 留下的 PENDING 稍后被恢复重发，
+  // 等机器人 15 分钟去重窗口一过，用户就收到重复消息。
+  // 循环模式早就挂了屏障，手工执行这条路径之前一直没有。
+  let stopping = false;
+  let finished = false;
+  let resolveDone: () => void = () => {};
+  const done = new Promise<void>((r) => { resolveDone = r; });
+
+  const onSignal = () => {
+    stopping = true;
+    if (!finished) console.log('[notify] 收到停止信号，等待当前投递收尾…');
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  const unregisterBarrier = registerShutdownBarrier(async () => {
+    if (finished) return;
+    await done;
+  });
+
+  try {
+    const summary = await runNotificationDispatch({ ...options, shouldStop: () => stopping });
+    console.log(`[notify] ${formatSummary(summary)}`);
+  } finally {
+    finished = true;
+    resolveDone();
+    unregisterBarrier();
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  }
 }

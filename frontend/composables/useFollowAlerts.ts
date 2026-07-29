@@ -67,6 +67,12 @@ export function useFollowAlerts() {
   const requestGeneration = useState<{ all: number; unread: number }>(
     'followAlerts/reqGen', () => ({ all: 0, unread: 0 })
   );
+  /**
+   * 未读计数的世代号。两种读取口径写的是**同一个** unreadCount，
+   * 各自的 requestGeneration 管不到对方 —— 较旧的响应后到就会把新计数
+   * 覆盖回去，红点凭空复活或消失。所有会写 unreadCount 的操作共用它。
+   */
+  const countGeneration = useState<number>('followAlerts/countGen', () => 0);
 
   async function fetchAlerts(force = false, limit = 20, offset = 0, unreadOnly = false) {
     const slot = unreadOnly ? 'unread' : 'all';
@@ -83,6 +89,8 @@ export function useFollowAlerts() {
     const myEpoch = identityEpoch.value;
     const myRequest = requestGeneration.value[slot] + 1;
     requestGeneration.value = { ...requestGeneration.value, [slot]: myRequest };
+    const myCountGen = countGeneration.value + 1;
+    countGeneration.value = myCountGen;
     try {
       const res = await $bff<{ ok: boolean; alerts: FollowAlertItem[]; unreadCount: number }>(
         '/alerts/follow', { method: 'GET', params: { limit, offset, ...(unreadOnly ? { unreadOnly: '1' } : {}) } }
@@ -96,7 +104,10 @@ export function useFollowAlerts() {
         // Number() 而非 Number.isFinite(原值)：COUNT 经 pg 驱动可能是字符串，
         // isFinite('3') 为 false 会把未读数静默判成 0
         const parsed = Number(res.unreadCount);
-        unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
+        // 只有仍是最新一次写计数的操作才允许落笔
+        if (countGeneration.value === myCountGen) {
+          unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
+        }
         stamp.value = new Date().toISOString();
         // combined 只服务铃铛那套（含已读），不要被未读口径的结果改写
         if (!unreadOnly) {
@@ -125,6 +136,7 @@ export function useFollowAlerts() {
       all: requestGeneration.value.all + 1,
       unread: requestGeneration.value.unread + 1
     };
+    countGeneration.value += 1;
     alerts.value = [];
     unreadAlerts.value = [];
     unreadCount.value = 0;
@@ -198,6 +210,13 @@ export function useFollowAlerts() {
     // 成功写回也要守卫：A 的请求在 B 登录后才返回的话，
     // 下面这些对共享状态的修改会落到 B 的界面上。
     const epochAtStart = identityEpoch.value;
+    // 作废在途 GET：一个在写入**之前**就发出的请求，回来时带的是「还没读」
+    // 的快照，会把刚标记已读的条目和计数原样恢复 —— 乐观更新被自己的旧读覆盖。
+    requestGeneration.value = {
+      all: requestGeneration.value.all + 1,
+      unread: requestGeneration.value.unread + 1
+    };
+    countGeneration.value += 1;
     try {
       const res = await $bff<{ ok: boolean; id: number; acknowledgedAt: string | null }>(`/alerts/follow/${id}/read`, { method: 'POST' });
       if (res?.ok && identityEpoch.value === epochAtStart) {
@@ -231,6 +250,13 @@ export function useFollowAlerts() {
 
   async function markAllRead() {
     const epochAtStart = identityEpoch.value;
+    // 作废在途 GET：一个在写入**之前**就发出的请求，回来时带的是「还没读」
+    // 的快照，会把刚标记已读的条目和计数原样恢复 —— 乐观更新被自己的旧读覆盖。
+    requestGeneration.value = {
+      all: requestGeneration.value.all + 1,
+      unread: requestGeneration.value.unread + 1
+    };
+    countGeneration.value += 1;
     try {
       const res = await $bff<{ ok: boolean; updated: number }>('/alerts/follow/read-all', { method: 'POST' });
       if (res?.ok && identityEpoch.value === epochAtStart) {

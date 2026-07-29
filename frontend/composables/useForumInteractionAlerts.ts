@@ -68,6 +68,12 @@ export function useForumInteractionAlerts() {
     'forumAlerts/reqGen', () => ({ all: 0, unread: 0 })
   );
   /**
+   * 未读计数的世代号。两种读取口径写的是**同一个** unreadCount，
+   * 各自的 requestGeneration 管不到对方 —— 较旧的响应后到就会把新计数
+   * 覆盖回去，红点凭空复活或消失。所有会写 unreadCount 的操作共用它。
+   */
+  const countGeneration = useState<number>('forumAlerts/countGen', () => 0);
+  /**
    * 未读口径的结果**单独存**。铃铛（含已读）与账号页提醒流（仅未读）是
    * 同时存在的消费者，共用一个数组时无论谁写都在破坏对方 ——
    * 靠新鲜度或世代号调停只能推迟覆盖，不能消除它。
@@ -93,6 +99,8 @@ export function useForumInteractionAlerts() {
     const myEpoch = identityEpoch.value;
     const myRequest = requestGeneration.value[slot] + 1;
     requestGeneration.value = { ...requestGeneration.value, [slot]: myRequest };
+    const myCountGen = countGeneration.value + 1;
+    countGeneration.value = myCountGen;
     try {
       const res = await $bff<ForumAlertsResponse>('/alerts/forum', {
         method: 'GET',
@@ -106,7 +114,10 @@ export function useForumInteractionAlerts() {
       if (res?.ok) {
         list.value = Array.isArray(res.alerts) ? res.alerts : [];
         const parsed = Number(res.unreadCount);
-        unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
+        // 只有仍是最新一次写计数的操作才允许落笔
+        if (countGeneration.value === myCountGen) {
+          unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
+        }
         stamp.value = new Date().toISOString();
         error.value = null;
       } else {
@@ -131,6 +142,13 @@ export function useForumInteractionAlerts() {
     // A 的请求在飞时换成 B 登录，失败回滚会把 A 的未读列表恢复给 B 看。
     const epochAtStart = identityEpoch.value;
     const sameIdentity = () => identityEpoch.value === epochAtStart;
+    // 作废在途 GET：一个在写入**之前**就发出的请求，回来时带的是「还没读」
+    // 的快照，会把刚标记已读的条目和计数原样恢复 —— 乐观更新被自己的旧读覆盖。
+    requestGeneration.value = {
+      all: requestGeneration.value.all + 1,
+      unread: requestGeneration.value.unread + 1
+    };
+    countGeneration.value += 1;
 
     const idx = alerts.value.findIndex((item) => item.id === id);
     // 先取出再用：alerts.value[idx] 在 noUncheckedIndexedAccess 下是 T | undefined，
@@ -202,6 +220,7 @@ export function useForumInteractionAlerts() {
       all: requestGeneration.value.all + 1,
       unread: requestGeneration.value.unread + 1
     };
+    countGeneration.value += 1;
     alerts.value = [];
     unreadAlerts.value = [];
     unreadCount.value = 0;
@@ -212,6 +231,13 @@ export function useForumInteractionAlerts() {
 
   async function markAllRead() {
     const epochAtStart = identityEpoch.value;
+    // 作废在途 GET：一个在写入**之前**就发出的请求，回来时带的是「还没读」
+    // 的快照，会把刚标记已读的条目和计数原样恢复 —— 乐观更新被自己的旧读覆盖。
+    requestGeneration.value = {
+      all: requestGeneration.value.all + 1,
+      unread: requestGeneration.value.unread + 1
+    };
+    countGeneration.value += 1;
     try {
       const res = await $bff<MarkAllReadResponse>('/alerts/forum/read-all', { method: 'POST' });
       if (res?.ok && identityEpoch.value === epochAtStart) {

@@ -81,7 +81,23 @@ function useAlertsState() {
   const epochs = useState<AlertsRecord<{ all: number; unread: number }>>(
     'alerts/epochs', () => createAlertsRecord(() => ({ all: 0, unread: 0 }))
   );
-  return { alerts, unreadAlerts, unreadCount, loading, unreadLoading, lastFetchedAt, unreadLastFetchedAt, activeMetric, error, epochs };
+  /**
+   * **身份**世代号：只在 resetState（换账号）时递增。
+   *
+   * 上一轮我拿 epochs 当身份签名，但它每次普通取数都会变 ——
+   * 于是「标记已读」期间只要有一次刷新或焦点重新校验，回滚就被判定为
+   * 「已换账号」而永远不执行，乐观删掉的条目再也回不来。
+   * 「该不该回滚」只取决于用户有没有换人，与期间刷新过几次无关，
+   * 所以必须是一个独立的、只随账号变化的计数。
+   */
+  const identityEpoch = useState<number>('alerts/identityEpoch', () => 0);
+  /**
+   * 未读计数的世代号。两种读取口径写的是**同一个** unreadCount，
+   * 各自的 epochs 管不到对方：一条较旧的响应后到就会把新计数覆盖回去，
+   * 让红点凭空复活或消失。所有会写 unreadCount 的操作共用这一个。
+   */
+  const countGeneration = useState<AlertsRecord<number>>('alerts/countGen', () => createAlertsRecord(() => 0));
+  return { alerts, unreadAlerts, unreadCount, loading, unreadLoading, lastFetchedAt, unreadLastFetchedAt, activeMetric, error, epochs, identityEpoch, countGeneration };
 }
 
 export function useAlerts() {
@@ -90,7 +106,7 @@ export function useAlerts() {
   // 请求世代：force 刷新会绕过 loading 门禁，于是同一 metric 可能有两个请求在飞；
   // 换账号时 A 的请求也可能在 B 登录后才返回。两种情况都会用陈旧/他人的数据
   // 覆盖共享状态。每次发起 +1，回来时比对，不是最新的就整个丢弃。
-  const { alerts, unreadAlerts, unreadCount, loading, unreadLoading, lastFetchedAt, unreadLastFetchedAt, activeMetric, error, epochs } = useAlertsState();
+  const { alerts, unreadAlerts, unreadCount, loading, unreadLoading, lastFetchedAt, unreadLastFetchedAt, activeMetric, error, epochs, identityEpoch, countGeneration } = useAlertsState();
   // Persist last used metric for better UX across sessions
   if (typeof window !== 'undefined') {
     try {
@@ -106,8 +122,10 @@ export function useAlerts() {
   function resetState() {
     // 作废所有在途请求：A 的响应若在 B 登录后才回来，会把 A 的数据
     // 写进 B 看到的共享状态（跨账号信息泄露）。
+    identityEpoch.value += 1;
     for (const m of ALERT_METRICS) {
       epochs.value[m] = { all: epochs.value[m].all + 1, unread: epochs.value[m].unread + 1 };
+      countGeneration.value[m] += 1;
     }
     alerts.value = createAlertsRecord(() => []);
     unreadCount.value = createAlertsRecord(() => 0);
@@ -159,6 +177,9 @@ export function useAlerts() {
     const slot = unreadOnly ? 'unread' : 'all';
     const myEpoch = epochs.value[targetMetric][slot] + 1;
     epochs.value[targetMetric] = { ...epochs.value[targetMetric], [slot]: myEpoch };
+    // 计数的世代单独抓：它是两种口径共写的
+    const myCountGen = countGeneration.value[targetMetric] + 1;
+    countGeneration.value[targetMetric] = myCountGen;
     try {
       const res = await $bff<AlertsResponse>('/alerts', {
         method: 'GET',
@@ -172,7 +193,10 @@ export function useAlerts() {
         // 可能返回字符串，isFinite('3') 为 false 会把未读数静默判成 0 —— 这正是
         // 「未读数不同步」最容易复发的坑，且不抛错、不告警。
         const parsed = Number(res.unreadCount);
-        unreadCount.value[targetMetric] = Number.isFinite(parsed) ? parsed : 0;
+        // 只有仍是最新一次写计数的操作才允许落笔
+        if (countGeneration.value[targetMetric] === myCountGen) {
+          unreadCount.value[targetMetric] = Number.isFinite(parsed) ? parsed : 0;
+        }
         stamps.value[targetMetric] = new Date().toISOString();
         error.value[targetMetric] = null;
       } else {
@@ -206,8 +230,13 @@ export function useAlerts() {
      * B 看到的是 A 的通知标题。乐观更新的回滚同样是一次写入，
      * 该受和取数一样的守卫。
      */
-    const identityAtStart = `${epochs.value[metric].all}:${epochs.value[metric].unread}`;
-    const sameIdentity = () => `${epochs.value[metric].all}:${epochs.value[metric].unread}` === identityAtStart;
+    const identityAtStart = identityEpoch.value;
+    const sameIdentity = () => identityEpoch.value === identityAtStart;
+    // 作废该 metric 上所有在途 GET：一个在写入**之前**就发出的请求，
+    // 回来时带的是「还没读」的快照，会把刚标记已读的条目和计数原样恢复。
+    // 变更必须让这些读作废，否则乐观更新会被自己的旧读覆盖掉。
+    epochs.value[metric] = { all: epochs.value[metric].all + 1, unread: epochs.value[metric].unread + 1 };
+    countGeneration.value[metric] += 1;
     const list = alerts.value[metric] ?? [];
     const target = list.find(item => item.id === id);
     const prevAck = target?.acknowledgedAt ?? null;
@@ -259,13 +288,16 @@ export function useAlerts() {
   async function markAllAlertsRead(metric: AlertMetric = 'COMMENT_COUNT') {
     // 同 markAlertRead：成功后的写回若落在换账号之后，
     // 会把 B 的未读数错误地清成 0（直到下次刷新才纠正）。
-    const identityAtStart = `${epochs.value[metric].all}:${epochs.value[metric].unread}`;
+    const identityAtStart = identityEpoch.value;
+    // 同上：先作废在途 GET，再发起变更
+    epochs.value[metric] = { all: epochs.value[metric].all + 1, unread: epochs.value[metric].unread + 1 };
+    countGeneration.value[metric] += 1;
     try {
       const res = await $bff<{ ok: boolean; updated: number }>('/alerts/read-all', {
         method: 'POST',
         body: { metric: METRIC_QUERY_MAP[metric] }
       });
-      if (res?.ok && `${epochs.value[metric].all}:${epochs.value[metric].unread}` === identityAtStart) {
+      if (res?.ok && identityEpoch.value === identityAtStart) {
         const nowIso = new Date().toISOString();
         alerts.value[metric] = (alerts.value[metric] ?? []).map(item => ({
           ...item,
