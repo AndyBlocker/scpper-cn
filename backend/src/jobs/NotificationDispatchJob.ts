@@ -241,7 +241,6 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     const uid = byWikidotId.get(t.wikidotId);
     if (uid != null) targetByUserId.set(uid, t);
   }
-  const targetsLoadedAt = Date.now();
   /**
    * 发送前复验绑定是否仍然有效。
    *
@@ -250,15 +249,29 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
    * 这份快照可能已经过期很久 —— 期间用户解绑或渠道被自动暂停，
    * 他仍会收到通知。这属于「已经撤销授权却还在收消息」，不只是数据不新。
    *
-   * 因此：快照超过缓存 TTL 就强制重取，并确认这个收件人的绑定身份没变。
+   * 快照超过 TTL 就重取一次，并确认该收件人的绑定身份没变；
    * 身份变了（重绑）或已不在列表里（解绑/暂停）就跳过，不占用重试次数。
+   *
+   * 【重取后必须刷新时间戳并缓存结果】
+   * 否则 targetsLoadedAt 永远停在轮次开始时刻，超过 60 秒后**每个**收件人
+   * 都会触发一次 loadActiveQqTargets({force:true}) —— 那是建 Prisma 连接、
+   * 全表扫活跃绑定、再断开的一整套跨库操作。一轮几百个收件人就是几百次全量扫描，
+   * 越忙的投递器越追不上进度。刷新时间戳后，一次重取覆盖之后一整个 TTL 窗口。
    */
   const TARGET_SNAPSHOT_TTL_MS = 60_000;
+  let targetsLoadedAt = Date.now();
+  let freshByBindingId: Map<string, QqTarget> | null = null;
+
   const revalidateTarget = async (t: QqTarget): Promise<QqTarget | null> => {
-    if (Date.now() - targetsLoadedAt < TARGET_SNAPSHOT_TTL_MS) return t;
+    if (Date.now() - targetsLoadedAt < TARGET_SNAPSHOT_TTL_MS) {
+      // 仍在有效期内：若上次重取过，以那份更新的为准
+      return freshByBindingId ? (freshByBindingId.get(t.bindingId) ?? null) : t;
+    }
     const fresh = await loadActiveQqTargets({ force: true });
-    const still = fresh.find((x) => x.bindingId === t.bindingId && x.address === t.address);
-    if (!still) {
+    freshByBindingId = new Map(fresh.map((x) => [x.bindingId, x]));
+    targetsLoadedAt = Date.now();
+    const still = freshByBindingId.get(t.bindingId);
+    if (!still || still.address !== t.address) {
       console.warn(`[notify] 用户 ${t.wikidotId} 的绑定在本轮进行中已失效（解绑/暂停/重绑），跳过`);
       return null;
     }
@@ -317,7 +330,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 于是「原批次重发」与「新告警组新批」互不干扰。
   // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
   // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
-  const replayResult = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop);
+  const replayResult = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget);
   const replayedCount = replayResult.replayed;
   const replaySkipped = replayResult.skipped;
 
@@ -761,7 +774,9 @@ async function resumeScheduledBatches(
   targetByUserId: Map<number, QqTarget>,
   summary: DispatchSummary,
   dryRun: boolean,
-  shouldStop?: () => boolean
+  shouldStop?: () => boolean,
+  /** 发送前复验绑定（与常规投递共用同一份实现与缓存） */
+  revalidateTarget?: (t: QqTarget) => Promise<QqTarget | null>
 ): Promise<{ replayed: number; skipped: boolean }> {
   // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
   // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
@@ -955,7 +970,13 @@ async function resumeScheduledBatches(
       continue;
     }
 
-    const result = await pushQqMessage({ qq: target.address, message, dedupeKey: digestKey });
+    // 与常规投递一致：发送前复验绑定。
+    // 多个待重发批次到期时这个循环可能跑上几分钟，期间用户解绑/重绑/被暂停的话，
+    // 不复验就会把通知发到一个已经撤销授权的号上。
+    const liveTarget = revalidateTarget ? await revalidateTarget(target) : target;
+    if (!liveTarget) continue;
+
+    const result = await pushQqMessage({ qq: liveTarget.address, message, dedupeKey: digestKey });
     if (result.ok) {
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
@@ -965,14 +986,14 @@ async function resumeScheduledBatches(
       // 计入当日私信条数：同一轮里该用户还有别的批次时，限额要立刻生效
       sentTodayByUser.set(userId, sentToday + 1);
       console.log(`[notify] 批次 ${digestKey} 重发成功${result.deduped ? '（机器人判定为重复，说明上次已送达）' : ''}`);
-      await reportChannelOutcome(target.accountId, target.bindingId, 'sent', null);
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'sent', null);
     } else if (isPermanentFailure(result.error)) {
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
         data: { state: 'FAILED', lastError: result.error ?? 'unknown', attemptCount: attempt }
       });
       summary.failed += stillPending.length;
-      await reportChannelOutcome(target.accountId, target.bindingId, 'failed', result.error ?? 'unknown');
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'failed', result.error ?? 'unknown');
     } else {
       const retryAt = nextRetryAt(resumeRound + 1);
       await prisma.notificationDelivery.updateMany({
