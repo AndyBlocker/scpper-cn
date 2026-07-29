@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { loadDisabledSiteTypes } from '../utils/notifyPrefs.js';
+import { loadSiteVisibility, siteBoundaryClause } from '../utils/notifyPrefs.js';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { getReadPoolSync } from '../utils/dbPool.js';
@@ -29,9 +29,12 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       // 用户关掉了「关注动态」的站内展示：列表与未读数一并置空。
       // 两者必须一起，只清列表会留下一个消不掉的红点。
       // 注意这不影响 QQ 推送 —— 两个渠道各自独立。
-      if ((await loadDisabledSiteTypes(pool, followerId)).has('FOLLOW_ACTIVITY')) {
+      const visibility = await loadSiteVisibility(pool, followerId);
+      if (visibility.disabled.has('FOLLOW_ACTIVITY')) {
         return res.json({ ok: true, alerts: [], unreadCount: 0 });
       }
+      // 关闭期间攒下的不算「新未读」—— 只显示最近一次切换之后的
+      const followBoundary = visibility.suppressedBefore.get('FOLLOW_ACTIVITY');
 
       const { type } = req.query as Record<string, string>;
       // 同 /alerts：不加这个参数，客户端过滤会让「最新 20 条已读完」的用户
@@ -69,6 +72,7 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         WHERE a."followerId" = $1
           ${alertsTypeClause}
           ${unreadOnly ? 'AND a."acknowledgedAt" IS NULL' : ''}
+          ${siteBoundaryClause(followBoundary, alertsParams, 'a')}
         ORDER BY a."detectedAt" DESC
         LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `;
@@ -84,6 +88,7 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         FROM "UserActivityAlert"
         WHERE "followerId" = $1 AND "acknowledgedAt" IS NULL
           ${unreadTypeClause}
+          ${siteBoundaryClause(followBoundary, unreadParams, '')}
       `;
       const [alertsRes, unreadRes] = await Promise.all([
         readPool.query(alertsQuery, alertsParams),
@@ -104,13 +109,18 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
 
       // combined 与根路由是**两个独立入口**，只在根路由加过滤等于没加 ——
       // 用这个端点的客户端会完全绕过站内开关。
-      if ((await loadDisabledSiteTypes(pool, followerId)).has('FOLLOW_ACTIVITY')) {
+      const combinedVisibility = await loadSiteVisibility(pool, followerId);
+      if (combinedVisibility.disabled.has('FOLLOW_ACTIVITY')) {
         return res.json({ ok: true, total: 0, groups: [] });
       }
+      // 计数、分组、明细三处都要过滤 —— 漏掉任一处就会出现
+      // 「总数对不上分组」或「分组里冒出关闭期间的旧条目」
+      const combinedBoundary = combinedVisibility.suppressedBefore.get('FOLLOW_ACTIVITY');
 
       const limit = Math.max(1, Math.min(parseInt(String(req.query.limit ?? '20'), 10) || 20, 50));
       const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);
 
+      const countParams: unknown[] = [followerId];
       const countRes = await readPool.query<{ count: number }>(
         `
           SELECT COUNT(*)::int AS count
@@ -118,26 +128,31 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
             SELECT DISTINCT a."pageId"
             FROM "UserActivityAlert" a
             WHERE a."followerId" = $1 AND a."acknowledgedAt" IS NULL
+              ${siteBoundaryClause(combinedBoundary, countParams, 'a')}
           ) t
         `,
-        [followerId]
+        countParams
       );
       const total = countRes.rows[0]?.count ?? 0;
       if (total === 0) return res.json({ ok: true, total, groups: [] });
 
+      // limit/offset 固定在 $2/$3，边界参数追加在后面
+      const groupParams: unknown[] = [followerId, limit, offset];
       const groupsRes = await readPool.query<{ pageId: number; updatedAt: string }>(
         `
           SELECT a."pageId" AS "pageId", MAX(a."detectedAt") AS "updatedAt"
           FROM "UserActivityAlert" a
           WHERE a."followerId" = $1 AND a."acknowledgedAt" IS NULL
+            ${siteBoundaryClause(combinedBoundary, groupParams, 'a')}
           GROUP BY a."pageId"
           ORDER BY "updatedAt" DESC
           LIMIT $2 OFFSET $3
         `,
-        [followerId, limit, offset]
+        groupParams
       );
 
       const pageIds = groupsRes.rows.map(r => r.pageId);
+      const detailParams: unknown[] = [followerId, pageIds];
       const details = await readPool.query(
         `
           SELECT a.id, a.type, a."detectedAt", a."acknowledgedAt", a."pageId",
@@ -148,9 +163,10 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
           JOIN "Page" p ON p.id = a."pageId"
           LEFT JOIN "PageVersion" pv ON pv."pageId" = a."pageId" AND pv."validTo" IS NULL
           WHERE a."followerId" = $1 AND a."acknowledgedAt" IS NULL AND a."pageId" = ANY($2::int[])
+            ${siteBoundaryClause(combinedBoundary, detailParams, 'a')}
           ORDER BY a."detectedAt" DESC
         `,
-        [followerId, pageIds]
+        detailParams
       );
 
       const updatedMap = new Map<number, string>();

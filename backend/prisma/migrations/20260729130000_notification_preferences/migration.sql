@@ -100,3 +100,13 @@ CREATE TABLE "DigestSlotClaim" (
 CREATE INDEX "DigestSlotClaim_createdAt_idx" ON "DigestSlotClaim"("createdAt");
 ALTER TABLE "DigestSlotClaim" ADD CONSTRAINT "DigestSlotClaim_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- ── 站内抑制边界 ──────────────────────────────────────────────
+-- 站内开关切换的时刻。展示侧只显示**晚于**它的告警。
+--
+-- 为什么不复用告警自己的 acknowledgedAt：那个字段的含义是「用户读过了」，
+-- QQ 投递器正是拿它判断「不必再推」。用它表达「站内不再显示」，
+-- 在「站内关掉但 QQ 仍开着」这个本功能的核心场景下就会分叉 ——
+-- 站内一关，待发的 QQ 通知被一起杀掉。两个渠道必须完全独立，
+-- 站内的抑制状态就该有自己的存放处。
+ALTER TABLE "UserNotificationPreference" ADD COLUMN "siteSuppressedBefore" TIMESTAMP(3);

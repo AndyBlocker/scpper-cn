@@ -1,5 +1,5 @@
 import { Router, type Request } from 'express';
-import { loadDisabledSiteTypes, METRIC_TO_NOTIFY_TYPE } from '../utils/notifyPrefs.js';
+import { loadSiteVisibility, siteBoundaryClause, METRIC_TO_NOTIFY_TYPE } from '../utils/notifyPrefs.js';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { fetchAuthUser, type AuthUserPayload } from '../utils/auth.js';
@@ -336,18 +336,22 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
       // 不必等缓存过期；也不会把「空」写进缓存污染重新开启后的读取。
       // 列表与未读数一起清空 —— 只清列表会留下一个用户消不掉的红点。
       // 这不影响 QQ 推送，两个渠道各自独立。
+      let siteBoundary: Date | undefined;
       const appUserId = await resolveAppUserId(pool, authUser);
       if (appUserId != null) {
-        const disabled = await loadDisabledSiteTypes(pool, appUserId);
+        const visibility = await loadSiteVisibility(pool, appUserId);
         const notifyType = METRIC_TO_NOTIFY_TYPE[metric];
-        if (notifyType && disabled.has(notifyType)) {
+        if (notifyType && visibility.disabled.has(notifyType)) {
           return res.json({ ok: true, metric, alerts: [], unreadCount: 0 });
         }
+        // 关闭期间攒下的不算「新未读」—— 列表与未读数共用同一个边界
+        siteBoundary = notifyType ? visibility.suppressedBefore.get(notifyType) : undefined;
       }
 
       // 缓存 30 秒 - 减少 sync 期间的数据库压力，同时保持数据较新
       const cacheKey = `alerts:${authUser.linkedWikidotId}:${metric}:${limit}:${offset}:${unreadOnly ? 'u' : 'a'}`;
       const result = await cache.remember(cacheKey, 30, async () => {
+        const rootAlertsParams: unknown[] = [authUser.linkedWikidotId, metric, limit, offset];
         const alertsQuery = `
           SELECT
             pa.id,
@@ -371,10 +375,12 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
           WHERE u."wikidotId" = $1
             AND pa."metric" = $2::"PageMetricType"
             ${unreadOnly ? 'AND pa."acknowledgedAt" IS NULL' : ''}
+            ${siteBoundaryClause(siteBoundary, rootAlertsParams, 'pa')}
           ORDER BY pa."detectedAt" DESC
           LIMIT $3 OFFSET $4
         `;
 
+        const rootUnreadParams: unknown[] = [authUser.linkedWikidotId, metric];
         const unreadQuery = `
           SELECT COUNT(*)::int AS count
           FROM "PageMetricAlert" pa
@@ -386,8 +392,8 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
         `;
 
         const [alertsResult, unreadResult] = await Promise.all([
-          readPool.query<AlertsQueryRow>(alertsQuery, [authUser.linkedWikidotId, metric, limit, offset]),
-          readPool.query<{ count: number }>(unreadQuery, [authUser.linkedWikidotId, metric])
+          readPool.query<AlertsQueryRow>(alertsQuery, rootAlertsParams),
+          readPool.query<{ count: number }>(unreadQuery, rootUnreadParams)
         ]);
 
         const unreadCount = unreadResult.rows[0]?.count ?? 0;
@@ -425,51 +431,6 @@ const isNotifyType = (v: unknown): v is NotifyType =>
 
 const DELIVERY_MODES = ['REALTIME', 'DAILY_DIGEST'] as const;
 type DeliveryMode = (typeof DELIVERY_MODES)[number];
-
-/**
- * 把某个通知类型此刻之前的未读一律标为已读。
- *
- * 站内开关切换时调用（两个方向）。见调用处对「为什么两个方向都要消费」的说明。
- * 用 now() 作为边界而不是删除数据：告警本身还有别的用途（QQ 推送的来源、
- * 历史查询），这里要的只是「不再算作未读」。
- */
-async function consumeAlertsForType(
-  client: { query: (sql: string, params: unknown[]) => Promise<unknown> },
-  userId: number,
-  type: string
-): Promise<void> {
-  if (type === 'FOLLOW_ACTIVITY') {
-    await client.query(
-      `UPDATE "UserActivityAlert" SET "acknowledgedAt" = now()
-       WHERE "followerId" = $1 AND "acknowledgedAt" IS NULL`,
-      [userId]
-    );
-    return;
-  }
-  if (type === 'FORUM_INTERACTION') {
-    await client.query(
-      `UPDATE "ForumInteractionAlert" SET "acknowledgedAt" = now()
-       WHERE "recipientUserId" = $1 AND "acknowledgedAt" IS NULL`,
-      [userId]
-    );
-    return;
-  }
-  // 其余三个都是页面指标，按 metric 精确到那一种
-  const metric = NOTIFY_TYPE_TO_METRIC[type];
-  if (!metric) return;
-  await client.query(
-    `UPDATE "PageMetricAlert" pa SET "acknowledgedAt" = now()
-     FROM "PageMetricWatch" pw
-     WHERE pw.id = pa."watchId" AND pw."userId" = $1
-       AND pa."metric" = $2::"PageMetricType" AND pa."acknowledgedAt" IS NULL`,
-    [userId, metric]
-  );
-}
-
-/** 通知类型 → 页面指标（METRIC_TO_NOTIFY_TYPE 的反表） */
-const NOTIFY_TYPE_TO_METRIC: Record<string, string> = Object.fromEntries(
-  Object.entries(METRIC_TO_NOTIFY_TYPE).map(([metric, type]) => [type, metric])
-);
 
 interface NotifyMatrixRow { type: NotifyType; siteEnabled: boolean; qqEnabled: boolean }
 interface NotifyChannelSetting {
@@ -625,15 +586,20 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
                            "updatedAt"   = now()`,
             [userId, row.type, row.siteEnabled, row.qqEnabled]
           );
-          // 站内开关一变（两个方向都算），就把该类型此刻之前的未读一次性消费掉。
+          // 站内开关一变（两个方向都算），就把抑制边界推到此刻。
+          // 展示侧只显示晚于边界的告警，于是重新开启时不会把关闭期间攒下的
+          // 全部涌出来变成一大堆「新未读」。
           //
-          // 关闭只是**遮蔽**：产出侧照旧在写告警。不消费的话，
-          //  · 重新开启的瞬间，关闭期间攒下的全部涌出来变成一大堆「新未读」；
-          //  · 一直关着的用户则积累一堆永远读不到、保留策略也删不掉的行
-          //    （retention 只删已读的）。
-          // 标记为已读的语义正是用户刚做的选择：「这类东西我不看 / 从现在开始重新看」。
+          // 记边界而不是把那些告警标成已读：acknowledgedAt 的含义是
+          // 「用户读过了」，QQ 投递器正是拿它判断「不必再推」——
+          // 站内一关就顺手写它，会把该用户待发的 QQ 通知一起杀掉。
+          // 两个渠道必须完全独立，站内的抑制状态就该有自己的存放处。
           if ((prevSite.get(row.type) ?? true) !== row.siteEnabled) {
-            await consumeAlertsForType(client, userId, row.type);
+            await client.query(
+              `UPDATE "UserNotificationPreference" SET "siteSuppressedBefore" = now()
+               WHERE "userId" = $1 AND "type" = $2::"NotificationTypeKey"`,
+              [userId, row.type]
+            );
           }
         }
 
@@ -968,6 +934,16 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
              ON CONFLICT ("userId","type")
              DO UPDATE SET "siteEnabled" = EXCLUDED."siteEnabled",
                            "qqEnabled"   = EXCLUDED."qqEnabled",
+                           -- 站内可见性一变就推进抑制边界，与 /notify-preferences
+                           -- 同一套语义。缺了它，用旧客户端解除静音会把静音期间
+                           -- 攒下的告警全部当成「新未读」倒出来。
+                           -- 只在 siteEnabled 真的变了时才推，避免重复提交时
+                           -- 把边界一路往前推、把刚到的新动态也压掉。
+                           "siteSuppressedBefore" = CASE
+                             WHEN "UserNotificationPreference"."siteEnabled" <> EXCLUDED."siteEnabled"
+                             THEN now()
+                             ELSE "UserNotificationPreference"."siteSuppressedBefore"
+                           END,
                            "updatedAt"   = now()`,
             [userId, notifyType, !muted]
           );
@@ -1071,10 +1047,14 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
       // 只在根路由加过滤是不够的 —— 用 combined 的客户端会整个绕过开关。
       const combinedUserId = await resolveAppUserId(pool, authUser);
       const disabledMetrics: string[] = [];
+      /** 仍然开启、但有抑制边界的指标：[指标名, 边界] */
+      const metricBoundaries: Array<[string, Date]> = [];
       if (combinedUserId != null) {
-        const disabled = await loadDisabledSiteTypes(pool, combinedUserId);
+        const visibility = await loadSiteVisibility(pool, combinedUserId);
         for (const [metricName, notifyType] of Object.entries(METRIC_TO_NOTIFY_TYPE)) {
-          if (disabled.has(notifyType)) disabledMetrics.push(metricName);
+          if (visibility.disabled.has(notifyType)) { disabledMetrics.push(metricName); continue; }
+          const b = visibility.suppressedBefore.get(notifyType);
+          if (b) metricBoundaries.push([metricName, b]);
         }
       }
       // 全部三类都关掉时直接返回空，省掉两次聚合查询
@@ -1083,11 +1063,26 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
       }
       // 被关掉的指标从聚合里排除。参数位置随各查询的参数个数变化，
       // 所以按查询分别生成片段，不用固定编号。
-      const exclusionClause = (paramIndex: number) =>
-        disabledMetrics.length > 0
-          ? `AND pa."metric" <> ALL($${paramIndex}::"PageMetricType"[])`
-          : '';
+      // 指标级过滤：排除被关掉的，以及仍开启但早于各自抑制边界的。
+      // 三个查询的前置参数个数不同，所以让它自己往 params 里追加并生成编号。
+      const metricFilters = (params: unknown[]): string => {
+        let sql = '';
+        if (disabledMetrics.length > 0) {
+          params.push(disabledMetrics);
+          sql += ` AND pa."metric" <> ALL($${params.length}::"PageMetricType"[])`;
+        }
+        for (const [metricName, boundary] of metricBoundaries) {
+          params.push(metricName);
+          const mi = params.length;
+          params.push(boundary);
+          const bi = params.length;
+          // 只压制**这一个**指标在边界之前的告警，其余指标不受影响
+          sql += ` AND NOT (pa."metric" = $${mi}::"PageMetricType" AND pa."detectedAt" < $${bi})`;
+        }
+        return sql;
+      };
 
+      const combinedCountParams: unknown[] = [authUser.linkedWikidotId];
       const countResult = await readPool.query<{ count: number }>(
         `
           SELECT COUNT(*)::int AS count
@@ -1098,15 +1093,14 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
             JOIN "User" u ON u.id = pw."userId"
             WHERE u."wikidotId" = $1
               AND pa."acknowledgedAt" IS NULL
-              ${exclusionClause(2)}
+              ${metricFilters(combinedCountParams)}
           ) AS t
         `,
-        disabledMetrics.length > 0
-          ? [authUser.linkedWikidotId, disabledMetrics]
-          : [authUser.linkedWikidotId]
+        combinedCountParams
       );
       const totalGroups = countResult.rows[0]?.count ?? 0;
 
+      const combinedGroupParams: unknown[] = [authUser.linkedWikidotId, limit, offset];
       const groupRows = await readPool.query<{ pageId: number; updatedAt: string }>(
         `
           SELECT pa."pageId" AS "pageId", MAX(pa."detectedAt") AS "updatedAt"
@@ -1115,14 +1109,12 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
           JOIN "User" u ON u.id = pw."userId"
           WHERE u."wikidotId" = $1
             AND pa."acknowledgedAt" IS NULL
-            ${exclusionClause(4)}
+            ${metricFilters(combinedGroupParams)}
           GROUP BY pa."pageId"
           ORDER BY "updatedAt" DESC
           LIMIT $2 OFFSET $3
         `,
-        disabledMetrics.length > 0
-          ? [authUser.linkedWikidotId, limit, offset, disabledMetrics]
-          : [authUser.linkedWikidotId, limit, offset]
+        combinedGroupParams
       );
 
       if (groupRows.rowCount === 0) {
@@ -1130,6 +1122,7 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
       }
 
       const pageIds = groupRows.rows.map(r => r.pageId);
+      const combinedDetailParams: unknown[] = [authUser.linkedWikidotId, pageIds];
       const details = await readPool.query<AlertsQueryRow>(
         `
           SELECT 
@@ -1154,15 +1147,13 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
           WHERE u."wikidotId" = $1
             AND pa."acknowledgedAt" IS NULL
             AND pa."pageId" = ANY($2::int[])
-            ${exclusionClause(3)}
+            ${metricFilters(combinedDetailParams)}
           ORDER BY pa."detectedAt" DESC
         `,
         // 分组查询排除了被关掉的指标，明细也必须排除 ——
         // 否则一个页面只要有一个启用的指标就会入选，
         // 展开后里面仍然列着那条已经关掉的提醒。
-        disabledMetrics.length > 0
-          ? [authUser.linkedWikidotId, pageIds, disabledMetrics]
-          : [authUser.linkedWikidotId, pageIds]
+        combinedDetailParams
       );
 
       const grouped = new Map<number, any>();

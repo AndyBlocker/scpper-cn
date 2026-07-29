@@ -490,16 +490,18 @@ enum QqDeliveryMode {
 /// 关掉站内不影响 QQ：告警一律产生，站内开关只决定是否展示。
 /// 这样才支持「站内不看、只要 QQ 推」这种用法。
 model UserNotificationPreference {
-  id          Int                 @id @default(autoincrement())
-  userId      Int
-  type        NotificationTypeKey
+  id                   Int                 @id @default(autoincrement())
+  userId               Int
+  type                 NotificationTypeKey
   /// 是否在站内提醒流与铃铛中展示
-  siteEnabled Boolean             @default(true)
+  siteEnabled          Boolean             @default(true)
   /// 是否经 QQ 私信推送
-  qqEnabled   Boolean             @default(true)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  qqEnabled            Boolean             @default(true)
+  /// 站内开关切换的时刻；展示侧只显示晚于它的告警（不碰告警自身的已读状态）
+  siteSuppressedBefore DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, type], map: "uniq_user_notification_preference")
   @@index([userId])
