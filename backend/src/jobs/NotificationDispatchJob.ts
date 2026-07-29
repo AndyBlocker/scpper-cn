@@ -1204,6 +1204,47 @@ export async function resolveDigestCutoff(
   return { cutoff, skipped };
 }
 
+/**
+ * 为**存量**投递行补出 notifyType。
+ *
+ * notifyType 是本次改动才写进 payload 的。上线那一刻队列里已有的 SCHEDULED 行
+ * 没有这个字段，于是「用户关掉某个类型」对它们完全失效 —— 关掉了还是会收到，
+ * 而这正是设置失效最直接的体感。存量行会在一两天内自然消化完，
+ * 但那一两天恰好是用户刚看到新设置页、最可能去调整偏好的时候。
+ *
+ * 从 dedupeKey 前缀反推：uaa:/fia: 前缀本身就唯一确定类型；
+ * pma: 还要看告警的 metric，按 id 批量回查一次即可（只针对缺字段的行）。
+ */
+async function backfillNotifyTypes(
+  prisma: Db,
+  rows: Array<{ dedupeKey: string; payload: unknown }>
+): Promise<Map<string, NotifyType>> {
+  const out = new Map<string, NotifyType>();
+  const pmaIdToKeys = new Map<number, string[]>();
+  for (const r of rows) {
+    if (typeof ((r.payload ?? {}) as Record<string, unknown>).notifyType === 'string') continue;
+    const [prefix, id] = r.dedupeKey.split(':');
+    if (prefix === 'uaa') out.set(r.dedupeKey, 'FOLLOW_ACTIVITY');
+    else if (prefix === 'fia') out.set(r.dedupeKey, 'FORUM_INTERACTION');
+    else if (prefix === 'pma') {
+      const n = Number(id);
+      if (Number.isFinite(n)) pmaIdToKeys.set(n, [...(pmaIdToKeys.get(n) ?? []), r.dedupeKey]);
+    }
+  }
+  if (pmaIdToKeys.size > 0) {
+    const alerts = await prisma.pageMetricAlert.findMany({
+      where: { id: { in: [...pmaIdToKeys.keys()] } },
+      select: { id: true, metric: true }
+    });
+    for (const a of alerts) {
+      const t = METRIC_TO_TYPE[a.metric];
+      if (!t) continue;
+      for (const k of pmaIdToKeys.get(a.id) ?? []) out.set(k, t);
+    }
+  }
+  return out;
+}
+
 /** 部分抢占 —— 用异常触发事务回滚，让名额与 key 占位一起撤销 */
 class PartialPreemption extends Error {
   constructor(readonly claimed: number) { super('partial_preemption'); }
@@ -1250,7 +1291,7 @@ async function expireStaleScheduledBatches(
   /** 当前处于定时模式的用户。判定必须看**现在的模式**，不能看 payload 里的痕迹 —— 
    *  用户可能是在批次转 SCHEDULED 之后才切换过来的。 */
   digestUserIds?: Set<number>
-): Promise<number> {
+): Promise<{ expired: number; digestUsers: Set<number> }> {
   // digestUserIds 来自 prefsByUser，而后者只装了**活跃目标** ——
   // 被暂停、或不在灰度名单里的定时用户不在其中，于是他们待重发的批次
   // 会按实时模式的 24 小时时限判过期。可一批日汇总本身就可能装着接近
@@ -1306,7 +1347,7 @@ async function expireStaleScheduledBatches(
   if (dryRun) {
     const n = await prisma.notificationDelivery.count({ where: whereExpired });
     if (n > 0) console.warn(`[notify][dry-run] 有 ${n} 条 SCHEDULED 已超出回看窗口，真实运行会判失效`);
-    return n;
+    return { expired: n, digestUsers };
   }
   const res = await prisma.notificationDelivery.updateMany({
     where: whereExpired,
@@ -1315,7 +1356,7 @@ async function expireStaleScheduledBatches(
   if (res.count > 0) {
     console.warn(`[notify] ${res.count} 条待重发记录已超出回看窗口（${LOOKBACK_HOURS} 小时），判失效不再补发`);
   }
-  return res.count;
+  return { expired: res.count, digestUsers };
 }
 
 /**
@@ -1345,7 +1386,9 @@ async function resumeScheduledBatches(
 ): Promise<{ replayed: number; skipped: boolean }> {
   // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
   // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
-  await expireStaleScheduledBatches(prisma, dryRun, digestUserIds);
+  // 过期判定与下面的「目标已消失」判定必须用**同一个**定时用户集合 ——
+  // 前者放宽到 48 小时保住了批次，后者却仍按 24 小时把它判死，等于白放宽。
+  const { digestUsers } = await expireStaleScheduledBatches(prisma, dryRun, digestUserIds);
 
   const now = new Date();
   const rows = await prisma.notificationDelivery.findMany({
@@ -1413,7 +1456,12 @@ async function resumeScheduledBatches(
       // 但陈旧清理只扫 PENDING，放着不管就是一批永久占着 dedupeKey 的僵尸行 ——
       // 既不会重发，也会一直把对应告警挡在新批次之外。超过保留期就判失败。
       const age = Date.now() - first.createdAt.getTime();
-      if (age > ORPHAN_SCHEDULED_MAX_AGE_MS && !dryRun) {
+      // 定时用户同样放宽一倍：一批日汇总本就装着接近 24 小时前的事件，
+      // 目标被暂停或移出灰度名单期间按 24 小时判死，恢复后什么都不剩了。
+      const orphanMaxAge = digestUsers.has(first.userId)
+        ? 2 * ORPHAN_SCHEDULED_MAX_AGE_MS
+        : ORPHAN_SCHEDULED_MAX_AGE_MS;
+      if (age > orphanMaxAge && !dryRun) {
         await prisma.notificationDelivery.updateMany({
           where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
           data: { state: 'FAILED', lastError: 'target_gone' }
@@ -1479,9 +1527,13 @@ async function resumeScheduledBatches(
     const prefs = prefsByUser?.get(first.userId);
     const optedOut = new Set<string>();
     if (prefs) {
+      // 上线时队列里的存量行没有 notifyType，先按 dedupeKey 补出来，
+      // 否则用户刚关掉的类型对这些行完全不生效
+      const backfilled = await backfillNotifyTypes(prisma, batch);
       for (const r of batch) {
-        const t = ((r.payload ?? {}) as Record<string, unknown>).notifyType;
-        if (typeof t === 'string' && prefs.qqEnabled.get(t as NotifyType) === false) {
+        const raw = ((r.payload ?? {}) as Record<string, unknown>).notifyType;
+        const t = typeof raw === 'string' ? raw : backfilled.get(r.dedupeKey);
+        if (t && prefs.qqEnabled.get(t as NotifyType) === false) {
           optedOut.add(r.dedupeKey);
         }
       }

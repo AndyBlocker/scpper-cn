@@ -19,6 +19,7 @@ const { preferences, loading, saving, error, fetchPreferences, updatePreferences
 const {
   matrix, byType, channel,
   loading: prefsLoading, loaded: prefsLoaded, saving: prefsSaving, error: prefsError,
+  identityEpoch: notifyIdentityEpoch,
   fetchPreferences: fetchNotifyPrefs, save: saveNotifyPrefs
 } = useNotifyPreferences()
 const { user, fetchCurrentUser } = useAuth()
@@ -159,6 +160,15 @@ async function saveGeneration() {
  * 旧的 toggleMuted 已被上面的 toggleChannel 取代 —— 静音是单一开关，
  * 现在每个类型有站内/QQ 两个独立开关，语义不同，不再复用。
  */
+
+// 直接从账号 A 切到 B 时，本面板可能一直保持挂载 —— onMounted 不会再触发。
+// 布局层的 resetAllAlertState 只把状态清空并置 loaded=false，
+// 于是 B 看到的是一组永远禁用的控件，直到手动切走再切回来。
+// 身份世代号正是在那次 reset 里递增的，跟着它重新取数即可。
+watch(notifyIdentityEpoch, () => {
+  void fetchPreferences()
+  void fetchNotifyPrefs()
+})
 
 onMounted(() => {
   void fetchPreferences()

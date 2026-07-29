@@ -131,5 +131,5 @@ export function useNotifyPreferences() {
 
   const byType = computed(() => new Map(matrix.value.map((r) => [r.type, r])))
 
-  return { matrix, byType, channel, loading, loaded, saving, error, fetchPreferences, save, resetState }
+  return { matrix, byType, channel, loading, loaded, saving, error, identityEpoch, fetchPreferences, save, resetState }
 }
