@@ -235,6 +235,21 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 或运维手动改上限。这里把它们标成 SUPPRESSED（不是失败，是主动放弃），
       // 并把闸门推进到最新一条之后，让下一轮从干净状态开始。
       const newest = candidates.reduce((a, c) => (c.detectedAt > a ? c.detectedAt : a), candidates[0].detectedAt);
+
+      // dry-run 必须在这里彻底止步。原先这段无条件写库：
+      //   * recordAll 硬编码 dryRun=false → 把整批积压永久标成 SUPPRESSED
+      //   * 紧接着推进 cutoffAt
+      // 于是一条自称「只打印不改动」的演练命令，会把积压**真的丢掉**且不可补发。
+      // 演练要能安全地回答「复位会发生什么」，就绝不能顺手把它做掉。
+      if (options.dryRun) {
+        console.warn(
+          `[notify][dry-run] 若执行 --reset-circuit：会把 ${candidates.length} 条积压标记为 SUPPRESSED`
+          + `（不发送、不补发），并把闸门推进到 ${newest.toISOString()}。本次未写入任何数据。`
+        );
+        summary.circuitTripped = true;
+        return summary;
+      }
+
       const byUser = new Map<number, Candidate[]>();
       for (const c of candidates) {
         const list = byUser.get(c.userId) ?? [];
@@ -257,10 +272,17 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     }
     console.error(`[notify] 全局熔断跳闸：${reason}。本轮不发送任何消息。`);
     console.error('[notify] 复位方式：notify-dispatch --once --reset-circuit（会把这批积压标记为已抑制，不补发）');
-    await prisma.notificationDispatchState.update({
-      where: { id: 1 },
-      data: { circuitTrippedAt: new Date(), circuitReason: reason }
-    });
+    // 同理：演练不该把真实的投递器打停。持久化 circuitTrippedAt 之后，
+    // 生产的 scpper-notify 会一直停在熔断态直到人工复位 —— 一次 dry-run 造成
+    // 真实停摆，是最不该有的副作用。
+    if (!options.dryRun) {
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 },
+        data: { circuitTrippedAt: new Date(), circuitReason: reason }
+      });
+    } else {
+      console.warn('[notify][dry-run] 未持久化熔断状态（真实运行时会写入并停止投递直到复位）');
+    }
     summary.circuitTripped = true;
     return summary;
   }
@@ -289,37 +311,40 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   }
 
   for (const [userId, group] of grouped) {
-    let items = group;
+    const items = group;
     const target = targetByUserId.get(userId);
     if (!target) continue;
 
-    // 日限额
+    items.sort((a, b) => a.detectedAt.getTime() - b.detectedAt.getTime());
+
+    // 日限额按**私信条数**计，不是按告警条数。
+    //
+    // 原先数的是 state='SENT' 的 NotificationDelivery 行数，但一轮只会给一个用户
+    // 发**一条**摘要，那一条摘要里的每个告警都各占一行。于是一条含 20 个告警的摘要
+    // 直接吃掉 40 的一半，默认配额下每天只能发两条消息，之后当天所有告警被永久
+    // SUPPRESSED（不重试、不补发）——活跃作者会被静默掐掉。
+    //
+    // 现在给同一次摘要里的所有行写同一个 digestKey，按 distinct digestKey 计数，
+    // 「40 条/天」才真的是「每天最多 40 条私信」。
     const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
-    const sentToday = await prisma.notificationDelivery.count({
-      where: { userId, state: 'SENT', createdAt: { gt: dayAgo } }
-    });
-    const remaining = DAILY_LIMIT - sentToday;
-    if (remaining <= 0) {
+    const sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
+    if (sentToday >= DAILY_LIMIT) {
       await recordAll(prisma, items, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
       summary.suppressed += items.length;
+      console.warn(`[notify] 用户 ${target.wikidotId} 24 小时内已发 ${sentToday} 条，达上限 ${DAILY_LIMIT}，本批抑制`);
       continue;
     }
 
-    items.sort((a, b) => a.detectedAt.getTime() - b.detectedAt.getTime());
-    // 限额要作用到**本批**：原先只在批前比一次，39 条已发 + 20 条新批会直接超到 59。
-    // 超出配额的部分标记 SUPPRESSED，不发也不再重试。
-    if (items.length > remaining) {
-      const overflowItems = items.slice(remaining);
-      await recordAll(prisma, overflowItems, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
-      summary.suppressed += overflowItems.length;
-      items = items.slice(0, remaining);
-    }
+    // 超出 CIRCUIT_USER_MAX 的部分不丢弃，由摘要末尾的「另有 N 条」覆盖 ——
+    // 它们同属这一条私信，因此照常记为 SENT。
     const shown = items.slice(0, CIRCUIT_USER_MAX);
     const overflow = items.length - shown.length;
     const message = renderDigest(shown, overflow);
+    // 一次摘要一个 key：既是 qqbot 侧的去重键，也是上面日限额的计数单位。
+    const digestKey = `digest:${userId}:${shown[shown.length - 1].dedupeKey}`;
 
     if (options.dryRun) {
-      console.log(`[notify][dry-run] → ${target.wikidotId}（${items.length} 条）\n${message}\n`);
+      console.log(`[notify][dry-run] → ${target.wikidotId}（${items.length} 条，本条为今日第 ${sentToday + 1} 条）\n${message}\n`);
       summary.sent += items.length;
       continue;
     }
@@ -332,7 +357,9 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 手动 PM2 轮次与 --once 手工轮次重叠时，两边都可能扫到同一批候选，
     // 输的那一方仍会把完整摘要发出去 → 用户收到两条一样的消息。
     // 这里比对「插入前后本轮 key 的归属」，只在确实是自己抢到时才发送。
-    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false);
+    // digestKey 在占位时就写进 payload：SENT 那步用的是 updateMany，
+    // 没法顺手往 JSON 里合并字段，而日限额的计数正依赖它。
+    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false, digestKey);
     if (claimed < items.length) {
       // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
       // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
@@ -347,8 +374,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       continue;
     }
 
-    const dedupeKey = `digest:${userId}:${shown[shown.length - 1].dedupeKey}`;
-    const result = await pushQqMessage({ qq: target.address, message, dedupeKey });
+    const result = await pushQqMessage({ qq: target.address, message, dedupeKey: digestKey });
 
     if (result.ok) {
       await prisma.notificationDelivery.updateMany({
@@ -442,7 +468,9 @@ async function recordAll(
   userId: number,
   state: 'PENDING' | 'SENT' | 'FAILED' | 'SUPPRESSED',
   error: string | null,
-  dryRun?: boolean
+  dryRun?: boolean,
+  /** 同一条摘要里的所有行共享它；日限额按 distinct digestKey 计数 */
+  digestKey?: string
 ): Promise<number> {
   if (dryRun) return 0;
   const now = new Date();
@@ -455,11 +483,42 @@ async function recordAll(
       attemptCount: 1,
       lastError: error,
       sentAt: state === 'SENT' ? now : null,
-      payload: { source: c.source, line: c.line, detectedAt: c.detectedAt.toISOString(), runId: RUN_ID }
+      payload: {
+        source: c.source,
+        line: c.line,
+        detectedAt: c.detectedAt.toISOString(),
+        runId: RUN_ID,
+        ...(digestKey ? { digestKey } : {})
+      }
     })),
     skipDuplicates: true
   });
   return created.count;
+}
+
+/**
+ * 过去 24 小时真正发给该用户的**私信条数**。
+ *
+ * 用 distinct digestKey 而不是行数：一条摘要 = 一条私信 = 一个 digestKey，
+ * 无论它里面打包了多少条告警。SUPPRESSED / FAILED / PENDING 都不算。
+ *
+ * 走原生 SQL 是因为 Prisma 不支持对 JSON 路径做 COUNT(DISTINCT)。
+ * 没有 digestKey 的行（本改动之前写入的）自然被排除，宁可少算也不多算。
+ */
+async function countDigestsSentSince(
+  prisma: PrismaClient,
+  userId: number,
+  since: Date
+): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(DISTINCT payload->>'digestKey') AS count
+    FROM "NotificationDelivery"
+    WHERE "userId" = ${userId}
+      AND state = 'SENT'
+      AND "createdAt" > ${since}
+      AND payload->>'digestKey' IS NOT NULL
+  `;
+  return Number(rows[0]?.count ?? 0);
 }
 
 function renderDigest(items: Candidate[], overflow: number): string {

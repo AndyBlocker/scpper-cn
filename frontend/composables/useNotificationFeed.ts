@@ -72,6 +72,13 @@ export function useNotificationFeed() {
   /** 是否显示已读条目。切换会改变向服务端请求的口径，故需重新取数。 */
   const showRead = ref(false)
 
+  /**
+   * 上一次取数用的 unreadOnly 口径。必须是 useState 而非 ref ——
+   * 底层三个 composable 的数据是全应用共享的，判断「这份数据是哪个口径取的」
+   * 也必须共享；用组件级 ref 的话，铃铛与账号页各记各的，照样会复用错口径的数据。
+   */
+  const lastFetchMode = useState<boolean | null>('notification-feed-fetch-mode', () => null)
+
   const pageItems = computed<FeedItem[]>(() =>
     (pageAlerts.alertsAll.value as Array<AlertItem & { sourceMetric: AlertMetric }>).map((a) => {
       const delta = signed(a.diffValue)
@@ -190,11 +197,22 @@ export function useNotificationFeed() {
     // 不看已读时直接向服务端要未读，而不是取最近 20 条再在客户端筛。
     // 后者会让「最新 20 条都读过、更早的未读还在」的用户看到空列表而徽标仍有数字。
     const unreadOnly = !showRead.value
+
+    // 三个来源的 composable 只按 lastFetchedAt 判新鲜，**不区分 unreadOnly**。
+    // 铃铛在 layout 里常驻，会以 unreadOnly=false 预取最近 20 条；账号页随后挂载时
+    // 以 unreadOnly=true + force=false 请求，会被判成「刚取过」而直接复用那份含已读的数据，
+    // 更早的未读因此被截断在外 —— 正是上面要避免的「列表空、徽标有数」。
+    // 所以模式一变就必须强制重取，新鲜度得按读取模式记。
+    const modeChanged = lastFetchMode.value !== unreadOnly
+    const effectiveForce = force || modeChanged
+
     await Promise.all([
-      pageAlerts.fetchAll(force, unreadOnly),
-      followAlerts.fetchAlerts(force, 20, 0, unreadOnly),
-      forumAlerts.fetchAlerts(force, 20, 0, unreadOnly)
+      pageAlerts.fetchAll(effectiveForce, unreadOnly),
+      followAlerts.fetchAlerts(effectiveForce, 20, 0, unreadOnly),
+      forumAlerts.fetchAlerts(effectiveForce, 20, 0, unreadOnly)
     ])
+    // 取完再记：失败时保持旧值，下次仍会强制重取
+    lastFetchMode.value = unreadOnly
   }
 
   /** 单条已读：按 kind 分发到对应 composable。三套的接口签名不同，这里收口。 */

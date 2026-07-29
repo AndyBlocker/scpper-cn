@@ -101,8 +101,14 @@ program
   .option('--apply', 'Actually delete. Without this flag the command only reports counts.')
   .option('--delivery-days <n>', 'Keep terminal-state deliveries for N days', '30')
   .option('--alert-days <n>', 'Keep acknowledged alerts for N days', '180')
+  // 有限命令必须自己断开 Prisma：单例客户端的查询引擎会把 event loop 顶住，
+  // 命令打完结果却不退出。运维在排查时最不需要的就是一个卡住的终端。
   .action(async (options) => {
-    await runNotifyRetention(parseRetentionOptions(options as Record<string, unknown>));
+    try {
+      await runNotifyRetention(parseRetentionOptions(options as Record<string, unknown>));
+    } finally {
+      await disconnectPrisma();
+    }
   });
 
 program
@@ -112,10 +118,14 @@ program
   .option('--failed', 'Also list individual failures')
   .action(async (options) => {
     const hours = Number.parseInt(String(options.hours ?? '24'), 10);
-    await runNotifyInspect({
-      hours: Number.isFinite(hours) && hours > 0 ? hours : 24,
-      failedOnly: Boolean(options.failed)
-    });
+    try {
+      await runNotifyInspect({
+        hours: Number.isFinite(hours) && hours > 0 ? hours : 24,
+        failedOnly: Boolean(options.failed)
+      });
+    } finally {
+      await disconnectPrisma();
+    }
   });
 
 program
@@ -130,7 +140,12 @@ program
     const dryRun = Boolean(options.dryRun);
     const resetCircuit = Boolean(options.resetCircuit);
     if (options.once) {
-      await runNotifyDispatchOnce({ dryRun, resetCircuit });
+      // --once 是有限的，要断开；下面的 loop 常驻 PM2，由它自己的信号处理收尾。
+      try {
+        await runNotifyDispatchOnce({ dryRun, resetCircuit });
+      } finally {
+        await disconnectPrisma();
+      }
       return;
     }
     const parsed = Number.parseInt(String(options.intervalSeconds ?? '60'), 10);
