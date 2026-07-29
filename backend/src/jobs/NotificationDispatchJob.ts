@@ -374,7 +374,25 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   const replayedCount = replayResult.replayed;
   const replaySkipped = replayResult.skipped;
 
-  const collected = await collectCandidates(prisma, userIds, floor);
+  // 定时用户可能需要比标准回看窗口更早的内容（见 lastDigestSentAt 的说明）。
+  // 存在定时用户时把查询窗口放宽到两倍，再按每个用户各自的下限过滤 ——
+  // 放宽是有界的（最坏 23 小时时点位移 + 24 小时窗口 < 48 小时），
+  // 不会退化成全表扫描。
+  const hasDigestUser = [...prefsByUser.values()].some((p) => p.mode === 'DAILY_DIGEST');
+  const collectFloor = hasDigestUser
+    ? new Date(Math.min(floor.getTime(), Date.now() - 2 * LOOKBACK_HOURS * 3600 * 1000))
+    : floor;
+  const collected = await collectCandidates(prisma, userIds, collectFloor);
+
+  // 每个用户的真实下限：实时用户用标准窗口；定时用户用「上次汇总之后」，
+  // 这样改时点造成的超长间隔也能被完整覆盖。
+  const userFloor = new Map<number, Date>();
+  for (const uid of userIds) {
+    const prefs = prefsByUser.get(uid);
+    if (prefs?.mode !== 'DAILY_DIGEST') { userFloor.set(uid, floor); continue; }
+    const last = await lastDigestSentAt(prisma, uid);
+    userFloor.set(uid, last && last > collectFloor ? last : collectFloor);
+  }
 
   // 每个收件人还有自己的起点：绑定生效时刻。
   //
@@ -388,6 +406,9 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   for (const c of collected) {
     const boundAt = targetByUserId.get(c.userId)?.verifiedAt ?? null;
     if (boundAt && c.detectedAt <= boundAt) { preBindingSkipped += 1; continue; }
+    // 每人各自的下限（实时=标准窗口；定时=上次汇总之后）
+    const myFloor = userFloor.get(c.userId);
+    if (myFloor && c.detectedAt < myFloor) continue;
     // 该用户把这个类型的 QQ 推送关掉了。
     // 注意这**不影响站内** —— 两个渠道各自独立，站内照常展示。
     // 缺省 true：没设置过的用户默认全收，绑定后立刻可用。
@@ -879,6 +900,25 @@ export function startOfUtc8Day(): Date {
   return new Date(shifted.getTime() - 8 * 3600 * 1000);
 }
 
+/**
+ * 该用户上一次成功发出汇总的时刻（没有则返回 null）。
+ *
+ * 定时用户改时点后会出现「两次汇总间隔超过 24 小时」的情况：
+ * 比如今天 10 点收过、随后改成 21 点，下一次就是明天 21 点 —— 相隔 35 小时。
+ * 而候选只回看 24 小时，中间那 11 小时的动态会静默过期。
+ * 拿到上次汇总时刻，就能把这段间隔完整覆盖住。
+ */
+async function lastDigestSentAt(prisma: PrismaClient, userId: number): Promise<Date | null> {
+  const rows = await prisma.$queryRaw<Array<{ at: Date | null }>>`
+    SELECT MAX(COALESCE("sentAt", "createdAt")) AS at
+    FROM "NotificationDelivery"
+    WHERE "userId" = ${userId}
+      AND state = 'SENT'
+      AND payload->>'digestKey' IS NOT NULL
+  `;
+  return rows[0]?.at ?? null;
+}
+
 /** UTC+8 今天 hour:00 对应的 UTC 时刻。用于「本次汇总收哪些内容」的截止线。 */
 export function utc8HourToday(hour: number): Date {
   const shifted = new Date(Date.now() + 8 * 3600 * 1000);
@@ -1164,7 +1204,13 @@ async function resumeScheduledBatches(
         : 0;
       if (!reachedHour || sentTodayCalendar > 0) continue;
     }
-    if (sentToday >= effLimit) {
+    // 定时模式用自然日计数 —— 与上面的资格判定同口径。
+    // 用滚动 24 小时的话，昨天 23:00 发出的汇总会把今天 21:00 的重发一直挡到 23:00，
+    // 期间最老的那些行可能已经超出回看窗口而过期。
+    const limitBaseline = prefs?.mode === 'DAILY_DIGEST'
+      ? await countDigestsSentSince(prisma, first.userId, startOfUtc8Day())
+      : sentToday;
+    if (limitBaseline >= effLimit) {
       console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${effLimit}，批次 ${digestKey} 留待下轮`);
       continue;
     }

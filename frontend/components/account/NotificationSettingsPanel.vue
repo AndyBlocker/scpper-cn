@@ -395,7 +395,7 @@ onMounted(() => {
               <button
                 type="button"
                 class="rounded-lg bg-[rgb(var(--accent))] px-4 py-1.5 text-sm text-white hover:bg-[rgb(var(--accent-strong))] disabled:opacity-50"
-                :disabled="prefsSaving"
+                :disabled="prefsSaving || prefsLoading || !prefsLoaded"
                 @click="saveChannelSetting"
               >
                 {{ prefsSaving ? '保存中…' : '保存推送设置' }}
