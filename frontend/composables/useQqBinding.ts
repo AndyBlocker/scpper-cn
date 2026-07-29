@@ -201,10 +201,37 @@ export function useQqBinding() {
       stopClock()
       return true
     } catch (e) {
-      // 404 = 本来就没有进行中的绑定，对用户而言与取消成功等价
       const status = (e as { status?: number; statusCode?: number })?.status
         ?? (e as { statusCode?: number })?.statusCode
       if (status === 404) {
+        // 404 有**两种**成因，不能一律当成「取消成功」：
+        //   a) 本来就没有进行中的挑战 —— 等价于取消成功
+        //   b) 机器人恰好在这次 DELETE 之前把挑战核销掉了 —— 绑定其实**成功了**
+        // 直接清空并停止轮询的话，b 会让用户看到「已取消」，而 QQ 其实已经绑上，
+        // 且轮询已停，界面要等下次进页面才会纠正过来。
+        // 直接发一次独立请求来区分，不走 fetchStatus：
+        // 它有 in-flight 去重，而 cancel 已经 bump 过 statusEpoch，
+        // 复用在途那次的话结果会被当成过期丢弃，等于什么都没查到。
+        try {
+          const res = await $bff<StatusResponse>('/qq-binding/status', {
+            method: 'GET',
+            headers: { 'cache-control': 'no-cache', pragma: 'no-cache' }
+          })
+          if (res?.ok && res.binding) {
+            // 绑定其实已经完成，"取消"这个动作根本没发生
+            binding.value = res.binding
+            challenge.value = null
+            plainCode.value = null
+            instructions.value = null
+            statusKnown.value = true
+            stopPolling()
+            stopClock()
+            error.value = '绑定已在取消前完成，当前已绑定'
+            return false
+          }
+        } catch {
+          // 查不到就退回旧行为：至少不把界面卡在一个假的「进行中」状态
+        }
         plainCode.value = null
         instructions.value = null
         challenge.value = null

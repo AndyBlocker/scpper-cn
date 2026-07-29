@@ -185,7 +185,10 @@ export function useAlerts() {
         error.value[targetMetric] = '网络异常，未能刷新提醒';
       }
     } finally {
-      busy.value[targetMetric] = false;
+      // 只有最新那次请求才有资格关掉 loading。旧请求先返回就把它关掉的话，
+      // 转圈提前消失、还会放行新的刷新，而更新的那次其实还在飞 ——
+      // follow / forum 两个 composable 已经这么做了，这里之前漏了。
+      if (epochs.value[targetMetric][slot] === myEpoch) busy.value[targetMetric] = false;
     }
     return list.value[targetMetric];
   }

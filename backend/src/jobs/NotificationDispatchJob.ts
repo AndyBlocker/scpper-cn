@@ -443,7 +443,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 这里比对「插入前后本轮 key 的归属」，只在确实是自己抢到时才发送。
     // digestKey 在占位时就写进 payload：SENT 那步用的是 updateMany，
     // 没法顺手往 JSON 里合并字段，而日限额的计数正依赖它。
-    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false, digestKey);
+    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId);
     if (claimed < items.length) {
       // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
       // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
@@ -565,7 +565,9 @@ async function recordAll(
   error: string | null,
   dryRun?: boolean,
   /** 同一条摘要里的所有行共享它；日限额按 distinct digestKey 计数 */
-  digestKey?: string
+  digestKey?: string,
+  /** 投递目标的绑定身份。重发时用它确认「这批还是发给当初那个绑定」 */
+  bindingId?: string
 ): Promise<number> {
   if (dryRun) return 0;
   const now = new Date();
@@ -583,7 +585,8 @@ async function recordAll(
         line: c.line,
         detectedAt: c.detectedAt.toISOString(),
         runId: RUN_ID,
-        ...(digestKey ? { digestKey } : {})
+        ...(digestKey ? { digestKey } : {}),
+        ...(bindingId ? { bindingId } : {})
       }
     })),
     skipDuplicates: true
@@ -733,16 +736,48 @@ async function resumeScheduledBatches(
     // 是 max(attemptCount) - 1，本次将是第 resumeRound 轮重发。
     // 原先直接拿 max+1 去比 MAX_RESUME_ATTEMPTS，默认 5 实际只重发 4 次，
     // 配成 1 时一次都不会重发 —— 与这个常量的字面含义不符。
+    // 这批当初是发给**哪个绑定**的？必须和现在的绑定身份一致才继续。
+    //
+    // 用户可能在这批还挂着 SCHEDULED 时解绑并绑了另一个 QQ。
+    // 只按 userId 找 target 的话，这批陈年通知就会被投递到**新号**上 ——
+    // 新绑定授权的是「今后的动态」，收到的却是他授权之前、发给旧号的内容。
+    // 双保险：绑定身份变了直接作废；身份没变但事件早于新的 verifiedAt 也作废。
+    const batchBindingId = ((batch[0].payload ?? {}) as Record<string, unknown>).bindingId;
+    const bindingChanged = typeof batchBindingId === 'string' && batchBindingId !== target.bindingId;
+    const predatesAuthorization = target.verifiedAt != null && batch.every((r) => {
+      const detected = ((r.payload ?? {}) as Record<string, unknown>).detectedAt;
+      return typeof detected === 'string' && new Date(detected) <= target.verifiedAt!;
+    });
+    if (bindingChanged || predatesAuthorization) {
+      console.warn(
+        `[notify] 批次 ${digestKey} ${bindingChanged ? '所属绑定已变更' : '早于当前绑定的授权时刻'}，作废不再投递`
+      );
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+          data: { state: 'CANCELLED', lastError: bindingChanged ? 'binding_changed' : 'predates_binding' }
+        });
+      }
+      summary.suppressed += batch.length;
+      continue;
+    }
+
     const attempt = Math.max(...batch.map((r) => r.attemptCount)) + 1;
     const resumeRound = attempt - 1;
 
     if (resumeRound > MAX_RESUME_ATTEMPTS) {
-      console.warn(`[notify] 批次 ${digestKey} 已重发 ${MAX_RESUME_ATTEMPTS} 次仍失败，判定失败不再重试`);
+      const lastError = batch.find((r) => r.lastError)?.lastError ?? 'max_resume_attempts';
+      console.warn(`[notify] 批次 ${digestKey} 已重发 ${MAX_RESUME_ATTEMPTS} 次仍失败（${lastError}），判定失败不再重试`);
       if (!dryRun) {
         await prisma.notificationDelivery.updateMany({
           where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
           data: { state: 'FAILED', lastError: 'max_resume_attempts' }
         });
+        // 重试耗尽必须回报渠道健康度。原先只落了 FAILED 就完事，
+        // 绑定仍是 ACTIVE、failureCount 纹丝不动，于是**每一条**新告警都要
+        // 完整走一遍「发→失败→重试 5 轮→放弃」，而界面上渠道一直显示健康。
+        // 这类持续失败（send_failed 等）正是自动暂停机制该介入的场景。
+        await reportChannelOutcome(target.accountId, target.bindingId, 'failed', lastError);
       }
       summary.failed += batch.length;
       continue;
