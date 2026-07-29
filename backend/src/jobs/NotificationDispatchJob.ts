@@ -514,6 +514,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       keys.push(...remaining.map((c) => c.dedupeKey));
     }
 
+    // 统计口径必须是「本次真正参与投递的条数」。
+    // 发送前的已读回查可能已经取消掉一部分（那部分已计入 suppressed），
+    // 若这里仍按原始 items.length 计，同一条会被同时算进 suppressed 与 sent/failed，
+    // 摘要里的数字自相矛盾，排查时反而误导人。
+    const dispatchedCount = keys.length;
+
     const result = await pushQqMessage({ qq: target.address, message, dedupeKey: digestKey });
 
     if (result.ok) {
@@ -521,7 +527,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
         data: { state: 'SENT', sentAt: new Date(), lastError: null }
       });
-      summary.sent += items.length;
+      summary.sent += dispatchedCount;
       // 成功要清零 failureCount，否则一次永久失败之后，日后**不连续**的偶发失败
       // 会累加到阈值，把一个正常渠道误暂停。
       await reportChannelOutcome(target.accountId, target.bindingId, 'sent', null);
@@ -530,7 +536,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
         data: { state: 'FAILED', lastError: result.error ?? 'unknown' }
       });
-      summary.failed += items.length;
+      summary.failed += dispatchedCount;
       console.warn(`[notify] 用户 ${target.wikidotId} 永久失败：${result.error}（不再重试）`);
       // 把永久失败回报给绑定方。不报的话：绑定一直是 ACTIVE、界面显示健康，
       // 而每条新告警都有新的 dedupeKey，于是对着一个已经删了机器人的用户永远重试下去。
@@ -550,7 +556,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         // scheduledAt = 下次可重试的时刻，重发侧只捞到期的
         data: { state: 'SCHEDULED', lastError: result.error ?? 'unknown', scheduledAt: nextRetryAt(1) }
       });
-      summary.failed += items.length;
+      summary.failed += dispatchedCount;
       console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（保留原批次，下轮以同一 digestKey 重发）`);
     }
   }
