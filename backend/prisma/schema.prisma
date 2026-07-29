@@ -447,11 +447,76 @@ model User {
   following                        UserFollow[]            @relation("UserFollowFollower")
   followers                        UserFollow[]            @relation("UserFollowTarget")
   notificationDeliveries           NotificationDelivery[]
+  notificationPreferences          UserNotificationPreference[]
+  notificationChannelSetting       UserNotificationChannelSetting?
 
   @@index([firstActivityAt])
   @@index([firstActivityType])
   @@index([lastActivityAt])
   @@index([attributionVotingCacheUpdatedAt])
+}
+
+/// 通知类型。跨「站内」与「QQ」两个渠道共用同一套类型定义。
+///
+/// 注意与 PageMetricType 的区别：那个枚举描述的是「页面的哪个指标变了」，
+/// 这里描述的是「用户会收到哪一类通知」—— 前三项对应页面指标，
+/// 后两项来自完全不同的表（UserActivityAlert / ForumInteractionAlert），
+/// 用一个枚举统一起来，设置页才能做成一张矩阵。
+enum NotificationTypeKey {
+  PAGE_COMMENT
+  PAGE_VOTE
+  PAGE_REVISION
+  FOLLOW_ACTIVITY
+  FORUM_INTERACTION
+}
+
+/// QQ 推送节奏。
+enum QqDeliveryMode {
+  /// 每轮扫描即推（当前行为）
+  REALTIME
+  /// 每天在用户指定的整点汇总推一次
+  DAILY_DIGEST
+}
+
+/// 通知偏好：每个用户 × 每个类型 × 每个渠道一份开关。
+///
+/// 【为什么放主库而不是用户库的绑定行上】
+///  1. 站内偏好必须在**没有 QQ 绑定**时也存在，挂在绑定行上就无处安放
+///  2. 告警表全在主库且按 User.id 索引，站内过滤同库同键，不必跨库
+///  3. 投递器本来就有 targetByUserId（主库 User.id），多一次主库查询即可，
+///     比跨库读用户库更轻
+///
+/// 【站内与 QQ 完全独立】
+/// 关掉站内不影响 QQ：告警一律产生，站内开关只决定是否展示。
+/// 这样才支持「站内不看、只要 QQ 推」这种用法。
+model UserNotificationPreference {
+  id          Int                 @id @default(autoincrement())
+  userId      Int
+  type        NotificationTypeKey
+  /// 是否在站内提醒流与铃铛中展示
+  siteEnabled Boolean             @default(true)
+  /// 是否经 QQ 私信推送
+  qqEnabled   Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type], map: "uniq_user_notification_preference")
+  @@index([userId])
+}
+
+/// 渠道级设置（不按类型区分），每个用户一行。
+model UserNotificationChannelSetting {
+  userId       Int            @id
+  /// 每日最多接收多少条 QQ 私信。上限受全局 NOTIFY_DAILY_LIMIT 约束，
+  /// 取两者更小值 —— 用户可以调得更保守，但不能突破运维设定的上限。
+  qqDailyLimit Int            @default(20)
+  qqMode       QqDeliveryMode @default(REALTIME)
+  /// DAILY_DIGEST 模式下的发送整点，0–23，按 UTC+8 解释
+  qqDigestHour Int            @default(21)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model UserMetricPreference {

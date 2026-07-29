@@ -402,6 +402,148 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
     }
   });
 
+
+/** 通知类型：与主库 NotificationTypeKey 枚举一一对应 */
+const NOTIFY_TYPES = ['PAGE_COMMENT', 'PAGE_VOTE', 'PAGE_REVISION', 'FOLLOW_ACTIVITY', 'FORUM_INTERACTION'] as const;
+type NotifyType = (typeof NOTIFY_TYPES)[number];
+const isNotifyType = (v: unknown): v is NotifyType =>
+  typeof v === 'string' && (NOTIFY_TYPES as readonly string[]).includes(v);
+
+const DELIVERY_MODES = ['REALTIME', 'DAILY_DIGEST'] as const;
+type DeliveryMode = (typeof DELIVERY_MODES)[number];
+
+interface NotifyMatrixRow { type: NotifyType; siteEnabled: boolean; qqEnabled: boolean }
+interface NotifyChannelSetting { qqDailyLimit: number; qqMode: DeliveryMode; qqDigestHour: number }
+
+/**
+ * 读取通知偏好矩阵与渠道设置。
+ *
+ * 没有记录的类型返回默认值（两个渠道都开），而不是不返回 ——
+ * 前端拿到的永远是完整的 5 行，不必自己补默认，也不会因为漏了一行而少画一格。
+ */
+async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
+  matrix: NotifyMatrixRow[];
+  channel: NotifyChannelSetting;
+}> {
+  const [prefRows, settingRows] = await Promise.all([
+    pool.query(
+      'SELECT "type", "siteEnabled", "qqEnabled" FROM "UserNotificationPreference" WHERE "userId" = $1',
+      [userId]
+    ),
+    pool.query(
+      'SELECT "qqDailyLimit", "qqMode", "qqDigestHour" FROM "UserNotificationChannelSetting" WHERE "userId" = $1',
+      [userId]
+    )
+  ]);
+
+  const stored = new Map<string, { siteEnabled: boolean; qqEnabled: boolean }>();
+  for (const r of prefRows.rows) {
+    stored.set(String(r.type), { siteEnabled: Boolean(r.siteEnabled), qqEnabled: Boolean(r.qqEnabled) });
+  }
+  const matrix: NotifyMatrixRow[] = NOTIFY_TYPES.map((type) => ({
+    type,
+    siteEnabled: stored.get(type)?.siteEnabled ?? true,
+    qqEnabled: stored.get(type)?.qqEnabled ?? true
+  }));
+
+  const c = settingRows.rows[0];
+  const channel: NotifyChannelSetting = {
+    // NUMERIC/INTEGER 经 pg 驱动可能是字符串，必须 Number() —— 这个坑在本仓库反复出现
+    qqDailyLimit: c ? Number(c.qqDailyLimit) : 20,
+    qqMode: c && DELIVERY_MODES.includes(c.qqMode) ? (c.qqMode as DeliveryMode) : 'REALTIME',
+    qqDigestHour: c ? Number(c.qqDigestHour) : 21
+  };
+  return { matrix, channel };
+}
+
+
+  /** 通知偏好矩阵（类型 × 渠道）+ 渠道级设置 */
+  router.get('/notify-preferences', async (req, res, next) => {
+    try {
+      const authUser = await fetchAuthUser(req);
+      if (!authUser || authUser.linkedWikidotId == null) {
+        return res.status(401).json({ ok: false, error: 'unauthenticated' });
+      }
+      const userId = await resolveAppUserId(pool, authUser);
+      if (userId == null) return res.status(404).json({ ok: false, error: 'user_not_found' });
+      res.json({ ok: true, ...(await resolveNotifyPreferences(pool, userId)) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/notify-preferences', async (req, res, next) => {
+    try {
+      const authUser = await fetchAuthUser(req);
+      if (!authUser || authUser.linkedWikidotId == null) {
+        return res.status(401).json({ ok: false, error: 'unauthenticated' });
+      }
+      const userId = await resolveAppUserId(pool, authUser);
+      if (userId == null) return res.status(404).json({ ok: false, error: 'user_not_found' });
+
+      const body = req.body ?? {};
+
+      // ── 矩阵：逐行 upsert。只处理请求里出现的类型，未出现的保持原样，
+      //    这样前端可以只提交被改动的那一格。
+      const rows = Array.isArray(body.matrix) ? body.matrix : [];
+      for (const row of rows) {
+        if (!isNotifyType(row?.type)) {
+          return res.status(400).json({ ok: false, error: 'invalid_type' });
+        }
+        if (typeof row.siteEnabled !== 'boolean' || typeof row.qqEnabled !== 'boolean') {
+          return res.status(400).json({ ok: false, error: 'invalid_flags' });
+        }
+      }
+      for (const row of rows) {
+        await pool.query(
+          `INSERT INTO "UserNotificationPreference" ("userId","type","siteEnabled","qqEnabled","updatedAt")
+           VALUES ($1, $2::"NotificationTypeKey", $3, $4, now())
+           ON CONFLICT ("userId","type")
+           DO UPDATE SET "siteEnabled" = EXCLUDED."siteEnabled",
+                         "qqEnabled"   = EXCLUDED."qqEnabled",
+                         "updatedAt"   = now()`,
+          [userId, row.type, row.siteEnabled, row.qqEnabled]
+        );
+      }
+
+      // ── 渠道级设置：三项都可选，只改传了的
+      const c = body.channel ?? {};
+      const hasChannel = c.qqDailyLimit !== undefined || c.qqMode !== undefined || c.qqDigestHour !== undefined;
+      if (hasChannel) {
+        const limit = c.qqDailyLimit === undefined ? null : Number(c.qqDailyLimit);
+        const hour = c.qqDigestHour === undefined ? null : Number(c.qqDigestHour);
+        // 校验放在写库前：数据库虽有 CHECK 兜底，但那会抛 500 而不是给出可读的 400
+        if (limit !== null && (!Number.isInteger(limit) || limit < 1 || limit > 200)) {
+          return res.status(400).json({ ok: false, error: 'invalid_daily_limit' });
+        }
+        if (hour !== null && (!Number.isInteger(hour) || hour < 0 || hour > 23)) {
+          return res.status(400).json({ ok: false, error: 'invalid_digest_hour' });
+        }
+        if (c.qqMode !== undefined && !DELIVERY_MODES.includes(c.qqMode)) {
+          return res.status(400).json({ ok: false, error: 'invalid_mode' });
+        }
+        await pool.query(
+          `INSERT INTO "UserNotificationChannelSetting"
+             ("userId","qqDailyLimit","qqMode","qqDigestHour","updatedAt")
+           VALUES ($1, COALESCE($2, 20), COALESCE($3::"QqDeliveryMode", 'REALTIME'), COALESCE($4, 21), now())
+           ON CONFLICT ("userId") DO UPDATE SET
+             "qqDailyLimit" = COALESCE($2, "UserNotificationChannelSetting"."qqDailyLimit"),
+             "qqMode"       = COALESCE($3::"QqDeliveryMode", "UserNotificationChannelSetting"."qqMode"),
+             "qqDigestHour" = COALESCE($4, "UserNotificationChannelSetting"."qqDigestHour"),
+             "updatedAt"    = now()`,
+          [userId, limit, c.qqMode ?? null, hour]
+        );
+      }
+
+      // 站内开关会影响提醒列表的返回内容，整族缓存必须失效，
+      // 否则用户改完设置刷新还是旧的（最长一个 TTL）
+      await invalidateAlertsCache(authUser.linkedWikidotId);
+      res.json({ ok: true, ...(await resolveNotifyPreferences(pool, userId)) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/preferences', async (req, res, next) => {
     try {
       const authUser = await fetchAuthUser(req);

@@ -124,8 +124,20 @@ const PROCESS_START = new Date();
  */
 const RUN_ID = `${process.pid}-${PROCESS_START.getTime()}`;
 
+/** 与 UserNotificationPreference.type 对齐的通知类型 */
+type NotifyType = 'PAGE_COMMENT' | 'PAGE_VOTE' | 'PAGE_REVISION' | 'FOLLOW_ACTIVITY' | 'FORUM_INTERACTION';
+
+/** 页面指标 → 通知类型 */
+const METRIC_TO_TYPE: Record<string, NotifyType> = {
+  COMMENT_COUNT: 'PAGE_COMMENT',
+  VOTE_COUNT: 'PAGE_VOTE',
+  REVISION_COUNT: 'PAGE_REVISION'
+};
+
 interface Candidate {
   source: 'page_metric' | 'follow_activity' | 'forum';
+  /** 用于按用户偏好过滤 QQ 推送 */
+  notifyType: NotifyType;
   dedupeKey: string;
   userId: number;
   detectedAt: Date;
@@ -363,12 +375,23 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 不加这层过滤的话，用户绑完 QQ 的第一轮就会收到绑定**之前**最多 24 小时的积压 ——
   // 他授权的是今后的动态，不是过去一天的，观感上像是刚绑就被刷屏。
   // 这里只过滤不记账：这些候选会随回看窗口自然滑出，不必为它们写一堆抑制记录。
+  // 用户的 QQ 侧偏好：哪些类型要推、日限额多少、实时还是定时
+  const prefsByUser = await loadNotifyPrefs(prisma, userIds);
+
   const candidates: Candidate[] = [];
   let preBindingSkipped = 0;
+  let prefFiltered = 0;
   for (const c of collected) {
     const boundAt = targetByUserId.get(c.userId)?.verifiedAt ?? null;
     if (boundAt && c.detectedAt <= boundAt) { preBindingSkipped += 1; continue; }
+    // 该用户把这个类型的 QQ 推送关掉了。
+    // 注意这**不影响站内** —— 两个渠道各自独立，站内照常展示。
+    // 缺省 true：没设置过的用户默认全收，绑定后立刻可用。
+    if (prefsByUser.get(c.userId)?.qqEnabled.get(c.notifyType) === false) { prefFiltered += 1; continue; }
     candidates.push(c);
+  }
+  if (prefFiltered > 0) {
+    console.log(`[notify] 按用户偏好跳过 ${prefFiltered} 条（对应类型的 QQ 推送已关闭）`);
   }
   if (preBindingSkipped > 0) {
     console.log(`[notify] 跳过 ${preBindingSkipped} 条产生于绑定生效之前的告警`);
@@ -497,12 +520,24 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     //
     // 现在给同一次摘要里的所有行写同一个 digestKey，按 distinct digestKey 计数，
     // 「40 条/天」才真的是「每天最多 40 条私信」。
+    const prefs = prefsByUser.get(userId) ?? { qqEnabled: new Map(), ...DEFAULT_PREFS };
     const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
     const sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
-    if (sentToday >= DAILY_LIMIT) {
+
+    // 定时模式：只在用户指定的整点发，且当天只发一次。
+    // 不到点就**留着**（不落库、不消耗任何配额），等到点那一轮再一起发 ——
+    // 这正是「每日汇总」的意义：把一天的动静攒成一条。
+    if (prefs.mode === 'DAILY_DIGEST') {
+      const hour = currentHourUtc8();
+      if (hour !== prefs.digestHour) continue;
+      if (sentToday > 0) continue; // 今天已经发过这一封
+    }
+
+    // 日限额取用户设置（已在加载时与全局上限取过更小值）
+    if (sentToday >= prefs.dailyLimit) {
       await recordAll(prisma, items, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
       summary.suppressed += items.length;
-      console.warn(`[notify] 用户 ${target.wikidotId} 24 小时内已发 ${sentToday} 条，达上限 ${DAILY_LIMIT}，本批抑制`);
+      console.warn(`[notify] 用户 ${target.wikidotId} 24 小时内已发 ${sentToday} 条，达其上限 ${prefs.dailyLimit}，本批抑制`);
       continue;
     }
 
@@ -723,6 +758,60 @@ async function recordAll(
     skipDuplicates: true
   });
   return created.count;
+}
+
+/**
+ * 用户的通知偏好（QQ 侧）。
+ *
+ * 一次查两张表：类型矩阵 + 渠道级设置。都在主库，与告警同库同键（User.id），
+ * 不必跨库。没有记录的用户走默认值 —— 默认全开、实时、20 条/天，
+ * 这样新用户绑定后立刻能收到，不用先去设置页点一遍。
+ */
+interface UserNotifyPrefs {
+  /** 该类型是否推 QQ；缺省 true */
+  qqEnabled: Map<NotifyType, boolean>;
+  dailyLimit: number;
+  mode: 'REALTIME' | 'DAILY_DIGEST';
+  digestHour: number;
+}
+
+const DEFAULT_PREFS: Omit<UserNotifyPrefs, 'qqEnabled'> = {
+  dailyLimit: 20,
+  mode: 'REALTIME',
+  digestHour: 21
+};
+
+export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): Promise<Map<number, UserNotifyPrefs>> {
+  const out = new Map<number, UserNotifyPrefs>();
+  if (userIds.length === 0) return out;
+
+  const [rows, settings] = await Promise.all([
+    prisma.userNotificationPreference.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, type: true, qqEnabled: true }
+    }),
+    prisma.userNotificationChannelSetting.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, qqDailyLimit: true, qqMode: true, qqDigestHour: true }
+    })
+  ]);
+
+  for (const uid of userIds) out.set(uid, { qqEnabled: new Map(), ...DEFAULT_PREFS });
+  for (const r of rows) out.get(r.userId)?.qqEnabled.set(r.type as NotifyType, r.qqEnabled);
+  for (const c of settings) {
+    const p = out.get(c.userId);
+    if (!p) continue;
+    // 用户值不得突破运维设定的全局上限 —— 取两者更小
+    p.dailyLimit = Math.max(1, Math.min(c.qqDailyLimit, DAILY_LIMIT));
+    p.mode = c.qqMode as 'REALTIME' | 'DAILY_DIGEST';
+    p.digestHour = c.qqDigestHour;
+  }
+  return out;
+}
+
+/** UTC+8 的当前小时。定时推送按用户所在时区（站点统一 UTC+8）解释。 */
+export function currentHourUtc8(): number {
+  return new Date(Date.now() + 8 * 3600 * 1000).getUTCHours();
 }
 
 /** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
@@ -1241,6 +1330,7 @@ async function collectCandidates(
     const delta = diff != null ? `${diff > 0 ? '+' : ''}${diff}` : '';
     out.push({
       source: 'page_metric',
+      notifyType: METRIC_TO_TYPE[metric] ?? 'PAGE_COMMENT',
       // 键里带 detectedAt：PageMetricAlert 是就地更新的，只带 newValue 的话
       // 「20→40→20→40」这种来回变动，最后那次 40 会撞到早先 40 的键而被当成已投递。
       dedupeKey: `pma:${r.id}:${r.newValue ?? 'n'}:${new Date(String(r.detectedAt)).getTime()}`,
@@ -1277,6 +1367,7 @@ async function collectCandidates(
     const what = String(r.type) === 'REVISION' ? '编辑了' : String(r.type) === 'ATTRIBUTION' ? '发布了' : '不再署名';
     out.push({
       source: 'follow_activity',
+      notifyType: 'FOLLOW_ACTIVITY',
       dedupeKey: `uaa:${r.id}:${r.revisionId ?? r.pageVersionId ?? 'n'}`,
       userId: Number(r.followerId),
       detectedAt: new Date(String(r.detectedAt)),
@@ -1305,6 +1396,7 @@ async function collectCandidates(
     const title = r.postTitle ? `「${String(r.postTitle)}」` : '';
     out.push({
       source: 'forum',
+      notifyType: 'FORUM_INTERACTION',
       dedupeKey: `fia:${r.id}`,
       userId: Number(r.recipientUserId),
       detectedAt: new Date(String(r.detectedAt)),
