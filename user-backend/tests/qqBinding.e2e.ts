@@ -91,9 +91,18 @@ async function main() {
   check('掩码不含完整号', !JSON.stringify(st2).includes('1000000001'));
 
   console.log('\n[6] 幂等与重放');
-  const replay = await verifyQqBinding({ qq: '1000000001', code: second.code });
-  check('同一个码不能再用（防重放）', !replay.matched, JSON.stringify(replay));
-  check('重放提示与通用提示不同', replay.reply !== r1.reply);
+  // 语义：**同一个 QQ** 重放同一个码 = 上一次成功的幂等回放。
+  // 机器人在 HTTP 响应丢失后会重试，此时挑战已是 VERIFIED；
+  // 若这里判失败，机器人会拒绝好友申请 —— 数据库里绑定成功、好友却没加上，
+  // 用户从此一条推送都收不到，而界面显示「已绑定」。
+  const replaySame = await verifyQqBinding({ qq: '1000000001', code: second.code });
+  check('同一 QQ 重放同一个码 = 幂等成功', replaySame.matched, JSON.stringify(replaySame));
+  const replayRows = await prisma.notificationChannelBinding.count({ where: { userId: alice.id } });
+  check('重放不产生额外绑定行', replayRows === 1, `rows=${replayRows}`);
+  // **其他 QQ** 拿这个已消费的码则必须拒绝 —— 幂等不等于把码变成万能钥匙
+  const replayOther = await verifyQqBinding({ qq: '1000000009', code: second.code });
+  check('其他 QQ 重放同一个码仍须拒绝', !replayOther.matched, JSON.stringify(replayOther));
+  check('重放拒绝提示与通用提示不同', replayOther.reply !== r1.reply);
 
   console.log('\n[7] 唯一性');
   const bobStart = await startQqBinding(bob.id, '1248393597');

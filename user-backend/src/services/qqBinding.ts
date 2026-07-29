@@ -284,6 +284,29 @@ export async function verifyQqBinding(params: {
       new Date()
     );
     if (!decision.ok) {
+      // 【重放即成功】上一次核销已经提交、但 HTTP 响应丢在了半路时，
+      // 机器人会带着同一个码重试。此时挑战已是 VERIFIED，evaluateChallenge
+      // 判成 code_consumed，机器人据此**拒绝好友申请** ——
+      // 数据库里绑定是成功的，好友却没加上，用户从此一条推送也收不到，
+      // 而界面显示「已绑定」，完全看不出问题在哪。
+      // 只要这次重放来自同一个 QQ、且它正是该账号当前的有效绑定，
+      // 就返回上一次的成功结果（幂等）。
+      if (decision.reason === 'code_consumed') {
+        const existing = await tx.notificationChannelBinding.findUnique({
+          where: { userId_channel: { userId: found.userId, channel: NotificationChannel.QQ } },
+          select: { address: true, status: true }
+        });
+        if (
+          existing
+          && existing.address === address
+          && existing.status !== ChannelBindingStatus.REVOKED
+        ) {
+          return {
+            matched: true,
+            reply: '绑定成功！之后 SCPper CN 的站点通知会通过这里发给你。\n可随时在网站「账号设置 → 通知」调整推送内容。'
+          };
+        }
+      }
       return { matched: false, reason: decision.reason, reply: rejectionMessage(decision.reason) };
     }
 

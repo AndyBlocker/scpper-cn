@@ -37,13 +37,19 @@ const emptyText = computed(() => {
 async function handleRefresh() {
   if (busy.value) return
   busy.value = true
-  try { await refresh(true) } finally { busy.value = false }
+  try {
+    await refresh(true)
+    while (pendingModeChange) { pendingModeChange = false; await refresh(true) }
+  } finally { busy.value = false }
 }
 
 async function handleMarkAll() {
   if (busy.value) return
   busy.value = true
-  try { await markAllRead() } finally { busy.value = false }
+  try {
+    await markAllRead()
+    while (pendingModeChange) { pendingModeChange = false; await refresh(true) }
+  } finally { busy.value = false }
 }
 
 async function handleMarkOne(key: string, item: Parameters<typeof markRead>[0]) {
@@ -69,13 +75,35 @@ async function handleMarkOne(key: string, item: Parameters<typeof markRead>[0]) 
 async function loadEarlierUnread() {
   if (busy.value) return
   busy.value = true
-  try { await refresh(true) } finally { busy.value = false }
+  try {
+    await refresh(true)
+    while (pendingModeChange) { pendingModeChange = false; await refresh(true) }
+  } finally { busy.value = false }
 }
 
+/**
+ * 切换「显示已读」。
+ *
+ * 不能在忙时直接 return：v-model 已经把 showRead 改掉了，而在飞的那次请求
+ * 用的还是**旧口径**，早退等于这次切换根本没取数 —— 面板会停在空的或过期的
+ * 内容上，直到用户手动再刷一次。
+ * 这里改为「记下还有待处理的切换」，当前请求结束后再按**最终**口径补一次。
+ */
+let pendingModeChange = false
+
 async function handleShowReadChange() {
-  if (busy.value) return
+  if (busy.value) { pendingModeChange = true; return }
   busy.value = true
-  try { await refresh(true) } finally { busy.value = false }
+  try {
+    await refresh(true)
+    // 期间用户又切了：按最终状态再取一次（循环直到没有新的切换）
+    while (pendingModeChange) {
+      pendingModeChange = false
+      await refresh(true)
+    }
+  } finally {
+    busy.value = false
+  }
 }
 
 /**

@@ -32,7 +32,12 @@ const CIRCUIT_GLOBAL_MAX = Math.max(1, Number(process.env.NOTIFY_CIRCUIT_GLOBAL_
 /** 单用户每日投递上限 */
 const DAILY_LIMIT = Math.max(1, Number(process.env.NOTIFY_DAILY_LIMIT ?? '40') || 40);
 
-const SITE_BASE = (process.env.NOTIFY_SITE_BASE || 'https://scp-cn.wiki').replace(/\/$/, '');
+/**
+ * 摘要里「查看全部」指向的站点。必须是 **SCPper 前端**的域名，
+ * 因为 /account 这个页面由前端提供 —— 默认值原先写的是 scp-cn.wiki
+ * （SCP 中文站本身），链接过去只会是一个不存在的页面。
+ */
+const SITE_BASE = (process.env.NOTIFY_SITE_BASE || 'https://scpper.mer.run').replace(/\/$/, '');
 
 /**
  * 灰度名单：逗号分隔的 wikidotId。**未配置**才表示不限制。
