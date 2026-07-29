@@ -222,21 +222,21 @@ export function useAlerts() {
       const res = await $bff<{ ok: boolean; acknowledgedAt: string | null }>(`/alerts/${id}/read`, { method: 'POST' });
       if (!res?.ok) {
         unreadAlerts.value[metric] = prevUnreadList;
+        // 计数回滚不能挂在 target 上：一条较早的未读可能只存在于未读桶里
+        // （含已读那份只有最近 20 条），此时 target 是 undefined，
+        // 乐观递减过的计数就永远回不来了 —— 列表恢复了、红点却少了一个。
+        if (wasUnread) unreadCount.value[metric] = prevUnread;
       }
       if (!res?.ok && target) {
-        // 回滚到请求前的服务端计数，而不是按本页重算
         target.acknowledgedAt = prevAck;
-        unreadCount.value[metric] = prevUnread;
       } else if (res?.ok && target) {
         target.acknowledgedAt = res.acknowledgedAt ?? target.acknowledgedAt;
       }
     } catch (error) {
       console.warn('[alerts] mark read failed', error);
       unreadAlerts.value[metric] = prevUnreadList;
-      if (target) {
-        target.acknowledgedAt = prevAck;
-        unreadCount.value[metric] = prevUnread;
-      }
+      if (wasUnread) unreadCount.value[metric] = prevUnread;
+      if (target) target.acknowledgedAt = prevAck;
     }
   }
 

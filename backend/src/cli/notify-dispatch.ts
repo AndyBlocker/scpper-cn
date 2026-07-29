@@ -1,3 +1,4 @@
+import { registerShutdownBarrier } from '../utils/db-connection.js';
 import { runNotificationDispatch, type DispatchSummary } from '../jobs/NotificationDispatchJob.js';
 
 type LoopOptions = {
@@ -84,6 +85,16 @@ export async function runNotifyDispatchLoop(options: LoopOptions): Promise<void>
 
   process.on('SIGINT', handleStopSignal);
   process.on('SIGTERM', handleStopSignal);
+  // 光装信号监听不够：db-connection 也监听同一个信号，且它会
+  // disconnectPrisma() 之后直接 process.exit(0) —— 上面那两个监听器
+  // 只来得及把 stopping 置位，进程就没了。真正在投递中途被砍断的话，
+  // 那批候选下轮会重新入选，等机器人 15 分钟去重窗口一过就重复推送。
+  // 注册一个关停屏障，让断连接与退出等到本轮结束。
+  const unregisterBarrier = registerShutdownBarrier(async () => {
+    if (!running) return;
+    console.log('[notify] 关停中，等待当前轮完成…');
+    await stopPromise;
+  });
 
   console.log(
     `[notify] 投递器启动：间隔 ${intervalSeconds}s`
@@ -94,6 +105,7 @@ export async function runNotifyDispatchLoop(options: LoopOptions): Promise<void>
   else scheduleNext();
 
   await stopPromise;
+  unregisterBarrier();
   console.log('[notify] 已停止');
 }
 

@@ -41,6 +41,13 @@ function ensureUserBackendEnv(): void {
 export interface QqTarget {
   /** user-backend 的账号 id（cuid），仅用于日志与回报 */
   accountId: string;
+  /**
+   * 绑定行的不可变 id。回报投递结果时必须带上它 ——
+   * 只按 (userId, channel) 定位的话，用户在缓存宽限期内解绑再重绑
+   * （那是一行**新记录**），旧地址的失败就会被记到新绑定头上，
+   * 甚至把一个健康的新绑定连累到自动暂停。
+   */
+  bindingId: string;
   /** 主库 User.wikidotId —— 跨库的唯一桥梁 */
   wikidotId: number;
   /** 完整 QQ 号。**只在本进程内存中出现，不落日志、不进 payload。** */
@@ -95,6 +102,7 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
   const client: any = new UserBackendPrismaClient({ datasources: { db: { url: userDbUrl } } });
   try {
     const rows: Array<{
+      id: string;
       address: string;
       resolvedMatrix: unknown;
       user: { id: string; linkedWikidotId: number | null; status: string };
@@ -105,6 +113,7 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
         user: { status: 'ACTIVE', linkedWikidotId: { not: null } }
       },
       select: {
+        id: true,
         address: true,
         resolvedMatrix: true,
         user: { select: { id: true, linkedWikidotId: true, status: true } }
@@ -117,6 +126,7 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
       if (typeof wikidotId !== 'number' || !Number.isFinite(wikidotId)) continue;
       targets.push({
         accountId: row.user.id,
+        bindingId: row.id,
         wikidotId,
         address: row.address,
         resolvedMatrix: (row.resolvedMatrix as Record<string, unknown> | null) ?? null

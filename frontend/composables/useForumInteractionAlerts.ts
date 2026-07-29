@@ -174,15 +174,17 @@ export function useForumInteractionAlerts() {
       // 未读桶必须无条件还原 —— 它和 alerts 是两份数据，
       // 只在 rollback 存在时还原的话，不在含已读缓存里的条目就永久消失了
       unreadAlerts.value = prevUnreadList;
+      // 还原保存下来的服务端计数，而不是按本地列表重算 ——
+      // 列表只有一页（≤20 条），重算会把 100 直接砍成 ≤20，且要等下次刷新才恢复。
+      // 这一步不能挂在 rollback 上：条目可能只存在于未读桶里（含已读那份只有 20 条），
+      // 那时 rollback 是 undefined，递减过的计数就再也回不来了。
+      if (wasUnread) unreadCount.value = prevUnread;
       const rollback = idx >= 0 ? alerts.value[idx] : undefined;
       if (rollback) {
         alerts.value[idx] = {
           ...rollback,
           acknowledgedAt: prev
         };
-        // 还原保存下来的服务端计数，而不是按本地列表重算 ——
-        // 列表只有一页（≤20 条），重算会把 100 直接砍成 ≤20，且要等下次刷新才恢复
-        unreadCount.value = prevUnread;
       }
     }
   }

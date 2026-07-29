@@ -15,7 +15,7 @@
  *     一次性推给所有人。NOTIFY_DISPATCH_START_AT 之前的告警永不处理。
  */
 
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { getPrismaClient } from '../utils/db-connection.js';
 import { loadActiveQqTargets, type QqTarget } from '../services/userDirectory.js';
 import { checkHealth, isPermanentFailure, pushQqMessage, EXPECTED_CONTRACT } from '../services/qqPush.js';
@@ -435,7 +435,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       summary.sent += items.length;
       // 成功要清零 failureCount，否则一次永久失败之后，日后**不连续**的偶发失败
       // 会累加到阈值，把一个正常渠道误暂停。
-      await reportChannelOutcome(target.accountId, 'sent', null);
+      await reportChannelOutcome(target.accountId, target.bindingId, 'sent', null);
     } else if (isPermanentFailure(result.error)) {
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
@@ -445,7 +445,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       console.warn(`[notify] 用户 ${target.wikidotId} 永久失败：${result.error}（不再重试）`);
       // 把永久失败回报给绑定方。不报的话：绑定一直是 ACTIVE、界面显示健康，
       // 而每条新告警都有新的 dedupeKey，于是对着一个已经删了机器人的用户永远重试下去。
-      await reportChannelOutcome(target.accountId, 'failed', result.error ?? 'unknown');
+      await reportChannelOutcome(target.accountId, target.bindingId, 'failed', result.error ?? 'unknown');
     } else {
       // 可重试：**保留这一批**，转 SCHEDULED 等下轮原样重发。
       //
@@ -481,6 +481,7 @@ let warnedMissingNotifyKey = false;
 
 async function reportChannelOutcome(
   accountId: string,
+  bindingId: string,
   outcome: 'sent' | 'failed',
   code: string | null
 ): Promise<void> {
@@ -505,7 +506,7 @@ async function reportChannelOutcome(
         headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
         // code 为 null 时必须**省略**该字段：接收侧 schema 是 z.string().optional()，
         // 传 null 会 400
-        body: JSON.stringify({ accountId, channel: 'QQ', outcome, ...(code ? { code } : {}) })
+        body: JSON.stringify({ accountId, bindingId, channel: 'QQ', outcome, ...(code ? { code } : {}) })
       });
       // fetch 对 4xx/5xx 也会 resolve。不查状态的话，密钥不一致（403）或
       // 参数不合（400）都会被当成回报成功 —— failureCount 既不累加也不清零，
@@ -575,15 +576,25 @@ const ORPHAN_SCHEDULED_MAX_AGE_MS = 24 * 3600 * 1000;
  */
 async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean): Promise<number> {
   const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
+  // 按**来源事件时间**判过期，不是按占位时间。
+  // createdAt 记的是投递器什么时候认领了它，一条在窗口边缘才被认领的告警，
+  // 按 createdAt 还能再苟一整个窗口期，实际送达时已经接近两倍于配置的时限。
+  // payload.detectedAt 是告警本身发生的时刻，才是「多旧」的正确度量。
+  // COALESCE 兜底：没有 detectedAt 的历史行退回 createdAt。
+  const whereExpired = {
+    state: 'SCHEDULED' as const,
+    OR: [
+      { payload: { path: ['detectedAt'], lt: cutoff.toISOString() } },
+      { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: cutoff } }] }
+    ]
+  };
   if (dryRun) {
-    const n = await prisma.notificationDelivery.count({
-      where: { state: 'SCHEDULED', createdAt: { lt: cutoff } }
-    });
+    const n = await prisma.notificationDelivery.count({ where: whereExpired });
     if (n > 0) console.warn(`[notify][dry-run] 有 ${n} 条 SCHEDULED 已超出回看窗口，真实运行会判失效`);
     return n;
   }
   const res = await prisma.notificationDelivery.updateMany({
-    where: { state: 'SCHEDULED', createdAt: { lt: cutoff } },
+    where: whereExpired,
     data: { state: 'FAILED', lastError: 'expired_beyond_lookback' }
   });
   if (res.count > 0) {
@@ -727,8 +738,14 @@ async function resumeScheduledBatches(
       console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${DAILY_LIMIT}，批次 ${digestKey} 留待下轮`);
       continue; // 保持 SCHEDULED，不消耗重试次数
     }
-    if (replayBudget <= 0) {
-      console.warn(`[notify] 本轮重发已达全局上限 ${CIRCUIT_GLOBAL_MAX} 条，其余批次留待下轮`);
+    // 必须在**发送前**确认额度够装下整批：原先只判 >0，
+    // 于是剩 1 条额度也会把一整批（可能几十条）发出去，再把额度减成负数 ——
+    // 单轮实际可超出 CIRCUIT_GLOBAL_MAX 将近一整批。
+    if (replayBudget < stillPending.length) {
+      console.warn(
+        `[notify] 本轮重发额度剩 ${replayBudget} 条，装不下批次 ${digestKey}（${stillPending.length} 条），`
+        + `其余留待下轮（全局上限 ${CIRCUIT_GLOBAL_MAX}）`
+      );
       break; // 其余保持 SCHEDULED
     }
     replayBudget -= stillPending.length;
@@ -762,14 +779,14 @@ async function resumeScheduledBatches(
       // 计入当日私信条数：同一轮里该用户还有别的批次时，限额要立刻生效
       sentTodayByUser.set(userId, sentToday + 1);
       console.log(`[notify] 批次 ${digestKey} 重发成功${result.deduped ? '（机器人判定为重复，说明上次已送达）' : ''}`);
-      await reportChannelOutcome(target.accountId, 'sent', null);
+      await reportChannelOutcome(target.accountId, target.bindingId, 'sent', null);
     } else if (isPermanentFailure(result.error)) {
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
         data: { state: 'FAILED', lastError: result.error ?? 'unknown', attemptCount: attempt }
       });
       summary.failed += stillPending.length;
-      await reportChannelOutcome(target.accountId, 'failed', result.error ?? 'unknown');
+      await reportChannelOutcome(target.accountId, target.bindingId, 'failed', result.error ?? 'unknown');
     } else {
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
@@ -795,16 +812,28 @@ async function findAcknowledgedDedupeKeys(
   dedupeKeys: string[]
 ): Promise<Set<string>> {
   const acked = new Set<string>();
-  const byPrefix = { pma: new Map<number, string>(), uaa: new Map<number, string>(), fia: new Map<number, string>() };
+  // 一个来源 id 可能对应**多个** dedupeKey：PageMetricAlert / UserActivityAlert
+  // 是就地合并的，同一行的 newValue 变化会生成新的键，而旧版本可能还留在 SCHEDULED。
+  // 用 Map<id, string> 只会保住最后一个键，于是把来源标已读时只取消得掉一个版本，
+  // 更早的版本照样会被重发出去。
+  const byPrefix = {
+    pma: new Map<number, string[]>(),
+    uaa: new Map<number, string[]>(),
+    fia: new Map<number, string[]>()
+  };
+  const push = (m: Map<number, string[]>, id: number, key: string) => {
+    const list = m.get(id);
+    if (list) list.push(key); else m.set(id, [key]);
+  };
 
   for (const key of dedupeKeys) {
     const [prefix, rawId] = key.split(':');
     if (!prefix || !rawId) continue;
     const id = Number.parseInt(rawId, 10);
     if (!Number.isFinite(id)) continue;
-    if (prefix === 'pma') byPrefix.pma.set(id, key);
-    else if (prefix === 'uaa') byPrefix.uaa.set(id, key);
-    else if (prefix === 'fia') byPrefix.fia.set(id, key);
+    if (prefix === 'pma') push(byPrefix.pma, id, key);
+    else if (prefix === 'uaa') push(byPrefix.uaa, id, key);
+    else if (prefix === 'fia') push(byPrefix.fia, id, key);
   }
 
   const lookups: Array<Promise<void>> = [];
@@ -814,7 +843,7 @@ async function findAcknowledgedDedupeKeys(
         where: { id: { in: [...byPrefix.pma.keys()] }, acknowledgedAt: { not: null } },
         select: { id: true }
       });
-      for (const r of rows) { const k = byPrefix.pma.get(r.id); if (k) acked.add(k); }
+      for (const r of rows) for (const k of byPrefix.pma.get(r.id) ?? []) acked.add(k);
     })());
   }
   if (byPrefix.uaa.size > 0) {
@@ -823,7 +852,7 @@ async function findAcknowledgedDedupeKeys(
         where: { id: { in: [...byPrefix.uaa.keys()] }, acknowledgedAt: { not: null } },
         select: { id: true }
       });
-      for (const r of rows) { const k = byPrefix.uaa.get(r.id); if (k) acked.add(k); }
+      for (const r of rows) for (const k of byPrefix.uaa.get(r.id) ?? []) acked.add(k);
     })());
   }
   if (byPrefix.fia.size > 0) {
@@ -832,7 +861,7 @@ async function findAcknowledgedDedupeKeys(
         where: { id: { in: [...byPrefix.fia.keys()] }, acknowledgedAt: { not: null } },
         select: { id: true }
       });
-      for (const r of rows) { const k = byPrefix.fia.get(r.id); if (k) acked.add(k); }
+      for (const r of rows) for (const k of byPrefix.fia.get(r.id) ?? []) acked.add(k);
     })());
   }
   await Promise.all(lookups);
