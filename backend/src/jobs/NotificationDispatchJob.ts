@@ -369,7 +369,8 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   const prefsByUser = await loadNotifyPrefs(prisma, userIds);
 
   const replayResult = await resumeScheduledBatches(
-    prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget, prefsByUser
+    prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget, prefsByUser,
+    new Set([...prefsByUser].filter(([, p]) => p.mode === 'DAILY_DIGEST').map(([uid]) => uid))
   );
   const replayedCount = replayResult.replayed;
   const replaySkipped = replayResult.skipped;
@@ -398,7 +399,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   for (const uid of userIds) {
     const prefs = prefsByUser.get(uid);
     if (prefs?.mode !== 'DAILY_DIGEST') { userFloor.set(uid, floor); continue; }
-    const last = await lastDigestCutoff(prisma, uid);
+    const last = prefs.lastDigestCutoffAt;
     // 起点往回留一段**安全重叠**。
     //
     // 截止线是墙上时钟，不是「已提交水位线」：一条 detectedAt 早于截止线的告警，
@@ -459,29 +460,24 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   const digestDeferred: Candidate[] = [];
   const eligible: Candidate[] = [];
   const digestEligibility = new Map<number, boolean>();
+  const digestCutoffByUser = new Map<number, Date>();
   for (const c of candidates) {
     const prefs = prefsByUser.get(c.userId);
     if (prefs?.mode !== 'DAILY_DIGEST') { eligible.push(c); continue; }
     let ok = digestEligibility.get(c.userId);
+    let cutoff = digestCutoffByUser.get(c.userId);
     if (ok === undefined) {
-      // 「到点或已过点」而非「正好等于该点」：投递器/数据库/机器人若在那个整点
-      // 整段不可用，严格相等会让这一天彻底跳过，而候选只回看 24 小时 ——
-      // 那批本该出现在汇总里的动态会永久过期。允许当天补发。
-      const reachedHour = currentHourUtc8() >= prefs.digestHour;
-      const already = reachedHour
-        ? (await countDigestsSentSince(prisma, c.userId, startOfUtc8Day())) > 0
-        : false;
-      ok = reachedHour && !already;
+      // 到期时刻由「上次截止线」推算，而不是比较「今天几点」。
+      // 逾期未发的汇总（比如跨午夜宕机漏掉的那封）在恢复后第一轮就补上，
+      // 且它的截止线仍是原定那个时刻，两次汇总的覆盖区间照样接得上。
+      cutoff = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
+      ok = Date.now() >= cutoff.getTime();
       digestEligibility.set(c.userId, ok);
+      digestCutoffByUser.set(c.userId, cutoff);
     }
-    // 即使这个用户本轮有资格，也只收**截止线之前**产生的内容。
-    //
-    // 「补发」补的是「到点时本该发却没发出去的那批」，不是「到点之后又新来的」。
-    // 不加这条边界的话：设定 21 点的用户在 23 点产生一条动态，
-    // 因为「已过点且今天没发过」会被立刻推送 —— 用户选的是每天 21 点收一次，
-    // 结果半夜收到消息，比不补发更糟。这类内容应当等明天的汇总。
-    const cutoff = utc8HourToday(prefs.digestHour);
-    if (ok && c.detectedAt < cutoff) eligible.push(c);
+    // 只收**截止线之前**产生的内容。补发补的是「到点时本该发却没发出去的那批」，
+    // 不是「到点之后又新来的」—— 否则设定 21 点的用户会在半夜收到消息。
+    if (ok && cutoff && c.detectedAt < cutoff) eligible.push(c);
     else digestDeferred.push(c);
   }
   if (digestDeferred.length > 0) {
@@ -665,7 +661,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // digestKey 在占位时就写进 payload：SENT 那步用的是 updateMany，
     // 没法顺手往 JSON 里合并字段，而日限额的计数正依赖它。
     // 定时模式把本次的截止线一并存下 —— 它是下一次收集的起点（见 lastDigestCutoff）
-    const digestCutoff = prefs.mode === 'DAILY_DIGEST' ? utc8HourToday(prefs.digestHour) : undefined;
+    const digestCutoff = prefs.mode === 'DAILY_DIGEST' ? digestCutoffByUser.get(userId) : undefined;
     const claimed = await recordAll(
       prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId, digestCutoff
     );
@@ -724,6 +720,14 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         data: { state: 'SENT', sentAt: new Date(), lastError: null }
       });
       summary.sent += dispatchedCount;
+      // 汇总周期状态必须在**发送成功后**推进，且记的是截止线而非发送时刻。
+      // 记发送时刻的话，补发场景下 21:00–23:00 之间的内容会两头不沾。
+      if (digestCutoff) {
+        await prisma.userNotificationChannelSetting.updateMany({
+          where: { userId },
+          data: { lastDigestCutoffAt: digestCutoff }
+        });
+      }
       // 成功要清零 failureCount，否则一次永久失败之后，日后**不连续**的偶发失败
       // 会累加到阈值，把一个正常渠道误暂停。
       await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'sent', null);
@@ -877,12 +881,15 @@ interface UserNotifyPrefs {
   dailyLimit: number;
   mode: 'REALTIME' | 'DAILY_DIGEST';
   digestHour: number;
+  /** 上一次汇总的截止线；null = 从未发过 */
+  lastDigestCutoffAt: Date | null;
 }
 
 const DEFAULT_PREFS: Omit<UserNotifyPrefs, 'qqEnabled'> = {
   dailyLimit: 20,
   mode: 'REALTIME',
-  digestHour: 21
+  digestHour: 21,
+  lastDigestCutoffAt: null
 };
 
 export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): Promise<Map<number, UserNotifyPrefs>> {
@@ -896,7 +903,7 @@ export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): 
     }),
     prisma.userNotificationChannelSetting.findMany({
       where: { userId: { in: userIds } },
-      select: { userId: true, qqDailyLimit: true, qqMode: true, qqDigestHour: true }
+      select: { userId: true, qqDailyLimit: true, qqMode: true, qqDigestHour: true, lastDigestCutoffAt: true }
     })
   ]);
 
@@ -912,6 +919,7 @@ export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): 
     p.dailyLimit = Math.max(1, Math.min(c.qqDailyLimit, DAILY_LIMIT));
     p.mode = c.qqMode as 'REALTIME' | 'DAILY_DIGEST';
     p.digestHour = c.qqDigestHour;
+    p.lastDigestCutoffAt = c.lastDigestCutoffAt ?? null;
   }
   return out;
 }
@@ -925,29 +933,27 @@ export function startOfUtc8Day(): Date {
 }
 
 /**
- * 该用户上一次汇总的**截止线**（没有则返回 null）。
+ * 下一次汇总的到期时刻 = 上次截止线之后的第一个 digestHour 边界。
  *
- * 【为什么是截止线而不是发送时刻】
- * 一次汇总只包含「截止线之前」的内容。若补发发生在 23:00（截止线是 21:00），
- * 用 sentAt=23:00 当作下次的起点，21:00–23:00 之间产生的内容就被永久跳过 ——
- * 它们当时因「晚于截止线」被推迟，之后又因「早于起点」被排除，两头不沾。
- * 用截止线做锚点，两次汇总的覆盖区间才能严丝合缝地接上。
+ * 【为什么不是「今天的 digestHour」】
+ * 宕机跨过午夜时（比如周二 21:00 到周三 01:00），只比较「今天几点」的做法
+ * 会把周二那封未发的汇总推到周三 21:00 —— 而两次截止线相隔约 48 小时，
+ * 早期内容已经被收集窗口丢掉了。
+ * 以「上次截止线」为基准推算，逾期的汇总在恢复后的第一轮就会补上，
+ * 且它的截止线仍然是周二 21:00，覆盖区间照样接得上。
  *
- * 兼容：早期数据没有 digestCutoff，退回 sentAt（那时不存在补发，两者相同）。
+ * 从未发过时（lastCutoff 为 null）退回今天的 digestHour。
  */
-async function lastDigestCutoff(prisma: PrismaClient, userId: number): Promise<Date | null> {
-  const rows = await prisma.$queryRaw<Array<{ at: Date | null }>>`
-    SELECT MAX(COALESCE(
-      (payload->>'digestCutoff')::timestamptz,
-      "sentAt",
-      "createdAt"
-    )) AS at
-    FROM "NotificationDelivery"
-    WHERE "userId" = ${userId}
-      AND state = 'SENT'
-      AND payload->>'digestKey' IS NOT NULL
-  `;
-  return rows[0]?.at ?? null;
+export function nextDigestDueAt(lastCutoff: Date | null, digestHour: number): Date {
+  const todayBoundary = utc8HourToday(digestHour);
+  if (!lastCutoff) return todayBoundary;
+  const DAY = 24 * 3600 * 1000;
+  let due = todayBoundary;
+  // 往前退到「刚好晚于上次截止线」的那个边界
+  while (due.getTime() - DAY > lastCutoff.getTime()) due = new Date(due.getTime() - DAY);
+  // 若今天的边界还不晚于上次截止线，则顺延到下一天
+  while (due.getTime() <= lastCutoff.getTime()) due = new Date(due.getTime() + DAY);
+  return due;
 }
 
 /** UTC+8 今天 hour:00 对应的 UTC 时刻。用于「本次汇总收哪些内容」的截止线。 */
@@ -991,7 +997,13 @@ function nextRetryAt(resumeRound: number): Date {
  * 必须在健康检查与重发**之前**跑：过期的本来就不该发，
  * 不该因为机器人恰好不可用就一直留着。
  */
-async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean): Promise<number> {
+async function expireStaleScheduledBatches(
+  prisma: PrismaClient,
+  dryRun: boolean,
+  /** 当前处于定时模式的用户。判定必须看**现在的模式**，不能看 payload 里的痕迹 —— 
+   *  用户可能是在批次转 SCHEDULED 之后才切换过来的。 */
+  digestUserIds?: Set<number>
+): Promise<number> {
   const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
   // 定时汇总的批次用**放宽一倍**的时限。
   //
@@ -1016,10 +1028,15 @@ async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean
         ]
       },
       {
-        // 带 digestCutoff 的是定时批次 —— 只有超过放宽后的时限才判死
+        // 定时用户的批次只有超过放宽时限才判死。
+        // 按 userId 而非 payload 判断：用户可能在批次转 SCHEDULED 之后
+        // 才切成定时模式，那时 payload 里根本没有 digestCutoff。
         OR: [
-          { payload: { path: ['digestCutoff'], equals: Prisma.DbNull } },
-          { payload: { path: ['detectedAt'], lt: digestCutoff.toISOString() } }
+          ...(digestUserIds && digestUserIds.size > 0
+            ? [{ userId: { notIn: [...digestUserIds] } }]
+            : []),
+          { payload: { path: ['detectedAt'], lt: digestCutoff.toISOString() } },
+          ...(digestUserIds && digestUserIds.size > 0 ? [] : [{ userId: { gt: -1 } }])
         ]
       }
     ]
@@ -1060,11 +1077,13 @@ async function resumeScheduledBatches(
   /** 发送前复验绑定（与常规投递共用同一份实现与缓存） */
   revalidateTarget?: (t: QqTarget) => Promise<QqTarget | null>,
   /** 与常规投递共用同一份偏好，保证两条路径行为一致 */
-  prefsByUser?: Map<number, UserNotifyPrefs>
+  prefsByUser?: Map<number, UserNotifyPrefs>,
+  /** 当前处于定时模式的用户，用于过期判定 */
+  digestUserIds?: Set<number>
 ): Promise<{ replayed: number; skipped: boolean }> {
   // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
   // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
-  await expireStaleScheduledBatches(prisma, dryRun);
+  await expireStaleScheduledBatches(prisma, dryRun, digestUserIds);
 
   const now = new Date();
   const rows = await prisma.notificationDelivery.findMany({

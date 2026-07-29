@@ -514,6 +514,14 @@ model UserNotificationChannelSetting {
   qqMode       QqDeliveryMode @default(REALTIME)
   /// DAILY_DIGEST 模式下的发送整点，0–23，按 UTC+8 解释
   qqDigestHour Int            @default(21)
+  /// 上一次成功发出的汇总所对应的**截止线**（不是发送时刻）。
+  ///
+  /// 显式存下来，而不是从投递记录反推。反推的做法在跨午夜宕机、
+  /// 中途切换模式这些情形下必然出错 —— 「现在属于哪个汇总周期」
+  /// 是一个状态，不是能从时钟和历史记录可靠推导出来的东西。
+  /// 有了它，下次到期时刻 = 它之后的第一个 digestHour 边界，
+  /// 逾期未发的汇总在恢复后会立刻补上，而不必等到明天同一时刻。
+  lastDigestCutoffAt DateTime?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)

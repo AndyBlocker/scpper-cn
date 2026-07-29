@@ -75,3 +75,8 @@ FROM "UserMetricPreference" ump
 WHERE (ump.config->>'muted') IN ('true', 'True', 'TRUE')
   AND ump."metric" IN ('COMMENT_COUNT', 'VOTE_COUNT', 'REVISION_COUNT')
 ON CONFLICT ("userId", "type") DO NOTHING;
+
+-- 汇总周期状态。显式记录「上一次汇总的截止线」，
+-- 而不是从投递记录反推 —— 反推在跨午夜宕机、中途切换模式时必然出错。
+ALTER TABLE "UserNotificationChannelSetting"
+  ADD COLUMN "lastDigestCutoffAt" TIMESTAMP(3);
