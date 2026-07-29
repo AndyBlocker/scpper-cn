@@ -23,6 +23,9 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       if (followerId == null) return res.json({ ok: true, alerts: [], unreadCount: 0 });
 
       const { type } = req.query as Record<string, string>;
+      // 同 /alerts：不加这个参数，客户端过滤会让「最新 20 条已读完」的用户
+      // 看到空列表而徽标仍有数字
+      const unreadOnly = String(req.query.unreadOnly ?? '') === '1';
       const limit = Math.max(1, Math.min(parseInt(String(req.query.limit ?? '20'), 10) || 20, 50));
       const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);
 
@@ -43,12 +46,18 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         SELECT a.id, a.type, a."detectedAt", a."acknowledgedAt", a."pageId",
                p."wikidotId" AS "pageWikidotId", p."currentUrl" AS "pageUrl",
                pv.title AS "pageTitle", pv."alternateTitle" AS "pageAlternateTitle",
-               a."targetUserId"
+               a."targetUserId",
+               -- 被关注者的名字：此前只返回 targetUserId，前端只能显示「你关注的作者」，
+               -- 用户看不出到底是谁动了什么，关注多个作者时这条提醒几乎没有信息量
+               tu."displayName" AS "targetDisplayName",
+               tu."wikidotId" AS "targetWikidotId"
         FROM "UserActivityAlert" a
         JOIN "Page" p ON p.id = a."pageId"
         LEFT JOIN "PageVersion" pv ON pv."pageId" = a."pageId" AND pv."validTo" IS NULL
+        LEFT JOIN "User" tu ON tu.id = a."targetUserId"
         WHERE a."followerId" = $1
           ${alertsTypeClause}
+          ${unreadOnly ? 'AND a."acknowledgedAt" IS NULL' : ''}
         ORDER BY a."detectedAt" DESC
         LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `;

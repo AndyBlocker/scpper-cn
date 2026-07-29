@@ -171,7 +171,7 @@
                   <ul v-else class="mt-3 space-y-3">
                     <li
                       v-for="(item, idx) in visibleDropdownItems"
-                      :key="`${item.source}-${item.id}-${item.source === 'forum' ? item.type : ((item as any).sourceMetric || item.metric)}`"
+                      :key="`${item.source}-${item.id}`"
                       class="rounded-xl border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.88)] transition hover:border-[var(--g-accent-border)] hover:bg-[rgb(var(--panel)_/_0.95)]"
                     >
                       <button
@@ -196,7 +196,11 @@
                             <span class="mr-1 rounded px-1 py-0.5 text-[10px] border border-[rgb(var(--panel-border)_/_0.45)]">{{ forumTypeLabelMap[item.type] }}</span>
                             {{ forumActorName(item) }}{{ forumActionText(item) }}
                           </template>
-                          <template v-else>
+                          <template v-else-if="isFollowDropdownItem(item)">
+                            <span class="mr-1 rounded px-1 py-0.5 text-[10px] border border-[rgb(var(--panel-border)_/_0.45)]">关注</span>
+                            {{ followDropdownAction(item) }}
+                          </template>
+                          <template v-else-if="isPageDropdownItem(item)">
                             <template v-if="isAllTab">
                               <span class="mr-1 rounded px-1 py-0.5 text-[10px] border border-[rgb(var(--panel-border)_/_0.45)]">{{ metricLabel(item.metric) }}</span>
                             </template>
@@ -212,7 +216,7 @@
                             <span v-if="item.newValue != null" class="ml-2 text-[11px] text-[rgb(var(--muted)_/_0.8)]">当前：{{ Math.round(Number(item.newValue)) }}</span>
                           </template>
                         </div>
-                        <div v-if="!isForumDropdownItem(item) && item.pageAlternateTitle" class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.8)] truncate">
+                        <div v-if="isPageDropdownItem(item) && item.pageAlternateTitle" class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.8)] truncate">
                           {{ item.pageAlternateTitle }}
                         </div>
                         <div v-else-if="isForumDropdownItem(item) && item.postExcerpt" class="mt-1 text-[11px] text-[rgb(var(--muted)_/_0.8)] line-clamp-2">
@@ -222,7 +226,7 @@
                     </li>
                   </ul>
                   <NuxtLink
-                    to="/account"
+                    to="/account?tab=alerts"
                     class="mt-4 block text-center text-xs font-medium text-[var(--g-accent)] hover:underline"
                     @click="isAlertsDropdownOpen = false"
                   >前往账户中心查看全部</NuxtLink>
@@ -414,6 +418,8 @@ import { useAuth } from '~/composables/useAuth'
 import { useThemeSettings } from '~/composables/useThemeSettings'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useForumInteractionAlerts, type ForumInteractionAlertItem, type ForumInteractionAlertType } from '~/composables/useForumInteractionAlerts'
+import { useFollowAlerts, type FollowAlertItem } from '~/composables/useFollowAlerts'
+import { useFollows } from '~/composables/useFollows'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
   script: [
@@ -501,14 +507,34 @@ const {
   unreadCount: forumUnreadCount,
   fetchAlerts: fetchForumAlerts,
   markRead: markForumAlertRead,
-  markAllRead: markAllForumAlertsRead
+  markAllRead: markAllForumAlertsRead,
+  resetState: resetForumAlertsState
 } = useForumInteractionAlerts()
 
 const isAlertsDropdownOpen = ref(false)
 const alertsActiveTab = ref<'ALL' | AlertMetric>('ALL')
 const isAllTab = computed(() => alertsActiveTab.value === 'ALL')
 const isMetricTab = computed(() => alertsActiveTab.value !== 'ALL')
-const combinedUnreadCount = computed(() => Number(totalUnreadCount.value || 0) + Number(forumUnreadCount.value || 0))
+const {
+  alerts: followAlertsForBell,
+  unreadCount: followUnreadCount,
+  fetchAlerts: fetchFollowAlertsForBell,
+  markRead: markFollowAlertRead,
+  markAllRead: markAllFollowAlertsRead,
+  resetState: resetFollowAlertsState
+} = useFollowAlerts()
+// 关注列表同样是共享状态，换账号时 isFollowing 会用上一个人的数据回答
+const { resetState: resetFollowsState } = useFollows()
+// 偏好设置也是全局共享状态，换账号时同样要作废在途请求
+const { resetState: resetAlertSettingsState } = useAlertSettings()
+
+// 三个来源都要计入。旧版漏了关注提醒：关注的作者发布新修订时铃铛徽标恒为 0，
+// 下拉里也找不到，用户只有进 /account 的「关注」tab 才看得到。
+const combinedUnreadCount = computed(() =>
+  Number(totalUnreadCount.value || 0)
+  + Number(forumUnreadCount.value || 0)
+  + Number(followUnreadCount.value || 0)
+)
 const currentScopeUnread = computed(() => {
   if (isAllTab.value) return combinedUnreadCount.value
   return unreadByMetricVal.value?.[alertsActiveTab.value as AlertMetric] || 0
@@ -522,7 +548,8 @@ let stopOnline: (() => void) | undefined
 
 type ForumDropdownItem = ForumInteractionAlertItem & { source: 'forum' }
 type PageDropdownItem = AlertItem & { source: 'page' }
-type DropdownAlertItem = ForumDropdownItem | PageDropdownItem
+type FollowDropdownItem = FollowAlertItem & { source: 'follow' }
+type DropdownAlertItem = ForumDropdownItem | PageDropdownItem | FollowDropdownItem
 
 const avatarIdHeader = computed(() => {
   const id = authUser.value?.linkedWikidotId
@@ -540,12 +567,12 @@ const themeToggleLabel = computed(() =>
 const iconButtonBaseClass =
   'inline-flex h-10 w-10 items-center justify-center rounded-full border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.9)] text-[rgb(var(--muted-strong))] shadow-sm transition hover:border-[var(--g-accent-border)] hover:shadow-sm hover:text-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] focus:ring-offset-0';
 
+// RATING / SCORE 已从 AlertMetric 移除（Job 从不产生、生产库 0 行）。
+// 留着会让这个对象字面量违反 Record<AlertMetric, string> 的多余属性检查。
 const metricLabelMap: Record<AlertMetric, string> = {
   COMMENT_COUNT: '评论数',
   VOTE_COUNT: '投票数',
-  RATING: '评分',
-  REVISION_COUNT: '修订数',
-  SCORE: '得分'
+  REVISION_COUNT: '修订数'
 };
 
 const alertTimeFormatter = typeof Intl !== 'undefined'
@@ -596,6 +623,20 @@ function forumActionText(item: ForumInteractionAlertItem): string {
   return '提及了你'
 }
 
+function isFollowDropdownItem(item: DropdownAlertItem): item is FollowDropdownItem {
+  return item.source === 'follow'
+}
+
+function isPageDropdownItem(item: DropdownAlertItem): item is PageDropdownItem {
+  return item.source === 'page'
+}
+
+function followDropdownAction(item: FollowDropdownItem): string {
+  if (item.type === 'REVISION') return '编辑了页面'
+  if (item.type === 'ATTRIBUTION') return '发布了页面'
+  return '取消了署名'
+}
+
 function isForumDropdownItem(item: DropdownAlertItem): item is ForumDropdownItem {
   return item.source === 'forum'
 }
@@ -603,6 +644,10 @@ function isForumDropdownItem(item: DropdownAlertItem): item is ForumDropdownItem
 function dropdownItemTitle(item: DropdownAlertItem): string {
   if (isForumDropdownItem(item)) {
     return item.pageTitle || item.threadTitle || item.postTitle || '论坛帖子'
+  }
+  if (isFollowDropdownItem(item)) {
+    const who = item.targetDisplayName || `用户 ${item.targetWikidotId ?? item.targetUserId}`
+    return `${who}：${item.pageTitle || '未知页面'}`
   }
   return item.pageTitle || '未知页面'
 }
@@ -616,7 +661,14 @@ const allDropdownItems = computed<DropdownAlertItem[]>(() => {
     ...item,
     source: 'forum' as const
   }))
-  return [...pageItems, ...forumItems].sort((a, b) => {
+  // 关注提醒也要进下拉：徽标已经把它算进去了，只算不显示的话，
+  // 用户只有关注类通知时会看到「有 N 条」但菜单空空，且「全部已读」会清掉
+  // 他从没看见过的东西。
+  const followItems: FollowDropdownItem[] = (followAlertsForBell.value || []).map((item) => ({
+    ...item,
+    source: 'follow' as const
+  }))
+  return [...pageItems, ...forumItems, ...followItems].sort((a, b) => {
     const ta = new Date(a.detectedAt).getTime() || 0
     const tb = new Date(b.detectedAt).getTime() || 0
     return tb - ta
@@ -643,6 +695,7 @@ const toggleAlertsDropdown = () => {
     // Preload all metrics and revalidate
     void fetchAll(false);
     void fetchForumAlerts(false, 20, 0);
+    void fetchFollowAlertsForBell(false, 20, 0);
     // reset keyboard index
     selectedAlertIndex.value = -1;
   }
@@ -653,6 +706,15 @@ const handleAlertNavigate = (item: DropdownAlertItem) => {
     void markForumAlertRead(item.id);
     isAlertsDropdownOpen.value = false;
     navigateTo(`/forums/t/${item.threadId}?postId=${item.postId}`);
+    return;
+  }
+
+  // 关注提醒走自己的已读接口与跳转，不能落到页面提醒的分支
+  if (isFollowDropdownItem(item)) {
+    void markFollowAlertRead(item.id);
+    isAlertsDropdownOpen.value = false;
+    if (item.pageWikidotId) navigateTo(`/page/${item.pageWikidotId}`);
+    else navigateTo('/account?tab=alerts');
     return;
   }
 
@@ -671,9 +733,12 @@ const handleAlertNavigate = (item: DropdownAlertItem) => {
 
 const handleMarkAllAlerts = () => {
   if (isAllTab.value) {
+    // 三套都要清。旧版只清了页面与论坛，点完「全部已读」铃铛归零，
+    // 但进 /account?tab=alerts 切到关注仍是一堆未读。
     void Promise.all([
       markAllRead('ALL'),
-      markAllForumAlertsRead()
+      markAllForumAlertsRead(),
+      markAllFollowAlertsRead()
     ]);
   } else {
     void markAllRead(alertsActiveTab.value as AlertMetric);
@@ -748,7 +813,8 @@ onMounted(() => {
       if (authUser.value?.linkedWikidotId) {
         return Promise.all([
           fetchAll(true),
-          fetchForumAlerts(true, 20, 0)
+          fetchForumAlerts(true, 20, 0),
+          fetchFollowAlertsForBell(true, 20, 0)
         ]).catch((err) => {
           console.warn('[layout] alerts fetch after auth load failed', err)
         })
@@ -760,7 +826,8 @@ onMounted(() => {
   } else if (authStatus.value === 'authenticated' && authUser.value?.linkedWikidotId) {
     Promise.all([
       fetchAll(false),
-      fetchForumAlerts(false, 20, 0)
+      fetchForumAlerts(false, 20, 0),
+      fetchFollowAlertsForBell(false, 20, 0)
     ]).catch((err) => {
       console.warn('[layout] initial alerts fetch failed', err)
     })
@@ -991,22 +1058,37 @@ onBeforeUnmount(() => {
   document.body.style.overflow = '';
 });
 
+/**
+ * 提醒状态是通过 useState 全局共享的。身份一变必须先清空再取：
+ * A 登出、B 在同一标签页登录时，若不清空，B 会看到 A 的未读数**和通知标题**
+ * —— 这是跨账号的信息泄露，不只是显示不准。
+ * 关注提醒是本次新接入的第三个来源，同样要清（原先只清了页面与论坛）。
+ */
+function resetAllAlertState() {
+  // 每个 composable 的 resetState 都会递增自己的身份世代号，
+  // 让 A 的在途请求回来时被丢弃，而不是写进 B 看到的共享状态。
+  resetAlertsState()
+  resetFollowAlertsState()
+  resetForumAlertsState()
+  resetFollowsState()
+  resetAlertSettingsState()
+  isAlertsDropdownOpen.value = false
+}
+
 watch([
   () => authStatus.value,
   () => authUser.value?.linkedWikidotId
 ], ([nextStatus, nextLinked]) => {
+  // 无论切到哪个身份都先清干净，再拉当前用户的数据
+  resetAllAlertState()
   if (nextStatus === 'authenticated' && nextLinked) {
     Promise.all([
       fetchAll(true),
-      fetchForumAlerts(true, 20, 0)
+      fetchForumAlerts(true, 20, 0),
+      fetchFollowAlertsForBell(true, 20, 0)
     ]).catch((err) => {
       console.warn('[layout] alerts fetch on auth change failed', err)
     })
-  } else {
-    resetAlertsState()
-    forumAlerts.value = []
-    forumUnreadCount.value = 0
-    isAlertsDropdownOpen.value = false
   }
 });
 

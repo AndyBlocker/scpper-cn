@@ -18,7 +18,9 @@
     "pm2:reload": "pm2 reload ecosystem.config.cjs",
     "pm2:stop": "pm2 stop ecosystem.config.cjs",
     "import:cn-events": "node scripts/import-cn-contests.mjs",
-    "colorize:cn-events": "node scripts/colorize-cn-contests.mjs"
+    "colorize:cn-events": "node scripts/colorize-cn-contests.mjs",
+    "test:qq-binding": "node --import tsx --test tests/qqBindingProof.test.ts",
+    "test:qq-binding:e2e": "node --import tsx tests/qqBinding.e2e.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.17.0",

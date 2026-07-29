@@ -44,6 +44,11 @@
     --danger: 220 38 38;        /* red-600 */
     --danger-strong: 185 28 28; /* red-700 */
 
+    /* warning (amber) —— 此前缺失：design-system.vue 的 .notif-icon.warning
+       引用了 --warning 却无定义，拿到的是无效颜色（背景透明）。 */
+    --warning: 217 119 6;       /* amber-600 */
+    --warning-strong: 180 83 9; /* amber-700 */
+
     /* slate neutrals for charts */
     --slate-300: 203 213 225;   /* slate-300 */
     --slate-400: 148 163 184;   /* slate-400 */
@@ -88,6 +93,8 @@
 
     --danger: 239 68 68;        /* red-500 */
     --danger-strong: 239 68 68; /* red-500 */
+    --warning: 245 158 11;      /* amber-500 */
+    --warning-strong: 245 158 11;
 
     --slate-300: 203 213 225;
     --slate-400: 148 163 184;

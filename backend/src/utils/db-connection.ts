@@ -14,6 +14,46 @@ let prismaInstance: PrismaClient | null = null;
 let signalsBound = false;
 
 /**
+ * 关停屏障：收到 SIGTERM/SIGINT 后、断开数据库之前要等待的收尾工作。
+ *
+ * 存在的理由是这里的信号处理会 process.exit(0) —— 同一个信号上别的监听器
+ * （比如「等本轮跑完再退」）根本来不及生效。需要保护关键区的调用方注册一个
+ * barrier，本模块等它 resolve 后再断连接退出。
+ *
+ * 有超时兜底：卡住的 barrier 不该让 PM2 的 stop 一直等到强杀。
+ */
+type ShutdownBarrier = () => Promise<void>;
+const shutdownBarriers = new Set<ShutdownBarrier>();
+const SHUTDOWN_BARRIER_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.SHUTDOWN_BARRIER_TIMEOUT_MS ?? '15000') || 15000
+);
+
+export function registerShutdownBarrier(fn: ShutdownBarrier): () => void {
+  shutdownBarriers.add(fn);
+  return () => { shutdownBarriers.delete(fn); };
+}
+
+async function awaitShutdownBarriers(): Promise<void> {
+  if (shutdownBarriers.size === 0) return;
+  const all = Promise.all([...shutdownBarriers].map(async (fn) => {
+    try { await fn(); } catch (error) {
+      console.warn('[shutdown] barrier 执行失败：', error instanceof Error ? error.message : error);
+    }
+  }));
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(`[shutdown] barrier 超过 ${SHUTDOWN_BARRIER_TIMEOUT_MS}ms 未完成，继续退出`);
+      resolve();
+    }, SHUTDOWN_BARRIER_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  await Promise.race([all, timeout]);
+  if (timer) clearTimeout(timer);
+}
+
+/**
  * 在 DATABASE_URL 中追加连接池参数（如果缺失）。
  * Prisma Query Engine 通过 URL 参数读取 connection_limit / pool_timeout。
  * 仅对 postgresql/postgres 协议生效；其他协议（如 file: SQLite）原样返回。
@@ -65,6 +105,11 @@ export function getPrismaClient(): PrismaClient {
     const graceful = async (signal?: string) => {
       try {
         if (signal) console.log(`Received ${signal}, disconnecting database...`);
+        // 先等注册过的关键区收尾，再断连接。
+        // 通知投递器就有这样一段：占位 PENDING → 调机器人 → 记录结果。
+        // 在中间被 process.exit 打断的话，那批候选下轮会重新入选，
+        // 等机器人那 15 分钟去重窗口一过就重复推给用户。
+        await awaitShutdownBarriers();
         await disconnectPrisma();
       } finally {
         if (signal) process.exit(0);

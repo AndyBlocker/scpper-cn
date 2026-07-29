@@ -30,6 +30,9 @@ import { ForumSyncProcessor } from '../core/processors/ForumSyncProcessor.js';
 import { WikidotForumClient } from '../core/client/WikidotForumClient.js';
 import { runSyncHourlyScheduler } from './sync-hourly.js';
 import { runWikidotBindingVerifyLoop } from './wikidot-binding-verify-loop.js';
+import { runNotifyDispatchLoop, runNotifyDispatchOnce } from './notify-dispatch.js';
+import { runNotifyRetention, parseRetentionOptions } from './notify-retention.js';
+import { runNotifyInspect } from './notify-inspect.js';
 import { runVoteResyncAudit } from './voteResyncAudit.js';
 import { runVoteTzDupCleanup } from './voteTzDupCleanup.js';
 import { runRepairUserVoteStats } from './repair-user-vote-stats.js';
@@ -89,6 +92,72 @@ program
     await runWikidotBindingVerifyLoop({
       intervalSeconds,
       runImmediately: Boolean(options.runImmediately)
+    });
+  });
+
+program
+  .command('notify-retention')
+  .description('Report (and optionally delete) old notification rows')
+  .option('--apply', 'Actually delete. Without this flag the command only reports counts.')
+  .option('--delivery-days <n>', 'Keep terminal-state deliveries for N days', '30')
+  .option('--alert-days <n>', 'Keep acknowledged alerts for N days', '180')
+  // parseRetentionOptions 一直在读 challengeDays、清理任务也在用，
+  // 但这里没声明对应的 flag —— Commander 会直接拒绝 --challenge-days，
+  // 于是这个保留期永远只能是默认的 90 天，改都改不了。
+  .option('--challenge-days <n>', 'Keep terminal-state binding challenges for N days', '90')
+  // 有限命令必须自己断开 Prisma：单例客户端的查询引擎会把 event loop 顶住，
+  // 命令打完结果却不退出。运维在排查时最不需要的就是一个卡住的终端。
+  .action(async (options) => {
+    try {
+      await runNotifyRetention(parseRetentionOptions(options as Record<string, unknown>));
+    } finally {
+      await disconnectPrisma();
+    }
+  });
+
+program
+  .command('notify-inspect')
+  .description('Show notification dispatcher health and recent delivery outcomes')
+  .option('--hours <n>', 'Look back N hours', '24')
+  .option('--failed', 'Also list individual failures')
+  .action(async (options) => {
+    const hours = Number.parseInt(String(options.hours ?? '24'), 10);
+    try {
+      await runNotifyInspect({
+        hours: Number.isFinite(hours) && hours > 0 ? hours : 24,
+        failedOnly: Boolean(options.failed)
+      });
+    } finally {
+      await disconnectPrisma();
+    }
+  });
+
+program
+  .command('notify-dispatch')
+  .description('Dispatch site notifications to bound external channels (QQ)')
+  .option('--interval-seconds <n>', 'Seconds between cycles (minimum 15)', '60')
+  .option('--run-immediately', 'Run one cycle immediately on startup')
+  .option('--once', 'Run a single cycle then exit (for manual runs / drills)')
+  .option('--dry-run', 'Print what would be sent without sending or recording anything')
+  .option('--reset-circuit', 'Clear a tripped global circuit breaker (first cycle only)')
+  .action(async (options) => {
+    const dryRun = Boolean(options.dryRun);
+    const resetCircuit = Boolean(options.resetCircuit);
+    if (options.once) {
+      // --once 是有限的，要断开；下面的 loop 常驻 PM2，由它自己的信号处理收尾。
+      try {
+        await runNotifyDispatchOnce({ dryRun, resetCircuit });
+      } finally {
+        await disconnectPrisma();
+      }
+      return;
+    }
+    const parsed = Number.parseInt(String(options.intervalSeconds ?? '60'), 10);
+    await runNotifyDispatchLoop({
+      intervalSeconds: Number.isFinite(parsed) ? parsed : 60,
+      runImmediately: Boolean(options.runImmediately),
+      dryRun,
+      resetCircuit
     });
   });
 

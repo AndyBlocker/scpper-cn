@@ -261,11 +261,18 @@ async function resolvePreferences(readPool: Pool, userId: number): Promise<{
   };
 }
 
+/**
+ * 把登录身份解析成主库 User.id。
+ *
+ * 原实现先试 `Number.parseInt(authUser.id, 10)` —— 但 authUser.id 是
+ * user-backend 的 **cuid 字符串**，与主库 User.id（自增整数）毫无关系。
+ * 目前 Prisma 的 cuid() 恒以字母 'c' 开头，parseInt 得到 NaN 才侥幸落到下面
+ * 正确的 wikidotId 分支；一旦 id 生成器换成 nanoid（可能以数字开头），
+ * 就会静默解析出**另一个用户的** User.id，读写到他人的提醒偏好。
+ * 同文件的 GET / 走的本来就是 wikidotId 路径，两套识别方式也不一致。
+ * 这里删掉那条捷径，统一只认 wikidotId。
+ */
 async function resolveAppUserId(readPool: Pool, authUser: AuthUserPayload): Promise<number | null> {
-  const parsed = Number.parseInt(authUser.id, 10);
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
   if (authUser.linkedWikidotId == null) {
     return null;
   }
@@ -277,10 +284,17 @@ async function resolveAppUserId(readPool: Pool, authUser: AuthUserPayload): Prom
   return Number.isFinite(resolved) ? resolved : null;
 }
 
-function normalizeMetric(metricParam?: string): string {
+/**
+ * 解析 metric 参数；无法识别时返回 null 而不是静默回落。
+ *
+ * 原实现对任何无法识别的值（含拼写错误）一律返回 COMMENT_COUNT。
+ * 后果不只是「查错了指标」——`POST /alerts/read-all` 传一个拼错的 metric
+ * 会把该用户**所有评论提醒**误标为已读，且没有任何报错。
+ */
+function normalizeMetric(metricParam?: string): string | null {
   if (!metricParam) return METRIC_ALIAS.comment;
   const key = metricParam.toLowerCase();
-  return METRIC_ALIAS[key] || METRIC_ALIAS.comment;
+  return METRIC_ALIAS[key] ?? null;
 }
 
 export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
@@ -305,13 +319,20 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
       }
 
       const metric = normalizeMetric(req.query.metric as string | undefined);
+      if (metric === null) {
+        return res.status(400).json({ ok: false, error: 'invalid_metric' });
+      }
       const limitParam = Number.parseInt(String(req.query.limit ?? '20'), 10);
       const offsetParam = Number.parseInt(String(req.query.offset ?? '0'), 10);
       const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 50)) : 20;
       const offset = Number.isFinite(offsetParam) ? Math.max(0, offsetParam) : 0;
+      // 只要未读。没有它的话，前端拿到最近 20 条后再在客户端过滤已读，
+      // 一旦最新 20 条都读过、更早的未读还在，界面就会显示「没有未读」
+      // 而徽标仍有数字，且无从翻到那些未读。
+      const unreadOnly = String(req.query.unreadOnly ?? '') === '1';
 
       // 缓存 30 秒 - 减少 sync 期间的数据库压力，同时保持数据较新
-      const cacheKey = `alerts:${authUser.linkedWikidotId}:${metric}:${limit}:${offset}`;
+      const cacheKey = `alerts:${authUser.linkedWikidotId}:${metric}:${limit}:${offset}:${unreadOnly ? 'u' : 'a'}`;
       const result = await cache.remember(cacheKey, 30, async () => {
         const alertsQuery = `
           SELECT
@@ -335,6 +356,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
           LEFT JOIN "PageVersion" pv ON pv."pageId" = pa."pageId" AND pv."validTo" IS NULL
           WHERE u."wikidotId" = $1
             AND pa."metric" = $2::"PageMetricType"
+            ${unreadOnly ? 'AND pa."acknowledgedAt" IS NULL' : ''}
           ORDER BY pa."detectedAt" DESC
           LIMIT $3 OFFSET $4
         `;
@@ -458,26 +480,19 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
         await client.query('BEGIN');
 
         if (updates.includes('vote') && voteThreshold !== null) {
-          const updatePref = await client.query(
+          // 原子 upsert。原先是「先 UPDATE，rowCount===0 再 INSERT」：
+          // 两个并发请求都判定 0 行时，第二条 INSERT 会撞 uniq_user_metric_preference
+          // 抛出未捕获异常 → 500。快速连点设置即可触发。
+          await client.query(
             `
-              UPDATE "UserMetricPreference"
-              SET "config" = jsonb_set(COALESCE("config", '{}'::jsonb), '{voteThreshold}', to_jsonb($2::numeric), true),
+              INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
+              VALUES ($1, 'VOTE_COUNT'::"PageMetricType", jsonb_build_object('voteThreshold', $2::numeric), NOW(), NOW())
+              ON CONFLICT ("userId", "metric") DO UPDATE
+              SET "config" = jsonb_set(COALESCE("UserMetricPreference"."config", '{}'::jsonb), '{voteThreshold}', to_jsonb($2::numeric), true),
                   "updatedAt" = NOW()
-              WHERE "userId" = $1
-                AND "metric" = 'VOTE_COUNT'::"PageMetricType"
             `,
             [userId, voteThreshold]
           );
-
-          if (updatePref.rowCount === 0) {
-            await client.query(
-              `
-                INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
-                VALUES ($1, 'VOTE_COUNT'::"PageMetricType", jsonb_build_object('voteThreshold', $2::numeric), NOW(), NOW())
-              `,
-              [userId, voteThreshold]
-            );
-          }
 
           const watchRows = await client.query<{ id: number; lastObserved: number | null; config: any }>(
             `
@@ -535,25 +550,18 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
             );
           }
 
-          if (existingPref) {
-            await client.query(
-              `
-                UPDATE "UserMetricPreference"
-                SET "config" = $2::jsonb,
-                    "updatedAt" = NOW()
-                WHERE id = $1
-              `,
-              [existingPref.id, JSON.stringify(nextPrefConfig)]
-            );
-          } else {
-            await client.query(
-              `
-                INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
-                VALUES ($1, 'REVISION_COUNT'::"PageMetricType", $2::jsonb, NOW(), NOW())
-              `,
-              [userId, JSON.stringify(nextPrefConfig)]
-            );
-          }
+          // 原子 upsert，理由同上（此处的 SELECT ... FOR UPDATE 对**不存在的行**
+          // 加不上锁，所以先查后插同样有竞态）
+          await client.query(
+            `
+              INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
+              VALUES ($1, 'REVISION_COUNT'::"PageMetricType", $2::jsonb, NOW(), NOW())
+              ON CONFLICT ("userId", "metric") DO UPDATE
+              SET "config" = EXCLUDED."config",
+                  "updatedAt" = NOW()
+            `,
+            [userId, JSON.stringify(nextPrefConfig)]
+          );
 
           const watchRows = await client.query<{ id: number; config: any }>(
             `
@@ -660,26 +668,17 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
           [userId, metric, muted, AUTO_WATCH_SOURCE]
         );
 
-        const prefUpdate = await client.query(
+        // 原子 upsert，理由同上。静音开关是最容易被连点的控件。
+        await client.query(
           `
-            UPDATE "UserMetricPreference"
-            SET "config" = jsonb_set(COALESCE("config", '{}'::jsonb), '{muted}', to_jsonb($3::boolean), true),
+            INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
+            VALUES ($1, $2::"PageMetricType", jsonb_build_object('muted', $3::boolean), NOW(), NOW())
+            ON CONFLICT ("userId", "metric") DO UPDATE
+            SET "config" = jsonb_set(COALESCE("UserMetricPreference"."config", '{}'::jsonb), '{muted}', to_jsonb($3::boolean), true),
                 "updatedAt" = NOW()
-            WHERE "userId" = $1
-              AND "metric" = $2::"PageMetricType"
           `,
           [userId, metric, muted]
         );
-
-        if (prefUpdate.rowCount === 0) {
-          await client.query(
-            `
-              INSERT INTO "UserMetricPreference" ("userId", "metric", "config", "createdAt", "updatedAt")
-              VALUES ($1, $2::"PageMetricType", jsonb_build_object('muted', $3::boolean), NOW(), NOW())
-            `,
-            [userId, metric, muted]
-          );
-        }
 
         await client.query('COMMIT');
       } catch (error) {
@@ -738,6 +737,10 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
       }
 
       const metric = normalizeMetric(req.body?.metric as string | undefined);
+      if (metric === null) {
+        // 400 而非静默回落：拼错 metric 曾会把该用户所有评论提醒误标已读
+        return res.status(400).json({ ok: false, error: 'invalid_metric' });
+      }
       const sql = `
         UPDATE "PageMetricAlert" pa
         SET "acknowledgedAt" = COALESCE(pa."acknowledgedAt", NOW())

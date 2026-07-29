@@ -1,0 +1,1244 @@
+/**
+ * 站外通知投递器（当前只有 QQ 渠道）。
+ *
+ * 形态是**旁路扫描**而非事件推送：每轮按 24 小时回看窗口扫三张告警表，
+ * 用 dedupeKey 比对 NotificationDelivery 剔除已推过的，聚合成一条摘要发出去。
+ * 三个告警 producer 一行不改 —— 它们跑在 scpper-sync 的关键路径上，
+ * 出问题停掉本进程即可完全回滚。
+ *
+ * 几条刻意的设计取舍：
+ *  1. **每轮每人只发一条摘要**，不做逐条即时推送。QQ 对私聊频率有风控，
+ *     而一次 sync 可能一口气产生上百条告警，逐条推等于主动送去封号。
+ *  2. **不碰 acknowledgedAt**。已读状态属于站内通知的语义，推送不该顺手把它标掉，
+ *     否则用户会发现「收到 QQ 提醒后站内红点就没了」。
+ *  3. **冷启动闸门**。首次上线时库里已有约 3.5 万条历史告警，没有闸门就会
+ *     一次性推给所有人。NOTIFY_DISPATCH_START_AT 之前的告警永不处理。
+ */
+
+import { Prisma, PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../utils/db-connection.js';
+import { loadActiveQqTargets, type QqTarget } from '../services/userDirectory.js';
+import { checkHealth, isPermanentFailure, pushQqMessage, EXPECTED_CONTRACT } from '../services/qqPush.js';
+
+const LOOKBACK_HOURS = Math.max(1, Number(process.env.NOTIFY_LOOKBACK_HOURS ?? '24') || 24);
+/** 单用户单轮上限：超出的合并为一句「还有 N 条」，避免一个人的告警风暴刷屏 */
+const CIRCUIT_USER_MAX = Math.max(1, Number(process.env.NOTIFY_CIRCUIT_USER_MAX ?? '20') || 20);
+/**
+ * 全局单轮上限。必须有：`analyze --full` 或 AnalysisWatermark 丢失会让 changeSet
+ * 退化为全库重算，单轮可能产生上万条告警。跳闸后需人工复位（--reset-circuit），
+ * 因为进程重启就自愈的话，真正的问题还在。
+ */
+const CIRCUIT_GLOBAL_MAX = Math.max(1, Number(process.env.NOTIFY_CIRCUIT_GLOBAL_MAX ?? '2000') || 2000);
+/** 单用户每日投递上限 */
+const DAILY_LIMIT = Math.max(1, Number(process.env.NOTIFY_DAILY_LIMIT ?? '40') || 40);
+
+/**
+ * 摘要里「查看全部」指向的站点。必须是 **SCPper 前端**的域名，
+ * 因为 /account 这个页面由前端提供 —— 默认值原先写的是 scp-cn.wiki
+ * （SCP 中文站本身），链接过去只会是一个不存在的页面。
+ */
+const SITE_BASE = (process.env.NOTIFY_SITE_BASE || 'https://scpper.mer.run').replace(/\/$/, '');
+
+/**
+ * 灰度名单：逗号分隔的 wikidotId。**未配置**才表示不限制。
+ *
+ * 关键区别：配了但一个都解析不出来（比如写成分号分隔、或全是拼错的值）时
+ * 返回**空集合**而不是 null —— 原实现返回 null，调用方当成「不限制」，
+ * 于是一个笔误就把灰度发布变成了全量群发。宁可一条不发也不能发错人。
+ */
+function parseAllowlist(): Set<number> | null {
+  const raw = (process.env.NOTIFY_QQ_ALLOWLIST || '').trim();
+  if (!raw) return null;
+  const set = new Set<number>();
+  for (const part of raw.split(',')) {
+    const t = part.trim();
+    if (!t) continue;
+    // 必须整条都是正整数。parseInt('123abc') 会得到 123、parseInt('1e3') 得到 1，
+    // 把畸形条目当成合法 wikidotId 意味着把私人通知推给一个无关的人。
+    if (!/^[1-9][0-9]*$/.test(t)) {
+      console.error(`[notify] NOTIFY_QQ_ALLOWLIST 含非法条目「${t}」，已忽略该条`);
+      continue;
+    }
+    set.add(Number(t));
+  }
+  if (set.size === 0) {
+    console.error('[notify] NOTIFY_QQ_ALLOWLIST 已配置但解析不出任何 wikidotId，本轮不投递任何人');
+  }
+  return set;
+}
+
+/**
+ * 冷启动闸门。
+ *
+ * 两个要同时满足的目标：
+ *  1. 首次上线不能把库里约 3.5 万条历史告警群发出去 —— 所以未配置时不能是「不限制」；
+ *  2. 闸门**不能随每次重启前移** —— 否则投递器停机（部署、崩溃、熔断复位）期间
+ *     产生的告警会落到窗口之外，既不重试也不记录，等于静默丢失。
+ *
+ * 做法：首轮把闸门值落库（NotificationDispatchState.cutoffAt），之后一律读库里的。
+ * 显式配置了 NOTIFY_DISPATCH_START_AT 时以环境变量为准并同步回库，
+ * 便于运维需要时前移或回拨。
+ */
+async function resolveCutoff(prisma: PrismaClient, persisted: Date | null, dryRun = false): Promise<Date> {
+  const raw = (process.env.NOTIFY_DISPATCH_START_AT || '').trim();
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      if (!persisted || persisted.getTime() !== parsed.getTime()) {
+        // 演练不得改动闸门：它决定真实投递器会跳过哪些历史告警，
+        // 一次「只看看」的命令把它写死，影响会一直留在生产上。
+        if (dryRun) {
+          console.warn(`[notify][dry-run] 闸门将被写为 ${parsed.toISOString()}（本次未写入）`);
+        } else {
+          await prisma.notificationDispatchState.update({ where: { id: 1 }, data: { cutoffAt: parsed } });
+        }
+      }
+      return parsed;
+    }
+    console.warn(`[notify] NOTIFY_DISPATCH_START_AT 无法解析（${raw}），改用已落库的闸门`);
+  }
+  if (persisted) return persisted;
+  // 首次运行且未显式配置：落一个进程启动时刻，此后不再变动
+  if (dryRun) {
+    console.warn(
+      `[notify][dry-run] 尚未落库过冷启动闸门；真实运行会把它固定为进程启动时刻`
+      + `（本次按 ${PROCESS_START.toISOString()} 试算，未写入）。`
+    );
+    return PROCESS_START;
+  }
+  await prisma.notificationDispatchState.update({ where: { id: 1 }, data: { cutoffAt: PROCESS_START } });
+  console.warn(
+    `[notify] 未配置 NOTIFY_DISPATCH_START_AT，已把冷启动闸门固定为 ${PROCESS_START.toISOString()} 并落库。`
+    + ' 如需调整请设置该环境变量。'
+  );
+  return PROCESS_START;
+}
+
+const PROCESS_START = new Date();
+
+/**
+ * 本次进程的运行标识，写进 payload.runId。
+ * 用于「部分抢占后退让」时只删自己登记的占位 —— 无差别删除会把胜出方的
+ * 占位也删掉，胜出方随后发送成功却更新到 0 行，那批候选于是又变回可投递，
+ * 稍后会被重复发送。
+ */
+const RUN_ID = `${process.pid}-${PROCESS_START.getTime()}`;
+
+interface Candidate {
+  source: 'page_metric' | 'follow_activity' | 'forum';
+  dedupeKey: string;
+  userId: number;
+  detectedAt: Date;
+  line: string;
+}
+
+type Row = Record<string, unknown>;
+
+function pageUrl(row: Row): string {
+  const url = row.pageUrl ? String(row.pageUrl) : '';
+  if (url.startsWith('http')) return url;
+  const wid = row.pageWikidotId;
+  return wid ? `${SITE_BASE}/page/${wid}` : SITE_BASE;
+}
+
+function pageLabel(row: Row): string {
+  const title = row.pageTitle ? String(row.pageTitle) : '';
+  const alt = row.pageAlternateTitle ? String(row.pageAlternateTitle) : '';
+  if (title && alt) return `${title}（${alt}）`;
+  return title || alt || String(row.pageUrl ?? '未知页面');
+}
+
+const METRIC_LABEL: Record<string, string> = {
+  COMMENT_COUNT: '评论',
+  VOTE_COUNT: '投票',
+  REVISION_COUNT: '编辑'
+};
+
+export interface DispatchOptions {
+  dryRun?: boolean;
+  resetCircuit?: boolean;
+  /**
+   * 是否已收到停止信号。返回 true 时**不再开始新的收件人**，
+   * 但当前这一条正在进行的原子投递（占位 → 发送 → 记账）一定跑完。
+   *
+   * 关停屏障若傻等整轮，多收件人的一轮可能超过 15 秒超时上限，
+   * 超时后进程照退，反而在某个后续收件人发送到一半时被砍断 ——
+   * 恰好是屏障要防的那件事。粒度必须落到单次投递。
+   */
+  shouldStop?: () => boolean;
+}
+
+export interface DispatchSummary {
+  targets: number;
+  candidates: number;
+  sent: number;
+  suppressed: number;
+  failed: number;
+  circuitTripped: boolean;
+  skippedReason?: string;
+}
+
+export async function runNotificationDispatch(options: DispatchOptions = {}): Promise<DispatchSummary> {
+  const prisma = getPrismaClient();
+  const summary: DispatchSummary = {
+    targets: 0, candidates: 0, sent: 0, suppressed: 0, failed: 0, circuitTripped: false
+  };
+
+  if (options.resetCircuit) {
+    // 这里是**最先**执行的一处熔断写操作，必须自己带 dry-run 判断 ——
+    // 后面那些分支的 dry-run 守卫根本轮不到执行。
+    // 漏掉的后果很实在：运维用 `--once --dry-run --reset-circuit` 想「看看复位会发生什么」，
+    // 结果熔断真被清掉，常驻的 PM2 投递器下一轮就开始把积压发出去。
+    if (options.dryRun) {
+      console.warn('[notify][dry-run] --reset-circuit 未执行：真实运行会清除熔断状态并恢复投递');
+    } else {
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 },
+        data: { circuitTrippedAt: null, circuitReason: null }
+      });
+      console.log('[notify] 全局熔断已人工复位');
+    }
+  }
+
+  const state = await prisma.notificationDispatchState.upsert({
+    where: { id: 1 },
+    create: { id: 1 },
+    // 演练不推进 lastRunAt：notify-inspect 用它判断投递器是否还活着，
+    // 让一次演练把「其实已经停了」伪装成「刚跑过」是帮倒忙。
+    update: options.dryRun ? {} : { lastRunAt: new Date() }
+  });
+  if (state.circuitTrippedAt && !options.resetCircuit) {
+    summary.skippedReason = `全局熔断于 ${state.circuitTrippedAt.toISOString()} 跳闸（${state.circuitReason ?? '未知原因'}），需 notify-dispatch --reset-circuit 复位`;
+    console.warn(`[notify] ${summary.skippedReason}`);
+    summary.circuitTripped = true;
+    return summary;
+  }
+
+  const targets = await loadActiveQqTargets();
+  const allowlist = parseAllowlist();
+  const effective = allowlist ? targets.filter((t) => allowlist.has(t.wikidotId)) : targets;
+  summary.targets = effective.length;
+  if (effective.length === 0) {
+    // 一个目标都没有（全被暂停/解绑/挡在灰度名单外）时也必须跑一次清理：
+    // 否则残留的 SCHEDULED 行永远不会过期，等某个目标日后重新启用，
+    // 那批陈年批次会被当成待重发原样送出去。
+    await expireStaleScheduledBatches(prisma, Boolean(options.dryRun));
+    return summary;
+  }
+
+  // wikidotId → 主库 User.id。所有告警表按 User.id 索引，而绑定侧只有 wikidotId。
+  const wikidotIds = effective.map((t) => t.wikidotId);
+  const users = await prisma.user.findMany({
+    where: { wikidotId: { in: wikidotIds } },
+    select: { id: true, wikidotId: true }
+  });
+  const byWikidotId = new Map<number, number>();
+  for (const u of users) {
+    if (u.wikidotId != null) byWikidotId.set(u.wikidotId, u.id);
+  }
+  const targetByUserId = new Map<number, QqTarget>();
+  for (const t of effective) {
+    const uid = byWikidotId.get(t.wikidotId);
+    if (uid != null) targetByUserId.set(uid, t);
+  }
+  /**
+   * 发送前复验绑定是否仍然有效。
+   *
+   * 目标快照是**整轮开始时**取的一份，但一轮可能很长：单轮上限 2000 条候选、
+   * 每次推送最多等 5 秒，收件人又是串行处理的。排在后面的收件人真正被发送时，
+   * 这份快照可能已经过期很久 —— 期间用户解绑或渠道被自动暂停，
+   * 他仍会收到通知。这属于「已经撤销授权却还在收消息」，不只是数据不新。
+   *
+   * 快照超过 TTL 就重取一次，并确认该收件人的绑定身份没变；
+   * 身份变了（重绑）或已不在列表里（解绑/暂停）就跳过，不占用重试次数。
+   *
+   * 【重取后必须刷新时间戳并缓存结果】
+   * 否则 targetsLoadedAt 永远停在轮次开始时刻，超过 60 秒后**每个**收件人
+   * 都会触发一次 loadActiveQqTargets({force:true}) —— 那是建 Prisma 连接、
+   * 全表扫活跃绑定、再断开的一整套跨库操作。一轮几百个收件人就是几百次全量扫描，
+   * 越忙的投递器越追不上进度。刷新时间戳后，一次重取覆盖之后一整个 TTL 窗口。
+   */
+  const TARGET_SNAPSHOT_TTL_MS = 60_000;
+  let targetsLoadedAt = Date.now();
+  let freshByBindingId: Map<string, QqTarget> | null = null;
+
+  const revalidateTarget = async (t: QqTarget): Promise<QqTarget | null> => {
+    if (Date.now() - targetsLoadedAt < TARGET_SNAPSHOT_TTL_MS) {
+      // 仍在有效期内：若上次重取过，以那份更新的为准
+      return freshByBindingId ? (freshByBindingId.get(t.bindingId) ?? null) : t;
+    }
+    const fresh = await loadActiveQqTargets({ force: true });
+    freshByBindingId = new Map(fresh.map((x) => [x.bindingId, x]));
+    targetsLoadedAt = Date.now();
+    const still = freshByBindingId.get(t.bindingId);
+    if (!still || still.address !== t.address) {
+      console.warn(`[notify] 用户 ${t.wikidotId} 的绑定在本轮进行中已失效（解绑/暂停/重绑），跳过`);
+      return null;
+    }
+    return still;
+  };
+
+  const userIds = [...targetByUserId.keys()];
+  if (userIds.length === 0) {
+    await expireStaleScheduledBatches(prisma, Boolean(options.dryRun));
+    return summary;
+  }
+
+  const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
+  const startAt = await resolveCutoff(prisma, state.cutoffAt ?? null, options.dryRun);
+  // 取两者更晚的：冷启动闸门优先于回看窗口
+  const floor = since > startAt ? since : startAt;
+
+  // 清理崩溃遗留的占位：进程若在「占位」与「转终态」之间退出，那批 PENDING
+  // 会永久挡住这些候选。超过 10 分钟仍是 PENDING 的一定是这种情况（正常路径是秒级）。
+  // 演练只报数不删：删掉的是真实投递器的占位，可能让它把同一批重发一次。
+  const staleCutoff = new Date(Date.now() - 10 * 60 * 1000);
+  if (options.dryRun) {
+    const staleCount = await prisma.notificationDelivery.count({
+      where: { state: 'PENDING', createdAt: { lt: staleCutoff } }
+    });
+    if (staleCount > 0) console.warn(`[notify][dry-run] 有 ${staleCount} 条陈旧 PENDING 占位，真实运行会清理它们`);
+  } else {
+    // 转 SCHEDULED 而不是删掉。
+    //
+    // 这些占位来自「机器人可能已经收下、进程却在记账前挂了」的场景。
+    // 删掉的话原始 digestKey 一并没了，下轮重新组批 —— 期间只要来一条新告警，
+    // 摘要就多一行、key 随之改变，等机器人 15 分钟去重窗口一过，
+    // 同样那几行会被再推一遍。保留原批次与原 key 才能让重发真正幂等。
+    // 没有 digestKey 的（更早版本写入的）保持删除，它们本来就重建不出原消息。
+    const staleWithDigest = await prisma.notificationDelivery.updateMany({
+      where: {
+        state: 'PENDING',
+        createdAt: { lt: staleCutoff },
+        NOT: { payload: { path: ['digestKey'], equals: Prisma.DbNull } }
+      },
+      data: { state: 'SCHEDULED', lastError: 'stale_claim_recovered' }
+    });
+    const staleWithoutDigest = await prisma.notificationDelivery.deleteMany({
+      where: { state: 'PENDING', createdAt: { lt: staleCutoff } }
+    });
+    if (staleWithDigest.count > 0) {
+      console.warn(`[notify] ${staleWithDigest.count} 条陈旧 PENDING 占位转为待重发（保留原 digestKey，重发即幂等）`);
+    }
+    if (staleWithoutDigest.count > 0) {
+      console.warn(`[notify] 清理了 ${staleWithoutDigest.count} 条无 digestKey 的陈旧占位，这些候选将重新入选`);
+    }
+  }
+
+  // 先把上一轮暂时失败、留成 SCHEDULED 的批次原样重发，再去扫新候选。
+  // 顺序不能反：这些行仍在库里，collectCandidates 会把它们排除在新批次之外，
+  // 于是「原批次重发」与「新告警组新批」互不干扰。
+  // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
+  // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
+  const replayResult = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget);
+  const replayedCount = replayResult.replayed;
+  const replaySkipped = replayResult.skipped;
+
+  const collected = await collectCandidates(prisma, userIds, floor);
+
+  // 每个收件人还有自己的起点：绑定生效时刻。
+  //
+  // 全局闸门与回看窗口只管「系统整体从哪天开始推」，管不了「这个人从哪一刻起同意接收」。
+  // 不加这层过滤的话，用户绑完 QQ 的第一轮就会收到绑定**之前**最多 24 小时的积压 ——
+  // 他授权的是今后的动态，不是过去一天的，观感上像是刚绑就被刷屏。
+  // 这里只过滤不记账：这些候选会随回看窗口自然滑出，不必为它们写一堆抑制记录。
+  const candidates: Candidate[] = [];
+  let preBindingSkipped = 0;
+  for (const c of collected) {
+    const boundAt = targetByUserId.get(c.userId)?.verifiedAt ?? null;
+    if (boundAt && c.detectedAt <= boundAt) { preBindingSkipped += 1; continue; }
+    candidates.push(c);
+  }
+  if (preBindingSkipped > 0) {
+    console.log(`[notify] 跳过 ${preBindingSkipped} 条产生于绑定生效之前的告警`);
+  }
+
+  summary.candidates = candidates.length;
+  if (candidates.length === 0) {
+    // 重发因机器人不可用而被跳过时，这一轮**不算成功**。
+    // 照旧推进 lastSuccessAt 的话，notify-inspect 在整个宕机期间都显示
+    // 「刚刚成功过」，而队列里的投递一条都发不出去 —— 正好瞒住了要排查的问题。
+    if (!options.dryRun && !replaySkipped) {
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 }, data: { lastSuccessAt: new Date() }
+      });
+    }
+    if (replaySkipped) summary.skippedReason = 'bot_unavailable';
+    return summary;
+  }
+
+  // 单轮上限是**整轮**的，重发已经用掉的额度要一并计入 ——
+  // 否则故障恢复时可以先发满一份重发、再发满一份新投递，实际是宣称上限的两倍。
+  if (candidates.length + replayedCount > CIRCUIT_GLOBAL_MAX) {
+    const reason = replayedCount > 0
+      ? `单轮候选 ${candidates.length} 条 + 已重发 ${replayedCount} 条超过全局上限 ${CIRCUIT_GLOBAL_MAX}`
+      : `单轮候选 ${candidates.length} 条超过全局上限 ${CIRCUIT_GLOBAL_MAX}`;
+    if (options.resetCircuit) {
+      // --reset-circuit 时必须**消化掉**触发跳闸的那批积压，否则复位后立刻重新扫到
+      // 同一批候选、再次跳闸 —— 熔断从此永远恢复不了，除非等它们过了回看窗口
+      // 或运维手动改上限。这里把它们标成 SUPPRESSED（不是失败，是主动放弃），
+      // 并把闸门推进到最新一条之后，让下一轮从干净状态开始。
+      const newest = candidates.reduce((a, c) => (c.detectedAt > a ? c.detectedAt : a), candidates[0].detectedAt);
+
+      // dry-run 必须在这里彻底止步。原先这段无条件写库：
+      //   * recordAll 硬编码 dryRun=false → 把整批积压永久标成 SUPPRESSED
+      //   * 紧接着推进 cutoffAt
+      // 于是一条自称「只打印不改动」的演练命令，会把积压**真的丢掉**且不可补发。
+      // 演练要能安全地回答「复位会发生什么」，就绝不能顺手把它做掉。
+      if (options.dryRun) {
+        console.warn(
+          `[notify][dry-run] 若执行 --reset-circuit：会把 ${candidates.length} 条积压标记为 SUPPRESSED`
+          + `（不发送、不补发），并把闸门推进到 ${newest.toISOString()}。本次未写入任何数据。`
+        );
+        summary.circuitTripped = true;
+        return summary;
+      }
+
+      const byUser = new Map<number, Candidate[]>();
+      for (const c of candidates) {
+        const list = byUser.get(c.userId) ?? [];
+        list.push(c);
+        byUser.set(c.userId, list);
+      }
+      for (const [uid, items] of byUser) {
+        await recordAll(prisma, items, uid, 'SUPPRESSED', 'circuit_reset_drop', false);
+      }
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 },
+        data: { cutoffAt: newest, circuitTrippedAt: null, circuitReason: null }
+      });
+      summary.suppressed += candidates.length;
+      console.warn(
+        `[notify] 复位时消化了 ${candidates.length} 条积压（标记 SUPPRESSED，不会发送），`
+        + `闸门推进到 ${newest.toISOString()}。下一轮起恢复正常投递。`
+      );
+      return summary;
+    }
+    console.error(`[notify] 全局熔断跳闸：${reason}。本轮不发送任何消息。`);
+    console.error('[notify] 复位方式：notify-dispatch --once --reset-circuit（会把这批积压标记为已抑制，不补发）');
+    // 同理：演练不该把真实的投递器打停。持久化 circuitTrippedAt 之后，
+    // 生产的 scpper-notify 会一直停在熔断态直到人工复位 —— 一次 dry-run 造成
+    // 真实停摆，是最不该有的副作用。
+    if (!options.dryRun) {
+      await prisma.notificationDispatchState.update({
+        where: { id: 1 },
+        data: { circuitTrippedAt: new Date(), circuitReason: reason }
+      });
+    } else {
+      console.warn('[notify][dry-run] 未持久化熔断状态（真实运行时会写入并停止投递直到复位）');
+    }
+    summary.circuitTripped = true;
+    return summary;
+  }
+
+  // 健康检查放在有候选之后：没东西可发时不必打扰机器人。
+  // dry-run 跳过这一步 —— 演练的意义正是在机器人不可用（或还没配好）时也能验证
+  // 扫描、去重、聚合与文案，卡在健康检查上就失去了作用。
+  if (!options.dryRun) {
+    const health = await checkHealth();
+    if (!health.ok) {
+      console.warn('[notify] qqbot 不可用，本轮跳过（候选留待下轮，不落 FAILED）');
+      summary.skippedReason = 'bot_unavailable';
+      return summary;
+    }
+    if (health.contract && health.contract !== EXPECTED_CONTRACT) {
+      console.warn(`[notify] 契约版本不一致：qqbot=${health.contract} 期望=${EXPECTED_CONTRACT}`);
+    }
+  }
+
+  // 按用户分组
+  const grouped = new Map<number, Candidate[]>();
+  for (const c of candidates) {
+    const list = grouped.get(c.userId) ?? [];
+    list.push(c);
+    grouped.set(c.userId, list);
+  }
+
+  for (const [userId, group] of grouped) {
+    // 在**收件人之间**检查停止信号：这里是两次原子投递的边界，
+    // 停在这儿不会留下任何中间态。
+    if (options.shouldStop?.()) {
+      console.log('[notify] 收到停止信号，本轮剩余收件人留待下次');
+      break;
+    }
+    const items = group;
+    const target = targetByUserId.get(userId);
+    if (!target) continue;
+
+    items.sort((a, b) => a.detectedAt.getTime() - b.detectedAt.getTime());
+
+    // 日限额按**私信条数**计，不是按告警条数。
+    //
+    // 原先数的是 state='SENT' 的 NotificationDelivery 行数，但一轮只会给一个用户
+    // 发**一条**摘要，那一条摘要里的每个告警都各占一行。于是一条含 20 个告警的摘要
+    // 直接吃掉 40 的一半，默认配额下每天只能发两条消息，之后当天所有告警被永久
+    // SUPPRESSED（不重试、不补发）——活跃作者会被静默掐掉。
+    //
+    // 现在给同一次摘要里的所有行写同一个 digestKey，按 distinct digestKey 计数，
+    // 「40 条/天」才真的是「每天最多 40 条私信」。
+    const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+    const sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
+    if (sentToday >= DAILY_LIMIT) {
+      await recordAll(prisma, items, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
+      summary.suppressed += items.length;
+      console.warn(`[notify] 用户 ${target.wikidotId} 24 小时内已发 ${sentToday} 条，达上限 ${DAILY_LIMIT}，本批抑制`);
+      continue;
+    }
+
+    // 超出 CIRCUIT_USER_MAX 的部分不丢弃，由摘要末尾的「另有 N 条」覆盖 ——
+    // 它们同属这一条私信，因此照常记为 SENT。
+    const shown = items.slice(0, CIRCUIT_USER_MAX);
+    const overflow = items.length - shown.length;
+    let message = renderDigest(shown, overflow);
+    // 一次摘要一个 key：既是 qqbot 侧的去重键，也是上面日限额的计数单位。
+    const digestKey = `digest:${userId}:${shown[shown.length - 1].dedupeKey}`;
+
+    if (options.dryRun) {
+      console.log(`[notify][dry-run] → ${target.wikidotId}（${items.length} 条，本条为今日第 ${sentToday + 1} 条）\n${message}\n`);
+      summary.sent += items.length;
+      continue;
+    }
+
+    // 长轮次里这份目标快照可能已经过期，发送前复验一次
+    const liveTarget = await revalidateTarget(target);
+    if (!liveTarget) continue;
+
+    // 发送**之前**先把这批 dedupeKey 以 PENDING 占住。
+    // 原先是先发后记账：若机器人已经收下但响应丢失、或进程在 recordAll 前退出，
+    // 这批候选下轮仍会被扫到，等机器人那 15 分钟去重窗口一过就会重复推送给用户。
+    const keys = items.map((c) => c.dedupeKey);
+    // createMany 的 skipDuplicates 会静默跳过别人已抢到的 key，但**不会**告诉我们跳了哪些。
+    // 手动 PM2 轮次与 --once 手工轮次重叠时，两边都可能扫到同一批候选，
+    // 输的那一方仍会把完整摘要发出去 → 用户收到两条一样的消息。
+    // 这里比对「插入前后本轮 key 的归属」，只在确实是自己抢到时才发送。
+    // digestKey 在占位时就写进 payload：SENT 那步用的是 updateMany，
+    // 没法顺手往 JSON 里合并字段，而日限额的计数正依赖它。
+    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId);
+    if (claimed < items.length) {
+      // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
+      // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
+      // 下一轮由唯一的胜出者完整处理。
+      await prisma.notificationDelivery.deleteMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } }
+      });
+      console.warn(
+        `[notify] 用户 ${target.wikidotId} 的候选被另一轮部分抢占`
+        + `（${claimed}/${items.length}），本轮整批退让`
+      );
+      continue;
+    }
+
+    // 发送前**再查一次已读**。
+    //
+    // collectCandidates 到这里之间隔着占位写入与（可能的）健康检查，
+    // 用户完全可能在这个窗口里于网页上把这些提醒读掉 ——
+    // 读完了还收到 QQ 推送是很突兀的体验。
+    // 重发路径早就做了这个检查，常规路径一直没有：同一件事只做了一半。
+    const ackedNow = await findAcknowledgedDedupeKeys(prisma, keys);
+    if (ackedNow.size > 0) {
+      const remaining = items.filter((c) => !ackedNow.has(c.dedupeKey));
+      await prisma.notificationDelivery.updateMany({
+        where: {
+          dedupeKey: { in: [...ackedNow] },
+          state: 'PENDING',
+          payload: { path: ['runId'], equals: RUN_ID }
+        },
+        data: { state: 'CANCELLED', lastError: 'acknowledged_on_site' }
+      });
+      summary.suppressed += ackedNow.size;
+      console.log(`[notify] 用户 ${target.wikidotId} 有 ${ackedNow.size} 条在发送前已被站内读掉，取消推送`);
+      if (remaining.length === 0) continue;
+      // 整批只剩一部分：重新渲染消息，digestKey 保持不变（机器人侧去重语义不变）
+      const reshown = remaining.slice(0, CIRCUIT_USER_MAX);
+      message = renderDigest(reshown, remaining.length - reshown.length);
+      keys.length = 0;
+      keys.push(...remaining.map((c) => c.dedupeKey));
+    }
+
+    // 统计口径必须是「本次真正参与投递的条数」。
+    // 发送前的已读回查可能已经取消掉一部分（那部分已计入 suppressed），
+    // 若这里仍按原始 items.length 计，同一条会被同时算进 suppressed 与 sent/failed，
+    // 摘要里的数字自相矛盾，排查时反而误导人。
+    const dispatchedCount = keys.length;
+
+    const result = await pushQqMessage({ qq: liveTarget.address, message, dedupeKey: digestKey });
+
+    if (result.ok) {
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
+        data: { state: 'SENT', sentAt: new Date(), lastError: null }
+      });
+      summary.sent += dispatchedCount;
+      // 成功要清零 failureCount，否则一次永久失败之后，日后**不连续**的偶发失败
+      // 会累加到阈值，把一个正常渠道误暂停。
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'sent', null);
+    } else if (isPermanentFailure(result.error)) {
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
+        data: { state: 'FAILED', lastError: result.error ?? 'unknown' }
+      });
+      summary.failed += dispatchedCount;
+      console.warn(`[notify] 用户 ${target.wikidotId} 永久失败：${result.error}（不再重试）`);
+      // 把永久失败回报给绑定方。不报的话：绑定一直是 ACTIVE、界面显示健康，
+      // 而每条新告警都有新的 dedupeKey，于是对着一个已经删了机器人的用户永远重试下去。
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'failed', result.error ?? 'unknown');
+    } else {
+      // 可重试：**保留这一批**，转 SCHEDULED 等下轮原样重发。
+      //
+      // 原先是直接删掉占位、让候选下轮重新入选。问题出在「机器人已经收下、
+      // 但响应超时」这种情况：下一轮会重新组批，若期间来了新告警，
+      // 摘要就多一行，digestKey 随之改变，qqbot 的 15 分钟去重表认不出来，
+      // 用户于是又收到一遍之前那些行。
+      // 保留原批次意味着重发时 digestKey 完全一致：机器人若真收下过就会去重，
+      // 若确实没发成（它在发送失败时会撤掉去重记录）则正常送达。
+      // 新来的告警自己组成新的一批，互不干扰。
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
+        // scheduledAt = 下次可重试的时刻，重发侧只捞到期的
+        data: { state: 'SCHEDULED', lastError: result.error ?? 'unknown', scheduledAt: nextRetryAt(1) }
+      });
+      summary.failed += dispatchedCount;
+      console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（保留原批次，下轮以同一 digestKey 重发）`);
+    }
+  }
+
+  if (!options.dryRun) {
+    await prisma.notificationDispatchState.update({
+      where: { id: 1 }, data: { lastSuccessAt: new Date() }
+    });
+  }
+  return summary;
+}
+
+/**
+ * 向 user-backend 回报渠道投递失败，由它累计 failureCount 并在阈值处暂停渠道。
+ * 失败只记日志不抛 —— 回报不上不该影响本轮其余用户的投递。
+ */
+let warnedMissingNotifyKey = false;
+
+async function reportChannelOutcome(
+  accountId: string,
+  bindingId: string,
+  outcome: 'sent' | 'failed',
+  code: string | null
+): Promise<void> {
+  const base = (process.env.USER_BACKEND_BASE_URL || 'http://127.0.0.1:4455').replace(/\/$/, '');
+  const key = (process.env.NOTIFY_INTERNAL_KEY || '').trim();
+  if (!key) {
+    // 静默跳过等于「渠道健康度永远不更新、坏掉的绑定永远不会自动暂停」。
+    // 至少要吵一次，别让漏配变成看不见的功能缺失。
+    if (!warnedMissingNotifyKey) {
+      warnedMissingNotifyKey = true;
+      console.error('[notify] 未配置 NOTIFY_INTERNAL_KEY —— 渠道健康度不会更新，失效绑定不会自动暂停');
+    }
+    return;
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    try {
+      const response = await fetch(`${base}/internal/notifications/report-delivery`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'x-internal-key': key },
+        // code 为 null 时必须**省略**该字段：接收侧 schema 是 z.string().optional()，
+        // 传 null 会 400
+        body: JSON.stringify({ accountId, bindingId, channel: 'QQ', outcome, ...(code ? { code } : {}) })
+      });
+      // fetch 对 4xx/5xx 也会 resolve。不查状态的话，密钥不一致（403）或
+      // 参数不合（400）都会被当成回报成功 —— failureCount 既不累加也不清零，
+      // 失效渠道永远不会自动暂停，而且毫无线索。
+      if (!response.ok) {
+        console.warn(
+          `[notify] 回报渠道状态被拒（${response.status}）：${await response.text().catch(() => '')}`
+        );
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    console.warn('[notify] 回报渠道状态失败：', error instanceof Error ? error.message : error);
+  }
+}
+
+async function recordAll(
+  prisma: PrismaClient,
+  items: Candidate[],
+  userId: number,
+  state: 'PENDING' | 'SENT' | 'FAILED' | 'SUPPRESSED',
+  error: string | null,
+  dryRun?: boolean,
+  /** 同一条摘要里的所有行共享它；日限额按 distinct digestKey 计数 */
+  digestKey?: string,
+  /** 投递目标的绑定身份。重发时用它确认「这批还是发给当初那个绑定」 */
+  bindingId?: string
+): Promise<number> {
+  if (dryRun) return 0;
+  const now = new Date();
+  const created = await prisma.notificationDelivery.createMany({
+    data: items.map((c) => ({
+      userId,
+      channel: 'QQ' as const,
+      dedupeKey: c.dedupeKey,
+      state,
+      attemptCount: 1,
+      lastError: error,
+      sentAt: state === 'SENT' ? now : null,
+      payload: {
+        source: c.source,
+        line: c.line,
+        detectedAt: c.detectedAt.toISOString(),
+        runId: RUN_ID,
+        ...(digestKey ? { digestKey } : {}),
+        ...(bindingId ? { bindingId } : {})
+      }
+    })),
+    skipDuplicates: true
+  });
+  return created.count;
+}
+
+/** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
+const MAX_RESUME_ATTEMPTS = Math.max(1, Number(process.env.NOTIFY_MAX_RESUME_ATTEMPTS ?? '5') || 5);
+/** 目标已消失的 SCHEDULED 批次保留多久后判失败（默认 24 小时） */
+const ORPHAN_SCHEDULED_MAX_AGE_MS = 24 * 3600 * 1000;
+/**
+ * 重试退避基数（秒）。第 N 轮重发等 BASE * 2^(N-1)，上限 30 分钟。
+ *
+ * 不退避的话，暂时失败的批次每 60 秒就重试一次，默认 5 次上限五分钟就耗尽 ——
+ * 而 rate_limited 这类失败恰恰需要「等一会儿再说」，密集重试只会一直撞在同一堵墙上，
+ * 然后把一条本可以送达的通知判成永久失败。
+ */
+const RETRY_BACKOFF_BASE_SEC = Math.max(30, Number(process.env.NOTIFY_RETRY_BACKOFF_BASE_SEC ?? '120') || 120);
+const RETRY_BACKOFF_MAX_MS = 30 * 60 * 1000;
+
+function nextRetryAt(resumeRound: number): Date {
+  const ms = Math.min(RETRY_BACKOFF_BASE_SEC * 1000 * Math.pow(2, Math.max(0, resumeRound - 1)), RETRY_BACKOFF_MAX_MS);
+  return new Date(Date.now() + ms);
+}
+
+/**
+ * 把超出回看窗口的 SCHEDULED 批次判失效。
+ *
+ * 整个投递器的承诺是「超过 NOTIFY_LOOKBACK_HOURS 的告警不再补发」——
+ * 正常扫描严格按这个窗口取候选，重发路径却只按投递状态取行、不看年龄。
+ * 于是机器人若离线超过窗口时长，恢复那一刻会把几天前的动态推给用户，
+ * 与承诺相悖，观感上也像「系统积压了一堆旧消息一起吐出来」。
+ *
+ * 必须在健康检查与重发**之前**跑：过期的本来就不该发，
+ * 不该因为机器人恰好不可用就一直留着。
+ */
+async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean): Promise<number> {
+  const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
+  // 按**来源事件时间**判过期，不是按占位时间。
+  // createdAt 记的是投递器什么时候认领了它，一条在窗口边缘才被认领的告警，
+  // 按 createdAt 还能再苟一整个窗口期，实际送达时已经接近两倍于配置的时限。
+  // payload.detectedAt 是告警本身发生的时刻，才是「多旧」的正确度量。
+  // COALESCE 兜底：没有 detectedAt 的历史行退回 createdAt。
+  const whereExpired = {
+    state: 'SCHEDULED' as const,
+    OR: [
+      { payload: { path: ['detectedAt'], lt: cutoff.toISOString() } },
+      { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: cutoff } }] }
+    ]
+  };
+  if (dryRun) {
+    const n = await prisma.notificationDelivery.count({ where: whereExpired });
+    if (n > 0) console.warn(`[notify][dry-run] 有 ${n} 条 SCHEDULED 已超出回看窗口，真实运行会判失效`);
+    return n;
+  }
+  const res = await prisma.notificationDelivery.updateMany({
+    where: whereExpired,
+    data: { state: 'FAILED', lastError: 'expired_beyond_lookback' }
+  });
+  if (res.count > 0) {
+    console.warn(`[notify] ${res.count} 条待重发记录已超出回看窗口（${LOOKBACK_HOURS} 小时），判失效不再补发`);
+  }
+  return res.count;
+}
+
+/**
+ * 重发上一轮暂时失败、被留成 SCHEDULED 的批次。
+ *
+ * 【为什么要单独一步而不是让它们重新入选】
+ * 重新入选就会重新组批：期间来了新告警，摘要内容变、digestKey 变，
+ * qqbot 的去重表认不出来，「已收下但响应超时」的那条就会被重复推送。
+ * 这里按 digestKey 原样取回、原样重发，机器人那侧要么去重（说明上次真收下了）、
+ * 要么正常送达（它在发送失败时会撤掉去重记录），两种情况都正确。
+ *
+ * 必须在扫描新候选**之前**跑：collectCandidates 会排除已有投递记录的候选，
+ * 所以这些行不会被重复计入新批次。
+ */
+async function resumeScheduledBatches(
+  prisma: PrismaClient,
+  targetByUserId: Map<number, QqTarget>,
+  summary: DispatchSummary,
+  dryRun: boolean,
+  shouldStop?: () => boolean,
+  /** 发送前复验绑定（与常规投递共用同一份实现与缓存） */
+  revalidateTarget?: (t: QqTarget) => Promise<QqTarget | null>
+): Promise<{ replayed: number; skipped: boolean }> {
+  // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
+  // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
+  await expireStaleScheduledBatches(prisma, dryRun);
+
+  const now = new Date();
+  const rows = await prisma.notificationDelivery.findMany({
+    // 只捞已到重试时刻的（scheduledAt 为空的是旧数据，视为立即可重试）
+    where: {
+      state: 'SCHEDULED',
+      channel: 'QQ',
+      OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }]
+    },
+    orderBy: { createdAt: 'asc' }
+  });
+  if (rows.length === 0) return { replayed: 0, skipped: false };
+
+  // 机器人离线时不要重发：每次失败都会 +1 attemptCount，
+  // 一次几分钟的宕机就能把批次推到 MAX_RESUME_ATTEMPTS 而被误判为永久失败。
+  // 「发不出去」和「不该发」是两回事，前者应该原地等待。
+  if (!dryRun) {
+    const health = await checkHealth();
+    if (!health.ok) {
+      console.warn(`[notify] qqbot 不可用，${rows.length} 条待重发的记录留到下轮（不计入重试次数）`);
+      return { replayed: 0, skipped: true };
+    }
+  }
+
+  // 按 digestKey 分组还原原批次
+  const groups = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const payload = (row.payload ?? {}) as Record<string, unknown>;
+    const key = typeof payload.digestKey === 'string' ? payload.digestKey : null;
+    if (!key) continue; // 没有 digestKey 的重建不出原消息，交给陈旧清理兜底
+    const list = groups.get(key) ?? [];
+    list.push(row);
+    groups.set(key, list);
+  }
+
+  // 用户可能在这期间**在站内读掉了**这些告警。正常扫描会把已读的排除在外，
+  // 重发路径却只按投递状态取行、不回看来源 —— 于是「网页上早看过了，
+  // 过一会儿 QQ 又推一遍」。CANCELLED 这个状态本来就是为这种情况留的。
+  const acknowledged = await findAcknowledgedDedupeKeys(prisma, rows.map((r) => r.dedupeKey));
+
+  // 本轮最多重发多少条记录。重发同样受全局上限约束：
+  // 机器人健康但发送持续暂时失败时，队列会越积越多，
+  // 不设上限就会在恢复的那一刻一次性灌出去。
+  // 本轮已经用掉的额度。重发和随后的新投递**共用**这一个单轮上限 ——
+  // 各算各的话，一次故障恢复可以先发满 CIRCUIT_GLOBAL_MAX 条重发、
+  // 紧接着新候选再发满一份，实际吐出去两倍于宣称的上限。
+  let replayed = 0;
+  let replayBudget = CIRCUIT_GLOBAL_MAX;
+  // 每个用户当天已发的私信条数，边发边累加，避免重发绕过日限额
+  const sentTodayByUser = new Map<number, number>();
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+
+  for (const [digestKey, batch] of groups) {
+    if (shouldStop?.()) {
+      console.log('[notify] 收到停止信号，剩余待重发批次留待下次');
+      break;
+    }
+    const first = batch[0];
+    if (!first) continue;
+    const keys = batch.map((r) => r.dedupeKey);
+    const target = targetByUserId.get(first.userId);
+
+    if (!target) {
+      // 用户已解绑/停用/被移出灰度名单。这批永远发不出去了，
+      // 但陈旧清理只扫 PENDING，放着不管就是一批永久占着 dedupeKey 的僵尸行 ——
+      // 既不会重发，也会一直把对应告警挡在新批次之外。超过保留期就判失败。
+      const age = Date.now() - first.createdAt.getTime();
+      if (age > ORPHAN_SCHEDULED_MAX_AGE_MS && !dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+          data: { state: 'FAILED', lastError: 'target_gone' }
+        });
+        console.warn(`[notify] 批次 ${digestKey} 的投递目标已不存在且超过保留期，判定失败`);
+      }
+      continue;
+    }
+
+    // attemptCount 在首次投递（recordAll）时就被写成 1，所以「已重发过的轮数」
+    // 是 max(attemptCount) - 1，本次将是第 resumeRound 轮重发。
+    // 原先直接拿 max+1 去比 MAX_RESUME_ATTEMPTS，默认 5 实际只重发 4 次，
+    // 配成 1 时一次都不会重发 —— 与这个常量的字面含义不符。
+    // 这批当初是发给**哪个绑定**的？必须和现在的绑定身份一致才继续。
+    //
+    // 用户可能在这批还挂着 SCHEDULED 时解绑并绑了另一个 QQ。
+    // 只按 userId 找 target 的话，这批陈年通知就会被投递到**新号**上 ——
+    // 新绑定授权的是「今后的动态」，收到的却是他授权之前、发给旧号的内容。
+    // 双保险：绑定身份变了直接作废；身份没变但事件早于新的 verifiedAt 也作废。
+    const batchBindingId = ((batch[0].payload ?? {}) as Record<string, unknown>).bindingId;
+    const bindingChanged = typeof batchBindingId === 'string' && batchBindingId !== target.bindingId;
+    const predatesAuthorization = target.verifiedAt != null && batch.every((r) => {
+      const detected = ((r.payload ?? {}) as Record<string, unknown>).detectedAt;
+      return typeof detected === 'string' && new Date(detected) <= target.verifiedAt!;
+    });
+    if (bindingChanged || predatesAuthorization) {
+      console.warn(
+        `[notify] 批次 ${digestKey} ${bindingChanged ? '所属绑定已变更' : '早于当前绑定的授权时刻'}，作废不再投递`
+      );
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+          data: { state: 'CANCELLED', lastError: bindingChanged ? 'binding_changed' : 'predates_binding' }
+        });
+      }
+      summary.suppressed += batch.length;
+      continue;
+    }
+
+    const attempt = Math.max(...batch.map((r) => r.attemptCount)) + 1;
+    const resumeRound = attempt - 1;
+
+    if (resumeRound > MAX_RESUME_ATTEMPTS) {
+      const lastError = batch.find((r) => r.lastError)?.lastError ?? 'max_resume_attempts';
+      console.warn(`[notify] 批次 ${digestKey} 已重发 ${MAX_RESUME_ATTEMPTS} 次仍失败（${lastError}），判定失败不再重试`);
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+          data: { state: 'FAILED', lastError: 'max_resume_attempts' }
+        });
+        // 重试耗尽必须回报渠道健康度。原先只落了 FAILED 就完事，
+        // 绑定仍是 ACTIVE、failureCount 纹丝不动，于是**每一条**新告警都要
+        // 完整走一遍「发→失败→重试 5 轮→放弃」，而界面上渠道一直显示健康。
+        // 这类持续失败（send_failed 等）正是自动暂停机制该介入的场景。
+        await reportChannelOutcome(target.accountId, target.bindingId, 'failed', lastError);
+      }
+      summary.failed += batch.length;
+      continue;
+    }
+
+    // 站内已读的那些直接取消，不再推送
+    const stillPending = batch.filter((r) => !acknowledged.has(r.dedupeKey));
+    const cancelledKeys = batch.filter((r) => acknowledged.has(r.dedupeKey)).map((r) => r.dedupeKey);
+    if (cancelledKeys.length > 0) {
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: cancelledKeys }, state: 'SCHEDULED' },
+          data: { state: 'CANCELLED', lastError: 'acknowledged_on_site' }
+        });
+      }
+      // 计入 suppressed，否则运维摘要与账本对不上（取消掉的既不算 sent 也不算 failed）
+      summary.suppressed += cancelledKeys.length;
+      console.log(`[notify] 批次 ${digestKey} 有 ${cancelledKeys.length} 条已在站内读过，取消推送`);
+    }
+    if (stillPending.length === 0) {
+      // 整批都读过了，不必再发。digestKey 保持不变没有意义了，直接跳过。
+      continue;
+    }
+
+    // 日限额：重发同样算私信条数，否则「失败-重试」这条路径可以完全绕开限额
+    const userId = first.userId;
+    let sentToday = sentTodayByUser.get(userId);
+    if (sentToday === undefined) {
+      sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
+      sentTodayByUser.set(userId, sentToday);
+    }
+    if (sentToday >= DAILY_LIMIT) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${DAILY_LIMIT}，批次 ${digestKey} 留待下轮`);
+      continue; // 保持 SCHEDULED，不消耗重试次数
+    }
+    // 必须在**发送前**确认额度够装下整批：原先只判 >0，
+    // 于是剩 1 条额度也会把一整批（可能几十条）发出去，再把额度减成负数 ——
+    // 单轮实际可超出 CIRCUIT_GLOBAL_MAX 将近一整批。
+    if (replayBudget < stillPending.length) {
+      console.warn(
+        `[notify] 本轮重发额度剩 ${replayBudget} 条，装不下批次 ${digestKey}（${stillPending.length} 条），`
+        + `其余留待下轮（全局上限 ${CIRCUIT_GLOBAL_MAX}）`
+      );
+      break; // 其余保持 SCHEDULED
+    }
+    replayBudget -= stillPending.length;
+    replayed += stillPending.length;
+
+    const replayKeys = stillPending.map((r) => r.dedupeKey);
+    const shown = stillPending.slice(0, CIRCUIT_USER_MAX);
+    const overflow = stillPending.length - shown.length;
+    const itemLines = shown.map((r) => {
+      const payload = (r.payload ?? {}) as Record<string, unknown>;
+      return typeof payload.line === 'string' ? payload.line : '(内容缺失)';
+    });
+    // digestKey 保持不变：即使内容因取消已读而变短，机器人仍按 key 去重，
+    // 「上次其实已送达」的情况照样能被挡住。
+    const message = renderDigestLines(itemLines, overflow);
+
+    if (dryRun) {
+      console.log(`[notify][dry-run] 重发 → ${target.wikidotId}（${stillPending.length} 条，第 ${resumeRound} 轮重发，今日第 ${sentToday + 1} 条）\n${message}\n`);
+      summary.sent += stillPending.length;
+      sentTodayByUser.set(userId, sentToday + 1);
+      continue;
+    }
+
+    // 与常规投递一致：发送前复验绑定。
+    // 多个待重发批次到期时这个循环可能跑上几分钟，期间用户解绑/重绑/被暂停的话，
+    // 不复验就会把通知发到一个已经撤销授权的号上。
+    const liveTarget = revalidateTarget ? await revalidateTarget(target) : target;
+    if (!liveTarget) continue;
+
+    const result = await pushQqMessage({ qq: liveTarget.address, message, dedupeKey: digestKey });
+    if (result.ok) {
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
+        data: { state: 'SENT', sentAt: new Date(), lastError: null, attemptCount: attempt }
+      });
+      summary.sent += stillPending.length;
+      // 计入当日私信条数：同一轮里该用户还有别的批次时，限额要立刻生效
+      sentTodayByUser.set(userId, sentToday + 1);
+      console.log(`[notify] 批次 ${digestKey} 重发成功${result.deduped ? '（机器人判定为重复，说明上次已送达）' : ''}`);
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'sent', null);
+    } else if (isPermanentFailure(result.error)) {
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
+        data: { state: 'FAILED', lastError: result.error ?? 'unknown', attemptCount: attempt }
+      });
+      summary.failed += stillPending.length;
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'failed', result.error ?? 'unknown');
+    } else {
+      const retryAt = nextRetryAt(resumeRound + 1);
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: replayKeys }, state: 'SCHEDULED' },
+        data: { lastError: result.error ?? 'unknown', attemptCount: attempt, scheduledAt: retryAt }
+      });
+      summary.failed += stillPending.length;
+      console.warn(
+        `[notify] 批次 ${digestKey} 第 ${resumeRound} 轮重发仍失败：${result.error}，`
+        + `下次重试 ${retryAt.toISOString()}`
+      );
+    }
+  }
+  return { replayed, skipped: false };
+}
+
+/**
+ * 找出这些 dedupeKey 里，来源告警**已在站内被读掉**的那些。
+ *
+ * dedupeKey 的前缀就是来源表、第二段就是主键（见 collectCandidates）：
+ *   pma:<PageMetricAlert.id>:...  uaa:<UserActivityAlert.id>:...  fia:<ForumInteractionAlert.id>
+ * 正常扫描本来就会把已读的排除在外，重发路径也必须做同样的检查 ——
+ * 否则用户在网页上看完，过一会儿 QQ 还会再推一遍。
+ */
+async function findAcknowledgedDedupeKeys(
+  prisma: PrismaClient,
+  dedupeKeys: string[]
+): Promise<Set<string>> {
+  const acked = new Set<string>();
+  // 一个来源 id 可能对应**多个** dedupeKey：PageMetricAlert / UserActivityAlert
+  // 是就地合并的，同一行的 newValue 变化会生成新的键，而旧版本可能还留在 SCHEDULED。
+  // 用 Map<id, string> 只会保住最后一个键，于是把来源标已读时只取消得掉一个版本，
+  // 更早的版本照样会被重发出去。
+  const byPrefix = {
+    pma: new Map<number, string[]>(),
+    uaa: new Map<number, string[]>(),
+    fia: new Map<number, string[]>()
+  };
+  const push = (m: Map<number, string[]>, id: number, key: string) => {
+    const list = m.get(id);
+    if (list) list.push(key); else m.set(id, [key]);
+  };
+
+  for (const key of dedupeKeys) {
+    const [prefix, rawId] = key.split(':');
+    if (!prefix || !rawId) continue;
+    const id = Number.parseInt(rawId, 10);
+    if (!Number.isFinite(id)) continue;
+    if (prefix === 'pma') push(byPrefix.pma, id, key);
+    else if (prefix === 'uaa') push(byPrefix.uaa, id, key);
+    else if (prefix === 'fia') push(byPrefix.fia, id, key);
+  }
+
+  const lookups: Array<Promise<void>> = [];
+  if (byPrefix.pma.size > 0) {
+    lookups.push((async () => {
+      const rows = await prisma.pageMetricAlert.findMany({
+        where: { id: { in: [...byPrefix.pma.keys()] }, acknowledgedAt: { not: null } },
+        select: { id: true }
+      });
+      for (const r of rows) for (const k of byPrefix.pma.get(r.id) ?? []) acked.add(k);
+    })());
+  }
+  if (byPrefix.uaa.size > 0) {
+    lookups.push((async () => {
+      const rows = await prisma.userActivityAlert.findMany({
+        where: { id: { in: [...byPrefix.uaa.keys()] }, acknowledgedAt: { not: null } },
+        select: { id: true }
+      });
+      for (const r of rows) for (const k of byPrefix.uaa.get(r.id) ?? []) acked.add(k);
+    })());
+  }
+  if (byPrefix.fia.size > 0) {
+    lookups.push((async () => {
+      const rows = await prisma.forumInteractionAlert.findMany({
+        where: { id: { in: [...byPrefix.fia.keys()] }, acknowledgedAt: { not: null } },
+        select: { id: true }
+      });
+      for (const r of rows) for (const k of byPrefix.fia.get(r.id) ?? []) acked.add(k);
+    })());
+  }
+  await Promise.all(lookups);
+  return acked;
+}
+
+/**
+ * 过去 24 小时真正发给该用户的**私信条数**。
+ *
+ * 用 distinct digestKey 而不是行数：一条摘要 = 一条私信 = 一个 digestKey，
+ * 无论它里面打包了多少条告警。SUPPRESSED / FAILED / PENDING 都不算。
+ *
+ * 走原生 SQL 是因为 Prisma 不支持对 JSON 路径做 COUNT(DISTINCT)。
+ * 没有 digestKey 的行（本改动之前写入的）自然被排除，宁可少算也不多算。
+ */
+async function countDigestsSentSince(
+  prisma: PrismaClient,
+  userId: number,
+  since: Date
+): Promise<number> {
+  // 按 sentAt 而不是 createdAt 计窗口：SCHEDULED 批次可能在创建很久之后才发出去，
+  // 用 createdAt 的话它一发出就已经落在 24 小时窗口之外、完全不占额度，
+  // 于是「故障恢复」这条路径可以让当天实际发出的条数超过 NOTIFY_DAILY_LIMIT。
+  // sentAt 为空的历史行退回 createdAt，避免旧数据整批不计。
+  const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(DISTINCT payload->>'digestKey') AS count
+    FROM "NotificationDelivery"
+    WHERE "userId" = ${userId}
+      AND state = 'SENT'
+      AND COALESCE("sentAt", "createdAt") > ${since}
+      AND payload->>'digestKey' IS NOT NULL
+  `;
+  return Number(rows[0]?.count ?? 0);
+}
+
+function renderDigest(items: Candidate[], overflow: number): string {
+  return renderDigestLines(items.map((c) => c.line), overflow);
+}
+
+/**
+ * 从纯文本行渲染摘要。重发 SCHEDULED 批次时用得上 ——
+ * 那时手上只有 payload 里存下来的 line，没有原始 Candidate。
+ */
+function renderDigestLines(itemLines: string[], overflow: number): string {
+  const lines = ['【SCPper CN】你有新的站点动态：', ''];
+  for (const line of itemLines) lines.push(`· ${line}`);
+  if (overflow > 0) lines.push(`· …另有 ${overflow} 条`);
+  lines.push('', `查看全部：${SITE_BASE}/account?tab=alerts`);
+  return lines.join('\n');
+}
+
+/**
+ * 扫三张告警表，剔除已推过的，得到本轮候选。
+ *
+ * 【为什么去重在 TS 里做而不是写进 SQL 的 NOT EXISTS】
+ * 最初的写法是在 SQL 里拼 dedupeKey 再反连接。实测发现两侧对 double precision
+ * 的文本化不一致：PostgreSQL 的 `1e20::text` 是 `1e+20`，而 JS 的
+ * `String(1e20)` 是 `100000000000000000000`。键一旦对不上，反连接就永远命中不了，
+ * 症状是**同一条通知每分钟重复推送** —— 最糟的失败模式。
+ * 现在 dedupeKey 只由 TS 构造一次，SQL 完全不参与，不存在两套渲染规则。
+ *
+ * 【为什么不用「先插入靠唯一键冲突」去重】
+ * 那样每轮都会为已推过的候选消耗一次序列值 —— 正是 UserTagPreference
+ * int4 序列在半年内耗尽的成因。
+ */
+async function collectCandidates(
+  prisma: PrismaClient,
+  userIds: number[],
+  since: Date
+): Promise<Candidate[]> {
+  const out: Candidate[] = [];
+
+  // ① 页面指标告警：我的作品被评论/被投票/被他人修订
+  const metricRows = await prisma.$queryRaw<Row[]>`
+    SELECT pa.id, pa.metric::text AS metric, pa."newValue", pa."diffValue", pa."detectedAt",
+           pw."userId", p."wikidotId" AS "pageWikidotId", p."currentUrl" AS "pageUrl",
+           pv.title AS "pageTitle", pv."alternateTitle" AS "pageAlternateTitle"
+    FROM "PageMetricAlert" pa
+    JOIN "PageMetricWatch" pw ON pw.id = pa."watchId"
+    JOIN "Page" p ON p.id = pa."pageId"
+    LEFT JOIN "PageVersion" pv ON pv."pageId" = pa."pageId" AND pv."validTo" IS NULL
+    WHERE pw."userId" = ANY(${userIds}::int[])
+      AND pa."detectedAt" > ${since}
+      AND pa."acknowledgedAt" IS NULL
+    ORDER BY pa."detectedAt"
+  `;
+  for (const r of metricRows) {
+    const metric = String(r.metric);
+    const label = METRIC_LABEL[metric] ?? metric;
+    const diff = r.diffValue != null ? Number(r.diffValue) : null;
+    const delta = diff != null ? `${diff > 0 ? '+' : ''}${diff}` : '';
+    out.push({
+      source: 'page_metric',
+      // 键里带 detectedAt：PageMetricAlert 是就地更新的，只带 newValue 的话
+      // 「20→40→20→40」这种来回变动，最后那次 40 会撞到早先 40 的键而被当成已投递。
+      dedupeKey: `pma:${r.id}:${r.newValue ?? 'n'}:${new Date(String(r.detectedAt)).getTime()}`,
+      userId: Number(r.userId),
+      detectedAt: new Date(String(r.detectedAt)),
+      line: `你的《${pageLabel(r)}》${label}有变化 ${delta}  ${pageUrl(r)}`
+    });
+  }
+
+  // ② 关注作者动态
+  const followRows = await prisma.$queryRaw<Row[]>`
+    SELECT ua.id, ua.type, ua."detectedAt", ua."followerId", ua."revisionId", ua."pageVersionId",
+           p."wikidotId" AS "pageWikidotId", p."currentUrl" AS "pageUrl",
+           pv.title AS "pageTitle", pv."alternateTitle" AS "pageAlternateTitle",
+           tu."displayName" AS "targetName"
+    FROM "UserActivityAlert" ua
+    JOIN "Page" p ON p.id = ua."pageId"
+    LEFT JOIN "PageVersion" pv ON pv."pageId" = ua."pageId" AND pv."validTo" IS NULL
+    LEFT JOIN "User" tu ON tu.id = ua."targetUserId"
+    WHERE ua."followerId" = ANY(${userIds}::int[])
+      AND ua."detectedAt" > ${since}
+      AND ua."acknowledgedAt" IS NULL
+    ORDER BY ua."detectedAt"
+  `;
+  for (const r of followRows) {
+    const who = r.targetName ? String(r.targetName) : '你关注的作者';
+    const what = String(r.type) === 'REVISION' ? '编辑了' : String(r.type) === 'ATTRIBUTION' ? '发布了' : '不再署名';
+    out.push({
+      source: 'follow_activity',
+      dedupeKey: `uaa:${r.id}:${r.revisionId ?? r.pageVersionId ?? 'n'}`,
+      userId: Number(r.followerId),
+      detectedAt: new Date(String(r.detectedAt)),
+      line: `${who} ${what}《${pageLabel(r)}》  ${pageUrl(r)}`
+    });
+  }
+
+  // ③ 论坛互动（回帖 / 直接回复 / @我）
+  const forumRows = await prisma.$queryRaw<Row[]>`
+    SELECT fa.id, fa.type::text AS type, fa."detectedAt", fa."recipientUserId",
+           fa."actorName", fa."postTitle", fa."postExcerpt", fa."threadId"
+    FROM "ForumInteractionAlert" fa
+    WHERE fa."recipientUserId" = ANY(${userIds}::int[])
+      AND fa."detectedAt" > ${since}
+      AND fa."acknowledgedAt" IS NULL
+    ORDER BY fa."detectedAt"
+  `;
+  for (const r of forumRows) {
+    const actor = r.actorName ? String(r.actorName) : '有人';
+    const type = String(r.type);
+    const verb = type === 'MENTION' ? '提到了你' : type === 'DIRECT_REPLY' ? '回复了你' : '在你关注的讨论中发言';
+    const title = r.postTitle ? `「${String(r.postTitle)}」` : '';
+    out.push({
+      source: 'forum',
+      dedupeKey: `fia:${r.id}`,
+      userId: Number(r.recipientUserId),
+      detectedAt: new Date(String(r.detectedAt)),
+      line: `${actor} ${verb} ${title}`.trim()
+    });
+  }
+
+  if (out.length === 0) return out;
+
+  // 一次查出这批 key 里已经存在的，再在内存里剔除。
+  // 只按 dedupeKey 唯一索引等值查询，与候选数同阶，不随投递表总量增长。
+  const seen = new Set<string>();
+  const keys = out.map((c) => c.dedupeKey);
+  const CHUNK = 1000;
+  for (let i = 0; i < keys.length; i += CHUNK) {
+    const existing = await prisma.notificationDelivery.findMany({
+      where: { dedupeKey: { in: keys.slice(i, i + CHUNK) } },
+      select: { dedupeKey: true }
+    });
+    for (const row of existing) seen.add(row.dedupeKey);
+  }
+  return out.filter((c) => !seen.has(c.dedupeKey));
+}

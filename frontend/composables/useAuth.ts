@@ -10,6 +10,15 @@ export interface AuthUser {
   displayName: string | null
   linkedWikidotId: number | null
   lastLoginAt: string | null
+  /**
+   * QQ 通知渠道绑定摘要。addressMask 形如 1234***7 ——
+   * user-backend 不会把完整 QQ 号发出来，前端拿不到也不需要它。
+   */
+  qqBinding: {
+    bound: boolean
+    addressMask: string | null
+    status: string | null
+  }
 }
 
 interface ApiResponse<T> {
@@ -25,13 +34,31 @@ function useAuthState() {
   return { user, status, loading }
 }
 
-function normalizeUser(payload: any): AuthUser {
+const EMPTY_QQ_BINDING = { bound: false, addressMask: null, status: null }
+
+function normalizeUser(payload: any, previous?: AuthUser | null): AuthUser {
+  const id = String(payload?.id || '')
+  // 只有当这份 payload 说的还是**同一个账号**时，才允许沿用上一份 qqBinding 快照。
+  // 否则 A 已登录时直接 login 到 B，B 的 payload 不含 qqBinding，
+  // 就会把 A 的掩码 QQ 号和绑定状态复制到 B 的界面上 —— 跨账号信息泄露，
+  // 且要等下一次强制 /auth/me 才会被纠正。
+  const sameAccount = Boolean(previous?.id) && previous?.id === id
   return {
-    id: String(payload?.id || ''),
+    id,
     email: String(payload?.email || ''),
     displayName: payload?.displayName ?? null,
     linkedWikidotId: payload?.linkedWikidotId != null ? Number(payload.linkedWikidotId) : null,
-    lastLoginAt: payload?.lastLoginAt ? String(payload.lastLoginAt) : null
+    lastLoginAt: payload?.lastLoginAt ? String(payload.lastLoginAt) : null,
+    // /auth/login 与 /auth/profile 返回的是 formatUser 的形状，**不含** qqBinding。
+    // 直接取 payload 会把已绑定用户的状态抹成 bound:false，界面随即报「未绑定」，
+    // 直到下一次强制 /auth/me 才恢复。字段缺失且账号未变时保留上一份快照。
+    qqBinding: payload?.qqBinding
+      ? {
+          bound: Boolean(payload.qqBinding.bound),
+          addressMask: payload.qqBinding.addressMask ?? null,
+          status: payload.qqBinding.status ?? null
+        }
+      : (sameAccount ? (previous?.qqBinding ?? EMPTY_QQ_BINDING) : EMPTY_QQ_BINDING)
   }
 }
 
@@ -69,7 +96,7 @@ export function useAuth() {
       })
       const res = await $bff<ApiResponse<AuthUser>>('/auth/me', requestOptions)
       if (res && res.ok && res.user) {
-        user.value = normalizeUser(res.user)
+        user.value = normalizeUser(res.user, user.value)
         status.value = 'authenticated'
         console.debug('[auth] fetchCurrentUser success', {
           id: user.value.id,
@@ -107,7 +134,7 @@ export function useAuth() {
         body: { email, password }
       })
       if (res && res.ok && res.user) {
-        user.value = normalizeUser(res.user)
+        user.value = normalizeUser(res.user, user.value)
         status.value = 'authenticated'
         return { ok: true as const }
       }
@@ -147,7 +174,7 @@ export function useAuth() {
         body: { displayName: trimmed }
       })
       if (res && res.ok && res.user) {
-        user.value = normalizeUser(res.user)
+        user.value = normalizeUser(res.user, user.value)
         status.value = 'authenticated'
         return { ok: true as const }
       }
