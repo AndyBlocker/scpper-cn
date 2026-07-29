@@ -242,14 +242,22 @@ export function useNotificationFeed() {
     }
   }
 
-  /** 全部已读：三套都要清，缺一个就会出现「铃铛归零但列表还有未读」 */
+  /**
+   * 全部已读：三套都要清，缺一个就会出现「铃铛归零但列表还有未读」。
+   *
+   * **不再补一次 refresh(true)**。三个 composable 的 markAllRead 成功后
+   * 已经把本地状态改成了正确结果（标已读、清空未读桶、未读数归零），
+   * 再拉一次没有新信息可拿，却引入一个实打实的风险：BFF 支持
+   * DATABASE_REPLICA_URL 读写分离，标记走主库、读走副本，正常复制延迟
+   * 就足以把刚清掉的提醒和红点原样填回来 —— 用户会以为「点了没用」。
+   * 保留本地结果，等下一次正常刷新（切 tab、可见性变化）自然对齐。
+   */
   async function markAllRead(): Promise<void> {
     await Promise.all([
       pageAlerts.markAllRead('ALL'),
       followAlerts.markAllRead(),
       forumAlerts.markAllRead()
     ])
-    await refresh(true)
   }
 
   return {

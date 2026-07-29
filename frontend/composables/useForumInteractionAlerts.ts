@@ -137,18 +137,28 @@ export function useForumInteractionAlerts() {
     // （列表只有一页），而且要等下次刷新才恢复。
     let prevUnread = Number(unreadCount.value || 0);
 
+    // 未读口径那份只装未读，读掉一条就该移出去。
+    // 先存一份原值：请求失败要还原，否则条目从提醒流里消失了，
+    // 服务端却仍是未读 —— 用户再也看不到它，直到下次重新取数。
+    const prevUnreadList = unreadAlerts.value;
+    // 「本来是未读吗」要在**任何改动之前**、并且**两份缓存都看**地算出来：
+    // 提醒流的条目取自未读桶，而含已读那份只有最近 20 条，
+    // 较早的未读不在其中时只看 target 会漏判 —— 条目消失了红点却不减。
+    const wasUnread = prevUnreadList.some((item) => item.id === id)
+      || Boolean(target && !target.acknowledgedAt);
+
     if (target && !target.acknowledgedAt) {
       alerts.value[idx] = {
         ...target,
         acknowledgedAt: new Date().toISOString()
       };
+    }
+    if (wasUnread) {
       // 同 useFollowAlerts：递减而非按截断到 20 条的本地列表重算
       prevUnread = Number(unreadCount.value || 0);
       unreadCount.value = Math.max(0, prevUnread - 1);
     }
-
-    // 未读口径那份只装未读，读掉一条就该移出去
-    unreadAlerts.value = unreadAlerts.value.filter((item) => item.id !== id);
+    unreadAlerts.value = prevUnreadList.filter((item) => item.id !== id);
 
     try {
       const res = await $bff<MarkReadResponse>(`/alerts/forum/${id}/read`, { method: 'POST' });
@@ -161,6 +171,9 @@ export function useForumInteractionAlerts() {
       }
     } catch (error) {
       console.warn('[forum-alerts] mark read failed', error);
+      // 未读桶必须无条件还原 —— 它和 alerts 是两份数据，
+      // 只在 rollback 存在时还原的话，不在含已读缓存里的条目就永久消失了
+      unreadAlerts.value = prevUnreadList;
       const rollback = idx >= 0 ? alerts.value[idx] : undefined;
       if (rollback) {
         alerts.value[idx] = {

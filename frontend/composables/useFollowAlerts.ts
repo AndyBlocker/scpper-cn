@@ -200,7 +200,10 @@ export function useFollowAlerts() {
         const current = idx >= 0 ? alerts.value[idx] : undefined;
         // 只有本来未读才算「新读了一条」。铃铛下拉里也会展示已读条目，
         // 点开它们同样会调这个幂等接口，无条件递减会把徽标越点越少。
-        const wasUnread = Boolean(current && !current.acknowledgedAt);
+        // 两份缓存都要看：提醒流的条目取自未读桶，而含已读那份只有最近 20 条，
+        // 较早的未读不在其中时只看 current 会漏判，导致条目消失而徽标不减。
+        const inUnreadBucket = unreadAlerts.value.some(a => a.id === id);
+        const wasUnread = inUnreadBucket || Boolean(current && !current.acknowledgedAt);
         if (current) alerts.value[idx] = { ...current, acknowledgedAt };
         combined.value = combined.value.map(group => ({
           ...group,

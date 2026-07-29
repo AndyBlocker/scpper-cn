@@ -75,7 +75,12 @@ function useAlertsState() {
   const error = useState<AlertsRecord<string | null>>('alerts/error', () => createAlertsRecord(() => null));
   // 请求世代必须**跨组件共享**：每个 useAlerts() 调用各自新建一个 Map 的话，
   // layout 里 resetState 递增的世代号影响不到面板里那份，守卫等于没有。
-  const epochs = useState<AlertsRecord<number>>('alerts/epochs', () => createAlertsRecord(() => 0));
+  // 世代号要按 metric **和口径**双维度记：两种口径写的是两份不同的缓存，
+  // 共用一个世代号的话，铃铛的 all 请求会让提醒流那次 unread 请求的写回
+  // 被判为过期而丢弃 —— 它俩根本不冲突。
+  const epochs = useState<AlertsRecord<{ all: number; unread: number }>>(
+    'alerts/epochs', () => createAlertsRecord(() => ({ all: 0, unread: 0 }))
+  );
   return { alerts, unreadAlerts, unreadCount, loading, unreadLoading, lastFetchedAt, unreadLastFetchedAt, activeMetric, error, epochs };
 }
 
@@ -101,7 +106,9 @@ export function useAlerts() {
   function resetState() {
     // 作废所有在途请求：A 的响应若在 B 登录后才回来，会把 A 的数据
     // 写进 B 看到的共享状态（跨账号信息泄露）。
-    for (const m of ALERT_METRICS) epochs.value[m] += 1;
+    for (const m of ALERT_METRICS) {
+      epochs.value[m] = { all: epochs.value[m].all + 1, unread: epochs.value[m].unread + 1 };
+    }
     alerts.value = createAlertsRecord(() => []);
     unreadCount.value = createAlertsRecord(() => 0);
     lastFetchedAt.value = createAlertsRecord(() => null);
@@ -149,15 +156,16 @@ export function useAlerts() {
     }
 
     busy.value[targetMetric] = true;
-    const myEpoch = epochs.value[targetMetric] + 1;
-    epochs.value[targetMetric] = myEpoch;
+    const slot = unreadOnly ? 'unread' : 'all';
+    const myEpoch = epochs.value[targetMetric][slot] + 1;
+    epochs.value[targetMetric] = { ...epochs.value[targetMetric], [slot]: myEpoch };
     try {
       const res = await $bff<AlertsResponse>('/alerts', {
         method: 'GET',
         params: { metric: METRIC_QUERY_MAP[targetMetric], ...(unreadOnly ? { unreadOnly: '1' } : {}) }
       });
       // 在途期间又发起了更新的请求 → 本次结果作废
-      if (epochs.value[targetMetric] !== myEpoch) return list.value[targetMetric];
+      if (epochs.value[targetMetric][slot] !== myEpoch) return list.value[targetMetric];
       if (res?.ok) {
         list.value[targetMetric] = Array.isArray(res.alerts) ? res.alerts : [];
         // 用 Number() 而非 Number.isFinite(原值)：PostgreSQL 的 COUNT 经 pg 驱动
@@ -173,7 +181,7 @@ export function useAlerts() {
       }
     } catch (err) {
       console.warn('[alerts] fetch failed', err);
-      if (epochs.value[targetMetric] === myEpoch) {
+      if (epochs.value[targetMetric][slot] === myEpoch) {
         error.value[targetMetric] = '网络异常，未能刷新提醒';
       }
     } finally {
@@ -192,13 +200,23 @@ export function useAlerts() {
     // 递减而非按本地列表重算：列表只有最近 20 条，服务端可能有更多未读，
     // 重算会把徽标直接砍到本页未读数。
     const prevUnread = Number(unreadCount.value[metric] || 0);
+    const prevUnreadList = unreadAlerts.value[metric] ?? [];
+
+    // 「这条本来是未读吗」必须**两份缓存都看**。
+    // 提醒流的条目取自未读桶，而含已读那份只有最近 20 条；一条较早的未读
+    // 不在其中时，只看 target 会判成「本来就已读」而不递减徽标 ——
+    // 结果条目从列表消失了，红点数字却纹丝不动。
+    const inUnreadBucket = prevUnreadList.some(item => item.id === id);
+    const wasUnread = inUnreadBucket || Boolean(target && !target.acknowledgedAt);
+
     if (target && !target.acknowledgedAt) {
       target.acknowledgedAt = new Date().toISOString();
+    }
+    if (wasUnread) {
       unreadCount.value[metric] = Math.max(0, prevUnread - 1);
     }
     // 未读口径那份只装未读，读掉一条就该移出去；否则提醒流会继续显示
     // 一条已经读过的条目，直到下一次重新取数
-    const prevUnreadList = unreadAlerts.value[metric] ?? [];
     unreadAlerts.value[metric] = prevUnreadList.filter(item => item.id !== id);
     try {
       const res = await $bff<{ ok: boolean; acknowledgedAt: string | null }>(`/alerts/${id}/read`, { method: 'POST' });

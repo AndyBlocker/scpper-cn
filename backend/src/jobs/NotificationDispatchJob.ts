@@ -205,6 +205,10 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   const effective = allowlist ? targets.filter((t) => allowlist.has(t.wikidotId)) : targets;
   summary.targets = effective.length;
   if (effective.length === 0) {
+    // 一个目标都没有（全被暂停/解绑/挡在灰度名单外）时也必须跑一次清理：
+    // 否则残留的 SCHEDULED 行永远不会过期，等某个目标日后重新启用，
+    // 那批陈年批次会被当成待重发原样送出去。
+    await expireStaleScheduledBatches(prisma, Boolean(options.dryRun));
     return summary;
   }
 
@@ -224,7 +228,10 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     if (uid != null) targetByUserId.set(uid, t);
   }
   const userIds = [...targetByUserId.keys()];
-  if (userIds.length === 0) return summary;
+  if (userIds.length === 0) {
+    await expireStaleScheduledBatches(prisma, Boolean(options.dryRun));
+    return summary;
+  }
 
   const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
   const startAt = await resolveCutoff(prisma, state.cutoffAt ?? null, options.dryRun);
@@ -254,7 +261,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 于是「原批次重发」与「新告警组新批」互不干扰。
   // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
   // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
-  await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun));
+  const replayedCount = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun));
 
   const candidates = await collectCandidates(prisma, userIds, floor);
   summary.candidates = candidates.length;
@@ -267,8 +274,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     return summary;
   }
 
-  if (candidates.length > CIRCUIT_GLOBAL_MAX) {
-    const reason = `单轮候选 ${candidates.length} 条超过全局上限 ${CIRCUIT_GLOBAL_MAX}`;
+  // 单轮上限是**整轮**的，重发已经用掉的额度要一并计入 ——
+  // 否则故障恢复时可以先发满一份重发、再发满一份新投递，实际是宣称上限的两倍。
+  if (candidates.length + replayedCount > CIRCUIT_GLOBAL_MAX) {
+    const reason = replayedCount > 0
+      ? `单轮候选 ${candidates.length} 条 + 已重发 ${replayedCount} 条超过全局上限 ${CIRCUIT_GLOBAL_MAX}`
+      : `单轮候选 ${candidates.length} 条超过全局上限 ${CIRCUIT_GLOBAL_MAX}`;
     if (options.resetCircuit) {
       // --reset-circuit 时必须**消化掉**触发跳闸的那批积压，否则复位后立刻重新扫到
       // 同一批候选、再次跳闸 —— 熔断从此永远恢复不了，除非等它们过了回看窗口
@@ -552,6 +563,36 @@ const MAX_RESUME_ATTEMPTS = Math.max(1, Number(process.env.NOTIFY_MAX_RESUME_ATT
 const ORPHAN_SCHEDULED_MAX_AGE_MS = 24 * 3600 * 1000;
 
 /**
+ * 把超出回看窗口的 SCHEDULED 批次判失效。
+ *
+ * 整个投递器的承诺是「超过 NOTIFY_LOOKBACK_HOURS 的告警不再补发」——
+ * 正常扫描严格按这个窗口取候选，重发路径却只按投递状态取行、不看年龄。
+ * 于是机器人若离线超过窗口时长，恢复那一刻会把几天前的动态推给用户，
+ * 与承诺相悖，观感上也像「系统积压了一堆旧消息一起吐出来」。
+ *
+ * 必须在健康检查与重发**之前**跑：过期的本来就不该发，
+ * 不该因为机器人恰好不可用就一直留着。
+ */
+async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean): Promise<number> {
+  const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
+  if (dryRun) {
+    const n = await prisma.notificationDelivery.count({
+      where: { state: 'SCHEDULED', createdAt: { lt: cutoff } }
+    });
+    if (n > 0) console.warn(`[notify][dry-run] 有 ${n} 条 SCHEDULED 已超出回看窗口，真实运行会判失效`);
+    return n;
+  }
+  const res = await prisma.notificationDelivery.updateMany({
+    where: { state: 'SCHEDULED', createdAt: { lt: cutoff } },
+    data: { state: 'FAILED', lastError: 'expired_beyond_lookback' }
+  });
+  if (res.count > 0) {
+    console.warn(`[notify] ${res.count} 条待重发记录已超出回看窗口（${LOOKBACK_HOURS} 小时），判失效不再补发`);
+  }
+  return res.count;
+}
+
+/**
  * 重发上一轮暂时失败、被留成 SCHEDULED 的批次。
  *
  * 【为什么要单独一步而不是让它们重新入选】
@@ -568,12 +609,16 @@ async function resumeScheduledBatches(
   targetByUserId: Map<number, QqTarget>,
   summary: DispatchSummary,
   dryRun: boolean
-): Promise<void> {
+): Promise<number> {
+  // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
+  // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
+  await expireStaleScheduledBatches(prisma, dryRun);
+
   const rows = await prisma.notificationDelivery.findMany({
     where: { state: 'SCHEDULED', channel: 'QQ' },
     orderBy: { createdAt: 'asc' }
   });
-  if (rows.length === 0) return;
+  if (rows.length === 0) return 0;
 
   // 机器人离线时不要重发：每次失败都会 +1 attemptCount，
   // 一次几分钟的宕机就能把批次推到 MAX_RESUME_ATTEMPTS 而被误判为永久失败。
@@ -582,7 +627,7 @@ async function resumeScheduledBatches(
     const health = await checkHealth();
     if (!health.ok) {
       console.warn(`[notify] qqbot 不可用，${rows.length} 条待重发的记录留到下轮（不计入重试次数）`);
-      return;
+      return 0;
     }
   }
 
@@ -605,6 +650,10 @@ async function resumeScheduledBatches(
   // 本轮最多重发多少条记录。重发同样受全局上限约束：
   // 机器人健康但发送持续暂时失败时，队列会越积越多，
   // 不设上限就会在恢复的那一刻一次性灌出去。
+  // 本轮已经用掉的额度。重发和随后的新投递**共用**这一个单轮上限 ——
+  // 各算各的话，一次故障恢复可以先发满 CIRCUIT_GLOBAL_MAX 条重发、
+  // 紧接着新候选再发满一份，实际吐出去两倍于宣称的上限。
+  let replayed = 0;
   let replayBudget = CIRCUIT_GLOBAL_MAX;
   // 每个用户当天已发的私信条数，边发边累加，避免重发绕过日限额
   const sentTodayByUser = new Map<number, number>();
@@ -631,10 +680,15 @@ async function resumeScheduledBatches(
       continue;
     }
 
+    // attemptCount 在首次投递（recordAll）时就被写成 1，所以「已重发过的轮数」
+    // 是 max(attemptCount) - 1，本次将是第 resumeRound 轮重发。
+    // 原先直接拿 max+1 去比 MAX_RESUME_ATTEMPTS，默认 5 实际只重发 4 次，
+    // 配成 1 时一次都不会重发 —— 与这个常量的字面含义不符。
     const attempt = Math.max(...batch.map((r) => r.attemptCount)) + 1;
+    const resumeRound = attempt - 1;
 
-    if (attempt > MAX_RESUME_ATTEMPTS) {
-      console.warn(`[notify] 批次 ${digestKey} 重发 ${MAX_RESUME_ATTEMPTS} 次仍失败，判定失败不再重试`);
+    if (resumeRound > MAX_RESUME_ATTEMPTS) {
+      console.warn(`[notify] 批次 ${digestKey} 已重发 ${MAX_RESUME_ATTEMPTS} 次仍失败，判定失败不再重试`);
       if (!dryRun) {
         await prisma.notificationDelivery.updateMany({
           where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
@@ -678,6 +732,7 @@ async function resumeScheduledBatches(
       break; // 其余保持 SCHEDULED
     }
     replayBudget -= stillPending.length;
+    replayed += stillPending.length;
 
     const replayKeys = stillPending.map((r) => r.dedupeKey);
     const shown = stillPending.slice(0, CIRCUIT_USER_MAX);
@@ -691,7 +746,7 @@ async function resumeScheduledBatches(
     const message = renderDigestLines(itemLines, overflow);
 
     if (dryRun) {
-      console.log(`[notify][dry-run] 重发 → ${target.wikidotId}（${stillPending.length} 条，第 ${attempt} 次，今日第 ${sentToday + 1} 条）\n${message}\n`);
+      console.log(`[notify][dry-run] 重发 → ${target.wikidotId}（${stillPending.length} 条，第 ${resumeRound} 轮重发，今日第 ${sentToday + 1} 条）\n${message}\n`);
       summary.sent += stillPending.length;
       sentTodayByUser.set(userId, sentToday + 1);
       continue;
@@ -721,9 +776,10 @@ async function resumeScheduledBatches(
         data: { lastError: result.error ?? 'unknown', attemptCount: attempt }
       });
       summary.failed += stillPending.length;
-      console.warn(`[notify] 批次 ${digestKey} 第 ${attempt} 次重发仍失败：${result.error}`);
+      console.warn(`[notify] 批次 ${digestKey} 第 ${resumeRound} 轮重发仍失败：${result.error}`);
     }
   }
+  return replayed;
 }
 
 /**
@@ -797,12 +853,16 @@ async function countDigestsSentSince(
   userId: number,
   since: Date
 ): Promise<number> {
+  // 按 sentAt 而不是 createdAt 计窗口：SCHEDULED 批次可能在创建很久之后才发出去，
+  // 用 createdAt 的话它一发出就已经落在 24 小时窗口之外、完全不占额度，
+  // 于是「故障恢复」这条路径可以让当天实际发出的条数超过 NOTIFY_DAILY_LIMIT。
+  // sentAt 为空的历史行退回 createdAt，避免旧数据整批不计。
   const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
     SELECT COUNT(DISTINCT payload->>'digestKey') AS count
     FROM "NotificationDelivery"
     WHERE "userId" = ${userId}
       AND state = 'SENT'
-      AND "createdAt" > ${since}
+      AND COALESCE("sentAt", "createdAt") > ${since}
       AND payload->>'digestKey' IS NOT NULL
   `;
   return Number(rows[0]?.count ?? 0);
