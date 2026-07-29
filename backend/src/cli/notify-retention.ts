@@ -117,46 +117,52 @@ export async function runNotifyRetention(options: RetentionOptions): Promise<voi
       { status: 'PENDING' as const, expiresAt: { lt: challengeCutoff } }
     ]
   };
+  // 用户库客户端是本函数**自己新建**的（不是 db-connection 的单例），
+  // 因此必须自己负责关闭：CLI action 里的 disconnectPrisma() 管不到它。
+  // 原先三条正常返回路径上各写了一次 $disconnect，但只要 count/deleteMany 抛异常
+  // 就一处都走不到 —— 查询引擎留着，一次失败的一次性命令就再也不退出。
   const userDb = await loadUserBackendClient();
-  if (userDb) {
-    buckets.push({
-      label: `ChannelBindingChallenge（终态且早于 ${options.challengeDays} 天）`,
-      count: await userDb.channelBindingChallenge.count({ where: challengeWhere }),
-      run: async () => (await userDb.channelBindingChallenge.deleteMany({ where: challengeWhere })).count
-    });
-  } else {
-    console.warn('[notify-retention] 无法连接用户库，跳过 ChannelBindingChallenge 清理');
-  }
+  try {
+    if (userDb) {
+      buckets.push({
+        label: `ChannelBindingChallenge（终态且早于 ${options.challengeDays} 天）`,
+        count: await userDb.channelBindingChallenge.count({ where: challengeWhere }),
+        run: async () => (await userDb.channelBindingChallenge.deleteMany({ where: challengeWhere })).count
+      });
+    } else {
+      console.warn('[notify-retention] 无法连接用户库，跳过 ChannelBindingChallenge 清理');
+    }
 
-  const total = buckets.reduce((acc, b) => acc + b.count, 0);
+    const total = buckets.reduce((acc, b) => acc + b.count, 0);
 
-  console.log(`[notify-retention] ${options.apply ? '执行模式' : 'DRY-RUN（不会删除任何数据）'}`);
-  for (const b of buckets) {
-    console.log(`  ${b.label}: ${b.count} 行`);
-  }
-  console.log(`  合计: ${total} 行`);
+    console.log(`[notify-retention] ${options.apply ? '执行模式' : 'DRY-RUN（不会删除任何数据）'}`);
+    for (const b of buckets) {
+      console.log(`  ${b.label}: ${b.count} 行`);
+    }
+    console.log(`  合计: ${total} 行`);
 
-  if (!options.apply) {
-    console.log('[notify-retention] 未加 --apply，本次不执行删除。');
-    await userDb?.$disconnect?.();
-    return;
-  }
+    if (!options.apply) {
+      console.log('[notify-retention] 未加 --apply，本次不执行删除。');
+      return;
+    }
 
-  if (total === 0) {
-    console.log('[notify-retention] 无需清理。');
-    await userDb?.$disconnect?.();
-    return;
-  }
+    if (total === 0) {
+      console.log('[notify-retention] 无需清理。');
+      return;
+    }
 
-  let deleted = 0;
-  for (const b of buckets) {
-    if (b.count === 0) continue;
-    const n = await b.run();
-    deleted += n;
-    console.log(`  已删除 ${n} 行 — ${b.label}`);
+    let deleted = 0;
+    for (const b of buckets) {
+      if (b.count === 0) continue;
+      const n = await b.run();
+      deleted += n;
+      console.log(`  已删除 ${n} 行 — ${b.label}`);
+    }
+    console.log(`[notify-retention] 完成，共删除 ${deleted} 行。`);
+  } finally {
+    // 关闭失败不该盖掉真正的错误
+    await userDb?.$disconnect?.().catch(() => {});
   }
-  console.log(`[notify-retention] 完成，共删除 ${deleted} 行。`);
-  await userDb?.$disconnect?.();
 }
 
 export function parseRetentionOptions(raw: Record<string, unknown>): RetentionOptions {

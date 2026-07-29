@@ -58,12 +58,22 @@ function useAlertsState() {
   const unreadCount = useState<AlertsRecord<number>>('alerts/unread', () => createAlertsRecord(() => 0));
   const loading = useState<AlertsRecord<boolean>>('alerts/loading', () => createAlertsRecord(() => false));
   const lastFetchedAt = useState<AlertsRecord<string | null>>('alerts/lastFetchedAt', () => createAlertsRecord(() => null));
+  /**
+   * 上一次取数用的 unreadOnly 口径，**必须与数据存在一起**。
+   *
+   * 两个调用方口径不同：常驻 layout 的铃铛要 unreadOnly=false（列出最近的，含已读），
+   * 账号页的提醒流要 unreadOnly=true。若只按 lastFetchedAt 判新鲜，铃铛刚取过的
+   * 「最近 20 条含已读」会被提醒流当成自己那份直接复用；当最新 20 条都已读、
+   * 更早处还有未读时，列表就空着而徽标仍有数字。
+   * 把口径记在数据旁边，谁写数据谁更新，就不会有调用方绕过它。
+   */
+  const lastFetchUnreadOnly = useState<AlertsRecord<boolean | null>>('alerts/lastFetchMode', () => createAlertsRecord(() => null));
   const activeMetric = useState<AlertMetric>('alerts/activeMetric', () => 'COMMENT_COUNT');
   const error = useState<AlertsRecord<string | null>>('alerts/error', () => createAlertsRecord(() => null));
   // 请求世代必须**跨组件共享**：每个 useAlerts() 调用各自新建一个 Map 的话，
   // layout 里 resetState 递增的世代号影响不到面板里那份，守卫等于没有。
   const epochs = useState<AlertsRecord<number>>('alerts/epochs', () => createAlertsRecord(() => 0));
-  return { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error, epochs };
+  return { alerts, unreadCount, loading, lastFetchedAt, lastFetchUnreadOnly, activeMetric, error, epochs };
 }
 
 export function useAlerts() {
@@ -72,7 +82,7 @@ export function useAlerts() {
   // 请求世代：force 刷新会绕过 loading 门禁，于是同一 metric 可能有两个请求在飞；
   // 换账号时 A 的请求也可能在 B 登录后才返回。两种情况都会用陈旧/他人的数据
   // 覆盖共享状态。每次发起 +1，回来时比对，不是最新的就整个丢弃。
-  const { alerts, unreadCount, loading, lastFetchedAt, activeMetric, error, epochs } = useAlertsState();
+  const { alerts, unreadCount, loading, lastFetchedAt, lastFetchUnreadOnly, activeMetric, error, epochs } = useAlertsState();
   // Persist last used metric for better UX across sessions
   if (typeof window !== 'undefined') {
     try {
@@ -92,6 +102,7 @@ export function useAlerts() {
     alerts.value = createAlertsRecord(() => []);
     unreadCount.value = createAlertsRecord(() => 0);
     lastFetchedAt.value = createAlertsRecord(() => null);
+    lastFetchUnreadOnly.value = createAlertsRecord(() => null);
     loading.value = createAlertsRecord(() => false);
     error.value = createAlertsRecord(() => null);
     activeMetric.value = 'COMMENT_COUNT';
@@ -119,7 +130,9 @@ export function useAlerts() {
       return alerts.value[targetMetric];
     }
     const lastFetchedTs = lastFetchedAt.value[targetMetric];
-    if (!force && lastFetchedTs) {
+    // 口径不同就不算新鲜：手上那份是另一种 unreadOnly 取来的，复用它会答非所问
+    const sameMode = lastFetchUnreadOnly.value[targetMetric] === unreadOnly;
+    if (!force && sameMode && lastFetchedTs) {
       const lastFetched = new Date(lastFetchedTs).getTime();
       const now = Date.now();
       if (now - lastFetched < 60_000) {
@@ -145,6 +158,7 @@ export function useAlerts() {
         const parsed = Number(res.unreadCount);
         unreadCount.value[targetMetric] = Number.isFinite(parsed) ? parsed : 0;
         lastFetchedAt.value[targetMetric] = new Date().toISOString();
+        lastFetchUnreadOnly.value[targetMetric] = unreadOnly;
         error.value[targetMetric] = null;
       } else {
         // 保留已有数据：清空会让用户看到「暂无提醒」，误以为提醒被清掉了

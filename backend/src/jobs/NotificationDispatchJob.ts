@@ -249,6 +249,13 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     }
   }
 
+  // 先把上一轮暂时失败、留成 SCHEDULED 的批次原样重发，再去扫新候选。
+  // 顺序不能反：这些行仍在库里，collectCandidates 会把它们排除在新批次之外，
+  // 于是「原批次重发」与「新告警组新批」互不干扰。
+  // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
+  // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
+  await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun));
+
   const candidates = await collectCandidates(prisma, userIds, floor);
   summary.candidates = candidates.length;
   if (candidates.length === 0) {
@@ -429,13 +436,21 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 而每条新告警都有新的 dedupeKey，于是对着一个已经删了机器人的用户永远重试下去。
       await reportChannelOutcome(target.accountId, 'failed', result.error ?? 'unknown');
     } else {
-      // 可重试：撤销刚才的占位，让候选下轮重新被扫到。
-      // 留着 PENDING 会让 dedupeKey 把重试也挡掉。
-      await prisma.notificationDelivery.deleteMany({
-        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } }
+      // 可重试：**保留这一批**，转 SCHEDULED 等下轮原样重发。
+      //
+      // 原先是直接删掉占位、让候选下轮重新入选。问题出在「机器人已经收下、
+      // 但响应超时」这种情况：下一轮会重新组批，若期间来了新告警，
+      // 摘要就多一行，digestKey 随之改变，qqbot 的 15 分钟去重表认不出来，
+      // 用户于是又收到一遍之前那些行。
+      // 保留原批次意味着重发时 digestKey 完全一致：机器人若真收下过就会去重，
+      // 若确实没发成（它在发送失败时会撤掉去重记录）则正常送达。
+      // 新来的告警自己组成新的一批，互不干扰。
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
+        data: { state: 'SCHEDULED', lastError: result.error ?? 'unknown' }
       });
       summary.failed += items.length;
-      console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（下轮重试）`);
+      console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（保留原批次，下轮以同一 digestKey 重发）`);
     }
   }
 
@@ -531,6 +546,133 @@ async function recordAll(
   return created.count;
 }
 
+/** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
+const MAX_RESUME_ATTEMPTS = Math.max(1, Number(process.env.NOTIFY_MAX_RESUME_ATTEMPTS ?? '5') || 5);
+/** 目标已消失的 SCHEDULED 批次保留多久后判失败（默认 24 小时） */
+const ORPHAN_SCHEDULED_MAX_AGE_MS = 24 * 3600 * 1000;
+
+/**
+ * 重发上一轮暂时失败、被留成 SCHEDULED 的批次。
+ *
+ * 【为什么要单独一步而不是让它们重新入选】
+ * 重新入选就会重新组批：期间来了新告警，摘要内容变、digestKey 变，
+ * qqbot 的去重表认不出来，「已收下但响应超时」的那条就会被重复推送。
+ * 这里按 digestKey 原样取回、原样重发，机器人那侧要么去重（说明上次真收下了）、
+ * 要么正常送达（它在发送失败时会撤掉去重记录），两种情况都正确。
+ *
+ * 必须在扫描新候选**之前**跑：collectCandidates 会排除已有投递记录的候选，
+ * 所以这些行不会被重复计入新批次。
+ */
+async function resumeScheduledBatches(
+  prisma: PrismaClient,
+  targetByUserId: Map<number, QqTarget>,
+  summary: DispatchSummary,
+  dryRun: boolean
+): Promise<void> {
+  const rows = await prisma.notificationDelivery.findMany({
+    where: { state: 'SCHEDULED', channel: 'QQ' },
+    orderBy: { createdAt: 'asc' }
+  });
+  if (rows.length === 0) return;
+
+  // 机器人离线时不要重发：每次失败都会 +1 attemptCount，
+  // 一次几分钟的宕机就能把批次推到 MAX_RESUME_ATTEMPTS 而被误判为永久失败。
+  // 「发不出去」和「不该发」是两回事，前者应该原地等待。
+  if (!dryRun) {
+    const health = await checkHealth();
+    if (!health.ok) {
+      console.warn(`[notify] qqbot 不可用，${rows.length} 条待重发的记录留到下轮（不计入重试次数）`);
+      return;
+    }
+  }
+
+  // 按 digestKey 分组还原原批次
+  const groups = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const payload = (row.payload ?? {}) as Record<string, unknown>;
+    const key = typeof payload.digestKey === 'string' ? payload.digestKey : null;
+    if (!key) continue; // 没有 digestKey 的重建不出原消息，交给陈旧清理兜底
+    const list = groups.get(key) ?? [];
+    list.push(row);
+    groups.set(key, list);
+  }
+
+  for (const [digestKey, batch] of groups) {
+    const first = batch[0];
+    if (!first) continue;
+    const keys = batch.map((r) => r.dedupeKey);
+    const target = targetByUserId.get(first.userId);
+
+    if (!target) {
+      // 用户已解绑/停用/被移出灰度名单。这批永远发不出去了，
+      // 但陈旧清理只扫 PENDING，放着不管就是一批永久占着 dedupeKey 的僵尸行 ——
+      // 既不会重发，也会一直把对应告警挡在新批次之外。超过保留期就判失败。
+      const age = Date.now() - first.createdAt.getTime();
+      if (age > ORPHAN_SCHEDULED_MAX_AGE_MS && !dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+          data: { state: 'FAILED', lastError: 'target_gone' }
+        });
+        console.warn(`[notify] 批次 ${digestKey} 的投递目标已不存在且超过保留期，判定失败`);
+      }
+      continue;
+    }
+
+    const attempt = Math.max(...batch.map((r) => r.attemptCount)) + 1;
+
+    if (attempt > MAX_RESUME_ATTEMPTS) {
+      console.warn(`[notify] 批次 ${digestKey} 重发 ${MAX_RESUME_ATTEMPTS} 次仍失败，判定失败不再重试`);
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+          data: { state: 'FAILED', lastError: 'max_resume_attempts' }
+        });
+      }
+      summary.failed += batch.length;
+      continue;
+    }
+
+    const shown = batch.slice(0, CIRCUIT_USER_MAX);
+    const overflow = batch.length - shown.length;
+    const itemLines = shown.map((r) => {
+      const payload = (r.payload ?? {}) as Record<string, unknown>;
+      return typeof payload.line === 'string' ? payload.line : '(内容缺失)';
+    });
+    const message = renderDigestLines(itemLines, overflow);
+
+    if (dryRun) {
+      console.log(`[notify][dry-run] 重发 → ${target.wikidotId}（${batch.length} 条，第 ${attempt} 次）\n${message}\n`);
+      summary.sent += batch.length;
+      continue;
+    }
+
+    const result = await pushQqMessage({ qq: target.address, message, dedupeKey: digestKey });
+    if (result.ok) {
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+        data: { state: 'SENT', sentAt: new Date(), lastError: null, attemptCount: attempt }
+      });
+      summary.sent += batch.length;
+      console.log(`[notify] 批次 ${digestKey} 重发成功${result.deduped ? '（机器人判定为重复，说明上次已送达）' : ''}`);
+      await reportChannelOutcome(target.accountId, 'sent', null);
+    } else if (isPermanentFailure(result.error)) {
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+        data: { state: 'FAILED', lastError: result.error ?? 'unknown', attemptCount: attempt }
+      });
+      summary.failed += batch.length;
+      await reportChannelOutcome(target.accountId, 'failed', result.error ?? 'unknown');
+    } else {
+      await prisma.notificationDelivery.updateMany({
+        where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
+        data: { lastError: result.error ?? 'unknown', attemptCount: attempt }
+      });
+      summary.failed += batch.length;
+      console.warn(`[notify] 批次 ${digestKey} 第 ${attempt} 次重发仍失败：${result.error}`);
+    }
+  }
+}
+
 /**
  * 过去 24 小时真正发给该用户的**私信条数**。
  *
@@ -557,8 +699,16 @@ async function countDigestsSentSince(
 }
 
 function renderDigest(items: Candidate[], overflow: number): string {
+  return renderDigestLines(items.map((c) => c.line), overflow);
+}
+
+/**
+ * 从纯文本行渲染摘要。重发 SCHEDULED 批次时用得上 ——
+ * 那时手上只有 payload 里存下来的 line，没有原始 Candidate。
+ */
+function renderDigestLines(itemLines: string[], overflow: number): string {
   const lines = ['【SCPper CN】你有新的站点动态：', ''];
-  for (const c of items) lines.push(`· ${c.line}`);
+  for (const line of itemLines) lines.push(`· ${line}`);
   if (overflow > 0) lines.push(`· …另有 ${overflow} 条`);
   lines.push('', `查看全部：${SITE_BASE}/account?tab=alerts`);
   return lines.join('\n');

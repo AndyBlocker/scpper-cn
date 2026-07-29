@@ -54,10 +54,19 @@ export function useFollowAlerts() {
    * 每次请求 +1 并记下自己的号，只有最新一次允许写回 —— 与 useAlerts 的做法一致。
    */
   const requestGeneration = useState<number>('followAlerts/reqGen', () => 0);
+  /**
+   * 上一次取数用的 unreadOnly 口径，必须与数据存在一起。
+   * 铃铛要 unreadOnly=false、账号页提醒流要 true；只按 lastFetchedAt 判新鲜的话，
+   * 谁先取到谁的那份就会被另一方当成自己的直接复用 ——
+   * 最新 20 条都已读、更早处还有未读时，列表空着而徽标有数字。
+   */
+  const lastFetchUnreadOnly = useState<boolean | null>('followAlerts/lastFetchMode', () => null);
 
   async function fetchAlerts(force = false, limit = 20, offset = 0, unreadOnly = false) {
     if (loading.value && !force) return alerts.value;
-    if (!force && lastFetchedAt.value) {
+    // 口径不同就不算新鲜：手上那份是另一种 unreadOnly 取来的
+    const sameMode = lastFetchUnreadOnly.value === unreadOnly;
+    if (!force && sameMode && lastFetchedAt.value) {
       const last = new Date(lastFetchedAt.value).getTime();
       if (Date.now() - last < 60_000) return alerts.value;
     }
@@ -80,6 +89,7 @@ export function useFollowAlerts() {
         const parsed = Number(res.unreadCount);
         unreadCount.value = Number.isFinite(parsed) ? parsed : 0;
         lastFetchedAt.value = new Date().toISOString();
+        lastFetchUnreadOnly.value = unreadOnly;
         combined.value = buildCombinedGroups(alerts.value);
         combinedLastFetchedAt.value = new Date().toISOString();
         error.value = null;
@@ -104,6 +114,7 @@ export function useFollowAlerts() {
     alerts.value = [];
     unreadCount.value = 0;
     lastFetchedAt.value = null;
+    lastFetchUnreadOnly.value = null;
     combined.value = [];
     combinedLastFetchedAt.value = null;
     error.value = null;

@@ -34,23 +34,31 @@ function useAuthState() {
   return { user, status, loading }
 }
 
+const EMPTY_QQ_BINDING = { bound: false, addressMask: null, status: null }
+
 function normalizeUser(payload: any, previous?: AuthUser | null): AuthUser {
+  const id = String(payload?.id || '')
+  // 只有当这份 payload 说的还是**同一个账号**时，才允许沿用上一份 qqBinding 快照。
+  // 否则 A 已登录时直接 login 到 B，B 的 payload 不含 qqBinding，
+  // 就会把 A 的掩码 QQ 号和绑定状态复制到 B 的界面上 —— 跨账号信息泄露，
+  // 且要等下一次强制 /auth/me 才会被纠正。
+  const sameAccount = Boolean(previous?.id) && previous?.id === id
   return {
-    id: String(payload?.id || ''),
+    id,
     email: String(payload?.email || ''),
     displayName: payload?.displayName ?? null,
     linkedWikidotId: payload?.linkedWikidotId != null ? Number(payload.linkedWikidotId) : null,
     lastLoginAt: payload?.lastLoginAt ? String(payload.lastLoginAt) : null,
     // /auth/login 与 /auth/profile 返回的是 formatUser 的形状，**不含** qqBinding。
     // 直接取 payload 会把已绑定用户的状态抹成 bound:false，界面随即报「未绑定」，
-    // 直到下一次强制 /auth/me 才恢复。字段缺失时保留上一份快照。
+    // 直到下一次强制 /auth/me 才恢复。字段缺失且账号未变时保留上一份快照。
     qqBinding: payload?.qqBinding
       ? {
           bound: Boolean(payload.qqBinding.bound),
           addressMask: payload.qqBinding.addressMask ?? null,
           status: payload.qqBinding.status ?? null
         }
-      : (previous?.qqBinding ?? { bound: false, addressMask: null, status: null })
+      : (sameAccount ? (previous?.qqBinding ?? EMPTY_QQ_BINDING) : EMPTY_QQ_BINDING)
   }
 }
 
