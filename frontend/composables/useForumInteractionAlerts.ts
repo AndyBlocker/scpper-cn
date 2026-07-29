@@ -149,6 +149,10 @@ export function useForumInteractionAlerts() {
       unread: requestGeneration.value.unread + 1
     };
     countGeneration.value += 1;
+    // 被作废的在途 GET 已经清不掉自己的 loading（世代守卫不成立），
+    // 这里替它收尾，否则转圈停不下来、后续非强制刷新也会被挡住。
+    loading.value = false;
+    unreadLoading.value = false;
 
     const idx = alerts.value.findIndex((item) => item.id === id);
     // 先取出再用：alerts.value[idx] 在 noUncheckedIndexedAccess 下是 T | undefined，
@@ -221,6 +225,10 @@ export function useForumInteractionAlerts() {
       unread: requestGeneration.value.unread + 1
     };
     countGeneration.value += 1;
+    // 被作废的在途 GET 已经清不掉自己的 loading（世代守卫不成立），
+    // 这里替它收尾，否则转圈停不下来、后续非强制刷新也会被挡住。
+    loading.value = false;
+    unreadLoading.value = false;
     alerts.value = [];
     unreadAlerts.value = [];
     unreadCount.value = 0;
@@ -238,6 +246,10 @@ export function useForumInteractionAlerts() {
       unread: requestGeneration.value.unread + 1
     };
     countGeneration.value += 1;
+    // 被作废的在途 GET 已经清不掉自己的 loading（世代守卫不成立），
+    // 这里替它收尾，否则转圈停不下来、后续非强制刷新也会被挡住。
+    loading.value = false;
+    unreadLoading.value = false;
     try {
       const res = await $bff<MarkAllReadResponse>('/alerts/forum/read-all', { method: 'POST' });
       if (res?.ok && identityEpoch.value === epochAtStart) {

@@ -241,6 +241,30 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     const uid = byWikidotId.get(t.wikidotId);
     if (uid != null) targetByUserId.set(uid, t);
   }
+  const targetsLoadedAt = Date.now();
+  /**
+   * 发送前复验绑定是否仍然有效。
+   *
+   * 目标快照是**整轮开始时**取的一份，但一轮可能很长：单轮上限 2000 条候选、
+   * 每次推送最多等 5 秒，收件人又是串行处理的。排在后面的收件人真正被发送时，
+   * 这份快照可能已经过期很久 —— 期间用户解绑或渠道被自动暂停，
+   * 他仍会收到通知。这属于「已经撤销授权却还在收消息」，不只是数据不新。
+   *
+   * 因此：快照超过缓存 TTL 就强制重取，并确认这个收件人的绑定身份没变。
+   * 身份变了（重绑）或已不在列表里（解绑/暂停）就跳过，不占用重试次数。
+   */
+  const TARGET_SNAPSHOT_TTL_MS = 60_000;
+  const revalidateTarget = async (t: QqTarget): Promise<QqTarget | null> => {
+    if (Date.now() - targetsLoadedAt < TARGET_SNAPSHOT_TTL_MS) return t;
+    const fresh = await loadActiveQqTargets({ force: true });
+    const still = fresh.find((x) => x.bindingId === t.bindingId && x.address === t.address);
+    if (!still) {
+      console.warn(`[notify] 用户 ${t.wikidotId} 的绑定在本轮进行中已失效（解绑/暂停/重绑），跳过`);
+      return null;
+    }
+    return still;
+  };
+
   const userIds = [...targetByUserId.keys()];
   if (userIds.length === 0) {
     await expireStaleScheduledBatches(prisma, Boolean(options.dryRun));
@@ -462,6 +486,10 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       continue;
     }
 
+    // 长轮次里这份目标快照可能已经过期，发送前复验一次
+    const liveTarget = await revalidateTarget(target);
+    if (!liveTarget) continue;
+
     // 发送**之前**先把这批 dedupeKey 以 PENDING 占住。
     // 原先是先发后记账：若机器人已经收下但响应丢失、或进程在 recordAll 前退出，
     // 这批候选下轮仍会被扫到，等机器人那 15 分钟去重窗口一过就会重复推送给用户。
@@ -520,7 +548,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 摘要里的数字自相矛盾，排查时反而误导人。
     const dispatchedCount = keys.length;
 
-    const result = await pushQqMessage({ qq: target.address, message, dedupeKey: digestKey });
+    const result = await pushQqMessage({ qq: liveTarget.address, message, dedupeKey: digestKey });
 
     if (result.ok) {
       await prisma.notificationDelivery.updateMany({
@@ -530,7 +558,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       summary.sent += dispatchedCount;
       // 成功要清零 failureCount，否则一次永久失败之后，日后**不连续**的偶发失败
       // 会累加到阈值，把一个正常渠道误暂停。
-      await reportChannelOutcome(target.accountId, target.bindingId, 'sent', null);
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'sent', null);
     } else if (isPermanentFailure(result.error)) {
       await prisma.notificationDelivery.updateMany({
         where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } },
@@ -540,7 +568,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       console.warn(`[notify] 用户 ${target.wikidotId} 永久失败：${result.error}（不再重试）`);
       // 把永久失败回报给绑定方。不报的话：绑定一直是 ACTIVE、界面显示健康，
       // 而每条新告警都有新的 dedupeKey，于是对着一个已经删了机器人的用户永远重试下去。
-      await reportChannelOutcome(target.accountId, target.bindingId, 'failed', result.error ?? 'unknown');
+      await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'failed', result.error ?? 'unknown');
     } else {
       // 可重试：**保留这一批**，转 SCHEDULED 等下轮原样重发。
       //
@@ -876,6 +904,8 @@ async function resumeScheduledBatches(
           data: { state: 'CANCELLED', lastError: 'acknowledged_on_site' }
         });
       }
+      // 计入 suppressed，否则运维摘要与账本对不上（取消掉的既不算 sent 也不算 failed）
+      summary.suppressed += cancelledKeys.length;
       console.log(`[notify] 批次 ${digestKey} 有 ${cancelledKeys.length} 条已在站内读过，取消推送`);
     }
     if (stillPending.length === 0) {

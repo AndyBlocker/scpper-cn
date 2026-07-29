@@ -137,6 +137,10 @@ export function useFollowAlerts() {
       unread: requestGeneration.value.unread + 1
     };
     countGeneration.value += 1;
+    // 被作废的在途 GET 已经清不掉自己的 loading（世代守卫不成立），
+    // 这里替它收尾，否则转圈停不下来、后续非强制刷新也会被挡住。
+    loading.value = false;
+    unreadLoading.value = false;
     alerts.value = [];
     unreadAlerts.value = [];
     unreadCount.value = 0;
@@ -217,6 +221,10 @@ export function useFollowAlerts() {
       unread: requestGeneration.value.unread + 1
     };
     countGeneration.value += 1;
+    // 被作废的在途 GET 已经清不掉自己的 loading（世代守卫不成立），
+    // 这里替它收尾，否则转圈停不下来、后续非强制刷新也会被挡住。
+    loading.value = false;
+    unreadLoading.value = false;
     try {
       const res = await $bff<{ ok: boolean; id: number; acknowledgedAt: string | null }>(`/alerts/follow/${id}/read`, { method: 'POST' });
       if (res?.ok && identityEpoch.value === epochAtStart) {
@@ -257,6 +265,10 @@ export function useFollowAlerts() {
       unread: requestGeneration.value.unread + 1
     };
     countGeneration.value += 1;
+    // 被作废的在途 GET 已经清不掉自己的 loading（世代守卫不成立），
+    // 这里替它收尾，否则转圈停不下来、后续非强制刷新也会被挡住。
+    loading.value = false;
+    unreadLoading.value = false;
     try {
       const res = await $bff<{ ok: boolean; updated: number }>('/alerts/follow/read-all', { method: 'POST' });
       if (res?.ok && identityEpoch.value === epochAtStart) {

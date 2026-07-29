@@ -420,6 +420,28 @@ export async function verifyQqBinding(params: {
       matched: true,
       reply: '绑定成功！之后 SCPper CN 的站点通知会通过这里发给你。\n可随时在网站「账号设置 → 通知」调整推送内容。'
     };
+  }).catch((error): VerifyOutcome => {
+    /**
+     * 并发抢同一个 QQ 号时的唯一键冲突，是**业务冲突**而不是服务器故障。
+     *
+     * 两个账号各自持有有效验证码、同时用同一个 QQ 回调时，
+     * 两个 Serializable 事务都可能观察到「该地址还没有归属」，
+     * 随后在 (channel, address) 唯一索引上撞车。PostgreSQL 这时给的是
+     * 唯一约束冲突（Prisma P2002）而不是可重试的序列化失败（P2034），
+     * 于是输的那一方直接 500 —— 机器人收到 5xx 会当成服务异常，
+     * 而实际情况有明确语义：这个号已经被别人绑走了。
+     * 转成与串行路径一致的 address_taken，文案也一致。
+     */
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      // eslint-disable-next-line no-console
+      console.warn('[qq-binding] 并发绑定同一 QQ，唯一键冲突，按 address_taken 处理');
+      return {
+        matched: false,
+        reason: 'address_taken',
+        reply: '这个 QQ 已经绑定到另一个站点账号了。如需换绑，请先在原账号解绑。'
+      };
+    }
+    throw error;
   }).then(async (outcome) => {
     // 事务外失效缓存：/auth/me 会带出绑定态，不失效的话前端最多 30 秒看不到变化
     if (outcome.matched) invalidateAuthCache(found.userId);

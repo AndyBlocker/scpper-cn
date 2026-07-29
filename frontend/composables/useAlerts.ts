@@ -237,6 +237,11 @@ export function useAlerts() {
     // 变更必须让这些读作废，否则乐观更新会被自己的旧读覆盖掉。
     epochs.value[metric] = { all: epochs.value[metric].all + 1, unread: epochs.value[metric].unread + 1 };
     countGeneration.value[metric] += 1;
+    // 被作废的那次 GET，其 finally 里的世代守卫已经不成立，再也清不掉 loading ——
+    // 转圈会一直转下去，还会挡住后续的非强制刷新。谁作废了它，谁负责收尾。
+    // （若此刻另有更新的 GET 在跑，它自己的 finally 会再置一次 false，无非闪一下。）
+    loading.value[metric] = false;
+    unreadLoading.value[metric] = false;
     const list = alerts.value[metric] ?? [];
     const target = list.find(item => item.id === id);
     const prevAck = target?.acknowledgedAt ?? null;
@@ -289,9 +294,11 @@ export function useAlerts() {
     // 同 markAlertRead：成功后的写回若落在换账号之后，
     // 会把 B 的未读数错误地清成 0（直到下次刷新才纠正）。
     const identityAtStart = identityEpoch.value;
-    // 同上：先作废在途 GET，再发起变更
+    // 同上：先作废在途 GET，再发起变更；并替被作废的请求清掉 loading
     epochs.value[metric] = { all: epochs.value[metric].all + 1, unread: epochs.value[metric].unread + 1 };
     countGeneration.value[metric] += 1;
+    loading.value[metric] = false;
+    unreadLoading.value[metric] = false;
     try {
       const res = await $bff<{ ok: boolean; updated: number }>('/alerts/read-all', {
         method: 'POST',
