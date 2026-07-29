@@ -23,10 +23,13 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       const followerId = await resolveFollowerId(readPool, auth.linkedWikidotId);
       if (followerId == null) return res.json({ ok: true, alerts: [], unreadCount: 0 });
 
+      // 用主库 pool 而非 readPool：这是**用户刚刚在设置页改过**的值，
+      // 走副本会撞上复制延迟 —— 关掉后还看得见、打开后还看不见。
+      // 列表数据走副本没问题（慢一点无所谓），但控制可见性的开关不行。
       // 用户关掉了「关注动态」的站内展示：列表与未读数一并置空。
       // 两者必须一起，只清列表会留下一个消不掉的红点。
       // 注意这不影响 QQ 推送 —— 两个渠道各自独立。
-      if ((await loadDisabledSiteTypes(readPool, followerId)).has('FOLLOW_ACTIVITY')) {
+      if ((await loadDisabledSiteTypes(pool, followerId)).has('FOLLOW_ACTIVITY')) {
         return res.json({ ok: true, alerts: [], unreadCount: 0 });
       }
 
@@ -98,6 +101,12 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       if (!auth || auth.linkedWikidotId == null) return res.status(401).json({ ok: false, error: 'unauthenticated' });
       const followerId = await resolveFollowerId(readPool, auth.linkedWikidotId);
       if (followerId == null) return res.json({ ok: true, total: 0, groups: [] });
+
+      // combined 与根路由是**两个独立入口**，只在根路由加过滤等于没加 ——
+      // 用这个端点的客户端会完全绕过站内开关。
+      if ((await loadDisabledSiteTypes(pool, followerId)).has('FOLLOW_ACTIVITY')) {
+        return res.json({ ok: true, total: 0, groups: [] });
+      }
 
       const limit = Math.max(1, Math.min(parseInt(String(req.query.limit ?? '20'), 10) || 20, 50));
       const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);

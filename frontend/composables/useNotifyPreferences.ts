@@ -49,6 +49,14 @@ export function useNotifyPreferences() {
   )
   const channel = useState<NotifyChannelSetting>('notifyPrefs/channel', () => ({ ...DEFAULT_CHANNEL }))
   const loading = useState<boolean>('notifyPrefs/loading', () => false)
+  /**
+   * 是否成功拿到过权威值。
+   *
+   * 加载失败时 matrix 停在「全开」的占位默认值上，若此时允许编辑，
+   * 用户点一个开关就会把**整行占位**提交上去 —— 服务端上原本关着的
+   * 另一个渠道会被静默打开。所以拿到权威值之前必须保持只读。
+   */
+  const loaded = useState<boolean>('notifyPrefs/loaded', () => false)
   const saving = useState<boolean>('notifyPrefs/saving', () => false)
   const error = ref<string | null>(null)
 
@@ -72,6 +80,7 @@ export function useNotifyPreferences() {
       if (res?.ok) {
         matrix.value = Array.isArray(res.matrix) && res.matrix.length ? res.matrix : matrix.value
         channel.value = { ...DEFAULT_CHANNEL, ...(res.channel ?? {}) }
+        loaded.value = true
       }
     } catch (e) {
       console.warn('[notify-prefs] fetch failed', e)
@@ -116,10 +125,11 @@ export function useNotifyPreferences() {
     channel.value = { ...DEFAULT_CHANNEL }
     loading.value = false
     saving.value = false
+    loaded.value = false
     error.value = null
   }
 
   const byType = computed(() => new Map(matrix.value.map((r) => [r.type, r])))
 
-  return { matrix, byType, channel, loading, saving, error, fetchPreferences, save, resetState }
+  return { matrix, byType, channel, loading, loaded, saving, error, fetchPreferences, save, resetState }
 }

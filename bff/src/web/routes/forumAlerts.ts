@@ -81,8 +81,9 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.json({ ok: true, alerts: [], unreadCount: 0 });
       }
 
-      // 同 followAlerts：站内关掉则列表与未读数一并置空，不影响 QQ 推送
-      if ((await loadDisabledSiteTypes(readPool, recipientUserId)).has('FORUM_INTERACTION')) {
+      // 同 followAlerts：用主库读开关（避免副本延迟），
+      // 站内关掉则列表与未读数一并置空，不影响 QQ 推送
+      if ((await loadDisabledSiteTypes(pool, recipientUserId)).has('FORUM_INTERACTION')) {
         return res.json({ ok: true, alerts: [], unreadCount: 0 });
       }
 

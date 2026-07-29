@@ -881,6 +881,23 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
           `,
           [userId, metric, muted]
         );
+        // 同步写新的偏好表 —— 否则这个端点会变成**空操作**：
+        // 它写的 mutedAt 已经不再作为告警产生条件，UserMetricPreference.config.muted
+        // 也不再被任何读取路径消费，调用方却拿到 200，以为静音成功了。
+        // 静音在旧语义下等于「完全不想收到」，因此两个渠道都置为 !muted。
+        const notifyType = METRIC_TO_NOTIFY_TYPE[metric];
+        if (notifyType) {
+          await client.query(
+            `INSERT INTO "UserNotificationPreference" ("userId","type","siteEnabled","qqEnabled","updatedAt")
+             VALUES ($1, $2::"NotificationTypeKey", $3, $3, now())
+             ON CONFLICT ("userId","type")
+             DO UPDATE SET "siteEnabled" = EXCLUDED."siteEnabled",
+                           "qqEnabled"   = EXCLUDED."qqEnabled",
+                           "updatedAt"   = now()`,
+            [userId, notifyType, !muted]
+          );
+        }
+
 
         await client.query('COMMIT');
       } catch (error) {
@@ -975,6 +992,27 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
       const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 50)) : 20;
       const offset = Number.isFinite(offsetParam) ? Math.max(0, offsetParam) : 0;
 
+      // 这个端点跨三个指标聚合，需要按指标粒度排除被关掉的类型。
+      // 只在根路由加过滤是不够的 —— 用 combined 的客户端会整个绕过开关。
+      const combinedUserId = await resolveAppUserId(pool, authUser);
+      const disabledMetrics: string[] = [];
+      if (combinedUserId != null) {
+        const disabled = await loadDisabledSiteTypes(pool, combinedUserId);
+        for (const [metricName, notifyType] of Object.entries(METRIC_TO_NOTIFY_TYPE)) {
+          if (disabled.has(notifyType)) disabledMetrics.push(metricName);
+        }
+      }
+      // 全部三类都关掉时直接返回空，省掉两次聚合查询
+      if (disabledMetrics.length >= Object.keys(METRIC_TO_NOTIFY_TYPE).length) {
+        return res.json({ ok: true, total: 0, groups: [] });
+      }
+      // 被关掉的指标从聚合里排除。参数位置随各查询的参数个数变化，
+      // 所以按查询分别生成片段，不用固定编号。
+      const exclusionClause = (paramIndex: number) =>
+        disabledMetrics.length > 0
+          ? `AND pa."metric" <> ALL($${paramIndex}::"PageMetricType"[])`
+          : '';
+
       const countResult = await readPool.query<{ count: number }>(
         `
           SELECT COUNT(*)::int AS count
@@ -985,9 +1023,12 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
             JOIN "User" u ON u.id = pw."userId"
             WHERE u."wikidotId" = $1
               AND pa."acknowledgedAt" IS NULL
+              ${exclusionClause(2)}
           ) AS t
         `,
-        [authUser.linkedWikidotId]
+        disabledMetrics.length > 0
+          ? [authUser.linkedWikidotId, disabledMetrics]
+          : [authUser.linkedWikidotId]
       );
       const totalGroups = countResult.rows[0]?.count ?? 0;
 
@@ -999,11 +1040,14 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
           JOIN "User" u ON u.id = pw."userId"
           WHERE u."wikidotId" = $1
             AND pa."acknowledgedAt" IS NULL
+            ${exclusionClause(4)}
           GROUP BY pa."pageId"
           ORDER BY "updatedAt" DESC
           LIMIT $2 OFFSET $3
         `,
-        [authUser.linkedWikidotId, limit, offset]
+        disabledMetrics.length > 0
+          ? [authUser.linkedWikidotId, limit, offset, disabledMetrics]
+          : [authUser.linkedWikidotId, limit, offset]
       );
 
       if (groupRows.rowCount === 0) {

@@ -4,6 +4,8 @@ import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAl
 import { useAuth } from '~/composables/useAuth'
 import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
 import { useNotifyPreferences, type NotifyType } from '~/composables/useNotifyPreferences'
+import { useFollowAlerts } from '~/composables/useFollowAlerts'
+import { useForumInteractionAlerts } from '~/composables/useForumInteractionAlerts'
 
 /**
  * 通知设置 —— 从提醒流里搬出来的所有偏好。
@@ -16,10 +18,14 @@ import { useNotifyPreferences, type NotifyType } from '~/composables/useNotifyPr
 const { preferences, loading, saving, error, fetchPreferences, updatePreferences } = useAlertSettings()
 const {
   matrix, byType, channel,
-  loading: prefsLoading, saving: prefsSaving, error: prefsError,
+  loading: prefsLoading, loaded: prefsLoaded, saving: prefsSaving, error: prefsError,
   fetchPreferences: fetchNotifyPrefs, save: saveNotifyPrefs
 } = useNotifyPreferences()
 const { user, fetchCurrentUser } = useAuth()
+// 站内开关改动后要强制重取对应来源 —— 它们各有 60 秒新鲜度门禁
+const { fetchAll: refreshPageAlerts } = useAlerts()
+const { fetchAlerts: refreshFollowAlerts } = useFollowAlerts()
+const { fetchAlerts: refreshForumAlerts } = useForumInteractionAlerts()
 
 const METRIC_LABEL: Record<AlertMetric, { title: string; hint: string }> = {
   COMMENT_COUNT: { title: '页面收到评论', hint: '你的作品下有新回复时提醒' },
@@ -66,6 +72,15 @@ async function toggleChannel(
   if (!row) return
   const updated = { ...row, [key]: next }
   const ok = await saveNotifyPrefs({ matrix: [updated] })
+  if (ok && key === 'siteEnabled') {
+    // 站内可见性变了，但共享的提醒列表与未读数还是旧的。
+    // 三个 composable 都有 60 秒新鲜度门禁，非强制取数会被直接跳过 ——
+    // 用户关掉某类提醒后，铃铛里那些条目和红点会继续挂着，像是没生效。
+    // 强制重取对应的来源。
+    if (row.type === 'FOLLOW_ACTIVITY') await refreshFollowAlerts(true, 20, 0, false)
+    else if (row.type === 'FORUM_INTERACTION') await refreshForumAlerts(true, 20, 0, false)
+    else await refreshPageAlerts(true, false)
+  }
   if (!ok) {
     // 这里用的是 :checked 单向绑定，浏览器点击时已经改了 DOM，
     // 而保存失败时 matrix 没变 —— Vue 的 vdom 认为值没变化就不会 patch 回去，
@@ -181,7 +196,7 @@ onMounted(() => {
                   type="checkbox"
                   class="h-4 w-4 rounded border-[rgb(var(--input-border))]"
                   :checked="row.siteEnabled"
-                  :disabled="prefsSaving || prefsLoading"
+                  :disabled="prefsSaving || prefsLoading || !prefsLoaded"
                   :aria-label="`${TYPE_LABEL[row.type].title} 的站内提醒`"
                   @change="toggleChannel(row.type, 'siteEnabled', ($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
                 >
@@ -191,7 +206,7 @@ onMounted(() => {
                   type="checkbox"
                   class="h-4 w-4 rounded border-[rgb(var(--input-border))] disabled:opacity-40"
                   :checked="row.qqEnabled"
-                  :disabled="prefsSaving || prefsLoading || !qqBound"
+                  :disabled="prefsSaving || prefsLoading || !prefsLoaded || !qqBound"
                   :aria-label="`${TYPE_LABEL[row.type].title} 的 QQ 推送`"
                   :title="qqBound ? '' : '绑定 QQ 后可用'"
                   @change="toggleChannel(row.type, 'qqEnabled', ($event.target as HTMLInputElement).checked, $event.target as HTMLInputElement)"
