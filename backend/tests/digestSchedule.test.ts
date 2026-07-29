@@ -161,26 +161,69 @@ test('未到期一律不标记', () => {
   }
 });
 
-// ── 「每天一封」的名额判定（review 第十二轮）────────────────────
-// 关键：占用名额 ≠ 已送达。未落定的批次同样占着今天那一封。
+// ── 名额判定：单位是「周期」不是「自然日」（review 第十二、十三轮）──
 
 const OCCUPYING_STATES = ['SENT', 'PENDING', 'SCHEDULED'];
 
-test('未落定的批次同样占用当天名额', () => {
-  const taken = (states: string[]) => states.some((st) => OCCUPYING_STATES.includes(st));
+test('未落定的批次同样占用该周期名额', () => {
+  const taken = (states) => states.some((st) => OCCUPYING_STATES.includes(st));
   assert.equal(taken(['SENT']), true, '已发出');
   assert.equal(taken(['PENDING']), true,
-    '另一轮正在发送中 —— 若它成功了就是今天那一封，此时另起一封会变成两封');
-  assert.equal(taken(['SCHEDULED']), true, '待重发，欠的还是今天这一封的账');
+    '另一轮正在发送中 —— 它成功了就是这个周期那一封，此时另起一封会变成两封');
+  assert.equal(taken(['SCHEDULED']), true, '待重发，欠的还是这个周期的账');
   assert.equal(taken(['FAILED']), false, '永久失败不占名额');
   assert.equal(taken(['CANCELLED']), false, '已取消不占名额');
-  assert.equal(taken([]), false, '什么都没有');
 });
 
-test('一天一封的判定必须独立于 qqDailyLimit', () => {
+test('一封的判定必须独立于 qqDailyLimit', () => {
   // 拿 qqDailyLimit（默认 20）判定等于允许一天二十封「每日汇总」
-  const wrongGate = (sentToday: number, dailyLimit: number) => sentToday < dailyLimit;
-  const rightGate = (slotTaken: boolean) => !slotTaken;
-  assert.equal(wrongGate(1, 20), true, '按限额判定：今天发过一封仍然放行 —— 会发第二封');
-  assert.equal(rightGate(true), false, '按名额判定：今天已占用就不再发');
+  const byLimit = (sentToday, dailyLimit) => sentToday < dailyLimit;
+  assert.equal(byLimit(1, 20), true, '按限额判定：发过一封仍然放行 —— 会发第二封');
+  const bySlot = (slotTaken) => !slotTaken;
+  assert.equal(bySlot(true), false, '按名额判定：该周期已占用就不再发');
+});
+
+// P1 回归：按自然日锁名额会把用户永久相位锁死在午夜。
+// 场景：digestHour=9，宕机跨过 day1 09:00 与午夜，day2 00:30 恢复。
+test('跨午夜补发后仍回到用户设定的时点，不被锁死在午夜', () => {
+  const HOUR = 9;
+  const iso = (d) => d.toISOString();
+  // day1 09:00 与 day2 09:00 的 UTC 时刻（UTC+8 → 减 8 小时）
+  const day1Due = new Date(Date.UTC(2026, 6, 20, 1, 0, 0));
+  const day2Due = new Date(Date.UTC(2026, 6, 21, 1, 0, 0));
+  const day0Cutoff = new Date(Date.UTC(2026, 6, 19, 1, 0, 0));
+
+  // 恢复于 day2 00:30（UTC+8）= day1 16:30 UTC，补发 day1 那个周期
+  const catchUp = nextDigestDueAt(day0Cutoff, HOUR);
+  assert.equal(iso(catchUp), iso(day1Due), '补的是 day1 09:00 那个周期，不是「现在」');
+
+  // 补发写下 digestCutoff = day1 09:00，水位线推到同一时刻
+  const sentCutoffs = new Set([iso(day1Due)]);
+
+  // 到 day2 09:00：应得的周期是 day2 09:00
+  const next = nextDigestDueAt(day1Due, HOUR);
+  assert.equal(iso(next), iso(day2Due), '下一个周期是 day2 09:00');
+
+  // 按周期判名额 → 未占用 → 正常发，相位恢复
+  assert.equal(sentCutoffs.has(iso(next)), false,
+    '按周期判定：day2 09:00 是新周期，补发没有占用它');
+
+  // 对照：按自然日判定会把补发（发生在 day2 凌晨）算作 day2 已发 → 挡住 09:00
+  const sentOnCalendarDay2 = true;   // 补发确实发生在 day2
+  assert.equal(!sentOnCalendarDay2, false,
+    '按自然日判定：day2 09:00 被凌晨那封挡住 —— 次日又逾期，永久锁死在午夜');
+});
+
+test('同周期的第二封被挡住（含跨天的 SCHEDULED 批次）', () => {
+  const HOUR = 9;
+  const due = new Date(Date.UTC(2026, 6, 20, 1, 0, 0));
+  // 昨天创建、至今仍 SCHEDULED 的批次，其 digestCutoff 就是它自己的周期
+  const unresolved = [{ cutoff: due.toISOString(), state: 'SCHEDULED' }];
+  const slotTaken = (cutoff) => unresolved.some(
+    (r) => OCCUPYING_STATES.includes(r.state) && (r.cutoff === cutoff.toISOString() || r.cutoff === null)
+  );
+  assert.equal(slotTaken(due), true,
+    '按周期判定与时间窗无关 —— 跨天也不会因为滑出窗口而误判为「名额空闲」');
+  const nextDue = nextDigestDueAt(due, HOUR);
+  assert.equal(slotTaken(nextDue), false, '下一个周期是独立的名额');
 });

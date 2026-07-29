@@ -45,7 +45,6 @@ async function fetchWatchDrift(prisma: PrismaClient): Promise<WatchDrift[]> {
     JOIN "Page" p ON p.id = w."pageId"
     WHERE w.metric = 'COMMENT_COUNT'::"PageMetricType"
       AND w."source" = 'AUTO_OWNERSHIP'
-      AND w."mutedAt" IS NULL
       AND pv."commentCount" IS NOT NULL
       AND (w."lastObserved" IS NULL OR pv."commentCount" <> w."lastObserved")
   `);

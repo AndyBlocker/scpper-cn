@@ -490,12 +490,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 逾期未发的汇总（比如跨午夜宕机漏掉的那封）在恢复后第一轮就补上，
       // 且它的截止线仍是原定那个时刻，两次汇总的覆盖区间照样接得上。
       cutoff = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
-      // 「每天一封」是对用户的承诺，必须显式守住。
-      // 只判「到期了没」是不够的：今天已收过、随后把时点改晚，
-      // 那个更晚的边界当天就会到期，于是同一天发第二封；
-      // 补发多个逾期边界时同样会连发。日限额（默认 20）拦不住这个。
-      // 未落定的批次（PENDING / SCHEDULED）同样占用今天的名额
-      const slotTaken = await hasDigestSlotTakenToday(prisma, c.userId);
+      // 「一个周期一封」是对用户的承诺，必须显式守住。
+      // 只判「到期了没」是不够的：这个周期已收过、随后把时点改晚，
+      // 那个更晚的边界会再次到期，于是同周期发第二封。
+      // 日限额（默认 20）拦不住这个。
+      // 未落定的批次（PENDING / SCHEDULED）同样占用**这个周期**的名额
+      const slotTaken = await hasDigestSlotTaken(prisma, c.userId, cutoff);
       ok = Date.now() >= cutoff.getTime() && !slotTaken;
       digestEligibility.set(c.userId, ok);
       digestCutoffByUser.set(c.userId, cutoff);
@@ -1064,29 +1064,44 @@ async function advanceDigestWatermarks(
 
 
 /**
- * 今天（UTC+8 自然日）这个用户是否已经**占用**了汇总名额。
+ * 这个用户**某个周期**的汇总名额是否已被占用。
  *
- * 关键在于「占用」不等于「已送达」：
- *  - SENT       已发出，显然占用
- *  - PENDING    另一轮已经占位、正在发送中 —— 若它成功了就是今天那一封
- *  - SCHEDULED  暂时失败待重发，它欠的还是今天这一封的账
- * 只数 SENT 的话：一条晚提交的告警会另起一个 digestKey 组成第二封，
- * 而原来那封若其实已经送达（响应超时而已），用户当天就收到两封 ——
- * 「每天一封」是写在设置页上的承诺，不能被这类时序破坏。
+ * 名额的单位是**周期（digestCutoff）**，不是自然日 —— 这点是血的教训：
+ * 按自然日锁的话，跨午夜的补发会吃掉新一天的额度，于是当天设定时点被挡；
+ * 到了次日那个边界又变成逾期、又在午夜后补发 …… 用户被**永久相位锁死在午夜**，
+ * 再也回不到自己设的时点。周期才是这里真正的守恒量。
+ *
+ * 「占用」不等于「已送达」：
+ *  - SENT       已发出
+ *  - PENDING    另一轮已占位、正在发送中 —— 它成功了就是这个周期那一封
+ *  - SCHEDULED  暂时失败待重发，欠的还是这个周期的账
+ * 只数 SENT 的话，一条晚提交的告警会另起 digestKey 组成同周期的第二封；
+ * 若原来那封其实已送达（只是响应超时），用户就收到两封。
+ *
+ * 另含 digestCutoff 为空的未落定批次：那是用户切成定时模式之前、
+ * 实时模式下攒下的残留。对一个定时用户来说，未落定的东西加起来也只该是一条。
+ * （这类批次不会永久占位 —— expireStaleScheduledBatches 按事件时间淘汰它们。）
  *
  * 这个判定必须**独立于 qqDailyLimit**：那个上限是给实时模式用的（默认 20），
- * 拿它来判定「今天发过没」等于允许一天发二十封「每日汇总」。
+ * 拿它来判定「这个周期发过没」等于允许一天发二十封「每日汇总」。
  */
-async function hasDigestSlotTakenToday(prisma: PrismaClient, userId: number): Promise<boolean> {
-  const since = startOfUtc8Day();
+async function hasDigestSlotTaken(
+  prisma: PrismaClient,
+  userId: number,
+  cutoff: Date,
+  /** 排除批次自己（重发路径用：它本就是 SCHEDULED，会数到自己） */
+  excludeDigestKey?: string
+): Promise<boolean> {
+  const iso = cutoff.toISOString();
   const rows = await prisma.$queryRaw<Array<{ n: bigint }>>`
     SELECT COUNT(DISTINCT payload->>'digestKey') AS n
     FROM "NotificationDelivery"
     WHERE "userId" = ${userId}
+      AND channel = 'QQ'
       AND state IN ('SENT', 'PENDING', 'SCHEDULED')
       AND payload->>'digestKey' IS NOT NULL
-      AND payload->>'digestCutoff' IS NOT NULL
-      AND COALESCE("sentAt", "createdAt") >= ${since}
+      AND (payload->>'digestCutoff' = ${iso} OR payload->>'digestCutoff' IS NULL)
+      AND (${excludeDigestKey ?? null}::text IS NULL OR payload->>'digestKey' <> ${excludeDigestKey ?? null}::text)
   `;
   return Number(rows[0]?.n ?? 0) > 0;
 }
@@ -1414,26 +1429,15 @@ async function resumeScheduledBatches(
         if (anyAfterCutoff) continue;
       }
     }
-    // 定时模式用自然日计数 —— 与上面的资格判定同口径。
-    // 用滚动 24 小时的话，昨天 23:00 发出的汇总会把今天 21:00 的重发一直挡到 23:00，
-    // 期间最老的那些行可能已经超出回看窗口而过期。
-    // 定时模式的「一天一封」必须独立判定，不能拿 qqDailyLimit 比 ——
+    // 定时模式的「一周期一封」必须独立判定，不能拿 qqDailyLimit 比 ——
     // 那个上限默认 20，用它判定等于允许一天发二十封「每日汇总」。
-    // 注意排除本批自己：它已是 SCHEDULED，会被 hasDigestSlotTakenToday 数到。
-    if (prefs?.mode === 'DAILY_DIGEST') {
-      const otherDigestToday = await prisma.$queryRaw<Array<{ n: bigint }>>`
-        SELECT COUNT(DISTINCT payload->>'digestKey') AS n
-        FROM "NotificationDelivery"
-        WHERE "userId" = ${first.userId}
-          AND state IN ('SENT', 'PENDING')
-          AND payload->>'digestKey' IS NOT NULL
-          AND payload->>'digestKey' <> ${digestKey}
-          AND COALESCE("sentAt", "createdAt") >= ${startOfUtc8Day()}
-      `;
-      if (Number(otherDigestToday[0]?.n ?? 0) > 0) {
-        console.warn(`[notify] 用户 ${target.wikidotId} 今天已有汇总，批次 ${digestKey} 留待明天`);
-        continue;
-      }
+    // 必须含 SCHEDULED：同周期若还并存着另一个待重发批次（例如切换模式前后
+    // 各留下一个），只看 SENT/PENDING 会让两个都发出去。排除自己即可 ——
+    // 本批本身就是 SCHEDULED，否则会数到自己而永远发不出。
+    if (prefs?.mode === 'DAILY_DIGEST' && batchCutoff
+        && await hasDigestSlotTaken(prisma, first.userId, batchCutoff, digestKey)) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 该周期已有汇总，批次 ${digestKey} 跳过`);
+      continue;
     }
     const limitBaseline = sentToday;
     if (prefs?.mode !== 'DAILY_DIGEST' && limitBaseline >= effLimit) {
