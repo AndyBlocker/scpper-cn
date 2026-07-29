@@ -51,6 +51,11 @@ module.exports = {
       exec_mode: 'fork',
       autorestart: true,
       time: true,
+      // PM2 默认只给 1.6 秒就 SIGKILL —— 比一次机器人调用的超时（5 秒）
+      // 和关停屏障（15 秒）都短。真在「已经发出私信、还没记账」之间被强杀的话，
+      // 那批候选下轮会重新入选，等机器人 15 分钟去重窗口一过就重复推给用户。
+      // 留出屏障时长 + 余量。
+      kill_timeout: 20000,
       env: {
         NODE_ENV: 'production',
         HTTP_PROXY: '',

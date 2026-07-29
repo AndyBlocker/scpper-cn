@@ -66,7 +66,12 @@ export async function runNotifyDispatchLoop(options: LoopOptions): Promise<void>
     try {
       const summary = await runNotificationDispatch({
         dryRun: options.dryRun,
-        resetCircuit: pendingReset
+        resetCircuit: pendingReset,
+        // 协作式取消：收到信号后本轮不再开始新的收件人，
+        // 但当前那条投递（占位→发送→记账）一定跑完。
+        // 这样关停屏障等待的是「一次原子投递」而不是「一整轮」，
+        // 多收件人时才不会撞上 15 秒超时、反而在中途被砍断。
+        shouldStop: () => stopping
       });
       pendingReset = false;
       const ms = Date.now() - startedAt;
@@ -92,7 +97,7 @@ export async function runNotifyDispatchLoop(options: LoopOptions): Promise<void>
   // 注册一个关停屏障，让断连接与退出等到本轮结束。
   const unregisterBarrier = registerShutdownBarrier(async () => {
     if (!running) return;
-    console.log('[notify] 关停中，等待当前轮完成…');
+    console.log('[notify] 关停中，等待当前投递收尾…');
     await stopPromise;
   });
 

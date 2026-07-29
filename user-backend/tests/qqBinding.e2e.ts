@@ -109,6 +109,10 @@ async function main() {
   check('密码错误时拒绝解绑', wrongPw);
   const stillBound = await getQqBindingStatus(alice.id);
   check('拒绝后绑定仍在', stillBound.binding !== null);
+  // 解绑前记下绑定行的 id，用于验证重绑后身份必须变化
+  const beforeUnbindRow = await prisma.notificationChannelBinding.findFirst({
+    where: { userId: alice.id }, select: { id: true }
+  });
   await unbindQq(alice.id, async () => true);
   const afterUnbind = await getQqBindingStatus(alice.id);
   check('密码正确后解绑成功', afterUnbind.binding === null);
@@ -118,7 +122,20 @@ async function main() {
   const reOk = await verifyQqBinding({ qq: '1000000001', code: re.code });
   check('可用同一 QQ 重新绑定', reOk.matched, JSON.stringify(reOk));
   const rows = await prisma.notificationChannelBinding.count({ where: { userId: alice.id } });
-  check('复用同一行而非新增（唯一键要求）', rows === 1, `rows=${rows}`);
+  check('仍然只有一行（唯一键要求）', rows === 1, `rows=${rows}`);
+
+  // 投递器按 bindingId 把回报对应到具体绑定；重绑必须是**全新身份**，
+  // 否则 userDirectory 那 60 秒缓存里针对旧 QQ 的成功/失败会被记到新绑定上，
+  // 连续失败甚至能把刚建好的健康绑定推到 PAUSED。
+  const afterRebindRow = await prisma.notificationChannelBinding.findFirst({
+    where: { userId: alice.id }, select: { id: true }
+  });
+  check(
+    '重绑后 bindingId 必须变化（旧回报不得命中新绑定）',
+    Boolean(beforeUnbindRow?.id) && Boolean(afterRebindRow?.id)
+      && beforeUnbindRow!.id !== afterRebindRow!.id,
+    `before=${beforeUnbindRow?.id} after=${afterRebindRow?.id}`
+  );
 
   console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
   await prisma.$disconnect();

@@ -101,6 +101,10 @@ program
   .option('--apply', 'Actually delete. Without this flag the command only reports counts.')
   .option('--delivery-days <n>', 'Keep terminal-state deliveries for N days', '30')
   .option('--alert-days <n>', 'Keep acknowledged alerts for N days', '180')
+  // parseRetentionOptions 一直在读 challengeDays、清理任务也在用，
+  // 但这里没声明对应的 flag —— Commander 会直接拒绝 --challenge-days，
+  // 于是这个保留期永远只能是默认的 90 天，改都改不了。
+  .option('--challenge-days <n>', 'Keep terminal-state binding challenges for N days', '90')
   // 有限命令必须自己断开 Prisma：单例客户端的查询引擎会把 event loop 顶住，
   // 命令打完结果却不退出。运维在排查时最不需要的就是一个卡住的终端。
   .action(async (options) => {

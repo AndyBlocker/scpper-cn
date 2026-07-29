@@ -152,6 +152,15 @@ const METRIC_LABEL: Record<string, string> = {
 export interface DispatchOptions {
   dryRun?: boolean;
   resetCircuit?: boolean;
+  /**
+   * 是否已收到停止信号。返回 true 时**不再开始新的收件人**，
+   * 但当前这一条正在进行的原子投递（占位 → 发送 → 记账）一定跑完。
+   *
+   * 关停屏障若傻等整轮，多收件人的一轮可能超过 15 秒超时上限，
+   * 超时后进程照退，反而在某个后续收件人发送到一半时被砍断 ——
+   * 恰好是屏障要防的那件事。粒度必须落到单次投递。
+   */
+  shouldStop?: () => boolean;
 }
 
 export interface DispatchSummary {
@@ -261,9 +270,27 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 于是「原批次重发」与「新告警组新批」互不干扰。
   // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
   // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
-  const replayedCount = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun));
+  const replayedCount = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop);
 
-  const candidates = await collectCandidates(prisma, userIds, floor);
+  const collected = await collectCandidates(prisma, userIds, floor);
+
+  // 每个收件人还有自己的起点：绑定生效时刻。
+  //
+  // 全局闸门与回看窗口只管「系统整体从哪天开始推」，管不了「这个人从哪一刻起同意接收」。
+  // 不加这层过滤的话，用户绑完 QQ 的第一轮就会收到绑定**之前**最多 24 小时的积压 ——
+  // 他授权的是今后的动态，不是过去一天的，观感上像是刚绑就被刷屏。
+  // 这里只过滤不记账：这些候选会随回看窗口自然滑出，不必为它们写一堆抑制记录。
+  const candidates: Candidate[] = [];
+  let preBindingSkipped = 0;
+  for (const c of collected) {
+    const boundAt = targetByUserId.get(c.userId)?.verifiedAt ?? null;
+    if (boundAt && c.detectedAt <= boundAt) { preBindingSkipped += 1; continue; }
+    candidates.push(c);
+  }
+  if (preBindingSkipped > 0) {
+    console.log(`[notify] 跳过 ${preBindingSkipped} 条产生于绑定生效之前的告警`);
+  }
+
   summary.candidates = candidates.length;
   if (candidates.length === 0) {
     if (!options.dryRun) {
@@ -362,6 +389,12 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   }
 
   for (const [userId, group] of grouped) {
+    // 在**收件人之间**检查停止信号：这里是两次原子投递的边界，
+    // 停在这儿不会留下任何中间态。
+    if (options.shouldStop?.()) {
+      console.log('[notify] 收到停止信号，本轮剩余收件人留待下次');
+      break;
+    }
     const items = group;
     const target = targetByUserId.get(userId);
     if (!target) continue;
@@ -619,7 +652,8 @@ async function resumeScheduledBatches(
   prisma: PrismaClient,
   targetByUserId: Map<number, QqTarget>,
   summary: DispatchSummary,
-  dryRun: boolean
+  dryRun: boolean,
+  shouldStop?: () => boolean
 ): Promise<number> {
   // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
   // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
@@ -671,6 +705,10 @@ async function resumeScheduledBatches(
   const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
 
   for (const [digestKey, batch] of groups) {
+    if (shouldStop?.()) {
+      console.log('[notify] 收到停止信号，剩余待重发批次留待下次');
+      break;
+    }
     const first = batch[0];
     if (!first) continue;
     const keys = batch.map((r) => r.dedupeKey);

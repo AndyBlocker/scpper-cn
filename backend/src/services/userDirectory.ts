@@ -52,6 +52,12 @@ export interface QqTarget {
   wikidotId: number;
   /** 完整 QQ 号。**只在本进程内存中出现，不落日志、不进 payload。** */
   address: string;
+  /**
+   * 绑定生效时刻。每个收件人的扫描起点不能早于它 ——
+   * 否则用户刚绑完就会收到绑定**之前**积压的告警（默认回看窗口是 24 小时），
+   * 而他授权推送的是「今后的动态」，不是过去一天的。
+   */
+  verifiedAt: Date | null;
   /** 由三级偏好解析出的「事件类型 → 是否推送」矩阵；阶段 5 才会有值 */
   resolvedMatrix: Record<string, unknown> | null;
 }
@@ -104,6 +110,7 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
     const rows: Array<{
       id: string;
       address: string;
+      verifiedAt: Date | null;
       resolvedMatrix: unknown;
       user: { id: string; linkedWikidotId: number | null; status: string };
     }> = await client.notificationChannelBinding.findMany({
@@ -115,6 +122,7 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
       select: {
         id: true,
         address: true,
+        verifiedAt: true,
         resolvedMatrix: true,
         user: { select: { id: true, linkedWikidotId: true, status: true } }
       }
@@ -127,6 +135,7 @@ export async function loadActiveQqTargets(options: { force?: boolean } = {}): Pr
       targets.push({
         accountId: row.user.id,
         bindingId: row.id,
+        verifiedAt: row.verifiedAt ?? null,
         wikidotId,
         address: row.address,
         resolvedMatrix: (row.resolvedMatrix as Record<string, unknown> | null) ?? null

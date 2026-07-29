@@ -181,20 +181,30 @@ export interface BindingStatus {
 }
 
 export async function getQqBindingStatus(userId: string): Promise<BindingStatus> {
-  const [binding, challenge] = await Promise.all([
-    prisma.notificationChannelBinding.findUnique({
-      where: { userId_channel: { userId, channel: NotificationChannel.QQ } }
-    }),
-    prisma.channelBindingChallenge.findFirst({
-      where: {
-        userId,
-        channel: NotificationChannel.QQ,
-        status: ChannelChallengeStatus.PENDING,
-        expiresAt: { gt: new Date() }
-      },
-      orderBy: { createdAt: 'desc' }
-    })
-  ]);
+  // 两条记录必须取自**同一个数据库快照**。
+  //
+  // 原先是两个独立查询并发跑：核销事务恰好在这中间提交时，
+  // 一个查询看到提交前的绑定（还没有），另一个看到提交后的挑战（已不是 PENDING），
+  // 于是返回 { binding: null, challenge: null }。前端据此判定「挑战没了也没绑上」，
+  // 停止轮询并把屏幕上的验证码清掉 —— 而绑定其实**成功了**。
+  // 用 REPEATABLE READ 事务读，两条一定来自同一时点。
+  const [binding, challenge] = await prisma.$transaction(
+    async (tx) => Promise.all([
+      tx.notificationChannelBinding.findUnique({
+        where: { userId_channel: { userId, channel: NotificationChannel.QQ } }
+      }),
+      tx.channelBindingChallenge.findFirst({
+        where: {
+          userId,
+          channel: NotificationChannel.QQ,
+          status: ChannelChallengeStatus.PENDING,
+          expiresAt: { gt: new Date() }
+        },
+        orderBy: { createdAt: 'desc' }
+      })
+    ]),
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }
+  );
 
   return {
     binding: binding && binding.status !== ChannelBindingStatus.REVOKED
@@ -316,26 +326,45 @@ export async function verifyQqBinding(params: {
     }
 
     const now = new Date();
-    // upsert 而非 create：REVOKED 的旧行会占着 (userId, channel) 唯一键，
-    // 用户解绑后重新绑定时必须复用同一行，否则会撞唯一约束。
-    await tx.notificationChannelBinding.upsert({
-      where: { userId_channel: { userId: found.userId, channel: NotificationChannel.QQ } },
-      create: {
-        userId: found.userId,
-        channel: NotificationChannel.QQ,
-        address,
-        status: ChannelBindingStatus.ACTIVE,
-        verifiedAt: now
-      },
-      update: {
-        address,
-        status: ChannelBindingStatus.ACTIVE,
-        verifiedAt: now,
-        failureCount: 0,
-        lastFailureCode: null,
-        suspendedUntil: null
-      }
-    });
+    // REVOKED 的旧行**删掉重建**，而不是原地复用。
+    //
+    // 旧行会占着 (userId, channel) 唯一键，所以早先是 upsert 复用同一行 ——
+    // 但那样 id 在「解绑→重绑」前后完全不变，而投递器正是拿 bindingId
+    // 来区分新旧绑定的。userDirectory 有 60 秒缓存（失败时还有 3 分钟宽限），
+    // 这期间针对**旧 QQ 号**的投递结果回报回来，会被当成新绑定的结果：
+    // 旧地址的成功会清零新绑定的失败计数，旧地址的连续失败甚至能把
+    // 一个刚建好的健康绑定直接推到 PAUSED。
+    // 删除再创建能拿到全新的 cuid，回报按 id 匹配不上就自然被忽略。
+    if (accountBinding && accountBinding.status === ChannelBindingStatus.REVOKED) {
+      await tx.notificationChannelBinding.delete({ where: { id: accountBinding.id } });
+    }
+    const shouldUpdateInPlace = Boolean(
+      accountBinding && accountBinding.status !== ChannelBindingStatus.REVOKED
+    );
+    if (shouldUpdateInPlace && accountBinding) {
+      // 同一个绑定重新验证（地址不变）：身份没变，原地更新即可
+      await tx.notificationChannelBinding.update({
+        where: { id: accountBinding.id },
+        data: {
+          address,
+          status: ChannelBindingStatus.ACTIVE,
+          verifiedAt: now,
+          failureCount: 0,
+          lastFailureCode: null,
+          suspendedUntil: null
+        }
+      });
+    } else {
+      await tx.notificationChannelBinding.create({
+        data: {
+          userId: found.userId,
+          channel: NotificationChannel.QQ,
+          address,
+          status: ChannelBindingStatus.ACTIVE,
+          verifiedAt: now
+        }
+      });
+    }
 
     await tx.channelBindingChallenge.update({
       where: { id: challenge.id },
