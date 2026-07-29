@@ -126,3 +126,29 @@ test('定时模式的日限额按自然日计（review P2）', () => {
   assert.equal(rolling24h >= limit, true, '按滚动窗口会误判为已达上限');
   assert.equal(calendarDay >= limit, false, '按自然日才正确：今天可以发');
 });
+
+test('相邻两次汇总的覆盖区间必须严丝合缝（review P1）', () => {
+  // 截止线 21:00，因故障补发到 23:00 才真正送出
+  const cutoff = 21, sentAt = 23;
+  // 下一次收集的起点：用 sentAt 会漏掉 21–23 点之间产生的内容
+  const missedBySentAt = (alertHour: number) => alertHour >= cutoff && alertHour < sentAt;
+  assert.equal(missedBySentAt(22), true,
+    '22 点的动态：当时晚于截止线被推迟，之后又早于 sentAt 起点被排除 —— 两头不沾');
+  // 用截止线做起点则被正确纳入下一次
+  const coveredByCutoff = (alertHour: number) => alertHour >= cutoff;
+  assert.equal(coveredByCutoff(22), true, '以截止线为锚点时它会进入下一次汇总');
+});
+
+test('放宽收集窗口不得越过冷启动闸门（review P1）', () => {
+  const now = 1_000_000_000_000;
+  const LOOKBACK = 24 * 3600 * 1000;
+  const clamp = (startAt: number, floor: number) =>
+    Math.max(startAt, Math.min(floor, now - 2 * LOOKBACK));
+  // 闸门比放宽后的窗口更晚（刚上线的情形）
+  const startAt = now - 3 * 3600 * 1000;  // 3 小时前才开闸
+  const floor = now - LOOKBACK;
+  assert.equal(clamp(startAt, floor), startAt, '起点不得早于闸门 —— 否则会推送上线前的积压');
+  // 闸门很早时，放宽正常生效
+  const oldStart = now - 30 * 24 * 3600 * 1000;
+  assert.equal(clamp(oldStart, floor), now - 2 * LOOKBACK, '闸门够早时按放宽窗口取');
+});

@@ -379,8 +379,16 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 放宽是有界的（最坏 23 小时时点位移 + 24 小时窗口 < 48 小时），
   // 不会退化成全表扫描。
   const hasDigestUser = [...prefsByUser.values()].some((p) => p.mode === 'DAILY_DIGEST');
+  // 放宽窗口**绝不能越过冷启动闸门**。
+  //
+  // startAt 是「这个系统从哪一刻起才允许推送」的硬边界 —— 上线时库里有约
+  // 1.5 万条历史告警，闸门就是唯一挡住它们的东西。
+  // 直接 Math.min(floor, now-48h) 会把起点推到闸门之前，
+  // 定时用户于是可能收到上线前的积压，甚至把全局熔断顶跳闸。
+  // 放宽只在「闸门之后」的范围内进行。
+  const widened = Date.now() - 2 * LOOKBACK_HOURS * 3600 * 1000;
   const collectFloor = hasDigestUser
-    ? new Date(Math.min(floor.getTime(), Date.now() - 2 * LOOKBACK_HOURS * 3600 * 1000))
+    ? new Date(Math.max(startAt.getTime(), Math.min(floor.getTime(), widened)))
     : floor;
   const collected = await collectCandidates(prisma, userIds, collectFloor);
 
@@ -390,8 +398,10 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   for (const uid of userIds) {
     const prefs = prefsByUser.get(uid);
     if (prefs?.mode !== 'DAILY_DIGEST') { userFloor.set(uid, floor); continue; }
-    const last = await lastDigestSentAt(prisma, uid);
-    userFloor.set(uid, last && last > collectFloor ? last : collectFloor);
+    const last = await lastDigestCutoff(prisma, uid);
+    // 同样不得早于闸门
+    const candidateFloor = last && last > collectFloor ? last : collectFloor;
+    userFloor.set(uid, candidateFloor > startAt ? candidateFloor : startAt);
   }
 
   // 每个收件人还有自己的起点：绑定生效时刻。
@@ -647,7 +657,11 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 这里比对「插入前后本轮 key 的归属」，只在确实是自己抢到时才发送。
     // digestKey 在占位时就写进 payload：SENT 那步用的是 updateMany，
     // 没法顺手往 JSON 里合并字段，而日限额的计数正依赖它。
-    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId);
+    // 定时模式把本次的截止线一并存下 —— 它是下一次收集的起点（见 lastDigestCutoff）
+    const digestCutoff = prefs.mode === 'DAILY_DIGEST' ? utc8HourToday(prefs.digestHour) : undefined;
+    const claimed = await recordAll(
+      prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId, digestCutoff
+    );
     if (claimed < items.length) {
       // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
       // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
@@ -805,7 +819,9 @@ async function recordAll(
   /** 同一条摘要里的所有行共享它；日限额按 distinct digestKey 计数 */
   digestKey?: string,
   /** 投递目标的绑定身份。重发时用它确认「这批还是发给当初那个绑定」 */
-  bindingId?: string
+  bindingId?: string,
+  /** 定时模式下本次汇总的截止线，作为下次收集的起点 */
+  digestCutoff?: Date
 ): Promise<number> {
   if (dryRun) return 0;
   const now = new Date();
@@ -832,7 +848,8 @@ async function recordAll(
         detectedAt: c.detectedAt.toISOString(),
         runId: RUN_ID,
         ...(digestKey ? { digestKey } : {}),
-        ...(bindingId ? { bindingId } : {})
+        ...(bindingId ? { bindingId } : {}),
+        ...(digestCutoff ? { digestCutoff: digestCutoff.toISOString() } : {})
       }
     })),
     skipDuplicates: true
@@ -901,16 +918,23 @@ export function startOfUtc8Day(): Date {
 }
 
 /**
- * 该用户上一次成功发出汇总的时刻（没有则返回 null）。
+ * 该用户上一次汇总的**截止线**（没有则返回 null）。
  *
- * 定时用户改时点后会出现「两次汇总间隔超过 24 小时」的情况：
- * 比如今天 10 点收过、随后改成 21 点，下一次就是明天 21 点 —— 相隔 35 小时。
- * 而候选只回看 24 小时，中间那 11 小时的动态会静默过期。
- * 拿到上次汇总时刻，就能把这段间隔完整覆盖住。
+ * 【为什么是截止线而不是发送时刻】
+ * 一次汇总只包含「截止线之前」的内容。若补发发生在 23:00（截止线是 21:00），
+ * 用 sentAt=23:00 当作下次的起点，21:00–23:00 之间产生的内容就被永久跳过 ——
+ * 它们当时因「晚于截止线」被推迟，之后又因「早于起点」被排除，两头不沾。
+ * 用截止线做锚点，两次汇总的覆盖区间才能严丝合缝地接上。
+ *
+ * 兼容：早期数据没有 digestCutoff，退回 sentAt（那时不存在补发，两者相同）。
  */
-async function lastDigestSentAt(prisma: PrismaClient, userId: number): Promise<Date | null> {
+async function lastDigestCutoff(prisma: PrismaClient, userId: number): Promise<Date | null> {
   const rows = await prisma.$queryRaw<Array<{ at: Date | null }>>`
-    SELECT MAX(COALESCE("sentAt", "createdAt")) AS at
+    SELECT MAX(COALESCE(
+      (payload->>'digestCutoff')::timestamptz,
+      "sentAt",
+      "createdAt"
+    )) AS at
     FROM "NotificationDelivery"
     WHERE "userId" = ${userId}
       AND state = 'SENT'
@@ -1203,6 +1227,15 @@ async function resumeScheduledBatches(
         ? await countDigestsSentSince(prisma, first.userId, startOfUtc8Day())
         : 0;
       if (!reachedHour || sentTodayCalendar > 0) continue;
+      // 与常规路径同样的截止线判断：批次里若有内容产生于今天的截止线之后，
+      // 就该等明天。用户可能是在实时模式下攒下这批、之后才切成定时的 ——
+      // 只看时钟而不看内容时间，等于绕过他刚选的节奏。
+      const cutoff = utc8HourToday(prefs.digestHour);
+      const anyAfterCutoff = batch.some((r) => {
+        const d = ((r.payload ?? {}) as Record<string, unknown>).detectedAt;
+        return typeof d === 'string' && new Date(d) >= cutoff;
+      });
+      if (anyAfterCutoff) continue;
     }
     // 定时模式用自然日计数 —— 与上面的资格判定同口径。
     // 用滚动 24 小时的话，昨天 23:00 发出的汇总会把今天 21:00 的重发一直挡到 23:00，
