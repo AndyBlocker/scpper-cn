@@ -7,7 +7,10 @@ import {
   resolveCollectionOwnerId,
   withLockedCollectionOwner
 } from '../utils/collectionOwner.js';
-import { accountCurrentlyClaimsWikidotId } from '../utils/collectionClaim.js';
+import {
+  accountCurrentlyClaimsWikidotId,
+  activeAccountClaimsWikidotId
+} from '../utils/collectionClaim.js';
 
 const TITLE_MIN_LEN = 1;
 const TITLE_MAX_LEN = 80;
@@ -150,23 +153,23 @@ async function countItems(db: Queryable, collectionId: number): Promise<number> 
   return Number(rows[0]?.count ?? 0);
 }
 
-interface PublicCollectionClaim {
+interface CanonicalPublicCollectionOwner {
   ownerId: number;
-  accountId: string;
+  accountId: string | null;
 }
 
-async function findPublicCollectionClaim(
+async function findCanonicalPublicCollectionOwner(
   pool: Pool,
   wikidotId: number
-): Promise<PublicCollectionClaim | null> {
+): Promise<CanonicalPublicCollectionOwner | null> {
   if (!Number.isFinite(wikidotId) || wikidotId <= 0) return null;
-  const { rows } = await pool.query<{ ownerId: number; accountId: string }>(
+  const { rows } = await pool.query<{ ownerId: number; accountId: string | null }>(
     `
       SELECT
         u.id AS "ownerId",
         cao."accountId"
       FROM "User" u
-      JOIN "CollectionAccountOwner" cao ON cao."userId" = u.id
+      LEFT JOIN "CollectionAccountOwner" cao ON cao."userId" = u.id
       WHERE u."wikidotId" = $1
       LIMIT 1
     `,
@@ -175,9 +178,24 @@ async function findPublicCollectionClaim(
   const row = rows[0];
   if (!row) return null;
   const ownerId = Number(row.ownerId);
-  const accountId = String(row.accountId || '').trim();
-  if (!Number.isInteger(ownerId) || ownerId <= 0 || !accountId) return null;
-  return { ownerId, accountId };
+  if (!Number.isInteger(ownerId) || ownerId <= 0) return null;
+  if (row.accountId !== null && typeof row.accountId !== 'string') return null;
+  return { ownerId, accountId: row.accountId };
+}
+
+async function resolveVerifiedPublicCollectionOwnerId(
+  pool: Pool,
+  wikidotId: number
+): Promise<number | null> {
+  const canonical = await findCanonicalPublicCollectionOwner(pool, wikidotId);
+  if (!canonical) return null;
+
+  // An existing canonical claim is authoritative. If it is stale, unavailable,
+  // or otherwise invalid, fail closed instead of consulting the legacy lookup.
+  const verified = canonical.accountId !== null
+    ? await accountCurrentlyClaimsWikidotId(canonical.accountId, wikidotId)
+    : await activeAccountClaimsWikidotId(wikidotId);
+  return verified ? canonical.ownerId : null;
 }
 
 function mapCollectionRow(row: any) {
@@ -379,11 +397,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       if (!Number.isFinite(wikidotId) || wikidotId <= 0) {
         return res.status(400).json({ ok: false, error: 'invalid_wikidot' });
       }
-      const claim = await findPublicCollectionClaim(pool, wikidotId);
-      if (
-        !claim
-        || !await accountCurrentlyClaimsWikidotId(claim.accountId, wikidotId)
-      ) {
+      const ownerId = await resolveVerifiedPublicCollectionOwnerId(pool, wikidotId);
+      if (ownerId == null) {
         return res.json({ ok: true, total: 0, items: [] });
       }
       const { rows } = await pool.query<any>(
@@ -411,7 +426,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
           WHERE c."ownerId" = $1 AND c.visibility = 'PUBLIC'
           ORDER BY c."publishedAt" DESC NULLS LAST, c."updatedAt" DESC
         `,
-        [claim.ownerId]
+        [ownerId]
       );
       res.json({
         ok: true,
@@ -431,11 +446,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       if (!Number.isFinite(wikidotId) || wikidotId <= 0 || !slug) {
         return res.status(400).json({ ok: false, error: 'invalid_params' });
       }
-      const claim = await findPublicCollectionClaim(pool, wikidotId);
-      if (
-        !claim
-        || !await accountCurrentlyClaimsWikidotId(claim.accountId, wikidotId)
-      ) {
+      const ownerId = await resolveVerifiedPublicCollectionOwnerId(pool, wikidotId);
+      if (ownerId == null) {
         return res.status(404).json({ ok: false, error: 'not_found' });
       }
       const { rows } = await pool.query<any>(
@@ -464,7 +476,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
             AND c.visibility = 'PUBLIC'
           LIMIT 1
         `,
-        [claim.ownerId, slug]
+        [ownerId, slug]
       );
       if (rows.length === 0) {
         return res.status(404).json({ ok: false, error: 'not_found' });

@@ -94,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 import { useFtmlProjects, type FtmlProjectMeta } from '~/composables/useFtmlProjects'
 
@@ -111,6 +111,8 @@ const { user, loading: authLoading, isAuthenticated, fetchCurrentUser } = useAut
 const {
   isLoading: projectsLoading,
   error: projectsError,
+  captureIdentity,
+  isIdentityCurrent,
   listProjects,
   createProject,
   deleteProject: apiDeleteProject
@@ -122,16 +124,63 @@ const isDeleting = ref(false)
 const deleteTarget = ref<FtmlProjectMeta | null>(null)
 
 const hasLinkedWikidot = computed(() => !!user.value?.linkedWikidotId)
+const accountContextKey = computed(() => {
+  if (!isAuthenticated.value || !user.value?.linkedWikidotId) return null
+  const ownerId = user.value.id?.trim()
+  return ownerId ? `${ownerId}:${user.value.linkedWikidotId}` : null
+})
+
+let mounted = false
+let viewGeneration = 0
+let listRequestGeneration = 0
+let requestedContextKey: string | null = null
+
+function resetPrivateView() {
+  viewGeneration += 1
+  listRequestGeneration += 1
+  requestedContextKey = null
+  projects.value = []
+  isCreating.value = false
+  isDeleting.value = false
+  deleteTarget.value = null
+}
 
 async function loadProjects() {
-  console.log('[FtmlProjects] Loading projects list...')
-  projects.value = await listProjects(false)
-  console.log('[FtmlProjects] Loaded projects:', projects.value.map(p => ({ id: p.id, title: p.title })))
+  const contextKey = accountContextKey.value
+  if (!contextKey) return
+
+  requestedContextKey = contextKey
+  const generation = viewGeneration
+  const requestGeneration = ++listRequestGeneration
+  const identity = captureIdentity()
+  const result = await listProjects(false)
+  if (
+    generation !== viewGeneration
+    || requestGeneration !== listRequestGeneration
+    || accountContextKey.value !== contextKey
+    || !isIdentityCurrent(identity)
+  ) {
+    return
+  }
+  projects.value = result
 }
 
 async function createNewProject() {
+  const contextKey = accountContextKey.value
+  if (!contextKey) return
+
+  const generation = viewGeneration
+  const identity = captureIdentity()
   isCreating.value = true
   const project = await createProject({ title: '未命名项目' })
+  if (
+    generation !== viewGeneration
+    || accountContextKey.value !== contextKey
+    || !isIdentityCurrent(identity)
+  ) {
+    return
+  }
+
   isCreating.value = false
   if (project) {
     router.push(`/ftml-projects/${project.id}`)
@@ -144,8 +193,22 @@ function confirmDelete(project: FtmlProjectMeta) {
 
 async function doDelete() {
   if (!deleteTarget.value) return
+
+  const contextKey = accountContextKey.value
+  if (!contextKey) return
+  const generation = viewGeneration
+  const identity = captureIdentity()
+  const targetId = deleteTarget.value.id
   isDeleting.value = true
-  const success = await apiDeleteProject(deleteTarget.value.id)
+  const success = await apiDeleteProject(targetId)
+  if (
+    generation !== viewGeneration
+    || accountContextKey.value !== contextKey
+    || !isIdentityCurrent(identity)
+  ) {
+    return
+  }
+
   isDeleting.value = false
   if (success) {
     deleteTarget.value = null
@@ -174,9 +237,23 @@ function formatTime(isoString: string): string {
   })
 }
 
+watch(
+  accountContextKey,
+  (nextContext) => {
+    resetPrivateView()
+    if (mounted && nextContext) {
+      requestedContextKey = nextContext
+      void loadProjects()
+    }
+  },
+  { flush: 'sync' }
+)
+
 onMounted(async () => {
+  mounted = true
   await fetchCurrentUser()
-  if (isAuthenticated.value && hasLinkedWikidot.value) {
+  const contextKey = accountContextKey.value
+  if (contextKey && requestedContextKey !== contextKey) {
     await loadProjects()
   }
 })

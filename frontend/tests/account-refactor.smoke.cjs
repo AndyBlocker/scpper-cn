@@ -514,6 +514,14 @@ async function main() {
       async (page, requests) => {
         await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
         await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+        assert.equal(
+          await page.getByRole('heading', {
+            name: '连接 Wikidot 身份',
+            exact: true,
+            level: 3
+          }).count(),
+          1
+        )
         assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 0)
         assert.equal(requests.filter(entry => entry.path === '/qq-binding/status').length, 0)
       }
@@ -849,6 +857,14 @@ async function main() {
         await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
         const sectionNavigation = page.locator('#account-section-navigation')
         assert.equal(await sectionNavigation.inputValue(), '/collections')
+        assert.equal(
+          await sectionNavigation.getAttribute('aria-describedby'),
+          'account-section-navigation-hint'
+        )
+        assert.equal(
+          await page.locator('#account-section-navigation-hint').innerText(),
+          '选择后会立即前往对应页面。'
+        )
         const selectedCollection = page.getByRole('button', { name: /SCP 精选/ }).first()
         assert.equal(await selectedCollection.getAttribute('aria-pressed'), 'true')
         assert.equal(

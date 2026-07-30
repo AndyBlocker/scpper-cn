@@ -282,9 +282,9 @@ function handleSearchKeydown(event: KeyboardEvent) {
     aria-labelledby="wikidot-identity-heading"
   >
     <header class="space-y-1">
-      <h2 id="wikidot-identity-heading" class="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+      <h3 id="wikidot-identity-heading" class="text-base font-semibold text-neutral-900 dark:text-neutral-100">
         连接 Wikidot 身份
-      </h2>
+      </h3>
       <p class="text-sm leading-6 text-neutral-600 dark:text-neutral-400">
         将站内账户与 Wikidot 用户关联，用于确认你的社区身份和使用需要身份验证的功能。
       </p>

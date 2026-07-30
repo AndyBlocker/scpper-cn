@@ -1760,7 +1760,7 @@ describe('Collections routes', () => {
     const publicListSql = String(queryMock.mock.calls[1]?.[0] ?? '');
     expect(publicListSql).not.toMatch(/\bc\.notes\b/);
     const claimSql = String(queryMock.mock.calls[0]?.[0] ?? '');
-    expect(claimSql).toContain('JOIN "CollectionAccountOwner"');
+    expect(claimSql).toContain('LEFT JOIN "CollectionAccountOwner"');
     expect(global.fetch).toHaveBeenCalledWith(
       'http://user-backend.test/internal/account-identity/acc_1',
       expect.objectContaining({
@@ -1847,21 +1847,40 @@ describe('Collections routes', () => {
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
-  test('public detail hides the old owner after takeover without private access', async () => {
+  test('stale canonical claim hides after takeover and never falls back to the new live owner', async () => {
     queryMock.mockResolvedValueOnce({
       rows: [{ ownerId: 99, accountId: 'old-account' }]
     });
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        account: {
-          id: 'old-account',
-          linkedWikidotId: null,
-          status: 'ACTIVE'
-        }
-      })
+    (global.fetch as jest.Mock).mockImplementation(async (url: string) => {
+      if (url.endsWith('/old-account')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            account: {
+              id: 'old-account',
+              linkedWikidotId: null,
+              status: 'ACTIVE'
+            }
+          })
+        };
+      }
+      if (url.endsWith('/by-wikidot/42')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            account: {
+              id: 'new-account',
+              linkedWikidotId: 42,
+              status: 'ACTIVE'
+            }
+          })
+        };
+      }
+      throw new Error(`Unexpected identity lookup: ${url}`);
     });
 
     const app = await createServer();
@@ -1871,6 +1890,11 @@ describe('Collections routes', () => {
 
     expect(res.body).toEqual({ ok: false, error: 'not_found' });
     expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://user-backend.test/internal/account-identity/old-account',
+      expect.objectContaining({ redirect: 'error' })
+    );
   });
 
   test('public collection reads fail closed when identity verification is unavailable', async () => {
@@ -1888,7 +1912,123 @@ describe('Collections routes', () => {
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
-  test('public list and detail hide historical collections without an account mapping', async () => {
+  test('public list shows an unclaimed canonical owner when the live account is ACTIVE', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ ownerId: 99, accountId: null }]
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 8,
+          ownerId: 99,
+          title: '旧公开收藏',
+          slug: 'legacy-public',
+          visibility: 'PUBLIC',
+          description: null,
+          notes: '仍然不能公开',
+          coverImageUrl: null,
+          coverImageOffsetX: 0,
+          coverImageOffsetY: 0,
+          coverImageScale: 1,
+          isDefault: false,
+          publishedAt: '2024-01-05T00:00:00.000Z',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-05T00:00:00.000Z',
+          itemCount: 1
+        }]
+      });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'legacy-account',
+          linkedWikidotId: 42,
+          status: 'ACTIVE'
+        }
+      })
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+
+    expect(res.body.total).toBe(1);
+    expect(res.body.items).toEqual([
+      expect.objectContaining({ ownerId: 99, slug: 'legacy-public' })
+    ]);
+    expect(res.body.items[0]).not.toHaveProperty('notes');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://user-backend.test/internal/account-identity/by-wikidot/42',
+      expect.objectContaining({
+        headers: { 'x-internal-key': 'collection-claim-test-key' },
+        redirect: 'error'
+      })
+    );
+    expect(queryMock.mock.calls.every(([sql]) =>
+      !/\b(?:INSERT|UPDATE|DELETE)\b/i.test(String(sql))
+    )).toBe(true);
+  });
+
+  test('public detail shows legacy data when the account is mapped only to a guest owner', async () => {
+    // A guest mapping exists elsewhere, so the canonical Wikidot owner itself
+    // has no claim. The read-only live lookup is therefore the compatibility
+    // authority; this route intentionally does not migrate either owner.
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ ownerId: 99, accountId: null }]
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 9,
+          ownerId: 99,
+          title: '旧账号公开详情',
+          slug: 'legacy-detail',
+          visibility: 'PUBLIC',
+          description: '兼容旧 guest mapping',
+          notes: '不可公开',
+          coverImageUrl: null,
+          coverImageOffsetX: 0,
+          coverImageOffsetY: 0,
+          coverImageScale: 1,
+          isDefault: false,
+          publishedAt: '2024-01-05T00:00:00.000Z',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-05T00:00:00.000Z',
+          itemCount: 0
+        }]
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'guest-mapped-account',
+          linkedWikidotId: 42,
+          status: 'ACTIVE'
+        }
+      })
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42/legacy-detail')
+      .expect(200);
+
+    expect(res.body.collection).toEqual(
+      expect.objectContaining({ ownerId: 99, slug: 'legacy-detail' })
+    );
+    expect(res.body.collection).not.toHaveProperty('notes');
+    expect(queryMock.mock.calls.every(([sql]) =>
+      !/\b(?:INSERT|UPDATE|DELETE)\b/i.test(String(sql))
+    )).toBe(true);
+  });
+
+  test('public list and detail hide when the canonical Wikidot owner is missing', async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -1907,6 +2047,77 @@ describe('Collections routes', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  test('legacy public reads fail closed when no active account owns the Wikidot id', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: null }]
+    });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: 'account_not_found' })
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+
+    expect(res.body).toEqual({ ok: true, total: 0, items: [] });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('legacy public reads reject a SUSPENDED live account', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: null }]
+    });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'suspended-account',
+          linkedWikidotId: 42,
+          status: 'SUSPENDED'
+        }
+      })
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+
+    expect(res.body).toEqual({ ok: true, total: 0, items: [] });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('legacy public reads reject a malformed identity response', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: null }]
+    });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'malformed-account',
+          linkedWikidotId: '42',
+          status: 'ACTIVE'
+        }
+      })
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+
+    expect(res.body).toEqual({ ok: true, total: 0, items: [] });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
   test('public list fails closed before contacting user-backend when the internal key is missing', async () => {
     delete process.env.BFF_INTERNAL_API_KEY;
     queryMock.mockResolvedValueOnce({
@@ -1923,10 +2134,10 @@ describe('Collections routes', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  test('public detail fails closed when account verification times out', async () => {
+  test('public detail fails closed when legacy account verification times out', async () => {
     process.env.COLLECTION_CLAIM_TIMEOUT_MS = '100';
     queryMock.mockResolvedValueOnce({
-      rows: [{ ownerId: 99, accountId: 'acc_1' }]
+      rows: [{ ownerId: 99, accountId: null }]
     });
     (global.fetch as jest.Mock).mockImplementation(
       (_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
@@ -1948,5 +2159,9 @@ describe('Collections routes', () => {
     expect(res.body).toEqual({ ok: false, error: 'not_found' });
     expect(queryMock).toHaveBeenCalledTimes(1);
     expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://user-backend.test/internal/account-identity/by-wikidot/42',
+      expect.objectContaining({ redirect: 'error' })
+    );
   });
 });

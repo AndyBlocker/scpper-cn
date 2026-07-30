@@ -11,6 +11,7 @@
     "test:auth-race": "node tests/auth-session-race.cjs",
     "test:expected-user": "node --experimental-strip-types --test tests/expected-user-private-read.test.mjs",
     "test:expected-user:browser": "node tests/expected-user-mismatch-recovery.cjs",
+    "test:ftml-identity-race": "node tests/ftml-identity-race.cjs",
     "lint": "eslint app.vue components composables layouts pages plugins server types utils nuxt.config.ts --ext .js,.ts,.vue --cache --cache-location .eslintcache",
     "lint:fix": "eslint app.vue components composables layouts pages plugins server types utils nuxt.config.ts --ext .js,.ts,.vue --fix --cache --cache-location .eslintcache",
     "typecheck": "nuxt typecheck"

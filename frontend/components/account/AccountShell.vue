@@ -136,10 +136,17 @@ const mobileNavigationPath = computed({
       >
         当前区域
       </label>
+      <p
+        id="account-section-navigation-hint"
+        class="mb-2 text-xs leading-5 text-[rgb(var(--muted))]"
+      >
+        选择后会立即前往对应页面。
+      </p>
       <div class="relative">
         <select
           id="account-section-navigation"
           v-model="mobileNavigationPath"
+          aria-describedby="account-section-navigation-hint"
           class="min-h-11 w-full appearance-none rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] px-4 py-2.5 pr-11 text-sm font-medium text-[rgb(var(--fg))] shadow-sm outline-none transition focus:border-[var(--g-accent-border)] focus:ring-2 focus:ring-[var(--g-accent-border)]"
         >
           <optgroup

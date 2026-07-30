@@ -112,8 +112,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuth } from '~/composables/useAuth'
-import { useFtmlProjects, type FtmlProject } from '~/composables/useFtmlProjects'
-import { useFtmlDemo, type DiagnosticError, type FtmlPreferences } from '~/composables/useFtmlDemo'
+import { useFtmlProjects } from '~/composables/useFtmlProjects'
+import { useFtmlDemo, type DiagnosticError } from '~/composables/useFtmlDemo'
 
 definePageMeta({
   layout: false
@@ -128,7 +128,14 @@ const { user, loading: authLoading, isAuthenticated, fetchCurrentUser } = useAut
 const hasLinkedWikidot = computed(() => !!user.value?.linkedWikidotId)
 
 // Project API
-const { getProject, updateProject: apiUpdateProject, isLoading: projectLoading, error: apiError } = useFtmlProjects()
+const {
+  getProject,
+  updateProject: apiUpdateProject,
+  isLoading: projectLoading,
+  error: apiError,
+  captureIdentity,
+  isIdentityCurrent
+} = useFtmlProjects()
 const loadError = ref<string | null>(null)
 const isSaving = ref(false)
 const hasUnsavedChanges = ref(false)
@@ -152,6 +159,12 @@ const {
   showToast
 } = useFtmlDemo()
 
+useHead(() => ({
+  title: state.pageMeta.title
+    ? `${state.pageMeta.title} - FTML`
+    : 'FTML 项目'
+}))
+
 // Refs
 const editorRef = ref<any>(null)
 const previewRef = ref<any>(null)
@@ -159,6 +172,17 @@ const previewRef = ref<any>(null)
 // Split resizing
 const splitRatio = ref(50)
 const isResizing = ref(false)
+const editorContextKey = computed(() => {
+  if (!isAuthenticated.value || !user.value?.linkedWikidotId) return null
+  const ownerId = user.value.id?.trim()
+  if (!ownerId) return null
+  return `${ownerId}:${user.value.linkedWikidotId}:${projectId.value}`
+})
+
+let mounted = false
+let editorGeneration = 0
+let activeContextKey: string | null = null
+let initialRenderTimer: ReturnType<typeof setTimeout> | null = null
 
 // Computed
 const showEditor = computed(() => state.preferences.uiLayout !== 'preview-only')
@@ -199,9 +223,70 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;')
 }
 
+function clearInitialRenderTimer() {
+  if (!initialRenderTimer) return
+  clearTimeout(initialRenderTimer)
+  initialRenderTimer = null
+}
+
+/**
+ * 编辑器中的源码、标题、标签、预览和 toast 都属于账号私有状态。身份切换时
+ * 先同步归零并终止旧 Worker，随后才允许为新账号启动加载。
+ */
+function resetPrivateEditor() {
+  editorGeneration += 1
+  activeContextKey = null
+  clearInitialRenderTimer()
+  cleanup()
+
+  loadError.value = null
+  isSaving.value = false
+  hasUnsavedChanges.value = false
+  lastSavedSource.value = ''
+  lastSavedTitle.value = ''
+  splitRatio.value = 50
+  isResizing.value = false
+  if (typeof document !== 'undefined') {
+    document.body.classList.remove('is-resizing')
+  }
+
+  state.source = ''
+  state.pageMeta.title = ''
+  state.pageMeta.tags = []
+  state.lastResult = null
+  state.includeStats = { hits: 0, misses: 0, lastMode: '', lastNote: '' }
+  state.navPreview.topBarHtml = ''
+  state.navPreview.sideBarHtml = ''
+  state.navPreview.lastError = null
+  state.isRendering = false
+  state.isNavRendering = false
+  state.workerStatus = 'idle'
+  state.workerVersion = null
+
+  // 这些设置可由项目数据覆盖，不能把 A 项目的设置短暂展示给 B。
+  state.preferences.mode = 'page'
+  state.preferences.layout = 'wikidot'
+  state.preferences.includeMode = 'bff'
+  state.preferences.uiLayout = 'both'
+  state.preferences.previewDevice = 'desktop'
+  state.preferences.autoRender = false
+  toasts.value = []
+}
+
 // Load project
-async function loadProject() {
-  const project = await getProject(projectId.value)
+async function loadProject(contextKey: string, generation: number) {
+  const requestedProjectId = projectId.value
+  const identity = captureIdentity()
+  const project = await getProject(requestedProjectId)
+  if (
+    generation !== editorGeneration
+    || editorContextKey.value !== contextKey
+    || projectId.value !== requestedProjectId
+    || !isIdentityCurrent(identity)
+  ) {
+    return
+  }
+
   if (!project) {
     loadError.value = apiError.value || '项目不存在'
     return
@@ -224,22 +309,48 @@ async function loadProject() {
     if (s.previewDevice) state.preferences.previewDevice = s.previewDevice as any
   }
 
-  useHead({ title: `${state.pageMeta.title} - FTML` })
-
   // Initial render
-  setTimeout(() => requestRender('init'), 100)
+  clearInitialRenderTimer()
+  initialRenderTimer = setTimeout(() => {
+    initialRenderTimer = null
+    if (
+      generation === editorGeneration
+      && editorContextKey.value === contextKey
+      && isIdentityCurrent(identity)
+    ) {
+      requestRender('init')
+    }
+  }, 100)
+}
+
+async function startEditorForCurrentContext() {
+  const contextKey = editorContextKey.value
+  if (!contextKey || activeContextKey === contextKey) return
+
+  activeContextKey = contextKey
+  const generation = editorGeneration
+  initialize({ skipLocalStorage: true })
+  await loadProject(contextKey, generation)
 }
 
 // Save project
 async function saveProject() {
-  if (isSaving.value) return
+  const contextKey = editorContextKey.value
+  if (isSaving.value || !contextKey) return
 
+  const generation = editorGeneration
+  const identity = captureIdentity()
+  const requestedProjectId = projectId.value
+  const savedSource = state.source
+  const savedTitle = state.pageMeta.title
+  const requestTitle = savedTitle || '未命名'
+  const savedTags = [...state.pageMeta.tags]
   isSaving.value = true
-  const result = await apiUpdateProject(projectId.value, {
-    title: state.pageMeta.title || '未命名',
-    source: state.source,
+  const result = await apiUpdateProject(requestedProjectId, {
+    title: requestTitle,
+    source: savedSource,
     pageTitle: null, // No longer separate
-    pageTags: state.pageMeta.tags,
+    pageTags: savedTags,
     settings: {
       mode: state.preferences.mode,
       layout: state.preferences.layout,
@@ -248,12 +359,23 @@ async function saveProject() {
       previewDevice: state.preferences.previewDevice
     }
   })
-  isSaving.value = false
+  if (
+    generation !== editorGeneration
+    || editorContextKey.value !== contextKey
+    || projectId.value !== requestedProjectId
+    || !isIdentityCurrent(identity)
+  ) {
+    return
+  }
 
+  isSaving.value = false
   if (result) {
-    lastSavedSource.value = state.source
-    lastSavedTitle.value = state.pageMeta.title
-    hasUnsavedChanges.value = false
+    lastSavedSource.value = savedSource
+    lastSavedTitle.value = savedTitle
+    hasUnsavedChanges.value = (
+      state.source !== savedSource
+      || state.pageMeta.title !== savedTitle
+    )
     showToast('已保存', 'success', 1500)
   } else {
     showToast('保存失败: ' + (apiError.value || '未知错误'), 'error')
@@ -347,6 +469,17 @@ watch(
   { immediate: true }
 )
 
+watch(
+  editorContextKey,
+  (nextContext) => {
+    resetPrivateEditor()
+    if (mounted && nextContext) {
+      void startEditorForCurrentContext()
+    }
+  },
+  { flush: 'sync' }
+)
+
 // Warn before leaving with unsaved changes
 function handleBeforeUnload(e: BeforeUnloadEvent) {
   if (hasUnsavedChanges.value) {
@@ -357,10 +490,12 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
 
 // Lifecycle
 onMounted(async () => {
+  mounted = true
   await fetchCurrentUser()
-  if (isAuthenticated.value && hasLinkedWikidot.value) {
-    initialize({ skipLocalStorage: true })
-    await loadProject()
+  const contextKey = editorContextKey.value
+  if (contextKey && activeContextKey !== contextKey) {
+    resetPrivateEditor()
+    await startEditorForCurrentContext()
   }
   window.addEventListener('mousemove', onMouseMove)
   window.addEventListener('mouseup', onMouseUp)
@@ -369,6 +504,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  mounted = false
+  clearInitialRenderTimer()
   cleanup()
   window.removeEventListener('mousemove', onMouseMove)
   window.removeEventListener('mouseup', onMouseUp)
