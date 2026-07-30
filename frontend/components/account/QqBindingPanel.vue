@@ -266,12 +266,27 @@ onBeforeUnmount(() => {
     <!-- 码已过期 -->
     <template v-else-if="isExpired || (hasActiveChallenge && !plainCode)">
       <div class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-        <template v-if="isExpired">验证码已过期，请重新生成。</template>
+        <template v-if="!qqNotifyEnabled">
+          QQ 通知功能已暂时关闭，这次绑定无法继续。可以在下方取消它。
+        </template>
+        <template v-else-if="isExpired">验证码已过期，请重新生成。</template>
         <template v-else>
           上次生成的验证码没有显示在本页（可能是在其他设备或刷新前生成的）。请重新生成一个。
         </template>
       </div>
+      <!-- 功能关闭时给「取消」而不是「重新生成」：后者调的 /start 现在恒返回 503，
+           摆一个必然失败的按钮等于把人卡在这里 —— 而 /cancel 是刻意留着的。 -->
       <button
+        v-if="!qqNotifyEnabled"
+        type="button"
+        class="w-full rounded-lg border border-neutral-300 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-700"
+        :disabled="loading"
+        @click="cancel()"
+      >
+        {{ loading ? '处理中…' : '取消绑定' }}
+      </button>
+      <button
+        v-else
         type="button"
         class="w-full rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
         :disabled="loading"
