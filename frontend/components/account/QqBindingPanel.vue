@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRuntimeConfig } from 'nuxt/app'
+import { useQqNotifyEnabled } from '~/composables/useQqNotifyEnabled'
 import { useQqBinding } from '~/composables/useQqBinding'
 
 // QQ 通知总开关（2026-07-30 暂时下线）。关闭时本面板只对**已绑定**用户显示，
 // 且只保留解绑；发起新绑定的入口一律不给。
-const qqNotifyEnabled = computed(() => Boolean(useRuntimeConfig().public.qqNotifyEnabled))
+const qqNotifyEnabled = useQqNotifyEnabled()
 
 const {
   binding,

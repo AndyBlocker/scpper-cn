@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRuntimeConfig } from 'nuxt/app'
+import { useQqNotifyEnabled } from '~/composables/useQqNotifyEnabled'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
 import { useAuth } from '~/composables/useAuth'
 import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
@@ -43,7 +43,7 @@ watch(preferences, (p) => {
 }, { immediate: true, deep: true })
 
 // QQ 通知总开关（2026-07-30 暂时下线）。关掉时不显示推送渠道一节。
-const qqNotifyEnabled = computed(() => Boolean(useRuntimeConfig().public.qqNotifyEnabled))
+const qqNotifyEnabled = useQqNotifyEnabled()
 const qqBound = computed(() => Boolean(user.value?.qqBinding?.bound))
 const qqMask = computed(() => user.value?.qqBinding?.addressMask ?? null)
 /**

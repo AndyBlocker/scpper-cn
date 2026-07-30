@@ -263,13 +263,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useQqNotifyEnabled } from '~/composables/useQqNotifyEnabled'
 import { navigateTo } from 'nuxt/app'
 import { useRoute } from 'vue-router'
 import UserAvatar from '~/components/UserAvatar.vue'
 import PageCard from '~/components/PageCard.vue'
 import AppearanceSettings from '~/components/account/AppearanceSettings.vue'
 import CollectionManager from '~/components/collections/CollectionManager.vue'
-import { useRuntimeConfig } from 'nuxt/app'
 import { useAuth } from '~/composables/useAuth'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
@@ -286,7 +286,7 @@ const { user, fetchCurrentUser, updateProfile, changePassword, status, logout } 
 // QQ 通知与绑定的总开关（2026-07-30 暂时下线该功能）。
 // 关掉时账号页不显示绑定入口，「通知设置」里也不显示 QQ 渠道那一列。
 // 现有绑定数据一律保留，置 QQ_NOTIFY_ENABLED=1 并重启即恢复。
-const qqNotifyEnabled = computed(() => Boolean(useRuntimeConfig().public.qqNotifyEnabled))
+const qqNotifyEnabled = useQqNotifyEnabled()
 
 const { favoritePages, removePageFavorite } = useFavorites()
 const { hydratePages: hydrateViewerVotes } = useViewerVotes()
