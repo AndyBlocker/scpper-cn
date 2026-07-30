@@ -117,7 +117,9 @@ describe('Expected user boundary for private reads', () => {
       .expect(200);
 
     expect(response.body).toEqual({ ok: true, total: 0, items: [] });
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    // The cached route identity is revalidated before owner resolution and
+    // once more while the account mapping row is locked.
+    expect(global.fetch).toHaveBeenCalledTimes(3);
     expect(queryMock).toHaveBeenCalledTimes(7);
   });
 });

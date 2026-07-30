@@ -60,6 +60,16 @@ async function main() {
   let cookieAccount = accountA
   let authReads = 0
   const collectionExpectedUsers = []
+  const ftmlRequests = []
+  const ftmlProject = {
+    id: 'project-a',
+    title: '账号 A 的 FTML 项目',
+    pageTitle: null,
+    pageTags: [],
+    isArchived: false,
+    createdAt: iso,
+    updatedAt: iso
+  }
 
   await page.route('**/api/**', async route => {
     const request = route.request()
@@ -88,6 +98,23 @@ async function main() {
       }
       return fulfillJson(route, { ok: true, total: 0, items: [] })
     }
+    if (apiPath.startsWith('/ftml-projects')) {
+      const expected = request.headers()['x-scpper-expected-user-id'] || null
+      ftmlRequests.push({ method: request.method(), path: apiPath, expected })
+      if (expected && expected !== cookieAccount.id) {
+        return fulfillJson(route, {
+          ok: false,
+          code: 'account_mismatch',
+          error: '登录账号已切换，请刷新后重试。'
+        }, 409)
+      }
+      if (apiPath === '/ftml-projects' && request.method() === 'GET') {
+        return fulfillJson(route, { projects: [ftmlProject] })
+      }
+      if (apiPath === `/ftml-projects/${ftmlProject.id}` && request.method() === 'DELETE') {
+        return fulfillJson(route, { ok: true })
+      }
+    }
     return fulfillJson(route, { ok: false, error: `Unexpected API request: ${apiPath}` }, 404)
   })
 
@@ -96,6 +123,38 @@ async function main() {
     await page.getByText('账号 A', { exact: true }).waitFor()
     await page.getByText('目前还没有收藏夹。可以先创建一个，或在页面右上角点击星标快速收藏。', { exact: true }).waitFor()
     assert.equal(collectionExpectedUsers.at(-1), 'account-a')
+
+    // FTML projects must use the same guarded BFF transport for both private
+    // reads and writes. A native fetch here would omit the expected-user
+    // header and old-server compatibility would silently accept the request.
+    await page.goto(`${baseUrl}/ftml-projects`, { waitUntil: 'domcontentloaded' })
+    await page.getByRole('heading', { name: 'FTML 项目', exact: true }).waitFor()
+    await page.getByText(ftmlProject.title, { exact: true }).waitFor()
+    assert.deepEqual(
+      ftmlRequests.find(entry => entry.method === 'GET'),
+      { method: 'GET', path: '/ftml-projects', expected: 'account-a' }
+    )
+
+    await page.getByRole('button', { name: '删除', exact: true }).click()
+    await page.getByRole('heading', { name: '确认删除', exact: true }).waitFor()
+    await Promise.all([
+      page.waitForResponse(response => (
+        new URL(response.url()).pathname === `/api/ftml-projects/${ftmlProject.id}`
+        && response.request().method() === 'DELETE'
+      )),
+      page.locator('.modal-content').getByRole('button', { name: '删除', exact: true }).click()
+    ])
+    assert.deepEqual(
+      ftmlRequests.find(entry => entry.method === 'DELETE'),
+      {
+        method: 'DELETE',
+        path: `/ftml-projects/${ftmlProject.id}`,
+        expected: 'account-a'
+      }
+    )
+
+    await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+    await page.getByText('目前还没有收藏夹。可以先创建一个，或在页面右上角点击星标快速收藏。', { exact: true }).waitFor()
 
     // Another tab has replaced the HttpOnly cookie with B, but its storage
     // broadcast is unavailable. The next private read still carries snapshot A.

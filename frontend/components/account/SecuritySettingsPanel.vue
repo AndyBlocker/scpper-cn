@@ -44,7 +44,10 @@ async function handlePasswordChange() {
   })
   passwordSaving.value = false
 
-  if (status.value !== 'authenticated') {
+  // A successful password change definitively ends the current session. A
+  // failed request only redirects when auth is definitively unauthenticated;
+  // "unknown" can be the short verification window after a 409 account switch.
+  if (result.ok || status.value === 'unauthenticated') {
     await navigateTo({
       path: '/auth/login',
       query: {

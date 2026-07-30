@@ -7,6 +7,7 @@ import {
   resolveCollectionOwnerId,
   withLockedCollectionOwner
 } from '../utils/collectionOwner.js';
+import { accountCurrentlyClaimsWikidotId } from '../utils/collectionClaim.js';
 
 const TITLE_MIN_LEN = 1;
 const TITLE_MAX_LEN = 80;
@@ -149,13 +150,34 @@ async function countItems(db: Queryable, collectionId: number): Promise<number> 
   return Number(rows[0]?.count ?? 0);
 }
 
-async function findUserIdByWikidotId(pool: Pool, wikidotId: number): Promise<number | null> {
+interface PublicCollectionClaim {
+  ownerId: number;
+  accountId: string;
+}
+
+async function findPublicCollectionClaim(
+  pool: Pool,
+  wikidotId: number
+): Promise<PublicCollectionClaim | null> {
   if (!Number.isFinite(wikidotId) || wikidotId <= 0) return null;
-  const { rows } = await pool.query<{ id: number }>(
-    'SELECT id FROM "User" WHERE "wikidotId" = $1 LIMIT 1',
+  const { rows } = await pool.query<{ ownerId: number; accountId: string }>(
+    `
+      SELECT
+        u.id AS "ownerId",
+        cao."accountId"
+      FROM "User" u
+      JOIN "CollectionAccountOwner" cao ON cao."userId" = u.id
+      WHERE u."wikidotId" = $1
+      LIMIT 1
+    `,
     [wikidotId]
   );
-  return rows[0]?.id ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  const ownerId = Number(row.ownerId);
+  const accountId = String(row.accountId || '').trim();
+  if (!Number.isInteger(ownerId) || ownerId <= 0 || !accountId) return null;
+  return { ownerId, accountId };
 }
 
 function mapCollectionRow(row: any) {
@@ -351,13 +373,17 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
   });
 
   router.get('/public/user/:wikidotId', async (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
     try {
       const wikidotId = Number.parseInt(String(req.params.wikidotId ?? ''), 10);
       if (!Number.isFinite(wikidotId) || wikidotId <= 0) {
         return res.status(400).json({ ok: false, error: 'invalid_wikidot' });
       }
-      const ownerId = await findUserIdByWikidotId(pool, wikidotId);
-      if (!ownerId) {
+      const claim = await findPublicCollectionClaim(pool, wikidotId);
+      if (
+        !claim
+        || !await accountCurrentlyClaimsWikidotId(claim.accountId, wikidotId)
+      ) {
         return res.json({ ok: true, total: 0, items: [] });
       }
       const { rows } = await pool.query<any>(
@@ -385,7 +411,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
           WHERE c."ownerId" = $1 AND c.visibility = 'PUBLIC'
           ORDER BY c."publishedAt" DESC NULLS LAST, c."updatedAt" DESC
         `,
-        [ownerId]
+        [claim.ownerId]
       );
       res.json({
         ok: true,
@@ -398,14 +424,18 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
   });
 
   router.get('/public/user/:wikidotId/:slug', async (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
     try {
       const wikidotId = Number.parseInt(String(req.params.wikidotId ?? ''), 10);
       const slug = normalizeString(req.params.slug);
       if (!Number.isFinite(wikidotId) || wikidotId <= 0 || !slug) {
         return res.status(400).json({ ok: false, error: 'invalid_params' });
       }
-      const ownerId = await findUserIdByWikidotId(pool, wikidotId);
-      if (!ownerId) {
+      const claim = await findPublicCollectionClaim(pool, wikidotId);
+      if (
+        !claim
+        || !await accountCurrentlyClaimsWikidotId(claim.accountId, wikidotId)
+      ) {
         return res.status(404).json({ ok: false, error: 'not_found' });
       }
       const { rows } = await pool.query<any>(
@@ -434,7 +464,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
             AND c.visibility = 'PUBLIC'
           LIMIT 1
         `,
-        [ownerId, slug]
+        [claim.ownerId, slug]
       );
       if (rows.length === 0) {
         return res.status(404).json({ ok: false, error: 'not_found' });
@@ -540,7 +570,11 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const lockedOwner = await lockCollectionOwnerForWrite(client, auth);
+        const lockedOwner = await lockCollectionOwnerForWrite(
+          client,
+          auth,
+          () => fetchFreshAuthUser(req)
+        );
         if (!lockedOwner) {
           await client.query('ROLLBACK');
           return res.status(401).json({ ok: false, error: 'unauthenticated' });
@@ -701,7 +735,11 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        const lockedOwner = await lockCollectionOwnerForWrite(client, auth);
+        const lockedOwner = await lockCollectionOwnerForWrite(
+          client,
+          auth,
+          () => fetchFreshAuthUser(req)
+        );
         if (!lockedOwner) {
           await client.query('ROLLBACK');
           return res.status(401).json({ ok: false, error: 'unauthenticated' });

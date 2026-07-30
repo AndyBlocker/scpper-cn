@@ -52,6 +52,25 @@ const collectionItem = {
   }
 }
 
+const secondCollectionItem = {
+  ...collectionItem,
+  id: 602,
+  pageId: 702,
+  annotation: '第二条示例批注',
+  order: 1,
+  pinned: false,
+  page: {
+    ...collectionItem.page,
+    id: 702,
+    wikidotId: 10002,
+    currentUrl: 'https://scp-wiki-cn.wikidot.com/scp-cn-002',
+    slug: 'scp-cn-002',
+    title: 'SCP-CN-002',
+    alternateTitle: '第二个测试页面',
+    rating: 96
+  }
+}
+
 function authUser(options = {}) {
   const featureEnabled = options.qqFeatureEnabled === true
   const qqBound = options.qqBound === true
@@ -95,7 +114,11 @@ async function json(route, body, status = 200) {
 function createApiHandler(options, requests) {
   let authMeCount = 0
   let preferencesReadCount = 0
+  let collectionDetailReadCount = 0
   let currentAuth = { ...options }
+  let currentCollectionItems = options.collectionMutationFlow
+    ? [{ ...collectionItem }, { ...secondCollectionItem }]
+    : [{ ...collectionItem }]
 
   return async (route) => {
     const request = route.request()
@@ -200,6 +223,9 @@ function createApiHandler(options, requests) {
         }
         return json(route, { ok: false, error: '响应在途中丢失' }, 503)
       }
+      if (options.profileResponseLost) {
+        return route.abort('connectionreset')
+      }
       if (options.malformedProfile) {
         return json(route, { ok: true, user: {} })
       }
@@ -295,7 +321,18 @@ function createApiHandler(options, requests) {
     }
 
     if (apiPath === '/collections/501' && method === 'GET') {
-      return json(route, { ok: true, collection, items: [collectionItem] })
+      collectionDetailReadCount += 1
+      if (options.collectionMutationFlow && collectionDetailReadCount > 1) {
+        await delay(450)
+      }
+      return json(route, {
+        ok: true,
+        collection: {
+          ...collection,
+          itemCount: currentCollectionItems.length
+        },
+        items: currentCollectionItems
+      })
     }
 
     if (apiPath === '/collections/502' && method === 'GET') {
@@ -315,6 +352,30 @@ function createApiHandler(options, requests) {
       })
     }
 
+    if (apiPath === '/collections/501/items/reorder' && method === 'POST') {
+      const order = request.postDataJSON()?.order
+      if (Array.isArray(order)) {
+        currentCollectionItems = order
+          .map(id => currentCollectionItems.find(item => item.id === id))
+          .filter(Boolean)
+          .map((item, index) => ({ ...item, order: index }))
+      }
+      return json(route, { ok: true, items: currentCollectionItems })
+    }
+
+    if (/^\/collections\/501\/items\/\d+$/.test(apiPath) && method === 'PATCH') {
+      if (options.collectionItemUpdateError) {
+        return json(route, { ok: false, error: '批注服务暂时不可用' }, 503)
+      }
+      const itemId = Number(apiPath.split('/').at(-1))
+      const patch = request.postDataJSON() || {}
+      currentCollectionItems = currentCollectionItems.map(item => (
+        item.id === itemId ? { ...item, ...patch } : item
+      ))
+      const item = currentCollectionItems.find(candidate => candidate.id === itemId)
+      return json(route, { ok: true, item })
+    }
+
     if (apiPath.startsWith('/collections/') && method === 'PATCH') {
       if (options.collectionUpdateError) {
         return json(route, { ok: false, error: 'require_linked_wikidot' }, 400)
@@ -322,11 +383,21 @@ function createApiHandler(options, requests) {
       if (options.delayCollectionWrite) {
         await delay(options.delayCollectionWrite)
       }
-      return json(route, { ok: true, collection, item: collectionItem, items: [collectionItem] })
+      return json(route, {
+        ok: true,
+        collection,
+        item: currentCollectionItems[0],
+        items: currentCollectionItems
+      })
     }
 
     if (apiPath.startsWith('/collections/') && ['POST', 'DELETE'].includes(method)) {
-      return json(route, { ok: true, collection, item: collectionItem, items: [collectionItem] })
+      return json(route, {
+        ok: true,
+        collection,
+        item: currentCollectionItems[0],
+        items: currentCollectionItems
+      })
     }
 
     if (apiPath === '/follows' && method === 'GET') {
@@ -580,6 +651,35 @@ async function main() {
       }
     )
 
+    const stalePasswordOptions = { linked: true, delayAuthAfterSwitch: 800 }
+    await scenario(
+      browser,
+      'stale-password-write-is-rejected-without-login-redirect',
+      stalePasswordOptions,
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/security`, { waitUntil: 'domcontentloaded' })
+        await page.getByText('playwright@example.com', { exact: true }).waitFor()
+        await page.getByLabel('当前密码', { exact: true }).fill('old-password')
+        await page.getByLabel('新密码', { exact: true }).fill('new-password')
+        await page.getByLabel('再次输入新密码', { exact: true }).fill('new-password')
+
+        stalePasswordOptions.forceServerAccount = 'B'
+        await page.getByRole('button', { name: '修改密码', exact: true }).click()
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        await page.getByLabel('当前密码', { exact: true }).waitFor()
+        assert.equal(new URL(page.url()).pathname, '/account/security')
+        assert.equal(await page.getByRole('heading', { name: '账号登录' }).count(), 0)
+
+        const writes = requests.filter(entry => (
+          entry.path === '/auth/password' && entry.method === 'PATCH'
+        ))
+        assert.equal(writes.length, 1)
+        assert.equal(writes[0].expectedUserId, 'pw-user-1')
+        assert.equal(writes[0].userId, 'pw-user-2')
+        assert.equal(writes[0].rejected, true)
+      }
+    )
+
     await scenario(
       browser,
       'profile-save-state',
@@ -616,6 +716,34 @@ async function main() {
           '畸形 profile DTO 后必须重新读取可信会话'
         )
         assert.equal(await input.inputValue(), '重查后确认的昵称')
+      }
+    )
+
+    await scenario(
+      browser,
+      'lost-profile-response-broadcasts-confirmed-profile',
+      { linked: true, profileResponseLost: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        const input = page.getByLabel('昵称', { exact: true })
+        const authReadsBefore = requests.filter(entry => entry.path === '/auth/me').length
+        const broadcastBefore = await page.evaluate(() => (
+          localStorage.getItem('scpper:auth-session-version')
+        ))
+
+        await input.fill('响应丢失后确认的新昵称')
+        await page.getByRole('button', { name: '保存昵称' }).click()
+        await page.getByText('昵称已保存。', { exact: true }).waitFor()
+
+        assert.ok(
+          requests.filter(entry => entry.path === '/auth/me').length > authReadsBefore,
+          'PATCH 响应丢失后必须通过 /auth/me 确认最终昵称'
+        )
+        const broadcastAfter = await page.evaluate(() => (
+          localStorage.getItem('scpper:auth-session-version')
+        ))
+        assert.notEqual(broadcastAfter, broadcastBefore)
+        assert.equal(JSON.parse(broadcastAfter).reason, 'profile')
       }
     )
 
@@ -803,6 +931,148 @@ async function main() {
         assert.ok(
           requests.filter(entry => entry.path === '/collections/502').length >= 2,
           '详情失败后应保留明确的重试入口'
+        )
+      }
+    )
+
+    await scenario(
+      browser,
+      'collection-annotation-error-preserves-draft',
+      { linked: true, collectionItemUpdateError: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+
+        const annotation = page.getByLabel('《SCP-CN-001》的批注', { exact: true })
+        await annotation.fill('这段草稿不能因保存失败而消失')
+        await page.keyboard.press('Tab')
+        await page.getByRole('alert').getByText(
+          '保存批注失败：批注服务暂时不可用 草稿仍保留在当前页面。',
+          { exact: true }
+        ).waitFor()
+
+        assert.equal(
+          await annotation.inputValue(),
+          '这段草稿不能因保存失败而消失'
+        )
+        assert.equal(
+          requests.filter(entry => (
+            entry.path === '/collections/501/items/601' && entry.method === 'PATCH'
+          )).length,
+          1
+        )
+      }
+    )
+
+    await scenario(
+      browser,
+      'collection-item-refresh-preserves-interaction',
+      { linked: true, collectionMutationFlow: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+        await page.getByText('SCP-CN-002', { exact: true }).waitFor()
+
+        const detailRequest = request => (
+          request.method() === 'GET'
+          && new URL(request.url()).pathname === '/api/collections/501'
+        )
+        const annotation = page.getByLabel('《SCP-CN-001》的批注', { exact: true })
+        await annotation.fill('失焦保存后仍要完成置顶操作')
+
+        const pinButton = page.getByRole('button', { name: '取消置顶', exact: true })
+        await pinButton.scrollIntoViewIfNeeded()
+        const pinBox = await pinButton.boundingBox()
+        assert.ok(pinBox, '置顶按钮应有可交互边界')
+
+        const annotationDetailPromise = page.waitForRequest(detailRequest)
+        const pinWritePromise = page.waitForRequest((request) => {
+          if (
+            request.method() !== 'PATCH'
+            || new URL(request.url()).pathname !== '/api/collections/501/items/601'
+          ) {
+            return false
+          }
+          return request.postDataJSON()?.pinned === false
+        })
+
+        await page.mouse.move(pinBox.x + pinBox.width / 2, pinBox.y + pinBox.height / 2)
+        await page.mouse.down()
+        const annotationDetail = await annotationDetailPromise
+        assert.equal(
+          await page.getByRole('region', { name: 'SCP 精选 收藏夹详情' }).isVisible(),
+          true,
+          '批注刷新期间详情面板必须保持挂载'
+        )
+        assert.equal(
+          await page.getByText('正在加载收藏夹详情…', { exact: true }).count(),
+          0,
+          '同一收藏夹静默刷新不应叠加整块 loading 面板'
+        )
+
+        const pinDetailPromise = page.waitForRequest(request => (
+          detailRequest(request) && request !== annotationDetail
+        ))
+        await page.mouse.up()
+        await pinWritePromise
+        const pinDetail = await pinDetailPromise
+        await pinDetail.response()
+
+        const firstReorderPromise = page.waitForRequest((request) => {
+          if (
+            request.method() !== 'POST'
+            || new URL(request.url()).pathname !== '/api/collections/501/items/reorder'
+          ) {
+            return false
+          }
+          return request.postDataJSON()?.order?.join(',') === '602,601'
+        })
+        const firstReorderDetailPromise = page.waitForRequest(detailRequest)
+        await page.getByRole('button', { name: '将《SCP-CN-001》下移' }).click()
+        await firstReorderPromise
+        const firstReorderDetail = await firstReorderDetailPromise
+        assert.equal(
+          await page.getByRole('region', { name: 'SCP 精选 收藏夹详情' }).isVisible(),
+          true,
+          '排序刷新期间详情面板必须保持挂载'
+        )
+        await firstReorderDetail.response()
+
+        const secondReorderPromise = page.waitForRequest((request) => {
+          if (
+            request.method() !== 'POST'
+            || new URL(request.url()).pathname !== '/api/collections/501/items/reorder'
+          ) {
+            return false
+          }
+          return request.postDataJSON()?.order?.join(',') === '601,602'
+        })
+        const secondReorderDetailPromise = page.waitForRequest(detailRequest)
+        await page.getByRole('button', { name: '将《SCP-CN-001》上移' }).click()
+        await secondReorderPromise
+        const secondReorderDetail = await secondReorderDetailPromise
+        assert.equal(
+          await page.getByRole('region', { name: 'SCP 精选 收藏夹详情' }).isVisible(),
+          true
+        )
+        await secondReorderDetail.response()
+
+        const itemWrites = requests.filter(entry => (
+          entry.path === '/collections/501/items/601' && entry.method === 'PATCH'
+        ))
+        assert.deepEqual(
+          itemWrites.map(entry => entry.body),
+          [
+            { annotation: '失焦保存后仍要完成置顶操作' },
+            { pinned: false }
+          ]
+        )
+        const reorderWrites = requests.filter(entry => (
+          entry.path === '/collections/501/items/reorder' && entry.method === 'POST'
+        ))
+        assert.deepEqual(
+          reorderWrites.map(entry => entry.body.order),
+          [[602, 601], [601, 602]]
         )
       }
     )

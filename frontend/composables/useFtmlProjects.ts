@@ -4,7 +4,9 @@
  * Provides methods to interact with the FTML projects backend API.
  */
 
+import type { FetchOptions } from 'ofetch'
 import { ref } from 'vue'
+import { getErrorMessage } from '~/utils/httpError'
 
 export interface FtmlProjectMeta {
   id: string
@@ -30,35 +32,20 @@ export interface FtmlProjectSettings {
 }
 
 export function useFtmlProjects() {
-  const config = useRuntimeConfig()
-  const bffBase = config.public.bffBase || '/api'
+  const { $bff } = useNuxtApp()
 
   const isLoading = ref(false)
   const error = ref<string | null>(null)
 
   async function fetchApi<T>(
     path: string,
-    options: RequestInit = {}
+    options: FetchOptions<'json'> = {}
   ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
     try {
-      const response = await fetch(`${bffBase}${path}`, {
-        ...options,
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers
-        }
-      })
-
-      const json = await response.json()
-
-      if (!response.ok) {
-        return { ok: false, error: json.error || json.message || '请求失败' }
-      }
-
+      const json = await $bff<T>(path, options)
       return { ok: true, data: json }
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : '网络错误' }
+    } catch (cause: unknown) {
+      return { ok: false, error: getErrorMessage(cause, '网络错误') }
     }
   }
 
@@ -108,7 +95,7 @@ export function useFtmlProjects() {
 
     const result = await fetchApi<{ project: FtmlProject }>('/ftml-projects', {
       method: 'POST',
-      body: JSON.stringify(data)
+      body: data
     })
 
     isLoading.value = false
@@ -137,7 +124,7 @@ export function useFtmlProjects() {
 
     const result = await fetchApi<{ project: FtmlProject }>(`/ftml-projects/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify(data)
+      body: data
     })
 
     isLoading.value = false

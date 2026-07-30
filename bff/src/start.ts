@@ -119,6 +119,9 @@ export async function createServer() {
   app.use((err: any, _req: any, res: any, _next: any) => {
     // eslint-disable-next-line no-console
     console.error(err);
+    if (err?.code === 'collection_owner_unverified') {
+      return res.status(503).json({ error: 'collection_owner_unverified' });
+    }
     const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
     const message = isDev ? (err?.message || 'Internal Server Error') : 'Internal Server Error';
     res.status(500).json({ error: message });

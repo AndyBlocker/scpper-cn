@@ -536,13 +536,25 @@ function installTakeoverRaceDb() {
 }
 
 describe('Collections routes', () => {
+  const previousInternalKey = process.env.BFF_INTERNAL_API_KEY;
+  const previousUserBackend = process.env.USER_BACKEND_BASE_URL;
+  const previousClaimTimeout = process.env.COLLECTION_CLAIM_TIMEOUT_MS;
+
   beforeEach(() => {
     queryMock.mockReset();
     global.fetch = jest.fn();
+    process.env.BFF_INTERNAL_API_KEY = 'collection-claim-test-key';
+    process.env.USER_BACKEND_BASE_URL = 'http://user-backend.test';
   });
 
   afterEach(() => {
     jest.clearAllMocks();
+    if (previousInternalKey === undefined) delete process.env.BFF_INTERNAL_API_KEY;
+    else process.env.BFF_INTERNAL_API_KEY = previousInternalKey;
+    if (previousUserBackend === undefined) delete process.env.USER_BACKEND_BASE_URL;
+    else process.env.USER_BACKEND_BASE_URL = previousUserBackend;
+    if (previousClaimTimeout === undefined) delete process.env.COLLECTION_CLAIM_TIMEOUT_MS;
+    else process.env.COLLECTION_CLAIM_TIMEOUT_MS = previousClaimTimeout;
   });
 
   const mockAuthOk = (linkedWikidotId: number | null = 42) => {
@@ -670,6 +682,69 @@ describe('Collections routes', () => {
     )).toBe(false);
   });
 
+  test('mapping-less linked reconciliation rolls back when fresh auth is unavailable', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: 42,
+            lastLoginAt: null
+          }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ ok: false })
+      });
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // no account mapping yet
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // global reconciliation lock
+      .mockResolvedValueOnce({ rows: [] }) // account advisory lock
+      .mockResolvedValueOnce({ rows: [] }) // mapping still absent under lock
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // canonical Wikidot User
+      .mockResolvedValueOnce({ rows: [] }) // canonical owner is unclaimed
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const app = await createServer();
+      const res = await request(app).get('/collections').expect(503);
+
+      expect(res.body).toEqual({
+        error: 'collection_owner_unverified'
+      });
+      expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'CollectionOwnerUnverifiedError',
+        code: 'collection_owner_unverified',
+        statusCode: 503
+      }));
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(queryMock.mock.calls.filter(([sql]) =>
+      String(sql).trim() === 'ROLLBACK'
+    )).toHaveLength(1);
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).trim() === 'COMMIT'
+    )).toBe(false);
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).includes('INSERT INTO "User"')
+    )).toBe(false);
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).includes('INSERT INTO "CollectionAccountOwner"')
+    )).toBe(false);
+  });
+
   test('stale linked auth fails closed when the canonical owner belongs to another account', async () => {
     mockAuthOk();
     (global.fetch as jest.Mock)
@@ -700,25 +775,21 @@ describe('Collections routes', () => {
             lastLoginAt: null
           }
         })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: null,
+            lastLoginAt: null
+          }
+        })
       });
-    const privateCollection = {
-      id: 77,
-      ownerId: 700,
-      title: '当前账号私有收藏',
-      slug: 'private',
-      visibility: 'PRIVATE',
-      description: null,
-      notes: '不能转给其他账号',
-      coverImageUrl: null,
-      coverImageOffsetX: 0,
-      coverImageOffsetY: 0,
-      coverImageScale: 1,
-      isDefault: false,
-      publishedAt: null,
-      createdAt: '2024-01-01T00:00:00.000Z',
-      updatedAt: '2024-01-02T00:00:00.000Z',
-      itemCount: 0
-    };
     queryMock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
@@ -733,16 +804,16 @@ describe('Collections routes', () => {
       .mockResolvedValueOnce({ rows: [] }) // access BEGIN
       .mockResolvedValueOnce({ rows: [] }) // access account lock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
-      .mockResolvedValueOnce({ rows: [privateCollection] })
-      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
-      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
+      .mockResolvedValueOnce({ rows: [] }); // stale access ROLLBACK
 
-    const app = await createServer();
-    const res = await request(app).get('/collections').expect(200);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const app = await createServer();
+      await request(app).get('/collections').expect(503);
+    } finally {
+      errorSpy.mockRestore();
+    }
 
-    expect(res.body.items).toEqual([
-      expect.objectContaining({ id: 77, ownerId: 700, notes: '不能转给其他账号' })
-    ]);
     expect(queryMock.mock.calls.some(([sql]) =>
       String(sql).includes('SET "ownerId" = $1')
     )).toBe(false);
@@ -753,7 +824,7 @@ describe('Collections routes', () => {
       String(sql).includes('"accountId" <> $2')
     )?.[0] ?? '');
     expect(claimSql).toContain('FOR UPDATE');
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
   test('verified B takes over X even when old account A never makes another request', async () => {
@@ -847,7 +918,7 @@ describe('Collections routes', () => {
       [900, 'acc_a', 99],
       [99, 'acc_b', 800]
     ]);
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
   test('stale linked request cannot reclaim an empty X after its account detached', async () => {
@@ -879,25 +950,21 @@ describe('Collections routes', () => {
             lastLoginAt: null
           }
         })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_a',
+            email: 'a@example.com',
+            displayName: 'A',
+            linkedWikidotId: null,
+            lastLoginAt: null
+          }
+        })
       });
-    const detachedCollection = {
-      id: 301,
-      ownerId: 700,
-      title: 'A detached',
-      slug: 'a-detached',
-      visibility: 'PRIVATE',
-      description: null,
-      notes: 'A only',
-      coverImageUrl: null,
-      coverImageOffsetX: 0,
-      coverImageOffsetY: 0,
-      coverImageScale: 1,
-      isDefault: false,
-      publishedAt: null,
-      createdAt: '2024-01-01T00:00:00.000Z',
-      updatedAt: '2024-01-02T00:00:00.000Z',
-      itemCount: 0
-    };
     queryMock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
       .mockResolvedValueOnce({ rows: [] }) // reconciliation BEGIN
@@ -910,23 +977,22 @@ describe('Collections routes', () => {
       .mockResolvedValueOnce({ rows: [] }) // access BEGIN
       .mockResolvedValueOnce({ rows: [] }) // access account lock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
-      .mockResolvedValueOnce({ rows: [detachedCollection] })
-      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
-      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
+      .mockResolvedValueOnce({ rows: [] }); // stale access ROLLBACK
 
-    const app = await createServer();
-    const res = await request(app).get('/collections').expect(200);
-
-    expect(res.body.items).toEqual([
-      expect.objectContaining({ id: 301, ownerId: 700, notes: 'A only' })
-    ]);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const app = await createServer();
+      await request(app).get('/collections').expect(503);
+    } finally {
+      errorSpy.mockRestore();
+    }
     expect(queryMock.mock.calls.some(([sql]) =>
       String(sql).includes('UPDATE "CollectionAccountOwner"')
     )).toBe(false);
     expect(queryMock.mock.calls.some(([sql]) =>
       String(sql).includes('SET "ownerId" = $1')
     )).toBe(false);
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
   test('takeover, detach, and stale replay preserve account isolation in state', async () => {
@@ -947,8 +1013,9 @@ describe('Collections routes', () => {
     const accountAUnlinked = { ...accountA, linkedWikidotId: null };
     const accountBUnlinked = { ...accountB, linkedWikidotId: null };
 
-    // B's route snapshot and its claimant-row-locked fresh read both confirm X.
-    database.queueAuth(accountB, accountB);
+    // Route snapshot, reconciliation read, and the mapping-lock read all
+    // confirm B→X.
+    database.queueAuth(accountB, accountB, accountB);
     const afterTakeover = await request(app).get('/collections').expect(200);
 
     expect(database.mappings.get('acc_a')).toBe(900);
@@ -985,13 +1052,11 @@ describe('Collections routes', () => {
 
     // A's route snapshot predates B's takeover, but the claimant-row-locked
     // fresh read sees A unlinked. A stays on its guest and cannot move B.
-    database.queueAuth(accountA, accountAUnlinked);
-    const afterOldAReplay = await request(app).get('/collections').expect(200);
+    database.queueAuth(accountA, accountAUnlinked, accountAUnlinked);
+    await request(app).get('/collections').expect(503);
 
     expect(database.mappings.get('acc_a')).toBe(900);
     expect(database.mappings.get('acc_b')).toBe(99);
-    expect(afterOldAReplay.body.items.map((item: { id: number }) => item.id).sort())
-      .toEqual([101, 102]);
     expect(queryMock.mock.calls.filter(([sql]) =>
       String(sql).includes('SET "ownerId" = $1')
     )).toHaveLength(ownerMoveCountAfterTakeover);
@@ -1001,12 +1066,11 @@ describe('Collections routes', () => {
 
     // The inverse stale snapshot is also harmless: an old null snapshot cannot
     // detach B after a newer relink, because fresh still confirms B→X.
-    database.queueAuth(accountBUnlinked, accountB);
-    const afterStaleUnlink = await request(app).get('/collections').expect(200);
+    database.queueAuth(accountBUnlinked, accountB, accountB);
+    await request(app).get('/collections').expect(503);
 
     expect(database.mappings.get('acc_b')).toBe(99);
     expect(database.collections.find(item => item.id === 202)?.ownerId).toBe(99);
-    expect(afterStaleUnlink.body.items.map((item: { id: number }) => item.id)).toEqual([202]);
     expect(queryMock.mock.calls.filter(([sql]) =>
       String(sql).includes('SET "ownerId" = $1')
     )).toHaveLength(ownerMoveCountAfterTakeover);
@@ -1016,7 +1080,11 @@ describe('Collections routes', () => {
 
     // A current unlink snapshot is enough to detach the current claimant. The
     // canonical target becomes empty and B's data moves to another private guest.
-    database.queueAuth(accountBUnlinked, accountBUnlinked);
+    database.queueAuth(
+      accountBUnlinked,
+      accountBUnlinked,
+      accountBUnlinked
+    );
     const afterDetach = await request(app).get('/collections').expect(200);
 
     expect(database.mappings.get('acc_b')).toBe(901);
@@ -1039,13 +1107,12 @@ describe('Collections routes', () => {
 
     // An in-flight old B snapshot still says linked X. The bypass-cache fresh
     // read says unlinked, so the empty X is not reclaimed.
-    database.queueAuth(accountB, accountBUnlinked);
-    const afterStaleReplay = await request(app).get('/collections').expect(200);
+    database.queueAuth(accountB, accountBUnlinked, accountBUnlinked);
+    await request(app).get('/collections').expect(503);
 
     expect(database.mappings.get('acc_a')).toBe(900);
     expect(database.mappings.get('acc_b')).toBe(901);
     expect(database.collections.some(item => item.ownerId === 99)).toBe(false);
-    expect(afterStaleReplay.body.items.map((item: { id: number }) => item.id)).toEqual([202]);
     expect(queryMock.mock.calls.filter(([sql]) =>
       String(sql).includes('SET "ownerId" = $1')
     )).toHaveLength(ownerMoveCountBeforeReplay);
@@ -1058,16 +1125,21 @@ describe('Collections routes', () => {
     ])).toEqual([
       ['acc_b', 42],
       ['acc_b', 42],
+      ['acc_b', 42],
       ['acc_a', 42],
+      ['acc_a', null],
       ['acc_a', null],
       ['acc_b', null],
       ['acc_b', 42],
+      ['acc_b', 42],
+      ['acc_b', null],
       ['acc_b', null],
       ['acc_b', null],
       ['acc_b', 42],
+      ['acc_b', null],
       ['acc_b', null]
     ]);
-    expect(global.fetch).toHaveBeenCalledTimes(10);
+    expect(global.fetch).toHaveBeenCalledTimes(15);
 
     // Every reconciliation takes the global lock immediately after BEGIN and
     // before its requester account lock, preventing an X↔Y lock cycle.
@@ -1147,6 +1219,86 @@ describe('Collections routes', () => {
     )).toBe(false);
   });
 
+  test('stale matched canonical auth cannot create PUBLIC data', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: 42,
+            lastLoginAt: null
+          }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: 42,
+            lastLoginAt: null
+          }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: null,
+            lastLoginAt: null
+          }
+        })
+      });
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ userId: 99, wikidotId: 42 }]
+      })
+      .mockResolvedValueOnce({ rows: [] }) // write BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // account lock
+      .mockResolvedValueOnce({
+        rows: [{ userId: 99, wikidotId: 42 }]
+      }) // mapping pinned under the lock
+      .mockResolvedValueOnce({ rows: [] }); // stale write ROLLBACK
+
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const app = await createServer();
+      const res = await request(app)
+        .post('/collections')
+        .set('x-scpper-expected-user-id', 'acc_1')
+        .send({ title: '过期身份不能发布', visibility: 'PUBLIC' })
+        .expect(503);
+      expect(res.body).toEqual({
+        error: 'collection_owner_unverified'
+      });
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(queryMock).toHaveBeenCalledTimes(5);
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).trim() === 'ROLLBACK'
+    )).toBe(true);
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).includes('INSERT INTO "UserCollection"')
+    )).toBe(false);
+  });
+
   test('POST /collections creates a public collection with publishedAt', async () => {
     mockAuthOk();
     queryMock
@@ -1201,8 +1353,9 @@ describe('Collections routes', () => {
     expect(insertCall?.[1]?.[3]).toBe('PUBLIC');
     expect(insertCall?.[1]?.[11]).toBeInstanceOf(Date);
     expect(queryMock).toHaveBeenCalledTimes(9);
-    // Guard and route share one /auth/me lookup for the same request.
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    // Guard/route share the first lookup. Ownership is then revalidated once
+    // before resolution and again while the account mapping is locked.
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
   test('POST re-reads the mapping under lock before inserting during a link race', async () => {
@@ -1561,8 +1714,22 @@ describe('Collections routes', () => {
   });
 
   test('GET /collections/public/user/:wikidotId returns public list', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'acc_1',
+          linkedWikidotId: 42,
+          status: 'ACTIVE'
+        }
+      })
+    });
     queryMock
-      .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // resolve user by wikidot id
+      .mockResolvedValueOnce({
+        rows: [{ ownerId: 99, accountId: 'acc_1' }]
+      }) // resolve the reconciled account claim
       .mockResolvedValueOnce({
         rows: [{
           id: 1,
@@ -1587,15 +1754,39 @@ describe('Collections routes', () => {
     const app = await createServer();
     const res = await request(app).get('/collections/public/user/42').expect(200);
     expect(res.body.ok).toBe(true);
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(res.body.items[0].visibility).toBe('PUBLIC');
     expect(res.body.items[0]).not.toHaveProperty('notes');
     const publicListSql = String(queryMock.mock.calls[1]?.[0] ?? '');
     expect(publicListSql).not.toMatch(/\bc\.notes\b/);
+    const claimSql = String(queryMock.mock.calls[0]?.[0] ?? '');
+    expect(claimSql).toContain('JOIN "CollectionAccountOwner"');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://user-backend.test/internal/account-identity/acc_1',
+      expect.objectContaining({
+        headers: { 'x-internal-key': 'collection-claim-test-key' },
+        redirect: 'error'
+      })
+    );
   });
 
   test('GET /collections/public/user/:wikidotId/:slug never exposes private notes', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'acc_1',
+          linkedWikidotId: 42,
+          status: 'ACTIVE'
+        }
+      })
+    });
     queryMock
-      .mockResolvedValueOnce({ rows: [{ id: 99 }] })
+      .mockResolvedValueOnce({
+        rows: [{ ownerId: 99, accountId: 'acc_1' }]
+      })
       .mockResolvedValueOnce({
         rows: [{
           id: 7,
@@ -1624,8 +1815,138 @@ describe('Collections routes', () => {
       .expect(200);
 
     expect(res.body.collection.description).toBe('给访客看的简介');
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(res.body.collection).not.toHaveProperty('notes');
     const publicDetailSql = String(queryMock.mock.calls[1]?.[0] ?? '');
     expect(publicDetailSql).not.toMatch(/\bc\.notes\b/);
+  });
+
+  test('public list hides a stale owner immediately after unlink without private access', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: 'old-account' }]
+    });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'old-account',
+          linkedWikidotId: null,
+          status: 'ACTIVE'
+        }
+      })
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+
+    expect(res.body).toEqual({ ok: true, total: 0, items: [] });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('public detail hides the old owner after takeover without private access', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: 'old-account' }]
+    });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        account: {
+          id: 'old-account',
+          linkedWikidotId: null,
+          status: 'ACTIVE'
+        }
+      })
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42/public-detail')
+      .expect(404);
+
+    expect(res.body).toEqual({ ok: false, error: 'not_found' });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('public collection reads fail closed when identity verification is unavailable', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: 'acc_1' }]
+    });
+    (global.fetch as jest.Mock).mockRejectedValue(new Error('user-backend unavailable'));
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+
+    expect(res.body).toEqual({ ok: true, total: 0, items: [] });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('public list and detail hide historical collections without an account mapping', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const app = await createServer();
+    const list = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+    const detail = await request(app)
+      .get('/collections/public/user/42/public-detail')
+      .expect(404);
+
+    expect(list.body).toEqual({ ok: true, total: 0, items: [] });
+    expect(detail.body).toEqual({ ok: false, error: 'not_found' });
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('public list fails closed before contacting user-backend when the internal key is missing', async () => {
+    delete process.env.BFF_INTERNAL_API_KEY;
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: 'acc_1' }]
+    });
+
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42')
+      .expect(200);
+
+    expect(res.body).toEqual({ ok: true, total: 0, items: [] });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('public detail fails closed when account verification times out', async () => {
+    process.env.COLLECTION_CLAIM_TIMEOUT_MS = '100';
+    queryMock.mockResolvedValueOnce({
+      rows: [{ ownerId: 99, accountId: 'acc_1' }]
+    });
+    (global.fetch as jest.Mock).mockImplementation(
+      (_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        }, { once: true });
+      })
+    );
+
+    const startedAt = Date.now();
+    const app = await createServer();
+    const res = await request(app)
+      .get('/collections/public/user/42/public-detail')
+      .expect(404);
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(res.body).toEqual({ ok: false, error: 'not_found' });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

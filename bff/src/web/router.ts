@@ -23,6 +23,7 @@ import { trackingRouter } from './routes/tracking.js';
 import { collectionsRouter } from './routes/collections.js';
 import { htmlSnippetsRouter } from './routes/html-snippets.js';
 import { internalRouter } from './routes/internal.js';
+import { internalCollectionOwnerRouter } from './routes/internalCollectionOwner.js';
 import { textAnalysisRouter } from './routes/text-analysis.js';
 import { forumsRouter } from './routes/forums.js';
 import { cssProxyRouter } from './routes/css-proxy.js';
@@ -93,6 +94,11 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use(cssProxyRouter());
   router.use('/annual-summary', annualSummaryRouter());
   router.use('/embed', embedRouter(pool, redis));
+  router.use(
+    '/internal/collection-owner',
+    guardInternalRoutes,
+    internalCollectionOwnerRouter(pool)
+  );
   router.use('/internal', guardInternalRoutes, internalRouter());
   router.use('/', htmlSnippetsRouter);
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));

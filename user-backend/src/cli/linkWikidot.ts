@@ -30,6 +30,13 @@ interface UnlinkResult {
 }
 
 const SERIALIZABLE_RETRY_ATTEMPTS = 3;
+const COLLECTION_OWNER_PIN_ERROR = '收藏归属预固定失败，身份变更已取消';
+
+interface AccountIdentitySnapshot {
+  id: string;
+  email: string;
+  linkedWikidotId: number | null;
+}
 
 function nextAuthCacheVersion(...currentVersions: Date[]): Date {
   return new Date(Math.max(
@@ -72,17 +79,155 @@ async function runBindingTransaction<T>(
   throw lastError ?? new Error('改绑事务执行失败');
 }
 
+function assertIdentitySnapshot(
+  current: AccountIdentitySnapshot,
+  expected: AccountIdentitySnapshot
+): void {
+  if (
+    current.id !== expected.id
+    || current.linkedWikidotId !== expected.linkedWikidotId
+  ) {
+    throw new Error('账号绑定状态已变化，请重试');
+  }
+}
+
+export async function pinCollectionOwnerBeforeIdentityTransition(
+  accountId: string,
+  wikidotId: number
+): Promise<void> {
+  const internalKey = String(process.env.BFF_INTERNAL_API_KEY || '').trim();
+  if (!internalKey) {
+    throw new Error(COLLECTION_OWNER_PIN_ERROR);
+  }
+  const bffBaseUrl = String(
+    process.env.BFF_BASE_URL || 'http://127.0.0.1:4396'
+  ).replace(/\/$/, '');
+  const timeoutValue = Number(
+    process.env.BFF_INTERNAL_FETCH_TIMEOUT_MS ?? '4500'
+  );
+  const timeoutMs = Math.min(
+    Math.max(Number.isFinite(timeoutValue) ? Math.floor(timeoutValue) : 4500, 250),
+    10_000
+  );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+
+  try {
+    const response = await fetch(
+      `${bffBaseUrl}/internal/collection-owner/pin`,
+      {
+        method: 'POST',
+        redirect: 'error',
+        signal: controller.signal,
+        headers: {
+          'content-type': 'application/json',
+          'x-internal-key': internalKey
+        },
+        body: JSON.stringify({ accountId, wikidotId })
+      }
+    );
+    const payload = await response.json().catch(() => null) as {
+      ok?: boolean;
+      pinned?: {
+        accountId?: string;
+        wikidotId?: number;
+      };
+    } | null;
+    if (
+      !response.ok
+      || payload?.ok !== true
+      || payload.pinned?.accountId !== accountId
+      || payload.pinned?.wikidotId !== wikidotId
+    ) {
+      throw new Error(COLLECTION_OWNER_PIN_ERROR);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === COLLECTION_OWNER_PIN_ERROR) {
+      throw error;
+    }
+    throw new Error(COLLECTION_OWNER_PIN_ERROR);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pinIdentitySnapshots(
+  identities: AccountIdentitySnapshot[]
+): Promise<void> {
+  const unique = new Map<string, AccountIdentitySnapshot>();
+  for (const identity of identities) {
+    if (identity.linkedWikidotId == null) continue;
+    unique.set(
+      `${identity.id}:${identity.linkedWikidotId}`,
+      identity
+    );
+  }
+  // Deterministic order keeps behavior stable if a force+takeover needs to pin
+  // both sides. The BFF serializes each call with its reconciliation lock.
+  for (const identity of [...unique.values()].sort((left, right) =>
+    left.id.localeCompare(right.id)
+  )) {
+    await pinCollectionOwnerBeforeIdentityTransition(
+      identity.id,
+      identity.linkedWikidotId!
+    );
+  }
+}
+
 export async function linkWikidotUser(args: LinkArgs): Promise<LinkResult> {
   const email = args.email.trim().toLowerCase();
   const wikidotId = args.wikidotId;
   const force = Boolean(args.force);
   const takeover = Boolean(args.takeover);
 
+  // Read and pre-pin identity provenance before opening the user DB
+  // transaction. A slow/unavailable BFF must never hold a UserAccount lock.
+  // The serializable transaction below re-reads and compares this exact state
+  // before writing, so these reads are not treated as authorization by
+  // themselves.
+  const accountSnapshot = await prisma.userAccount.findUnique({
+    where: { email }
+  });
+  if (!accountSnapshot) {
+    throw new Error(`未找到邮箱为 ${email} 的用户账号`);
+  }
+  if (
+    accountSnapshot.linkedWikidotId
+    && accountSnapshot.linkedWikidotId !== wikidotId
+    && !force
+  ) {
+    throw new Error(`该账号已绑定 wikidotId=${accountSnapshot.linkedWikidotId}，如需覆盖请添加 --force`);
+  }
+  const existingSnapshot = await prisma.userAccount.findUnique({
+    where: { linkedWikidotId: wikidotId }
+  });
+  if (
+    existingSnapshot
+    && existingSnapshot.id !== accountSnapshot.id
+    && !takeover
+  ) {
+    throw new Error(`wikidotId=${wikidotId} 已绑定到账号 ${existingSnapshot.email}，如需转移请添加 --takeover`);
+  }
+
+  const snapshotsToPin: AccountIdentitySnapshot[] = [];
+  if (
+    accountSnapshot.linkedWikidotId != null
+    && accountSnapshot.linkedWikidotId !== wikidotId
+  ) {
+    snapshotsToPin.push(accountSnapshot);
+  }
+  if (existingSnapshot && existingSnapshot.id !== accountSnapshot.id) {
+    snapshotsToPin.push(existingSnapshot);
+  }
+  await pinIdentitySnapshots(snapshotsToPin);
+
   const outcome = await runBindingTransaction(async (tx) => {
     const account = await tx.userAccount.findUnique({ where: { email } });
     if (!account) {
       throw new Error(`未找到邮箱为 ${email} 的用户账号`);
     }
+    assertIdentitySnapshot(account, accountSnapshot);
 
     if (account.linkedWikidotId === wikidotId) {
       return {
@@ -103,6 +248,9 @@ export async function linkWikidotUser(args: LinkArgs): Promise<LinkResult> {
     }
 
     const existing = await tx.userAccount.findUnique({ where: { linkedWikidotId: wikidotId } });
+    if ((existing?.id ?? null) !== (existingSnapshot?.id ?? null)) {
+      throw new Error('账号绑定状态已变化，请重试');
+    }
     let clearedAccountEmail: string | undefined;
     let clearedAccountId: string | undefined;
     const transitionVersion = nextAuthCacheVersion(
@@ -163,16 +311,35 @@ export async function unlinkWikidotUser(args: UnlinkArgs): Promise<UnlinkResult>
     throw new Error('请提供 --email 或 --wikidotId（且只能提供一个）');
   }
 
+  const email = args.email?.trim().toLowerCase();
+  const wikidotId = args.wikidotId;
+  if (wikidotId !== undefined && (!Number.isInteger(wikidotId) || wikidotId <= 0)) {
+    throw new Error('wikidotId 必须是正整数');
+  }
+  const accountSnapshot = email
+    ? await prisma.userAccount.findUnique({ where: { email } })
+    : await prisma.userAccount.findUnique({
+        where: { linkedWikidotId: wikidotId as number }
+      });
+  if (!accountSnapshot) {
+    if (email) {
+      throw new Error(`未找到邮箱为 ${email} 的用户账号`);
+    }
+    throw new Error(`wikidotId=${wikidotId} 未绑定任何账号`);
+  }
+  if (!accountSnapshot.linkedWikidotId) {
+    throw new Error(`账号 ${accountSnapshot.email} 未绑定 wikidotId，无法解绑`);
+  }
+
+  await pinIdentitySnapshots([accountSnapshot]);
+
   const outcome = await runBindingTransaction(async (tx) => {
-    if (args.email) {
-      const email = args.email.trim().toLowerCase();
+    if (email) {
       const account = await tx.userAccount.findUnique({ where: { email } });
       if (!account) {
         throw new Error(`未找到邮箱为 ${email} 的用户账号`);
       }
-      if (!account.linkedWikidotId) {
-        throw new Error(`账号 ${account.email} 未绑定 wikidotId，无法解绑`);
-      }
+      assertIdentitySnapshot(account, accountSnapshot);
       const updated = await tx.userAccount.update({
         where: { id: account.id },
         data: {
@@ -183,20 +350,19 @@ export async function unlinkWikidotUser(args: UnlinkArgs): Promise<UnlinkResult>
       return {
         result: {
           email: updated.email,
-          previousLinkedWikidotId: account.linkedWikidotId
+          previousLinkedWikidotId: account.linkedWikidotId as number
         },
         invalidatedAccountIds: [updated.id]
       };
     }
 
-    const wikidotId = args.wikidotId as number;
-    if (!Number.isInteger(wikidotId) || wikidotId <= 0) {
-      throw new Error('wikidotId 必须是正整数');
-    }
-    const accountWithId = await tx.userAccount.findUnique({ where: { linkedWikidotId: wikidotId } });
+    const accountWithId = await tx.userAccount.findUnique({
+      where: { linkedWikidotId: wikidotId as number }
+    });
     if (!accountWithId) {
       throw new Error(`wikidotId=${wikidotId} 未绑定任何账号`);
     }
+    assertIdentitySnapshot(accountWithId, accountSnapshot);
     const updated = await tx.userAccount.update({
       where: { id: accountWithId.id },
       data: {
@@ -207,7 +373,7 @@ export async function unlinkWikidotUser(args: UnlinkArgs): Promise<UnlinkResult>
     return {
       result: {
         email: updated.email,
-        previousLinkedWikidotId: wikidotId
+        previousLinkedWikidotId: wikidotId as number
       },
       invalidatedAccountIds: [updated.id]
     };

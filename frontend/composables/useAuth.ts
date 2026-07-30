@@ -804,6 +804,7 @@ export function useAuth() {
           && user.value.email.trim().toLowerCase() === expectedEmail
           && user.value.displayName === trimmed
         ) {
+          announceSessionChange('profile')
           return { ok: true as const }
         }
       }

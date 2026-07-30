@@ -23,8 +23,29 @@ const OWNER_LOCK_NAMESPACE = 1129270342;
 // stable private collection access.
 const RECONCILE_LOCK_NAMESPACE = 1129270343;
 const MAX_OWNER_RESOLUTION_ATTEMPTS = 3;
+const ANONYMOUS_GUEST_DISPLAY_NAME = 'SCPper 收藏用户';
 
 export type RefreshAuthUser = () => Promise<AuthUserPayload | null>;
+
+export class CollectionOwnerUnverifiedError extends Error {
+  readonly code = 'collection_owner_unverified';
+  readonly statusCode = 503;
+
+  constructor() {
+    super('Collection owner identity could not be verified');
+    this.name = 'CollectionOwnerUnverifiedError';
+  }
+}
+
+export class CollectionOwnerPinConflictError extends Error {
+  readonly code = 'collection_owner_pin_conflict';
+  readonly statusCode = 409;
+
+  constructor() {
+    super('Collection owner is already claimed by another account');
+    this.name = 'CollectionOwnerPinConflictError';
+  }
+}
 
 async function refreshMatchesIdentity(
   refreshAuth: RefreshAuthUser | undefined,
@@ -113,20 +134,15 @@ async function ensureWikidotOwner(
 }
 
 async function createGuestOwner(
-  client: PoolClient,
-  auth: Pick<AuthUserPayload, 'displayName' | 'email'>,
-  accountId: string
+  client: PoolClient
 ): Promise<number> {
-  const displayName = (auth.displayName && auth.displayName.trim().slice(0, 80))
-    || (auth.email && auth.email.trim().slice(0, 80))
-    || `账号用户 ${accountId.slice(0, 6)}`;
   const inserted = await client.query<{ id: number }>(
     `
       INSERT INTO "User" ("displayName", "isGuest")
       VALUES ($1, TRUE)
       RETURNING id
     `,
-    [displayName]
+    [ANONYMOUS_GUEST_DISPLAY_NAME]
   );
   const ownerId = Number(inserted.rows[0]?.id);
   if (!Number.isInteger(ownerId) || ownerId <= 0) {
@@ -266,13 +282,12 @@ async function updateAccountMapping(
  */
 async function detachCanonicalOwner(
   client: PoolClient,
-  auth: AuthUserPayload,
   accountId: string,
   mapping: CollectionOwnerMapping
 ): Promise<CollectionOwnerMapping> {
   if (mapping.wikidotId == null) return mapping;
 
-  const guestOwnerId = await createGuestOwner(client, auth, accountId);
+  const guestOwnerId = await createGuestOwner(client);
   // The guest row was created in this transaction and cannot be observed by a
   // competing transaction. Locking both ids still keeps collection movement
   // consistent with every other reconciliation path.
@@ -347,7 +362,6 @@ async function lockOwners(
 
 async function resolveInTransaction(
   pool: Pool,
-  auth: AuthUserPayload,
   accountId: string,
   linkedWikidotId: number | null,
   refreshAuth: RefreshAuthUser | undefined
@@ -382,17 +396,27 @@ async function resolveInTransaction(
         // Unlinking must release the canonical Wikidot claim. Keeping the
         // mapping on that User forever prevents a later legitimate account
         // from using public collections for the same Wikidot identity.
-        mapping = await detachCanonicalOwner(client, auth, accountId, mapping);
+        mapping = await detachCanonicalOwner(client, accountId, mapping);
         await client.query('COMMIT');
         return mapping.userId;
       }
-      const guestOwnerId = await createGuestOwner(client, auth, accountId);
+      const guestOwnerId = await createGuestOwner(client);
       await insertAccountMapping(client, accountId, guestOwnerId);
       await client.query('COMMIT');
       return guestOwnerId;
     }
 
     if (mapping?.wikidotId === linkedWikidotId) {
+      if (
+        refreshAuth
+        && !await refreshMatchesIdentity(
+          refreshAuth,
+          accountId,
+          linkedWikidotId
+        )
+      ) {
+        throw new CollectionOwnerUnverifiedError();
+      }
       await client.query('COMMIT');
       return mapping.userId;
     }
@@ -417,13 +441,16 @@ async function resolveInTransaction(
       accountId,
       linkedWikidotId
     )) {
-      const safeOwnerId = mapping?.userId
-        ?? await createGuestOwner(client, auth, accountId);
       if (!mapping) {
-        await insertAccountMapping(client, accountId, safeOwnerId);
+        // There is no previously-proven account owner to fall back to. Creating
+        // an empty guest mapping here would turn a transient /auth/me failure
+        // into durable ownership state and can hide legacy collections until a
+        // later merge. Roll the transaction back and let the request retry once
+        // user-backend can prove the identity.
+        throw new CollectionOwnerUnverifiedError();
       }
       await client.query('COMMIT');
-      return safeOwnerId;
+      return mapping.userId;
     }
 
     if (canonicalClaim) {
@@ -431,11 +458,7 @@ async function resolveInTransaction(
       // from user-backend. The new verified account may therefore take over
       // immediately; the previous SCPper account does not need to make another
       // request before the canonical Wikidot owner is released.
-      const previousAccountGuestId = await createGuestOwner(
-        client,
-        { displayName: null, email: '' },
-        canonicalClaim.accountId
-      );
+      const previousAccountGuestId = await createGuestOwner(client);
       await lockOwners(client, [
         mapping?.userId,
         canonicalOwnerId,
@@ -505,6 +528,101 @@ async function resolveInTransaction(
   }
 }
 
+export interface CollectionOwnerPinResult {
+  accountId: string;
+  wikidotId: number;
+  userId: number;
+  migrated: boolean;
+}
+
+/**
+ * Persist the collection provenance of an identity that user-backend has
+ * already proved still belongs to `accountId`.
+ *
+ * Admin unlink/takeover/rebind operations call this before changing identity
+ * state. Once this mapping exists, a later claimant cannot enter the
+ * mapping-less legacy path and inherit the previous account's collections.
+ * Existing account-owned data is consolidated into the current canonical
+ * Wikidot owner and made private; no collection or item is deleted.
+ */
+export async function pinCollectionOwnerBeforeIdentityTransition(
+  pool: Pool,
+  accountIdValue: string,
+  wikidotIdValue: number
+): Promise<CollectionOwnerPinResult> {
+  const accountId = String(accountIdValue || '').trim();
+  const wikidotId = Number(wikidotIdValue);
+  if (!accountId || !Number.isInteger(wikidotId) || wikidotId <= 0) {
+    throw new TypeError('Invalid collection owner pin identity');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Match the reconciliation lock graph exactly: global → account →
+    // claimant mapping → owner locks.
+    await client.query(
+      'SELECT pg_advisory_xact_lock($1::int, $2::int)',
+      [RECONCILE_LOCK_NAMESPACE, 0]
+    );
+    await client.query(
+      'SELECT pg_advisory_xact_lock($1::int, hashtext($2))',
+      [ACCOUNT_LOCK_NAMESPACE, accountId]
+    );
+
+    const mapping = await findAccountMapping(client, accountId, true);
+    const canonicalOwnerId = await ensureWikidotOwner(client, wikidotId);
+    const competingClaim = await lockCanonicalClaim(
+      client,
+      canonicalOwnerId,
+      accountId
+    );
+    if (competingClaim) {
+      throw new CollectionOwnerPinConflictError();
+    }
+
+    await lockOwners(client, [mapping?.userId, canonicalOwnerId]);
+    let migrated = false;
+    if (!mapping) {
+      await insertAccountMapping(client, accountId, canonicalOwnerId);
+    } else if (mapping.userId !== canonicalOwnerId) {
+      // A linked account may still have a guest/previous-owner mapping from an
+      // older resolver. Consolidate it before pinning provenance so an admin
+      // transition never strands those private collections.
+      await mergeCollections(
+        client,
+        mapping.userId,
+        canonicalOwnerId,
+        true
+      );
+      await updateAccountMapping(
+        client,
+        accountId,
+        mapping.userId,
+        canonicalOwnerId
+      );
+      migrated = true;
+    }
+
+    await client.query('COMMIT');
+    return {
+      accountId,
+      wikidotId,
+      userId: canonicalOwnerId,
+      migrated
+    };
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // Preserve the original error.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Resolve a stable collection owner for an SCPper account.
  *
@@ -531,6 +649,17 @@ export async function resolveCollectionOwnerId(
       || (linkedWikidotId != null && mapping.wikidotId === linkedWikidotId)
     )
   ) {
+    if (
+      linkedWikidotId != null
+      && refreshAuth
+      && !await refreshMatchesIdentity(
+        refreshAuth,
+        accountId,
+        linkedWikidotId
+      )
+    ) {
+      throw new CollectionOwnerUnverifiedError();
+    }
     return mapping.userId;
   }
 
@@ -539,7 +668,6 @@ export async function resolveCollectionOwnerId(
     try {
       return await resolveInTransaction(
         pool,
-        auth,
         accountId,
         linkedWikidotId,
         refreshAuth
@@ -564,7 +692,8 @@ export async function resolveCollectionOwnerId(
  */
 export async function lockCollectionOwnerForAccess(
   client: PoolClient,
-  auth: AuthUserPayload
+  auth: AuthUserPayload,
+  refreshAuth?: RefreshAuthUser
 ): Promise<CollectionOwnerMapping | null> {
   const accountId = accountIdFromAuth(auth);
   if (!accountId) return null;
@@ -573,7 +702,19 @@ export async function lockCollectionOwnerForAccess(
     'SELECT pg_advisory_xact_lock($1::int, hashtext($2))',
     [ACCOUNT_LOCK_NAMESPACE, accountId]
   );
-  return findAccountMapping(client, accountId, true);
+  const mapping = await findAccountMapping(client, accountId, true);
+  if (
+    mapping
+    && refreshAuth
+    && !await refreshMatchesIdentity(
+      refreshAuth,
+      accountId,
+      linkedWikidotIdFromAuth(auth)
+    )
+  ) {
+    throw new CollectionOwnerUnverifiedError();
+  }
+  return mapping;
 }
 
 // Backward-compatible name for callers outside the collection routes.
@@ -605,7 +746,11 @@ export async function withLockedCollectionOwner<T>(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const mapping = await lockCollectionOwnerForAccess(client, auth);
+    const mapping = await lockCollectionOwnerForAccess(
+      client,
+      auth,
+      refreshAuth
+    );
     if (!mapping) {
       await client.query('ROLLBACK');
       return null;

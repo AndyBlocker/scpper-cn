@@ -11,6 +11,7 @@ import { ftmlProjectsRouter } from './routes/ftml-projects.js';
 import { wikidotBindingRouter, wikidotBindingInternalRouter } from './routes/wikidotBinding.js';
 import { qqBindingRouter, qqBindingInternalRouter } from './routes/qqBinding.js';
 import { internalNotificationsRouter } from './routes/internalNotifications.js';
+import { internalAccountIdentityRouter } from './routes/internalAccountIdentity.js';
 
 export function createApp() {
   const app = express();
@@ -79,6 +80,7 @@ export function createApp() {
   app.use('/qq-binding', qqBindingRouter());
   app.use('/internal/qq-binding', qqBindingInternalRouter());
   app.use('/internal/notifications', internalNotificationsRouter());
+  app.use('/internal/account-identity', internalAccountIdentityRouter());
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });

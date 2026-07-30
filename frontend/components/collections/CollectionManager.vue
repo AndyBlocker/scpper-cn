@@ -138,7 +138,7 @@
       </div>
 
       <div
-        v-if="activeId && detailLoading"
+        v-if="activeId && detailLoading && !activeDetail"
         id="active-collection-detail"
         class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-neutral-200/80 bg-white/95 p-8 text-center text-sm text-neutral-500 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:text-neutral-300"
         role="status"
@@ -251,6 +251,19 @@
                 删除收藏夹
               </button>
             </div>
+          </div>
+
+          <div
+            v-if="itemOperationError"
+            class="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50/80 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"
+            role="alert"
+          >
+            <LucideIcon
+              name="AlertTriangle"
+              class="mt-0.5 h-4 w-4 shrink-0"
+              aria-hidden="true"
+            />
+            <p>{{ itemOperationError }}</p>
           </div>
 
           <div v-if="activeItems.length > 0" class="space-y-4">
@@ -419,6 +432,7 @@ const activeId = ref<number | null>(null)
 const activeDetail = ref<CollectionDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref<string | null>(null)
+const itemOperationError = ref<string | null>(null)
 const annotations = reactive<Record<number, string>>({})
 let detailRequestSequence = 0
 
@@ -494,6 +508,7 @@ function select(id: number) {
   // detail is unresolved or has failed to load.
   activeDetail.value = null
   detailError.value = null
+  itemOperationError.value = null
   detailLoading.value = true
   activeId.value = id
 }
@@ -501,7 +516,12 @@ function select(id: number) {
 async function loadDetail(id: number) {
   const requestSequence = ++detailRequestSequence
   if (id === activeId.value) {
-    activeDetail.value = null
+    // 同一收藏夹的 mutation 后会强制重读详情。保留已经挂载的面板，避免
+    // textarea blur 触发自动保存时在 pointerup/click 前卸载相邻按钮，也让
+    // 用户可以连续调整排序。真正切换收藏夹时 select() 会先清掉旧详情。
+    if (activeDetail.value?.collection.id !== id) {
+      activeDetail.value = null
+    }
     detailError.value = null
     detailLoading.value = true
   }
@@ -611,12 +631,22 @@ async function confirmDelete() {
 async function handleAnnotationSave(item: CollectionItem) {
   const next = annotations[item.id]?.trim() || null
   if (next === item.annotation) return
-  await updateItem(item.collectionId, item.id, { annotation: next })
+  itemOperationError.value = null
+  const result = await updateItem(item.collectionId, item.id, { annotation: next })
+  if (!result.ok) {
+    itemOperationError.value = `保存批注失败：${result.error || '请稍后重试。'} 草稿仍保留在当前页面。`
+    return
+  }
   await loadDetail(item.collectionId)
 }
 
 async function togglePin(item: CollectionItem) {
-  await updateItem(item.collectionId, item.id, { pinned: !item.pinned })
+  itemOperationError.value = null
+  const result = await updateItem(item.collectionId, item.id, { pinned: !item.pinned })
+  if (!result.ok) {
+    itemOperationError.value = `更新置顶状态失败：${result.error || '请稍后重试。'}`
+    return
+  }
   await loadDetail(item.collectionId)
 }
 
@@ -625,17 +655,31 @@ async function moveItem(from: number, to: number) {
   const items = [...activeDetail.value.items]
   const [moved] = items.splice(from, 1)
   items.splice(to, 0, moved)
-  await reorderItems(activeDetail.value.collection.id, items.map((item) => item.id))
+  itemOperationError.value = null
+  const result = await reorderItems(
+    activeDetail.value.collection.id,
+    items.map((item) => item.id)
+  )
+  if (!result.ok) {
+    itemOperationError.value = `调整排序失败：${result.error || '请稍后重试。'}`
+    return
+  }
   await loadDetail(activeDetail.value.collection.id)
 }
 
 async function remove(item: CollectionItem) {
   if (!window.confirm('确定从收藏夹中移除此页面吗？')) return
-  await removeItem(item.collectionId, item.id)
+  itemOperationError.value = null
+  const result = await removeItem(item.collectionId, item.id)
+  if (!result.ok) {
+    itemOperationError.value = `移除页面失败：${result.error || '请稍后重试。'}`
+    return
+  }
   await loadDetail(item.collectionId)
 }
 
 async function handleRefresh() {
+  itemOperationError.value = null
   const refreshed = await fetchCollections(true)
   if (
     activeId.value

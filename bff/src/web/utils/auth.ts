@@ -27,18 +27,38 @@ export interface AuthUserPayload {
 }
 
 const USER_BACKEND_DEFAULT = 'http://127.0.0.1:4455';
+const USER_BACKEND_AUTH_TIMEOUT_DEFAULT_MS = 2_000;
+const USER_BACKEND_AUTH_TIMEOUT_MIN_MS = 100;
+const USER_BACKEND_AUTH_TIMEOUT_MAX_MS = 5_000;
 export const EXPECTED_USER_ID_HEADER = 'x-scpper-expected-user-id';
 const READ_METHODS = new Set(['GET', 'HEAD']);
 const requestAuthCache = new WeakMap<Request, Promise<AuthUserPayload | null>>();
+
+function userBackendAuthTimeoutMs(): number {
+  const raw = process.env.USER_BACKEND_AUTH_TIMEOUT_MS?.trim();
+  if (!raw) return USER_BACKEND_AUTH_TIMEOUT_DEFAULT_MS;
+
+  const configured = Number(raw);
+  if (!Number.isFinite(configured)) return USER_BACKEND_AUTH_TIMEOUT_DEFAULT_MS;
+  return Math.min(
+    USER_BACKEND_AUTH_TIMEOUT_MAX_MS,
+    Math.max(USER_BACKEND_AUTH_TIMEOUT_MIN_MS, Math.trunc(configured))
+  );
+}
 
 async function fetchAuthUserUncached(req: Request): Promise<AuthUserPayload | null> {
   const base = process.env.USER_BACKEND_BASE_URL || USER_BACKEND_DEFAULT;
   if (!base || base === 'disable') return null;
   const target = base.replace(/\/$/, '') + '/auth/me';
+  const timeoutMs = userBackendAuthTimeoutMs();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
   try {
     const response = await fetch(target, {
       method: 'GET',
-      headers: { accept: 'application/json', cookie: req.headers.cookie ?? '' }
+      headers: { accept: 'application/json', cookie: req.headers.cookie ?? '' },
+      signal: controller.signal
     });
     if (response.status === 401) return null;
     if (!response.ok) {
@@ -77,9 +97,16 @@ async function fetchAuthUserUncached(req: Request): Promise<AuthUserPayload | nu
       }
     };
   } catch (err) {
+    if (controller.signal.aborted) {
+      // eslint-disable-next-line no-console
+      console.warn(`[fetchAuthUser] user-backend timed out after ${timeoutMs}ms`);
+      return null;
+    }
     // eslint-disable-next-line no-console
     console.error('[fetchAuthUser] user-backend unreachable:', err instanceof Error ? err.message : err);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
