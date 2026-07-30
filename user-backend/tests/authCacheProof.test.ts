@@ -1,0 +1,280 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import type { NextFunction, Request, Response } from 'express';
+import { prisma } from '../src/db.js';
+import {
+  __authCacheTesting,
+  invalidateAuthCache,
+  requireAuth
+} from '../src/middleware/requireAuth.js';
+import { config } from '../src/config.js';
+import { issueAuthToken } from '../src/utils/auth-token.js';
+import { EXPECTED_USER_ID_HEADER } from '../src/utils/expectedUser.js';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function account(
+  displayName: string,
+  overrides: Partial<{
+    id: string;
+    email: string;
+    linkedWikidotId: number | null;
+    updatedAt: Date;
+  }> = {}
+) {
+  return {
+    id: overrides.id ?? 'auth-cache-user',
+    email: overrides.email ?? 'cache@example.com',
+    displayName,
+    linkedWikidotId: overrides.linkedWikidotId ?? null,
+    lastLoginAt: null,
+    updatedAt: overrides.updatedAt ?? new Date('2026-07-30T06:00:00.000Z'),
+    status: 'ACTIVE',
+    passwordHash: `hash-${displayName}`,
+    channelBindings: [],
+    channelChallenges: []
+  };
+}
+
+test('查询期间失效时旧结果既不返回也不重新写入缓存', async () => {
+  __authCacheTesting.reset();
+  const firstQuery = deferred<ReturnType<typeof account>>();
+  const secondQuery = deferred<ReturnType<typeof account>>();
+  const userAccount = prisma.userAccount as unknown as {
+    findUnique: (...args: unknown[]) => Promise<ReturnType<typeof account> | null>;
+  };
+  const originalFindUnique = userAccount.findUnique;
+  let queryCount = 0;
+
+  userAccount.findUnique = async () => {
+    queryCount += 1;
+    return queryCount === 1 ? firstQuery.promise : secondQuery.promise;
+  };
+
+  try {
+    const staleLookup = __authCacheTesting.fetchAndCacheUser('auth-cache-user');
+    assert.equal(queryCount, 1);
+
+    invalidateAuthCache('auth-cache-user');
+    const freshLookup = __authCacheTesting.fetchAndCacheUser('auth-cache-user');
+    assert.equal(queryCount, 2);
+
+    firstQuery.resolve(account('旧昵称'));
+    secondQuery.resolve(account('新昵称'));
+
+    const [staleCallerResult, freshCallerResult] = await Promise.all([
+      staleLookup,
+      freshLookup
+    ]);
+    assert.equal(staleCallerResult?.displayName, '新昵称');
+    assert.equal(freshCallerResult?.displayName, '新昵称');
+    assert.equal(__authCacheTesting.getCachedUser('auth-cache-user')?.displayName, '新昵称');
+    assert.equal(queryCount, 2);
+  } finally {
+    userAccount.findUnique = originalFindUnique;
+    __authCacheTesting.reset();
+  }
+});
+
+test('独立 CLI 提交后，在线进程不会继续使用已预热的旧绑定缓存', async () => {
+  __authCacheTesting.reset();
+  const before = account('跨进程用户', {
+    linkedWikidotId: 12345,
+    updatedAt: new Date('2026-07-30T06:00:00.000Z')
+  });
+  const after = account('跨进程用户', {
+    linkedWikidotId: null,
+    updatedAt: new Date('2026-07-30T06:00:00.001Z')
+  });
+  let databaseState = before;
+  let fullQueryCount = 0;
+  let versionQueryCount = 0;
+  const userAccount = prisma.userAccount as unknown as {
+    findUnique: (args: {
+      select?: { updatedAt?: boolean };
+    }) => Promise<ReturnType<typeof account> | { updatedAt: Date } | null>;
+  };
+  const originalFindUnique = userAccount.findUnique;
+
+  userAccount.findUnique = async (args) => {
+    const versionOnly = args.select
+      && args.select.updatedAt === true
+      && Object.keys(args.select).length === 1;
+    if (versionOnly) {
+      versionQueryCount += 1;
+      return { updatedAt: databaseState.updatedAt };
+    }
+    fullQueryCount += 1;
+    return databaseState;
+  };
+
+  try {
+    const warmed = await __authCacheTesting.fetchCurrentUser(before.id);
+    assert.equal(warmed?.linkedWikidotId, 12345);
+    assert.equal(fullQueryCount, 1);
+    assert.equal(versionQueryCount, 0);
+
+    // 模拟另一个 Node 进程中的 CLI 已提交解绑。刻意不调用 invalidateAuthCache：
+    // 在线服务只能依靠数据库版本探测发现这次跨进程变更。
+    databaseState = after;
+
+    const refreshed = await __authCacheTesting.fetchCurrentUser(before.id);
+    assert.equal(refreshed?.linkedWikidotId, null);
+    assert.equal(fullQueryCount, 2);
+    assert.equal(versionQueryCount, 1);
+    assert.equal(__authCacheTesting.getCachedUser(before.id)?.updatedAt.getTime(), after.updatedAt.getTime());
+  } finally {
+    userAccount.findUnique = originalFindUnique;
+    __authCacheTesting.reset();
+  }
+});
+
+test('账号 Cookie 与预期账号不一致时在私有读写路由前返回 409', async () => {
+  __authCacheTesting.reset();
+  const cachedAccount = account('可信昵称');
+  const userAccount = prisma.userAccount as unknown as {
+    findUnique: (...args: unknown[]) => Promise<ReturnType<typeof account> | null>;
+  };
+  const originalFindUnique = userAccount.findUnique;
+  userAccount.findUnique = async () => cachedAccount;
+
+  const token = issueAuthToken(cachedAccount.id, cachedAccount.passwordHash);
+
+  try {
+    for (const requestCase of [
+      { method: 'PATCH', originalUrl: '/auth/profile' },
+      { method: 'GET', originalUrl: '/gacha/wallet' },
+      { method: 'GET', originalUrl: '/admin/accounts' }
+    ]) {
+      let statusCode = 200;
+      let responseBody: unknown;
+      let routeReached = false;
+      const req = {
+        ...requestCase,
+        headers: {
+          cookie: `${config.session.cookieName}=${token}`,
+          [EXPECTED_USER_ID_HEADER]: 'another-user'
+        }
+      } as unknown as Request;
+      const res = {
+        status(code: number) {
+          statusCode = code;
+          return this;
+        },
+        json(body: unknown) {
+          responseBody = body;
+          return this;
+        }
+      } as unknown as Response;
+
+      await requireAuth(req, res, (() => {
+        routeReached = true;
+      }) as NextFunction);
+      assert.equal(statusCode, 409, requestCase.originalUrl);
+      assert.deepEqual(responseBody, {
+        code: 'account_mismatch',
+        error: '登录账号已切换，请刷新后重试。'
+      });
+      assert.equal(routeReached, false, requestCase.originalUrl);
+      assert.equal(req.authUser, undefined, requestCase.originalUrl);
+    }
+  } finally {
+    userAccount.findUnique = originalFindUnique;
+    __authCacheTesting.reset();
+  }
+});
+
+test('预期账号匹配的新客户端与未带 header 的旧客户端都可通过 requireAuth', async () => {
+  __authCacheTesting.reset();
+  const cachedAccount = account('兼容昵称');
+  const userAccount = prisma.userAccount as unknown as {
+    findUnique: (...args: unknown[]) => Promise<ReturnType<typeof account> | null>;
+  };
+  const originalFindUnique = userAccount.findUnique;
+  userAccount.findUnique = async () => cachedAccount;
+
+  const token = issueAuthToken(cachedAccount.id, cachedAccount.passwordHash);
+
+  try {
+    for (const method of ['PATCH', 'GET']) {
+      for (const expected of [undefined, cachedAccount.id]) {
+        const headers: Record<string, string> = {
+          cookie: `${config.session.cookieName}=${token}`
+        };
+        if (expected) headers[EXPECTED_USER_ID_HEADER] = expected;
+        const req = {
+          method,
+          originalUrl: method === 'GET' ? '/gacha/wallet' : '/auth/profile',
+          headers
+        } as unknown as Request;
+        const res = {
+          status() {
+            assert.fail('compatible request should not be rejected');
+          },
+          json() {
+            assert.fail('compatible request should not receive an error response');
+          }
+        } as unknown as Response;
+        let nextCalled = false;
+
+        await requireAuth(req, res, (() => {
+          nextCalled = true;
+        }) as NextFunction);
+        assert.equal(nextCalled, true);
+        assert.equal(req.authUser?.id, cachedAccount.id);
+      }
+    }
+  } finally {
+    userAccount.findUnique = originalFindUnique;
+    __authCacheTesting.reset();
+  }
+});
+
+test('/auth/me 始终可作为账号不一致后的恢复来源', async () => {
+  __authCacheTesting.reset();
+  const cachedAccount = account('恢复昵称');
+  const userAccount = prisma.userAccount as unknown as {
+    findUnique: (...args: unknown[]) => Promise<ReturnType<typeof account> | null>;
+  };
+  const originalFindUnique = userAccount.findUnique;
+  userAccount.findUnique = async () => cachedAccount;
+
+  const token = issueAuthToken(cachedAccount.id, cachedAccount.passwordHash);
+
+  try {
+    const req = {
+      method: 'GET',
+      originalUrl: '/auth/me?recover=1',
+      headers: {
+        cookie: `${config.session.cookieName}=${token}`,
+        [EXPECTED_USER_ID_HEADER]: 'stale-account'
+      }
+    } as unknown as Request;
+    const res = {
+      status() {
+        assert.fail('/auth/me recovery must not be rejected');
+      },
+      json() {
+        assert.fail('/auth/me recovery must not receive an error response');
+      }
+    } as unknown as Response;
+    let nextCalled = false;
+
+    await requireAuth(req, res, (() => {
+      nextCalled = true;
+    }) as NextFunction);
+    assert.equal(nextCalled, true);
+    assert.equal(req.authUser?.id, cachedAccount.id);
+  } finally {
+    userAccount.findUnique = originalFindUnique;
+    __authCacheTesting.reset();
+  }
+});

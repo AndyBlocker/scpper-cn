@@ -15,6 +15,7 @@ module.exports = {
     '^\\.\\./utils/cache\\.js$': '<rootDir>/src/web/utils/cache.ts',
     '^\\.\\./utils/auth\\.js$': '<rootDir>/src/web/utils/auth.ts',
     '^\\./utils/cache\\.js$': '<rootDir>/src/web/utils/cache.ts',
-    '^\\./utils/auth\\.js$': '<rootDir>/src/web/utils/auth.ts'
+    '^\\./utils/auth\\.js$': '<rootDir>/src/web/utils/auth.ts',
+    '^(\\.{1,2}/.*)\\.js$': '$1'
   }
 };

@@ -23,12 +23,14 @@ import { trackingRouter } from './routes/tracking.js';
 import { collectionsRouter } from './routes/collections.js';
 import { htmlSnippetsRouter } from './routes/html-snippets.js';
 import { internalRouter } from './routes/internal.js';
+import { internalCollectionOwnerRouter } from './routes/internalCollectionOwner.js';
 import { textAnalysisRouter } from './routes/text-analysis.js';
 import { forumsRouter } from './routes/forums.js';
 import { cssProxyRouter } from './routes/css-proxy.js';
 import { pagePreviewRouter } from './routes/page-preview.js';
 import { annualSummaryRouter } from './routes/annual-summary.js';
 import { embedRouter } from './routes/embed.js';
+import { requireExpectedUser } from './utils/auth.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -63,6 +65,11 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
     // internal route access.
     return res.status(403).json({ error: 'internal_access_denied' });
   };
+  // Global placement is intentional: account-private GETs must be checked
+  // before route handlers resolve an owner (some legacy resolvers can insert a
+  // User/CollectionAccountOwner row). The middleware itself uses a strict path
+  // allow-list, so public and anonymous routes remain unchanged.
+  router.use(requireExpectedUser);
   router.use('/pages/random', expensiveLimiter);
   router.use('/pages', pagesRouter(pool, redis));
   router.use('/users', usersRouter(pool, redis));
@@ -87,6 +94,11 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use(cssProxyRouter());
   router.use('/annual-summary', annualSummaryRouter());
   router.use('/embed', embedRouter(pool, redis));
+  router.use(
+    '/internal/collection-owner',
+    guardInternalRoutes,
+    internalCollectionOwnerRouter(pool)
+  );
   router.use('/internal', guardInternalRoutes, internalRouter());
   router.use('/', htmlSnippetsRouter);
   router.use(PAGE_IMAGE_ROUTE_PREFIX, pageImagesRouter(pool));

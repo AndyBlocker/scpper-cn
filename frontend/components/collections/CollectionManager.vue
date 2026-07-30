@@ -1,34 +1,33 @@
 <template>
   <div class="space-y-6">
-    <section class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white p-8 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950">
-      <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-        <div class="max-w-2xl space-y-4">
-          <div class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-neutral-500 shadow-sm backdrop-blur-sm dark:bg-neutral-900/70 dark:text-neutral-300">
-            <LucideIcon name="Sparkle" class="h-4 w-4 text-[var(--g-accent)]" />
-            管理收藏夹
-          </div>
-          <div class="space-y-2">
-            <h2 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">精心整理你的灵感清单</h2>
-            <p class="text-sm text-neutral-600 dark:text-neutral-400">
-              将喜欢的页面分门别类，搭配封面与批注，打造一个既好看又好用的收藏空间。
-            </p>
-          </div>
+    <section class="rounded-lg border border-neutral-200/80 bg-white p-4 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950 sm:p-5">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50">收藏夹管理</h2>
+          <p class="mt-1 text-sm leading-6 text-neutral-600 dark:text-neutral-400">
+            选择一个收藏夹查看条目，或新建收藏夹开始整理。
+          </p>
         </div>
         <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/95 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:-translate-y-0.5 hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-200"
+            class="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-wait disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 sm:flex-none"
+            :disabled="loading"
             @click="handleRefresh"
           >
-            <LucideIcon name="RefreshCw" class="h-4 w-4" />
-            刷新
+            <LucideIcon
+              name="RefreshCw"
+              class="h-4 w-4"
+              :class="{ 'animate-spin': loading }"
+            />
+            {{ loading ? '刷新中…' : '刷新' }}
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
+            class="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-white dark:focus:ring-neutral-100 dark:focus:ring-offset-neutral-950 sm:flex-none"
             @click="openCreate"
           >
-            <LucideIcon name="Plus" class="h-4.5 w-4.5" />
+            <LucideIcon name="Plus" class="h-4 w-4" />
             新建收藏夹
           </button>
         </div>
@@ -40,7 +39,7 @@
         <header class="flex items-center justify-between">
           <div>
             <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-neutral-500 dark:text-neutral-400">我的收藏夹</h3>
-            <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">点击卡片切换收藏夹，右侧查看条目与批注。</p>
+            <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">点击卡片切换收藏夹，选中后查看条目与批注。</p>
           </div>
           <span v-if="collectionList.length > 0" class="text-xs text-neutral-400 dark:text-neutral-500">
             共 {{ collectionList.length }} 个
@@ -56,14 +55,15 @@
         </div>
 
         <div
-          v-else-if="error"
+          v-else-if="error && collectionList.length === 0"
           class="flex flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-red-50/80 p-10 text-center text-sm text-red-600 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-200"
+          role="alert"
         >
           <LucideIcon name="AlertTriangle" class="h-5 w-5" />
           <p>加载收藏夹失败：{{ error }}</p>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+            class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-neutral-200 bg-white/90 px-4 py-2 text-sm font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
             @click="handleRefresh"
           >
             再试一次
@@ -92,6 +92,8 @@
               :class="collection.id === activeId
                 ? 'ring-2 ring-[var(--g-accent-border)] shadow dark:ring-[rgb(var(--accent)_/_0.5)]'
                 : 'border-neutral-200/80 hover:border-[var(--g-accent-border)] dark:border-neutral-800/70'"
+              :aria-pressed="collection.id === activeId"
+              aria-controls="active-collection-detail"
               @click="select(collection.id)"
             >
               <div
@@ -135,7 +137,56 @@
         </ul>
       </div>
 
-      <div v-if="activeDetail" class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white/95 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-lg">
+      <div
+        v-if="activeId && detailLoading && !activeDetail"
+        id="active-collection-detail"
+        class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-neutral-200/80 bg-white/95 p-8 text-center text-sm text-neutral-500 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:text-neutral-300"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <LucideIcon
+          name="LoaderCircle"
+          class="h-5 w-5 animate-spin text-[var(--g-accent)]"
+          aria-hidden="true"
+        />
+        <p>正在加载收藏夹详情…</p>
+      </div>
+
+      <div
+        v-else-if="activeId && detailError"
+        id="active-collection-detail"
+        class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-red-50/80 p-8 text-center text-sm text-red-700 shadow-sm dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"
+        role="alert"
+      >
+        <LucideIcon
+          name="AlertTriangle"
+          class="h-5 w-5"
+          aria-hidden="true"
+        />
+        <div>
+          <h3 class="font-semibold">无法加载收藏夹详情</h3>
+          <p class="mt-1">{{ detailError }}</p>
+        </div>
+        <button
+          type="button"
+          class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-neutral-200 bg-white/90 px-4 py-2 text-sm font-semibold text-neutral-700 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200"
+          @click="loadDetail(activeId)"
+        >
+          再试一次
+        </button>
+      </div>
+
+      <div
+        v-if="activeDetail"
+        id="active-collection-detail"
+        class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white/95 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-lg"
+        role="region"
+        :aria-label="`${activeDetail.collection.title} 收藏夹详情`"
+        aria-live="polite"
+        aria-atomic="false"
+        :aria-busy="detailLoading"
+      >
         <div class="relative h-48 overflow-hidden">
           <div
             class="absolute inset-0 opacity-90"
@@ -185,7 +236,7 @@
             <div class="flex items-center gap-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-neutral-200/80 bg-white/90 px-4 py-2 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                 @click="openEdit"
               >
                 <LucideIcon name="Pencil" class="h-3.5 w-3.5" />
@@ -193,13 +244,26 @@
               </button>
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-red-300/70 bg-red-50/80 px-4 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100 dark:border-red-900/70 dark:bg-red-900/30 dark:text-red-200"
+                class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-300/70 bg-red-50/80 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 dark:border-red-900/70 dark:bg-red-900/30 dark:text-red-200"
                 @click="confirmDelete"
               >
                 <LucideIcon name="Trash2" class="h-3.5 w-3.5" />
                 删除收藏夹
               </button>
             </div>
+          </div>
+
+          <div
+            v-if="itemOperationError"
+            class="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50/80 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"
+            role="alert"
+          >
+            <LucideIcon
+              name="AlertTriangle"
+              class="mt-0.5 h-4 w-4 shrink-0"
+              aria-hidden="true"
+            />
+            <p>{{ itemOperationError }}</p>
           </div>
 
           <div v-if="activeItems.length > 0" class="space-y-4">
@@ -241,19 +305,27 @@
                       ID {{ item.page.wikidotId ?? item.page.id }}
                     </span>
                   </div>
+                  <label
+                    :for="`collection-item-annotation-${item.id}`"
+                    class="block text-xs font-medium text-neutral-600 dark:text-neutral-300"
+                  >
+                    {{ item.page.title ? `《${item.page.title}》的批注` : '页面批注' }}
+                  </label>
                   <textarea
+                    :id="`collection-item-annotation-${item.id}`"
                     v-model="annotations[item.id]"
                     rows="2"
                     maxlength="1200"
+                    :aria-describedby="`collection-item-annotation-hint-${item.id}`"
                     class="w-full rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 text-sm text-neutral-700 focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-strong)] dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
                     placeholder="为这篇页面写点读后感或整理要点..."
                     @blur="handleAnnotationSave(item)"
                   />
                   <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-400 dark:text-neutral-500">
-                    <span>批注会自动保存，也可以随时在收藏面板中调整。</span>
+                    <span :id="`collection-item-annotation-hint-${item.id}`">批注会自动保存，也可以随时在收藏面板中调整。</span>
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-0.5 font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                      class="inline-flex min-h-10 items-center gap-1 rounded-lg border border-neutral-200/80 bg-white/90 px-3 py-2 font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                       @click="handleAnnotationSave(item)"
                     >
                       <LucideIcon name="Save" class="h-3 w-3" />
@@ -262,11 +334,12 @@
                   </div>
                 </div>
                 <div class="flex shrink-0 flex-col items-end gap-2">
-                  <div class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-neutral-50/80 px-2 py-1 text-xs font-semibold text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200">
+                  <div class="inline-flex items-center gap-1 rounded-lg border border-neutral-200/80 bg-neutral-50/80 px-1 text-xs font-semibold text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200">
                     <button
                       type="button"
-                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[var(--g-accent)]"
+                      class="inline-flex h-10 w-10 items-center justify-center rounded-lg transition hover:text-[var(--g-accent)] disabled:opacity-40"
                       :disabled="index === 0"
+                      :aria-label="`将${item.page.title ? `《${item.page.title}》` : '此页面'}上移`"
                       @click="moveItem(index, index - 1)"
                     >
                       <LucideIcon name="ArrowUp" class="h-4 w-4" />
@@ -274,8 +347,9 @@
                     <span class="px-2 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">排序</span>
                     <button
                       type="button"
-                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[var(--g-accent)]"
+                      class="inline-flex h-10 w-10 items-center justify-center rounded-lg transition hover:text-[var(--g-accent)] disabled:opacity-40"
                       :disabled="index === activeItems.length - 1"
+                      :aria-label="`将${item.page.title ? `《${item.page.title}》` : '此页面'}下移`"
                       @click="moveItem(index, index + 1)"
                     >
                       <LucideIcon name="ArrowDown" class="h-4 w-4" />
@@ -283,7 +357,7 @@
                   </div>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-1 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                    class="inline-flex min-h-10 items-center gap-1 rounded-lg border border-neutral-200/80 bg-white/90 px-3 py-2 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                     @click="togglePin(item)"
                   >
                     <LucideIcon :name="item.pinned ? 'BookmarkX' : 'Bookmark'" class="h-3.5 w-3.5" />
@@ -291,7 +365,7 @@
                   </button>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-full border border-red-300/80 bg-red-50/80 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 dark:border-red-800/80 dark:bg-red-900/30 dark:text-red-200"
+                    class="inline-flex min-h-10 items-center gap-1 rounded-lg border border-red-300/80 bg-red-50/80 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100 dark:border-red-800/80 dark:bg-red-900/30 dark:text-red-200"
                     @click="remove(item)"
                   >
                     <LucideIcon name="Trash2" class="h-3 w-3" />
@@ -314,7 +388,8 @@
       :mode="modal.mode"
       :collection="modal.collection"
       :saving="saving"
-      @close="modal.open = false"
+      :submit-error="modal.submitError"
+      @close="closeModal"
       @submit="handleSubmit"
     />
   </div>
@@ -355,21 +430,32 @@ const collectionList = computed(() => {
 
 const activeId = ref<number | null>(null)
 const activeDetail = ref<CollectionDetail | null>(null)
+const detailLoading = ref(false)
+const detailError = ref<string | null>(null)
+const itemOperationError = ref<string | null>(null)
 const annotations = reactive<Record<number, string>>({})
+let detailRequestSequence = 0
 
-const modal = reactive<{ open: boolean; mode: 'create' | 'edit'; collection: CollectionSummary | null }>({
+const modal = reactive<{
+  open: boolean
+  mode: 'create' | 'edit'
+  collection: CollectionSummary | null
+  submitError: string | null
+}>({
   open: false,
   mode: 'create',
-  collection: null
+  collection: null,
+  submitError: null
 })
 
 watch(collectionList, (list) => {
-  if (list.length > 0 && !activeId.value) {
+  const selectionStillExists = list.some(collection => collection.id === activeId.value)
+  if (list.length > 0 && !selectionStillExists) {
     activeId.value = list[0].id
-    void loadDetail(list[0].id)
   } else if (list.length === 0) {
     activeId.value = null
     activeDetail.value = null
+    detailError.value = null
   }
 }, { immediate: true })
 
@@ -378,8 +464,10 @@ watch(activeId, (id) => {
     void loadDetail(id)
   } else {
     activeDetail.value = null
+    detailError.value = null
+    detailLoading.value = false
   }
-})
+}, { immediate: true })
 
 const activeItems = computed(() => activeDetail.value?.items ?? [])
 
@@ -416,14 +504,43 @@ function clampScale(value: number | null | undefined): number {
 
 function select(id: number) {
   if (activeId.value === id) return
+  // Do not leave the previous collection editable while the newly selected
+  // detail is unresolved or has failed to load.
+  activeDetail.value = null
+  detailError.value = null
+  itemOperationError.value = null
+  detailLoading.value = true
   activeId.value = id
 }
 
 async function loadDetail(id: number) {
-  const detail = await fetchCollectionDetail(id, true)
-  if (detail && id === activeId.value) {
-    activeDetail.value = detail
-    annotationsReset(detail.items)
+  const requestSequence = ++detailRequestSequence
+  if (id === activeId.value) {
+    // 同一收藏夹的 mutation 后会强制重读详情。保留已经挂载的面板，避免
+    // textarea blur 触发自动保存时在 pointerup/click 前卸载相邻按钮，也让
+    // 用户可以连续调整排序。真正切换收藏夹时 select() 会先清掉旧详情。
+    if (activeDetail.value?.collection.id !== id) {
+      activeDetail.value = null
+    }
+    detailError.value = null
+    detailLoading.value = true
+  }
+  try {
+    const detail = await fetchCollectionDetail(id, true)
+    if (requestSequence === detailRequestSequence && id === activeId.value) {
+      if (detail) {
+        activeDetail.value = detail
+        detailError.value = null
+        annotationsReset(detail.items)
+      } else {
+        activeDetail.value = null
+        detailError.value = error.value || '加载收藏夹详情失败，请重试。'
+      }
+    }
+  } finally {
+    if (requestSequence === detailRequestSequence) {
+      detailLoading.value = false
+    }
   }
 }
 
@@ -439,6 +556,7 @@ function annotationsReset(items: CollectionItem[]) {
 function openCreate() {
   modal.mode = 'create'
   modal.collection = null
+  modal.submitError = null
   modal.open = true
 }
 
@@ -446,7 +564,25 @@ function openEdit() {
   if (!activeDetail.value) return
   modal.mode = 'edit'
   modal.collection = activeDetail.value.collection
+  modal.submitError = null
   modal.open = true
+}
+
+function closeModal() {
+  const shouldRefresh = Boolean(modal.submitError)
+  modal.open = false
+  modal.submitError = null
+  if (shouldRefresh) void handleRefresh()
+}
+
+function submitErrorMessage(errorValue: string | undefined, fallback: string) {
+  const messages: Record<string, string> = {
+    require_linked_wikidot: '公开收藏夹前需要先绑定 Wikidot 账号。',
+    invalid_title: '请填写有效的收藏夹名称。',
+    invalid_visibility: '收藏夹公开状态无效，请重新选择。',
+    collection_limit_reached: '收藏夹数量已达上限。'
+  }
+  return errorValue ? (messages[errorValue] || errorValue) : fallback
 }
 
 async function handleSubmit(payload: {
@@ -460,18 +596,22 @@ async function handleSubmit(payload: {
   isDefault: boolean
   visibility: 'PUBLIC' | 'PRIVATE'
 }) {
+  modal.submitError = null
   if (modal.mode === 'create') {
     const result = await createCollection(payload)
-    if (result.ok && result.collection) {
+    if (result.ok) {
       modal.open = false
       activeId.value = result.collection.id
-      await loadDetail(result.collection.id)
+    } else {
+      modal.submitError = submitErrorMessage(result.error, '创建收藏夹失败，请重试。')
     }
   } else if (modal.collection) {
     const result = await updateCollection(modal.collection.id, payload)
     if (result.ok && activeId.value === modal.collection.id) {
       modal.open = false
       await loadDetail(modal.collection.id)
+    } else if (!result.ok) {
+      modal.submitError = submitErrorMessage(result.error, '保存收藏夹失败，请重试。')
     }
   }
 }
@@ -491,12 +631,22 @@ async function confirmDelete() {
 async function handleAnnotationSave(item: CollectionItem) {
   const next = annotations[item.id]?.trim() || null
   if (next === item.annotation) return
-  await updateItem(item.collectionId, item.id, { annotation: next })
+  itemOperationError.value = null
+  const result = await updateItem(item.collectionId, item.id, { annotation: next })
+  if (!result.ok) {
+    itemOperationError.value = `保存批注失败：${result.error || '请稍后重试。'} 草稿仍保留在当前页面。`
+    return
+  }
   await loadDetail(item.collectionId)
 }
 
 async function togglePin(item: CollectionItem) {
-  await updateItem(item.collectionId, item.id, { pinned: !item.pinned })
+  itemOperationError.value = null
+  const result = await updateItem(item.collectionId, item.id, { pinned: !item.pinned })
+  if (!result.ok) {
+    itemOperationError.value = `更新置顶状态失败：${result.error || '请稍后重试。'}`
+    return
+  }
   await loadDetail(item.collectionId)
 }
 
@@ -505,19 +655,36 @@ async function moveItem(from: number, to: number) {
   const items = [...activeDetail.value.items]
   const [moved] = items.splice(from, 1)
   items.splice(to, 0, moved)
-  await reorderItems(activeDetail.value.collection.id, items.map((item) => item.id))
+  itemOperationError.value = null
+  const result = await reorderItems(
+    activeDetail.value.collection.id,
+    items.map((item) => item.id)
+  )
+  if (!result.ok) {
+    itemOperationError.value = `调整排序失败：${result.error || '请稍后重试。'}`
+    return
+  }
   await loadDetail(activeDetail.value.collection.id)
 }
 
 async function remove(item: CollectionItem) {
   if (!window.confirm('确定从收藏夹中移除此页面吗？')) return
-  await removeItem(item.collectionId, item.id)
+  itemOperationError.value = null
+  const result = await removeItem(item.collectionId, item.id)
+  if (!result.ok) {
+    itemOperationError.value = `移除页面失败：${result.error || '请稍后重试。'}`
+    return
+  }
   await loadDetail(item.collectionId)
 }
 
 async function handleRefresh() {
-  await fetchCollections(true)
-  if (activeId.value) {
+  itemOperationError.value = null
+  const refreshed = await fetchCollections(true)
+  if (
+    activeId.value
+    && refreshed.some(collection => collection.id === activeId.value)
+  ) {
     await loadDetail(activeId.value)
   }
 }

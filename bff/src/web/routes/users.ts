@@ -435,7 +435,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
   router.get('/:id', async (req, res, next) => {
     try {
       const { id } = req.params as Record<string, string>;
-      const payload = await cache.remember(`users:profile:id:${id}`, 300, async () => {
+      // v2 bypasses profiles cached before guest owners were excluded.
+      const payload = await cache.remember(`users:profile:id:v2:${id}`, 300, async () => {
         const sql = `
           SELECT 
             id,
@@ -449,6 +450,8 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             "isGuest"
           FROM "User"
           WHERE id = $1
+            AND "wikidotId" IS NOT NULL
+            AND COALESCE("isGuest", FALSE) = FALSE
         `;
         const { rows } = await readPool.query(sql, [id]);
         return rows[0] ?? null;

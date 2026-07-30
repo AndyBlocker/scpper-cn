@@ -199,11 +199,45 @@ export interface DispatchSummary {
   skippedReason?: string;
 }
 
+/**
+ * QQ 通知总开关（2026-07-30 起该功能暂时下线）。
+ *
+ * 这是**代码级**的闸门，不是靠「PM2 里那个进程现在是停的」。
+ * 只靠进程状态挡不住：一次常规的 `pm2 start ecosystem.config.cjs`、
+ * 或者机器重启后从旧 dump 恢复，投递器就会重新跑起来开始推消息 ——
+ * 而此时界面上明明写着「不会推送」。关掉一个功能，得让它**跑起来也不干活**。
+ *
+ * 与 user-backend、前端的同名变量是同一套语义，恢复时三处一起开 ——
+ * 注意 backend 有**自己的** .env，不会读到 user-backend/.env 里那份。
+ *
+ * 写成函数而不是模块级常量：投递器启动过程中还会通过 ensureUserBackendEnv()
+ * 再加载一批环境变量，模块加载时就定死的话，那之后才就位的配置一律读不到。
+ */
+function qqNotifyEnabled(): boolean {
+  return /^(1|true|yes|on)$/i.test(process.env.QQ_NOTIFY_ENABLED ?? '');
+}
+
+/** 「功能已下线」这条只在**首次**打印，避免 60 秒一轮刷屏 */
+let disabledNoticeLogged = false;
+
 export async function runNotificationDispatch(options: DispatchOptions = {}): Promise<DispatchSummary> {
   const prisma = getPrismaClient();
   const summary: DispatchSummary = {
     targets: 0, candidates: 0, sent: 0, suppressed: 0, failed: 0, circuitTripped: false
   };
+
+  // 功能已下线：什么都不做，直接返回空结果。
+  // 放在最前面（早于 --reset-circuit 等任何写操作），保证这条路径完全无副作用。
+  if (!qqNotifyEnabled()) {
+    summary.skippedReason = 'feature_disabled';
+    // 只提示一次。这个分支存在的意义正是「进程被误拉起来」，
+    // 而那种情况下循环每 60 秒走一次这里 —— 每轮两行日志会一直刷下去。
+    if (!disabledNoticeLogged) {
+      disabledNoticeLogged = true;
+      console.warn('[notify] QQ 通知功能已下线（QQ_NOTIFY_ENABLED 未开启），本轮及后续轮次均不做任何处理');
+    }
+    return summary;
+  }
 
   if (options.resetCircuit) {
     // 这里是**最先**执行的一处熔断写操作，必须自己带 dry-run 判断 ——

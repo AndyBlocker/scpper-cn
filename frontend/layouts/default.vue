@@ -129,7 +129,7 @@
               <LucideIcon v-else name="Moon" class="h-5 w-5" stroke-width="1.8" />
             </button>
             <!-- Theme toggle hidden on mobile, available via sidebar -->
-            <div v-if="isAuthenticated && hasLinkedWikidot" class="relative">
+            <div v-if="notificationsEnabled && isAuthenticated && hasLinkedWikidot" class="relative">
               <button
                 ref="alertsButtonRef"
                 type="button"
@@ -226,7 +226,7 @@
                     </li>
                   </ul>
                   <NuxtLink
-                    to="/account?tab=alerts"
+                    to="/notifications"
                     class="mt-4 block text-center text-xs font-medium text-[var(--g-accent)] hover:underline"
                     @click="isAlertsDropdownOpen = false"
                   >前往账户中心查看全部</NuxtLink>
@@ -242,11 +242,18 @@
                 <span class="hidden lg:inline">{{ authUser?.displayName || authUser?.email }}</span>
               </NuxtLink>
             </div>
-            <div v-else class="hidden sm:flex items-center gap-2">
+            <div v-else-if="authStatus === 'unauthenticated'" class="hidden sm:flex items-center gap-2">
               <NuxtLink
                 to="/auth/login"
                 class="inline-flex h-10 items-center rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.88)] px-4 text-sm font-semibold text-[rgb(var(--muted-strong))] shadow-sm transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)]"
               >登录</NuxtLink>
+            </div>
+            <div
+              v-else
+              class="hidden sm:flex min-h-10 items-center rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.7)] px-4 text-sm text-[rgb(var(--muted))]"
+              role="status"
+            >
+              账号状态待确认
             </div>
           </div>
         </div>
@@ -296,11 +303,18 @@
                         <span class="text-sm font-medium text-[rgb(var(--fg))] truncate max-w-[10rem]">{{ authUser?.displayName || authUser?.email }}</span>
                       </NuxtLink>
                     </template>
-                    <template v-else>
+                    <template v-else-if="authStatus === 'unauthenticated'">
                       <NuxtLink to="/auth/login" @click="closeSidebar" class="inline-flex items-center gap-2 text-sm font-medium text-[var(--g-accent)]">
                         登录
                       </NuxtLink>
                     </template>
+                    <span
+                      v-else
+                      class="text-sm text-[rgb(var(--muted))]"
+                      role="status"
+                    >
+                      账号状态待确认
+                    </span>
                   </div>
                   <button
                     type="button"
@@ -420,6 +434,7 @@ import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAl
 import { useForumInteractionAlerts, type ForumInteractionAlertItem, type ForumInteractionAlertType } from '~/composables/useForumInteractionAlerts'
 import { useFollowAlerts, type FollowAlertItem } from '~/composables/useFollowAlerts'
 import { useFollows } from '~/composables/useFollows'
+import { useNotificationsEnabled } from '~/composables/useNotificationsEnabled'
 const GA_ID = 'G-QCYZ6ZEF46'
 useHead({
   script: [
@@ -483,6 +498,7 @@ import type { BffFetcher } from '~/types/nuxt-bff'
 const {$bff} = useNuxtApp() as unknown as { $bff: BffFetcher };
 
 const { user: authUser, isAuthenticated, fetchCurrentUser, status: authStatus } = useAuth()
+const notificationsEnabled = useNotificationsEnabled()
 const {
   alerts: alertItems,
   alertsByMetric,
@@ -527,6 +543,8 @@ const {
 const { resetState: resetFollowsState } = useFollows()
 // 偏好设置也是全局共享状态，换账号时同样要作废在途请求
 const { resetState: resetAlertSettingsState } = useAlertSettings()
+// 私有收藏夹包含标题、备注与页面批注；身份切换时必须同步清空并作废在途请求
+const { resetState: resetCollectionsState } = useCollections()
 
 // 三个来源都要计入。旧版漏了关注提醒：关注的作者发布新修订时铃铛徽标恒为 0，
 // 下拉里也找不到，用户只有进 /account 的「关注」tab 才看得到。
@@ -686,7 +704,7 @@ const visibleDropdownItems = computed<DropdownAlertItem[]>(() => {
 })
 
 const toggleAlertsDropdown = () => {
-  if (!isAuthenticated.value || !hasLinkedWikidot.value) return;
+  if (!notificationsEnabled.value || !isAuthenticated.value || !hasLinkedWikidot.value) return;
   const next = !isAlertsDropdownOpen.value;
   isAlertsDropdownOpen.value = next;
   if (next) {
@@ -714,7 +732,7 @@ const handleAlertNavigate = (item: DropdownAlertItem) => {
     void markFollowAlertRead(item.id);
     isAlertsDropdownOpen.value = false;
     if (item.pageWikidotId) navigateTo(`/page/${item.pageWikidotId}`);
-    else navigateTo('/account?tab=alerts');
+    else navigateTo('/notifications');
     return;
   }
 
@@ -728,13 +746,13 @@ const handleAlertNavigate = (item: DropdownAlertItem) => {
     window.open(item.pageUrl, '_blank', 'noopener');
     return;
   }
-  navigateTo('/account');
+  navigateTo('/notifications');
 };
 
 const handleMarkAllAlerts = () => {
   if (isAllTab.value) {
     // 三套都要清。旧版只清了页面与论坛，点完「全部已读」铃铛归零，
-    // 但进 /account?tab=alerts 切到关注仍是一堆未读。
+    // 但进提醒收件箱切到关注来源时仍是一堆未读。
     void Promise.all([
       markAllRead('ALL'),
       markAllForumAlertsRead(),
@@ -804,13 +822,15 @@ onMounted(() => {
   document.addEventListener('keydown', handleGlobalKeydown);
   updateHeaderOffset()
   window.addEventListener('resize', updateHeaderOffset, { passive: true })
-  // SWR-like revalidation hooks for alerts
-  stopFocus = startRevalidateOnFocus();
-  stopOnline = startRevalidateOnReconnect();
+  if (notificationsEnabled.value) {
+    // SWR-like revalidation hooks for alerts
+    stopFocus = startRevalidateOnFocus();
+    stopOnline = startRevalidateOnReconnect();
+  }
 
   if (authStatus.value === 'unknown') {
     fetchCurrentUser().then(() => {
-      if (authUser.value?.linkedWikidotId) {
+      if (notificationsEnabled.value && authUser.value?.linkedWikidotId) {
         return Promise.all([
           fetchAll(true),
           fetchForumAlerts(true, 20, 0),
@@ -823,7 +843,11 @@ onMounted(() => {
     }).catch((err) => {
       console.warn('[layout] fetchCurrentUser failed', err)
     })
-  } else if (authStatus.value === 'authenticated' && authUser.value?.linkedWikidotId) {
+  } else if (
+    notificationsEnabled.value
+    && authStatus.value === 'authenticated'
+    && authUser.value?.linkedWikidotId
+  ) {
     Promise.all([
       fetchAll(false),
       fetchForumAlerts(false, 20, 0),
@@ -1059,12 +1083,11 @@ onBeforeUnmount(() => {
 });
 
 /**
- * 提醒状态是通过 useState 全局共享的。身份一变必须先清空再取：
- * A 登出、B 在同一标签页登录时，若不清空，B 会看到 A 的未读数**和通知标题**
- * —— 这是跨账号的信息泄露，不只是显示不准。
- * 关注提醒是本次新接入的第三个来源，同样要清（原先只清了页面与论坛）。
+ * 这些用户私有状态都通过 useState 全局共享。身份一变必须先清空再取：
+ * A 登出、B 在同一标签页登录时，若不清空，B 可能看到 A 的通知标题、
+ * 关注关系，或私有收藏夹标题与批注。
  */
-function resetAllAlertState() {
+function resetPrivateUserState() {
   // 每个 composable 的 resetState 都会递增自己的身份世代号，
   // 让 A 的在途请求回来时被丢弃，而不是写进 B 看到的共享状态。
   resetAlertsState()
@@ -1072,16 +1095,18 @@ function resetAllAlertState() {
   resetForumAlertsState()
   resetFollowsState()
   resetAlertSettingsState()
+  resetCollectionsState()
   isAlertsDropdownOpen.value = false
 }
 
 watch([
   () => authStatus.value,
+  () => authUser.value?.id,
   () => authUser.value?.linkedWikidotId
-], ([nextStatus, nextLinked]) => {
+], ([nextStatus, _nextUserId, nextLinked]) => {
   // 无论切到哪个身份都先清干净，再拉当前用户的数据
-  resetAllAlertState()
-  if (nextStatus === 'authenticated' && nextLinked) {
+  resetPrivateUserState()
+  if (notificationsEnabled.value && nextStatus === 'authenticated' && nextLinked) {
     Promise.all([
       fetchAll(true),
       fetchForumAlerts(true, 20, 0),

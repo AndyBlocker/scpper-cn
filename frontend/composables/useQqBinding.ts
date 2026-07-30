@@ -179,6 +179,9 @@ export function useQqBinding() {
       now.value = Date.now()
       startClock()
       startPolling()
+      // 账号摘要决定 Connections 页是否挂载本组件。发起后立即同步 pendingChallenge，
+      // 否则用户切走再回来时，父页面仍按旧的 false 把取消入口整个隐藏。
+      await fetchCurrentUser(true)
       return true
     } catch (e) {
       error.value = getErrorMessage(e, '发起绑定失败，请稍后重试')
@@ -199,6 +202,7 @@ export function useQqBinding() {
       challenge.value = null
       stopPolling()
       stopClock()
+      await fetchCurrentUser(true)
       return true
     } catch (e) {
       const status = (e as { status?: number; statusCode?: number })?.status
@@ -242,6 +246,7 @@ export function useQqBinding() {
         challenge.value = null
         stopPolling()
         stopClock()
+        await fetchCurrentUser(true)
         return true
       }
       error.value = getErrorMessage(e, '取消失败，请稍后重试')

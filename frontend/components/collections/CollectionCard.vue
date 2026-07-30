@@ -44,7 +44,7 @@
         <p v-if="collection.description" class="text-sm leading-relaxed text-neutral-600 dark:text-neutral-300 line-clamp-3">
           {{ collection.description }}
         </p>
-        <p v-else class="text-sm text-neutral-400 dark:text-neutral-500">还没有简介，点击编辑补充一些介绍。</p>
+        <p v-else class="text-sm text-neutral-400 dark:text-neutral-500">还没有简介。</p>
         <div class="mt-auto flex items-center justify-between text-xs text-neutral-400 dark:text-neutral-500">
           <span class="inline-flex items-center gap-1">
             <LucideIcon name="Sparkle" class="h-3.5 w-3.5" />

@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { requireAdmin } from '../middleware/requireAdmin.js';
-import { linkWikidotUser, unlinkWikidotUser } from '../cli/linkWikidot.js';
+import {
+  linkWikidotUser,
+  pinCollectionOwnerBeforeIdentityTransition,
+  unlinkWikidotUser
+} from '../cli/linkWikidot.js';
 
 const listSchema = z.object({
   query: z.string().trim().optional(),
@@ -15,6 +19,44 @@ const linkSchema = z.object({
   force: z.boolean().optional(),
   takeover: z.boolean().optional()
 });
+
+export async function deleteAccountWithCollectionPin(
+  id: string,
+  actingAccountId: string | undefined
+): Promise<{ deletedEmail: string } | null> {
+  const account = await prisma.userAccount.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      email: true,
+      linkedWikidotId: true
+    }
+  });
+  if (!account) return null;
+  if (actingAccountId === id) {
+    throw new Error('无法删除当前登录的账号');
+  }
+  if (account.linkedWikidotId != null) {
+    await pinCollectionOwnerBeforeIdentityTransition(
+      account.id,
+      account.linkedWikidotId
+    );
+  }
+
+  // The identity snapshot used for pre-pin is part of the delete predicate.
+  // A concurrent rebind therefore makes this a no-op instead of releasing an
+  // unpinned identity.
+  const deleted = await prisma.userAccount.deleteMany({
+    where: {
+      id: account.id,
+      linkedWikidotId: account.linkedWikidotId
+    }
+  });
+  if (deleted.count !== 1) {
+    throw new Error('账号绑定状态已变化，请重试');
+  }
+  return { deletedEmail: account.email };
+}
 
 export function adminRouter() {
   const router = Router();
@@ -123,20 +165,14 @@ export function adminRouter() {
   router.delete('/accounts/:id', requireAdmin, async (req, res, next) => {
     try {
       const { id } = req.params as Record<string, string>;
-      const account = await prisma.userAccount.findUnique({
-        where: { id },
-        select: { id: true, email: true }
-      });
-      if (!account) {
+      const result = await deleteAccountWithCollectionPin(
+        id,
+        req.authUser?.id
+      );
+      if (!result) {
         return res.status(404).json({ error: '账号不存在' });
       }
-      // Prevent admin from deleting themselves
-      if (req.authUser?.id === id) {
-        return res.status(400).json({ error: '无法删除当前登录的账号' });
-      }
-      // Delete the account (Prisma cascade will handle related records)
-      await prisma.userAccount.delete({ where: { id } });
-      res.json({ ok: true, deletedEmail: account.email });
+      res.json({ ok: true, deletedEmail: result.deletedEmail });
     } catch (err) {
       const message = err instanceof Error ? err.message : '删除失败';
       res.status(400).json({ error: message });

@@ -14,11 +14,16 @@
         v-if="open"
         ref="panelRef"
         :key="panelStateKey"
-        class="absolute right-0 z-40 mt-2 w-96 rounded-lg border border-neutral-200 bg-white/95 p-4 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/95 dark:shadow-lg"
+        class="fixed inset-x-4 top-20 z-40 max-h-[calc(100dvh-6rem)] overflow-y-auto rounded-lg border border-neutral-200 bg-white p-4 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-96"
       >
         <div class="flex items-center justify-between border-b border-neutral-200 pb-2 dark:border-neutral-700">
           <h4 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">收藏 “{{ pageTitle }}”</h4>
-          <button type="button" class="text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300" @click="open = false">
+          <button
+            type="button"
+            class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
+            aria-label="关闭收藏面板"
+            @click="open = false"
+          >
             <LucideIcon name="X" class="h-4 w-4" />
           </button>
         </div>
@@ -31,7 +36,7 @@
         <div v-else-if="panelMode === 'guest'" class="space-y-3 py-4 text-sm text-neutral-600 dark:text-neutral-300">
           <p>登录后即可将页面加入收藏夹，并在个人中心统一管理。</p>
           <NuxtLink
-            to="/auth/login"
+            :to="loginDestination"
             class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-4 py-1.5 text-xs font-semibold text-white shadow-sm"
           >
             <LucideIcon name="LogIn" class="h-4 w-4" />
@@ -209,7 +214,7 @@
         </div>
 
         <div class="pt-3 text-right text-[11px] text-neutral-400 dark:text-neutral-500">
-          收藏夹管理位于 <NuxtLink to="/account?tab=collections" class="text-[var(--g-accent)]">账号设置 · 收藏夹</NuxtLink>
+          前往 <NuxtLink to="/collections" class="text-[var(--g-accent)]">我的收藏夹</NuxtLink> 进行完整管理
         </div>
       </div>
     </transition>
@@ -227,6 +232,7 @@ const props = defineProps<{
   pageTitle: string
 }>()
 
+const route = useRoute()
 const { isAuthenticated, status: authStatus, fetchCurrentUser, loading: authLoading } = useAuth()
 const {
   collections,
@@ -251,6 +257,10 @@ const messages = reactive<Record<number, string>>({})
 const isApplying = ref(false)
 const openCreateForm = ref(false)
 const createPayload = reactive({ title: '' })
+const loginDestination = computed(() => ({
+  path: '/auth/login',
+  query: { redirect: route.fullPath }
+}))
 
 const collectionList = computed(() => {
   const source = collections.value

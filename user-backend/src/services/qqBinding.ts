@@ -161,6 +161,9 @@ export async function startQqBinding(userId: string, botQq: string | null): Prom
     });
   });
 
+  // /auth/me 的摘要会据此决定是否保留「取消待处理绑定」入口。
+  // 事务提交后再失效，避免并发读取把提交前的 pending:false 重新写入缓存。
+  invalidateAuthCache(userId);
   return { code, expiresAt, ttlMinutes: CHALLENGE_TTL_MINUTES, botQq };
 }
 
@@ -227,6 +230,7 @@ export async function cancelQqBinding(userId: string): Promise<boolean> {
     where: { userId, channel: NotificationChannel.QQ, status: ChannelChallengeStatus.PENDING },
     data: { status: ChannelChallengeStatus.CANCELLED, failureReason: 'user_cancelled' }
   });
+  if (result.count > 0) invalidateAuthCache(userId);
   return result.count > 0;
 }
 

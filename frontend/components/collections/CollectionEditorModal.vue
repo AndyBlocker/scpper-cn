@@ -1,27 +1,47 @@
 <template>
   <Teleport to="body">
     <transition name="fade">
-      <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/70 backdrop-blur-sm px-4 py-8">
-        <div class="relative w-full max-w-2xl rounded-lg border border-white/10 bg-white/95 p-6 shadow-2xl dark:border-neutral-700 dark:bg-neutral-950/90">
+      <div
+        v-if="open"
+        class="fixed inset-0 z-50 overflow-y-auto bg-neutral-900/70 px-4 py-4 backdrop-blur-sm sm:py-8"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div
+            ref="dialogRef"
+            role="dialog"
+            aria-modal="true"
+            :aria-labelledby="dialogTitleId"
+            :aria-describedby="dialogDescriptionId"
+            tabindex="-1"
+            class="relative max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-lg border border-white/10 bg-white p-4 shadow-2xl dark:border-neutral-700 dark:bg-neutral-950 sm:max-h-[calc(100vh-4rem)] sm:max-h-[calc(100dvh-4rem)] sm:p-6"
+          >
           <button
             type="button"
-            class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:text-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:text-white"
-            aria-label="关闭"
-            @click="$emit('close')"
+            class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:text-white"
+            :aria-label="`关闭${title}`"
+            :disabled="saving"
+            @click="requestClose"
           >
             <LucideIcon name="X" class="h-4.5 w-4.5" />
           </button>
-          <header class="mb-6 space-y-2">
-            <h2 class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">{{ title }}</h2>
-            <p class="text-sm text-neutral-600 dark:text-neutral-400">
+          <header class="mb-6 space-y-2 pr-12">
+            <h2 :id="dialogTitleId" class="text-xl font-semibold text-neutral-900 dark:text-neutral-100">{{ title }}</h2>
+            <p :id="dialogDescriptionId" class="text-sm text-neutral-600 dark:text-neutral-400">
               {{ subtitle }}
             </p>
           </header>
 
           <form class="space-y-5" @submit.prevent="handleSubmit">
             <div class="space-y-2">
-              <label class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">名称</label>
+              <label
+                for="collection-editor-title"
+                class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400"
+              >
+                名称
+              </label>
               <input
+                id="collection-editor-title"
+                ref="titleInputRef"
                 v-model="local.title"
                 type="text"
                 maxlength="80"
@@ -33,39 +53,60 @@
 
             <div class="grid gap-4 md:grid-cols-2">
               <div class="space-y-2">
-                <label class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">简介</label>
+                <label
+                  for="collection-editor-description"
+                  class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400"
+                >
+                  简介
+                </label>
                 <textarea
+                  id="collection-editor-description"
                   v-model="local.description"
                   rows="4"
                   maxlength="800"
+                  aria-describedby="collection-editor-description-count"
                   class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                   placeholder="向他人介绍这个收藏夹（可选）"
                 />
-                <p class="text-right text-[11px] text-neutral-400 dark:text-neutral-500">{{ (local.description?.length || 0) }}/800</p>
+                <p id="collection-editor-description-count" class="text-right text-[11px] text-neutral-400 dark:text-neutral-500">{{ (local.description?.length || 0) }}/800</p>
               </div>
               <div class="space-y-2">
-                <label class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">个人备注</label>
+                <label
+                  for="collection-editor-notes"
+                  class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400"
+                >
+                  个人备注
+                </label>
                 <textarea
+                  id="collection-editor-notes"
                   v-model="local.notes"
                   rows="4"
                   maxlength="1200"
+                  aria-describedby="collection-editor-notes-count"
                   class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                   placeholder="只有自己可见的笔记（可选）"
                 />
-                <p class="text-right text-[11px] text-neutral-400 dark:text-neutral-500">{{ (local.notes?.length || 0) }}/1200</p>
+                <p id="collection-editor-notes-count" class="text-right text-[11px] text-neutral-400 dark:text-neutral-500">{{ (local.notes?.length || 0) }}/1200</p>
               </div>
             </div>
 
             <div class="space-y-2">
-              <label class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">封面图片链接</label>
+              <label
+                for="collection-editor-cover-url"
+                class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400"
+              >
+                封面图片链接
+              </label>
               <input
+                id="collection-editor-cover-url"
                 v-model="local.coverImageUrl"
                 type="url"
                 maxlength="400"
+                aria-describedby="collection-editor-cover-hint"
                 class="w-full rounded-xl border border-neutral-200 bg-white/80 px-4 py-3 text-sm text-neutral-800 shadow-sm transition focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-100"
                 placeholder="https://example.com/cover.jpg"
               >
-              <p class="text-[11px] text-neutral-400 dark:text-neutral-500">建议使用 1200×640 或更高分辨率的图片，链接需可公开访问。</p>
+              <p id="collection-editor-cover-hint" class="text-[11px] text-neutral-400 dark:text-neutral-500">建议使用 1200×640 或更高分辨率的图片，链接需可公开访问。</p>
               <div
                 v-if="local.coverImageUrl"
                 class="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/80 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
@@ -101,6 +142,7 @@
                   <div class="flex items-center gap-3">
                     <LucideIcon name="ArrowUpDown" class="h-4 w-4" />
                     <input
+                      id="collection-editor-cover-y"
                       v-model.number="local.coverImageOffsetY"
                       type="range"
                       min="-60"
@@ -109,11 +151,12 @@
                       class="flex-1 accent-[var(--g-accent)]"
                       @input="local.coverImageOffsetY = clampOffset(local.coverImageOffsetY)"
                     >
-                    <span class="w-20 text-right font-medium">垂直 {{ local.coverImageOffsetY.toFixed(0) }}%</span>
+                    <label for="collection-editor-cover-y" class="w-20 text-right font-medium">垂直 {{ local.coverImageOffsetY.toFixed(0) }}%</label>
                   </div>
                   <div class="flex items-center gap-3">
                     <LucideIcon name="ArrowLeftRight" class="h-4 w-4" />
                     <input
+                      id="collection-editor-cover-x"
                       v-model.number="local.coverImageOffsetX"
                       type="range"
                       min="-60"
@@ -122,11 +165,12 @@
                       class="flex-1 accent-[var(--g-accent)]"
                       @input="local.coverImageOffsetX = clampOffset(local.coverImageOffsetX)"
                     >
-                    <span class="w-20 text-right font-medium">水平 {{ local.coverImageOffsetX.toFixed(0) }}%</span>
+                    <label for="collection-editor-cover-x" class="w-20 text-right font-medium">水平 {{ local.coverImageOffsetX.toFixed(0) }}%</label>
                   </div>
                   <div class="flex items-center gap-3">
                     <LucideIcon name="ZoomIn" class="h-4 w-4" />
                     <input
+                      id="collection-editor-cover-scale"
                       v-model.number="local.coverImageScale"
                       type="range"
                       min="0.75"
@@ -135,15 +179,19 @@
                       class="flex-1 accent-[var(--g-accent)]"
                       @input="local.coverImageScale = clampScale(local.coverImageScale)"
                     >
-                    <span class="w-24 text-right font-medium">缩放 ×{{ local.coverImageScale.toFixed(2) }}</span>
+                    <label for="collection-editor-cover-scale" class="w-24 text-right font-medium">缩放 ×{{ local.coverImageScale.toFixed(2) }}</label>
                   </div>
                 </div>
               </div>
             </div>
 
             <div class="grid gap-4 md:grid-cols-2">
-              <label class="flex items-start gap-3 rounded-xl border border-neutral-200 bg-white/80 p-4 dark:border-neutral-700 dark:bg-neutral-900/60">
+              <label
+                for="collection-editor-default"
+                class="flex items-start gap-3 rounded-xl border border-neutral-200 bg-white/80 p-4 dark:border-neutral-700 dark:bg-neutral-900/60"
+              >
                 <input
+                  id="collection-editor-default"
                   v-model="local.isDefault"
                   type="checkbox"
                   class="mt-1 h-4 w-4 rounded border-neutral-300 text-[var(--g-accent)] focus:ring-[var(--g-accent)]"
@@ -158,8 +206,13 @@
                   <div class="text-sm font-medium text-neutral-800 dark:text-neutral-100">公开展示</div>
                   <button
                     type="button"
+                    role="switch"
+                    :aria-checked="local.visibility === 'PUBLIC'"
+                    aria-describedby="collection-editor-visibility-hint"
+                    aria-label="公开展示收藏夹"
+                    :disabled="local.visibility === 'PRIVATE' && !canPublish"
                     :class="[
-                      'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                      'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
                       local.visibility === 'PUBLIC'
                         ? 'bg-[var(--g-accent-medium)] text-[var(--g-accent)]'
                         : 'bg-neutral-200/60 text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300'
@@ -170,20 +223,40 @@
                     <span>{{ local.visibility === 'PUBLIC' ? '公开' : '私密' }}</span>
                   </button>
                 </div>
-                <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                <p
+                  id="collection-editor-visibility-hint"
+                  class="text-xs text-neutral-500 dark:text-neutral-400"
+                >
                   公开后，收藏夹会展示在你的个人主页，任何人均可浏览。
                 </p>
                 <p v-if="visibilityHint" class="rounded-lg bg-amber-100/60 px-3 py-2 text-[11px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
                   {{ visibilityHint }}
+                  <NuxtLink
+                    v-if="!canPublish"
+                    to="/account/connections"
+                    class="ml-1 font-semibold underline underline-offset-2"
+                  >
+                    前往绑定
+                  </NuxtLink>
                 </p>
               </div>
             </div>
 
+            <p
+              v-if="submitError"
+              class="rounded-lg border border-red-300/70 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-200"
+              role="alert"
+              aria-live="assertive"
+            >
+              {{ submitError }}
+            </p>
+
             <div class="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-4 py-2 text-sm font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
-                @click="$emit('close')"
+                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-4 py-2 text-sm font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                :disabled="saving"
+                @click="requestClose"
               >
                 取消
               </button>
@@ -197,6 +270,7 @@
               </button>
             </div>
           </form>
+          </div>
         </div>
       </div>
     </transition>
@@ -204,7 +278,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import type { CollectionSummary, CollectionVisibility } from '~/composables/useCollections'
 import { useAuth } from '~/composables/useAuth'
 
@@ -213,6 +287,7 @@ const props = defineProps<{
   saving?: boolean
   mode: 'create' | 'edit'
   collection?: CollectionSummary | null
+  submitError?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -231,6 +306,14 @@ const emit = defineEmits<{
 }>()
 
 const { user, isAuthenticated } = useAuth()
+
+const dialogTitleId = 'collection-editor-dialog-title'
+const dialogDescriptionId = 'collection-editor-dialog-description'
+const dialogRef = ref<HTMLElement | null>(null)
+const titleInputRef = ref<HTMLInputElement | null>(null)
+let previouslyFocusedElement: HTMLElement | null = null
+let previousBodyOverflow = ''
+let dialogActive = false
 
 const local = reactive({
   title: '',
@@ -266,12 +349,32 @@ watch(
 
 watch(
   () => props.open,
-  (open) => {
-    if (open && props.mode === 'create') {
+  async (open) => {
+    if (open) {
+      // 每次打开都从已确认的 collection 重新建立草稿；关闭即代表放弃未保存修改。
       reset()
-      local.isDefault = props.collection?.isDefault === true
     }
-  }
+    if (typeof document === 'undefined') return
+
+    if (open) {
+      previouslyFocusedElement = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+      previousBodyOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      document.addEventListener('keydown', handleDocumentKeydown)
+      dialogActive = true
+      await nextTick()
+      titleInputRef.value?.focus()
+      return
+    }
+
+    cleanupDialog()
+    await nextTick()
+    previouslyFocusedElement?.focus()
+    previouslyFocusedElement = null
+  },
+  { immediate: true }
 )
 
 const coverPreviewRef = ref<HTMLElement | null>(null)
@@ -376,17 +479,75 @@ const subtitle = computed(() => props.mode === 'create'
 const submitLabel = computed(() => props.mode === 'create' ? '创建收藏夹' : '保存修改')
 
 const visibilityHint = computed(() => {
+  if (!canPublish.value) {
+    return local.visibility === 'PUBLIC'
+      ? '当前收藏夹已公开；切回私密后，需要先绑定 Wikidot 才能再次公开。'
+      : '公开收藏夹前需要先绑定 Wikidot 账号。'
+  }
   if (local.visibility === 'PRIVATE') {
     return '仅自己可见，可用于暂存或私密整理。'
-  }
-  if (!isAuthenticated.value || !user.value?.linkedWikidotId) {
-    return '公开前需要绑定 Wikidot 账号，系统会自动校验。'
   }
   return '公开收藏夹会显示在个人主页，包含标题、简介与摘录。'
 })
 
+const canPublish = computed(() => (
+  isAuthenticated.value
+  && Number.isFinite(Number(user.value?.linkedWikidotId))
+  && Number(user.value?.linkedWikidotId) > 0
+))
+
 function toggleVisibility() {
+  if (local.visibility === 'PRIVATE' && !canPublish.value) return
   local.visibility = local.visibility === 'PUBLIC' ? 'PRIVATE' : 'PUBLIC'
+}
+
+function requestClose() {
+  if (props.saving) return
+  emit('close')
+}
+
+function getFocusableElements(): HTMLElement[] {
+  if (!dialogRef.value) return []
+  return Array.from(dialogRef.value.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.getAttribute('aria-hidden') !== 'true')
+}
+
+function handleDocumentKeydown(event: KeyboardEvent) {
+  if (!props.open) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    requestClose()
+    return
+  }
+  if (event.key !== 'Tab') return
+
+  const focusableElements = getFocusableElements()
+  if (focusableElements.length === 0) {
+    event.preventDefault()
+    dialogRef.value?.focus()
+    return
+  }
+
+  const firstElement = focusableElements[0]
+  const lastElement = focusableElements[focusableElements.length - 1]
+  const activeElement = document.activeElement
+  const focusIsInsideDialog = activeElement instanceof Node && dialogRef.value?.contains(activeElement)
+
+  if (event.shiftKey && (activeElement === firstElement || !focusIsInsideDialog)) {
+    event.preventDefault()
+    lastElement?.focus()
+  } else if (!event.shiftKey && (activeElement === lastElement || !focusIsInsideDialog)) {
+    event.preventDefault()
+    firstElement?.focus()
+  }
+}
+
+function cleanupDialog() {
+  if (typeof document === 'undefined' || !dialogActive) return
+  document.removeEventListener('keydown', handleDocumentKeydown)
+  document.body.style.overflow = previousBodyOverflow
+  dialogActive = false
 }
 
 function reset() {
@@ -414,6 +575,10 @@ function handleSubmit() {
     visibility: local.visibility
   })
 }
+
+onBeforeUnmount(() => {
+  cleanupDialog()
+})
 </script>
 
 <style scoped>

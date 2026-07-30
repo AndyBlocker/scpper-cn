@@ -82,7 +82,27 @@ export default defineNuxtConfig({
       bffBase: process.env.BFF_BASE || '/api',
       debugFetchTimings: envBoolean(process.env.DEBUG_FETCH_TIMINGS, false),
       debugFetchMinDurationMs: envNumber(process.env.DEBUG_FETCH_MIN_DURATION_MS, 0),
-      slowFetchThresholdMs: envNumber(process.env.SLOW_FETCH_THRESHOLD_MS, 800)
+      slowFetchThresholdMs: envNumber(process.env.SLOW_FETCH_THRESHOLD_MS, 800),
+      // 站内提醒功能总开关。暂时关闭时隐藏顶栏铃铛，并停止页面、关注和论坛
+      // 提醒的预取与重验证；底层接口和数据保留，便于之后直接恢复。
+      // 后端告警生成会刻意继续运行，以保留暂停期间的历史；QQ 外部投递由
+      // 独立的 QQ_NOTIFY_ENABLED 代码级闸门阻止。
+      //
+      //  · 构建期：NOTIFICATIONS_ENABLED=1 npm run build
+      //  · 运行时：NUXT_PUBLIC_NOTIFICATIONS_ENABLED=true
+      notificationsEnabled: envBoolean(process.env.NOTIFICATIONS_ENABLED, false),
+      // QQ 通知与绑定的总开关。2026-07-30 暂时下线该功能：
+      // 关掉后账号页不再显示 QQ 绑定入口，通知设置里也不再有「推送渠道」一节。
+      // 数据一律保留（下线时库里有 19 条 ACTIVE 绑定），不需要重新绑定。
+      //
+      // 恢复时注意变量名有两个，别混：
+      //  · 构建期：QQ_NOTIFY_ENABLED=1 npm run build
+      //  · 运行时：NUXT_PUBLIC_QQ_NOTIFY_ENABLED=true（Nuxt 只认 NUXT_PUBLIC_ 前缀）
+      //    —— 已构建好的产物只能用这个覆盖；用 QQ_NOTIFY_ENABLED 会**静默无效**，
+      //    实测过：设了它 payload 里仍然是 false。
+      //  · user-backend 侧另有 QQ_NOTIFY_ENABLED 控制绑定接口，两处要一起开。
+      //  · 还要 pm2 start scpper-notify 才会真正开始投递。
+      qqNotifyEnabled: envBoolean(process.env.QQ_NOTIFY_ENABLED, false)
     }
   },
   nitro: {

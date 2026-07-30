@@ -75,8 +75,12 @@ export async function runNotifyDispatchLoop(options: LoopOptions): Promise<void>
       });
       pendingReset = false;
       const ms = Date.now() - startedAt;
-      // 无事可做的轮次不打日志，否则每分钟一行会把 pm2 日志刷满
-      if (summary.candidates > 0 || summary.circuitTripped || summary.skippedReason) {
+      // 无事可做的轮次不打日志，否则每分钟一行会把 pm2 日志刷满。
+      // feature_disabled 要单独排除：功能下线时**每一轮**都会带上这个
+      // skippedReason，照原样打就是每分钟一行刷到底 —— 正好破坏了上面这条本意。
+      // 它只需在投递器首轮提示一次（那次由 job 内部打印），之后保持安静。
+      const quietSkip = summary.skippedReason === 'feature_disabled';
+      if (!quietSkip && (summary.candidates > 0 || summary.circuitTripped || summary.skippedReason)) {
         console.log(`[notify] ${reason} 完成（${ms}ms）：${formatSummary(summary)}`);
       }
     } catch (error) {

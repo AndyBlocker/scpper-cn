@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { startRegistration, completeRegistration } from '../services/registration.js';
 import { issueAuthToken } from '../utils/auth-token.js';
 import { prisma } from '../db.js';
-import { requireAuth, invalidateAuthCache } from '../middleware/requireAuth.js';
+import { requireAuth, invalidateAuthCache, formatAuthQqBinding } from '../middleware/requireAuth.js';
 import { startPasswordReset, completePasswordReset } from '../services/passwordReset.js';
 import { SlidingWindowRateLimiter } from '../utils/rateLimiter.js';
 
@@ -108,13 +108,24 @@ function createErrorResponse(error: unknown) {
 export function authRouter() {
   const router = Router();
 
-  function formatUser(account: { id: string; email: string; displayName: string | null; linkedWikidotId: number | null; lastLoginAt: Date | null }) {
+  function formatUser(account: {
+    id: string;
+    email: string;
+    displayName: string | null;
+    linkedWikidotId: number | null;
+    lastLoginAt: Date | null;
+    channelBindings: Array<{ address: string; status: string }>;
+    channelChallenges: Array<{ id: string }>;
+  }) {
+    const qq = account.channelBindings[0];
+    const qqBinding = formatAuthQqBinding(qq, account.channelChallenges.length > 0);
     return {
       id: account.id,
       email: account.email,
       displayName: account.displayName,
       linkedWikidotId: account.linkedWikidotId,
-      lastLoginAt: account.lastLoginAt
+      lastLoginAt: account.lastLoginAt,
+      qqBinding
     };
   }
 
@@ -172,7 +183,14 @@ export function authRouter() {
       }
       const payload = loginSchema.parse(req.body ?? {});
       const email = payload.email.trim().toLowerCase();
-      const account = await prisma.userAccount.findUnique({ where: { email } });
+      const account = await prisma.userAccount.findUnique({
+        where: { email },
+        select: {
+          id: true,
+          passwordHash: true,
+          status: true
+        }
+      });
 
       if (!account || !account.passwordHash || account.status !== 'ACTIVE') {
         throw new Error('邮箱或密码错误');
@@ -186,19 +204,38 @@ export function authRouter() {
       const loginAt = new Date();
       const updated = await prisma.userAccount.update({
         where: { id: account.id },
-        data: { lastLoginAt: loginAt }
+        data: { lastLoginAt: loginAt },
+        include: {
+          channelBindings: {
+            where: { channel: 'QQ' },
+            select: { address: true, status: true }
+          },
+          channelChallenges: {
+            where: {
+              channel: 'QQ',
+              status: 'PENDING',
+              expiresAt: { gt: new Date() }
+            },
+            select: { id: true },
+            take: 1
+          }
+        }
       });
 
       const token = issueAuthToken(updated.id, updated.passwordHash ?? account.passwordHash);
 
       setSessionCookie(res, token);
+      // 同一账号可能仍有另一枚有效 cookie；避免它在 30 秒内读到旧 lastLoginAt。
+      invalidateAuthCache(updated.id);
 
       res.json({ ok: true, user: formatUser({
         id: updated.id,
         email: updated.email,
         displayName: updated.displayName ?? null,
         linkedWikidotId: updated.linkedWikidotId ?? null,
-        lastLoginAt: updated.lastLoginAt ?? loginAt
+        lastLoginAt: updated.lastLoginAt ?? loginAt,
+        channelBindings: updated.channelBindings,
+        channelChallenges: updated.channelChallenges
       }) });
     } catch (error) {
       const { status, body } = createErrorResponse(error);
@@ -264,14 +301,33 @@ export function authRouter() {
       }
       const updated = await prisma.userAccount.update({
         where: { id: req.authUser.id },
-        data: { displayName: payload.displayName }
+        data: { displayName: payload.displayName },
+        include: {
+          channelBindings: {
+            where: { channel: 'QQ' },
+            select: { address: true, status: true }
+          },
+          channelChallenges: {
+            where: {
+              channel: 'QQ',
+              status: 'PENDING',
+              expiresAt: { gt: new Date() }
+            },
+            select: { id: true },
+            take: 1
+          }
+        }
       });
+      // /auth/me 复用 requireAuth 的 30 秒缓存；不失效会让刚保存的昵称回滚。
+      invalidateAuthCache(updated.id);
       res.json({ ok: true, user: formatUser({
         id: updated.id,
         email: updated.email,
         displayName: updated.displayName ?? null,
         linkedWikidotId: updated.linkedWikidotId ?? null,
-        lastLoginAt: updated.lastLoginAt ?? null
+        lastLoginAt: updated.lastLoginAt ?? null,
+        channelBindings: updated.channelBindings,
+        channelChallenges: updated.channelChallenges
       }) });
     } catch (error) {
       const { status, body } = createErrorResponse(error);

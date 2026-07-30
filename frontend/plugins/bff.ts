@@ -1,5 +1,10 @@
 import type { FetchOptions } from 'ofetch';
 import { consola } from 'consola';
+import {
+  expectedUserIdForRequest,
+  normalizeBffRequestPath,
+  requestExpectedUserMismatchRecovery
+} from '~/utils/expectedUser';
 
 type DebugMeta = {
   startAt: number;
@@ -11,8 +16,15 @@ type DebugMeta = {
   shouldLogStart: boolean;
 };
 
+const EXPECTED_USER_ID_HEADER = 'x-scpper-expected-user-id';
+
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig();
+  // These keys are owned by useAuth. Capturing the refs here lets every
+  // account-private mutation carry the identity from the last trusted auth
+  // snapshot without relying on each composable to remember the guard.
+  const authUser = useState<{ id?: string } | null>('auth-user', () => null);
+  const authStatus = useState<string>('auth-status', () => 'unknown');
   const publicConfig = config.public as Record<string, unknown>;
   const bffBase: string = String(publicConfig.bffBase || '/api');
   const debugFetchTimings = parseBoolean(publicConfig.debugFetchTimings, false);
@@ -72,6 +84,18 @@ export default defineNuxtPlugin((nuxtApp) => {
       const clientDebugFlag = !isServer && hasClientDebugFlag();
       const shouldLogStart = debugFetchTimings || clientDebugFlag;
       const method = String(options.method || 'GET').toUpperCase();
+      const trustedUserId = expectedUserIdForRequest({
+        method,
+        request,
+        bffBase,
+        authStatus: authStatus.value,
+        authUserId: authUser.value?.id
+      });
+      if (trustedUserId) {
+        const headers = new Headers(options.headers as HeadersInit | undefined);
+        headers.set(EXPECTED_USER_ID_HEADER, trustedUserId);
+        options.headers = headers;
+      }
       const targetInfo = resolveTargetInfo(request);
       const startAt = now();
 
@@ -93,9 +117,27 @@ export default defineNuxtPlugin((nuxtApp) => {
     onResponse({ options, response }) {
       handleResponseDebug(options, response.status);
     },
-    onResponseError({ options, response }) {
+    async onResponseError({ options, response }) {
       const status = response?.status ?? 0;
+      const targetPath = (options as any)?._debugFetch?.targetPath || response?.url || '/';
       handleResponseDebug(options, status, true);
+      const responseData = (response as any)?._data;
+      const normalizedPath = normalizeBffRequestPath(targetPath, bffBase);
+      if (
+        status === 409
+        && responseData?.code === 'account_mismatch'
+        && normalizedPath !== '/auth/me'
+      ) {
+        // The cookie is now owned by a different account than the trusted
+        // snapshot. Re-resolve it once even when localStorage sync is blocked.
+        // /auth/me is exempt from the expected-user header and from this hook,
+        // so recovery cannot recursively trigger itself.
+        // Keep the failed caller suspended until the trusted auth snapshot has
+        // caught up with the cookie. Otherwise account forms can observe the
+        // transient "unknown" state and redirect to login even though recovery
+        // has already resolved a different, still-authenticated account.
+        await requestExpectedUserMismatchRecovery(nuxtApp);
+      }
     }
   });
 
