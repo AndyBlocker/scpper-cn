@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRuntimeConfig } from 'nuxt/app'
 import { useQqBinding } from '~/composables/useQqBinding'
+
+// QQ 通知总开关（2026-07-30 暂时下线）。关闭时本面板只对**已绑定**用户显示，
+// 且只保留解绑；发起新绑定的入口一律不给。
+const qqNotifyEnabled = computed(() => Boolean(useRuntimeConfig().public.qqNotifyEnabled))
 
 const {
   binding,
@@ -118,6 +123,11 @@ onBeforeUnmount(() => {
 
     <!-- 已绑定 -->
     <template v-else-if="isBound">
+      <!-- 功能下线期间要说清楚：绑定还在，但不会再推送。
+           不说的话用户会以为推送仍在正常工作，只是没有新动态。 -->
+      <p v-if="!qqNotifyEnabled" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+        QQ 通知功能已暂时关闭，目前不会推送任何消息。绑定仍保留，功能恢复后无需重新绑定；也可以在下方解绑。
+      </p>
       <div class="rounded-xl border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900/30">
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0">
@@ -261,6 +271,13 @@ onBeforeUnmount(() => {
       >
         {{ loading ? '生成中…' : '重新生成验证码' }}
       </button>
+    </template>
+
+    <!-- 未绑定 + 功能已下线：只说明情况，不给发起入口 -->
+    <template v-else-if="!qqNotifyEnabled">
+      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+        QQ 通知功能暂时关闭，目前无法绑定。
+      </p>
     </template>
 
     <!-- 未绑定 -->

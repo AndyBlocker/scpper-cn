@@ -124,8 +124,11 @@
 
           <!-- QQ 通知渠道绑定。与 Wikidot 绑定并列，同属「账号绑定」一栏：
                用户找绑定入口一定先来「资料」页，放这里比塞进提醒设置里好找。
-               2026-07-30 起由 qqNotifyEnabled 总开关控制，功能暂时下线。 -->
-          <template v-if="qqNotifyEnabled">
+               2026-07-30 起由 qqNotifyEnabled 总开关控制，功能暂时下线。
+               下线时仍对**已绑定**用户保留这一块：后端刻意留着 /unbind、/cancel，
+               而这个面板是唯一能调用它们的界面 —— 一起藏掉的话，
+               「随时可以解绑」就成了一句空话，人被困在里面。 -->
+          <template v-if="qqNotifyEnabled || user?.qqBinding?.bound">
           <div class="flex items-center justify-between pt-2">
             <div>
               <div class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">QQ 绑定</div>
