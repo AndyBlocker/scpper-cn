@@ -124,8 +124,20 @@ const PROCESS_START = new Date();
  */
 const RUN_ID = `${process.pid}-${PROCESS_START.getTime()}`;
 
+/** 与 UserNotificationPreference.type 对齐的通知类型 */
+type NotifyType = 'PAGE_COMMENT' | 'PAGE_VOTE' | 'PAGE_REVISION' | 'FOLLOW_ACTIVITY' | 'FORUM_INTERACTION';
+
+/** 页面指标 → 通知类型 */
+const METRIC_TO_TYPE: Record<string, NotifyType> = {
+  COMMENT_COUNT: 'PAGE_COMMENT',
+  VOTE_COUNT: 'PAGE_VOTE',
+  REVISION_COUNT: 'PAGE_REVISION'
+};
+
 interface Candidate {
   source: 'page_metric' | 'follow_activity' | 'forum';
+  /** 用于按用户偏好过滤 QQ 推送 */
+  notifyType: NotifyType;
   dedupeKey: string;
   userId: number;
   detectedAt: Date;
@@ -351,11 +363,61 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 于是「原批次重发」与「新告警组新批」互不干扰。
   // 注意本轮的健康检查在**收集候选之后**才做（没东西可发时不打扰机器人），
   // 所以 resumeScheduledBatches 自己会先探一次健康，避免机器人离线时空耗重试次数。
-  const replayResult = await resumeScheduledBatches(prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget);
+  // 偏好必须在**重发之前**加载：重发路径同样要尊重「用户已关掉这个类型」
+  // 以及定时/限额设置。首次投递失败后用户去关掉了某类通知，
+  // 重试时还照发出去，等于设置根本没生效。
+  const prefsByUser = await loadNotifyPrefs(prisma, userIds);
+
+  const replayResult = await resumeScheduledBatches(
+    prisma, targetByUserId, summary, Boolean(options.dryRun), options.shouldStop, revalidateTarget, prefsByUser,
+    new Set([...prefsByUser].filter(([, p]) => p.mode === 'DAILY_DIGEST').map(([uid]) => uid))
+  );
   const replayedCount = replayResult.replayed;
   const replaySkipped = replayResult.skipped;
 
-  const collected = await collectCandidates(prisma, userIds, floor);
+  // 定时用户可能需要比标准回看窗口更早的内容（见 lastDigestSentAt 的说明）。
+  // 存在定时用户时把查询窗口放宽到两倍，再按每个用户各自的下限过滤 ——
+  // 放宽是有界的（最坏 23 小时时点位移 + 24 小时窗口 < 48 小时），
+  // 不会退化成全表扫描。
+  const hasDigestUser = [...prefsByUser.values()].some((p) => p.mode === 'DAILY_DIGEST');
+  // 放宽窗口**绝不能越过冷启动闸门**。
+  //
+  // startAt 是「这个系统从哪一刻起才允许推送」的硬边界 —— 上线时库里有约
+  // 1.5 万条历史告警，闸门就是唯一挡住它们的东西。
+  // 直接 Math.min(floor, now-48h) 会把起点推到闸门之前，
+  // 定时用户于是可能收到上线前的积压，甚至把全局熔断顶跳闸。
+  // 放宽只在「闸门之后」的范围内进行。
+  const widened = Date.now() - 2 * LOOKBACK_HOURS * 3600 * 1000;
+  const collectFloor = hasDigestUser
+    ? new Date(Math.max(startAt.getTime(), Math.min(floor.getTime(), widened)))
+    : floor;
+  const collected = await collectCandidates(prisma, userIds, collectFloor);
+
+  // 每个用户的真实下限：实时用户用标准窗口；定时用户用「上次汇总之后」，
+  // 这样改时点造成的超长间隔也能被完整覆盖。
+  const userFloor = new Map<number, Date>();
+  for (const uid of userIds) {
+    const prefs = prefsByUser.get(uid);
+    if (prefs?.mode !== 'DAILY_DIGEST') { userFloor.set(uid, floor); continue; }
+    const last = prefs.lastDigestCutoffAt;
+    if (!last) {
+      // 从未发过汇总：没有「需要补回的历史周期」，就该用标准回看窗口。
+      // 用放宽后的 48 小时会让一个绑定已久的用户在**第一封**汇总里
+      // 收到 24–48 小时前的旧未读，而配置写的是 24 小时。
+      userFloor.set(uid, floor > startAt ? floor : startAt);
+      continue;
+    }
+    // 起点往回留一段**安全重叠**。
+    //
+    // 截止线是墙上时钟，不是「已提交水位线」：一条 detectedAt 早于截止线的告警，
+    // 完全可能在 collectCandidates 取快照之后才提交 —— 本轮看不见它，
+    // 而截止线一旦被持久化，下一轮又因为「早于起点」被永久排除。
+    // 重扫是安全的：dedupeKey 会挡住已经推过的，重叠只是多查一点。
+    const OVERLAP_MS = 15 * 60 * 1000;
+    const anchored = last ? new Date(last.getTime() - OVERLAP_MS) : null;
+    const candidateFloor = anchored && anchored > collectFloor ? anchored : collectFloor;
+    userFloor.set(uid, candidateFloor > startAt ? candidateFloor : startAt);
+  }
 
   // 每个收件人还有自己的起点：绑定生效时刻。
   //
@@ -365,17 +427,135 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
   // 这里只过滤不记账：这些候选会随回看窗口自然滑出，不必为它们写一堆抑制记录。
   const candidates: Candidate[] = [];
   let preBindingSkipped = 0;
+  const optedOut: Candidate[] = [];
   for (const c of collected) {
     const boundAt = targetByUserId.get(c.userId)?.verifiedAt ?? null;
     if (boundAt && c.detectedAt <= boundAt) { preBindingSkipped += 1; continue; }
+    // 每人各自的下限（实时=标准窗口；定时=上次汇总之后）
+    const myFloor = userFloor.get(c.userId);
+    if (myFloor && c.detectedAt < myFloor) continue;
+    // 该用户把这个类型的 QQ 推送关掉了。
+    // 注意这**不影响站内** —— 两个渠道各自独立，站内照常展示。
+    // 缺省 true：没设置过的用户默认全收，绑定后立刻可用。
+    if (prefsByUser.get(c.userId)?.qqEnabled.get(c.notifyType) === false) { optedOut.push(c); continue; }
     candidates.push(c);
+  }
+  // 关闭期间的候选必须**落账为 SUPPRESSED**，不能只是丢掉。
+  // 只丢掉的话它们每轮都会被重新扫到，用户一旦在回看窗口内重新打开该类型，
+  // 关闭期间攒下的全部告警会一次性倒灌过去 —— 而他期望的是「从现在起开始收」。
+  if (optedOut.length > 0) {
+    const byUser = new Map<number, Candidate[]>();
+    for (const c of optedOut) {
+      const l = byUser.get(c.userId) ?? []; l.push(c); byUser.set(c.userId, l);
+    }
+    for (const [uid, items] of byUser) {
+      await recordAll(prisma, items, uid, 'SUPPRESSED', 'type_disabled', options.dryRun);
+    }
+    summary.suppressed += optedOut.length;
+    console.log(`[notify] 按用户偏好抑制 ${optedOut.length} 条（对应类型的 QQ 推送已关闭）`);
   }
   if (preBindingSkipped > 0) {
     console.log(`[notify] 跳过 ${preBindingSkipped} 条产生于绑定生效之前的告警`);
   }
 
+  // ── 定时用户的资格判定必须在**熔断计数之前** ──────────────────
+  //
+  // 定时用户的候选会在一天里不断堆积，但其中只有「到点的那些人」本轮真会发出去。
+  // 若把全部堆积量计入熔断，几个不同时点的定时用户攒够量就能把全局熔断顶跳闸，
+  // 连带把实时用户也一起卡死 —— 而实际要发的量根本没超标。
+  // 所以先剔除本轮无资格的，再计数。
+  const digestDeferred: Candidate[] = [];
+  const eligible: Candidate[] = [];
+  const digestEligibility = new Map<number, boolean>();
+  const digestCutoffByUser = new Map<number, Date>();
+  /**
+   * 周期内**存在但本轮没能发出**的内容。
+   *
+   * 「本轮没发出去」有三种，必须分开：
+   *   1. 周期内确实没内容           → 周期算过完，水位线该推进
+   *   2. 有内容但被优雅停机跳过      → 没过完，推进就等于丢弃
+   *   3. 有内容但被「每天一封」挡住   → 同上（多个逾期周期时会遇到）
+   * 只有第 1 种能预先标记为已处理。
+   */
+  const hasUnsentInPeriod = new Set<number>();
+  /** 本轮处理完的用户 —— 只有他们的周期水位线可以推进 */
+  const processedUserIds = new Set<number>();
+  for (const c of candidates) {
+    const prefs = prefsByUser.get(c.userId);
+    if (prefs?.mode !== 'DAILY_DIGEST') { eligible.push(c); continue; }
+    let ok = digestEligibility.get(c.userId);
+    let cutoff = digestCutoffByUser.get(c.userId);
+    if (ok === undefined) {
+      // 到期时刻由「上次截止线」推算，而不是比较「今天几点」。
+      // 逾期未发的汇总（比如跨午夜宕机漏掉的那封）在恢复后第一轮就补上，
+      // 且它的截止线仍是原定那个时刻，两次汇总的覆盖区间照样接得上。
+      // 「一天一封」是对用户的承诺，必须显式守住 —— 这个自然日已经发过，
+      // 随后把时点改晚，那个更晚的边界当天就会到期，于是同一天发第二封。
+      // 日限额（默认 20）拦不住这个。
+      //
+      // 但「挡住」不等于「原地等」：已被占用的边界**永远**轮不到我们，
+      // 干等会把水位线钉死在它上面 —— 到期判定每轮都返回同一个边界，
+      // 期间的告警一直进不了任何一封汇总，直到滑出扫描窗口被静默丢弃。
+      // 正确做法是跨过它，让这些告警顺延到下一个还没被占的周期。
+      // 这里只**读**槽位；真正的占位在发送前那一步原子完成（见 claimDigestSlot）。
+      // 在资格判定里就占的话，最终没内容可发的用户会白占掉当天名额。
+      const occupied = async (at: Date) => (await readDigestSlot(prisma, c.userId, at)) !== null;
+      const resolved = await resolveDigestCutoff(
+        occupied, prefs.lastDigestCutoffAt, prefs.digestHour, Date.now()
+      );
+      cutoff = resolved.cutoff;
+      // 跨越结果**不落库**。lastDigestCutoffAt 同时是收集下限（userFloor 由它推出），
+      // 把跨过的边界写进去会把下限推到那个边界之前一点 —— 恰好把这批本该顺延的
+      // 告警筛掉，它们既没发出也没记录，就此消失。
+      // 而落库本来也不必要：跨越每轮都会从水位线重新走一遍，本身就是幂等的。
+      if (resolved.skipped) {
+        console.log(
+          `[notify] 用户 ${c.userId} 的 ${resolved.skipped.toISOString()} 边界已被占用，`
+          + `本轮内容顺延至 ${cutoff.toISOString()}`
+        );
+      }
+      ok = Date.now() >= cutoff.getTime() && !(await occupied(cutoff));
+      digestEligibility.set(c.userId, ok);
+      digestCutoffByUser.set(c.userId, cutoff);
+    }
+    // 属于本周期（早于截止线）却没资格发出去 —— 记下来，
+    // 这个用户的周期还没过完，水位线不能推进
+    if (!ok && cutoff && c.detectedAt < cutoff) hasUnsentInPeriod.add(c.userId);
+    // 只收**截止线之前**产生的内容。补发补的是「到点时本该发却没发出去的那批」，
+    // 不是「到点之后又新来的」—— 否则设定 21 点的用户会在半夜收到消息。
+    if (ok && cutoff && c.detectedAt < cutoff) eligible.push(c);
+    else digestDeferred.push(c);
+  }
+  if (digestDeferred.length > 0) {
+    console.log(`[notify] ${digestDeferred.length} 条属于定时用户且本轮未到点，留待其设定时段`);
+  }
+  candidates.length = 0;
+  candidates.push(...eligible);
+
+
+  // 到期却没有任何可发内容的定时用户（空周期、内容全被站内读掉或被偏好抑制），
+  // 根本不会进入下面的收件人循环 —— 但他们的周期确实**已经过完了**。
+  // 不把他们算作已处理的话，水位线停在那个空周期上，
+  // 之后每一条新告警都晚于它而被无限推迟，这个用户从此收不到汇总。
+  const nowMs = Date.now();
+  const usersWithEligible = new Set(candidates.map((c) => c.userId));
+  for (const [userId, prefs] of prefsByUser) {
+    if (prefs.mode !== 'DAILY_DIGEST') continue;
+    const due = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
+    if (nowMs < due.getTime()) continue;
+    // 有待发内容的：等他在下面的循环里真正处理完再标记 ——
+    // 优雅停机可能让他根本轮不到，那时推进水位线会把内容永久丢掉。
+    if (usersWithEligible.has(userId)) continue;
+    // 周期内有内容但被挡住（每天一封 / 多个逾期周期）：周期没过完，不能推进。
+    if (hasUnsentInPeriod.has(userId)) continue;
+    // 到这里才是真正的空周期
+    processedUserIds.add(userId);
+  }
+
   summary.candidates = candidates.length;
   if (candidates.length === 0) {
+    // 空批次也要先推进水位线再返回 —— 否则「今天没内容」会把水位线永久冻住
+    await advanceDigestWatermarks(prisma, prefsByUser, Boolean(options.dryRun), processedUserIds);
     // 重发因机器人不可用而被跳过时，这一轮**不算成功**。
     // 照旧推进 lastSuccessAt 的话，notify-inspect 在整个宕机期间都显示
     // 「刚刚成功过」，而队列里的投递一条都发不出去 —— 正好瞒住了要排查的问题。
@@ -399,7 +579,13 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 同一批候选、再次跳闸 —— 熔断从此永远恢复不了，除非等它们过了回看窗口
       // 或运维手动改上限。这里把它们标成 SUPPRESSED（不是失败，是主动放弃），
       // 并把闸门推进到最新一条之后，让下一轮从干净状态开始。
-      const newest = candidates.reduce((a, c) => (c.detectedAt > a ? c.detectedAt : a), candidates[0].detectedAt);
+      // 闸门要推过的是**全部**积压，不只是本轮有资格发的那部分。
+      // digestDeferred 里是定时用户尚未到点的内容：它们没进 candidates，
+      // 但如果其中有比 newest 更早的，闸门一推就跨过了它们 ——
+      // 既没有投递记录、也永远不会被再次扫到，静默消失。
+      // 复位的语义是「消化掉这批积压」，那就必须连它们一起消化。
+      const resetScope = [...candidates, ...digestDeferred];
+      const newest = resetScope.reduce((a, c) => (c.detectedAt > a ? c.detectedAt : a), resetScope[0].detectedAt);
 
       // dry-run 必须在这里彻底止步。原先这段无条件写库：
       //   * recordAll 硬编码 dryRun=false → 把整批积压永久标成 SUPPRESSED
@@ -408,15 +594,16 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       // 演练要能安全地回答「复位会发生什么」，就绝不能顺手把它做掉。
       if (options.dryRun) {
         console.warn(
-          `[notify][dry-run] 若执行 --reset-circuit：会把 ${candidates.length} 条积压标记为 SUPPRESSED`
-          + `（不发送、不补发），并把闸门推进到 ${newest.toISOString()}。本次未写入任何数据。`
+          `[notify][dry-run] 若执行 --reset-circuit：会把 ${resetScope.length} 条积压标记为 SUPPRESSED`
+          + `（其中 ${digestDeferred.length} 条是定时用户尚未到点的内容），`
+          + `不发送、不补发，并把闸门推进到 ${newest.toISOString()}。本次未写入任何数据。`
         );
         summary.circuitTripped = true;
         return summary;
       }
 
       const byUser = new Map<number, Candidate[]>();
-      for (const c of candidates) {
+      for (const c of resetScope) {
         const list = byUser.get(c.userId) ?? [];
         list.push(c);
         byUser.set(c.userId, list);
@@ -482,7 +669,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       console.log('[notify] 收到停止信号，本轮剩余收件人留待下次');
       break;
     }
-    const items = group;
+    let items = group;
     const target = targetByUserId.get(userId);
     if (!target) continue;
 
@@ -497,12 +684,51 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     //
     // 现在给同一次摘要里的所有行写同一个 digestKey，按 distinct digestKey 计数，
     // 「40 条/天」才真的是「每天最多 40 条私信」。
+    // 偏好要在**发送前**复验，不能只用开轮时的那份快照。
+    // 收件人是串行处理的，一轮可能跑上几分钟 —— 用户在 loadNotifyPrefs 之后、
+    // 轮到自己之前关掉某个类型或改了投递方式，拿快照去发就是
+    // 「我明明已经关掉了」。绑定身份都复验了，偏好这种同样会被用户当场
+    // 改动的东西没理由不验。位置在渲染之前：晚于此处过滤的话，
+    // 消息正文里已经写进了那几条。
+    const snapshotPrefs = prefsByUser.get(userId) ?? { qqEnabled: new Map(), ...DEFAULT_PREFS };
+    const freshPrefs = (await loadNotifyPrefs(prisma, [userId])).get(userId);
+    if (freshPrefs && (freshPrefs.mode !== snapshotPrefs.mode || freshPrefs.digestHour !== snapshotPrefs.digestHour)) {
+      // 投递方式变了，这一批的组织方式（实时逐条 / 汇总攒一封、攒到几点）
+      // 已经不对了。整批留到下一轮按新设置重新规划 ——
+      // 此时还没占任何名额或 dedupeKey，退让不留痕迹。
+      console.log(`[notify] 用户 ${target.wikidotId} 在本轮中途改了投递方式，本批留待下轮重新规划`);
+      continue;
+    }
+    const prefs = freshPrefs ?? snapshotPrefs;
+    const nowDisabled = items.filter((c) => prefs.qqEnabled.get(c.notifyType) === false);
+    if (nowDisabled.length > 0) {
+      // 记成 SUPPRESSED 而非静默丢弃：排查时能看出「是被偏好挡下的」
+      await recordAll(prisma, nowDisabled, userId, 'SUPPRESSED', 'type_disabled', options.dryRun);
+      summary.suppressed += nowDisabled.length;
+      const disabledKeys = new Set(nowDisabled.map((c) => c.dedupeKey));
+      items = items.filter((c) => !disabledKeys.has(c.dedupeKey));
+      console.log(`[notify] 用户 ${target.wikidotId} 有 ${nowDisabled.length} 条的类型在本轮中途被关闭，不再推送`);
+      if (items.length === 0) continue;
+    }
     const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
     const sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
-    if (sentToday >= DAILY_LIMIT) {
+
+    // 定时模式：只在用户指定的整点发，且当天只发一次。
+    // 不到点就**留着**（不落库、不消耗任何配额），等到点那一轮再一起发 ——
+    // 这正是「每日汇总」的意义：把一天的动静攒成一条。
+    // 定时资格已在熔断计数之前统一判定过（含「过点补发」与自然日去重），
+    // 这里不再重复判断 —— 判两次容易两处口径不一致。
+
+    // 日限额：定时模式用**自然日**计数，与上面的资格判定同口径。
+    // 否则 qqDailyLimit=1 的定时用户会被昨天那条汇总卡住 ——
+    // 滚动 24 小时窗口里还能看到它，于是今天整批被记为 SUPPRESSED，永久丢失。
+    const limitBaseline = prefs.mode === 'DAILY_DIGEST'
+      ? await countDigestsSentSince(prisma, userId, startOfUtc8Day())
+      : sentToday;
+    if (limitBaseline >= prefs.dailyLimit) {
       await recordAll(prisma, items, userId, 'SUPPRESSED', 'daily_limit', options.dryRun);
       summary.suppressed += items.length;
-      console.warn(`[notify] 用户 ${target.wikidotId} 24 小时内已发 ${sentToday} 条，达上限 ${DAILY_LIMIT}，本批抑制`);
+      console.warn(`[notify] 用户 ${target.wikidotId} 已发 ${limitBaseline} 条，达其上限 ${prefs.dailyLimit}，本批抑制`);
       continue;
     }
 
@@ -524,6 +750,7 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     const liveTarget = await revalidateTarget(target);
     if (!liveTarget) continue;
 
+
     // 发送**之前**先把这批 dedupeKey 以 PENDING 占住。
     // 原先是先发后记账：若机器人已经收下但响应丢失、或进程在 recordAll 前退出，
     // 这批候选下轮仍会被扫到，等机器人那 15 分钟去重窗口一过就会重复推送给用户。
@@ -534,18 +761,41 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
     // 这里比对「插入前后本轮 key 的归属」，只在确实是自己抢到时才发送。
     // digestKey 在占位时就写进 payload：SENT 那步用的是 updateMany，
     // 没法顺手往 JSON 里合并字段，而日限额的计数正依赖它。
-    const claimed = await recordAll(prisma, items, userId, 'PENDING', null, false, digestKey, target.bindingId);
-    if (claimed < items.length) {
-      // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
-      // 被对方占住的那几条就会被发两次。撤掉自己这部分占位、整批退让，
-      // 下一轮由唯一的胜出者完整处理。
-      await prisma.notificationDelivery.deleteMany({
-        where: { dedupeKey: { in: keys }, state: 'PENDING', payload: { path: ['runId'], equals: RUN_ID } }
-      });
+    // 定时模式把本次的截止线一并存下 —— 它是下一次收集的起点（见 lastDigestCutoff）
+    const digestCutoff = prefs.mode === 'DAILY_DIGEST' ? digestCutoffByUser.get(userId) : undefined;
+    // 定时模式：先原子占住「这一天的汇总名额」，再去占各条 dedupeKey。
+    // 顺序不能反 —— 两轮的 key 集合可能不同，各自都能占到自己那批。
+    //
+    // 两步必须在**同一个事务**里：名额占住了、记账却因异常或进程退出没做成的话，
+    // 会留下一个没有任何投递行与之对应的孤儿名额，把这个用户当天的汇总白白吃掉。
+    // 事务让「占名额 / 占 key」要么都成立、要么都不留痕；
+    // 部分抢占时直接抛异常回滚，连带把名额还回去，不必手工补偿。
+    let claimed = 0;
+    let slotLost = false;
+    try {
+      claimed = await prisma.$transaction(async (tx) => {
+        if (digestCutoff && !(await claimDigestSlot(tx, userId, digestCutoff, digestKey))) {
+          slotLost = true;
+          return 0;
+        }
+        const n = await recordAll(
+          tx, items, userId, 'PENDING', null, false, digestKey, target.bindingId, digestCutoff
+        );
+        // 部分抢占：另一轮已经占住其中一些 key。此时若照发整批摘要，
+        // 被对方占住的那几条就会被发两次。整批退让，下一轮由胜出者完整处理。
+        if (n < items.length) throw new PartialPreemption(n);
+        return n;
+      }, { timeout: 15_000 });
+    } catch (e) {
+      if (!(e instanceof PartialPreemption)) throw e;
       console.warn(
         `[notify] 用户 ${target.wikidotId} 的候选被另一轮部分抢占`
-        + `（${claimed}/${items.length}），本轮整批退让`
+        + `（${e.claimed}/${items.length}），本轮整批退让（事务已回滚，名额未占用）`
       );
+      continue;
+    }
+    if (slotLost) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 当天的汇总名额已被占用，本轮退让`);
       continue;
     }
 
@@ -568,13 +818,20 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       });
       summary.suppressed += ackedNow.size;
       console.log(`[notify] 用户 ${target.wikidotId} 有 ${ackedNow.size} 条在发送前已被站内读掉，取消推送`);
-      if (remaining.length === 0) continue;
+      if (remaining.length === 0) {
+        // 整批都被读掉了，什么也不会发出去 —— 名额必须还回去，
+        // 否则这个用户当天再有新动态也发不出汇总（占了位却没有对应的投递行）。
+        if (digestCutoff) await releaseDigestSlot(prisma, userId, digestCutoff, digestKey);
+        continue;
+      }
       // 整批只剩一部分：重新渲染消息，digestKey 保持不变（机器人侧去重语义不变）
       const reshown = remaining.slice(0, CIRCUIT_USER_MAX);
       message = renderDigest(reshown, remaining.length - reshown.length);
       keys.length = 0;
       keys.push(...remaining.map((c) => c.dedupeKey));
     }
+
+    processedUserIds.add(userId);
 
     // 统计口径必须是「本次真正参与投递的条数」。
     // 发送前的已读回查可能已经取消掉一部分（那部分已计入 suppressed），
@@ -590,6 +847,14 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
         data: { state: 'SENT', sentAt: new Date(), lastError: null }
       });
       summary.sent += dispatchedCount;
+      // 汇总周期状态必须在**发送成功后**推进，且记的是截止线而非发送时刻。
+      // 记发送时刻的话，补发场景下 21:00–23:00 之间的内容会两头不沾。
+      if (digestCutoff) {
+        await prisma.userNotificationChannelSetting.updateMany({
+          where: { userId },
+          data: { lastDigestCutoffAt: digestCutoff }
+        });
+      }
       // 成功要清零 failureCount，否则一次永久失败之后，日后**不连续**的偶发失败
       // 会累加到阈值，把一个正常渠道误暂停。
       await reportChannelOutcome(liveTarget.accountId, liveTarget.bindingId, 'sent', null);
@@ -622,6 +887,10 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
       console.warn(`[notify] 用户 ${target.wikidotId} 暂时失败：${result.error}（保留原批次，下轮以同一 digestKey 重发）`);
     }
   }
+
+  // 本轮到期的定时周期一律推进水位线 —— 包括「没东西可发」的空周期。
+  // 只在发送成功时推进的话，一个空周期就能把水位线永久冻住。
+  await advanceDigestWatermarks(prisma, prefsByUser, Boolean(options.dryRun), processedUserIds);
 
   if (!options.dryRun) {
     await prisma.notificationDispatchState.update({
@@ -683,7 +952,7 @@ async function reportChannelOutcome(
 }
 
 async function recordAll(
-  prisma: PrismaClient,
+  prisma: Db,
   items: Candidate[],
   userId: number,
   state: 'PENDING' | 'SENT' | 'FAILED' | 'SUPPRESSED',
@@ -692,7 +961,9 @@ async function recordAll(
   /** 同一条摘要里的所有行共享它；日限额按 distinct digestKey 计数 */
   digestKey?: string,
   /** 投递目标的绑定身份。重发时用它确认「这批还是发给当初那个绑定」 */
-  bindingId?: string
+  bindingId?: string,
+  /** 定时模式下本次汇总的截止线，作为下次收集的起点 */
+  digestCutoff?: Date
 ): Promise<number> {
   if (dryRun) return 0;
   const now = new Date();
@@ -711,19 +982,339 @@ async function recordAll(
         // 合并字段一并存下：重发时只有 payload，没有原始候选，
         // 不存的话同一批重发出来的格式会和首次不一致
         groupKey: c.groupKey,
+        // 重发时要据此判断「用户是否已关掉这个类型」，不存就无从判断
+        notifyType: c.notifyType,
         ...(c.mergeHead ? { mergeHead: c.mergeHead } : {}),
         ...(c.mergePart ? { mergePart: c.mergePart } : {}),
         ...(c.mergeTail ? { mergeTail: c.mergeTail } : {}),
         detectedAt: c.detectedAt.toISOString(),
         runId: RUN_ID,
         ...(digestKey ? { digestKey } : {}),
-        ...(bindingId ? { bindingId } : {})
+        ...(bindingId ? { bindingId } : {}),
+        ...(digestCutoff ? { digestCutoff: digestCutoff.toISOString() } : {})
       }
     })),
     skipDuplicates: true
   });
   return created.count;
 }
+
+/**
+ * 用户的通知偏好（QQ 侧）。
+ *
+ * 一次查两张表：类型矩阵 + 渠道级设置。都在主库，与告警同库同键（User.id），
+ * 不必跨库。没有记录的用户走默认值 —— 默认全开、实时、20 条/天，
+ * 这样新用户绑定后立刻能收到，不用先去设置页点一遍。
+ */
+interface UserNotifyPrefs {
+  /** 该类型是否推 QQ；缺省 true */
+  qqEnabled: Map<NotifyType, boolean>;
+  dailyLimit: number;
+  mode: 'REALTIME' | 'DAILY_DIGEST';
+  digestHour: number;
+  /** 上一次汇总的截止线；null = 从未发过 */
+  lastDigestCutoffAt: Date | null;
+}
+
+const DEFAULT_PREFS: Omit<UserNotifyPrefs, 'qqEnabled'> = {
+  dailyLimit: 20,
+  mode: 'REALTIME',
+  digestHour: 21,
+  lastDigestCutoffAt: null
+};
+
+export async function loadNotifyPrefs(prisma: PrismaClient, userIds: number[]): Promise<Map<number, UserNotifyPrefs>> {
+  const out = new Map<number, UserNotifyPrefs>();
+  if (userIds.length === 0) return out;
+
+  const [rows, settings] = await Promise.all([
+    prisma.userNotificationPreference.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, type: true, qqEnabled: true }
+    }),
+    prisma.userNotificationChannelSetting.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, qqDailyLimit: true, qqMode: true, qqDigestHour: true, lastDigestCutoffAt: true }
+    })
+  ]);
+
+  // 默认值同样要钳制：运维把 NOTIFY_DAILY_LIMIT 调到 20 以下时，
+  // 没有设置行的用户若保留默认 20，就绕过了运维上限。
+  const defaults = { ...DEFAULT_PREFS, dailyLimit: Math.max(1, Math.min(DEFAULT_PREFS.dailyLimit, DAILY_LIMIT)) };
+  for (const uid of userIds) out.set(uid, { qqEnabled: new Map(), ...defaults });
+  for (const r of rows) out.get(r.userId)?.qqEnabled.set(r.type as NotifyType, r.qqEnabled);
+  for (const c of settings) {
+    const p = out.get(c.userId);
+    if (!p) continue;
+    // 用户值不得突破运维设定的全局上限 —— 取两者更小
+    p.dailyLimit = Math.max(1, Math.min(c.qqDailyLimit, DAILY_LIMIT));
+    p.mode = c.qqMode as 'REALTIME' | 'DAILY_DIGEST';
+    p.digestHour = c.qqDigestHour;
+    p.lastDigestCutoffAt = c.lastDigestCutoffAt ?? null;
+  }
+  return out;
+}
+
+/** UTC+8 的当前小时。定时推送按用户所在时区（站点统一 UTC+8）解释。 */
+/** UTC+8 当天 0 点对应的 UTC 时刻。用于「今天发过没」这类自然日判断。 */
+export function startOfUtc8Day(): Date {
+  const shifted = new Date(Date.now() + 8 * 3600 * 1000);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - 8 * 3600 * 1000);
+}
+
+/**
+ * 下一次汇总的到期时刻 = 上次截止线之后的第一个 digestHour 边界。
+ *
+ * 【为什么不是「今天的 digestHour」】
+ * 宕机跨过午夜时（比如周二 21:00 到周三 01:00），只比较「今天几点」的做法
+ * 会把周二那封未发的汇总推到周三 21:00 —— 而两次截止线相隔约 48 小时，
+ * 早期内容已经被收集窗口丢掉了。
+ * 以「上次截止线」为基准推算，逾期的汇总在恢复后的第一轮就会补上，
+ * 且它的截止线仍然是周二 21:00，覆盖区间照样接得上。
+ *
+ * 从未发过时（lastCutoff 为 null）退回今天的 digestHour。
+ */
+export function nextDigestDueAt(lastCutoff: Date | null, digestHour: number): Date {
+  const todayBoundary = utc8HourToday(digestHour);
+  if (!lastCutoff) return todayBoundary;
+  const DAY = 24 * 3600 * 1000;
+  let due = todayBoundary;
+  // 往前退到「刚好晚于上次截止线」的那个边界
+  while (due.getTime() - DAY > lastCutoff.getTime()) due = new Date(due.getTime() - DAY);
+  // 若今天的边界还不晚于上次截止线，则顺延到下一天
+  while (due.getTime() <= lastCutoff.getTime()) due = new Date(due.getTime() + DAY);
+  return due;
+}
+
+/** UTC+8 今天 hour:00 对应的 UTC 时刻。用于「本次汇总收哪些内容」的截止线。 */
+export function utc8HourToday(hour: number): Date {
+  const shifted = new Date(Date.now() + 8 * 3600 * 1000);
+  shifted.setUTCHours(hour, 0, 0, 0);
+  return new Date(shifted.getTime() - 8 * 3600 * 1000);
+}
+
+export function currentHourUtc8(): number {
+  return new Date(Date.now() + 8 * 3600 * 1000).getUTCHours();
+}
+
+
+/**
+ * 推进定时用户的周期水位线。
+ *
+ * 【为什么不能只在「发送成功」时推进】
+ * 一个到期的周期完全可能没有任何内容（用户那天没动静），或者内容全被
+ * 站内读掉/被偏好抑制。这些情况下没有任何一次发送发生，水位线就停在原地 ——
+ * nextDigestDueAt 之后永远返回那个空周期的边界，而**每一条新告警都晚于它**，
+ * 于是被无限推迟，这个用户从此再也收不到汇总。
+ *
+ * 正确的语义是：**周期到期并被处理过**就推进，与是否真的发出消息无关。
+ * 内容若因暂时失败进了重发队列，那批自己带着 digestCutoff，不会丢。
+ */
+/**
+ * 从水位线出发，跨过**所有已到期的空周期**，返回该停在哪个边界。
+ *
+ * 一轮只推进一个边界的话，一个停用很久的目标（暂停、移出灰度名单、
+ * 绑定失效后重连）恢复后要跑满「缺了多少天就多少轮」才能追上 ——
+ * 一年前的绑定重新启用，新通知要等约 365 轮（默认 60 秒一轮）才发得出。
+ *
+ * 只跨**没有待发内容**的周期：调用方只对 processedUserIds 里的用户调用它，
+ * 而有内容却没发出去的用户（hasUnsentInPeriod）根本进不到这里。
+ *
+ * @returns 该推进到的边界；null = 尚未到期，本轮不推进
+ */
+export function fastForwardDigestCutoff(
+  lastCutoff: Date | null,
+  digestHour: number,
+  now: number
+): Date | null {
+  let due = nextDigestDueAt(lastCutoff, digestHour);
+  if (now < due.getTime()) return null;
+  for (let guard = 0; guard < MAX_CUTOFF_SKIP; guard++) {
+    const next = nextDigestDueAt(due, digestHour);
+    if (now < next.getTime()) break;   // 下一个还没到期，停在这里
+    due = next;
+  }
+  return due;
+}
+
+async function advanceDigestWatermarks(
+  prisma: PrismaClient,
+  prefsByUser: Map<number, UserNotifyPrefs>,
+  dryRun: boolean,
+  /**
+   * 本轮**真正处理完**的用户。优雅停机时循环会提前 break，
+   * 剩下的用户被明确留给下一轮 —— 给他们推进水位线等于宣称
+   * 「这个周期处理过了」，而下一轮的起点（水位线 - 15 分钟重叠）
+   * 会把他们那个周期的绝大部分内容直接丢掉。
+   */
+  processedUserIds: Set<number>
+): Promise<void> {
+  if (dryRun) return;
+  const now = Date.now();
+  for (const [userId, prefs] of prefsByUser) {
+    if (prefs.mode !== 'DAILY_DIGEST') continue;
+    if (!processedUserIds.has(userId)) continue;
+    // 连续的空周期在一轮里全部跨完（见 fastForwardDigestCutoff）
+    const due = fastForwardDigestCutoff(prefs.lastDigestCutoffAt, prefs.digestHour, now);
+    if (!due) continue;                          // 还没到期
+    if (prefs.lastDigestCutoffAt && due <= prefs.lastDigestCutoffAt) continue;
+    // 条件里再判一次「只前进不后退」，因为 prefs 是**开轮时的快照**：
+    // 本轮若跨过了被占用的边界并成功发出了更晚那一封，成功路径已经把水位线
+    // 推到了那个更晚的截止线；这里按快照重算出的 due 却是被跨过的那个较早边界，
+    // 无条件写入就会把它退回去 —— 之后每一轮都要重新扫一遍、重新跨一次。
+    await prisma.userNotificationChannelSetting.updateMany({
+      where: {
+        userId,
+        OR: [{ lastDigestCutoffAt: null }, { lastDigestCutoffAt: { lt: due } }]
+      },
+      data: { lastDigestCutoffAt: due }
+    });
+  }
+}
+
+
+/**
+ * 周期边界所属的 UTC+8 自然日（YYYY-MM-DD）—— 汇总名额的单位。
+ *
+ * 是**边界归属的那一天**，不是消息发出去的那一天。两个方向都踩过坑：
+ *  · 按「发出去那天」算：跨午夜的补发会吃掉新一天的额度 → 当天设定时点被挡 →
+ *    次日又逾期又在午夜后补发，用户被**永久相位锁死在午夜**。
+ *  · 按「单个边界」算：同一天里把时点从 10:00 改到 21:00，会产生两个不同的
+ *    边界，于是当天发两封 —— 而设置页承诺的是每天一封。
+ * 取「边界所属的自然日」两者都对。
+ */
+export function utc8DayOf(cutoff: Date): string {
+  return new Date(cutoff.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * 读取该用户这一天的汇总名额占用情况。
+ *
+ * 名额记在专门的 DigestSlotClaim 上，而不是从投递表的 payload 形状反推 ——
+ * 后者试过，站不住：历史的实时投递行带着 digestKey 却没有 digestCutoff，
+ * 任何「视 null 为匹配所有周期」的写法都会把发过实时消息的用户永久挡死；
+ * 而反过来忽略它们又会漏掉模式切换前的残留。名额是独立的状态，就该独立存。
+ */
+async function readDigestSlot(
+  prisma: Db, userId: number, cutoff: Date
+): Promise<{ digestKey: string | null } | null> {
+  const rows = await prisma.$queryRaw<Array<{ digestKey: string | null }>>`
+    SELECT "digestKey" FROM "DigestSlotClaim"
+    WHERE "userId" = ${userId} AND "cutoffDay" = ${utc8DayOf(cutoff)}::date
+    LIMIT 1`;
+  return rows[0] ?? null;
+}
+
+/**
+ * 原子占住该用户这一天的汇总名额；已被占则返回 false。
+ *
+ * 「先查再占」两步之间存在窗口：两轮投递重叠时（PM2 常驻轮次 + 手工 --once），
+ * 双方都可能查到空槽。已有的 per-key 占位挡不住这个 —— 两轮的 dedupeKey 集合
+ * 可以不同（PageMetricAlert 是就地合并的，内容签名会变），于是各自抢到各自那批，
+ * 两封摘要都发出去。主键冲突把这两步压成一步。
+ */
+async function claimDigestSlot(
+  prisma: Db, userId: number, cutoff: Date, digestKey: string
+): Promise<boolean> {
+  const n = await prisma.$executeRaw`
+    INSERT INTO "DigestSlotClaim" ("userId","cutoffDay","cutoffAt","digestKey")
+    VALUES (${userId}, ${utc8DayOf(cutoff)}::date, ${cutoff}, ${digestKey})
+    ON CONFLICT ("userId","cutoffDay") DO NOTHING`;
+  return n > 0;
+}
+
+/** 占了名额但这批最终没发出去时归还，否则用户白丢一天的汇总。
+ *  带 digestKey 条件，保证只归还自己那一份。 */
+async function releaseDigestSlot(
+  prisma: Db, userId: number, cutoff: Date, digestKey: string
+): Promise<void> {
+  await prisma.$executeRaw`
+    DELETE FROM "DigestSlotClaim"
+    WHERE "userId" = ${userId} AND "cutoffDay" = ${utc8DayOf(cutoff)}::date
+      AND "digestKey" = ${digestKey}`;
+}
+
+/** 单轮里最多跨过多少个已被占用的边界。
+ *  正常最多跨 1 个（同日改时点）；给足余量以防长期停机后堆积，
+ *  同时避免水位线异常时无限循环。 */
+/**
+ * 从水位线出发，定位本轮该用的截止线，并跨过所有「已被占用且已到期」的边界。
+ *
+ * 被占用的边界永远轮不到我们（那一天的名额已经给了更早的那封汇总）。
+ * 原地等的话水位线会被钉死：每一轮都返回同一个边界，期间的告警一直进不了
+ * 任何一封汇总，直到滑出扫描窗口被静默丢弃。跨过去，它们顺延到下一个周期。
+ *
+ * 取槽位的动作以回调注入，便于单测直接驱动这段逻辑。
+ * 返回的 skipped 是**最后一个**被跨过的边界 —— 水位线要推到它。
+ */
+export async function resolveDigestCutoff(
+  isOccupied: (cutoff: Date) => Promise<boolean>,
+  lastCutoff: Date | null,
+  digestHour: number,
+  now: number
+): Promise<{ cutoff: Date; skipped: Date | null }> {
+  let cutoff = nextDigestDueAt(lastCutoff, digestHour);
+  let skipped: Date | null = null;
+  for (let guard = 0; guard < MAX_CUTOFF_SKIP; guard++) {
+    if (now < cutoff.getTime()) break;              // 还没到期，正常等
+    if (!(await isOccupied(cutoff))) break;         // 这个边界可用
+    skipped = cutoff;                                // 被占 → 跨过去
+    cutoff = nextDigestDueAt(cutoff, digestHour);
+  }
+  return { cutoff, skipped };
+}
+
+/**
+ * 为**存量**投递行补出 notifyType。
+ *
+ * notifyType 是本次改动才写进 payload 的。上线那一刻队列里已有的 SCHEDULED 行
+ * 没有这个字段，于是「用户关掉某个类型」对它们完全失效 —— 关掉了还是会收到，
+ * 而这正是设置失效最直接的体感。存量行会在一两天内自然消化完，
+ * 但那一两天恰好是用户刚看到新设置页、最可能去调整偏好的时候。
+ *
+ * 从 dedupeKey 前缀反推：uaa:/fia: 前缀本身就唯一确定类型；
+ * pma: 还要看告警的 metric，按 id 批量回查一次即可（只针对缺字段的行）。
+ */
+async function backfillNotifyTypes(
+  prisma: Db,
+  rows: Array<{ dedupeKey: string; payload: unknown }>
+): Promise<Map<string, NotifyType>> {
+  const out = new Map<string, NotifyType>();
+  const pmaIdToKeys = new Map<number, string[]>();
+  for (const r of rows) {
+    if (typeof ((r.payload ?? {}) as Record<string, unknown>).notifyType === 'string') continue;
+    const [prefix, id] = r.dedupeKey.split(':');
+    if (prefix === 'uaa') out.set(r.dedupeKey, 'FOLLOW_ACTIVITY');
+    else if (prefix === 'fia') out.set(r.dedupeKey, 'FORUM_INTERACTION');
+    else if (prefix === 'pma') {
+      const n = Number(id);
+      if (Number.isFinite(n)) pmaIdToKeys.set(n, [...(pmaIdToKeys.get(n) ?? []), r.dedupeKey]);
+    }
+  }
+  if (pmaIdToKeys.size > 0) {
+    const alerts = await prisma.pageMetricAlert.findMany({
+      where: { id: { in: [...pmaIdToKeys.keys()] } },
+      select: { id: true, metric: true }
+    });
+    for (const a of alerts) {
+      const t = METRIC_TO_TYPE[a.metric];
+      if (!t) continue;
+      for (const k of pmaIdToKeys.get(a.id) ?? []) out.set(k, t);
+    }
+  }
+  return out;
+}
+
+/** 部分抢占 —— 用异常触发事务回滚，让名额与 key 占位一起撤销 */
+class PartialPreemption extends Error {
+  constructor(readonly claimed: number) { super('partial_preemption'); }
+}
+
+/** 既可以是普通客户端，也可以是事务客户端 —— 占位与记账必须能在同一个事务里做 */
+type Db = PrismaClient | Prisma.TransactionClient;
+
+const MAX_CUTOFF_SKIP = 400;
 
 /** SCHEDULED 批次最多重发几轮，超过就判失败不再占位 */
 const MAX_RESUME_ATTEMPTS = Math.max(1, Number(process.env.NOTIFY_MAX_RESUME_ATTEMPTS ?? '5') || 5);
@@ -755,8 +1346,37 @@ function nextRetryAt(resumeRound: number): Date {
  * 必须在健康检查与重发**之前**跑：过期的本来就不该发，
  * 不该因为机器人恰好不可用就一直留着。
  */
-async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean): Promise<number> {
+async function expireStaleScheduledBatches(
+  prisma: PrismaClient,
+  dryRun: boolean,
+  /** 当前处于定时模式的用户。判定必须看**现在的模式**，不能看 payload 里的痕迹 —— 
+   *  用户可能是在批次转 SCHEDULED 之后才切换过来的。 */
+  digestUserIds?: Set<number>
+): Promise<{ expired: number; digestUsers: Set<number> }> {
+  // digestUserIds 来自 prefsByUser，而后者只装了**活跃目标** ——
+  // 被暂停、或不在灰度名单里的定时用户不在其中，于是他们待重发的批次
+  // 会按实时模式的 24 小时时限判过期。可一批日汇总本身就可能装着接近
+  // 24 小时前的事件，下一次清理就把它判死了，而目标可能马上就恢复。
+  // 直接按「待重发行里出现过的用户」查一次当前模式，与活跃与否无关。
+  const scheduledDigestUsers = await prisma.$queryRaw<Array<{ userId: number }>>`
+    SELECT DISTINCT d."userId"
+    FROM "NotificationDelivery" d
+    JOIN "UserNotificationChannelSetting" s ON s."userId" = d."userId"
+    WHERE d.state = 'SCHEDULED' AND d.channel = 'QQ' AND s."qqMode" = 'DAILY_DIGEST'`;
+  const digestUsers = new Set<number>([
+    ...(digestUserIds ?? []),
+    ...scheduledDigestUsers.map((r) => r.userId)
+  ]);
+
   const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
+  // 定时汇总的批次用**放宽一倍**的时限。
+  //
+  // 按来源事件时间判过期本身是对的（见下），但定时汇总攒的就是一整天的内容 ——
+  // 它最老的那几条在发出时本来就接近回看窗口上限。一旦这批暂时失败转为
+  // SCHEDULED，下一轮的过期清理会立刻把它们判死，于是**定时用户的批次
+  // 只要失败一次就再也重试不了**，补发场景下更是整批必死。
+  const digestCutoff = new Date(Date.now() - 2 * LOOKBACK_HOURS * 3600 * 1000);
+
   // 按**来源事件时间**判过期，不是按占位时间。
   // createdAt 记的是投递器什么时候认领了它，一条在窗口边缘才被认领的告警，
   // 按 createdAt 还能再苟一整个窗口期，实际送达时已经接近两倍于配置的时限。
@@ -764,15 +1384,36 @@ async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean
   // COALESCE 兜底：没有 detectedAt 的历史行退回 createdAt。
   const whereExpired = {
     state: 'SCHEDULED' as const,
-    OR: [
-      { payload: { path: ['detectedAt'], lt: cutoff.toISOString() } },
-      { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: cutoff } }] }
+    AND: [
+      {
+        OR: [
+          { payload: { path: ['detectedAt'], lt: cutoff.toISOString() } },
+          { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: cutoff } }] }
+        ]
+      },
+      {
+        // 定时用户的批次只有超过放宽时限才判死。
+        // 按 userId 而非 payload 判断：用户可能在批次转 SCHEDULED 之后
+        // 才切成定时模式，那时 payload 里根本没有 digestCutoff。
+        OR: [
+          ...(digestUsers.size > 0
+            ? [{ userId: { notIn: [...digestUsers] } }]
+            : []),
+          { payload: { path: ['detectedAt'], lt: digestCutoff.toISOString() } },
+          // 与上面那组同样需要 createdAt 兜底：没有 detectedAt 的历史行
+          // （本次改动之前写下的）在 JSON 比较里永远匹配不上，而定时用户
+          // 又被 notIn 排除在外 —— 两头不沾，这些行会越过放宽后的时限活下来，
+          // 日后被当作陈旧内容重发出去。
+          { AND: [{ payload: { path: ['detectedAt'], equals: Prisma.DbNull } }, { createdAt: { lt: digestCutoff } }] },
+          ...(digestUsers.size > 0 ? [] : [{ userId: { gt: -1 } }])
+        ]
+      }
     ]
   };
   if (dryRun) {
     const n = await prisma.notificationDelivery.count({ where: whereExpired });
     if (n > 0) console.warn(`[notify][dry-run] 有 ${n} 条 SCHEDULED 已超出回看窗口，真实运行会判失效`);
-    return n;
+    return { expired: n, digestUsers };
   }
   const res = await prisma.notificationDelivery.updateMany({
     where: whereExpired,
@@ -781,7 +1422,7 @@ async function expireStaleScheduledBatches(prisma: PrismaClient, dryRun: boolean
   if (res.count > 0) {
     console.warn(`[notify] ${res.count} 条待重发记录已超出回看窗口（${LOOKBACK_HOURS} 小时），判失效不再补发`);
   }
-  return res.count;
+  return { expired: res.count, digestUsers };
 }
 
 /**
@@ -803,11 +1444,17 @@ async function resumeScheduledBatches(
   dryRun: boolean,
   shouldStop?: () => boolean,
   /** 发送前复验绑定（与常规投递共用同一份实现与缓存） */
-  revalidateTarget?: (t: QqTarget) => Promise<QqTarget | null>
+  revalidateTarget?: (t: QqTarget) => Promise<QqTarget | null>,
+  /** 与常规投递共用同一份偏好，保证两条路径行为一致 */
+  prefsByUser?: Map<number, UserNotifyPrefs>,
+  /** 当前处于定时模式的用户，用于过期判定 */
+  digestUserIds?: Set<number>
 ): Promise<{ replayed: number; skipped: boolean }> {
   // 先把超窗的判失效，再取待重发的 —— 顺序不能反：
   // 过期与否和机器人健不健康无关，不该被下面的健康检查挡住。
-  await expireStaleScheduledBatches(prisma, dryRun);
+  // 过期判定与下面的「目标已消失」判定必须用**同一个**定时用户集合 ——
+  // 前者放宽到 48 小时保住了批次，后者却仍按 24 小时把它判死，等于白放宽。
+  const { digestUsers } = await expireStaleScheduledBatches(prisma, dryRun, digestUserIds);
 
   const now = new Date();
   const rows = await prisma.notificationDelivery.findMany({
@@ -875,7 +1522,12 @@ async function resumeScheduledBatches(
       // 但陈旧清理只扫 PENDING，放着不管就是一批永久占着 dedupeKey 的僵尸行 ——
       // 既不会重发，也会一直把对应告警挡在新批次之外。超过保留期就判失败。
       const age = Date.now() - first.createdAt.getTime();
-      if (age > ORPHAN_SCHEDULED_MAX_AGE_MS && !dryRun) {
+      // 定时用户同样放宽一倍：一批日汇总本就装着接近 24 小时前的事件，
+      // 目标被暂停或移出灰度名单期间按 24 小时判死，恢复后什么都不剩了。
+      const orphanMaxAge = digestUsers.has(first.userId)
+        ? 2 * ORPHAN_SCHEDULED_MAX_AGE_MS
+        : ORPHAN_SCHEDULED_MAX_AGE_MS;
+      if (age > orphanMaxAge && !dryRun) {
         await prisma.notificationDelivery.updateMany({
           where: { dedupeKey: { in: keys }, state: 'SCHEDULED' },
           data: { state: 'FAILED', lastError: 'target_gone' }
@@ -936,8 +1588,39 @@ async function resumeScheduledBatches(
       continue;
     }
 
+    // 用户在首次投递失败之后关掉了这个类型 → 取消，不再重发。
+    // 「我已经关掉了它，为什么还收到」是最直接的设置失效体感。
+    // 与常规投递同理：重发也是**串行**逐批处理的，一轮可能跑很久。
+    // 用户在开轮 loadNotifyPrefs 之后、轮到这一批之前改了偏好，
+    // 拿快照重发就是把刚关掉的通知又送出去一次。
+    const snapshotPrefs = prefsByUser?.get(first.userId);
+    const prefs = (await loadNotifyPrefs(prisma, [first.userId])).get(first.userId) ?? snapshotPrefs;
+    const optedOut = new Set<string>();
+    if (prefs) {
+      // 上线时队列里的存量行没有 notifyType，先按 dedupeKey 补出来，
+      // 否则用户刚关掉的类型对这些行完全不生效
+      const backfilled = await backfillNotifyTypes(prisma, batch);
+      for (const r of batch) {
+        const raw = ((r.payload ?? {}) as Record<string, unknown>).notifyType;
+        const t = typeof raw === 'string' ? raw : backfilled.get(r.dedupeKey);
+        if (t && prefs.qqEnabled.get(t as NotifyType) === false) {
+          optedOut.add(r.dedupeKey);
+        }
+      }
+    }
+    if (optedOut.size > 0) {
+      if (!dryRun) {
+        await prisma.notificationDelivery.updateMany({
+          where: { dedupeKey: { in: [...optedOut] }, state: 'SCHEDULED' },
+          data: { state: 'CANCELLED', lastError: 'type_disabled' }
+        });
+      }
+      summary.suppressed += optedOut.size;
+      console.log(`[notify] 批次 ${digestKey} 有 ${optedOut.size} 条的类型已被用户关闭，取消重发`);
+    }
+
     // 站内已读的那些直接取消，不再推送
-    const stillPending = batch.filter((r) => !acknowledged.has(r.dedupeKey));
+    const stillPending = batch.filter((r) => !acknowledged.has(r.dedupeKey) && !optedOut.has(r.dedupeKey));
     const cancelledKeys = batch.filter((r) => acknowledged.has(r.dedupeKey)).map((r) => r.dedupeKey);
     if (cancelledKeys.length > 0) {
       if (!dryRun) {
@@ -959,12 +1642,71 @@ async function resumeScheduledBatches(
     const userId = first.userId;
     let sentToday = sentTodayByUser.get(userId);
     if (sentToday === undefined) {
-      sentToday = await countDigestsSentSince(prisma, userId, dayAgo);
+      // 口径必须与常规投递一致：定时模式按 UTC+8 自然日，实时模式按滚动 24 小时。
+      // 定时模式若用滚动窗口，qqDailyLimit=1 的用户昨晚那封会把今天的重发
+      // 一直挡到整整 24 小时之后 —— 期间批次里最老的行可能已经逼近过期。
+      const since = prefs?.mode === 'DAILY_DIGEST' ? startOfUtc8Day() : dayAgo;
+      sentToday = await countDigestsSentSince(prisma, userId, since);
       sentTodayByUser.set(userId, sentToday);
     }
-    if (sentToday >= DAILY_LIMIT) {
-      console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${DAILY_LIMIT}，批次 ${digestKey} 留待下轮`);
-      continue; // 保持 SCHEDULED，不消耗重试次数
+    // 限额与定时同样按每人设置，两条投递路径的行为必须一致
+    const effLimit = prefs?.dailyLimit ?? DAILY_LIMIT;
+    // 这批所属周期的截止线（仅定时模式有意义）；发送成功后据此推进水位线
+    let batchCutoff: Date | null = null;
+    if (prefs?.mode === 'DAILY_DIGEST') {
+      // 与常规路径同口径：过点即可补发，且「今天发过没」按 UTC+8 自然日算。
+      // sentToday 是滚动 24 小时的计数，用在这里会让昨天晚些时候发出的汇总
+      // 一直挡住今天的重发，直到它滑出窗口 —— 那时批次可能已经过期。
+      // 资格看**这批自己的截止线**，不是「今天几点」。
+      //
+      // 一个待重发的定时批次，其截止线在它进入队列时就已经过去了 ——
+      // 它欠的是那个周期的账。若机器人在午夜后、今天设定时点之前恢复，
+      // 再按「今天几点」判断会把它压到今晚，期间最老的行可能已经过期。
+      // 批次自带 digestCutoff 时直接用它；没有的（实时模式下攒的、
+      // 之后才切成定时）退回按本周期的到期时刻判断。
+      const storedCutoff = ((batch[0]?.payload ?? {}) as Record<string, unknown>).digestCutoff;
+      batchCutoff = typeof storedCutoff === 'string'
+        ? new Date(storedCutoff)
+        : nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
+      if (Date.now() < batchCutoff!.getTime()) continue;   // 本周期还没到期
+      // 没有 digestCutoff 的批次（模式切换而来）还要确认内容不晚于截止线
+      if (typeof storedCutoff !== 'string') {
+        const anyAfterCutoff = batch.some((r) => {
+          const d = ((r.payload ?? {}) as Record<string, unknown>).detectedAt;
+          return typeof d === 'string' && new Date(d) >= batchCutoff!;
+        });
+        if (anyAfterCutoff) continue;
+      }
+    }
+    // 定时模式的「一天一封」必须独立判定，不能拿 qqDailyLimit 比 ——
+    // 那个上限默认 20，用它判定等于允许一天发二十封「每日汇总」。
+    if (prefs?.mode === 'DAILY_DIGEST' && batchCutoff) {
+      const slot = await readDigestSlot(prisma, first.userId, batchCutoff);
+      if (slot) {
+        // 槽位是别人的（当天已有另一封）就跳过；是自己的才继续重发
+        if (slot.digestKey !== digestKey) {
+          console.warn(`[notify] 用户 ${target.wikidotId} 当天已有另一封汇总，批次 ${digestKey} 跳过`);
+          continue;
+        }
+      } else if (dryRun) {
+        // 演练绝不能写库。这条路径在后面那个 dry-run 分支**之前**，
+        // 不挡的话，一条自称只读的命令会留下真实的占位行，
+        // 把当天另一封（key 不同的）真实汇总挡掉。
+        console.log(`[notify][dry-run] 会为批次 ${digestKey} 占用当天汇总名额`);
+      } else if (!(await claimDigestSlot(prisma, first.userId, batchCutoff, digestKey))) {
+        // 没有槽位（模式切换前攒下的批次）则现占；抢不到说明有别人，退让
+        console.warn(`[notify] 用户 ${target.wikidotId} 当天的汇总名额已被占用，批次 ${digestKey} 跳过`);
+        continue;
+      }
+    }
+    // 日限额对定时模式**同样生效**。先前为了不让 qqDailyLimit 兼任「一天一封」
+    // 的判定而整个跳过了它，跳过头了：一天一封现在由 DigestSlotClaim 独立保证，
+    // 限额该回来管它本来该管的事 —— 否则宕机恢复时，几个不同周期的待重发批次
+    // 会在同一轮里全部发出，把用户设的 qqDailyLimit=1 直接架空。
+    const limitBaseline = sentToday;
+    if (limitBaseline >= effLimit) {
+      console.warn(`[notify] 用户 ${target.wikidotId} 已达日限额 ${effLimit}，批次 ${digestKey} 留待下轮`);
+      continue;
     }
     // 必须在**发送前**确认额度够装下整批：原先只判 >0，
     // 于是剩 1 条额度也会把一整批（可能几十条）发出去，再把额度减成负数 ——
@@ -1021,6 +1763,15 @@ async function resumeScheduledBatches(
         data: { state: 'SENT', sentAt: new Date(), lastError: null, attemptCount: attempt }
       });
       summary.sent += stillPending.length;
+      // 重发成功同样要推进水位线 —— 否则后续扫描仍盯着旧边界，
+      // 而这批行已是 SENT 被排除在外，更新的告警又全部晚于旧边界被推迟，
+      // 这个用户从此收不到任何汇总。
+      if (prefs?.mode === 'DAILY_DIGEST' && batchCutoff) {
+        await prisma.userNotificationChannelSetting.updateMany({
+          where: { userId: first.userId },
+          data: { lastDigestCutoffAt: batchCutoff }
+        });
+      }
       // 计入当日私信条数：同一轮里该用户还有别的批次时，限额要立刻生效
       sentTodayByUser.set(userId, sentToday + 1);
       console.log(`[notify] 批次 ${digestKey} 重发成功${result.deduped ? '（机器人判定为重复，说明上次已送达）' : ''}`);
@@ -1241,6 +1992,7 @@ async function collectCandidates(
     const delta = diff != null ? `${diff > 0 ? '+' : ''}${diff}` : '';
     out.push({
       source: 'page_metric',
+      notifyType: METRIC_TO_TYPE[metric] ?? 'PAGE_COMMENT',
       // 键里带 detectedAt：PageMetricAlert 是就地更新的，只带 newValue 的话
       // 「20→40→20→40」这种来回变动，最后那次 40 会撞到早先 40 的键而被当成已投递。
       dedupeKey: `pma:${r.id}:${r.newValue ?? 'n'}:${new Date(String(r.detectedAt)).getTime()}`,
@@ -1277,6 +2029,7 @@ async function collectCandidates(
     const what = String(r.type) === 'REVISION' ? '编辑了' : String(r.type) === 'ATTRIBUTION' ? '发布了' : '不再署名';
     out.push({
       source: 'follow_activity',
+      notifyType: 'FOLLOW_ACTIVITY',
       dedupeKey: `uaa:${r.id}:${r.revisionId ?? r.pageVersionId ?? 'n'}`,
       userId: Number(r.followerId),
       detectedAt: new Date(String(r.detectedAt)),
@@ -1305,6 +2058,7 @@ async function collectCandidates(
     const title = r.postTitle ? `「${String(r.postTitle)}」` : '';
     out.push({
       source: 'forum',
+      notifyType: 'FORUM_INTERACTION',
       dedupeKey: `fia:${r.id}`,
       userId: Number(r.recipientUserId),
       detectedAt: new Date(String(r.detectedAt)),

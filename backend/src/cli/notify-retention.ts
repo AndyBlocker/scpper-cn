@@ -85,6 +85,15 @@ export async function runNotifyRetention(options: RetentionOptions): Promise<voi
     run: async () => (await prisma.notificationDelivery.deleteMany({ where: deliveryWhere })).count
   });
 
+  // ①b 汇总名额的占位行。每人每天最多一行，长期不清也只是慢慢长；
+  //     但它没有任何业务价值，过了那天就是垃圾。与投递行同一个保留期。
+  const claimWhere = { createdAt: { lt: deliveryCutoff } };
+  buckets.push({
+    label: `DigestSlotClaim（早于 ${options.deliveryDays} 天）`,
+    count: await prisma.digestSlotClaim.count({ where: claimWhere }),
+    run: async () => (await prisma.digestSlotClaim.deleteMany({ where: claimWhere })).count
+  });
+
   // ② 已读的三张告警表。**只删已读**：未读的无论多老都保留，
   //    否则用户长期不上线回来会发现历史动态凭空消失。
   const ackWhere = { acknowledgedAt: { not: null, lt: alertCutoff } };

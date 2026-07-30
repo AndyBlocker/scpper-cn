@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { loadSiteVisibility, siteBoundaryClause } from '../utils/notifyPrefs.js';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { fetchAuthUser } from '../utils/auth.js';
@@ -80,6 +81,15 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.json({ ok: true, alerts: [], unreadCount: 0 });
       }
 
+      // 同 followAlerts：用主库读开关（避免副本延迟），
+      // 站内关掉则列表与未读数一并置空，不影响 QQ 推送
+      const visibility = await loadSiteVisibility(pool, recipientUserId);
+      if (visibility.disabled.has('FORUM_INTERACTION')) {
+        return res.json({ ok: true, alerts: [], unreadCount: 0 });
+      }
+      // 关闭期间攒下的不算「新未读」—— 列表与未读数用同一个边界
+      const forumBoundary = visibility.suppressedBefore.get('FORUM_INTERACTION');
+
       const limit = Math.max(1, Math.min(Number.parseInt(String(req.query.limit ?? '20'), 10) || 20, 50));
       const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0);
       const alertType = normalizeAlertType(req.query.type);
@@ -87,6 +97,9 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       // 「徽标有数字但列表为空且翻不到」
       const unreadOnly = String(req.query.unreadOnly ?? '') === '1';
 
+      // limit/offset 固定在 $3/$4，边界参数追加在其后
+      const alertsParams: unknown[] = [recipientUserId, alertType, limit, offset];
+      const unreadParams: unknown[] = [recipientUserId, alertType];
       const alertsQuery = `
         SELECT
           a.id,
@@ -115,6 +128,7 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         WHERE a."recipientUserId" = $1
           AND ($2::text IS NULL OR a.type = CAST($2 AS "ForumInteractionAlertType"))
           ${unreadOnly ? 'AND a."acknowledgedAt" IS NULL' : ''}
+          ${siteBoundaryClause(forumBoundary, alertsParams, 'a')}
         ORDER BY a."detectedAt" DESC
         LIMIT $3 OFFSET $4
       `;
@@ -125,11 +139,12 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
         WHERE a."recipientUserId" = $1
           AND ($2::text IS NULL OR a.type = CAST($2 AS "ForumInteractionAlertType"))
           AND a."acknowledgedAt" IS NULL
+          ${siteBoundaryClause(forumBoundary, unreadParams, 'a')}
       `;
 
       const [alertsResult, unreadResult] = await Promise.all([
-        readPool.query<ForumAlertRow>(alertsQuery, [recipientUserId, alertType, limit, offset]),
-        readPool.query<{ count: number }>(unreadQuery, [recipientUserId, alertType])
+        readPool.query<ForumAlertRow>(alertsQuery, alertsParams),
+        readPool.query<{ count: number }>(unreadQuery, unreadParams)
       ]);
 
       const alerts = alertsResult.rows.map((row) => ({
@@ -179,6 +194,11 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       }
 
       const alertType = normalizeAlertType(req.body?.type);
+      const readAllVisibility = await loadSiteVisibility(pool, recipientUserId);
+      if (readAllVisibility.disabled.has('FORUM_INTERACTION')) {
+        return res.json({ ok: true, updated: 0 });
+      }
+      const readAllParams: unknown[] = [recipientUserId, alertType];
       const result = await pool.query<{ id: number }>(
         `
           UPDATE "ForumInteractionAlert"
@@ -186,9 +206,15 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
           WHERE "recipientUserId" = $1
             AND ($2::text IS NULL OR type = CAST($2 AS "ForumInteractionAlertType"))
             AND "acknowledgedAt" IS NULL
+          -- 「全部已读」只能覆盖用户**实际看得见的**那些。
+          -- acknowledgedAt 是两个渠道共用的状态：QQ 投递器拿它判断「不必再推」。
+          -- 把站内隐藏的行一并标记，等于用户点一下「全部已读」就把待发的
+          -- QQ 通知悄悄杀掉了 —— 而他根本没看到过那些条目。
+          -- 判据与读取侧完全一致：类型被关掉的整类跳过，其余只覆盖边界之后的。
+            ${siteBoundaryClause(readAllVisibility.suppressedBefore.get('FORUM_INTERACTION'), readAllParams, '')}
           RETURNING id
         `,
-        [recipientUserId, alertType]
+        readAllParams
       );
 
       return res.json({ ok: true, updated: result.rowCount || 0 });
