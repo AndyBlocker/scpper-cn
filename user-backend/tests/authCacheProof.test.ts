@@ -21,13 +21,22 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function account(displayName: string) {
+function account(
+  displayName: string,
+  overrides: Partial<{
+    id: string;
+    email: string;
+    linkedWikidotId: number | null;
+    updatedAt: Date;
+  }> = {}
+) {
   return {
-    id: 'auth-cache-user',
-    email: 'cache@example.com',
+    id: overrides.id ?? 'auth-cache-user',
+    email: overrides.email ?? 'cache@example.com',
     displayName,
-    linkedWikidotId: null,
+    linkedWikidotId: overrides.linkedWikidotId ?? null,
     lastLoginAt: null,
+    updatedAt: overrides.updatedAt ?? new Date('2026-07-30T06:00:00.000Z'),
     status: 'ACTIVE',
     passwordHash: `hash-${displayName}`,
     channelBindings: [],
@@ -69,6 +78,59 @@ test('查询期间失效时旧结果既不返回也不重新写入缓存', async
     assert.equal(freshCallerResult?.displayName, '新昵称');
     assert.equal(__authCacheTesting.getCachedUser('auth-cache-user')?.displayName, '新昵称');
     assert.equal(queryCount, 2);
+  } finally {
+    userAccount.findUnique = originalFindUnique;
+    __authCacheTesting.reset();
+  }
+});
+
+test('独立 CLI 提交后，在线进程不会继续使用已预热的旧绑定缓存', async () => {
+  __authCacheTesting.reset();
+  const before = account('跨进程用户', {
+    linkedWikidotId: 12345,
+    updatedAt: new Date('2026-07-30T06:00:00.000Z')
+  });
+  const after = account('跨进程用户', {
+    linkedWikidotId: null,
+    updatedAt: new Date('2026-07-30T06:00:00.001Z')
+  });
+  let databaseState = before;
+  let fullQueryCount = 0;
+  let versionQueryCount = 0;
+  const userAccount = prisma.userAccount as unknown as {
+    findUnique: (args: {
+      select?: { updatedAt?: boolean };
+    }) => Promise<ReturnType<typeof account> | { updatedAt: Date } | null>;
+  };
+  const originalFindUnique = userAccount.findUnique;
+
+  userAccount.findUnique = async (args) => {
+    const versionOnly = args.select
+      && args.select.updatedAt === true
+      && Object.keys(args.select).length === 1;
+    if (versionOnly) {
+      versionQueryCount += 1;
+      return { updatedAt: databaseState.updatedAt };
+    }
+    fullQueryCount += 1;
+    return databaseState;
+  };
+
+  try {
+    const warmed = await __authCacheTesting.fetchCurrentUser(before.id);
+    assert.equal(warmed?.linkedWikidotId, 12345);
+    assert.equal(fullQueryCount, 1);
+    assert.equal(versionQueryCount, 0);
+
+    // 模拟另一个 Node 进程中的 CLI 已提交解绑。刻意不调用 invalidateAuthCache：
+    // 在线服务只能依靠数据库版本探测发现这次跨进程变更。
+    databaseState = after;
+
+    const refreshed = await __authCacheTesting.fetchCurrentUser(before.id);
+    assert.equal(refreshed?.linkedWikidotId, null);
+    assert.equal(fullQueryCount, 2);
+    assert.equal(versionQueryCount, 1);
+    assert.equal(__authCacheTesting.getCachedUser(before.id)?.updatedAt.getTime(), after.updatedAt.getTime());
   } finally {
     userAccount.findUnique = originalFindUnique;
     __authCacheTesting.reset();

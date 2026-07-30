@@ -215,6 +215,7 @@ export function useCollections() {
     const token = beginPrivateRequest()
     const existing = state.value.active[id]
     if (!force && existing) return existing
+    markError(null, token)
     try {
       const res = await $bff<{ ok: boolean; collection: CollectionSummary; items: CollectionItem[] }>(`/collections/${id}`, { method: 'GET' })
       if (!isCurrentRequest(token)) return null

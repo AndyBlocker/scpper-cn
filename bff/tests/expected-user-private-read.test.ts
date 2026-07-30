@@ -103,8 +103,12 @@ describe('Expected user boundary for private reads', () => {
   test('keeps old clients compatible when a private GET has no expected-user header', async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] })
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // account advisory lock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // locked mapping
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ total: '0' }] });
+      .mockResolvedValueOnce({ rows: [{ total: '0' }] })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
     const app = await createServer();
 
     const response = await request(app)
@@ -114,6 +118,6 @@ describe('Expected user boundary for private reads', () => {
 
     expect(response.body).toEqual({ ok: true, total: 0, items: [] });
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(queryMock).toHaveBeenCalledTimes(3);
+    expect(queryMock).toHaveBeenCalledTimes(7);
   });
 });

@@ -84,6 +84,18 @@ async function fetchAuthUserUncached(req: Request): Promise<AuthUserPayload | nu
 }
 
 /**
+ * Re-read /auth/me without this request's WeakMap snapshot.
+ *
+ * Most route logic should use fetchAuthUser(). Collection ownership takeover is
+ * the exception: after locking the current claimant it must verify that the
+ * incoming Wikidot link is still authoritative, otherwise an in-flight stale
+ * request could reclaim an identity that an administrator just transferred.
+ */
+export function fetchFreshAuthUser(req: Request): Promise<AuthUserPayload | null> {
+  return fetchAuthUserUncached(req);
+}
+
+/**
  * A request can pass through an expected-user guard and then its route handler.
  * Reuse the same /auth/me result so the guard does not double the auth-service
  * traffic and both checks operate on one identity snapshot.

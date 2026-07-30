@@ -168,6 +168,10 @@ function installStatefulCollectionDb() {
         collection.ownerId = Number(targetOwnerId);
         collection.slug = String(slug);
         collection.isDefault = Boolean(isDefault);
+        if (sql.includes("visibility = 'PRIVATE'")) {
+          collection.visibility = 'PRIVATE';
+          collection.publishedAt = null;
+        }
       }
       return { rows: [], rowCount: collection ? 1 : 0 };
     }
@@ -278,7 +282,11 @@ function installStatefulCollectionDb() {
       };
     }
     if (sql.startsWith('DELETE FROM "UserCollection" WHERE id = $1')) {
-      const index = collections.findIndex(item => item.id === Number(values[0]));
+      const ownerId = values[1] == null ? null : Number(values[1]);
+      const index = collections.findIndex(item => (
+        item.id === Number(values[0])
+        && (ownerId == null || item.ownerId === ownerId)
+      ));
       if (index < 0) return { rows: [], rowCount: 0 };
       collections.splice(index, 1);
       return { rows: [], rowCount: 1 };
@@ -294,6 +302,235 @@ function installStatefulCollectionDb() {
     },
     setLinkedWikidotId(value: number | null) {
       linkedWikidotId = value;
+    }
+  };
+}
+
+interface FakeAuthSnapshot {
+  id: string;
+  email: string;
+  displayName: string;
+  linkedWikidotId: number | null;
+}
+
+function installTakeoverRaceDb() {
+  const users = new Map<number, { wikidotId: number | null }>([
+    [99, { wikidotId: 42 }],
+    [800, { wikidotId: null }]
+  ]);
+  const mappings = new Map<string, number>([
+    ['acc_a', 99],
+    ['acc_b', 800]
+  ]);
+  const collections: FakeCollection[] = [
+    {
+      id: 101,
+      ownerId: 99,
+      title: 'A public',
+      slug: 'a-public',
+      visibility: 'PUBLIC',
+      description: null,
+      notes: 'A public private note',
+      coverImageUrl: null,
+      coverImageOffsetX: 0,
+      coverImageOffsetY: 0,
+      coverImageScale: 1,
+      isDefault: true,
+      publishedAt: '2024-01-05T00:00:00.000Z',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-05T00:00:00.000Z',
+      itemCount: 0
+    },
+    {
+      id: 102,
+      ownerId: 99,
+      title: 'A private',
+      slug: 'a-private',
+      visibility: 'PRIVATE',
+      description: null,
+      notes: 'A only',
+      coverImageUrl: null,
+      coverImageOffsetX: 0,
+      coverImageOffsetY: 0,
+      coverImageScale: 1,
+      isDefault: false,
+      publishedAt: null,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-05T00:00:00.000Z',
+      itemCount: 0
+    },
+    {
+      id: 202,
+      ownerId: 800,
+      title: 'B private',
+      slug: 'b-private',
+      visibility: 'PRIVATE',
+      description: null,
+      notes: 'B only',
+      coverImageUrl: null,
+      coverImageOffsetX: 0,
+      coverImageOffsetY: 0,
+      coverImageScale: 1,
+      isDefault: false,
+      publishedAt: null,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-05T00:00:00.000Z',
+      itemCount: 0
+    }
+  ];
+  let nextUserId = 900;
+  const pendingAuthReads: FakeAuthSnapshot[] = [];
+  const servedAuthReads: FakeAuthSnapshot[] = [];
+
+  (global.fetch as jest.Mock).mockImplementation(async () => {
+    const snapshot = pendingAuthReads.shift();
+    if (!snapshot) throw new Error('Unexpected fresh auth read');
+    servedAuthReads.push(snapshot);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        user: {
+          ...snapshot,
+          lastLoginAt: null
+        }
+      })
+    };
+  });
+
+  queryMock.mockImplementation(async (sqlValue: unknown, values: unknown[] = []) => {
+    const sql = String(sqlValue).replace(/\s+/g, ' ').trim();
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.includes('pg_advisory_xact_lock')) {
+      return { rows: [], rowCount: 1 };
+    }
+    if (
+      sql.includes('FROM "CollectionAccountOwner" cao')
+      && sql.includes('JOIN "User" u')
+    ) {
+      const accountId = String(values[0]);
+      const userId = mappings.get(accountId);
+      if (userId == null) return { rows: [], rowCount: 0 };
+      return {
+        rows: [{
+          userId,
+          wikidotId: users.get(userId)?.wikidotId ?? null
+        }],
+        rowCount: 1
+      };
+    }
+    if (
+      sql.includes('FROM "CollectionAccountOwner"')
+      && sql.includes('"userId" = $1')
+      && sql.includes('"accountId" <> $2')
+    ) {
+      const targetOwnerId = Number(values[0]);
+      const requester = String(values[1]);
+      const claim = [...mappings.entries()].find(([accountId, userId]) => (
+        accountId !== requester && userId === targetOwnerId
+      ));
+      return {
+        rows: claim ? [{ accountId: claim[0], userId: claim[1] }] : [],
+        rowCount: claim ? 1 : 0
+      };
+    }
+    if (
+      sql.includes('SELECT id FROM "User"')
+      && sql.includes('"wikidotId" = $1')
+    ) {
+      const wikidotId = Number(values[0]);
+      const found = [...users.entries()].find(([, user]) => user.wikidotId === wikidotId);
+      return {
+        rows: found ? [{ id: found[0] }] : [],
+        rowCount: found ? 1 : 0
+      };
+    }
+    if (
+      sql.includes('INSERT INTO "User"')
+      && sql.includes('"displayName", "isGuest"')
+    ) {
+      const id = nextUserId;
+      nextUserId += 1;
+      users.set(id, { wikidotId: null });
+      return { rows: [{ id }], rowCount: 1 };
+    }
+    if (
+      sql.includes('SELECT id, slug, "isDefault"')
+      && sql.includes('FROM "UserCollection"')
+      && sql.includes('FOR UPDATE')
+    ) {
+      const ownerId = Number(values[0]);
+      const rows = collections
+        .filter(collection => collection.ownerId === ownerId)
+        .map(collection => ({
+          id: collection.id,
+          slug: collection.slug,
+          isDefault: collection.isDefault
+        }));
+      return { rows, rowCount: rows.length };
+    }
+    if (
+      sql.includes('UPDATE "UserCollection"')
+      && sql.includes('SET "ownerId" = $1')
+    ) {
+      const [targetOwnerId, slug, isDefault, collectionId, sourceOwnerId] = values;
+      const collection = collections.find(item => (
+        item.id === Number(collectionId)
+        && item.ownerId === Number(sourceOwnerId)
+      ));
+      if (!collection) return { rows: [], rowCount: 0 };
+      collection.ownerId = Number(targetOwnerId);
+      collection.slug = String(slug);
+      collection.isDefault = Boolean(isDefault);
+      if (sql.includes("visibility = 'PRIVATE'")) {
+        collection.visibility = 'PRIVATE';
+        collection.publishedAt = null;
+      }
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes('UPDATE "CollectionAccountOwner"')) {
+      const [targetOwnerId, accountId, sourceOwnerId] = values;
+      if (mappings.get(String(accountId)) !== Number(sourceOwnerId)) {
+        return { rows: [], rowCount: 0 };
+      }
+      mappings.set(String(accountId), Number(targetOwnerId));
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes('INSERT INTO "CollectionAccountOwner"')) {
+      mappings.set(String(values[0]), Number(values[1]));
+      return { rows: [], rowCount: 1 };
+    }
+    if (
+      sql.includes('LEFT JOIN LATERAL')
+      && sql.includes('LIMIT $2 OFFSET $3')
+      && sql.includes('WHERE c."ownerId" = $1')
+    ) {
+      const ownerId = Number(values[0]);
+      const rows = collections.filter(collection => collection.ownerId === ownerId);
+      return { rows, rowCount: rows.length };
+    }
+    if (
+      sql.includes('SELECT COUNT(*)::text AS total')
+      && sql.includes('FROM "UserCollection"')
+    ) {
+      const ownerId = Number(values[0]);
+      return {
+        rows: [{ total: String(collections.filter(item => item.ownerId === ownerId).length) }],
+        rowCount: 1
+      };
+    }
+    throw new Error(`Unexpected takeover race SQL: ${sql}`);
+  });
+
+  return {
+    mappings,
+    collections,
+    servedAuthReads,
+    queueAuth(...snapshots: FakeAuthSnapshot[]) {
+      pendingAuthReads.push(...snapshots);
     }
   };
 }
@@ -347,6 +584,9 @@ describe('Collections routes', () => {
     mockAuthOk();
     queryMock
       .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // stable account owner
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // account advisory lock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // locked owner
       .mockResolvedValueOnce({
         rows: [{
           id: 1,
@@ -367,7 +607,8 @@ describe('Collections routes', () => {
           itemCount: 2
         }]
       })
-      .mockResolvedValueOnce({ rows: [{ total: '1' }] });
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
 
     const app = await createServer();
     const res = await request(app).get('/collections').expect(200);
@@ -399,15 +640,20 @@ describe('Collections routes', () => {
     queryMock
       .mockResolvedValueOnce({ rows: [] }) // no account mapping yet
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // global reconciliation lock
       .mockResolvedValueOnce({ rows: [] }) // account advisory lock
       .mockResolvedValueOnce({ rows: [] }) // mapping still absent under lock
       .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // canonical Wikidot User
-      .mockResolvedValueOnce({ rows: [] }) // canonical owner advisory lock
       .mockResolvedValueOnce({ rows: [] }) // canonical owner is unclaimed
+      .mockResolvedValueOnce({ rows: [] }) // canonical owner advisory lock
       .mockResolvedValueOnce({ rows: [] }) // insert account -> canonical mapping
       .mockResolvedValueOnce({ rows: [] }) // COMMIT
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // access account lock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // locked mapping
       .mockResolvedValueOnce({ rows: [historical] })
-      .mockResolvedValueOnce({ rows: [{ total: '1' }] });
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
 
     const app = await createServer();
     const res = await request(app).get('/collections').expect(200);
@@ -424,8 +670,37 @@ describe('Collections routes', () => {
     )).toBe(false);
   });
 
-  test('canonical owner claimed by another account never leaks or absorbs private data', async () => {
+  test('stale linked auth fails closed when the canonical owner belongs to another account', async () => {
     mockAuthOk();
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: 42,
+            lastLoginAt: null
+          }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: null,
+            lastLoginAt: null
+          }
+        })
+      });
     const privateCollection = {
       id: 77,
       ownerId: 700,
@@ -447,15 +722,20 @@ describe('Collections routes', () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // global reconciliation lock
       .mockResolvedValueOnce({ rows: [] }) // account lock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
       .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // canonical Wikidot User
-      .mockResolvedValueOnce({ rows: [] }) // owner 99 lock
-      .mockResolvedValueOnce({ rows: [] }) // owner 700 lock
-      .mockResolvedValueOnce({ rows: [{ accountId: 'another-account' }] })
-      .mockResolvedValueOnce({ rows: [] }) // COMMIT
+      .mockResolvedValueOnce({
+        rows: [{ accountId: 'another-account', userId: 99 }]
+      }) // locked canonical claimant
+      .mockResolvedValueOnce({ rows: [] }) // fail-closed reconciliation COMMIT
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // access account lock
+      .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
       .mockResolvedValueOnce({ rows: [privateCollection] })
-      .mockResolvedValueOnce({ rows: [{ total: '1' }] });
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
 
     const app = await createServer();
     const res = await request(app).get('/collections').expect(200);
@@ -472,20 +752,382 @@ describe('Collections routes', () => {
     const claimSql = String(queryMock.mock.calls.find(([sql]) =>
       String(sql).includes('"accountId" <> $2')
     )?.[0] ?? '');
-    expect(claimSql).not.toContain('FOR UPDATE');
+    expect(claimSql).toContain('FOR UPDATE');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('verified B takes over X even when old account A never makes another request', async () => {
+    const authResponse = {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        user: {
+          id: 'acc_b',
+          email: 'b@example.com',
+          displayName: 'B',
+          linkedWikidotId: 42,
+          lastLoginAt: null
+        }
+      })
+    };
+    (global.fetch as jest.Mock).mockResolvedValue(authResponse);
+    const bCollection = {
+      id: 202,
+      ownerId: 99,
+      title: 'B 的收藏',
+      slug: 'b-private',
+      visibility: 'PRIVATE',
+      description: null,
+      notes: 'B only',
+      coverImageUrl: null,
+      coverImageOffsetX: 0,
+      coverImageOffsetY: 0,
+      coverImageScale: 1,
+      isDefault: false,
+      publishedAt: null,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      itemCount: 0
+    };
+
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ userId: 800, wikidotId: null }] }) // B guest mapping
+      .mockResolvedValueOnce({ rows: [] }) // reconciliation BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // global reconciliation lock
+      .mockResolvedValueOnce({ rows: [] }) // B account lock
+      .mockResolvedValueOnce({ rows: [{ userId: 800, wikidotId: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // canonical X
+      .mockResolvedValueOnce({
+        rows: [{ accountId: 'acc_a', userId: 99 }]
+      }) // lock A's claim
+      .mockResolvedValueOnce({ rows: [{ id: 900 }], rowCount: 1 }) // isolated guest for A
+      .mockResolvedValueOnce({ rows: [] }) // owner 99 lock
+      .mockResolvedValueOnce({ rows: [] }) // owner 800 lock
+      .mockResolvedValueOnce({ rows: [] }) // owner 900 lock
+      .mockResolvedValueOnce({ rows: [] }) // A guest target collections
+      .mockResolvedValueOnce({
+        rows: [{ id: 101, slug: 'a-public', isDefault: true }]
+      }) // A collections currently under X
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // move A collection to guest/private
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // update A mapping
+      .mockResolvedValueOnce({ rows: [] }) // canonical target now empty
+      .mockResolvedValueOnce({
+        rows: [{ id: 202, slug: 'b-private', isDefault: false }]
+      }) // B guest collections
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // move B collection to X/private
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // update B mapping
+      .mockResolvedValueOnce({ rows: [] }) // reconciliation COMMIT
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // access account lock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] })
+      .mockResolvedValueOnce({ rows: [bCollection] })
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
+
+    const app = await createServer();
+    const res = await request(app).get('/collections').expect(200);
+
+    expect(res.body.items).toEqual([
+      expect.objectContaining({ id: 202, ownerId: 99, notes: 'B only' })
+    ]);
+    const ownerMoves = queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('SET "ownerId" = $1')
+    );
+    expect(ownerMoves).toHaveLength(2);
+    expect(ownerMoves[0]?.[1]).toEqual([900, 'a-public', true, 101, 99]);
+    expect(ownerMoves[1]?.[1]).toEqual([99, 'b-private', false, 202, 800]);
+    expect(ownerMoves.every(([sql]) =>
+      String(sql).includes("visibility = 'PRIVATE'")
+    )).toBe(true);
+    const mappingMoves = queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('UPDATE "CollectionAccountOwner"')
+    );
+    expect(mappingMoves.map(([, values]) => values)).toEqual([
+      [900, 'acc_a', 99],
+      [99, 'acc_b', 800]
+    ]);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('stale linked request cannot reclaim an empty X after its account detached', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_a',
+            email: 'a@example.com',
+            displayName: 'A',
+            linkedWikidotId: 42,
+            lastLoginAt: null
+          }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_a',
+            email: 'a@example.com',
+            displayName: 'A',
+            linkedWikidotId: null,
+            lastLoginAt: null
+          }
+        })
+      });
+    const detachedCollection = {
+      id: 301,
+      ownerId: 700,
+      title: 'A detached',
+      slug: 'a-detached',
+      visibility: 'PRIVATE',
+      description: null,
+      notes: 'A only',
+      coverImageUrl: null,
+      coverImageOffsetX: 0,
+      coverImageOffsetY: 0,
+      coverImageScale: 1,
+      isDefault: false,
+      publishedAt: null,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      itemCount: 0
+    };
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
+      .mockResolvedValueOnce({ rows: [] }) // reconciliation BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // global reconciliation lock
+      .mockResolvedValueOnce({ rows: [] }) // A account lock
+      .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // empty canonical X
+      .mockResolvedValueOnce({ rows: [] }) // no claimant
+      .mockResolvedValueOnce({ rows: [] }) // fail-closed COMMIT
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // access account lock
+      .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
+      .mockResolvedValueOnce({ rows: [detachedCollection] })
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
+
+    const app = await createServer();
+    const res = await request(app).get('/collections').expect(200);
+
+    expect(res.body.items).toEqual([
+      expect.objectContaining({ id: 301, ownerId: 700, notes: 'A only' })
+    ]);
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).includes('UPDATE "CollectionAccountOwner"')
+    )).toBe(false);
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).includes('SET "ownerId" = $1')
+    )).toBe(false);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('takeover, detach, and stale replay preserve account isolation in state', async () => {
+    const database = installTakeoverRaceDb();
+    const app = await createServer();
+    const accountA = {
+      id: 'acc_a',
+      email: 'a@example.com',
+      displayName: 'A',
+      linkedWikidotId: 42
+    };
+    const accountB = {
+      id: 'acc_b',
+      email: 'b@example.com',
+      displayName: 'B',
+      linkedWikidotId: 42
+    };
+    const accountAUnlinked = { ...accountA, linkedWikidotId: null };
+    const accountBUnlinked = { ...accountB, linkedWikidotId: null };
+
+    // B's route snapshot and its claimant-row-locked fresh read both confirm X.
+    database.queueAuth(accountB, accountB);
+    const afterTakeover = await request(app).get('/collections').expect(200);
+
+    expect(database.mappings.get('acc_a')).toBe(900);
+    expect(database.mappings.get('acc_b')).toBe(99);
+    expect(database.collections.filter(item => [101, 102].includes(item.id))).toEqual([
+      expect.objectContaining({
+        id: 101,
+        ownerId: 900,
+        visibility: 'PRIVATE',
+        publishedAt: null
+      }),
+      expect.objectContaining({
+        id: 102,
+        ownerId: 900,
+        visibility: 'PRIVATE',
+        publishedAt: null
+      })
+    ]);
+    expect(database.collections.find(item => item.id === 202)).toEqual(
+      expect.objectContaining({
+        ownerId: 99,
+        visibility: 'PRIVATE',
+        publishedAt: null
+      })
+    );
+    expect(afterTakeover.body.items.map((item: { id: number }) => item.id)).toEqual([202]);
+
+    const ownerMoveCountAfterTakeover = queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('SET "ownerId" = $1')
+    ).length;
+    const mappingMoveCountAfterTakeover = queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('UPDATE "CollectionAccountOwner"')
+    ).length;
+
+    // A's route snapshot predates B's takeover, but the claimant-row-locked
+    // fresh read sees A unlinked. A stays on its guest and cannot move B.
+    database.queueAuth(accountA, accountAUnlinked);
+    const afterOldAReplay = await request(app).get('/collections').expect(200);
+
+    expect(database.mappings.get('acc_a')).toBe(900);
+    expect(database.mappings.get('acc_b')).toBe(99);
+    expect(afterOldAReplay.body.items.map((item: { id: number }) => item.id).sort())
+      .toEqual([101, 102]);
+    expect(queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('SET "ownerId" = $1')
+    )).toHaveLength(ownerMoveCountAfterTakeover);
+    expect(queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('UPDATE "CollectionAccountOwner"')
+    )).toHaveLength(mappingMoveCountAfterTakeover);
+
+    // The inverse stale snapshot is also harmless: an old null snapshot cannot
+    // detach B after a newer relink, because fresh still confirms B→X.
+    database.queueAuth(accountBUnlinked, accountB);
+    const afterStaleUnlink = await request(app).get('/collections').expect(200);
+
+    expect(database.mappings.get('acc_b')).toBe(99);
+    expect(database.collections.find(item => item.id === 202)?.ownerId).toBe(99);
+    expect(afterStaleUnlink.body.items.map((item: { id: number }) => item.id)).toEqual([202]);
+    expect(queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('SET "ownerId" = $1')
+    )).toHaveLength(ownerMoveCountAfterTakeover);
+    expect(queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('UPDATE "CollectionAccountOwner"')
+    )).toHaveLength(mappingMoveCountAfterTakeover);
+
+    // A current unlink snapshot is enough to detach the current claimant. The
+    // canonical target becomes empty and B's data moves to another private guest.
+    database.queueAuth(accountBUnlinked, accountBUnlinked);
+    const afterDetach = await request(app).get('/collections').expect(200);
+
+    expect(database.mappings.get('acc_b')).toBe(901);
+    expect(database.collections.some(item => item.ownerId === 99)).toBe(false);
+    expect(database.collections.find(item => item.id === 202)).toEqual(
+      expect.objectContaining({
+        ownerId: 901,
+        visibility: 'PRIVATE',
+        publishedAt: null
+      })
+    );
+    expect(afterDetach.body.items.map((item: { id: number }) => item.id)).toEqual([202]);
+
+    const ownerMoveCountBeforeReplay = queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('SET "ownerId" = $1')
+    ).length;
+    const mappingMoveCountBeforeReplay = queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('UPDATE "CollectionAccountOwner"')
+    ).length;
+
+    // An in-flight old B snapshot still says linked X. The bypass-cache fresh
+    // read says unlinked, so the empty X is not reclaimed.
+    database.queueAuth(accountB, accountBUnlinked);
+    const afterStaleReplay = await request(app).get('/collections').expect(200);
+
+    expect(database.mappings.get('acc_a')).toBe(900);
+    expect(database.mappings.get('acc_b')).toBe(901);
+    expect(database.collections.some(item => item.ownerId === 99)).toBe(false);
+    expect(afterStaleReplay.body.items.map((item: { id: number }) => item.id)).toEqual([202]);
+    expect(queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('SET "ownerId" = $1')
+    )).toHaveLength(ownerMoveCountBeforeReplay);
+    expect(queryMock.mock.calls.filter(([sql]) =>
+      String(sql).includes('UPDATE "CollectionAccountOwner"')
+    )).toHaveLength(mappingMoveCountBeforeReplay);
+    expect(database.servedAuthReads.map(snapshot => [
+      snapshot.id,
+      snapshot.linkedWikidotId
+    ])).toEqual([
+      ['acc_b', 42],
+      ['acc_b', 42],
+      ['acc_a', 42],
+      ['acc_a', null],
+      ['acc_b', null],
+      ['acc_b', 42],
+      ['acc_b', null],
+      ['acc_b', null],
+      ['acc_b', 42],
+      ['acc_b', null]
+    ]);
+    expect(global.fetch).toHaveBeenCalledTimes(10);
+
+    // Every reconciliation takes the global lock immediately after BEGIN and
+    // before its requester account lock, preventing an X↔Y lock cycle.
+    const calls = queryMock.mock.calls.map(([sql]) => String(sql));
+    const globalLockIndexes = queryMock.mock.calls
+      .map(([sql, values], index) => ({ sql: String(sql), values, index }))
+      .filter(({ sql, values }) => (
+        sql.includes('pg_advisory_xact_lock($1::int, $2::int)')
+        && !sql.includes('hashtext')
+        && values?.[0] === 1129270343
+      ))
+      .map(({ index }) => index);
+    expect(globalLockIndexes).toHaveLength(5);
+    for (const index of globalLockIndexes) {
+      expect(calls[index - 1]?.trim()).toBe('BEGIN');
+      expect(calls[index + 1]).toContain('hashtext($2)');
+    }
   });
 
   test('PUBLIC create fails closed when the linked canonical owner belongs to another account', async () => {
     mockAuthOk();
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: 42,
+            lastLoginAt: null
+          }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          user: {
+            id: 'acc_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            linkedWikidotId: null,
+            lastLoginAt: null
+          }
+        })
+      });
     queryMock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
       .mockResolvedValueOnce({ rows: [] }) // reconciliation BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // global reconciliation lock
       .mockResolvedValueOnce({ rows: [] }) // account lock
       .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] })
       .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // canonical Wikidot User
-      .mockResolvedValueOnce({ rows: [] }) // owner 99 lock
-      .mockResolvedValueOnce({ rows: [] }) // owner 700 lock
-      .mockResolvedValueOnce({ rows: [{ accountId: 'another-account' }] })
+      .mockResolvedValueOnce({
+        rows: [{ accountId: 'another-account', userId: 99 }]
+      }) // locked canonical claimant
       .mockResolvedValueOnce({ rows: [] }) // reconciliation COMMIT
       .mockResolvedValueOnce({ rows: [] }) // create BEGIN
       .mockResolvedValueOnce({ rows: [] }) // create account lock
@@ -632,6 +1274,98 @@ describe('Collections routes', () => {
     expect(mappingReads).toBe(2);
   });
 
+  test('private GET re-reads the mapping under lock after an owner handoff', async () => {
+    mockAuthOk();
+    const detachedCollection = {
+      id: 401,
+      ownerId: 700,
+      title: 'handoff-safe',
+      slug: 'handoff-safe',
+      visibility: 'PRIVATE',
+      description: null,
+      notes: 'A only',
+      coverImageUrl: null,
+      coverImageOffsetX: 0,
+      coverImageOffsetY: 0,
+      coverImageScale: 1,
+      isDefault: false,
+      publishedAt: null,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      itemCount: 0
+    };
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // pre-handoff snapshot
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // account lock waits for handoff
+      .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] }) // post-handoff mapping
+      .mockResolvedValueOnce({ rows: [detachedCollection] })
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
+
+    const app = await createServer();
+    const res = await request(app).get('/collections').expect(200);
+
+    expect(res.body.items).toEqual([
+      expect.objectContaining({ id: 401, ownerId: 700, notes: 'A only' })
+    ]);
+    const listCall = queryMock.mock.calls.find(([sql]) =>
+      String(sql).includes('LIMIT $2 OFFSET $3')
+    );
+    expect(listCall?.[1]?.[0]).toBe(700);
+  });
+
+  test('private DELETE cannot remove the new claimant data after an owner handoff', async () => {
+    mockAuthOk();
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // stale resolved owner
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // account lock waits for handoff
+      .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] }) // A now owns guest
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // id belongs to B under owner 99
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
+
+    const app = await createServer();
+    const res = await request(app).delete('/collections/501').expect(404);
+
+    expect(res.body.error).toBe('not_found');
+    const deleteCall = queryMock.mock.calls.find(([sql]) =>
+      String(sql).includes('DELETE FROM "UserCollection"')
+    );
+    expect(String(deleteCall?.[0])).toContain('"ownerId" = $2');
+    expect(deleteCall?.[1]).toEqual([501, 700]);
+  });
+
+  test('item mutation cannot cross into the new claimant collection after handoff', async () => {
+    mockAuthOk();
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // stale resolved owner
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // account lock waits for handoff
+      .mockResolvedValueOnce({ rows: [{ userId: 700, wikidotId: null }] }) // A now owns guest
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 601,
+          ownerId: 99,
+          title: 'B collection',
+          slug: 'b',
+          visibility: 'PRIVATE',
+          itemCount: 1
+        }]
+      })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
+
+    const app = await createServer();
+    const res = await request(app)
+      .delete('/collections/601/items/701')
+      .expect(404);
+
+    expect(res.body.error).toBe('not_found');
+    expect(queryMock.mock.calls.some(([sql]) =>
+      String(sql).includes('DELETE FROM "UserCollectionItem"')
+    )).toBe(false);
+  });
+
   test('POST /collections rejects stale expected user before any database query', async () => {
     mockAuthOk();
 
@@ -689,6 +1423,9 @@ describe('Collections routes', () => {
     mockAuthOk();
     queryMock
       .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // stable account owner
+      .mockResolvedValueOnce({ rows: [] }) // access BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // access account lock
+      .mockResolvedValueOnce({ rows: [{ userId: 99, wikidotId: 42 }] }) // locked owner
       .mockResolvedValueOnce({
         rows: [{
           id: 5,
@@ -726,7 +1463,8 @@ describe('Collections routes', () => {
           pageAlternateTitle: null,
           pageRating: 120
         }]
-      });
+      })
+      .mockResolvedValueOnce({ rows: [] }); // access COMMIT
 
     const app = await createServer();
     const res = await request(app).get('/collections/5').expect(200);
@@ -777,9 +1515,25 @@ describe('Collections routes', () => {
 
     database.setLinkedWikidotId(null);
     const afterUnlink = await request(app).get('/collections').expect(200);
+    const detachedOwnerId = database.mappingUserId;
+    expect(detachedOwnerId).toBe(701);
     expect(afterUnlink.body.items.map((item: { id: number }) => item.id)).toEqual(
       expect.arrayContaining([90, createdId])
     );
+    expect(afterUnlink.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 90,
+        ownerId: detachedOwnerId,
+        visibility: 'PRIVATE',
+        publishedAt: null
+      }),
+      expect.objectContaining({
+        id: createdId,
+        ownerId: detachedOwnerId,
+        visibility: 'PRIVATE',
+        publishedAt: null
+      })
+    ]));
 
     await request(app)
       .delete(`/collections/${createdId}`)
@@ -792,13 +1546,17 @@ describe('Collections routes', () => {
     const ownerUpdates = queryMock.mock.calls.filter(([sql]) =>
       String(sql).includes('SET "ownerId" = $1')
     );
-    expect(ownerUpdates).toHaveLength(1);
+    expect(ownerUpdates).toHaveLength(3);
     expect(ownerUpdates[0]?.[1]).toEqual([
       99,
       `favorites-migrated-${createdId}`,
       false,
       createdId,
       700
+    ]);
+    expect(ownerUpdates.slice(1).map(([, values]) => values)).toEqual([
+      [701, 'favorites', true, 90, 99],
+      [701, `favorites-migrated-${createdId}`, false, createdId, 99]
     ]);
   });
 

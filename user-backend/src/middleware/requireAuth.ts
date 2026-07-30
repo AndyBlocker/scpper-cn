@@ -78,6 +78,7 @@ interface CachedUser {
   displayName: string | null;
   linkedWikidotId: number | null;
   lastLoginAt: Date | null;
+  updatedAt: Date;
   status: string;
   passwordHash: string | null;
   qqBinding: AuthChannelBinding;
@@ -145,6 +146,9 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
           displayName: true,
           linkedWikidotId: true,
           lastLoginAt: true,
+          // 跨进程缓存版本。CLI 不能触及在线服务的内存 Map，因此缓存命中时
+          // 会用一次只取 updatedAt 的轻量查询确认这份快照仍是当前版本。
+          updatedAt: true,
           status: true,
           passwordHash: true,
           // 一并取出通知渠道绑定：这个查询本来就有 30 秒缓存，且绑定变更时会
@@ -182,6 +186,7 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
         displayName: user.displayName ?? null,
         linkedWikidotId: user.linkedWikidotId ?? null,
         lastLoginAt: user.lastLoginAt ?? null,
+        updatedAt: user.updatedAt,
         status: user.status,
         passwordHash: user.passwordHash,
         qqBinding,
@@ -207,6 +212,32 @@ async function fetchAndCacheUser(userId: string): Promise<CachedUser | null> {
 }
 
 /**
+ * 返回经过数据库版本校验的认证快照。
+ *
+ * 管理员路由与 CLI 都可能在别的 Node 进程修改 UserAccount。纯 TTL 缓存会让
+ * 旧 linkedWikidotId/passwordHash 最多继续生效 30 秒；每次缓存命中只查询
+ * updatedAt，发现变化后复用现有世代机制失效并完整刷新。查询失败会向上抛出，
+ * 不会在无法确认版本时继续信任旧认证数据。
+ */
+async function fetchCurrentUser(userId: string): Promise<CachedUser | null> {
+  const cached = getCachedUser(userId);
+  if (!cached) return fetchAndCacheUser(userId);
+
+  const current = await prisma.userAccount.findUnique({
+    where: { id: userId },
+    select: { updatedAt: true }
+  });
+  if (
+    !current
+    || current.updatedAt.getTime() !== cached.updatedAt.getTime()
+  ) {
+    invalidateAuthCache(userId);
+    return fetchAndCacheUser(userId);
+  }
+  return cached;
+}
+
+/**
  * Immediately evict a user from the auth cache.
  * Call after any operation that changes an AuthUser field or token verification input.
  */
@@ -223,6 +254,7 @@ export function invalidateAuthCache(userId: string) {
  */
 export const __authCacheTesting = {
   fetchAndCacheUser,
+  fetchCurrentUser,
   getCachedUser,
   reset() {
     userCache.clear();
@@ -264,7 +296,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     if (!userId) {
       return res.status(401).json({ error: '登录状态已失效' });
     }
-    const user = getCachedUser(userId) ?? await fetchAndCacheUser(userId);
+    const user = await fetchCurrentUser(userId);
     if (!user || user.status !== 'ACTIVE') {
       return res.status(401).json({ error: '账号不可用' });
     }

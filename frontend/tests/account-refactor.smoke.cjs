@@ -285,7 +285,13 @@ function createApiHandler(options, requests) {
       const ownerCollection = currentAuth.userId === 'pw-user-2'
         ? { ...collection, id: 502, title: '第二位用户的收藏夹', slug: 'second-picks' }
         : collection
-      return json(route, { ok: true, items: [ownerCollection], total: 1 })
+      const items = options.collectionDetailError
+        ? [
+            ownerCollection,
+            { ...collection, id: 502, title: '待加载收藏夹', slug: 'detail-error' }
+          ]
+        : [ownerCollection]
+      return json(route, { ok: true, items, total: items.length })
     }
 
     if (apiPath === '/collections/501' && method === 'GET') {
@@ -293,6 +299,9 @@ function createApiHandler(options, requests) {
     }
 
     if (apiPath === '/collections/502' && method === 'GET') {
+      if (options.collectionDetailError) {
+        return json(route, { ok: false, error: '详情服务暂时不可用' }, 503)
+      }
       const secondCollection = {
         ...collection,
         id: 502,
@@ -745,6 +754,36 @@ async function main() {
         await dialog.getByRole('button', { name: '保存修改' }).click()
         await dialog.getByRole('alert').getByText('公开收藏夹前需要先绑定 Wikidot 账号。').waitFor()
         assert.equal(await dialog.isVisible(), true)
+      }
+    )
+
+    await scenario(
+      browser,
+      'collection-detail-error-clears-stale-actions',
+      { linked: true, collectionDetailError: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+
+        const failedCollection = page.getByRole('button', { name: /待加载收藏夹/ })
+        await failedCollection.click()
+        await page.getByRole('alert').getByRole('heading', {
+          name: '无法加载收藏夹详情'
+        }).waitFor()
+
+        assert.equal(await failedCollection.getAttribute('aria-pressed'), 'true')
+        assert.equal(await page.getByRole('button', { name: '编辑', exact: true }).count(), 0)
+        assert.equal(await page.getByRole('button', { name: '删除收藏夹' }).count(), 0)
+        assert.equal(await page.getByRole('button', { name: /SCP 精选/ }).count(), 1)
+
+        await page.getByRole('alert').getByRole('button', { name: '再试一次' }).click()
+        await page.getByRole('alert').getByRole('heading', {
+          name: '无法加载收藏夹详情'
+        }).waitFor()
+        assert.ok(
+          requests.filter(entry => entry.path === '/collections/502').length >= 2,
+          '详情失败后应保留明确的重试入口'
+        )
       }
     )
 

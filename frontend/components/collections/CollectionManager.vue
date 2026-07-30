@@ -55,8 +55,9 @@
         </div>
 
         <div
-          v-else-if="error"
+          v-else-if="error && collectionList.length === 0"
           class="flex flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-red-50/80 p-10 text-center text-sm text-red-600 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-200"
+          role="alert"
         >
           <LucideIcon name="AlertTriangle" class="h-5 w-5" />
           <p>加载收藏夹失败：{{ error }}</p>
@@ -134,6 +135,46 @@
             </button>
           </li>
         </ul>
+      </div>
+
+      <div
+        v-if="activeId && detailLoading"
+        id="active-collection-detail"
+        class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-neutral-200/80 bg-white/95 p-8 text-center text-sm text-neutral-500 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:text-neutral-300"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <LucideIcon
+          name="LoaderCircle"
+          class="h-5 w-5 animate-spin text-[var(--g-accent)]"
+          aria-hidden="true"
+        />
+        <p>正在加载收藏夹详情…</p>
+      </div>
+
+      <div
+        v-else-if="activeId && detailError"
+        id="active-collection-detail"
+        class="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-red-50/80 p-8 text-center text-sm text-red-700 shadow-sm dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"
+        role="alert"
+      >
+        <LucideIcon
+          name="AlertTriangle"
+          class="h-5 w-5"
+          aria-hidden="true"
+        />
+        <div>
+          <h3 class="font-semibold">无法加载收藏夹详情</h3>
+          <p class="mt-1">{{ detailError }}</p>
+        </div>
+        <button
+          type="button"
+          class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-neutral-200 bg-white/90 px-4 py-2 text-sm font-semibold text-neutral-700 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200"
+          @click="loadDetail(activeId)"
+        >
+          再试一次
+        </button>
       </div>
 
       <div
@@ -377,6 +418,7 @@ const collectionList = computed(() => {
 const activeId = ref<number | null>(null)
 const activeDetail = ref<CollectionDetail | null>(null)
 const detailLoading = ref(false)
+const detailError = ref<string | null>(null)
 const annotations = reactive<Record<number, string>>({})
 let detailRequestSequence = 0
 
@@ -393,12 +435,13 @@ const modal = reactive<{
 })
 
 watch(collectionList, (list) => {
-  if (list.length > 0 && !activeId.value) {
+  const selectionStillExists = list.some(collection => collection.id === activeId.value)
+  if (list.length > 0 && !selectionStillExists) {
     activeId.value = list[0].id
-    void loadDetail(list[0].id)
   } else if (list.length === 0) {
     activeId.value = null
     activeDetail.value = null
+    detailError.value = null
   }
 }, { immediate: true })
 
@@ -407,8 +450,10 @@ watch(activeId, (id) => {
     void loadDetail(id)
   } else {
     activeDetail.value = null
+    detailError.value = null
+    detailLoading.value = false
   }
-})
+}, { immediate: true })
 
 const activeItems = computed(() => activeDetail.value?.items ?? [])
 
@@ -445,21 +490,32 @@ function clampScale(value: number | null | undefined): number {
 
 function select(id: number) {
   if (activeId.value === id) return
+  // Do not leave the previous collection editable while the newly selected
+  // detail is unresolved or has failed to load.
+  activeDetail.value = null
+  detailError.value = null
+  detailLoading.value = true
   activeId.value = id
 }
 
 async function loadDetail(id: number) {
   const requestSequence = ++detailRequestSequence
-  if (id === activeId.value) detailLoading.value = true
+  if (id === activeId.value) {
+    activeDetail.value = null
+    detailError.value = null
+    detailLoading.value = true
+  }
   try {
     const detail = await fetchCollectionDetail(id, true)
-    if (
-      requestSequence === detailRequestSequence
-      && detail
-      && id === activeId.value
-    ) {
-      activeDetail.value = detail
-      annotationsReset(detail.items)
+    if (requestSequence === detailRequestSequence && id === activeId.value) {
+      if (detail) {
+        activeDetail.value = detail
+        detailError.value = null
+        annotationsReset(detail.items)
+      } else {
+        activeDetail.value = null
+        detailError.value = error.value || '加载收藏夹详情失败，请重试。'
+      }
     }
   } finally {
     if (requestSequence === detailRequestSequence) {
@@ -526,7 +582,6 @@ async function handleSubmit(payload: {
     if (result.ok) {
       modal.open = false
       activeId.value = result.collection.id
-      await loadDetail(result.collection.id)
     } else {
       modal.submitError = submitErrorMessage(result.error, '创建收藏夹失败，请重试。')
     }
@@ -581,8 +636,11 @@ async function remove(item: CollectionItem) {
 }
 
 async function handleRefresh() {
-  await fetchCollections(true)
-  if (activeId.value) {
+  const refreshed = await fetchCollections(true)
+  if (
+    activeId.value
+    && refreshed.some(collection => collection.id === activeId.value)
+  ) {
     await loadDetail(activeId.value)
   }
 }
