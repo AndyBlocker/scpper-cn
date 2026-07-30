@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/requireAuth.js';
@@ -66,6 +66,27 @@ function createErrorResponse(error: unknown) {
 }
 
 /** 用户侧路由（需登录） */
+/**
+ * QQ 通知与绑定的总开关（2026-07-30 起该功能暂时下线）。
+ *
+ * 默认关闭。置 QQ_NOTIFY_ENABLED=1 可恢复，需与前端的同名变量一起开。
+ * 现有绑定数据一律保留（下线时库里有 19 条 ACTIVE），不做任何清理。
+ */
+const QQ_NOTIFY_ENABLED = /^(1|true|yes|on)$/i.test(process.env.QQ_NOTIFY_ENABLED ?? '');
+
+/**
+ * 功能下线时挡住**新建**绑定的路径。
+ *
+ * 只挡新建（/start 与机器人回调 /verify），不挡 /unbind、/cancel ——
+ * 已经绑好的用户必须始终能自己解绑，把退出的路也堵上等于把人困住。
+ * 回调一并挡住是刻意的：验证不通过，机器人会拒绝好友申请，
+ * 这正是我们想要的失败方向（宁可不加好友，也不要建立新绑定）。
+ */
+function requireQqEnabled(_req: Request, res: Response, next: NextFunction) {
+  if (QQ_NOTIFY_ENABLED) return next();
+  return res.status(503).json({ error: 'QQ 通知功能已暂时下线' });
+}
+
 export function qqBindingRouter() {
   const router = Router();
 
@@ -76,7 +97,7 @@ export function qqBindingRouter() {
   });
 
   // 发起绑定：返回明文验证码（**只此一次**，库里只存哈希）
-  router.post('/start', requireAuth, async (req, res) => {
+  router.post('/start', requireQqEnabled, requireAuth, async (req, res) => {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
 
@@ -202,7 +223,7 @@ export function qqBindingInternalRouter() {
     next();
   });
 
-  router.post('/verify', async (req, res) => {
+  router.post('/verify', requireQqEnabled, async (req, res) => {
     try {
       const payload = verifySchema.parse(req.body ?? {});
 

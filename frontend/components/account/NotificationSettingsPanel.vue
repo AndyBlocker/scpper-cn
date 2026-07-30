@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRuntimeConfig } from 'nuxt/app'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
 import { useAuth } from '~/composables/useAuth'
 import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
@@ -41,6 +42,8 @@ watch(preferences, (p) => {
   ignoreSelfRevision.value = p.ignoreLinkedWikidotSelfRevision
 }, { immediate: true, deep: true })
 
+// QQ 通知总开关（2026-07-30 暂时下线）。关掉时不显示推送渠道一节。
+const qqNotifyEnabled = computed(() => Boolean(useRuntimeConfig().public.qqNotifyEnabled))
 const qqBound = computed(() => Boolean(user.value?.qqBinding?.bound))
 const qqMask = computed(() => user.value?.qqBinding?.addressMask ?? null)
 /**
@@ -110,7 +113,7 @@ onMounted(() => {
       <section>
         <h3 class="text-sm font-semibold text-[rgb(var(--fg))]">接收哪些提醒</h3>
         <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">
-          关掉后将不再产生这类提醒，站内与 QQ 都不会收到。
+          关掉后将不再产生这类提醒{{ qqNotifyEnabled ? '，站内与 QQ 都不会收到' : '' }}。
         </p>
         <div class="mt-3 divide-y divide-[rgb(var(--panel-border))] rounded-lg border border-[rgb(var(--panel-border))]">
           <label
@@ -202,8 +205,9 @@ onMounted(() => {
         </div>
       </section>
 
-      <!-- ③ 推送渠道 -->
-      <section>
+      <!-- ③ 推送渠道。整节的意义就是 QQ（站内那行只是「始终开启」的说明），
+           功能下线时整节隐藏，留一行「站内始终开启」反而让人以为漏了什么。 -->
+      <section v-if="qqNotifyEnabled">
         <h3 class="text-sm font-semibold text-[rgb(var(--fg))]">推送渠道</h3>
         <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">
           站内提醒始终开启。绑定 QQ 后可额外通过私信接收。

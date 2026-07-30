@@ -123,7 +123,9 @@
           <WikidotBindingPanel v-else />
 
           <!-- QQ 通知渠道绑定。与 Wikidot 绑定并列，同属「账号绑定」一栏：
-               用户找绑定入口一定先来「资料」页，放这里比塞进提醒设置里好找。 -->
+               用户找绑定入口一定先来「资料」页，放这里比塞进提醒设置里好找。
+               2026-07-30 起由 qqNotifyEnabled 总开关控制，功能暂时下线。 -->
+          <template v-if="qqNotifyEnabled">
           <div class="flex items-center justify-between pt-2">
             <div>
               <div class="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">QQ 绑定</div>
@@ -137,6 +139,7 @@
             </div>
           </div>
           <QqBindingPanel />
+          </template>
         </div>
       </div>
     </section>
@@ -263,6 +266,7 @@ import UserAvatar from '~/components/UserAvatar.vue'
 import PageCard from '~/components/PageCard.vue'
 import AppearanceSettings from '~/components/account/AppearanceSettings.vue'
 import CollectionManager from '~/components/collections/CollectionManager.vue'
+import { useRuntimeConfig } from 'nuxt/app'
 import { useAuth } from '~/composables/useAuth'
 import { useAlerts, type AlertItem, type AlertMetric } from '~/composables/useAlerts'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
@@ -275,6 +279,11 @@ import { useViewerVotes } from '~/composables/useViewerVotes'
 import { orderTags } from '~/composables/useTagOrder'
 
 const { user, fetchCurrentUser, updateProfile, changePassword, status, logout } = useAuth()
+
+// QQ 通知与绑定的总开关（2026-07-30 暂时下线该功能）。
+// 关掉时账号页不显示绑定入口，「通知设置」里也不显示 QQ 渠道那一列。
+// 现有绑定数据一律保留，置 QQ_NOTIFY_ENABLED=1 并重启即恢复。
+const qqNotifyEnabled = computed(() => Boolean(useRuntimeConfig().public.qqNotifyEnabled))
 
 const { favoritePages, removePageFavorite } = useFavorites()
 const { hydratePages: hydrateViewerVotes } = useViewerVotes()
