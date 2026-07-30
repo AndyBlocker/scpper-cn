@@ -13,6 +13,9 @@ module.exports = {
         NITRO_PRESET: 'node-server',
         BFF_BASE: process.env.BFF_BASE || '/api',
         BFF_PROXY_TARGET: process.env.BFF_PROXY_TARGET || 'http://127.0.0.1:4396',
+        // 站内提醒默认开启；QQ 绑定与站外投递保持独立关闭。
+        NUXT_PUBLIC_NOTIFICATIONS_ENABLED: process.env.NUXT_PUBLIC_NOTIFICATIONS_ENABLED || 'true',
+        NUXT_PUBLIC_QQ_NOTIFY_ENABLED: process.env.NUXT_PUBLIC_QQ_NOTIFY_ENABLED || 'false',
       },
       instances: 1,
       exec_mode: 'fork',

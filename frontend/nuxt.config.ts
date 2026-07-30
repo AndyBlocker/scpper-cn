@@ -83,14 +83,13 @@ export default defineNuxtConfig({
       debugFetchTimings: envBoolean(process.env.DEBUG_FETCH_TIMINGS, false),
       debugFetchMinDurationMs: envNumber(process.env.DEBUG_FETCH_MIN_DURATION_MS, 0),
       slowFetchThresholdMs: envNumber(process.env.SLOW_FETCH_THRESHOLD_MS, 800),
-      // 站内提醒功能总开关。暂时关闭时隐藏顶栏铃铛，并停止页面、关注和论坛
-      // 提醒的预取与重验证；底层接口和数据保留，便于之后直接恢复。
-      // 后端告警生成会刻意继续运行，以保留暂停期间的历史；QQ 外部投递由
-      // 独立的 QQ_NOTIFY_ENABLED 代码级闸门阻止。
+      // 站内提醒功能总开关，默认开启。仅在站内提醒本身需要紧急维护时才关闭；
+      // QQ 绑定与站外投递由独立的 QQ_NOTIFY_ENABLED 控制，关闭 QQ 不应影响
+      // 顶栏铃铛、提醒收件箱或通知设置。
       //
       //  · 构建期：NOTIFICATIONS_ENABLED=1 npm run build
       //  · 运行时：NUXT_PUBLIC_NOTIFICATIONS_ENABLED=true
-      notificationsEnabled: envBoolean(process.env.NOTIFICATIONS_ENABLED, false),
+      notificationsEnabled: envBoolean(process.env.NOTIFICATIONS_ENABLED, true),
       // QQ 通知与绑定的总开关。2026-07-30 暂时下线该功能：
       // 关掉后账号页不再显示 QQ 绑定入口，通知设置里也不再有「推送渠道」一节。
       // 数据一律保留（下线时库里有 19 条 ACTIVE 绑定），不需要重新绑定。

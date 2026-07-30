@@ -5,7 +5,7 @@ const { chromium } = require('playwright')
 
 const baseUrl = process.env.ACCOUNT_TEST_BASE_URL || 'http://127.0.0.1:19876'
 const outputDir = process.env.ACCOUNT_TEST_OUTPUT_DIR || '/tmp/scpper-account-refactor-evidence'
-const notificationsEnabled = process.env.ACCOUNT_TEST_NOTIFICATIONS_ENABLED === '1'
+const notificationsEnabled = process.env.ACCOUNT_TEST_NOTIFICATIONS_ENABLED !== '0'
 const qqFrontendEnabled = process.env.ACCOUNT_TEST_QQ_ENABLED === '1'
 const iso = '2026-07-30T08:00:00.000Z'
 const transparentPng = Buffer.from(
@@ -460,6 +460,15 @@ async function login(page) {
   await page.getByRole('button', { name: '登录', exact: true }).click()
 }
 
+async function settledProfileNameInput(page) {
+  const input = page.getByLabel('昵称', { exact: true })
+  await input.waitFor()
+  // 账号页通过客户端鉴权后才挂载表单。等初始会话与头像等请求稳定，
+  // 避免测试在 hydration/身份重验证尚未结束时抢先填写后被可信快照覆盖。
+  await page.waitForLoadState('networkidle')
+  return input
+}
+
 async function main() {
   fs.mkdirSync(outputDir, { recursive: true })
   const browser = await chromium.launch({ headless: true })
@@ -473,9 +482,23 @@ async function main() {
         await page.goto(`${baseUrl}/account`, { waitUntil: 'domcontentloaded' })
         await page.getByText('playwright@example.com', { exact: true }).waitFor()
         await page.getByRole('heading', { name: '账号概览' }).waitFor()
-        assert.equal(await page.locator('a[href="/notifications"]').count(), 0)
-        assert.equal(await page.locator('a[href="/settings/notifications"]').count(), 0)
-        assert.equal(await page.getByText('通知设置', { exact: true }).count(), 0)
+        const expectedNotificationEntries = notificationsEnabled ? 1 : 0
+        assert.equal(
+          await page.locator('a[href="/notifications"]').count(),
+          expectedNotificationEntries
+        )
+        assert.equal(
+          await page.locator('a[href="/settings/notifications"]').count(),
+          expectedNotificationEntries
+        )
+        assert.equal(
+          await page.locator('option[value="/notifications"]').count(),
+          expectedNotificationEntries
+        )
+        assert.equal(
+          await page.locator('option[value="/settings/notifications"]').count(),
+          expectedNotificationEntries
+        )
         const sectionNavigation = page.locator('#account-section-navigation')
         assert.equal(await sectionNavigation.inputValue(), '/account')
         assert.ok((await sectionNavigation.boundingBox()).height >= 44)
@@ -694,9 +717,8 @@ async function main() {
       { linked: true },
       async (page) => {
         await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
-        const input = page.getByLabel('昵称', { exact: true })
+        const input = await settledProfileNameInput(page)
         const button = page.getByRole('button', { name: '保存昵称' })
-        await input.waitFor()
         assert.equal(await button.isDisabled(), true)
         await input.fill('新的验收昵称')
         await button.click()
@@ -714,7 +736,7 @@ async function main() {
       { linked: true, malformedProfile: true },
       async (page, requests) => {
         await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
-        const input = page.getByLabel('昵称', { exact: true })
+        const input = await settledProfileNameInput(page)
         await input.fill('重查后确认的昵称')
         const authReadsBefore = requests.filter(entry => entry.path === '/auth/me').length
         await page.getByRole('button', { name: '保存昵称' }).click()
@@ -733,7 +755,7 @@ async function main() {
       { linked: true, profileResponseLost: true },
       async (page, requests) => {
         await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
-        const input = page.getByLabel('昵称', { exact: true })
+        const input = await settledProfileNameInput(page)
         const authReadsBefore = requests.filter(entry => entry.path === '/auth/me').length
         const broadcastBefore = await page.evaluate(() => (
           localStorage.getItem('scpper:auth-session-version')
@@ -761,7 +783,7 @@ async function main() {
       { linked: true, profileNetworkSwitch: true },
       async (page) => {
         await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
-        const input = page.getByLabel('昵称', { exact: true })
+        const input = await settledProfileNameInput(page)
         await input.fill('两个账号碰巧相同的昵称')
         await page.getByRole('button', { name: '保存昵称' }).click()
         await page.getByText('second@example.com', { exact: true }).waitFor()
@@ -808,6 +830,55 @@ async function main() {
     if (notificationsEnabled) {
       await scenario(
         browser,
+        'site-notifications-available-with-qq-hidden',
+        { linked: true, qqBound: true, qqFeatureEnabled: true, qqStatusError: true },
+        async (page, requests) => {
+          await page.goto(`${baseUrl}/account`, { waitUntil: 'domcontentloaded' })
+          await page.getByRole('heading', { name: '账号概览' }).waitFor()
+          const bell = page.getByRole('button', { name: '查看提醒' })
+          await bell.waitFor()
+          await bell.click()
+          await page.locator('#alerts-menu').waitFor()
+          await page.getByRole('heading', { name: '信息提醒' }).waitFor()
+          const accountNavigation = page.getByRole('navigation', {
+            name: '账号中心导航'
+          })
+          assert.equal(
+            await accountNavigation.locator('a[href="/notifications"]').count(),
+            1
+          )
+          assert.equal(
+            await accountNavigation.locator('a[href="/settings/notifications"]').count(),
+            1
+          )
+
+          await page.goto(`${baseUrl}/notifications`, { waitUntil: 'domcontentloaded' })
+          await page.getByRole('heading', { name: '提醒收件箱' }).waitFor()
+          assert.equal(new URL(page.url()).pathname, '/notifications')
+
+          await page.goto(`${baseUrl}/settings/notifications`, {
+            waitUntil: 'domcontentloaded'
+          })
+          await page.getByRole('heading', { name: '页面提醒偏好' }).waitFor()
+          assert.equal(new URL(page.url()).pathname, '/settings/notifications')
+          assert.ok(requests.some(entry => entry.path === '/alerts/preferences'))
+          assert.equal(await page.getByText('推送渠道', { exact: true }).count(), 0)
+          assert.equal(await page.getByText('QQ 私信', { exact: true }).count(), 0)
+
+          await page.goto(`${baseUrl}/account/connections`, {
+            waitUntil: 'domcontentloaded'
+          })
+          await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+          assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 0)
+          assert.equal(
+            requests.filter(entry => entry.path.startsWith('/qq-binding/')).length,
+            0
+          )
+        }
+      )
+
+      await scenario(
+        browser,
         'notification-settings-account-switch-isolated',
         { linked: true, switchAccount: true, delayFirstPreferences: 900 },
         async (page, requests, context) => {
@@ -833,19 +904,27 @@ async function main() {
         }
       )
 
-      await scenario(
-        browser,
-        'notification-qq-capability-is-server-authoritative',
-        { linked: true, qqBound: true, qqFeatureEnabled: false },
-        async (page) => {
-          await page.goto(`${baseUrl}/settings/notifications`, { waitUntil: 'domcontentloaded' })
-          await page.getByText('功能暂停（当前不会通过 QQ 投递）', { exact: true }).waitFor()
-          assert.equal(
-            await page.getByText('通常在事件发生后一小时内送达。', { exact: false }).count(),
-            0
-          )
-        }
-      )
+      if (qqFrontendEnabled) {
+        await scenario(
+          browser,
+          'notification-qq-capability-is-server-authoritative',
+          { linked: true, qqBound: true, qqFeatureEnabled: false },
+          async (page) => {
+            await page.goto(`${baseUrl}/settings/notifications`, {
+              waitUntil: 'domcontentloaded'
+            })
+            await page.getByText('功能暂停（当前不会通过 QQ 投递）', {
+              exact: true
+            }).waitFor()
+            assert.equal(
+              await page.getByText('通常在事件发生后一小时内送达。', {
+                exact: false
+              }).count(),
+              0
+            )
+          }
+        )
+      }
     }
 
     await scenario(
@@ -1161,7 +1240,7 @@ async function main() {
         assert.equal(await page.getByText('playwright@example.com', { exact: true }).count(), 0)
         assert.equal(await page.getByLabel('昵称', { exact: true }).count(), 0)
         await page.getByText('second@example.com', { exact: true }).waitFor()
-        const input = page.getByLabel('昵称', { exact: true })
+        const input = await settledProfileNameInput(page)
         await input.fill('第二位用户的新昵称')
         await page.getByRole('button', { name: '保存昵称' }).click()
         await page.getByText('昵称已保存。', { exact: true }).waitFor()
@@ -1181,7 +1260,8 @@ async function main() {
       async (page, requests) => {
         await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
         await page.getByText('playwright@example.com', { exact: true }).waitFor()
-        await page.getByLabel('昵称', { exact: true }).fill('不应写给 B 的昵称')
+        const input = await settledProfileNameInput(page)
+        await input.fill('不应写给 B 的昵称')
 
         // 模拟另一标签页已把共享 Cookie 切到 B，但 storage/focus 通知尚未到达。
         staleWriteOptions.forceServerAccount = 'B'
