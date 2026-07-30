@@ -64,6 +64,11 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
     // internal route access.
     return res.status(403).json({ error: 'internal_access_denied' });
   };
+  // Global placement is intentional: account-private GETs must be checked
+  // before route handlers resolve an owner (some legacy resolvers can insert a
+  // User/CollectionAccountOwner row). The middleware itself uses a strict path
+  // allow-list, so public and anonymous routes remain unchanged.
+  router.use(requireExpectedUser);
   router.use('/pages/random', expensiveLimiter);
   router.use('/pages', pagesRouter(pool, redis));
   router.use('/users', usersRouter(pool, redis));
@@ -75,13 +80,13 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/analytics', analyticsRouter(pool, redis));
   router.use('/quotes', quotesRouter(pool, redis));
   router.use('/tags', tagsRouter(pool, redis));
-  router.use('/alerts', requireExpectedUser, alertsRouter(pool, redis));
-  router.use('/follows', requireExpectedUser, followsRouter(pool, redis));
-  router.use('/alerts/follow', requireExpectedUser, followAlertsRouter(pool, redis));
-  router.use('/alerts/forum', requireExpectedUser, forumAlertsRouter(pool, redis));
+  router.use('/alerts', alertsRouter(pool, redis));
+  router.use('/follows', followsRouter(pool, redis));
+  router.use('/alerts/follow', followAlertsRouter(pool, redis));
+  router.use('/alerts/forum', forumAlertsRouter(pool, redis));
   router.use('/references', referencesRouter(pool, redis));
   router.use('/tracking', trackingRouter(pool));
-  router.use('/collections', requireExpectedUser, collectionsRouter(pool, redis));
+  router.use('/collections', collectionsRouter(pool, redis));
   router.use('/text-analysis', textAnalysisRouter());
   router.use('/forums', forumsRouter(pool, redis));
   router.use('/pages', pagePreviewRouter(pool));

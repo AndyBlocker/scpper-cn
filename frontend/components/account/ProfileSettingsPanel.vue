@@ -38,6 +38,12 @@ function resetDisplayName() {
   message.value = null
 }
 
+function handleDisplayNameInput() {
+  // 成功或失败提示只描述上一次提交。用户再次编辑后立即清除，避免把尚未
+  // 保存的新值误报为“已保存”。
+  message.value = null
+}
+
 async function handleSubmit() {
   if (!canSave.value) return
   saving.value = true
@@ -144,6 +150,7 @@ async function handleSubmit() {
           aria-describedby="account-display-name-hint account-display-name-count account-display-name-message"
           class="mt-2 min-h-11 w-full rounded-lg border border-[rgb(var(--input-border))] bg-[rgb(var(--input-bg))] px-3 py-2 text-sm text-[rgb(var(--fg))] outline-none transition focus:border-[var(--g-accent-border)] focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60"
           :disabled="saving"
+          @input="handleDisplayNameInput"
         >
         <div class="mt-2 flex items-start justify-between gap-4">
           <p

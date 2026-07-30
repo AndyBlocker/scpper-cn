@@ -53,4 +53,16 @@ describe('Expected user proxy forwarding', () => {
 
     expect(receivedExpectedUser).toBe('acc_frontend_snapshot');
   });
+
+  test('forwards the expected account header to private user-backend reads', async () => {
+    process.env.USER_BACKEND_BASE_URL = upstreamBase;
+    const app = await createServer();
+
+    await request(app)
+      .get('/gacha/wallet')
+      .set('x-scpper-expected-user-id', 'acc_private_read_snapshot')
+      .expect(200);
+
+    expect(receivedExpectedUser).toBe('acc_private_read_snapshot');
+  });
 });

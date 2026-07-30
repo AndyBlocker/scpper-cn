@@ -7,7 +7,7 @@ useHead({
 <template>
   <AccountShell
     title="账号连接"
-    description="连接你的 Wikidot 身份，并管理仍需收尾的历史外部连接。"
+    description="连接并查看你的 Wikidot 身份，让作者与个人内容保持一致归属。"
   >
     <AccountAuthGate>
       <template #default="{ user }">

@@ -4,7 +4,11 @@ import { config } from '../config.js';
 import { parseCookieHeader } from '../utils/cookies.js';
 import { extractUserId, verifyAuthToken } from '../utils/auth-token.js';
 import { maskQqNumber } from '../services/qqBindingProof.js';
-import { qqFeatureEnabled } from '../utils/qqFeature.js';
+import {
+  qqFeatureEnabled,
+  qqNotificationsEnabled,
+  type QqFeatureEnvironment
+} from '../utils/qqFeature.js';
 import { rejectExpectedUserMismatch } from '../utils/expectedUser.js';
 
 /** 通知渠道绑定摘要。**只含掩码**，完整地址不出 user-backend 的投递路径。 */
@@ -40,17 +44,20 @@ const AUTH_CACHE_TTL_MS = 30_000; // 30 seconds
 /**
  * /auth/login、/auth/profile 与 /auth/me 共用的 QQ 摘要格式。
  *
- * featureEnabled 表示总开关与机器人配置都已就绪；createBinding 是当前能否发起；
- * deliverNotifications 是此绑定此刻能否投递；manageExistingBinding 则刻意不受
+ * featureEnabled 表示投递总开关；createBinding 还要求机器人账号配置就绪；
+ * deliverNotifications 与 backend 投递器使用相同判据，不会因纯展示用途的
+ * QQ_BOT_SELF_ID 缺失而谎报“不会投递”。manageExistingBinding 则刻意不受
  * 总开关限制，确保下线期间已有绑定或待取消挑战仍有退出入口。
  */
 export function formatAuthQqBinding(
   binding: { address: string; status: string } | null | undefined,
   pendingChallenge: boolean,
-  featureEnabled = qqFeatureEnabled()
+  environment: QqFeatureEnvironment = process.env
 ): AuthChannelBinding {
   const bound = Boolean(binding && binding.status !== 'REVOKED');
   const status = bound ? binding?.status ?? null : null;
+  const featureEnabled = qqNotificationsEnabled(environment);
+  const createBindingEnabled = qqFeatureEnabled(environment);
   return {
     bound,
     addressMask: bound && binding ? maskQqNumber(binding.address) : null,
@@ -58,7 +65,7 @@ export function formatAuthQqBinding(
     pendingChallenge,
     capabilities: {
       featureEnabled,
-      createBinding: featureEnabled && !bound,
+      createBinding: createBindingEnabled && !bound,
       deliverNotifications: featureEnabled && bound && status === 'ACTIVE',
       manageExistingBinding: bound || pendingChallenge
     }

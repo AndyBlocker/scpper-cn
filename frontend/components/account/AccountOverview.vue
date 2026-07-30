@@ -25,23 +25,6 @@ const avatarId = computed(() => {
 const wikidotStatus = computed(() => (
   props.user.linkedWikidotId ? '已连接' : '未连接'
 ))
-const qqFeatureEnabled = computed(() => Boolean(
-  props.user.qqBinding?.capabilities?.featureEnabled
-))
-const qqStatusLabel = computed(() => {
-  if (!qqFeatureEnabled.value) return 'QQ 功能暂停，可管理旧连接'
-  if (props.user.qqBinding?.bound) return 'QQ 已连接'
-  return 'QQ 绑定进行中'
-})
-
-const connectionDescription = computed(() => {
-  if (props.user.qqBinding?.bound || props.user.qqBinding?.pendingChallenge) {
-    return qqFeatureEnabled.value
-      ? '管理 Wikidot 身份与 QQ 连接'
-      : '管理 Wikidot 身份与需要收尾的旧 QQ 连接'
-  }
-  return '连接 Wikidot 身份，管理外部账号'
-})
 
 const links = computed<OverviewLink[]>(() => [
   {
@@ -52,7 +35,7 @@ const links = computed<OverviewLink[]>(() => [
   },
   {
     title: '账号连接',
-    description: connectionDescription.value,
+    description: '连接并管理 Wikidot 身份',
     icon: 'Link2',
     to: '/account/connections',
     status: wikidotStatus.value
@@ -114,7 +97,7 @@ function formatLastLogin(value: string | null): string {
       <div>
         <h2 class="font-semibold">站内通知功能暂时关闭</h2>
         <p class="mt-1 leading-6">
-          提醒、通知设置及 QQ 新绑定入口已暂时隐藏。已有数据会保留，你现在无需进行任何操作。
+          提醒与通知设置入口已暂时隐藏。已有数据会保留，你现在无需进行任何操作。
         </p>
       </div>
     </section>
@@ -148,20 +131,6 @@ function formatLastLogin(value: string | null): string {
                 aria-hidden="true"
               />
               Wikidot {{ wikidotStatus }}
-            </span>
-            <span
-              v-if="user.qqBinding?.bound || user.qqBinding?.pendingChallenge"
-              class="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1"
-              :class="qqFeatureEnabled
-                ? 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-200'
-                : 'border-amber-300/70 bg-amber-50 text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/40 dark:text-amber-200'"
-            >
-              <LucideIcon
-                :name="qqFeatureEnabled ? 'CircleCheck' : 'PauseCircle'"
-                class="h-3.5 w-3.5"
-                aria-hidden="true"
-              />
-              {{ qqStatusLabel }}
             </span>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { useNuxtApp } from 'nuxt/app'
 import { computed } from 'vue'
 import { getErrorMessage, getErrorStatus } from '~/utils/httpError'
+import { registerExpectedUserMismatchRecovery } from '~/utils/expectedUser'
 
 export type AuthStatus = 'unknown' | 'authenticated' | 'unauthenticated'
 export type AuthState = 'loading' | 'ready' | 'unauthenticated' | 'error'
@@ -43,8 +44,13 @@ interface AuthFetchInflight {
 interface AuthRuntime {
   epoch: number
   activeRequestsByEpoch: Map<number, number>
+  activeIdentityMutationEpoch: number | null
+  activeIdentityMutationVerificationEpoch: number | null
+  pendingIdentitySessionValidation: boolean
+  pendingPassiveSessionValidation: boolean
   fetchInflight: AuthFetchInflight | null
   sessionRevalidation: Promise<AuthUser | null> | null
+  sessionRevalidationInvalidatesSnapshot: boolean
   sessionValidationGeneration: number
   sessionSyncListenersInstalled: boolean
   sourceId: string
@@ -67,8 +73,13 @@ function getAuthRuntime(nuxtApp: object): AuthRuntime {
   const runtime: AuthRuntime = {
     epoch: 0,
     activeRequestsByEpoch: new Map(),
+    activeIdentityMutationEpoch: null,
+    activeIdentityMutationVerificationEpoch: null,
+    pendingIdentitySessionValidation: false,
+    pendingPassiveSessionValidation: false,
     fetchInflight: null,
     sessionRevalidation: null,
+    sessionRevalidationInvalidatesSnapshot: false,
     sessionValidationGeneration: 0,
     sessionSyncListenersInstalled: false,
     sourceId: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
@@ -299,12 +310,64 @@ export function useAuth() {
   /**
    * 任何会改变身份快照的写操作都开启新世代，并与旧 /auth/me 解除去重关系。
    * 已在网络中的旧请求仍可结束，但只有当前世代的响应能写入共享状态。
+   *
+   * mutation 的优先级高于普通 focus/pageshow 验证：它开始时会同步撤销旧验证的
+   * UI 所有权，避免已经被新世代忽略的慢 GET 继续让账号页保持 inert。
    */
   function beginIdentityMutation() {
+    if (runtime.sessionRevalidation) {
+      // 当前被接管的验证不会再拥有 UI。显式账号变更通知必须在 mutation
+      // 结束后强制重读 Cookie；普通前台恢复检查则可降级为被动补验。
+      if (runtime.sessionRevalidationInvalidatesSnapshot) {
+        runtime.pendingIdentitySessionValidation = true
+      } else {
+        runtime.pendingPassiveSessionValidation = true
+      }
+    }
+    runtime.sessionValidationGeneration += 1
+    runtime.sessionRevalidation = null
+    runtime.sessionRevalidationInvalidatesSnapshot = false
+    sessionVerifying.value = false
+
     const epoch = supersedeCurrentEpoch()
+    runtime.activeIdentityMutationEpoch = epoch
+    runtime.activeIdentityMutationVerificationEpoch = null
     authError.value = null
     beginRequest(epoch)
     return epoch
+  }
+
+  function endIdentityMutation(epoch: number) {
+    const ownsCurrentEpoch = runtime.activeIdentityMutationEpoch === epoch
+      && (
+        runtime.epoch === epoch
+        || runtime.activeIdentityMutationVerificationEpoch === runtime.epoch
+      )
+    const wasSuperseded = !ownsCurrentEpoch
+    endRequest(epoch)
+
+    // 被跨标签通知或任何强制 /auth/me 读取抢占的 mutation 仍可能在响应阶段
+    // 改写 HttpOnly Cookie。它结束后必须再读一次最终 Cookie，不能仅丢弃 DTO。
+    if (wasSuperseded) {
+      runtime.pendingIdentitySessionValidation = true
+    }
+
+    if (runtime.activeIdentityMutationEpoch === epoch) {
+      runtime.activeIdentityMutationEpoch = null
+      runtime.activeIdentityMutationVerificationEpoch = null
+    }
+
+    // 若另一个 mutation 已经接管，等待它结束再确认最终 Cookie；否则现在补验。
+    if (runtime.activeIdentityMutationEpoch === null) {
+      if (runtime.pendingIdentitySessionValidation) {
+        runtime.pendingIdentitySessionValidation = false
+        runtime.pendingPassiveSessionValidation = false
+        void revalidateSession(true)
+      } else if (runtime.pendingPassiveSessionValidation) {
+        runtime.pendingPassiveSessionValidation = false
+        void revalidateSession(false)
+      }
+    }
   }
 
   function isCurrent(epoch: number) {
@@ -337,14 +400,25 @@ export function useAuth() {
     return responseStatus !== null && responseStatus >= 400 && responseStatus < 500
   }
 
-  async function fetchCurrentUser(force = false) {
+  async function fetchCurrentUser(force = false, identityMutationEpoch: number | null = null) {
     if (status.value === 'authenticated' && !authError.value && !force) {
       authDebug('[auth] fetchCurrentUser skip (already authenticated)')
       return user.value
     }
     // 强制刷新用于绑定/资料变更后的重新读取。它必须开启新世代，而不是加入
     // 变更前已经在途的 /auth/me，否则“刷新”仍可能返回旧摘要。
-    if (force) supersedeCurrentEpoch()
+    if (force) {
+      const mutationOwnsCurrentEpoch = identityMutationEpoch !== null
+        && runtime.activeIdentityMutationEpoch === identityMutationEpoch
+        && runtime.epoch === identityMutationEpoch
+      const forcedEpoch = supersedeCurrentEpoch()
+      // Mutation 内部用于确认不确定写入结果的 /auth/me 仍属于同一次操作。
+      // 它可以开启新请求世代以避开旧 inflight，但不应被 endIdentityMutation
+      // 误判成外部账号切换，否则会再次清空快照并卸载承载错误提示的表单。
+      if (mutationOwnsCurrentEpoch) {
+        runtime.activeIdentityMutationVerificationEpoch = forcedEpoch
+      }
+    }
     const existing = runtime.fetchInflight
     if (existing && existing.epoch === runtime.epoch) {
       authDebug('[auth] fetchCurrentUser dedup (already in-flight)')
@@ -429,8 +503,26 @@ export function useAuth() {
   async function revalidateSession(invalidateSnapshot = false) {
     if (!import.meta.client) return fetchCurrentUser(true)
 
+    // focus/pageshow 是被动、可延后的安全网，不能打断用户已经发起的登录、退出、
+    // 资料或密码写操作。mutation 自身会解析响应，并在结果不确定时强制读取
+    // /auth/me，因此这里直接沿用当前可信快照即可。
+    if (!invalidateSnapshot && runtime.activeIdentityMutationEpoch !== null) {
+      authDebug('[auth] passive session validation skipped (identity mutation in-flight)')
+      runtime.pendingPassiveSessionValidation = true
+      return user.value
+    }
+
     if (!invalidateSnapshot && runtime.sessionRevalidation) {
       return runtime.sessionRevalidation
+    }
+
+    // 来自其他标签页的显式身份变更通知仍然拥有最高安全优先级。它会让当前
+    // mutation 的响应因 epoch 不匹配而失效，并接管会话验证。
+    if (invalidateSnapshot) {
+      runtime.activeIdentityMutationEpoch = null
+      runtime.activeIdentityMutationVerificationEpoch = null
+      runtime.pendingIdentitySessionValidation = false
+      runtime.pendingPassiveSessionValidation = false
     }
 
     runtime.sessionValidationGeneration += 1
@@ -440,11 +532,13 @@ export function useAuth() {
 
     const verification = fetchCurrentUser(true)
     runtime.sessionRevalidation = verification
+    runtime.sessionRevalidationInvalidatesSnapshot = invalidateSnapshot
     try {
       return await verification
     } finally {
       if (runtime.sessionValidationGeneration === validationGeneration) {
         runtime.sessionRevalidation = null
+        runtime.sessionRevalidationInvalidatesSnapshot = false
         sessionVerifying.value = false
       }
     }
@@ -530,7 +624,7 @@ export function useAuth() {
           authDebug('[auth] /auth/login user email did not match the requested account')
         }
         markSessionUnknown()
-        await fetchCurrentUser(true)
+        await fetchCurrentUser(true, mutationEpoch)
         if (
           status.value === 'authenticated'
           && user.value?.email.trim().toLowerCase() === requestedEmail
@@ -565,7 +659,7 @@ export function useAuth() {
       // 后续请求却携带账号 B 的 cookie，会形成跨账号身份错配。清掉旧快照，再用
       // 一次不可复用旧 inflight 的 /auth/me 确认真实会话。
       markSessionUnknown()
-      await fetchCurrentUser(true)
+      await fetchCurrentUser(true, mutationEpoch)
       if (
         status.value === 'authenticated'
         && user.value?.email.trim().toLowerCase() === requestedEmail
@@ -580,7 +674,7 @@ export function useAuth() {
           : message
       }
     } finally {
-      endRequest(mutationEpoch)
+      endIdentityMutation(mutationEpoch)
     }
   }
 
@@ -616,7 +710,7 @@ export function useAuth() {
       // 网络失败可能发生在服务端已经清 Cookie 之后，也可能发生在请求到达之前。
       // 登出不会把会话切换到另一个账号，因此可在重查期间保留当前可信快照，
       // 避免账号页面卸载后吞掉“退出失败”的可重试提示。
-      await fetchCurrentUser(true)
+      await fetchCurrentUser(true, mutationEpoch)
       if (status.value === 'unauthenticated') {
         announceSessionChange('logout')
         return { ok: true as const }
@@ -628,7 +722,7 @@ export function useAuth() {
           : '无法确认是否已退出，请恢复网络后重试。'
       }
     } finally {
-      endRequest(mutationEpoch)
+      endIdentityMutation(mutationEpoch)
     }
   }
 
@@ -675,7 +769,7 @@ export function useAuth() {
         } else {
           authDebug('[auth] /auth/profile returned an inconsistent user payload')
         }
-        await fetchCurrentUser(true)
+        await fetchCurrentUser(true, mutationEpoch)
         if (
           status.value === 'authenticated'
           && !authError.value
@@ -702,7 +796,7 @@ export function useAuth() {
         markUnauthenticated()
       } else if (!isDefinitiveClientRejection(cause)) {
         // 更新可能已落库但响应丢失；重新读取同一账号可避免展示旧昵称。
-        await fetchCurrentUser(true)
+        await fetchCurrentUser(true, mutationEpoch)
         if (
           status.value === 'authenticated'
           && !authError.value
@@ -716,7 +810,7 @@ export function useAuth() {
       const message = getErrorMessage(cause, '更新失败')
       return { ok: false as const, error: message }
     } finally {
-      endRequest(mutationEpoch)
+      endIdentityMutation(mutationEpoch)
     }
   }
 
@@ -747,7 +841,7 @@ export function useAuth() {
         // 服务端可能已修改密码并清 Cookie，但响应在途中丢失。重新解析会话，
         // 不在未确认时宣称“密码已修改”。
         markSessionUnknown()
-        await fetchCurrentUser(true)
+        await fetchCurrentUser(true, mutationEpoch)
         if (status.value === 'unauthenticated') {
           return {
             ok: false as const,
@@ -758,7 +852,7 @@ export function useAuth() {
       const message = getErrorMessage(cause, '修改密码失败')
       return { ok: false as const, error: message }
     } finally {
-      endRequest(mutationEpoch)
+      endIdentityMutation(mutationEpoch)
     }
   }
 
@@ -771,6 +865,7 @@ export function useAuth() {
     return 'unauthenticated'
   })
 
+  registerExpectedUserMismatchRecovery(nuxtApp, () => revalidateSession(true))
   installSessionSyncListeners()
 
   return {

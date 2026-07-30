@@ -28,7 +28,7 @@ export interface AuthUserPayload {
 
 const USER_BACKEND_DEFAULT = 'http://127.0.0.1:4455';
 export const EXPECTED_USER_ID_HEADER = 'x-scpper-expected-user-id';
-const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const READ_METHODS = new Set(['GET', 'HEAD']);
 const requestAuthCache = new WeakMap<Request, Promise<AuthUserPayload | null>>();
 
 async function fetchAuthUserUncached(req: Request): Promise<AuthUserPayload | null> {
@@ -103,14 +103,77 @@ function expectedUserId(req: Request): string | null {
   return String(raw).trim();
 }
 
+const hasPathPrefix = (path: string, prefix: string) =>
+  path === prefix || path.startsWith(`${prefix}/`);
+
+function requestPath(req: Request): string {
+  const raw = String(req.originalUrl || req.url || req.path || '/');
+  const path = raw.split(/[?#]/u, 1)[0] || '/';
+  return (path.startsWith('/') ? path : `/${path}`).replace(/\/+$/u, '') || '/';
+}
+
+/**
+ * Private GET/HEAD routes that are scoped to the session owner.
+ *
+ * `/auth/me` is deliberately excluded: it is the source of truth used to
+ * re-resolve the real cookie identity after a mismatch. Public collections
+ * stay anonymous and cacheable. This list covers BFF-owned private reads;
+ * proxied `/gacha` and `/admin` reads are checked by user-backend after the
+ * BFF forwards the same header.
+ */
+export function isExpectedUserPrivateReadPath(path: string): boolean {
+  if (path === '/auth/me' || hasPathPrefix(path, '/collections/public')) {
+    return false;
+  }
+
+  if (
+    hasPathPrefix(path, '/alerts')
+    || hasPathPrefix(path, '/follows')
+    || hasPathPrefix(path, '/collections')
+    || hasPathPrefix(path, '/ftml-projects')
+  ) {
+    return true;
+  }
+
+  return path === '/qq-binding/status'
+    || path === '/wikidot-binding/status'
+    || path === '/wikidot-binding/resolve';
+}
+
+function shouldCheckExpectedUser(req: Request): boolean {
+  const method = req.method.toUpperCase();
+  if (method === 'OPTIONS') return false;
+  if (READ_METHODS.has(method)) {
+    return isExpectedUserPrivateReadPath(requestPath(req));
+  }
+
+  // Preserve the pre-existing mutation boundary. Other proxied user-backend
+  // mutations are independently checked by its requireAuth middleware.
+  const path = requestPath(req);
+  return hasPathPrefix(path, '/alerts')
+    || hasPathPrefix(path, '/follows')
+    || (
+      hasPathPrefix(path, '/collections')
+      && !hasPathPrefix(path, '/collections/public')
+    );
+}
+
+function accountMismatch(res: Response) {
+  return res.status(409).json({
+    ok: false,
+    code: 'account_mismatch',
+    error: '登录账号已切换，请刷新后重试。'
+  });
+}
+
 /**
  * Optimistic concurrency guard for account identity.
  *
  * It is deliberately optional for rolling deploys: requests from old clients
  * without the header keep their existing behavior. New clients send the user
  * id from their last trusted auth snapshot. If another tab has since replaced
- * the cookie, the mutation is rejected before a database owner is resolved or
- * any write is attempted.
+ * the cookie, private reads and mutations are rejected before a database owner
+ * is resolved, including GET paths whose owner resolution can insert rows.
  */
 export async function requireExpectedUser(
   req: Request,
@@ -118,21 +181,19 @@ export async function requireExpectedUser(
   next: NextFunction
 ) {
   const expected = expectedUserId(req);
-  if (expected === null || SAFE_METHODS.has(req.method.toUpperCase())) {
+  if (expected === null || !shouldCheckExpectedUser(req)) {
     return next();
   }
 
   try {
     const actual = await fetchAuthUser(req);
-    // Let the route preserve its existing 401 response when the cookie is
-    // absent/invalid. The mismatch code is only for two known, different users.
-    if (!actual) return next();
+    // With a trusted client snapshot but no verifiable cookie identity, fail
+    // closed before private data is read. The 409 recovery path re-runs
+    // /auth/me, which will then resolve an expired session to 401 or pick up the
+    // replacement account. Header-less old clients retain their old behavior.
+    if (!actual) return accountMismatch(res);
     if (expected !== actual.id) {
-      return res.status(409).json({
-        ok: false,
-        code: 'account_mismatch',
-        error: '登录账号已切换，请刷新后重试。'
-      });
+      return accountMismatch(res);
     }
     return next();
   } catch (error) {

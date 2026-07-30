@@ -1,5 +1,10 @@
 import type { FetchOptions } from 'ofetch';
 import { consola } from 'consola';
+import {
+  expectedUserIdForRequest,
+  normalizeBffRequestPath,
+  requestExpectedUserMismatchRecovery
+} from '~/utils/expectedUser';
 
 type DebugMeta = {
   startAt: number;
@@ -12,7 +17,6 @@ type DebugMeta = {
 };
 
 const EXPECTED_USER_ID_HEADER = 'x-scpper-expected-user-id';
-const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig();
@@ -80,10 +84,14 @@ export default defineNuxtPlugin((nuxtApp) => {
       const clientDebugFlag = !isServer && hasClientDebugFlag();
       const shouldLogStart = debugFetchTimings || clientDebugFlag;
       const method = String(options.method || 'GET').toUpperCase();
-      const trustedUserId = authStatus.value === 'authenticated'
-        ? String(authUser.value?.id || '').trim()
-        : '';
-      if (!SAFE_METHODS.has(method) && trustedUserId) {
+      const trustedUserId = expectedUserIdForRequest({
+        method,
+        request,
+        bffBase,
+        authStatus: authStatus.value,
+        authUserId: authUser.value?.id
+      });
+      if (trustedUserId) {
         const headers = new Headers(options.headers as HeadersInit | undefined);
         headers.set(EXPECTED_USER_ID_HEADER, trustedUserId);
         options.headers = headers;
@@ -111,7 +119,21 @@ export default defineNuxtPlugin((nuxtApp) => {
     },
     onResponseError({ options, response }) {
       const status = response?.status ?? 0;
+      const targetPath = (options as any)?._debugFetch?.targetPath || response?.url || '/';
       handleResponseDebug(options, status, true);
+      const responseData = (response as any)?._data;
+      const normalizedPath = normalizeBffRequestPath(targetPath, bffBase);
+      if (
+        status === 409
+        && responseData?.code === 'account_mismatch'
+        && normalizedPath !== '/auth/me'
+      ) {
+        // The cookie is now owned by a different account than the trusted
+        // snapshot. Re-resolve it once even when localStorage sync is blocked.
+        // /auth/me is exempt from the expected-user header and from this hook,
+        // so recovery cannot recursively trigger itself.
+        void requestExpectedUserMismatchRecovery(nuxtApp);
+      }
     }
   });
 

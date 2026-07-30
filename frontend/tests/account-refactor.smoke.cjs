@@ -6,6 +6,7 @@ const { chromium } = require('playwright')
 const baseUrl = process.env.ACCOUNT_TEST_BASE_URL || 'http://127.0.0.1:19876'
 const outputDir = process.env.ACCOUNT_TEST_OUTPUT_DIR || '/tmp/scpper-account-refactor-evidence'
 const notificationsEnabled = process.env.ACCOUNT_TEST_NOTIFICATIONS_ENABLED === '1'
+const qqFrontendEnabled = process.env.ACCOUNT_TEST_QQ_ENABLED === '1'
 const iso = '2026-07-30T08:00:00.000Z'
 const transparentPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
@@ -223,22 +224,23 @@ function createApiHandler(options, requests) {
       return json(route, {
         ok: true,
         botQq: '10000001',
-        binding: options.qqBound
+        binding: currentAuth.qqBound
           ? {
               addressMask: '1234***8',
               displayName: '测试 QQ',
-              status: options.qqStatus || 'ACTIVE',
+              status: currentAuth.qqStatus || 'ACTIVE',
               verifiedAt: iso,
               suspendedUntil: null
             }
           : null,
-        challenge: options.qqPending
+        challenge: currentAuth.qqPending
           ? { codeHint: '1234', expiresAt: '2026-07-31T08:00:00.000Z', createdAt: iso }
           : null
       })
     }
 
     if (apiPath === '/qq-binding/start' && method === 'POST') {
+      currentAuth = { ...currentAuth, qqPending: true }
       return json(route, {
         ok: true,
         code: 'SCPPER-ABCDEFGHJKMN',
@@ -248,11 +250,13 @@ function createApiHandler(options, requests) {
       })
     }
 
-    if (apiPath === '/qq-binding/challenge' && method === 'DELETE') {
+    if (apiPath === '/qq-binding/cancel' && method === 'DELETE') {
+      currentAuth = { ...currentAuth, qqPending: false }
       return json(route, { ok: true })
     }
 
-    if (apiPath === '/qq-binding' && method === 'DELETE') {
+    if (apiPath === '/qq-binding/unbind' && method === 'POST') {
+      currentAuth = { ...currentAuth, qqBound: false, qqPending: false }
       return json(route, { ok: true })
     }
 
@@ -392,7 +396,9 @@ async function main() {
         assert.equal(await page.locator('a[href="/notifications"]').count(), 0)
         assert.equal(await page.locator('a[href="/settings/notifications"]').count(), 0)
         assert.equal(await page.getByText('通知设置', { exact: true }).count(), 0)
-        assert.ok((await page.locator('#account-section-navigation').boundingBox()).height >= 44)
+        const sectionNavigation = page.locator('#account-section-navigation')
+        assert.equal(await sectionNavigation.inputValue(), '/account')
+        assert.ok((await sectionNavigation.boundingBox()).height >= 44)
         const size = await dimensions(page)
         assert.ok(size.scrollWidth <= size.innerWidth, JSON.stringify(size))
         assert.ok(size.bodyScrollWidth <= size.innerWidth, JSON.stringify(size))
@@ -415,48 +421,95 @@ async function main() {
 
     await scenario(
       browser,
-      'connections-bound-error-fallback',
+      'connections-bound-hidden-while-disabled',
       { linked: true, qqBound: true, qqStatusError: true },
       async (page, requests) => {
         await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
-        await page.getByText('QQ 功能目前暂停', { exact: false }).waitFor()
-        await page.getByText('QQ 状态暂时不可用', { exact: false }).waitFor()
-        await page.getByText('1234***8', { exact: true }).waitFor()
-        assert.equal(await page.getByRole('button', { name: '解绑 QQ' }).count(), 1)
-        const count = requests.filter(entry => entry.path === '/qq-binding/status').length
-        assert.ok(count >= 1 && count <= 2)
+        await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+        assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 0)
+        assert.equal(await page.getByRole('button', { name: '解绑 QQ' }).count(), 0)
+        assert.equal(requests.filter(entry => entry.path === '/qq-binding/status').length, 0)
+
+        await page.goto(`${baseUrl}/account`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: '账号概览' }).waitFor()
+        assert.equal(await page.getByText('QQ 已连接', { exact: true }).count(), 0)
+        assert.equal(await page.getByText('QQ 功能暂停，可管理旧连接', { exact: true }).count(), 0)
       }
     )
 
     await scenario(
       browser,
-      'connections-paused-pending-does-not-poll',
+      'connections-pending-hidden-while-disabled',
       { linked: true, qqPending: true, qqFeatureEnabled: false },
       async (page, requests) => {
         await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
-        await page.getByRole('button', { name: '取消未完成的绑定' }).waitFor()
-        const initialCount = requests.filter(entry => entry.path === '/qq-binding/status').length
-        assert.equal(initialCount, 1)
-        await page.waitForTimeout(5500)
-        assert.equal(
-          requests.filter(entry => entry.path === '/qq-binding/status').length,
-          initialCount
-        )
+        await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+        assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 0)
+        assert.equal(await page.getByRole('button', { name: '取消未完成的绑定' }).count(), 0)
+        assert.equal(requests.filter(entry => entry.path === '/qq-binding/status').length, 0)
       }
     )
 
-    await scenario(
-      browser,
-      'connections-feature-restorable',
-      { linked: true, qqFeatureEnabled: true },
-      async (page, requests) => {
-        await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
-        await page.getByRole('button', { name: '开始绑定' }).click()
-        await page.getByText('一次性验证码', { exact: true }).waitFor()
-        await page.getByText('ABCD', { exact: true }).waitFor()
-        assert.equal(requests.filter(entry => entry.path === '/qq-binding/start').length, 1)
-      }
-    )
+    if (!qqFrontendEnabled) {
+      await scenario(
+        browser,
+        'connections-frontend-switch-wins',
+        { linked: true, qqFeatureEnabled: true },
+        async (page, requests) => {
+          await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+          await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+          assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 0)
+          assert.equal(await page.getByRole('button', { name: '开始绑定' }).count(), 0)
+          assert.equal(requests.filter(entry => entry.path === '/qq-binding/start').length, 0)
+        }
+      )
+
+    } else {
+      await scenario(
+        browser,
+        'connections-feature-restorable',
+        { linked: true, qqFeatureEnabled: true },
+        async (page, requests) => {
+          await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+          await page.getByRole('button', { name: '开始绑定' }).click()
+          await page.getByText('一次性验证码', { exact: true }).waitFor()
+          await page.getByText('ABCD', { exact: true }).waitFor()
+          assert.equal(requests.filter(entry => entry.path === '/qq-binding/start').length, 1)
+        }
+      )
+
+      await scenario(
+        browser,
+        'connections-enabled-cancel-keeps-success',
+        { linked: true, qqPending: true, qqFeatureEnabled: false },
+        async (page, requests) => {
+          await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+          await page.getByRole('button', { name: '取消未完成的绑定' }).click()
+          await page.getByText('未完成的 QQ 绑定已取消。', { exact: false }).waitFor()
+          assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 1)
+          assert.equal(requests.filter(entry => (
+            entry.path === '/qq-binding/cancel' && entry.method === 'DELETE'
+          )).length, 1)
+        }
+      )
+
+      await scenario(
+        browser,
+        'connections-enabled-unbind-keeps-success',
+        { linked: true, qqBound: true, qqFeatureEnabled: false },
+        async (page, requests) => {
+          await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+          await page.getByRole('button', { name: '解绑 QQ' }).click()
+          await page.getByLabel('登录密码', { exact: true }).fill('password-for-smoke-test')
+          await page.getByRole('button', { name: '确认解绑' }).click()
+          await page.getByText('QQ 连接已解绑。', { exact: false }).waitFor()
+          assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 1)
+          assert.equal(requests.filter(entry => (
+            entry.path === '/qq-binding/unbind' && entry.method === 'POST'
+          )).length, 1)
+        }
+      )
+    }
 
     await scenario(
       browser,
@@ -466,6 +519,8 @@ async function main() {
         await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
         await page.getByRole('heading', { name: '暂时无法读取账号信息' }).waitFor()
         assert.equal(await page.getByLabel('昵称', { exact: true }).count(), 0)
+        assert.equal(await page.getByRole('link', { name: '登录', exact: true }).count(), 0)
+        await page.getByText('账号状态待确认', { exact: true }).waitFor()
       }
     )
 
@@ -510,6 +565,9 @@ async function main() {
         await button.click()
         await page.getByText('昵称已保存。', { exact: true }).waitFor()
         assert.equal(await button.isDisabled(), true)
+        await input.fill('再次编辑但尚未保存')
+        assert.equal(await page.getByText('昵称已保存。', { exact: true }).count(), 0)
+        assert.equal(await button.isEnabled(), true)
       }
     )
 
@@ -632,6 +690,18 @@ async function main() {
       async (page) => {
         await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
         await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+        const sectionNavigation = page.locator('#account-section-navigation')
+        assert.equal(await sectionNavigation.inputValue(), '/collections')
+        const selectedCollection = page.getByRole('button', { name: /SCP 精选/ }).first()
+        assert.equal(await selectedCollection.getAttribute('aria-pressed'), 'true')
+        assert.equal(
+          await selectedCollection.getAttribute('aria-controls'),
+          'active-collection-detail'
+        )
+        assert.equal(
+          await page.locator('#active-collection-detail').getAttribute('role'),
+          'region'
+        )
         const editButton = page.getByRole('button', { name: '编辑', exact: true }).first()
         await editButton.click()
         const dialog = page.getByRole('dialog')
@@ -654,6 +724,10 @@ async function main() {
           await page.getByRole('dialog').getByLabel('名称', { exact: true }).inputValue(),
           'SCP 精选'
         )
+        await page.keyboard.press('Escape')
+        await sectionNavigation.selectOption('/account')
+        await page.getByRole('heading', { name: '账号概览' }).waitFor()
+        assert.equal(new URL(page.url()).pathname, '/account')
       },
       { width: 375, height: 667 }
     )
@@ -767,7 +841,10 @@ async function main() {
         // 模拟另一标签页已把共享 Cookie 切到 B，但 storage/focus 通知尚未到达。
         staleWriteOptions.forceServerAccount = 'B'
         await page.getByRole('button', { name: '保存昵称' }).click()
-        await page.getByText('登录账号已切换，请刷新后重试。', { exact: true }).waitFor()
+        // 409 是本地身份快照已过期的信号；插件应立即通过不携带 expected-user
+        // 的 /auth/me 重新解析 Cookie，而不是让用户在旧表单里反复失败。
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        await page.getByLabel('昵称', { exact: true }).waitFor()
 
         const writes = requests.filter(entry => entry.path === '/auth/profile')
         assert.equal(writes.length, 1)
@@ -775,6 +852,7 @@ async function main() {
         assert.equal(writes[0].userId, 'pw-user-2')
         assert.equal(writes[0].rejected, true)
         assert.equal(await page.getByText('昵称已保存。', { exact: true }).count(), 0)
+        assert.ok(requests.some(entry => entry.path === '/auth/me' && entry.userId === 'pw-user-2'))
       }
     )
 

@@ -75,7 +75,7 @@ test('查询期间失效时旧结果既不返回也不重新写入缓存', async
   }
 });
 
-test('账号 Cookie 与预期账号不一致时在路由写入前返回 409', async () => {
+test('账号 Cookie 与预期账号不一致时在私有读写路由前返回 409', async () => {
   __authCacheTesting.reset();
   const cachedAccount = account('可信昵称');
   const userAccount = prisma.userAccount as unknown as {
@@ -85,39 +85,45 @@ test('账号 Cookie 与预期账号不一致时在路由写入前返回 409', as
   userAccount.findUnique = async () => cachedAccount;
 
   const token = issueAuthToken(cachedAccount.id, cachedAccount.passwordHash);
-  let statusCode = 200;
-  let responseBody: unknown;
-  let routeWriteReached = false;
-  const req = {
-    method: 'PATCH',
-    headers: {
-      cookie: `${config.session.cookieName}=${token}`,
-      [EXPECTED_USER_ID_HEADER]: 'another-user'
-    }
-  } as unknown as Request;
-  const res = {
-    status(code: number) {
-      statusCode = code;
-      return this;
-    },
-    json(body: unknown) {
-      responseBody = body;
-      return this;
-    }
-  } as unknown as Response;
-  const next = (() => {
-    routeWriteReached = true;
-  }) as NextFunction;
 
   try {
-    await requireAuth(req, res, next);
-    assert.equal(statusCode, 409);
-    assert.deepEqual(responseBody, {
-      code: 'account_mismatch',
-      error: '登录账号已切换，请刷新后重试。'
-    });
-    assert.equal(routeWriteReached, false);
-    assert.equal(req.authUser, undefined);
+    for (const requestCase of [
+      { method: 'PATCH', originalUrl: '/auth/profile' },
+      { method: 'GET', originalUrl: '/gacha/wallet' },
+      { method: 'GET', originalUrl: '/admin/accounts' }
+    ]) {
+      let statusCode = 200;
+      let responseBody: unknown;
+      let routeReached = false;
+      const req = {
+        ...requestCase,
+        headers: {
+          cookie: `${config.session.cookieName}=${token}`,
+          [EXPECTED_USER_ID_HEADER]: 'another-user'
+        }
+      } as unknown as Request;
+      const res = {
+        status(code: number) {
+          statusCode = code;
+          return this;
+        },
+        json(body: unknown) {
+          responseBody = body;
+          return this;
+        }
+      } as unknown as Response;
+
+      await requireAuth(req, res, (() => {
+        routeReached = true;
+      }) as NextFunction);
+      assert.equal(statusCode, 409, requestCase.originalUrl);
+      assert.deepEqual(responseBody, {
+        code: 'account_mismatch',
+        error: '登录账号已切换，请刷新后重试。'
+      });
+      assert.equal(routeReached, false, requestCase.originalUrl);
+      assert.equal(req.authUser, undefined, requestCase.originalUrl);
+    }
   } finally {
     userAccount.findUnique = originalFindUnique;
     __authCacheTesting.reset();
@@ -136,31 +142,75 @@ test('预期账号匹配的新客户端与未带 header 的旧客户端都可通
   const token = issueAuthToken(cachedAccount.id, cachedAccount.passwordHash);
 
   try {
-    for (const expected of [undefined, cachedAccount.id]) {
-      const headers: Record<string, string> = {
-        cookie: `${config.session.cookieName}=${token}`
-      };
-      if (expected) headers[EXPECTED_USER_ID_HEADER] = expected;
-      const req = {
-        method: 'PATCH',
-        headers
-      } as unknown as Request;
-      const res = {
-        status() {
-          assert.fail('compatible request should not be rejected');
-        },
-        json() {
-          assert.fail('compatible request should not receive an error response');
-        }
-      } as unknown as Response;
-      let nextCalled = false;
+    for (const method of ['PATCH', 'GET']) {
+      for (const expected of [undefined, cachedAccount.id]) {
+        const headers: Record<string, string> = {
+          cookie: `${config.session.cookieName}=${token}`
+        };
+        if (expected) headers[EXPECTED_USER_ID_HEADER] = expected;
+        const req = {
+          method,
+          originalUrl: method === 'GET' ? '/gacha/wallet' : '/auth/profile',
+          headers
+        } as unknown as Request;
+        const res = {
+          status() {
+            assert.fail('compatible request should not be rejected');
+          },
+          json() {
+            assert.fail('compatible request should not receive an error response');
+          }
+        } as unknown as Response;
+        let nextCalled = false;
 
-      await requireAuth(req, res, (() => {
-        nextCalled = true;
-      }) as NextFunction);
-      assert.equal(nextCalled, true);
-      assert.equal(req.authUser?.id, cachedAccount.id);
+        await requireAuth(req, res, (() => {
+          nextCalled = true;
+        }) as NextFunction);
+        assert.equal(nextCalled, true);
+        assert.equal(req.authUser?.id, cachedAccount.id);
+      }
     }
+  } finally {
+    userAccount.findUnique = originalFindUnique;
+    __authCacheTesting.reset();
+  }
+});
+
+test('/auth/me 始终可作为账号不一致后的恢复来源', async () => {
+  __authCacheTesting.reset();
+  const cachedAccount = account('恢复昵称');
+  const userAccount = prisma.userAccount as unknown as {
+    findUnique: (...args: unknown[]) => Promise<ReturnType<typeof account> | null>;
+  };
+  const originalFindUnique = userAccount.findUnique;
+  userAccount.findUnique = async () => cachedAccount;
+
+  const token = issueAuthToken(cachedAccount.id, cachedAccount.passwordHash);
+
+  try {
+    const req = {
+      method: 'GET',
+      originalUrl: '/auth/me?recover=1',
+      headers: {
+        cookie: `${config.session.cookieName}=${token}`,
+        [EXPECTED_USER_ID_HEADER]: 'stale-account'
+      }
+    } as unknown as Request;
+    const res = {
+      status() {
+        assert.fail('/auth/me recovery must not be rejected');
+      },
+      json() {
+        assert.fail('/auth/me recovery must not receive an error response');
+      }
+    } as unknown as Response;
+    let nextCalled = false;
+
+    await requireAuth(req, res, (() => {
+      nextCalled = true;
+    }) as NextFunction);
+    assert.equal(nextCalled, true);
+    assert.equal(req.authUser?.id, cachedAccount.id);
   } finally {
     userAccount.findUnique = originalFindUnique;
     __authCacheTesting.reset();

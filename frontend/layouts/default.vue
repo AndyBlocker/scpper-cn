@@ -242,11 +242,18 @@
                 <span class="hidden lg:inline">{{ authUser?.displayName || authUser?.email }}</span>
               </NuxtLink>
             </div>
-            <div v-else class="hidden sm:flex items-center gap-2">
+            <div v-else-if="authStatus === 'unauthenticated'" class="hidden sm:flex items-center gap-2">
               <NuxtLink
                 to="/auth/login"
                 class="inline-flex h-10 items-center rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.88)] px-4 text-sm font-semibold text-[rgb(var(--muted-strong))] shadow-sm transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)]"
               >登录</NuxtLink>
+            </div>
+            <div
+              v-else
+              class="hidden sm:flex min-h-10 items-center rounded-full border border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.7)] px-4 text-sm text-[rgb(var(--muted))]"
+              role="status"
+            >
+              账号状态待确认
             </div>
           </div>
         </div>
@@ -296,11 +303,18 @@
                         <span class="text-sm font-medium text-[rgb(var(--fg))] truncate max-w-[10rem]">{{ authUser?.displayName || authUser?.email }}</span>
                       </NuxtLink>
                     </template>
-                    <template v-else>
+                    <template v-else-if="authStatus === 'unauthenticated'">
                       <NuxtLink to="/auth/login" @click="closeSidebar" class="inline-flex items-center gap-2 text-sm font-medium text-[var(--g-accent)]">
                         登录
                       </NuxtLink>
                     </template>
+                    <span
+                      v-else
+                      class="text-sm text-[rgb(var(--muted))]"
+                      role="status"
+                    >
+                      账号状态待确认
+                    </span>
                   </div>
                   <button
                     type="button"
@@ -732,7 +746,7 @@ const handleAlertNavigate = (item: DropdownAlertItem) => {
     window.open(item.pageUrl, '_blank', 'noopener');
     return;
   }
-  navigateTo('/account');
+  navigateTo('/notifications');
 };
 
 const handleMarkAllAlerts = () => {

@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
-import { fetchAuthUser, ensureUserByWikidotId, type AuthUserPayload } from '../utils/auth.js';
+import { fetchAuthUser } from '../utils/auth.js';
+import {
+  lockCollectionOwnerForWrite,
+  resolveCollectionOwnerId
+} from '../utils/collectionOwner.js';
 
 const TITLE_MIN_LEN = 1;
 const TITLE_MAX_LEN = 80;
@@ -17,6 +21,7 @@ const COVER_SCALE_MAX = 2.5;
 let coverTransformColumnsAvailable: boolean | null = null;
 
 type Visibility = 'PUBLIC' | 'PRIVATE';
+type Queryable = Pick<Pool, 'query'>;
 
 const VISIBILITY_VALUES: Visibility[] = ['PUBLIC', 'PRIVATE'];
 
@@ -64,10 +69,10 @@ function sanitizeCoverScale(value: unknown, fallback = 1): number {
   return Number.isNaN(clamped) ? fallback : clamped;
 }
 
-async function ensureCoverTransformColumns(pool: Pool): Promise<boolean> {
+async function ensureCoverTransformColumns(db: Queryable): Promise<boolean> {
   if (coverTransformColumnsAvailable != null) return coverTransformColumnsAvailable;
   try {
-    const { rows } = await pool.query<{ column_name: string }>(
+    const { rows } = await db.query<{ column_name: string }>(
       `
         SELECT column_name
         FROM information_schema.columns
@@ -98,12 +103,17 @@ const slugify = (input: string): string => input
   .replace(/-+/g, '-')
   .replace(/^-|-$/g, '');
 
-async function ensureUniqueSlug(pool: Pool, ownerId: number, baseSlug: string, excludeId?: number | null): Promise<string> {
+async function ensureUniqueSlug(
+  db: Queryable,
+  ownerId: number,
+  baseSlug: string,
+  excludeId?: number | null
+): Promise<string> {
   const MAX_SLUG_ATTEMPTS = 100;
   let attempt = 0;
   let candidate = baseSlug || `collection-${Date.now().toString(36)}`;
   while (true) {
-    const { rows } = await pool.query<{ id: number }>(
+    const { rows } = await db.query<{ id: number }>(
       `
         SELECT id
         FROM "UserCollection"
@@ -122,8 +132,8 @@ async function ensureUniqueSlug(pool: Pool, ownerId: number, baseSlug: string, e
   }
 }
 
-async function countCollections(pool: Pool, ownerId: number): Promise<number> {
-  const { rows } = await pool.query<{ count: string }>(
+async function countCollections(db: Queryable, ownerId: number): Promise<number> {
+  const { rows } = await db.query<{ count: string }>(
     'SELECT COUNT(*)::text AS count FROM "UserCollection" WHERE "ownerId" = $1',
     [ownerId]
   );
@@ -136,83 +146,6 @@ async function countItems(pool: Pool, collectionId: number): Promise<number> {
     [collectionId]
   );
   return Number(rows[0]?.count ?? 0);
-}
-
-async function ensureAccountOwner(pool: Pool, auth: AuthUserPayload): Promise<number | null> {
-  const accountId = String(auth.id || '').trim();
-  if (!accountId) return null;
-
-  const existing = await pool.query<{ userId: number }>(
-    'SELECT "userId" FROM "CollectionAccountOwner" WHERE "accountId" = $1 LIMIT 1',
-    [accountId]
-  );
-  if (existing.rows.length > 0) {
-    return Number(existing.rows[0].userId);
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const check = await client.query<{ userId: number }>(
-      'SELECT "userId" FROM "CollectionAccountOwner" WHERE "accountId" = $1 LIMIT 1',
-      [accountId]
-    );
-    if (check.rows.length > 0) {
-      await client.query('COMMIT');
-      return Number(check.rows[0].userId);
-    }
-
-    const displayName = (auth.displayName && auth.displayName.trim().slice(0, 80))
-      || (auth.email && auth.email.trim().slice(0, 80))
-      || `账号用户 ${accountId.slice(0, 6)}`;
-    const insertedUser = await client.query<{ id: number }>(
-      `
-        INSERT INTO "User" ("displayName", "isGuest")
-        VALUES ($1, TRUE)
-        RETURNING id
-      `,
-      [displayName]
-    );
-    const userId = Number(insertedUser.rows[0].id);
-    await client.query(
-      `
-        INSERT INTO "CollectionAccountOwner" ("accountId", "userId")
-        VALUES ($1, $2)
-      `,
-      [accountId, userId]
-    );
-    await client.query('COMMIT');
-    return userId;
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      // ignore rollback errors
-    }
-    if ((error as any)?.code === '23505') {
-      const retry = await pool.query<{ userId: number }>(
-        'SELECT "userId" FROM "CollectionAccountOwner" WHERE "accountId" = $1 LIMIT 1',
-        [accountId]
-      );
-      if (retry.rows.length > 0) {
-        return Number(retry.rows[0].userId);
-      }
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function resolveOwnerId(pool: Pool, auth: AuthUserPayload | null): Promise<number | null> {
-  if (!auth) return null;
-  if (auth.linkedWikidotId != null) {
-    const wikidotOwner = await ensureUserByWikidotId(pool, auth.linkedWikidotId);
-    if (wikidotOwner != null) {
-      return wikidotOwner;
-    }
-  }
-  return ensureAccountOwner(pool, auth);
 }
 
 async function findUserIdByWikidotId(pool: Pool, wikidotId: number): Promise<number | null> {
@@ -233,6 +166,29 @@ function mapCollectionRow(row: any) {
     visibility: row.visibility,
     description: row.description ?? null,
     notes: row.notes ?? null,
+    coverImageUrl: row.coverImageUrl ?? null,
+    coverImageOffsetX: row.coverImageOffsetX != null ? Number(row.coverImageOffsetX) : 0,
+    coverImageOffsetY: row.coverImageOffsetY != null ? Number(row.coverImageOffsetY) : 0,
+    coverImageScale: row.coverImageScale != null ? Number(row.coverImageScale) : 1,
+    isDefault: Boolean(row.isDefault),
+    publishedAt: row.publishedAt ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    itemCount: Number(row.itemCount ?? 0)
+  };
+}
+
+// Public routes use an allowlist rather than deleting `notes` after mapping.
+// `notes` is explicitly presented as "只有自己可见" in the editor and must
+// never be selected or serialized for anonymous collection responses.
+function mapPublicCollectionRow(row: any) {
+  return {
+    id: Number(row.id),
+    ownerId: Number(row.ownerId),
+    title: row.title,
+    slug: row.slug,
+    visibility: row.visibility,
+    description: row.description ?? null,
     coverImageUrl: row.coverImageUrl ?? null,
     coverImageOffsetX: row.coverImageOffsetX != null ? Number(row.coverImageOffsetX) : 0,
     coverImageOffsetY: row.coverImageOffsetY != null ? Number(row.coverImageOffsetY) : 0,
@@ -341,7 +297,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
   router.get('/', async (req, res, next) => {
     try {
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
@@ -396,7 +352,20 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const { rows } = await pool.query<any>(
         `
           SELECT
-            c.*,
+            c.id,
+            c."ownerId",
+            c.title,
+            c.slug,
+            c.visibility,
+            c.description,
+            c."coverImageUrl",
+            c."coverImageOffsetX",
+            c."coverImageOffsetY",
+            c."coverImageScale",
+            c."isDefault",
+            c."publishedAt",
+            c."createdAt",
+            c."updatedAt",
             COALESCE(items.count, 0)::int AS "itemCount"
           FROM "UserCollection" c
           LEFT JOIN LATERAL (
@@ -410,7 +379,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       res.json({
         ok: true,
         total: rows.length,
-        items: rows.map(mapCollectionRow)
+        items: rows.map(mapPublicCollectionRow)
       });
     } catch (error) {
       next(error);
@@ -430,9 +399,24 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       }
       const { rows } = await pool.query<any>(
         `
-          SELECT c.*, (
-            SELECT COUNT(*)::int FROM "UserCollectionItem" WHERE "collectionId" = c.id
-          ) AS "itemCount"
+          SELECT
+            c.id,
+            c."ownerId",
+            c.title,
+            c.slug,
+            c.visibility,
+            c.description,
+            c."coverImageUrl",
+            c."coverImageOffsetX",
+            c."coverImageOffsetY",
+            c."coverImageScale",
+            c."isDefault",
+            c."publishedAt",
+            c."createdAt",
+            c."updatedAt",
+            (
+              SELECT COUNT(*)::int FROM "UserCollectionItem" WHERE "collectionId" = c.id
+            ) AS "itemCount"
           FROM "UserCollection" c
           WHERE c."ownerId" = $1
             AND c.slug = $2
@@ -448,7 +432,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const items = await fetchCollectionItems(pool, collection.id);
       res.json({
         ok: true,
-        collection: mapCollectionRow(collection),
+        collection: mapPublicCollectionRow(collection),
         items: items.map(mapItemRow)
       });
     } catch (error) {
@@ -463,7 +447,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ ok: false, error: 'invalid_id' });
       }
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
@@ -504,8 +488,8 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       ) {
         return res.status(400).json({ ok: false, error: 'require_linked_wikidot' });
       }
-      const ownerId = await resolveOwnerId(pool, auth);
-      if (ownerId == null) {
+      const resolvedOwnerId = await resolveCollectionOwnerId(pool, auth);
+      if (resolvedOwnerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
       const description = sanitizeOptionalText(req.body?.description, DESCRIPTION_MAX_LEN);
@@ -516,21 +500,36 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const coverImageScale = sanitizeCoverScale(req.body?.coverImageScale, 1);
       const isDefault = req.body?.isDefault === true;
       const publishedAt = visibility === 'PUBLIC' ? new Date() : null;
-
-      const existingCount = await countCollections(pool, ownerId);
-      if (existingCount >= MAX_COLLECTIONS_PER_USER) {
-        return res.status(400).json({ ok: false, error: 'collection_limit_reached' });
-      }
-
       const baseSlug = slugify(req.body?.slug || title);
-      const slug = await ensureUniqueSlug(pool, ownerId, baseSlug);
 
-      const supportsTransforms = await ensureCoverTransformColumns(pool);
-
-      // Use a transaction to atomically insert + clear other defaults
+      // Pin the account mapping for the whole owner-dependent operation. This
+      // shares the reconciliation lock so a concurrent Wikidot link cannot
+      // leave a newly-created collection on the migrated-away guest owner.
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        const lockedOwner = await lockCollectionOwnerForWrite(client, auth);
+        if (!lockedOwner) {
+          await client.query('ROLLBACK');
+          return res.status(401).json({ ok: false, error: 'unauthenticated' });
+        }
+        const ownerId = lockedOwner.userId;
+        if (
+          visibility === 'PUBLIC'
+          && lockedOwner.wikidotId !== Number(auth.linkedWikidotId)
+        ) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ ok: false, error: 'collection_owner_conflict' });
+        }
+
+        const existingCount = await countCollections(client, ownerId);
+        if (existingCount >= MAX_COLLECTIONS_PER_USER) {
+          await client.query('COMMIT');
+          return res.status(400).json({ ok: false, error: 'collection_limit_reached' });
+        }
+
+        const slug = await ensureUniqueSlug(client, ownerId, baseSlug);
+        const supportsTransforms = await ensureCoverTransformColumns(client);
 
         // Advisory lock on ownerId to serialize concurrent isDefault changes
         if (isDefault) {
@@ -611,7 +610,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ ok: false, error: 'invalid_id' });
       }
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
@@ -659,20 +658,54 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const isDefault = req.body?.isDefault === true;
       const slugInput = normalizeString(req.body?.slug || '');
       const baseSlug = slugInput ? slugify(slugInput) : slugify(title);
-      const slug = await ensureUniqueSlug(pool, ownerId, baseSlug || record.slug, id);
 
       const publishMoment = visibility === 'PUBLIC' && record.visibility !== 'PUBLIC' ? new Date() : null;
       const unpublish = visibility === 'PRIVATE' && record.visibility === 'PUBLIC';
 
-      const supportsTransforms = await ensureCoverTransformColumns(pool);
-
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        const lockedOwner = await lockCollectionOwnerForWrite(client, auth);
+        if (!lockedOwner) {
+          await client.query('ROLLBACK');
+          return res.status(401).json({ ok: false, error: 'unauthenticated' });
+        }
+        const lockedOwnerId = lockedOwner.userId;
+        const lockedCollection = await client.query<{ ownerId: number }>(
+          `
+            SELECT "ownerId"
+            FROM "UserCollection"
+            WHERE id = $1
+            FOR UPDATE
+          `,
+          [id]
+        );
+        if (
+          !lockedCollection.rows[0]
+          || Number(lockedCollection.rows[0].ownerId) !== lockedOwnerId
+        ) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ ok: false, error: 'not_found' });
+        }
+        if (
+          visibility === 'PUBLIC'
+          && lockedOwner.wikidotId !== Number(auth.linkedWikidotId)
+        ) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ ok: false, error: 'collection_owner_conflict' });
+        }
+
+        const slug = await ensureUniqueSlug(
+          client,
+          lockedOwnerId,
+          baseSlug || record.slug,
+          id
+        );
+        const supportsTransforms = await ensureCoverTransformColumns(client);
 
         // Advisory lock on ownerId to serialize concurrent isDefault changes
         if (isDefault) {
-          await client.query('SELECT pg_advisory_xact_lock($1)', [ownerId]);
+          await client.query('SELECT pg_advisory_xact_lock($1)', [lockedOwnerId]);
         }
 
         const updated = await client.query<any>(
@@ -756,7 +789,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
                   "updatedAt" = NOW()
               WHERE "ownerId" = $1 AND id <> $2 AND "isDefault" = TRUE
             `,
-            [ownerId, id]
+            [lockedOwnerId, id]
           );
         }
 
@@ -780,7 +813,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ ok: false, error: 'invalid_id' });
       }
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
@@ -802,7 +835,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ ok: false, error: 'invalid_id' });
       }
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
@@ -862,7 +895,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ ok: false, error: 'invalid_id' });
       }
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
@@ -918,7 +951,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ ok: false, error: 'invalid_id' });
       }
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         client.release();
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
@@ -974,7 +1007,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
         return res.status(400).json({ ok: false, error: 'invalid_id' });
       }
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
+      const ownerId = await resolveCollectionOwnerId(pool, auth);
       if (!auth || ownerId == null) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }

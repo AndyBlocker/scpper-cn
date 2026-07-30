@@ -39,7 +39,7 @@
         <header class="flex items-center justify-between">
           <div>
             <h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-neutral-500 dark:text-neutral-400">我的收藏夹</h3>
-            <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">点击卡片切换收藏夹，右侧查看条目与批注。</p>
+            <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">点击卡片切换收藏夹，选中后查看条目与批注。</p>
           </div>
           <span v-if="collectionList.length > 0" class="text-xs text-neutral-400 dark:text-neutral-500">
             共 {{ collectionList.length }} 个
@@ -91,6 +91,8 @@
               :class="collection.id === activeId
                 ? 'ring-2 ring-[var(--g-accent-border)] shadow dark:ring-[rgb(var(--accent)_/_0.5)]'
                 : 'border-neutral-200/80 hover:border-[var(--g-accent-border)] dark:border-neutral-800/70'"
+              :aria-pressed="collection.id === activeId"
+              aria-controls="active-collection-detail"
               @click="select(collection.id)"
             >
               <div
@@ -134,7 +136,16 @@
         </ul>
       </div>
 
-      <div v-if="activeDetail" class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white/95 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-lg">
+      <div
+        v-if="activeDetail"
+        id="active-collection-detail"
+        class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white/95 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950/85 dark:shadow-lg"
+        role="region"
+        :aria-label="`${activeDetail.collection.title} 收藏夹详情`"
+        aria-live="polite"
+        aria-atomic="false"
+        :aria-busy="detailLoading"
+      >
         <div class="relative h-48 overflow-hidden">
           <div
             class="absolute inset-0 opacity-90"
@@ -365,7 +376,9 @@ const collectionList = computed(() => {
 
 const activeId = ref<number | null>(null)
 const activeDetail = ref<CollectionDetail | null>(null)
+const detailLoading = ref(false)
 const annotations = reactive<Record<number, string>>({})
+let detailRequestSequence = 0
 
 const modal = reactive<{
   open: boolean
@@ -436,10 +449,22 @@ function select(id: number) {
 }
 
 async function loadDetail(id: number) {
-  const detail = await fetchCollectionDetail(id, true)
-  if (detail && id === activeId.value) {
-    activeDetail.value = detail
-    annotationsReset(detail.items)
+  const requestSequence = ++detailRequestSequence
+  if (id === activeId.value) detailLoading.value = true
+  try {
+    const detail = await fetchCollectionDetail(id, true)
+    if (
+      requestSequence === detailRequestSequence
+      && detail
+      && id === activeId.value
+    ) {
+      activeDetail.value = detail
+      annotationsReset(detail.items)
+    }
+  } finally {
+    if (requestSequence === detailRequestSequence) {
+      detailLoading.value = false
+    }
   }
 }
 
@@ -498,7 +523,7 @@ async function handleSubmit(payload: {
   modal.submitError = null
   if (modal.mode === 'create') {
     const result = await createCollection(payload)
-    if (result.ok && result.collection) {
+    if (result.ok) {
       modal.open = false
       activeId.value = result.collection.id
       await loadDetail(result.collection.id)

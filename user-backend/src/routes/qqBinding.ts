@@ -73,10 +73,10 @@ function createErrorResponse(error: unknown) {
 /**
  * 功能下线时挡住**新建**绑定的路径。
  *
- * 只挡新建（/start 与机器人回调 /verify），不挡 /unbind、/cancel ——
+ * 只挡网页侧的新建入口 /start，不挡 /unbind、/cancel ——
  * 已经绑好的用户必须始终能自己解绑，把退出的路也堵上等于把人困住。
- * 回调一并挡住是刻意的：验证不通过，机器人会拒绝好友申请，
- * 这正是我们想要的失败方向（宁可不加好友，也不要建立新绑定）。
+ * 机器人回调需要维持固定的 200 + reply 协议，因此在内部 handler 中单独
+ * fail closed，返回未匹配说明但不执行任何绑定写入。
  */
 function requireQqEnabled(_req: Request, res: Response, next: NextFunction) {
   if (qqFeatureEnabled()) return next();
@@ -220,8 +220,17 @@ export function qqBindingInternalRouter() {
     next();
   });
 
-  router.post('/verify', requireQqEnabled, async (req, res) => {
+  router.post('/verify', async (req, res) => {
     try {
+      if (!qqFeatureEnabled()) {
+        return res.json({
+          ok: true,
+          matched: false,
+          reason: 'feature_disabled',
+          reply: 'QQ 通知功能已暂时关闭，当前不接受新的绑定。'
+        });
+      }
+
       const payload = verifySchema.parse(req.body ?? {});
 
       const addressKey = String(payload.qq);

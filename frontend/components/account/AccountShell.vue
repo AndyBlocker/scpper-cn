@@ -40,7 +40,7 @@ const navigationGroups = computed<NavigationGroup[]>(() => {
       },
       {
         label: '账号连接',
-        description: '管理 Wikidot 等连接',
+        description: '管理 Wikidot 身份',
         icon: 'Link2',
         to: '/account/connections'
       },
@@ -105,13 +105,14 @@ const currentNavigationPath = computed(() => {
   return navigationItems.value.find(item => item.to === route.path)?.to ?? '/account'
 })
 
-function handleMobileNavigation(event: Event) {
-  const target = event.target as HTMLSelectElement
-  const destination = target.value
-  if (destination && destination !== route.path) {
-    void navigateTo(destination)
+const mobileNavigationPath = computed({
+  get: () => currentNavigationPath.value,
+  set: (destination: string) => {
+    if (destination && destination !== route.path) {
+      void navigateTo(destination)
+    }
   }
-}
+})
 </script>
 
 <template>
@@ -138,9 +139,8 @@ function handleMobileNavigation(event: Event) {
       <div class="relative">
         <select
           id="account-section-navigation"
-          :value="currentNavigationPath"
+          v-model="mobileNavigationPath"
           class="min-h-11 w-full appearance-none rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] px-4 py-2.5 pr-11 text-sm font-medium text-[rgb(var(--fg))] shadow-sm outline-none transition focus:border-[var(--g-accent-border)] focus:ring-2 focus:ring-[var(--g-accent-border)]"
-          @change="handleMobileNavigation"
         >
           <optgroup
             v-for="group in navigationGroups"
