@@ -7,6 +7,7 @@
     "dev": "node ../scripts/service-runner.mjs frontend dev",
     "build": "node ../scripts/service-runner.mjs frontend build",
     "start": "node ../scripts/service-runner.mjs frontend start",
+    "test:account": "node tests/account-refactor.smoke.cjs",
     "lint": "eslint app.vue components composables layouts pages plugins server types utils nuxt.config.ts --ext .js,.ts,.vue --cache --cache-location .eslintcache",
     "lint:fix": "eslint app.vue components composables layouts pages plugins server types utils nuxt.config.ts --ext .js,.ts,.vue --fix --cache --cache-location .eslintcache",
     "typecheck": "nuxt typecheck"
@@ -52,6 +53,7 @@
     "@types/codemirror": "^5.60.15",
     "eslint": "^9.13.0",
     "eslint-plugin-vue": "^9.28.0",
+    "playwright": "1.62.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.11.0",
     "vue-eslint-parser": "^9.4.3",

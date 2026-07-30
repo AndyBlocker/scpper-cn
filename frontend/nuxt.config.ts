@@ -85,6 +85,8 @@ export default defineNuxtConfig({
       slowFetchThresholdMs: envNumber(process.env.SLOW_FETCH_THRESHOLD_MS, 800),
       // 站内提醒功能总开关。暂时关闭时隐藏顶栏铃铛，并停止页面、关注和论坛
       // 提醒的预取与重验证；底层接口和数据保留，便于之后直接恢复。
+      // 后端告警生成会刻意继续运行，以保留暂停期间的历史；QQ 外部投递由
+      // 独立的 QQ_NOTIFY_ENABLED 代码级闸门阻止。
       //
       //  · 构建期：NOTIFICATIONS_ENABLED=1 npm run build
       //  · 运行时：NUXT_PUBLIC_NOTIFICATIONS_ENABLED=true

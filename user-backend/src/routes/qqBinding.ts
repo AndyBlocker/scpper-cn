@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/requireAuth.js';
+import { getQqBotSelfId, qqFeatureEnabled } from '../utils/qqFeature.js';
 import { verifyInternalKey } from '../utils/internalAuth.js';
 import { SlidingWindowRateLimiter } from '../utils/rateLimiter.js';
 import {
@@ -12,9 +13,6 @@ import {
   unbindQq,
   verifyQqBinding
 } from '../services/qqBinding.js';
-
-// 机器人 QQ 号，用于前端展示「去加这个号为好友」。不是密钥，可公开。
-const QQ_BOT_SELF_ID = (process.env.QQ_BOT_SELF_ID || '').trim() || null;
 
 // ─── 限流 ────────────────────────────────────────────────────────────────
 // wikidotBinding 的 /start 完全没有限流，这里补上。两个维度都要：
@@ -72,8 +70,6 @@ function createErrorResponse(error: unknown) {
  * 默认关闭。置 QQ_NOTIFY_ENABLED=1 可恢复，需与前端的同名变量一起开。
  * 现有绑定数据一律保留（下线时库里有 19 条 ACTIVE），不做任何清理。
  */
-const QQ_NOTIFY_ENABLED = /^(1|true|yes|on)$/i.test(process.env.QQ_NOTIFY_ENABLED ?? '');
-
 /**
  * 功能下线时挡住**新建**绑定的路径。
  *
@@ -83,7 +79,7 @@ const QQ_NOTIFY_ENABLED = /^(1|true|yes|on)$/i.test(process.env.QQ_NOTIFY_ENABLE
  * 这正是我们想要的失败方向（宁可不加好友，也不要建立新绑定）。
  */
 function requireQqEnabled(_req: Request, res: Response, next: NextFunction) {
-  if (QQ_NOTIFY_ENABLED) return next();
+  if (qqFeatureEnabled()) return next();
   return res.status(503).json({ error: 'QQ 通知功能已暂时下线' });
 }
 
@@ -97,15 +93,16 @@ export function qqBindingRouter() {
   });
 
   // 发起绑定：返回明文验证码（**只此一次**，库里只存哈希）
-  router.post('/start', requireQqEnabled, requireAuth, async (req, res) => {
+  router.post('/start', requireAuth, requireQqEnabled, async (req, res) => {
     try {
       if (!req.authUser) return res.status(401).json({ error: '未登录' });
+      const botQq = getQqBotSelfId();
 
       // 没配机器人 QQ 就别放行：会生成一个挑战、返回成功，
       // 而界面只能告诉用户「添加（机器人账号）为好友」—— 一个他无从得知的号码。
       // 用户既加不了好友，还白白消耗一次发起限流额度，验证码也只能等它过期。
       // 这个检查必须在限流之前，配置缺失不该算到用户头上。
-      if (!QQ_BOT_SELF_ID) {
+      if (!botQq) {
         // eslint-disable-next-line no-console
         console.error('[qq-binding] QQ_BOT_SELF_ID 未配置，拒绝发起绑定');
         return res.status(503).json({ error: 'QQ 绑定暂不可用，请稍后再试' });
@@ -116,7 +113,7 @@ export function qqBindingRouter() {
         return res.status(429).json({ error: '操作过于频繁，请稍后再试' });
       }
 
-      const result = await startQqBinding(req.authUser.id, QQ_BOT_SELF_ID);
+      const result = await startQqBinding(req.authUser.id, botQq);
       res.json({
         ok: true,
         code: result.code,
@@ -143,7 +140,7 @@ export function qqBindingRouter() {
       const status = await getQqBindingStatus(req.authUser.id);
       res.json({
         ok: true,
-        botQq: QQ_BOT_SELF_ID,
+        botQq: getQqBotSelfId(),
         binding: status.binding
           ? {
               addressMask: status.binding.addressMask,

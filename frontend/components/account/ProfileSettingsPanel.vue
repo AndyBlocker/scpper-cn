@@ -7,7 +7,7 @@ const props = defineProps<{
   user: AuthUser
 }>()
 
-const { updateProfile } = useAuth()
+const { updateProfile, status } = useAuth()
 const displayName = ref('')
 const saving = ref(false)
 const message = ref<{ tone: 'success' | 'error'; text: string } | null>(null)
@@ -44,6 +44,18 @@ async function handleSubmit() {
   message.value = null
   const result = await updateProfile({ displayName: normalizedDisplayName.value })
   saving.value = false
+
+  if (!result.ok && status.value !== 'authenticated') {
+    await navigateTo({
+      path: '/auth/login',
+      query: {
+        reason: 'profile-session-expired',
+        redirect: '/account/profile'
+      }
+    }, { replace: true })
+    return
+  }
+
   message.value = result.ok
     ? { tone: 'success', text: '昵称已保存。' }
     : { tone: 'error', text: result.error || '保存失败，请稍后重试。' }

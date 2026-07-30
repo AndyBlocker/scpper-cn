@@ -23,7 +23,7 @@ describe('Collections routes', () => {
     jest.clearAllMocks();
   });
 
-  const mockAuthOk = () => {
+  const mockAuthOk = (linkedWikidotId: number | null = 42) => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       status: 200,
@@ -33,7 +33,7 @@ describe('Collections routes', () => {
           id: 'acc_1',
           email: 'user@example.com',
           displayName: 'User',
-          linkedWikidotId: 42,
+          linkedWikidotId,
           lastLoginAt: null
         }
       })
@@ -83,7 +83,7 @@ describe('Collections routes', () => {
     expect(res.body.items[0].title).toBe('我的收藏');
   });
 
-  test('POST /collections creates new collection', async () => {
+  test('POST /collections creates a public collection with publishedAt', async () => {
     mockAuthOk();
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // ensureUserByWikidotId
@@ -103,7 +103,7 @@ describe('Collections routes', () => {
           ownerId: 99,
           title: '新收藏夹',
           slug: 'xin-shoucangjia',
-          visibility: 'PRIVATE',
+          visibility: 'PUBLIC',
           description: null,
           notes: null,
           coverImageUrl: null,
@@ -111,7 +111,7 @@ describe('Collections routes', () => {
           coverImageOffsetY: 0,
           coverImageScale: 1,
           isDefault: false,
-          publishedAt: null,
+          publishedAt: '2024-01-01T00:00:00.000Z',
           createdAt: '2024-01-01T00:00:00.000Z',
           updatedAt: '2024-01-01T00:00:00.000Z',
           itemCount: 0
@@ -122,12 +122,70 @@ describe('Collections routes', () => {
     const app = await createServer();
     const res = await request(app)
       .post('/collections')
-      .send({ title: '新收藏夹' })
+      .set('x-scpper-expected-user-id', 'acc_1')
+      .send({ title: '新收藏夹', visibility: 'PUBLIC' })
       .expect(201);
 
     expect(res.body.ok).toBe(true);
     expect(res.body.collection.slug).toBe('xin-shoucangjia');
+    expect(res.body.collection.visibility).toBe('PUBLIC');
+    const insertCall = queryMock.mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO "UserCollection"')
+    );
+    expect(insertCall?.[1]?.[3]).toBe('PUBLIC');
+    expect(insertCall?.[1]?.[11]).toBeInstanceOf(Date);
     expect(queryMock).toHaveBeenCalledTimes(7);
+    // Guard and route share one /auth/me lookup for the same request.
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('POST /collections rejects stale expected user before any database query', async () => {
+    mockAuthOk();
+
+    const app = await createServer();
+    const res = await request(app)
+      .post('/collections')
+      .set('x-scpper-expected-user-id', 'acc_2')
+      .send({ title: '不应写入' })
+      .expect(409);
+
+    expect(res.body).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+      error: '登录账号已切换，请刷新后重试。'
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('POST /collections requires a Wikidot link before creating PUBLIC data', async () => {
+    mockAuthOk(null);
+
+    const app = await createServer();
+    const res = await request(app)
+      .post('/collections')
+      .set('x-scpper-expected-user-id', 'acc_1')
+      .send({ title: '公开收藏', visibility: 'PUBLIC' })
+      .expect(400);
+
+    expect(res.body.error).toBe('require_linked_wikidot');
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  test('POST /collections keeps old clients compatible when expected user header is absent', async () => {
+    mockAuthOk();
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] })
+      .mockResolvedValueOnce({ rows: [{ count: '20' }] });
+
+    const app = await createServer();
+    const res = await request(app)
+      .post('/collections')
+      .send({ title: '旧客户端' })
+      .expect(400);
+
+    expect(res.body.error).toBe('collection_limit_reached');
+    expect(queryMock).toHaveBeenCalledTimes(2);
   });
 
   test('GET /collections/:id returns detail with items', async () => {

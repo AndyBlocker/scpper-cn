@@ -4,6 +4,8 @@ import { config } from '../config.js';
 import { parseCookieHeader } from '../utils/cookies.js';
 import { extractUserId, verifyAuthToken } from '../utils/auth-token.js';
 import { maskQqNumber } from '../services/qqBindingProof.js';
+import { qqFeatureEnabled } from '../utils/qqFeature.js';
+import { rejectExpectedUserMismatch } from '../utils/expectedUser.js';
 
 /** 通知渠道绑定摘要。**只含掩码**，完整地址不出 user-backend 的投递路径。 */
 export interface AuthChannelBinding {
@@ -34,9 +36,6 @@ declare module 'express-serve-static-core' {
 
 // ─── In-memory user cache (short TTL to reduce DB round-trips) ────────
 const AUTH_CACHE_TTL_MS = 30_000; // 30 seconds
-const QQ_NOTIFY_ENABLED = /^(1|true|yes|on)$/i.test(process.env.QQ_NOTIFY_ENABLED ?? '');
-const QQ_BOT_CONFIGURED = Boolean((process.env.QQ_BOT_SELF_ID ?? '').trim());
-const QQ_FEATURE_ENABLED = QQ_NOTIFY_ENABLED && QQ_BOT_CONFIGURED;
 
 /**
  * /auth/login、/auth/profile 与 /auth/me 共用的 QQ 摘要格式。
@@ -47,7 +46,8 @@ const QQ_FEATURE_ENABLED = QQ_NOTIFY_ENABLED && QQ_BOT_CONFIGURED;
  */
 export function formatAuthQqBinding(
   binding: { address: string; status: string } | null | undefined,
-  pendingChallenge: boolean
+  pendingChallenge: boolean,
+  featureEnabled = qqFeatureEnabled()
 ): AuthChannelBinding {
   const bound = Boolean(binding && binding.status !== 'REVOKED');
   const status = bound ? binding?.status ?? null : null;
@@ -57,9 +57,9 @@ export function formatAuthQqBinding(
     status,
     pendingChallenge,
     capabilities: {
-      featureEnabled: QQ_FEATURE_ENABLED,
-      createBinding: QQ_FEATURE_ENABLED && !bound,
-      deliverNotifications: QQ_FEATURE_ENABLED && bound && status === 'ACTIVE',
+      featureEnabled,
+      createBinding: featureEnabled && !bound,
+      deliverNotifications: featureEnabled && bound && status === 'ACTIVE',
       manageExistingBinding: bound || pendingChallenge
     }
   };
@@ -210,6 +210,22 @@ export function invalidateAuthCache(userId: string) {
   inflightLookups.delete(userId);
 }
 
+/**
+ * 只供无数据库副作用的并发证明测试使用；生产路由不会引用这个导出。
+ * 测试需要控制 Prisma Promise 的完成顺序，才能稳定复现“查询中失效”竞态。
+ */
+export const __authCacheTesting = {
+  fetchAndCacheUser,
+  getCachedUser,
+  reset() {
+    userCache.clear();
+    inflightLookups.clear();
+    activeLookupCounts.clear();
+    cacheGeneration.clear();
+    generationCounter = 0;
+  }
+};
+
 // Periodic cleanup to prevent memory leaks (every 60 seconds)
 setInterval(() => {
   const now = Date.now();
@@ -248,6 +264,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const verification = verifyAuthToken(token, user.passwordHash);
     if (!verification.valid) {
       return res.status(401).json({ error: verification.expired ? '登录状态已过期' : '登录状态无效' });
+    }
+    // The optional header comes from the frontend's last trusted auth
+    // snapshot. A cookie replaced by another tab must not turn a stale form
+    // submission into a mutation against that other account.
+    if (rejectExpectedUserMismatch(req, res, user.id)) {
+      return;
     }
     req.authUser = {
       id: user.id,

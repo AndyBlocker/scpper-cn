@@ -17,8 +17,9 @@
           >
           <button
             type="button"
-            class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:text-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:text-white"
+            class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:text-white"
             :aria-label="`关闭${title}`"
+            :disabled="saving"
             @click="requestClose"
           >
             <LucideIcon name="X" class="h-4.5 w-4.5" />
@@ -207,9 +208,11 @@
                     type="button"
                     role="switch"
                     :aria-checked="local.visibility === 'PUBLIC'"
+                    aria-describedby="collection-editor-visibility-hint"
                     aria-label="公开展示收藏夹"
+                    :disabled="local.visibility === 'PRIVATE' && !canPublish"
                     :class="[
-                      'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                      'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
                       local.visibility === 'PUBLIC'
                         ? 'bg-[var(--g-accent-medium)] text-[var(--g-accent)]'
                         : 'bg-neutral-200/60 text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300'
@@ -220,19 +223,39 @@
                     <span>{{ local.visibility === 'PUBLIC' ? '公开' : '私密' }}</span>
                   </button>
                 </div>
-                <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                <p
+                  id="collection-editor-visibility-hint"
+                  class="text-xs text-neutral-500 dark:text-neutral-400"
+                >
                   公开后，收藏夹会展示在你的个人主页，任何人均可浏览。
                 </p>
                 <p v-if="visibilityHint" class="rounded-lg bg-amber-100/60 px-3 py-2 text-[11px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
                   {{ visibilityHint }}
+                  <NuxtLink
+                    v-if="!canPublish"
+                    to="/account/connections"
+                    class="ml-1 font-semibold underline underline-offset-2"
+                  >
+                    前往绑定
+                  </NuxtLink>
                 </p>
               </div>
             </div>
 
+            <p
+              v-if="submitError"
+              class="rounded-lg border border-red-300/70 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-200"
+              role="alert"
+              aria-live="assertive"
+            >
+              {{ submitError }}
+            </p>
+
             <div class="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-4 py-2 text-sm font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/80 px-4 py-2 text-sm font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                :disabled="saving"
                 @click="requestClose"
               >
                 取消
@@ -264,6 +287,7 @@ const props = defineProps<{
   saving?: boolean
   mode: 'create' | 'edit'
   collection?: CollectionSummary | null
+  submitError?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -326,9 +350,9 @@ watch(
 watch(
   () => props.open,
   async (open) => {
-    if (open && props.mode === 'create') {
+    if (open) {
+      // 每次打开都从已确认的 collection 重新建立草稿；关闭即代表放弃未保存修改。
       reset()
-      local.isDefault = props.collection?.isDefault === true
     }
     if (typeof document === 'undefined') return
 
@@ -455,20 +479,30 @@ const subtitle = computed(() => props.mode === 'create'
 const submitLabel = computed(() => props.mode === 'create' ? '创建收藏夹' : '保存修改')
 
 const visibilityHint = computed(() => {
+  if (!canPublish.value) {
+    return local.visibility === 'PUBLIC'
+      ? '当前收藏夹已公开；切回私密后，需要先绑定 Wikidot 才能再次公开。'
+      : '公开收藏夹前需要先绑定 Wikidot 账号。'
+  }
   if (local.visibility === 'PRIVATE') {
     return '仅自己可见，可用于暂存或私密整理。'
-  }
-  if (!isAuthenticated.value || !user.value?.linkedWikidotId) {
-    return '公开前需要绑定 Wikidot 账号，系统会自动校验。'
   }
   return '公开收藏夹会显示在个人主页，包含标题、简介与摘录。'
 })
 
+const canPublish = computed(() => (
+  isAuthenticated.value
+  && Number.isFinite(Number(user.value?.linkedWikidotId))
+  && Number(user.value?.linkedWikidotId) > 0
+))
+
 function toggleVisibility() {
+  if (local.visibility === 'PRIVATE' && !canPublish.value) return
   local.visibility = local.visibility === 'PUBLIC' ? 'PRIVATE' : 'PUBLIC'
 }
 
 function requestClose() {
+  if (props.saving) return
   emit('close')
 }
 

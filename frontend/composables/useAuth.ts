@@ -44,6 +44,11 @@ interface AuthRuntime {
   epoch: number
   activeRequestsByEpoch: Map<number, number>
   fetchInflight: AuthFetchInflight | null
+  sessionRevalidation: Promise<AuthUser | null> | null
+  sessionValidationGeneration: number
+  sessionSyncListenersInstalled: boolean
+  sourceId: string
+  lastForegroundValidationAt: number
 }
 
 /**
@@ -62,7 +67,12 @@ function getAuthRuntime(nuxtApp: object): AuthRuntime {
   const runtime: AuthRuntime = {
     epoch: 0,
     activeRequestsByEpoch: new Map(),
-    fetchInflight: null
+    fetchInflight: null,
+    sessionRevalidation: null,
+    sessionValidationGeneration: 0,
+    sessionSyncListenersInstalled: false,
+    sourceId: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+    lastForegroundValidationAt: 0
   }
   authRuntimes.set(nuxtApp, runtime)
   return runtime
@@ -73,7 +83,15 @@ function useAuthState() {
   const status = useState<AuthStatus>('auth-status', () => 'unknown')
   const loading = useState<boolean>('auth-loading', () => false)
   const error = useState<string | null>('auth-error', () => null)
-  return { user, status, loading, error }
+  const sessionVerifying = useState<boolean>('auth-session-verifying', () => false)
+  return { user, status, loading, error, sessionVerifying }
+}
+
+const AUTH_SYNC_STORAGE_KEY = 'scpper:auth-session-version'
+const FOREGROUND_VALIDATION_DEBOUNCE_MS = 1_000
+
+function authDebug(...args: unknown[]) {
+  if (import.meta.dev) console.debug(...args)
 }
 
 const EMPTY_QQ_BINDING: AuthUser['qqBinding'] = {
@@ -89,56 +107,160 @@ const EMPTY_QQ_BINDING: AuthUser['qqBinding'] = {
   }
 }
 
-function normalizeQqBinding(payload: any): AuthUser['qqBinding'] {
-  const bound = Boolean(payload?.bound)
-  const pendingChallenge = Boolean(payload?.pendingChallenge)
+type ParseResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: string }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string'
+}
+
+function parseQqBinding(payload: unknown): ParseResult<AuthUser['qqBinding']> {
+  if (!isRecord(payload)) {
+    return { ok: false, reason: 'qqBinding 不是对象' }
+  }
+  if (typeof payload.bound !== 'boolean') {
+    return { ok: false, reason: 'qqBinding.bound 不是布尔值' }
+  }
+  if (!isNullableString(payload.addressMask)) {
+    return { ok: false, reason: 'qqBinding.addressMask 不是字符串或 null' }
+  }
+  if (!isNullableString(payload.status)) {
+    return { ok: false, reason: 'qqBinding.status 不是字符串或 null' }
+  }
+  if (
+    payload.pendingChallenge !== undefined
+    && typeof payload.pendingChallenge !== 'boolean'
+  ) {
+    return { ok: false, reason: 'qqBinding.pendingChallenge 不是布尔值' }
+  }
+
+  const bound = payload.bound
+  const pendingChallenge = payload.pendingChallenge ?? false
+  if (payload.capabilities === undefined) {
+    // 兼容旧版 user-backend 的 QQ 摘要。旧响应没有能力声明，因此一律禁止
+    // 新建和投递；已有绑定仍允许管理，避免暂停期间失去解绑入口。
+    return {
+      ok: true,
+      value: {
+        bound,
+        addressMask: payload.addressMask,
+        status: payload.status,
+        pendingChallenge,
+        capabilities: {
+          featureEnabled: false,
+          createBinding: false,
+          deliverNotifications: false,
+          manageExistingBinding: bound || pendingChallenge
+        }
+      }
+    }
+  }
+
+  const capabilities = payload.capabilities
+  if (
+    !isRecord(capabilities)
+    || typeof capabilities.featureEnabled !== 'boolean'
+    || typeof capabilities.createBinding !== 'boolean'
+    || typeof capabilities.deliverNotifications !== 'boolean'
+    || typeof capabilities.manageExistingBinding !== 'boolean'
+  ) {
+    return { ok: false, reason: 'qqBinding.capabilities 形状无效' }
+  }
+
   return {
-    bound,
-    addressMask: payload?.addressMask ?? null,
-    status: payload?.status ?? null,
-    pendingChallenge,
-    capabilities: {
-      featureEnabled: Boolean(
-        payload?.capabilities?.featureEnabled
-        ?? payload?.capabilities?.createBinding
-        ?? payload?.capabilities?.deliverNotifications
-      ),
-      // 缺字段表示仍在和旧 user-backend 通信；默认拒绝新建/投递是安全失败方向。
-      createBinding: Boolean(payload?.capabilities?.createBinding),
-      deliverNotifications: Boolean(payload?.capabilities?.deliverNotifications),
-      manageExistingBinding: payload?.capabilities?.manageExistingBinding == null
-        ? bound || pendingChallenge
-        : Boolean(payload.capabilities.manageExistingBinding)
+    ok: true,
+    value: {
+      bound,
+      addressMask: payload.addressMask,
+      status: payload.status,
+      pendingChallenge,
+      capabilities: {
+        featureEnabled: capabilities.featureEnabled,
+        createBinding: capabilities.createBinding,
+        deliverNotifications: capabilities.deliverNotifications,
+        manageExistingBinding: capabilities.manageExistingBinding
+      }
     }
   }
 }
 
-function normalizeUser(payload: any, previous?: AuthUser | null): AuthUser {
-  const id = String(payload?.id || '')
+function parseAuthUser(
+  payload: unknown,
+  previous?: AuthUser | null
+): ParseResult<AuthUser> {
+  if (!isRecord(payload)) {
+    return { ok: false, reason: 'user 不是对象' }
+  }
+  if (typeof payload.id !== 'string' || !payload.id.trim()) {
+    return { ok: false, reason: 'user.id 不是非空字符串' }
+  }
+  if (typeof payload.email !== 'string' || !payload.email.trim()) {
+    return { ok: false, reason: 'user.email 不是非空字符串' }
+  }
+  if (!isNullableString(payload.displayName)) {
+    return { ok: false, reason: 'user.displayName 不是字符串或 null' }
+  }
+  if (
+    payload.linkedWikidotId !== null
+    && (
+      typeof payload.linkedWikidotId !== 'number'
+      || !Number.isSafeInteger(payload.linkedWikidotId)
+    )
+  ) {
+    return { ok: false, reason: 'user.linkedWikidotId 不是安全整数或 null' }
+  }
+  if (!isNullableString(payload.lastLoginAt)) {
+    return { ok: false, reason: 'user.lastLoginAt 不是字符串或 null' }
+  }
+
+  const id = payload.id.trim()
   // 只有当这份 payload 说的还是**同一个账号**时，才允许沿用上一份 qqBinding 快照。
   // 否则 A 已登录时直接 login 到 B，B 的 payload 不含 qqBinding，
   // 就会把 A 的掩码 QQ 号和绑定状态复制到 B 的界面上 —— 跨账号信息泄露，
   // 且要等下一次强制 /auth/me 才会被纠正。
   const sameAccount = Boolean(previous?.id) && previous?.id === id
+
+  let qqBinding: AuthUser['qqBinding']
+  if (!Object.prototype.hasOwnProperty.call(payload, 'qqBinding')) {
+    // 新版接口都会返回 qqBinding；字段完全缺失只用于和旧服务滚动升级兼容。
+    // 同一账号才允许沿用快照，不能把 A 的掩码 QQ 摘要复制到随后登录的 B。
+    qqBinding = sameAccount
+      ? (previous?.qqBinding ?? EMPTY_QQ_BINDING)
+      : EMPTY_QQ_BINDING
+  } else {
+    const parsedQqBinding = parseQqBinding(payload.qqBinding)
+    if (!parsedQqBinding.ok) return parsedQqBinding
+    qqBinding = parsedQqBinding.value
+  }
+
   return {
-    id,
-    email: String(payload?.email || ''),
-    displayName: payload?.displayName ?? null,
-    linkedWikidotId: payload?.linkedWikidotId != null ? Number(payload.linkedWikidotId) : null,
-    lastLoginAt: payload?.lastLoginAt ? String(payload.lastLoginAt) : null,
-    // 新版 /auth/login、/auth/profile、/auth/me 都返回 qqBinding；和旧服务滚动升级
-    // 期间仍可能收到缺字段的 payload。同一账号才允许沿用快照，既避免绑定状态闪烁，
-    // 也不能把 A 的掩码 QQ 摘要复制到随后登录的 B。
-    qqBinding: payload?.qqBinding
-      ? normalizeQqBinding(payload.qqBinding)
-      : (sameAccount ? (previous?.qqBinding ?? EMPTY_QQ_BINDING) : EMPTY_QQ_BINDING)
+    ok: true,
+    value: {
+      id,
+      email: payload.email.trim(),
+      displayName: payload.displayName,
+      linkedWikidotId: payload.linkedWikidotId,
+      lastLoginAt: payload.lastLoginAt,
+      qqBinding
+    }
   }
 }
 
 export function useAuth() {
   const nuxtApp = useNuxtApp()
   const { $bff } = nuxtApp
-  const { user, status, loading, error: authError } = useAuthState()
+  const {
+    user,
+    status,
+    loading,
+    error: authError,
+    sessionVerifying
+  } = useAuthState()
   const runtime = getAuthRuntime(nuxtApp)
 
   function syncLoading() {
@@ -217,7 +339,7 @@ export function useAuth() {
 
   async function fetchCurrentUser(force = false) {
     if (status.value === 'authenticated' && !authError.value && !force) {
-      console.debug('[auth] fetchCurrentUser skip (already authenticated)')
+      authDebug('[auth] fetchCurrentUser skip (already authenticated)')
       return user.value
     }
     // 强制刷新用于绑定/资料变更后的重新读取。它必须开启新世代，而不是加入
@@ -225,7 +347,7 @@ export function useAuth() {
     if (force) supersedeCurrentEpoch()
     const existing = runtime.fetchInflight
     if (existing && existing.epoch === runtime.epoch) {
-      console.debug('[auth] fetchCurrentUser dedup (already in-flight)')
+      authDebug('[auth] fetchCurrentUser dedup (already in-flight)')
       return existing.promise
     }
     const requestEpoch = runtime.epoch
@@ -244,36 +366,43 @@ export function useAuth() {
         if (force || status.value !== 'authenticated') {
           requestOptions.params = { _: Date.now().toString(36) }
         }
-        console.debug('[auth] fetchCurrentUser request', {
+        authDebug('[auth] fetchCurrentUser request', {
           force,
           status: status.value,
           params: requestOptions.params
         })
-        const res = await $bff<ApiResponse<AuthUser>>('/auth/me', requestOptions)
+        const res = await $bff<ApiResponse<unknown>>('/auth/me', requestOptions)
         if (!isCurrent(requestEpoch)) {
-          console.debug('[auth] fetchCurrentUser ignored (superseded)')
+          authDebug('[auth] fetchCurrentUser ignored (superseded)')
           return user.value
         }
-        if (res && res.ok && res.user) {
-          user.value = normalizeUser(res.user, user.value)
+        if (res?.ok === true) {
+          const parsedUser = parseAuthUser(res.user, user.value)
+          if (!parsedUser.ok) {
+            console.warn('[auth] fetchCurrentUser received an invalid user payload')
+            authDebug('[auth] invalid /auth/me user payload', parsedUser.reason)
+            markAuthResolutionError(new Error('认证服务返回了无效的用户资料'))
+            return user.value
+          }
+          user.value = parsedUser.value
           status.value = 'authenticated'
           authError.value = null
-          console.debug('[auth] fetchCurrentUser success', {
+          authDebug('[auth] fetchCurrentUser success', {
             id: user.value.id,
             linkedWikidotId: user.value.linkedWikidotId
           })
         } else {
-          console.warn('[auth] fetchCurrentUser unexpected response', res)
+          console.warn('[auth] fetchCurrentUser received an unexpected response')
           markAuthResolutionError(new Error(res?.error || '认证服务返回了无效响应'))
         }
       } catch (cause: unknown) {
         if (!isCurrent(requestEpoch)) {
-          console.debug('[auth] fetchCurrentUser error ignored (superseded)')
+          authDebug('[auth] fetchCurrentUser error ignored (superseded)')
           return user.value
         }
         if (getErrorStatus(cause) === 401) {
           markUnauthenticated()
-          console.debug('[auth] fetchCurrentUser 401 (unauthenticated)')
+          authDebug('[auth] fetchCurrentUser 401 (unauthenticated)')
         } else {
           console.warn('[auth] failed to fetch current user:', cause)
           markAuthResolutionError(cause)
@@ -290,23 +419,131 @@ export function useAuth() {
     return requestPromise
   }
 
+  /**
+   * 重新验证浏览器当前 Cookie 对应的账号。
+   *
+   * 普通前台恢复会保留最后一次可信快照，但用 sessionVerifying 暂停账号页交互；
+   * 收到其他标签页的身份变更通知时则立即清空快照，避免 A 的界面拿 B 的 Cookie
+   * 发出写请求。新通知会开启新世代，旧验证响应无法覆盖最新身份。
+   */
+  async function revalidateSession(invalidateSnapshot = false) {
+    if (!import.meta.client) return fetchCurrentUser(true)
+
+    if (!invalidateSnapshot && runtime.sessionRevalidation) {
+      return runtime.sessionRevalidation
+    }
+
+    runtime.sessionValidationGeneration += 1
+    const validationGeneration = runtime.sessionValidationGeneration
+    if (invalidateSnapshot) markSessionUnknown()
+    sessionVerifying.value = true
+
+    const verification = fetchCurrentUser(true)
+    runtime.sessionRevalidation = verification
+    try {
+      return await verification
+    } finally {
+      if (runtime.sessionValidationGeneration === validationGeneration) {
+        runtime.sessionRevalidation = null
+        sessionVerifying.value = false
+      }
+    }
+  }
+
+  function announceSessionChange(reason: 'login' | 'logout' | 'password' | 'profile') {
+    if (!import.meta.client) return
+    try {
+      window.localStorage.setItem(AUTH_SYNC_STORAGE_KEY, JSON.stringify({
+        sourceId: runtime.sourceId,
+        reason,
+        nonce: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+      }))
+    } catch (cause) {
+      // localStorage 可能被浏览器策略禁用；pageshow/focus 的强制验证仍是兜底。
+      authDebug('[auth] unable to broadcast session change', cause)
+    }
+  }
+
+  function installSessionSyncListeners() {
+    if (!import.meta.client || runtime.sessionSyncListenersInstalled) return
+    runtime.sessionSyncListenersInstalled = true
+
+    const validateOnForeground = () => {
+      if (document.hidden) return
+      const now = Date.now()
+      if (now - runtime.lastForegroundValidationAt < FOREGROUND_VALIDATION_DEBOUNCE_MS) {
+        return
+      }
+      runtime.lastForegroundValidationAt = now
+      void revalidateSession(false)
+    }
+
+    window.addEventListener('storage', (event) => {
+      if (event.key !== AUTH_SYNC_STORAGE_KEY || !event.newValue) return
+      try {
+        const message = JSON.parse(event.newValue) as { sourceId?: string }
+        if (message.sourceId === runtime.sourceId) return
+      } catch {
+        // 无法解析也按身份可能变化处理，安全失败方向是重新验证。
+      }
+      void revalidateSession(true)
+    })
+    window.addEventListener('pageshow', validateOnForeground)
+    window.addEventListener('focus', validateOnForeground)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) validateOnForeground()
+    })
+  }
+
   async function login(email: string, password: string) {
     const mutationEpoch = beginIdentityMutation()
     const hadAuthenticatedSnapshot = status.value === 'authenticated' && Boolean(user.value)
     const requestedEmail = email.trim().toLowerCase()
     try {
-      const res = await $bff<ApiResponse<AuthUser>>('/auth/login', {
+      const res = await $bff<ApiResponse<unknown>>('/auth/login', {
         method: 'POST',
         body: { email, password }
       })
-      if (res && res.ok && res.user) {
+      if (res?.ok === true) {
         if (!isCurrent(mutationEpoch)) {
           return { ok: false as const, error: '登录请求已被后续账号操作取代' }
         }
-        user.value = normalizeUser(res.user, user.value)
-        status.value = 'authenticated'
-        authError.value = null
-        return { ok: true as const }
+        const parsedUser = parseAuthUser(res.user, user.value)
+        if (
+          parsedUser.ok
+          && parsedUser.value.email.trim().toLowerCase() === requestedEmail
+        ) {
+          user.value = parsedUser.value
+          status.value = 'authenticated'
+          authError.value = null
+          announceSessionChange('login')
+          return { ok: true as const }
+        }
+
+        // 登录接口可能已经写入账号 B 的 Cookie；畸形 DTO（或与请求邮箱不符的
+        // DTO）绝不能覆盖可信快照，更不能继续让账号 A 的页面向账号 B 发写请求。
+        // 清空可交互快照，再通过独立世代的 /auth/me 解析 Cookie 的真实身份。
+        console.warn('[auth] login received an invalid user payload')
+        if (!parsedUser.ok) {
+          authDebug('[auth] invalid /auth/login user payload', parsedUser.reason)
+        } else {
+          authDebug('[auth] /auth/login user email did not match the requested account')
+        }
+        markSessionUnknown()
+        await fetchCurrentUser(true)
+        if (
+          status.value === 'authenticated'
+          && user.value?.email.trim().toLowerCase() === requestedEmail
+        ) {
+          announceSessionChange('login')
+          return { ok: true as const }
+        }
+        return {
+          ok: false as const,
+          error: status.value === 'unknown'
+            ? '登录结果暂时无法确认，请检查网络后重试。'
+            : '登录结果与当前会话不一致，请重试。'
+        }
       }
       const message = res?.error || '登录失败'
       if (isCurrent(mutationEpoch) && !hadAuthenticatedSnapshot) {
@@ -333,6 +570,7 @@ export function useAuth() {
         status.value === 'authenticated'
         && user.value?.email.trim().toLowerCase() === requestedEmail
       ) {
+        announceSessionChange('login')
         return { ok: true as const }
       }
       return {
@@ -357,6 +595,7 @@ export function useAuth() {
         return { ok: false as const, error: res?.error || '退出失败，请稍后重试。' }
       }
       markUnauthenticated()
+      announceSessionChange('logout')
       return { ok: true as const }
     } catch (cause: unknown) {
       console.warn('[auth] logout failed', cause)
@@ -367,6 +606,7 @@ export function useAuth() {
       const message = getErrorMessage(cause, '退出失败，请稍后重试。')
       if (getErrorStatus(cause) === 401) {
         markUnauthenticated()
+        announceSessionChange('logout')
         return { ok: true as const }
       }
       if (isDefinitiveClientRejection(cause)) {
@@ -378,6 +618,7 @@ export function useAuth() {
       // 避免账号页面卸载后吞掉“退出失败”的可重试提示。
       await fetchCurrentUser(true)
       if (status.value === 'unauthenticated') {
+        announceSessionChange('logout')
         return { ok: true as const }
       }
       return {
@@ -396,20 +637,61 @@ export function useAuth() {
     if (!trimmed) {
       return { ok: false as const, error: '昵称不能为空' }
     }
+    const expectedUserId = user.value?.id ?? null
+    const expectedEmail = user.value?.email.trim().toLowerCase() ?? null
     const mutationEpoch = beginIdentityMutation()
     try {
-      const res = await $bff<ApiResponse<AuthUser>>('/auth/profile', {
+      const res = await $bff<ApiResponse<unknown>>('/auth/profile', {
         method: 'PATCH',
         body: { displayName: trimmed }
       })
-      if (res && res.ok && res.user) {
+      if (res?.ok === true) {
         if (!isCurrent(mutationEpoch)) {
           return { ok: false as const, error: '资料更新已被后续账号操作取代' }
         }
-        user.value = normalizeUser(res.user, user.value)
-        status.value = 'authenticated'
-        authError.value = null
-        return { ok: true as const }
+        const parsedUser = parseAuthUser(res.user, user.value)
+        if (
+          parsedUser.ok
+          && (!expectedUserId || parsedUser.value.id === expectedUserId)
+          && (
+            !expectedEmail
+            || parsedUser.value.email.trim().toLowerCase() === expectedEmail
+          )
+          && parsedUser.value.displayName === trimmed
+        ) {
+          user.value = parsedUser.value
+          status.value = 'authenticated'
+          authError.value = null
+          announceSessionChange('profile')
+          return { ok: true as const }
+        }
+
+        // profile 不应改变账号身份，返回的昵称也应是刚保存的值。畸形或语义
+        // 不一致的 DTO 不写共享快照；保留最后一份可信用户，并强制读取服务端
+        // 最终状态来判断更新是否实际落库。
+        console.warn('[auth] updateProfile received an invalid user payload')
+        if (!parsedUser.ok) {
+          authDebug('[auth] invalid /auth/profile user payload', parsedUser.reason)
+        } else {
+          authDebug('[auth] /auth/profile returned an inconsistent user payload')
+        }
+        await fetchCurrentUser(true)
+        if (
+          status.value === 'authenticated'
+          && !authError.value
+          && user.value?.id === expectedUserId
+          && user.value.email.trim().toLowerCase() === expectedEmail
+          && user.value.displayName === trimmed
+        ) {
+          announceSessionChange('profile')
+          return { ok: true as const }
+        }
+        return {
+          ok: false as const,
+          error: authError.value
+            ? '资料更新结果暂时无法确认，请检查网络后重试。'
+            : '资料更新未生效，请重试。'
+        }
       }
       return { ok: false as const, error: res?.error || '更新失败' }
     } catch (cause: unknown) {
@@ -421,7 +703,13 @@ export function useAuth() {
       } else if (!isDefinitiveClientRejection(cause)) {
         // 更新可能已落库但响应丢失；重新读取同一账号可避免展示旧昵称。
         await fetchCurrentUser(true)
-        if (status.value === 'authenticated' && user.value?.displayName === trimmed) {
+        if (
+          status.value === 'authenticated'
+          && !authError.value
+          && user.value?.id === expectedUserId
+          && user.value.email.trim().toLowerCase() === expectedEmail
+          && user.value.displayName === trimmed
+        ) {
           return { ok: true as const }
         }
       }
@@ -446,6 +734,7 @@ export function useAuth() {
         return { ok: false as const, error: res?.error || '修改密码失败' }
       }
       markUnauthenticated()
+      announceSessionChange('password')
       return { ok: true as const }
     } catch (cause: unknown) {
       if (!isCurrent(mutationEpoch)) {
@@ -453,6 +742,7 @@ export function useAuth() {
       }
       if (getErrorStatus(cause) === 401) {
         markUnauthenticated()
+        announceSessionChange('password')
       } else if (!isDefinitiveClientRejection(cause)) {
         // 服务端可能已修改密码并清 Cookie，但响应在途中丢失。重新解析会话，
         // 不在未确认时宣称“密码已修改”。
@@ -481,15 +771,19 @@ export function useAuth() {
     return 'unauthenticated'
   })
 
+  installSessionSyncListeners()
+
   return {
     user,
     status,
     state,
     loading,
+    sessionVerifying,
     error: authError,
     authError,
     isAuthenticated,
     fetchCurrentUser,
+    revalidateSession,
     login,
     logout,
     updateProfile,

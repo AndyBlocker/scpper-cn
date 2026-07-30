@@ -1,4 +1,4 @@
-import type { Request } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import type { Pool } from 'pg';
 
 export interface AuthUserPayload {
@@ -27,8 +27,11 @@ export interface AuthUserPayload {
 }
 
 const USER_BACKEND_DEFAULT = 'http://127.0.0.1:4455';
+export const EXPECTED_USER_ID_HEADER = 'x-scpper-expected-user-id';
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const requestAuthCache = new WeakMap<Request, Promise<AuthUserPayload | null>>();
 
-export async function fetchAuthUser(req: Request): Promise<AuthUserPayload | null> {
+async function fetchAuthUserUncached(req: Request): Promise<AuthUserPayload | null> {
   const base = process.env.USER_BACKEND_BASE_URL || USER_BACKEND_DEFAULT;
   if (!base || base === 'disable') return null;
   const target = base.replace(/\/$/, '') + '/auth/me';
@@ -77,6 +80,63 @@ export async function fetchAuthUser(req: Request): Promise<AuthUserPayload | nul
     // eslint-disable-next-line no-console
     console.error('[fetchAuthUser] user-backend unreachable:', err instanceof Error ? err.message : err);
     return null;
+  }
+}
+
+/**
+ * A request can pass through an expected-user guard and then its route handler.
+ * Reuse the same /auth/me result so the guard does not double the auth-service
+ * traffic and both checks operate on one identity snapshot.
+ */
+export function fetchAuthUser(req: Request): Promise<AuthUserPayload | null> {
+  const cached = requestAuthCache.get(req);
+  if (cached) return cached;
+  const pending = fetchAuthUserUncached(req);
+  requestAuthCache.set(req, pending);
+  return pending;
+}
+
+function expectedUserId(req: Request): string | null {
+  const raw = req.headers[EXPECTED_USER_ID_HEADER];
+  if (raw === undefined) return null;
+  if (Array.isArray(raw)) return raw.join(',');
+  return String(raw).trim();
+}
+
+/**
+ * Optimistic concurrency guard for account identity.
+ *
+ * It is deliberately optional for rolling deploys: requests from old clients
+ * without the header keep their existing behavior. New clients send the user
+ * id from their last trusted auth snapshot. If another tab has since replaced
+ * the cookie, the mutation is rejected before a database owner is resolved or
+ * any write is attempted.
+ */
+export async function requireExpectedUser(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const expected = expectedUserId(req);
+  if (expected === null || SAFE_METHODS.has(req.method.toUpperCase())) {
+    return next();
+  }
+
+  try {
+    const actual = await fetchAuthUser(req);
+    // Let the route preserve its existing 401 response when the cookie is
+    // absent/invalid. The mismatch code is only for two known, different users.
+    if (!actual) return next();
+    if (expected !== actual.id) {
+      return res.status(409).json({
+        ok: false,
+        code: 'account_mismatch',
+        error: '登录账号已切换，请刷新后重试。'
+      });
+    }
+    return next();
+  } catch (error) {
+    return next(error);
   }
 }
 

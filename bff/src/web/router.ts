@@ -29,6 +29,7 @@ import { cssProxyRouter } from './routes/css-proxy.js';
 import { pagePreviewRouter } from './routes/page-preview.js';
 import { annualSummaryRouter } from './routes/annual-summary.js';
 import { embedRouter } from './routes/embed.js';
+import { requireExpectedUser } from './utils/auth.js';
 
 export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -74,13 +75,13 @@ export function buildRouter(pool: Pool, redis: RedisClientType | null) {
   router.use('/analytics', analyticsRouter(pool, redis));
   router.use('/quotes', quotesRouter(pool, redis));
   router.use('/tags', tagsRouter(pool, redis));
-  router.use('/alerts', alertsRouter(pool, redis));
-  router.use('/follows', followsRouter(pool, redis));
-  router.use('/alerts/follow', followAlertsRouter(pool, redis));
-  router.use('/alerts/forum', forumAlertsRouter(pool, redis));
+  router.use('/alerts', requireExpectedUser, alertsRouter(pool, redis));
+  router.use('/follows', requireExpectedUser, followsRouter(pool, redis));
+  router.use('/alerts/follow', requireExpectedUser, followAlertsRouter(pool, redis));
+  router.use('/alerts/forum', requireExpectedUser, forumAlertsRouter(pool, redis));
   router.use('/references', referencesRouter(pool, redis));
   router.use('/tracking', trackingRouter(pool));
-  router.use('/collections', collectionsRouter(pool, redis));
+  router.use('/collections', requireExpectedUser, collectionsRouter(pool, redis));
   router.use('/text-analysis', textAnalysisRouter());
   router.use('/forums', forumsRouter(pool, redis));
   router.use('/pages', pagePreviewRouter(pool));

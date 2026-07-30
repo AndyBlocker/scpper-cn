@@ -40,6 +40,7 @@ export async function createServer() {
         'req.headers.authorization',
         'req.headers.cookie',
         'req.headers["x-internal-key"]',
+        'req.headers["x-scpper-expected-user-id"]',
         'res.headers["set-cookie"]'
       ],
       censor: '[REDACTED]'

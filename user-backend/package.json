@@ -9,6 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "node ../scripts/service-bin-runner.mjs user-backend eslint \"src/**/*.{ts,js}\"",
     "test:wikidot-binding": "node --import tsx --test tests/wikidotBindingProof.test.ts",
+    "test:auth-feature": "node --import tsx --test tests/authFeatureProof.test.ts",
+    "test:auth-cache": "node --import tsx --test tests/authCacheProof.test.ts",
     "start": "node ../scripts/service-runner.mjs user-backend start",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",

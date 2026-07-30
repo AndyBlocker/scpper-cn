@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useQqNotifyEnabled } from '~/composables/useQqNotifyEnabled'
-import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
+import {
+  AlertSettingsSupersededError,
+  useAlertSettings,
+  type AlertPreferences,
+  type RevisionFilterOption
+} from '~/composables/useAlertSettings'
 import { useAuth } from '~/composables/useAuth'
 import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
 
@@ -14,14 +19,19 @@ interface PreferencesSnapshot {
   mutedMetrics: Record<AlertMetric, boolean>
 }
 
+interface SnapshotIdentity {
+  userId: string
+  epoch: number
+}
+
 const {
-  preferences,
   error: settingsError,
+  identityEpoch,
   fetchPreferences,
   updatePreferences,
   setMetricMuted
 } = useAlertSettings()
-const { user, fetchCurrentUser } = useAuth()
+const { user, status: authStatus, fetchCurrentUser } = useAuth()
 
 const METRIC_LABEL: Record<AlertMetric, { title: string; hint: string }> = {
   COMMENT_COUNT: { title: '页面收到评论', hint: '你的作品下有新回复时提醒' },
@@ -37,15 +47,30 @@ const REVISION_OPTIONS: Array<{ value: RevisionFilterOption; label: string; hint
 
 const panelState = ref<PanelState>('loading')
 const serverSnapshot = ref<PreferencesSnapshot | null>(null)
+const serverSnapshotIdentity = ref<SnapshotIdentity | null>(null)
 const draft = ref<PreferencesSnapshot | null>(null)
 const snapshotStale = ref(false)
 const loadError = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 const savedMessage = ref<string | null>(null)
-let loadInFlight = false
 let savedTimer: ReturnType<typeof setTimeout> | null = null
+let mounted = false
+let panelGeneration = 0
+let activeLoadGeneration: number | null = null
+let reloadScheduled = false
 
 const isBusy = computed(() => panelState.value === 'loading' || panelState.value === 'saving')
+const currentIdentity = computed<SnapshotIdentity | null>(() => {
+  const userId = user.value?.id
+  if (authStatus.value !== 'authenticated' || !userId) return null
+  return {
+    userId,
+    epoch: identityEpoch.value
+  }
+})
+const snapshotOwnedByCurrentIdentity = computed(() => (
+  identitiesEqual(serverSnapshotIdentity.value, currentIdentity.value)
+))
 const dirty = computed(() => {
   if (!serverSnapshot.value || !draft.value) return false
   return !snapshotsEqual(serverSnapshot.value, draft.value)
@@ -59,6 +84,7 @@ const canEdit = computed(() => (
   panelState.value === 'ready'
   && serverSnapshot.value !== null
   && draft.value !== null
+  && snapshotOwnedByCurrentIdentity.value
   && !snapshotStale.value
 ))
 
@@ -66,20 +92,59 @@ const canEdit = computed(() => (
 const qqNotifyEnabled = useQqNotifyEnabled()
 const qqBound = computed(() => Boolean(user.value?.qqBinding?.bound))
 const qqMask = computed(() => user.value?.qqBinding?.addressMask ?? null)
-const qqActive = computed(() => user.value?.qqBinding?.status === 'ACTIVE')
-const qqPaused = computed(() => qqBound.value && !qqActive.value)
+const qqFeatureAvailable = computed(() => Boolean(
+  user.value?.qqBinding?.capabilities?.featureEnabled
+))
+// 只有 user-backend 明确给出 deliverNotifications=true 才显示投递绿灯；
+// status=ACTIVE 本身不代表总开关与机器人配置当前可用。
+const qqActive = computed(() => (
+  qqBound.value
+  && Boolean(user.value?.qqBinding?.capabilities?.deliverNotifications)
+))
+const qqFeaturePaused = computed(() => !qqFeatureAvailable.value)
+const qqPaused = computed(() => (
+  qqBound.value
+  && qqFeatureAvailable.value
+  && !qqActive.value
+))
 
-function snapshotFromPreferences(): PreferencesSnapshot {
+function snapshotFromPreferences(preferences: AlertPreferences): PreferencesSnapshot {
   return {
-    voteCountThreshold: Number(preferences.value.voteCountThreshold),
-    revisionFilter: preferences.value.revisionFilter,
-    ignoreLinkedWikidotSelfRevision: preferences.value.ignoreLinkedWikidotSelfRevision,
+    voteCountThreshold: Number(preferences.voteCountThreshold),
+    revisionFilter: preferences.revisionFilter,
+    ignoreLinkedWikidotSelfRevision: preferences.ignoreLinkedWikidotSelfRevision,
     mutedMetrics: {
-      COMMENT_COUNT: Boolean(preferences.value.mutedMetrics.COMMENT_COUNT),
-      VOTE_COUNT: Boolean(preferences.value.mutedMetrics.VOTE_COUNT),
-      REVISION_COUNT: Boolean(preferences.value.mutedMetrics.REVISION_COUNT)
+      COMMENT_COUNT: Boolean(preferences.mutedMetrics.COMMENT_COUNT),
+      VOTE_COUNT: Boolean(preferences.mutedMetrics.VOTE_COUNT),
+      REVISION_COUNT: Boolean(preferences.mutedMetrics.REVISION_COUNT)
     }
   }
+}
+
+function identitiesEqual(
+  left: SnapshotIdentity | null,
+  right: SnapshotIdentity | null
+): boolean {
+  return Boolean(
+    left
+    && right
+    && left.userId === right.userId
+    && left.epoch === right.epoch
+  )
+}
+
+function captureIdentity(): SnapshotIdentity | null {
+  const identity = currentIdentity.value
+  return identity ? { ...identity } : null
+}
+
+function isCurrentPanelOperation(
+  generation: number,
+  identity: SnapshotIdentity
+): boolean {
+  return mounted
+    && generation === panelGeneration
+    && identitiesEqual(identity, currentIdentity.value)
 }
 
 function cloneSnapshot(source: PreferencesSnapshot): PreferencesSnapshot {
@@ -114,93 +179,177 @@ function flashSaved(message: string) {
   savedTimer = setTimeout(() => { savedMessage.value = null }, 1800)
 }
 
+function clearSavedFeedback() {
+  if (savedTimer) {
+    clearTimeout(savedTimer)
+    savedTimer = null
+  }
+  savedMessage.value = null
+}
+
+function invalidatePanelSnapshot() {
+  // 先递增本地世代，所有旧身份的 load/save finally 都不能再改变新面板。
+  panelGeneration += 1
+  activeLoadGeneration = null
+  serverSnapshot.value = null
+  serverSnapshotIdentity.value = null
+  draft.value = null
+  snapshotStale.value = false
+  loadError.value = null
+  actionError.value = null
+  clearSavedFeedback()
+  panelState.value = 'loading'
+}
+
+function scheduleIdentityReload() {
+  if (!mounted || reloadScheduled || !currentIdentity.value) return
+  reloadScheduled = true
+  queueMicrotask(() => {
+    reloadScheduled = false
+    if (mounted && currentIdentity.value) {
+      void loadPreferences()
+    }
+  })
+}
+
 async function loadPreferences() {
-  if (loadInFlight || panelState.value === 'saving') return
-  const hadSnapshot = serverSnapshot.value !== null
-  loadInFlight = true
+  const identity = captureIdentity()
+  if (!identity || panelState.value === 'saving') return
+  if (
+    activeLoadGeneration !== null
+    && activeLoadGeneration === panelGeneration
+  ) return
+
+  const hadSnapshot = Boolean(
+    serverSnapshot.value
+    && identitiesEqual(serverSnapshotIdentity.value, identity)
+  )
+  const operationGeneration = panelGeneration + 1
+  panelGeneration = operationGeneration
+  activeLoadGeneration = operationGeneration
   panelState.value = 'loading'
   loadError.value = null
   actionError.value = null
-  savedMessage.value = null
+  clearSavedFeedback()
 
   try {
-    await fetchPreferences(true)
-    if (settingsError.value) throw new Error(settingsError.value)
+    const result = await fetchPreferences()
+    if (
+      result.identityEpoch !== identity.epoch
+      || !isCurrentPanelOperation(operationGeneration, identity)
+    ) {
+      throw new AlertSettingsSupersededError()
+    }
 
-    const confirmed = snapshotFromPreferences()
+    const confirmed = snapshotFromPreferences(result.preferences)
     serverSnapshot.value = confirmed
+    serverSnapshotIdentity.value = { ...identity }
     draft.value = cloneSnapshot(confirmed)
     snapshotStale.value = false
     panelState.value = 'ready'
   } catch (errorValue) {
+    // 身份 watcher 已经清空并为新用户安排了加载。旧请求的 catch/finally
+    // 必须完全静默，不能重新放回 A 的快照或把 B 的面板标成 ready。
+    if (!isCurrentPanelOperation(operationGeneration, identity)) return
+
     loadError.value = messageFrom(errorValue, '无法加载提醒设置，请稍后重试。')
-    if (hadSnapshot && serverSnapshot.value) {
+    if (
+      hadSnapshot
+      && serverSnapshot.value
+      && identitiesEqual(serverSnapshotIdentity.value, identity)
+    ) {
       draft.value = cloneSnapshot(serverSnapshot.value)
       snapshotStale.value = true
       panelState.value = 'ready'
     } else {
       serverSnapshot.value = null
+      serverSnapshotIdentity.value = null
       draft.value = null
       snapshotStale.value = false
       panelState.value = 'load-error'
     }
   } finally {
-    loadInFlight = false
+    if (activeLoadGeneration === operationGeneration) {
+      activeLoadGeneration = null
+    }
   }
 }
 
 async function saveGeneration() {
   if (!canEdit.value || !draft.value || !dirty.value || !thresholdValid.value) return
+  const identity = captureIdentity()
+  if (!identity || !identitiesEqual(serverSnapshotIdentity.value, identity)) return
 
   const expected = cloneSnapshot(draft.value)
+  const operationGeneration = panelGeneration + 1
+  panelGeneration = operationGeneration
   panelState.value = 'saving'
   actionError.value = null
-  savedMessage.value = null
+  clearSavedFeedback()
 
   try {
-    await updatePreferences({
+    const result = await updatePreferences({
       voteCountThreshold: expected.voteCountThreshold,
       revisionFilter: expected.revisionFilter,
       ignoreLinkedWikidotSelfRevision: expected.ignoreLinkedWikidotSelfRevision
     })
-    if (settingsError.value) throw new Error(settingsError.value)
+    if (
+      result.identityEpoch !== identity.epoch
+      || !isCurrentPanelOperation(operationGeneration, identity)
+    ) {
+      throw new AlertSettingsSupersededError()
+    }
 
-    const confirmed = snapshotFromPreferences()
+    const confirmed = snapshotFromPreferences(result.preferences)
     if (!generationFieldsMatch(confirmed, expected)) {
       throw new Error('服务器没有确认这次修改，请重试。')
     }
     serverSnapshot.value = confirmed
+    serverSnapshotIdentity.value = { ...identity }
     draft.value = cloneSnapshot(confirmed)
     snapshotStale.value = false
     flashSaved('设置已保存')
   } catch (errorValue) {
+    if (!isCurrentPanelOperation(operationGeneration, identity)) return
     actionError.value = messageFrom(errorValue, '保存提醒设置失败，请重试。')
   } finally {
-    panelState.value = 'ready'
+    if (isCurrentPanelOperation(operationGeneration, identity)) {
+      panelState.value = 'ready'
+    }
   }
 }
 
 async function toggleMuted(metric: AlertMetric, muted: boolean) {
   if (!canEdit.value || !draft.value || !serverSnapshot.value) return
+  const identity = captureIdentity()
+  if (!identity || !identitiesEqual(serverSnapshotIdentity.value, identity)) return
 
   const draftBeforeToggle = cloneSnapshot(draft.value)
   const expectedDraft = cloneSnapshot(draft.value)
   expectedDraft.mutedMetrics[metric] = muted
   draft.value = expectedDraft
+  const operationGeneration = panelGeneration + 1
+  panelGeneration = operationGeneration
   panelState.value = 'saving'
   actionError.value = null
-  savedMessage.value = null
+  clearSavedFeedback()
 
   try {
-    await setMetricMuted(metric, muted)
-    if (settingsError.value) throw new Error(settingsError.value)
+    const result = await setMetricMuted(metric, muted)
+    if (
+      result.identityEpoch !== identity.epoch
+      || !isCurrentPanelOperation(operationGeneration, identity)
+    ) {
+      throw new AlertSettingsSupersededError()
+    }
 
-    const confirmed = snapshotFromPreferences()
+    const confirmed = snapshotFromPreferences(result.preferences)
     if (confirmed.mutedMetrics[metric] !== muted) {
       throw new Error('服务器没有确认这次修改，请重试。')
     }
 
     serverSnapshot.value = confirmed
+    serverSnapshotIdentity.value = { ...identity }
     draft.value = {
       ...draftBeforeToggle,
       mutedMetrics: { ...confirmed.mutedMetrics }
@@ -208,29 +357,47 @@ async function toggleMuted(metric: AlertMetric, muted: boolean) {
     snapshotStale.value = false
     flashSaved('提醒类型已保存')
   } catch (errorValue) {
+    if (!isCurrentPanelOperation(operationGeneration, identity)) return
     draft.value = draftBeforeToggle
     actionError.value = messageFrom(errorValue, '保存提醒设置失败，请重试。')
   } finally {
-    panelState.value = 'ready'
+    if (isCurrentPanelOperation(operationGeneration, identity)) {
+      panelState.value = 'ready'
+    }
   }
 }
 
 function resetDraft() {
-  if (!serverSnapshot.value || isBusy.value) return
+  if (!serverSnapshot.value || !snapshotOwnedByCurrentIdentity.value || isBusy.value) return
   draft.value = cloneSnapshot(serverSnapshot.value)
   actionError.value = null
-  savedMessage.value = null
+  clearSavedFeedback()
 }
 
+watch([
+  () => authStatus.value,
+  () => user.value?.id,
+  () => identityEpoch.value
+], () => {
+  // user id 与 composable epoch 都是快照所有权的一部分。同步清空能保证
+  // 同一帧内也不会出现“B 的 Cookie + A 的可编辑草稿”。
+  invalidatePanelSnapshot()
+  scheduleIdentityReload()
+}, { flush: 'sync' })
+
 onMounted(() => {
-  void loadPreferences()
+  mounted = true
+  scheduleIdentityReload()
   if (qqNotifyEnabled.value) {
     void fetchCurrentUser(true)
   }
 })
 
 onBeforeUnmount(() => {
-  if (savedTimer) clearTimeout(savedTimer)
+  mounted = false
+  panelGeneration += 1
+  activeLoadGeneration = null
+  clearSavedFeedback()
 })
 </script>
 
@@ -244,7 +411,7 @@ onBeforeUnmount(() => {
       class="rounded-lg border border-[rgb(var(--danger))]/30 bg-[rgb(var(--danger))]/10 p-5"
       role="alert"
       aria-live="assertive"
-      aria-labelledby="notification-settings-load-error-title"
+      aria-atomic="true"
     >
       <h2 id="notification-settings-load-error-title" class="text-base font-semibold text-[rgb(var(--danger-strong))]">
         无法加载提醒偏好
@@ -480,7 +647,7 @@ onBeforeUnmount(() => {
       <section v-if="qqNotifyEnabled" aria-labelledby="notification-channels-title">
         <h3 id="notification-channels-title" class="text-sm font-semibold text-[rgb(var(--fg))]">推送渠道</h3>
         <p class="mt-0.5 text-xs text-[rgb(var(--muted))]">
-          站内提醒始终开启。连接 QQ 后可额外通过私信接收。
+          站内提醒始终开启。仅当服务端确认 QQ 投递能力可用时，才会额外发送私信。
         </p>
         <div class="mt-3 space-y-2 rounded-lg border border-[rgb(var(--panel-border))] p-4">
           <div class="flex items-center gap-2 text-sm text-[rgb(var(--fg))]">
@@ -491,25 +658,31 @@ onBeforeUnmount(() => {
           <div class="flex flex-wrap items-center gap-2 text-sm">
             <span
               class="inline-block h-2 w-2 rounded-full"
-              :class="qqActive ? 'bg-[rgb(var(--success))]' : qqPaused ? 'bg-[rgb(var(--warning))]' : 'bg-[rgb(var(--slate-400))]'"
+              :class="qqActive ? 'bg-[rgb(var(--success))]' : (qqFeaturePaused || qqPaused) ? 'bg-[rgb(var(--warning))]' : 'bg-[rgb(var(--slate-400))]'"
               aria-hidden="true"
             />
             <span class="text-[rgb(var(--fg))]">QQ 私信</span>
             <span v-if="qqBound" class="font-mono text-xs text-[rgb(var(--muted))]">{{ qqMask }}</span>
-            <span v-if="qqPaused" class="text-xs text-[rgb(var(--warning-strong))]">
+            <span v-if="qqFeaturePaused" class="text-xs text-[rgb(var(--warning-strong))]">
+              功能暂停（当前不会通过 QQ 投递）
+            </span>
+            <span v-else-if="qqPaused" class="text-xs text-[rgb(var(--warning-strong))]">
               已暂停（连续投递失败，请确认机器人仍是好友后重新连接）
             </span>
             <span v-else-if="!qqBound" class="text-xs text-[rgb(var(--muted))]">未连接</span>
             <NuxtLink
-              v-if="!qqBound"
+              v-if="!qqBound && qqFeatureAvailable"
               to="/account/connections"
               class="ml-auto inline-flex min-h-11 items-center text-xs font-semibold text-[var(--g-accent)] hover:underline"
             >
               去连接 →
             </NuxtLink>
           </div>
-          <p class="pt-1 text-[11px] text-[rgb(var(--muted))]">
+          <p v-if="qqActive" class="pt-1 text-[11px] text-[rgb(var(--muted))]">
             QQ 推送按整点同步周期汇总发送，通常在事件发生后一小时内送达。
+          </p>
+          <p v-else class="pt-1 text-[11px] text-[rgb(var(--muted))]">
+            当前未确认 QQ 投递能力；站内提醒不受影响。
           </p>
         </div>
       </section>

@@ -485,13 +485,28 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
   router.post('/', async (req, res, next) => {
     try {
       const auth = await fetchAuthUser(req);
-      const ownerId = await resolveOwnerId(pool, auth);
-      if (!auth || ownerId == null) {
+      if (!auth) {
         return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
       const title = sanitizeTitle(req.body?.title);
       if (!title) {
         return res.status(400).json({ ok: false, error: 'invalid_title' });
+      }
+      const visibility = req.body?.visibility === undefined
+        ? 'PRIVATE'
+        : sanitizeVisibility(req.body.visibility);
+      if (!visibility) {
+        return res.status(400).json({ ok: false, error: 'invalid_visibility' });
+      }
+      if (
+        visibility === 'PUBLIC'
+        && (!auth.linkedWikidotId || !Number.isFinite(auth.linkedWikidotId))
+      ) {
+        return res.status(400).json({ ok: false, error: 'require_linked_wikidot' });
+      }
+      const ownerId = await resolveOwnerId(pool, auth);
+      if (ownerId == null) {
+        return res.status(401).json({ ok: false, error: 'unauthenticated' });
       }
       const description = sanitizeOptionalText(req.body?.description, DESCRIPTION_MAX_LEN);
       const notes = sanitizeOptionalText(req.body?.notes, NOTES_MAX_LEN);
@@ -500,6 +515,7 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
       const coverImageOffsetY = sanitizeCoverOffset(req.body?.coverImageOffsetY, 0);
       const coverImageScale = sanitizeCoverScale(req.body?.coverImageScale, 1);
       const isDefault = req.body?.isDefault === true;
+      const publishedAt = visibility === 'PUBLIC' ? new Date() : null;
 
       const existingCount = await countCollections(pool, ownerId);
       if (existingCount >= MAX_COLLECTIONS_PER_USER) {
@@ -526,18 +542,41 @@ export function collectionsRouter(pool: Pool, _redis: RedisClientType | null) {
             ? `
               INSERT INTO "UserCollection"
               ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "coverImageOffsetX", "coverImageOffsetY", "coverImageScale", "isDefault", "publishedAt", "updatedAt")
-              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, $8, $9, $10, NULL, NOW())
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
               RETURNING *
             `
             : `
               INSERT INTO "UserCollection"
               ("ownerId", title, slug, visibility, description, notes, "coverImageUrl", "isDefault", "publishedAt", "updatedAt")
-              VALUES ($1, $2, $3, 'PRIVATE', $4, $5, $6, $7, NULL, NOW())
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
               RETURNING *
             `,
           supportsTransforms
-            ? [ownerId, title, slug, description, notes, coverImageUrl, coverImageOffsetX, coverImageOffsetY, coverImageScale, isDefault]
-            : [ownerId, title, slug, description, notes, coverImageUrl, isDefault]
+            ? [
+                ownerId,
+                title,
+                slug,
+                visibility,
+                description,
+                notes,
+                coverImageUrl,
+                coverImageOffsetX,
+                coverImageOffsetY,
+                coverImageScale,
+                isDefault,
+                publishedAt
+              ]
+            : [
+                ownerId,
+                title,
+                slug,
+                visibility,
+                description,
+                notes,
+                coverImageUrl,
+                isDefault,
+                publishedAt
+              ]
         );
 
         if (isDefault) {

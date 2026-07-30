@@ -6,7 +6,7 @@ const props = defineProps<{
   user: AuthUser
 }>()
 
-const { changePassword, logout } = useAuth()
+const { changePassword, logout, status } = useAuth()
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
@@ -44,6 +44,17 @@ async function handlePasswordChange() {
   })
   passwordSaving.value = false
 
+  if (status.value !== 'authenticated') {
+    await navigateTo({
+      path: '/auth/login',
+      query: {
+        reason: result.ok ? 'password-changed' : 'password-result-uncertain',
+        redirect: '/account/security'
+      }
+    }, { replace: true })
+    return
+  }
+
   if (!result.ok) {
     passwordMessage.value = {
       tone: 'error',
@@ -55,10 +66,6 @@ async function handlePasswordChange() {
   currentPassword.value = ''
   newPassword.value = ''
   confirmPassword.value = ''
-  await navigateTo({
-    path: '/auth/login',
-    query: { reason: 'password-changed' }
-  }, { replace: true })
 }
 
 async function handleLogout() {

@@ -61,6 +61,7 @@ export function createApp() {
       paths: [
         'req.headers.authorization',
         'req.headers.cookie',
+        'req.headers["x-scpper-expected-user-id"]',
         'res.headers["set-cookie"]'
       ],
       censor: '[REDACTED]'

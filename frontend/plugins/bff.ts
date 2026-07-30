@@ -11,8 +11,16 @@ type DebugMeta = {
   shouldLogStart: boolean;
 };
 
+const EXPECTED_USER_ID_HEADER = 'x-scpper-expected-user-id';
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig();
+  // These keys are owned by useAuth. Capturing the refs here lets every
+  // account-private mutation carry the identity from the last trusted auth
+  // snapshot without relying on each composable to remember the guard.
+  const authUser = useState<{ id?: string } | null>('auth-user', () => null);
+  const authStatus = useState<string>('auth-status', () => 'unknown');
   const publicConfig = config.public as Record<string, unknown>;
   const bffBase: string = String(publicConfig.bffBase || '/api');
   const debugFetchTimings = parseBoolean(publicConfig.debugFetchTimings, false);
@@ -72,6 +80,14 @@ export default defineNuxtPlugin((nuxtApp) => {
       const clientDebugFlag = !isServer && hasClientDebugFlag();
       const shouldLogStart = debugFetchTimings || clientDebugFlag;
       const method = String(options.method || 'GET').toUpperCase();
+      const trustedUserId = authStatus.value === 'authenticated'
+        ? String(authUser.value?.id || '').trim()
+        : '';
+      if (!SAFE_METHODS.has(method) && trustedUserId) {
+        const headers = new Headers(options.headers as HeadersInit | undefined);
+        headers.set(EXPECTED_USER_ID_HEADER, trustedUserId);
+        options.headers = headers;
+      }
       const targetInfo = resolveTargetInfo(request);
       const startAt = now();
 

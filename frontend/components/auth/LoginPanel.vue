@@ -12,13 +12,19 @@
       class="flex items-start gap-3 rounded-xl border px-4 py-3 text-sm"
       :class="reasonNotice.tone === 'success'
         ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-        : 'border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200'"
-      role="status"
-      aria-live="polite"
+        : reasonNotice.tone === 'warning'
+          ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100'
+          : 'border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200'"
+      :role="reasonNotice.tone === 'warning' ? 'alert' : 'status'"
+      :aria-live="reasonNotice.tone === 'warning' ? 'assertive' : 'polite'"
       aria-atomic="true"
     >
       <LucideIcon
-        :name="reasonNotice.tone === 'success' ? 'CheckCircle' : 'Info'"
+        :name="reasonNotice.tone === 'success'
+          ? 'CheckCircle'
+          : reasonNotice.tone === 'warning'
+            ? 'AlertTriangle'
+            : 'Info'"
         class="mt-0.5 h-4 w-4 shrink-0"
         stroke-width="2"
         aria-hidden="true"
@@ -115,6 +121,18 @@ const reasonNotice = computed(() => {
     return {
       tone: 'status' as const,
       message: '你已安全退出登录。'
+    }
+  }
+  if (reason === 'password-result-uncertain') {
+    return {
+      tone: 'warning' as const,
+      message: '当前登录已失效，无法确认密码修改结果。请先尝试使用新密码登录；如果失败，再使用原密码或重置密码。'
+    }
+  }
+  if (reason === 'profile-session-expired') {
+    return {
+      tone: 'warning' as const,
+      message: '保存资料时登录已失效，无法确认昵称是否更新。重新登录后请检查个人资料。'
     }
   }
   return null

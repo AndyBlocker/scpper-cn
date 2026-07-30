@@ -45,6 +45,7 @@ const copied = ref(false)
 const showUnbind = ref(false)
 const unbindPassword = ref('')
 const unbindError = ref<string | null>(null)
+const resolvedMessage = ref<string | null>(null)
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
@@ -61,7 +62,10 @@ const effectiveAddressMask = computed(() => (
   binding.value?.addressMask || props.summaryAddressMask || '已绑定的 QQ 账号'
 ))
 const shouldRender = computed(() => (
-  props.allowNewBinding || effectiveBound.value || effectivePendingChallenge.value
+  props.allowNewBinding
+  || effectiveBound.value
+  || effectivePendingChallenge.value
+  || Boolean(resolvedMessage.value)
 ))
 
 const codeGroups = computed(() => {
@@ -94,8 +98,16 @@ async function handleUnbind() {
   if (ok) {
     showUnbind.value = false
     unbindPassword.value = ''
+    resolvedMessage.value = 'QQ 连接已解绑。若其他区域没有立即更新，重新打开本页即可。'
   } else {
     unbindError.value = error.value || '解绑失败，请稍后重试。'
+  }
+}
+
+async function handleCancel() {
+  const ok = await cancel()
+  if (ok) {
+    resolvedMessage.value = '未完成的 QQ 绑定已取消。若其他区域没有立即更新，重新打开本页即可。'
   }
 }
 
@@ -108,6 +120,7 @@ function closeUnbind() {
 function syncPolling() {
   if (
     props.active
+    && props.featureEnabled
     && hasActiveChallenge.value
     && !isBound.value
     && !document.hidden
@@ -122,6 +135,7 @@ function handleVisibilityChange() {
   syncPolling()
   if (
     props.active
+    && props.featureEnabled
     && !document.hidden
     && hasActiveChallenge.value
   ) {
@@ -130,7 +144,7 @@ function handleVisibilityChange() {
 }
 
 watch(
-  [hasActiveChallenge, isBound, () => props.active],
+  [hasActiveChallenge, isBound, () => props.active, () => props.featureEnabled],
   syncPolling
 )
 
@@ -193,7 +207,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      v-if="!statusKnown && !error && !summaryBound && !summaryPendingChallenge"
+      v-if="!statusKnown && !error && !effectiveBound && !effectivePendingChallenge"
       class="flex items-center gap-2 py-3 text-sm text-[rgb(var(--muted))]"
       role="status"
     >
@@ -205,7 +219,21 @@ onBeforeUnmount(() => {
       正在确认连接状态…
     </div>
 
-    <template v-if="effectiveBound">
+    <template v-if="resolvedMessage">
+      <div
+        class="flex items-start gap-3 rounded-lg border border-emerald-300/70 bg-emerald-50/90 p-4 text-sm leading-6 text-emerald-900 dark:border-emerald-800/70 dark:bg-emerald-950/35 dark:text-emerald-100"
+        role="status"
+      >
+        <LucideIcon
+          name="CircleCheck"
+          class="mt-0.5 h-4 w-4 shrink-0"
+          aria-hidden="true"
+        />
+        <span>{{ resolvedMessage }}</span>
+      </div>
+    </template>
+
+    <template v-else-if="effectiveBound">
       <div
         v-if="!featureEnabled"
         class="rounded-lg border border-amber-300/70 bg-amber-50/90 p-3 text-sm leading-6 text-amber-950 dark:border-amber-800/70 dark:bg-amber-950/35 dark:text-amber-100"
@@ -310,7 +338,7 @@ onBeforeUnmount(() => {
         type="button"
         class="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] px-4 py-2 text-sm font-semibold text-[rgb(var(--fg))] transition hover:bg-[rgb(var(--bg))] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60"
         :disabled="loading"
-        @click="cancel()"
+        @click="handleCancel"
       >
         <LucideIcon
           v-if="loading"
@@ -359,7 +387,7 @@ onBeforeUnmount(() => {
         type="button"
         class="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[rgb(var(--panel-border))] px-4 py-2 text-sm font-medium text-[rgb(var(--muted-strong))] hover:bg-[rgb(var(--panel))] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:opacity-60"
         :disabled="loading"
-        @click="cancel()"
+        @click="handleCancel"
       >
         取消绑定
       </button>
@@ -374,7 +402,7 @@ onBeforeUnmount(() => {
           type="button"
           class="inline-flex min-h-11 items-center justify-center rounded-lg border border-[rgb(var(--panel-border))] px-4 py-2 text-sm font-medium text-[rgb(var(--fg))] hover:bg-[rgb(var(--panel))] disabled:opacity-60"
           :disabled="loading"
-          @click="cancel()"
+          @click="handleCancel"
         >
           取消旧任务
         </button>

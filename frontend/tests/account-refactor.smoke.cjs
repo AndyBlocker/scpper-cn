@@ -1,0 +1,824 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const { chromium } = require('playwright')
+
+const baseUrl = process.env.ACCOUNT_TEST_BASE_URL || 'http://127.0.0.1:19876'
+const outputDir = process.env.ACCOUNT_TEST_OUTPUT_DIR || '/tmp/scpper-account-refactor-evidence'
+const notificationsEnabled = process.env.ACCOUNT_TEST_NOTIFICATIONS_ENABLED === '1'
+const iso = '2026-07-30T08:00:00.000Z'
+const transparentPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+  'base64'
+)
+
+const collection = {
+  id: 501,
+  ownerId: 1,
+  title: 'SCP 精选',
+  slug: 'scp-picks',
+  visibility: 'PRIVATE',
+  description: 'Playwright 收藏夹',
+  notes: '用于交互验收',
+  coverImageUrl: null,
+  coverImageOffsetX: 0,
+  coverImageOffsetY: 0,
+  coverImageScale: 1,
+  isDefault: true,
+  publishedAt: null,
+  createdAt: iso,
+  updatedAt: iso,
+  itemCount: 1
+}
+
+const collectionItem = {
+  id: 601,
+  collectionId: 501,
+  pageId: 701,
+  annotation: '示例批注',
+  order: 0,
+  pinned: true,
+  createdAt: iso,
+  updatedAt: iso,
+  page: {
+    id: 701,
+    wikidotId: 10001,
+    currentUrl: 'https://scp-wiki-cn.wikidot.com/scp-cn-001',
+    slug: 'scp-cn-001',
+    title: 'SCP-CN-001',
+    alternateTitle: '测试页面',
+    rating: 128
+  }
+}
+
+function authUser(options = {}) {
+  const featureEnabled = options.qqFeatureEnabled === true
+  const qqBound = options.qqBound === true
+  const pendingChallenge = options.qqPending === true
+  return {
+    ok: true,
+    user: {
+      id: options.userId || 'pw-user-1',
+      email: options.email || 'playwright@example.com',
+      displayName: options.displayName || '验收用户',
+      linkedWikidotId: options.linked === false ? null : 123456,
+      lastLoginAt: iso,
+      qqBinding: {
+        bound: qqBound,
+        addressMask: qqBound ? '1234***8' : null,
+        status: qqBound ? (options.qqStatus || 'ACTIVE') : null,
+        pendingChallenge,
+        capabilities: {
+          featureEnabled,
+          createBinding: featureEnabled && !qqBound,
+          deliverNotifications: featureEnabled && qqBound && (options.qqStatus || 'ACTIVE') === 'ACTIVE',
+          manageExistingBinding: qqBound || pendingChallenge
+        }
+      }
+    }
+  }
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function json(route, body, status = 200) {
+  await route.fulfill({
+    status,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify(body)
+  })
+}
+
+function createApiHandler(options, requests) {
+  let authMeCount = 0
+  let preferencesReadCount = 0
+  let currentAuth = { ...options }
+
+  return async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const apiPath = url.pathname.slice('/api'.length)
+    const method = request.method()
+    if (options.forceServerAccount === 'B') {
+      currentAuth = {
+        ...currentAuth,
+        userId: 'pw-user-2',
+        email: 'second@example.com',
+        displayName: '第二位用户',
+        linked: true
+      }
+    }
+    const requestOwner = currentAuth.userId || 'pw-user-1'
+    const expectedUserId = request.headers()['x-scpper-expected-user-id'] || null
+    const requestEntry = {
+      method,
+      path: apiPath,
+      userId: requestOwner,
+      expectedUserId,
+      rejected: false,
+      body: request.postDataJSON?.() || null
+    }
+    requests.push(requestEntry)
+
+    if (
+      !['GET', 'HEAD', 'OPTIONS'].includes(method)
+      && expectedUserId
+      && expectedUserId !== requestOwner
+    ) {
+      requestEntry.rejected = true
+      return json(route, {
+        ok: false,
+        code: 'account_mismatch',
+        error: '登录账号已切换，请刷新后重试。'
+      }, 409)
+    }
+
+    if (apiPath.startsWith('/avatar/')) {
+      return route.fulfill({ status: 200, contentType: 'image/png', body: transparentPng })
+    }
+
+    if (apiPath === '/auth/me' && method === 'GET') {
+      authMeCount += 1
+      const responseSnapshot = { ...currentAuth }
+      if (options.authError) {
+        return json(route, { ok: false, error: '认证服务暂时不可用' }, 503)
+      }
+      if (options.malformedAuth) {
+        return json(route, { ok: true, user: {} })
+      }
+      if (options.delayInitialAuth && authMeCount === 1) {
+        await delay(options.delayInitialAuth)
+      } else if (options.delayAuthAfterSwitch && responseSnapshot.userId === 'pw-user-2') {
+        await delay(options.delayAuthAfterSwitch)
+      }
+      return json(route, authUser(responseSnapshot))
+    }
+
+    if (apiPath === '/auth/login' && method === 'POST') {
+      if (options.switchAccount) {
+        currentAuth = {
+          ...currentAuth,
+          userId: 'pw-user-2',
+          email: 'second@example.com',
+          displayName: '第二位用户',
+          linked: true
+        }
+      }
+      if (options.malformedLogin) {
+        return json(route, { ok: true, user: {} })
+      }
+      return json(route, authUser(currentAuth))
+    }
+
+    if (apiPath === '/auth/logout' && method === 'POST') {
+      if (options.logoutAmbiguous) {
+        return json(route, { ok: false, error: '代理连接失败' }, 503)
+      }
+      return json(route, { ok: true })
+    }
+
+    if (apiPath === '/auth/password' && method === 'PATCH') {
+      return json(route, { ok: true })
+    }
+
+    if (apiPath === '/auth/profile' && method === 'PATCH') {
+      const submittedName = request.postDataJSON()?.displayName || currentAuth.displayName
+      currentAuth = {
+        ...currentAuth,
+        displayName: submittedName
+      }
+      if (options.profileNetworkSwitch) {
+        currentAuth = {
+          ...currentAuth,
+          userId: 'pw-user-2',
+          email: 'second@example.com',
+          displayName: submittedName,
+          linked: true
+        }
+        return json(route, { ok: false, error: '响应在途中丢失' }, 503)
+      }
+      if (options.malformedProfile) {
+        return json(route, { ok: true, user: {} })
+      }
+      return json(route, authUser(currentAuth))
+    }
+
+    if (apiPath === '/wikidot-binding/status' && method === 'GET') {
+      return json(route, { ok: true, task: null })
+    }
+
+    if (apiPath === '/wikidot-binding/resolve' && method === 'GET') {
+      return json(route, {
+        ok: true,
+        users: [{ wikidotId: 123456, displayName: '测试作者', username: 'test-author' }]
+      })
+    }
+
+    if (apiPath === '/qq-binding/status' && method === 'GET') {
+      if (options.qqStatusError) {
+        return json(route, { ok: false, error: 'QQ 状态暂时不可用' }, 503)
+      }
+      return json(route, {
+        ok: true,
+        botQq: '10000001',
+        binding: options.qqBound
+          ? {
+              addressMask: '1234***8',
+              displayName: '测试 QQ',
+              status: options.qqStatus || 'ACTIVE',
+              verifiedAt: iso,
+              suspendedUntil: null
+            }
+          : null,
+        challenge: options.qqPending
+          ? { codeHint: '1234', expiresAt: '2026-07-31T08:00:00.000Z', createdAt: iso }
+          : null
+      })
+    }
+
+    if (apiPath === '/qq-binding/start' && method === 'POST') {
+      return json(route, {
+        ok: true,
+        code: 'SCPPER-ABCDEFGHJKMN',
+        expiresAt: '2026-07-31T08:00:00.000Z',
+        botQq: '10000001',
+        instructions: ['添加机器人好友', '填写验证码']
+      })
+    }
+
+    if (apiPath === '/qq-binding/challenge' && method === 'DELETE') {
+      return json(route, { ok: true })
+    }
+
+    if (apiPath === '/qq-binding' && method === 'DELETE') {
+      return json(route, { ok: true })
+    }
+
+    if (apiPath === '/alerts/preferences' && method === 'GET') {
+      preferencesReadCount += 1
+      const responseOwner = currentAuth.userId || 'pw-user-1'
+      if (options.delayFirstPreferences && preferencesReadCount === 1) {
+        await delay(options.delayFirstPreferences)
+      }
+      return json(route, {
+        ok: true,
+        preferences: {
+          voteCountThreshold: responseOwner === 'pw-user-2' ? 91 : 37,
+          revisionFilter: responseOwner === 'pw-user-2' ? 'NON_OWNER' : 'ANY',
+          ignoreLinkedWikidotSelfRevision: true,
+          mutedMetrics: {
+            COMMENT_COUNT: false,
+            VOTE_COUNT: false,
+            REVISION_COUNT: false
+          }
+        }
+      })
+    }
+
+    if (apiPath === '/collections' && method === 'GET') {
+      const ownerCollection = currentAuth.userId === 'pw-user-2'
+        ? { ...collection, id: 502, title: '第二位用户的收藏夹', slug: 'second-picks' }
+        : collection
+      return json(route, { ok: true, items: [ownerCollection], total: 1 })
+    }
+
+    if (apiPath === '/collections/501' && method === 'GET') {
+      return json(route, { ok: true, collection, items: [collectionItem] })
+    }
+
+    if (apiPath === '/collections/502' && method === 'GET') {
+      const secondCollection = {
+        ...collection,
+        id: 502,
+        title: '第二位用户的收藏夹',
+        slug: 'second-picks'
+      }
+      return json(route, {
+        ok: true,
+        collection: secondCollection,
+        items: [{ ...collectionItem, id: 602, collectionId: 502 }]
+      })
+    }
+
+    if (apiPath.startsWith('/collections/') && method === 'PATCH') {
+      if (options.collectionUpdateError) {
+        return json(route, { ok: false, error: 'require_linked_wikidot' }, 400)
+      }
+      if (options.delayCollectionWrite) {
+        await delay(options.delayCollectionWrite)
+      }
+      return json(route, { ok: true, collection, item: collectionItem, items: [collectionItem] })
+    }
+
+    if (apiPath.startsWith('/collections/') && ['POST', 'DELETE'].includes(method)) {
+      return json(route, { ok: true, collection, item: collectionItem, items: [collectionItem] })
+    }
+
+    if (apiPath === '/follows' && method === 'GET') {
+      return json(route, { ok: true, follows: [] })
+    }
+
+    return json(route, { ok: true })
+  }
+}
+
+async function scenario(browser, name, options, run, viewport = { width: 1280, height: 900 }) {
+  if (process.env.SCENARIO && process.env.SCENARIO !== name) return
+
+  const context = await browser.newContext({
+    viewport,
+    colorScheme: 'dark',
+    locale: 'zh-CN',
+    reducedMotion: 'reduce'
+  })
+  await context.addInitScript(() => {
+    localStorage.setItem('theme', 'dark')
+    localStorage.setItem('color-scheme', 'aurora')
+  })
+
+  const requests = []
+  await context.route(
+    url => url.hostname.includes('google-analytics.com') || url.hostname === 'www.google.com',
+    route => route.abort()
+  )
+  await context.route(
+    url => url.pathname.startsWith('/api/'),
+    createApiHandler(options, requests)
+  )
+
+  const page = await context.newPage()
+  const pageErrors = []
+  page.on('pageerror', error => pageErrors.push(error.message))
+
+  process.stdout.write(`• ${name}\n`)
+  await run(page, requests, context)
+  assert.deepEqual(pageErrors, [], `${name}: browser page errors`)
+  await page.screenshot({
+    path: path.join(outputDir, `${name}.png`),
+    fullPage: true
+  })
+  await context.close()
+}
+
+async function dimensions(page) {
+  return page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    bodyScrollWidth: document.body.scrollWidth
+  }))
+}
+
+async function login(page) {
+  await page.getByLabel('邮箱', { exact: true }).fill('second@example.com')
+  await page.getByLabel('密码', { exact: true }).fill('password-for-smoke-test')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+}
+
+async function main() {
+  fs.mkdirSync(outputDir, { recursive: true })
+  const browser = await chromium.launch({ headless: true })
+
+  try {
+    await scenario(
+      browser,
+      'overview-mobile',
+      { linked: false },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account`, { waitUntil: 'domcontentloaded' })
+        await page.getByText('playwright@example.com', { exact: true }).waitFor()
+        await page.getByRole('heading', { name: '账号概览' }).waitFor()
+        assert.equal(await page.locator('a[href="/notifications"]').count(), 0)
+        assert.equal(await page.locator('a[href="/settings/notifications"]').count(), 0)
+        assert.equal(await page.getByText('通知设置', { exact: true }).count(), 0)
+        assert.ok((await page.locator('#account-section-navigation').boundingBox()).height >= 44)
+        const size = await dimensions(page)
+        assert.ok(size.scrollWidth <= size.innerWidth, JSON.stringify(size))
+        assert.ok(size.bodyScrollWidth <= size.innerWidth, JSON.stringify(size))
+        assert.ok(requests.some(entry => entry.path === '/auth/me' && entry.method === 'GET'))
+      },
+      { width: 320, height: 640 }
+    )
+
+    await scenario(
+      browser,
+      'connections-qq-hidden',
+      { linked: false },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+        assert.equal(await page.getByRole('heading', { name: 'QQ 连接' }).count(), 0)
+        assert.equal(requests.filter(entry => entry.path === '/qq-binding/status').length, 0)
+      }
+    )
+
+    await scenario(
+      browser,
+      'connections-bound-error-fallback',
+      { linked: true, qqBound: true, qqStatusError: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+        await page.getByText('QQ 功能目前暂停', { exact: false }).waitFor()
+        await page.getByText('QQ 状态暂时不可用', { exact: false }).waitFor()
+        await page.getByText('1234***8', { exact: true }).waitFor()
+        assert.equal(await page.getByRole('button', { name: '解绑 QQ' }).count(), 1)
+        const count = requests.filter(entry => entry.path === '/qq-binding/status').length
+        assert.ok(count >= 1 && count <= 2)
+      }
+    )
+
+    await scenario(
+      browser,
+      'connections-paused-pending-does-not-poll',
+      { linked: true, qqPending: true, qqFeatureEnabled: false },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('button', { name: '取消未完成的绑定' }).waitFor()
+        const initialCount = requests.filter(entry => entry.path === '/qq-binding/status').length
+        assert.equal(initialCount, 1)
+        await page.waitForTimeout(5500)
+        assert.equal(
+          requests.filter(entry => entry.path === '/qq-binding/status').length,
+          initialCount
+        )
+      }
+    )
+
+    await scenario(
+      browser,
+      'connections-feature-restorable',
+      { linked: true, qqFeatureEnabled: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/connections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('button', { name: '开始绑定' }).click()
+        await page.getByText('一次性验证码', { exact: true }).waitFor()
+        await page.getByText('ABCD', { exact: true }).waitFor()
+        assert.equal(requests.filter(entry => entry.path === '/qq-binding/start').length, 1)
+      }
+    )
+
+    await scenario(
+      browser,
+      'auth-service-error',
+      { authError: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: '暂时无法读取账号信息' }).waitFor()
+        assert.equal(await page.getByLabel('昵称', { exact: true }).count(), 0)
+      }
+    )
+
+    await scenario(
+      browser,
+      'malformed-auth-payload-is-rejected',
+      { malformedAuth: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: '暂时无法读取账号信息' }).waitFor()
+        assert.equal(await page.getByLabel('昵称', { exact: true }).count(), 0)
+        assert.equal(await page.getByText('未设置昵称', { exact: true }).count(), 0)
+      }
+    )
+
+    await scenario(
+      browser,
+      'security-and-logout-ambiguity',
+      { linked: true, logoutAmbiguous: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/security`, { waitUntil: 'domcontentloaded' })
+        await page.getByLabel('当前密码', { exact: true }).waitFor()
+        await page.getByRole('button', { name: '退出当前登录' }).click()
+        await page.getByText('退出未完成，你仍处于登录状态，请重试。', { exact: true }).waitFor()
+        assert.equal(new URL(page.url()).pathname, '/account/security')
+        assert.equal(requests.filter(entry => entry.path === '/auth/logout').length, 1)
+        assert.ok(requests.filter(entry => entry.path === '/auth/me').length >= 2)
+      }
+    )
+
+    await scenario(
+      browser,
+      'profile-save-state',
+      { linked: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        const input = page.getByLabel('昵称', { exact: true })
+        const button = page.getByRole('button', { name: '保存昵称' })
+        await input.waitFor()
+        assert.equal(await button.isDisabled(), true)
+        await input.fill('新的验收昵称')
+        await button.click()
+        await page.getByText('昵称已保存。', { exact: true }).waitFor()
+        assert.equal(await button.isDisabled(), true)
+      }
+    )
+
+    await scenario(
+      browser,
+      'malformed-profile-response-is-revalidated',
+      { linked: true, malformedProfile: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        const input = page.getByLabel('昵称', { exact: true })
+        await input.fill('重查后确认的昵称')
+        const authReadsBefore = requests.filter(entry => entry.path === '/auth/me').length
+        await page.getByRole('button', { name: '保存昵称' }).click()
+        await page.getByText('昵称已保存。', { exact: true }).waitFor()
+        assert.ok(
+          requests.filter(entry => entry.path === '/auth/me').length > authReadsBefore,
+          '畸形 profile DTO 后必须重新读取可信会话'
+        )
+        assert.equal(await input.inputValue(), '重查后确认的昵称')
+      }
+    )
+
+    await scenario(
+      browser,
+      'lost-profile-response-cannot-confirm-another-account',
+      { linked: true, profileNetworkSwitch: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        const input = page.getByLabel('昵称', { exact: true })
+        await input.fill('两个账号碰巧相同的昵称')
+        await page.getByRole('button', { name: '保存昵称' }).click()
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        assert.equal(await page.getByText('昵称已保存。', { exact: true }).count(), 0)
+      }
+    )
+
+    await scenario(
+      browser,
+      'appearance-works-without-auth',
+      { authError: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/settings/appearance`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: '快速配色' }).waitFor()
+        const advanced = page.getByRole('button', { name: '高级外观设置', exact: false })
+        await advanced.click()
+        await page.getByRole('heading', { name: '自定义颜色' }).waitFor()
+        const colorInputs = page.locator('input[type="color"]')
+        assert.ok(await colorInputs.count() >= 20)
+        for (let index = 0; index < await colorInputs.count(); index += 1) {
+          assert.ok(await colorInputs.nth(index).evaluate(input => input.labels?.length > 0))
+        }
+      }
+    )
+
+    if (!notificationsEnabled) {
+      await scenario(
+        browser,
+        'legacy-and-paused-routes',
+        { linked: true },
+        async (page) => {
+          await page.goto(`${baseUrl}/account?tab=appearance`, { waitUntil: 'domcontentloaded' })
+          await page.getByRole('heading', { name: '外观设置' }).waitFor()
+          assert.equal(new URL(page.url()).pathname, '/settings/appearance')
+          await page.goto(`${baseUrl}/notifications`, { waitUntil: 'domcontentloaded' })
+          await page.getByText('站内通知功能暂时关闭', { exact: true }).waitFor()
+          const redirected = new URL(page.url())
+          assert.equal(redirected.pathname, '/account')
+          assert.equal(redirected.searchParams.get('notice'), 'notifications-paused')
+        }
+      )
+    }
+
+    if (notificationsEnabled) {
+      await scenario(
+        browser,
+        'notification-settings-account-switch-isolated',
+        { linked: true, switchAccount: true, delayFirstPreferences: 900 },
+        async (page, requests, context) => {
+          await page.goto(`${baseUrl}/settings/notifications`, { waitUntil: 'domcontentloaded' })
+          await page.getByText('正在从服务端加载提醒偏好…', { exact: true }).waitFor()
+
+          const secondPage = await context.newPage()
+          await secondPage.goto(`${baseUrl}/auth/login`, { waitUntil: 'domcontentloaded' })
+          await login(secondPage)
+          await secondPage.getByText('second@example.com', { exact: true }).waitFor()
+
+          const threshold = page.getByLabel('票数变化阈值')
+          await threshold.waitFor()
+          assert.equal(await threshold.inputValue(), '91')
+          assert.equal(await threshold.isEnabled(), true)
+          assert.ok(
+            requests.filter(entry => entry.path === '/alerts/preferences').length >= 2,
+            '账号切换后必须为新身份重新读取提醒偏好'
+          )
+          await page.waitForTimeout(1100)
+          assert.equal(await threshold.inputValue(), '91')
+          await secondPage.close()
+        }
+      )
+
+      await scenario(
+        browser,
+        'notification-qq-capability-is-server-authoritative',
+        { linked: true, qqBound: true, qqFeatureEnabled: false },
+        async (page) => {
+          await page.goto(`${baseUrl}/settings/notifications`, { waitUntil: 'domcontentloaded' })
+          await page.getByText('功能暂停（当前不会通过 QQ 投递）', { exact: true }).waitFor()
+          assert.equal(
+            await page.getByText('通常在事件发生后一小时内送达。', { exact: false }).count(),
+            0
+          )
+        }
+      )
+    }
+
+    await scenario(
+      browser,
+      'collections-unlinked-mobile-dialog',
+      { linked: false },
+      async (page) => {
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+        const editButton = page.getByRole('button', { name: '编辑', exact: true }).first()
+        await editButton.click()
+        const dialog = page.getByRole('dialog')
+        await dialog.waitFor()
+        assert.equal(await dialog.getAttribute('aria-modal'), 'true')
+        const visibilitySwitch = dialog.getByRole('switch', { name: '公开展示收藏夹' })
+        assert.equal(await visibilitySwitch.isDisabled(), true)
+        assert.equal(await dialog.getByRole('link', { name: '前往绑定' }).count(), 1)
+        const box = await dialog.boundingBox()
+        assert.ok(box.y >= 0 && box.y + box.height <= 667)
+        const size = await dimensions(page)
+        assert.ok(size.scrollWidth <= size.innerWidth, JSON.stringify(size))
+        await dialog.getByLabel('名称', { exact: true }).fill('未保存的标题')
+        await page.keyboard.press('Escape')
+        await dialog.waitFor({ state: 'detached' })
+        assert.equal(await editButton.evaluate(node => document.activeElement === node), true)
+        await editButton.click()
+        await page.getByRole('dialog').waitFor()
+        assert.equal(
+          await page.getByRole('dialog').getByLabel('名称', { exact: true }).inputValue(),
+          'SCP 精选'
+        )
+      },
+      { width: 375, height: 667 }
+    )
+
+    await scenario(
+      browser,
+      'collection-submit-error-stays-in-dialog',
+      { linked: true, collectionUpdateError: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+        await page.getByRole('button', { name: '编辑', exact: true }).first().click()
+        const dialog = page.getByRole('dialog')
+        await dialog.getByLabel('名称', { exact: true }).fill('服务端拒绝的标题')
+        await dialog.getByRole('button', { name: '保存修改' }).click()
+        await dialog.getByRole('alert').getByText('公开收藏夹前需要先绑定 Wikidot 账号。').waitFor()
+        assert.equal(await dialog.isVisible(), true)
+      }
+    )
+
+    await scenario(
+      browser,
+      'collection-dialog-cannot-close-while-saving',
+      { linked: true, delayCollectionWrite: 700 },
+      async (page) => {
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+        await page.getByRole('button', { name: '编辑', exact: true }).first().click()
+        const dialog = page.getByRole('dialog')
+        await dialog.getByLabel('名称', { exact: true }).fill('保存中的标题')
+        const saveButton = dialog.getByRole('button', { name: '保存修改' })
+        await saveButton.click()
+        await page.waitForTimeout(50)
+        assert.equal(await saveButton.isDisabled(), true)
+        await page.keyboard.press('Escape')
+        assert.equal(await dialog.isVisible(), true)
+        await dialog.waitFor({ state: 'detached' })
+      }
+    )
+
+    await scenario(
+      browser,
+      'late-initial-auth-cannot-overwrite-login',
+      { linked: true, switchAccount: true, delayInitialAuth: 900 },
+      async (page) => {
+        await page.goto(`${baseUrl}/auth/login`, { waitUntil: 'domcontentloaded' })
+        await login(page)
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        await page.waitForTimeout(1100)
+        assert.equal(await page.getByText('playwright@example.com', { exact: true }).count(), 0)
+        assert.equal(await page.getByText('second@example.com', { exact: true }).count(), 1)
+      }
+    )
+
+    await scenario(
+      browser,
+      'malformed-login-response-is-revalidated',
+      { linked: true, switchAccount: true, malformedLogin: true },
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/auth/login`, { waitUntil: 'domcontentloaded' })
+        const authReadsBefore = requests.filter(entry => entry.path === '/auth/me').length
+        await login(page)
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        assert.ok(
+          requests.filter(entry => entry.path === '/auth/me').length > authReadsBefore,
+          '畸形 login DTO 后必须通过 /auth/me 解析 Cookie 身份'
+        )
+        assert.equal(await page.getByText('playwright@example.com', { exact: true }).count(), 0)
+      }
+    )
+
+    await scenario(
+      browser,
+      'cross-tab-account-switch-revalidates-before-write',
+      { linked: true, switchAccount: true, delayAuthAfterSwitch: 800 },
+      async (page, requests, context) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        await page.getByText('playwright@example.com', { exact: true }).waitFor()
+
+        const secondPage = await context.newPage()
+        await secondPage.goto(`${baseUrl}/auth/login`, { waitUntil: 'domcontentloaded' })
+        await login(secondPage)
+        await secondPage.getByText('second@example.com', { exact: true }).waitFor()
+
+        await page.getByText(/正在确认(?:当前账号|登录状态)/).waitFor()
+        assert.equal(await page.getByText('playwright@example.com', { exact: true }).count(), 0)
+        assert.equal(await page.getByLabel('昵称', { exact: true }).count(), 0)
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        const input = page.getByLabel('昵称', { exact: true })
+        await input.fill('第二位用户的新昵称')
+        await page.getByRole('button', { name: '保存昵称' }).click()
+        await page.getByText('昵称已保存。', { exact: true }).waitFor()
+
+        const writes = requests.filter(entry => entry.path === '/auth/profile' && entry.method === 'PATCH')
+        assert.equal(writes.length, 1)
+        assert.equal(writes[0].userId, 'pw-user-2')
+        await secondPage.close()
+      }
+    )
+
+    const staleWriteOptions = { linked: true }
+    await scenario(
+      browser,
+      'stale-account-write-is-rejected-by-user-boundary',
+      staleWriteOptions,
+      async (page, requests) => {
+        await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+        await page.getByText('playwright@example.com', { exact: true }).waitFor()
+        await page.getByLabel('昵称', { exact: true }).fill('不应写给 B 的昵称')
+
+        // 模拟另一标签页已把共享 Cookie 切到 B，但 storage/focus 通知尚未到达。
+        staleWriteOptions.forceServerAccount = 'B'
+        await page.getByRole('button', { name: '保存昵称' }).click()
+        await page.getByText('登录账号已切换，请刷新后重试。', { exact: true }).waitFor()
+
+        const writes = requests.filter(entry => entry.path === '/auth/profile')
+        assert.equal(writes.length, 1)
+        assert.equal(writes[0].expectedUserId, 'pw-user-1')
+        assert.equal(writes[0].userId, 'pw-user-2')
+        assert.equal(writes[0].rejected, true)
+        assert.equal(await page.getByText('昵称已保存。', { exact: true }).count(), 0)
+      }
+    )
+
+    await scenario(
+      browser,
+      'same-tab-account-switch-isolates-collections',
+      { linked: true, switchAccount: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: 'SCP 精选', exact: true }).first().waitFor()
+        await page.goto(`${baseUrl}/auth/login`, { waitUntil: 'domcontentloaded' })
+        await login(page)
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        await page.goto(`${baseUrl}/collections`, { waitUntil: 'domcontentloaded' })
+        await page
+          .getByRole('heading', { name: '第二位用户的收藏夹', exact: true })
+          .first()
+          .waitFor()
+        assert.equal(await page.getByText('SCP 精选', { exact: true }).count(), 0)
+      }
+    )
+
+    await scenario(
+      browser,
+      'unsafe-login-redirect-is-rejected',
+      { linked: true, switchAccount: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/auth/login?redirect=//evil.example`, {
+          waitUntil: 'domcontentloaded'
+        })
+        await login(page)
+        await page.getByText('second@example.com', { exact: true }).waitFor()
+        assert.equal(new URL(page.url()).origin, new URL(baseUrl).origin)
+        assert.equal(new URL(page.url()).pathname, '/account')
+      }
+    )
+  } finally {
+    await browser.close()
+  }
+
+  process.stdout.write(`PASS — screenshots: ${outputDir}\n`)
+}
+
+main().catch(error => {
+  console.error(error)
+  process.exitCode = 1
+})

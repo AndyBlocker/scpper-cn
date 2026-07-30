@@ -323,7 +323,8 @@
       :mode="modal.mode"
       :collection="modal.collection"
       :saving="saving"
-      @close="modal.open = false"
+      :submit-error="modal.submitError"
+      @close="closeModal"
       @submit="handleSubmit"
     />
   </div>
@@ -366,10 +367,16 @@ const activeId = ref<number | null>(null)
 const activeDetail = ref<CollectionDetail | null>(null)
 const annotations = reactive<Record<number, string>>({})
 
-const modal = reactive<{ open: boolean; mode: 'create' | 'edit'; collection: CollectionSummary | null }>({
+const modal = reactive<{
+  open: boolean
+  mode: 'create' | 'edit'
+  collection: CollectionSummary | null
+  submitError: string | null
+}>({
   open: false,
   mode: 'create',
-  collection: null
+  collection: null,
+  submitError: null
 })
 
 watch(collectionList, (list) => {
@@ -448,6 +455,7 @@ function annotationsReset(items: CollectionItem[]) {
 function openCreate() {
   modal.mode = 'create'
   modal.collection = null
+  modal.submitError = null
   modal.open = true
 }
 
@@ -455,7 +463,25 @@ function openEdit() {
   if (!activeDetail.value) return
   modal.mode = 'edit'
   modal.collection = activeDetail.value.collection
+  modal.submitError = null
   modal.open = true
+}
+
+function closeModal() {
+  const shouldRefresh = Boolean(modal.submitError)
+  modal.open = false
+  modal.submitError = null
+  if (shouldRefresh) void handleRefresh()
+}
+
+function submitErrorMessage(errorValue: string | undefined, fallback: string) {
+  const messages: Record<string, string> = {
+    require_linked_wikidot: '公开收藏夹前需要先绑定 Wikidot 账号。',
+    invalid_title: '请填写有效的收藏夹名称。',
+    invalid_visibility: '收藏夹公开状态无效，请重新选择。',
+    collection_limit_reached: '收藏夹数量已达上限。'
+  }
+  return errorValue ? (messages[errorValue] || errorValue) : fallback
 }
 
 async function handleSubmit(payload: {
@@ -469,18 +495,23 @@ async function handleSubmit(payload: {
   isDefault: boolean
   visibility: 'PUBLIC' | 'PRIVATE'
 }) {
+  modal.submitError = null
   if (modal.mode === 'create') {
     const result = await createCollection(payload)
     if (result.ok && result.collection) {
       modal.open = false
       activeId.value = result.collection.id
       await loadDetail(result.collection.id)
+    } else {
+      modal.submitError = submitErrorMessage(result.error, '创建收藏夹失败，请重试。')
     }
   } else if (modal.collection) {
     const result = await updateCollection(modal.collection.id, payload)
     if (result.ok && activeId.value === modal.collection.id) {
       modal.open = false
       await loadDetail(modal.collection.id)
+    } else if (!result.ok) {
+      modal.submitError = submitErrorMessage(result.error, '保存收藏夹失败，请重试。')
     }
   }
 }

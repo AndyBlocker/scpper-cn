@@ -249,6 +249,7 @@ export function useCollections() {
         method: 'POST',
         body: {
           title: payload.title,
+          visibility: payload.visibility ?? 'PRIVATE',
           description: payload.description,
           notes: payload.notes,
           coverImageUrl: payload.coverImageUrl,
