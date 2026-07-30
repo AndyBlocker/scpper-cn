@@ -15,10 +15,11 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-function requestGate() {
+function requestGate(options = {}) {
   return {
     started: deferred(),
-    release: deferred()
+    release: deferred(),
+    ...options
   }
 }
 
@@ -46,6 +47,8 @@ function account(id, name, wikidotId) {
 
 const accountA = account('ftml-account-a', 'FTML 账号 A', 101001)
 const accountB = account('ftml-account-b', 'FTML 账号 B', 202002)
+const accountARebound = account('ftml-account-a', 'FTML 账号 A（重绑）', 303003)
+const reboundProjectTitle = '同一账号重绑后的 FTML 项目'
 
 const sources = {
   [accountA.id]: [
@@ -121,13 +124,13 @@ async function createHarness(browser) {
   const nextCreateGate = new Map()
   const nextSaveGate = new Map()
 
-  async function consumeGate(map, ownerId, label) {
+  async function consumeGate(map, ownerId) {
     const gate = map.get(ownerId)
     if (!gate) return
     map.delete(ownerId)
     gate.started.resolve()
     await gate.release.promise
-    return label
+    return gate
   }
 
   await page.route('**/api/**', async route => {
@@ -155,14 +158,24 @@ async function createHarness(browser) {
       }
 
       if (apiPath === '/ftml-projects' && method === 'GET') {
-        await consumeGate(nextListGate, expected, 'list')
+        const requestAccount = cookieAccount
+        const gate = await consumeGate(nextListGate, expected)
+        if (gate?.failureStatus) {
+          return fulfillJson(route, { error: 'held_list_failure' }, gate.failureStatus)
+        }
         const project = projectFor(expected)
+        if (
+          requestAccount.id === accountARebound.id
+          && requestAccount.linkedWikidotId === accountARebound.linkedWikidotId
+        ) {
+          project.title = reboundProjectTitle
+        }
         const { source: _source, settings: _settings, ...meta } = project
         return fulfillJson(route, { projects: [meta] })
       }
 
       if (apiPath === '/ftml-projects' && method === 'POST') {
-        await consumeGate(nextCreateGate, expected, 'create')
+        await consumeGate(nextCreateGate, expected)
         return fulfillJson(route, {
           project: {
             ...projectFor(expected),
@@ -173,12 +186,12 @@ async function createHarness(browser) {
       }
 
       if (apiPath === `/ftml-projects/${projectId}` && method === 'GET') {
-        await consumeGate(nextDetailGate, expected, 'detail')
+        await consumeGate(nextDetailGate, expected)
         return fulfillJson(route, { project: projectFor(expected) })
       }
 
       if (apiPath === `/ftml-projects/${projectId}` && method === 'PATCH') {
-        await consumeGate(nextSaveGate, expected, 'save')
+        await consumeGate(nextSaveGate, expected)
         const body = request.postDataJSON()
         return fulfillJson(route, {
           project: {
@@ -217,8 +230,8 @@ async function createHarness(browser) {
     pageErrors,
     ftmlRequests,
     switchAccount,
-    holdNextList(ownerId) {
-      const gate = requestGate()
+    holdNextList(ownerId, options = {}) {
+      const gate = requestGate(options)
       nextListGate.set(ownerId, gate)
       return gate
     },
@@ -318,6 +331,33 @@ async function testInflightListCannotOverwriteNewAccount(browser) {
   }
 }
 
+async function testSameAccountRebindRejectsStaleListError(browser) {
+  const harness = await createHarness(browser)
+  const { page } = harness
+  try {
+    const listGate = harness.holdNextList(accountA.id, { failureStatus: 503 })
+    await page.goto(`${baseUrl}/ftml-projects`, { waitUntil: 'domcontentloaded' })
+    await waitForSignal(listGate.started, 'held pre-rebind list request')
+
+    await harness.switchAccount(accountARebound)
+    await page.getByText(reboundProjectTitle, { exact: true }).waitFor()
+    listGate.release.resolve()
+    await page.waitForTimeout(250)
+
+    assert.equal(await page.getByText(reboundProjectTitle, { exact: true }).count(), 1)
+    assert.equal(await page.getByText(/加载失败:/).count(), 0)
+    assert.ok(
+      harness.ftmlRequests.filter(request => (
+        request.method === 'GET'
+        && request.expected === accountA.id
+      )).length >= 2
+    )
+    await assertNoPageErrors(harness)
+  } finally {
+    await harness.context.close()
+  }
+}
+
 async function testSettledSourceAndStaleSave(browser) {
   const harness = await createHarness(browser)
   const { page } = harness
@@ -391,6 +431,9 @@ async function main() {
 
     await testInflightListCannotOverwriteNewAccount(browser)
     process.stdout.write('PASS in-flight FTML list response cannot overwrite the new account\n')
+
+    await testSameAccountRebindRejectsStaleListError(browser)
+    process.stdout.write('PASS same-account Wikidot rebind rejects stale FTML list errors\n')
 
     await testSettledSourceAndStaleSave(browser)
     process.stdout.write('PASS settled FTML source clears/reloads and stale save cannot report success\n')

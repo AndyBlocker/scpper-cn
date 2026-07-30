@@ -34,6 +34,7 @@ export interface FtmlProjectSettings {
 
 export interface FtmlIdentityToken {
   ownerId: string | null
+  linkedWikidotId: number | null
   epoch: number
 }
 
@@ -44,6 +45,7 @@ export function useFtmlProjects() {
   const isLoading = ref(false)
   const error = ref<string | null>(null)
   const identityOwnerId = ref<string | null>(currentOwnerId())
+  const identityLinkedWikidotId = ref<number | null>(currentLinkedWikidotId())
   const identityEpoch = ref(0)
   const activeRequestsByEpoch = new Map<number, number>()
 
@@ -53,15 +55,30 @@ export function useFtmlProjects() {
     return id || null
   }
 
+  function currentLinkedWikidotId(): number | null {
+    if (!currentOwnerId()) return null
+    const wikidotId = authUser.value?.linkedWikidotId
+    return typeof wikidotId === 'number' && Number.isSafeInteger(wikidotId)
+      ? wikidotId
+      : null
+  }
+
   /**
    * FTML 项目都是账号私有数据。身份变化时同步开启新世代并撤销旧请求对
    * loading/error 的所有权；旧网络请求可以自然结束，但不能再影响新账号 UI。
    */
   function synchronizeIdentity() {
     const ownerId = currentOwnerId()
-    if (identityOwnerId.value === ownerId) return
+    const linkedWikidotId = currentLinkedWikidotId()
+    if (
+      identityOwnerId.value === ownerId
+      && identityLinkedWikidotId.value === linkedWikidotId
+    ) {
+      return
+    }
 
     identityOwnerId.value = ownerId
+    identityLinkedWikidotId.value = linkedWikidotId
     identityEpoch.value += 1
     activeRequestsByEpoch.clear()
     isLoading.value = false
@@ -73,6 +90,7 @@ export function useFtmlProjects() {
     synchronizeIdentity()
     return {
       ownerId: identityOwnerId.value,
+      linkedWikidotId: identityLinkedWikidotId.value,
       epoch: identityEpoch.value
     }
   }
@@ -81,7 +99,9 @@ export function useFtmlProjects() {
     synchronizeIdentity()
     return token.epoch === identityEpoch.value
       && token.ownerId === identityOwnerId.value
+      && token.linkedWikidotId === identityLinkedWikidotId.value
       && token.ownerId === currentOwnerId()
+      && token.linkedWikidotId === currentLinkedWikidotId()
   }
 
   function beginRequest(): FtmlIdentityToken {
@@ -119,7 +139,7 @@ export function useFtmlProjects() {
   }
 
   watch(
-    () => currentOwnerId(),
+    () => [currentOwnerId(), currentLinkedWikidotId()] as const,
     () => synchronizeIdentity(),
     { flush: 'sync' }
   )
@@ -270,6 +290,7 @@ export function useFtmlProjects() {
     isLoading,
     error,
     identityOwnerId: readonly(identityOwnerId),
+    identityLinkedWikidotId: readonly(identityLinkedWikidotId),
     identityEpoch: readonly(identityEpoch),
     captureIdentity,
     isIdentityCurrent,
