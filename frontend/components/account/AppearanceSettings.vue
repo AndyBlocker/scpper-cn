@@ -6,20 +6,27 @@
           <h2 class="text-lg font-semibold text-[rgb(var(--fg))]">主题模式</h2>
           <p class="text-sm text-neutral-600 dark:text-neutral-400">切换浅色或深色，并实时预览。</p>
         </div>
-        <div class="inline-flex rounded-full border border-[rgb(var(--panel-border)_/_0.5)] bg-[rgb(var(--panel)_/_0.7)] p-1 text-sm">
-          <button
+        <fieldset class="inline-flex rounded-full border border-[rgb(var(--panel-border)_/_0.5)] bg-[rgb(var(--panel)_/_0.7)] p-1 text-sm">
+          <legend class="sr-only">页面主题模式</legend>
+          <label
             v-for="modeOption in modeOptions"
             :key="modeOption.key"
-            type="button"
-            class="flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold transition"
+            class="flex min-h-10 cursor-pointer items-center gap-2 rounded-full px-3 py-1.5 font-semibold transition focus-within:outline-none focus-within:ring-2 focus-within:ring-[var(--g-accent-border)]"
             :class="themeMode === modeOption.key
               ? 'bg-[var(--g-accent-medium)] text-[var(--g-accent)] shadow-sm'
               : 'text-neutral-600 dark:text-neutral-300 hover:text-[var(--g-accent)]'"
-            @click="handleModeChange(modeOption.key)"
           >
+            <input
+              type="radio"
+              name="appearance-theme-mode"
+              :value="modeOption.key"
+              :checked="themeMode === modeOption.key"
+              class="sr-only"
+              @change="handleModeChange(modeOption.key)"
+            >
             <span>{{ modeOption.label }}</span>
-          </button>
-        </div>
+          </label>
+        </fieldset>
       </header>
       <p class="mt-4 rounded-lg border border-dashed border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.55)] px-4 py-3 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
         当前正在编辑 <span class="font-semibold text-[var(--g-accent)]">{{ editingModeLabel }}</span> 配置。切换模式将立即应用新主题，方便对比效果。
@@ -34,7 +41,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-[rgb(var(--panel-border)_/_0.55)] px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300"
+          class="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[rgb(var(--panel-border)_/_0.55)] px-3 py-2 text-xs font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300"
           @click="handleResetPresets"
         >
           <LucideIcon name="RotateCcw" class="h-4 w-4" stroke-width="2" />
@@ -53,41 +60,73 @@
             : 'border-[rgb(var(--panel-border)_/_0.4)] bg-[rgb(var(--panel)_/_0.6)] text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:text-neutral-300'"
           @click="handlePresetSelect(preset.key)"
         >
-          <div class="flex flex-col gap-1">
-            <span class="text-sm font-semibold">{{ preset.name }}</span>
-            <span class="text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">Key: {{ preset.key }}</span>
-          </div>
+          <span class="text-sm font-semibold">{{ preset.name }}</span>
           <span
             class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/70 shadow-inner"
             :style="{ background: preset.gradient }"
-          ></span>
+            aria-hidden="true"
+          />
         </button>
       </div>
     </section>
 
+    <section class="rounded-lg border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.78)] p-5 shadow-sm backdrop-blur-xl dark:shadow-lg sm:p-6">
+      <button
+        type="button"
+        class="flex min-h-11 w-full items-center justify-between gap-4 text-left focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
+        :aria-expanded="advancedOpen"
+        aria-controls="appearance-advanced-settings"
+        @click="advancedOpen = !advancedOpen"
+      >
+        <span>
+          <span class="block text-lg font-semibold text-[rgb(var(--fg))]">高级外观设置</span>
+          <span class="mt-1 block text-sm leading-6 text-neutral-600 dark:text-neutral-400">
+            精确调整界面颜色，或导入、导出主题配置。大多数用户无需修改。
+          </span>
+        </span>
+        <LucideIcon
+          name="ChevronDown"
+          class="h-5 w-5 shrink-0 text-[rgb(var(--muted))] transition-transform"
+          :class="{ 'rotate-180': advancedOpen }"
+          aria-hidden="true"
+        />
+      </button>
+    </section>
+
+    <div
+      v-if="advancedOpen"
+      id="appearance-advanced-settings"
+      class="space-y-8"
+    >
     <section class="rounded-lg border border-[rgb(var(--panel-border)_/_0.45)] bg-[rgb(var(--panel)_/_0.78)] p-6 shadow-sm backdrop-blur-xl dark:shadow-lg">
       <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 class="text-lg font-semibold text-[rgb(var(--fg))]">自定义颜色</h2>
           <p class="text-sm text-neutral-600 dark:text-neutral-400">为不同组件设置精确的颜色。覆盖项目会立即保存在浏览器本地。</p>
         </div>
-        <div class="flex items-center gap-2 text-xs">
-          <span class="text-neutral-500 dark:text-neutral-400">编辑模式：</span>
+        <fieldset class="flex items-center gap-2 text-xs">
+          <legend class="text-neutral-500 dark:text-neutral-400">编辑模式：</legend>
           <div class="inline-flex rounded-full border border-[rgb(var(--panel-border)_/_0.5)] bg-[rgb(var(--panel)_/_0.65)] p-0.5">
-            <button
+            <label
               v-for="modeOption in modeOptions"
               :key="`editor-${modeOption.key}`"
-              type="button"
-              class="rounded-full px-2.5 py-1 font-semibold transition"
+              class="flex min-h-10 cursor-pointer items-center rounded-full px-2.5 py-1 font-semibold transition focus-within:outline-none focus-within:ring-2 focus-within:ring-[var(--g-accent-border)]"
               :class="editingMode === modeOption.key
                 ? 'bg-[var(--g-accent-medium)] text-[var(--g-accent)]'
                 : 'text-neutral-600 dark:text-neutral-300 hover:text-[var(--g-accent)]'"
-              @click="handleModeChange(modeOption.key)"
             >
+              <input
+                type="radio"
+                name="appearance-editor-mode"
+                :value="modeOption.key"
+                :checked="editingMode === modeOption.key"
+                class="sr-only"
+                @change="handleModeChange(modeOption.key)"
+              >
               {{ modeOption.label }}
-            </button>
+            </label>
           </div>
-        </div>
+        </fieldset>
       </header>
 
       <div class="mt-6 space-y-6">
@@ -104,7 +143,7 @@
             <button
               v-if="group.tokens.some(token => isOverridden(editingMode, token.key))"
               type="button"
-              class="mt-2 inline-flex items-center gap-1 rounded-full bg-[var(--g-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--g-accent)] sm:mt-0"
+              class="mt-2 inline-flex min-h-10 items-center gap-1 rounded-lg bg-[var(--g-accent-soft)] px-3 py-2 text-[11px] font-semibold text-[var(--g-accent)] sm:mt-0"
               @click="clearGroupOverrides(group.tokens)"
             >
               <LucideIcon name="Minus" class="h-3.5 w-3.5" stroke-width="2" />
@@ -117,13 +156,16 @@
               :key="`${group.key}-${token.key}`"
               class="flex items-center justify-between gap-3 rounded-xl border border-[rgb(var(--panel-border)_/_0.3)] bg-[rgb(var(--panel)_/_0.5)] px-3 py-3"
             >
-              <div class="min-w-0">
+              <label
+                :for="`picker-${editingMode}-${token.key}`"
+                class="min-w-0 cursor-pointer"
+              >
                 <div class="text-sm font-medium text-[rgb(var(--fg))]">{{ token.label }}</div>
                 <div class="text-[11px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
                   {{ displayHex(editingMode, token.key) }}
                   <span v-if="isOverridden(editingMode, token.key)" class="ml-1 inline-flex items-center rounded-full bg-[var(--g-accent-medium)] px-2 py-0.5 text-[10px] font-semibold text-[var(--g-accent)]">已覆盖</span>
                 </div>
-              </div>
+              </label>
               <div class="flex items-center gap-2 shrink-0">
                 <input
                   :id="`picker-${editingMode}-${token.key}`"
@@ -135,9 +177,9 @@
                 <button
                   v-if="isOverridden(editingMode, token.key)"
                   type="button"
-                  class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[rgb(var(--panel-border)_/_0.5)] text-neutral-500 hover:text-[var(--g-accent)]"
+                  class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[rgb(var(--panel-border)_/_0.5)] text-neutral-500 hover:text-[var(--g-accent)]"
                   @click="clearOverride(editingMode, token.key)"
-                  aria-label="清除该颜色的覆盖"
+                  :aria-label="`清除${token.label}颜色覆盖`"
                 >
                   <LucideIcon name="X" class="h-4 w-4" stroke-width="2" />
                 </button>
@@ -154,7 +196,13 @@
           <h2 class="text-lg font-semibold text-[rgb(var(--fg))]">导入与导出</h2>
           <p class="text-sm text-neutral-600 dark:text-neutral-400">备份你的主题设置或在不同设备间同步。</p>
         </div>
-        <div v-if="message" :class="messageClass" class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold">
+        <div
+          v-if="message"
+          :class="messageClass"
+          class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
+          role="status"
+          aria-live="polite"
+        >
           <LucideIcon
             v-if="message.type === 'success'"
             name="Check"
@@ -174,7 +222,7 @@
         <div class="inline-flex items-center gap-2">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:-translate-y-0.5 transition"
+            class="inline-flex min-h-11 items-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-white dark:focus:ring-neutral-100 dark:focus:ring-offset-neutral-950"
             @click="handleExport"
           >
             <LucideIcon name="Upload" class="h-4 w-4" stroke-width="2" />
@@ -182,7 +230,7 @@
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-[rgb(var(--panel-border)_/_0.55)] bg-[rgb(var(--panel)_/_0.7)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300"
+            class="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[rgb(var(--panel-border)_/_0.55)] bg-[rgb(var(--panel)_/_0.7)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300"
             @click="triggerImport"
           >
             <LucideIcon name="Download" class="h-4 w-4" stroke-width="2" />
@@ -191,7 +239,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full border border-[rgb(var(--panel-border)_/_0.55)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[rgb(var(--panel-border)_/_0.55)] px-4 py-2 text-sm font-semibold text-neutral-600 hover:text-[var(--g-accent)] dark:text-neutral-300 disabled:cursor-not-allowed disabled:opacity-40"
           :disabled="!hasOverrides"
           @click="handleResetOverrides"
         >
@@ -201,6 +249,7 @@
       </div>
       <input ref="fileInputRef" type="file" accept="application/json" class="hidden" @change="handleImport" />
     </section>
+    </div>
   </div>
 </template>
 
@@ -374,6 +423,7 @@ const defaultPalette: Record<ThemeMode, Record<ThemeToken, string>> = {
 } as const;
 
 const editingMode = ref<ThemeMode>(themeMode.value);
+const advancedOpen = ref(false);
 
 watch(themeMode, (next) => {
   editingMode.value = next;
@@ -414,7 +464,8 @@ function handleModeChange(mode: ThemeMode) {
 
 function handlePresetSelect(key: string) {
   applyColorScheme(key);
-  showMessage('success', `已应用 ${key} 配色方案`);
+  const presetName = presets.find((item) => item.key === key)?.name ?? '所选';
+  showMessage('success', `已应用${presetName}配色方案`);
 }
 
 function getColorValue(mode: ThemeMode, token: ThemeToken): string {

@@ -1,11 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useQqNotifyEnabled } from '~/composables/useQqNotifyEnabled'
 import { useQqBinding } from '~/composables/useQqBinding'
 
-// QQ 通知总开关（2026-07-30 暂时下线）。关闭时本面板只对**已绑定**用户显示，
-// 且只保留解绑；发起新绑定的入口一律不给。
-const qqNotifyEnabled = useQqNotifyEnabled()
+const props = withDefaults(defineProps<{
+  summaryBound?: boolean
+  summaryAddressMask?: string | null
+  summaryPendingChallenge?: boolean
+  allowNewBinding?: boolean
+  featureEnabled?: boolean
+  deliveryEnabled?: boolean
+  active?: boolean
+}>(), {
+  summaryBound: false,
+  summaryAddressMask: null,
+  summaryPendingChallenge: false,
+  allowNewBinding: false,
+  featureEnabled: false,
+  deliveryEnabled: false,
+  active: true
+})
 
 const {
   binding,
@@ -16,7 +29,6 @@ const {
   statusKnown,
   error,
   isBound,
-  isPaused,
   hasActiveChallenge,
   isExpired,
   countdown,
@@ -30,33 +42,52 @@ const {
 } = useQqBinding()
 
 const copied = ref(false)
-let copiedTimer: ReturnType<typeof setTimeout> | null = null
-
 const showUnbind = ref(false)
 const unbindPassword = ref('')
 const unbindError = ref<string | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
-// 验证码分成三段展示。12 位连排极难人眼校对，而这里打错的代价是
-// 「好友申请被拒 → 得重新发一次申请」，QQ 对反复发申请还有频率限制。
+/**
+ * `/auth/me` 的摘要是管理入口的兜底。只有状态接口成功返回后，才由局部状态
+ * 取代摘要；这样状态接口 503 时不会把已绑定用户的解绑入口一起藏掉。
+ */
+const effectiveBound = computed(() => (
+  isBound.value || (!statusKnown.value && props.summaryBound)
+))
+const effectivePendingChallenge = computed(() => (
+  hasActiveChallenge.value || (!statusKnown.value && props.summaryPendingChallenge)
+))
+const effectiveAddressMask = computed(() => (
+  binding.value?.addressMask || props.summaryAddressMask || '已绑定的 QQ 账号'
+))
+const shouldRender = computed(() => (
+  props.allowNewBinding || effectiveBound.value || effectivePendingChallenge.value
+))
+
 const codeGroups = computed(() => {
   const raw = plainCode.value
   if (!raw) return []
   const body = raw.replace(/^SCPPER-/, '')
-  return [body.slice(0, 4), body.slice(4, 8), body.slice(8, 12)]
+  return [body.slice(0, 4), body.slice(4, 8), body.slice(8, 12)].filter(Boolean)
 })
 
 async function handleCopy() {
   const ok = await copyCode()
-  if (!ok) return
+  if (!ok) {
+    error.value = '复制失败，请手动选择验证码复制。'
+    return
+  }
   copied.value = true
   if (copiedTimer) clearTimeout(copiedTimer)
-  copiedTimer = setTimeout(() => { copied.value = false }, 2000)
+  copiedTimer = setTimeout(() => {
+    copied.value = false
+  }, 2000)
 }
 
 async function handleUnbind() {
   unbindError.value = null
   if (!unbindPassword.value) {
-    unbindError.value = '请输入登录密码'
+    unbindError.value = '请输入登录密码。'
     return
   }
   const ok = await unbind(unbindPassword.value)
@@ -64,251 +95,318 @@ async function handleUnbind() {
     showUnbind.value = false
     unbindPassword.value = ''
   } else {
-    unbindError.value = error.value || '解绑失败'
+    unbindError.value = error.value || '解绑失败，请稍后重试。'
   }
 }
 
-// 只在有进行中的绑定且页面可见时轮询：后台标签页轮询纯属浪费，
-// 且 BFF 的每次鉴权都要打一次 user-backend。
+function closeUnbind() {
+  showUnbind.value = false
+  unbindPassword.value = ''
+  unbindError.value = null
+}
+
 function syncPolling() {
-  if (hasActiveChallenge.value && !isBound.value && !document.hidden) startPolling()
-  else stopPolling()
+  if (
+    props.active
+    && hasActiveChallenge.value
+    && !isBound.value
+    && !document.hidden
+  ) {
+    startPolling()
+  } else {
+    stopPolling()
+  }
 }
 
-watch([hasActiveChallenge, isBound], syncPolling)
-
-function onVisibility() {
+function handleVisibilityChange() {
   syncPolling()
-  if (!document.hidden && hasActiveChallenge.value) void fetchStatus()
+  if (
+    props.active
+    && !document.hidden
+    && hasActiveChallenge.value
+  ) {
+    void fetchStatus()
+  }
 }
+
+watch(
+  [hasActiveChallenge, isBound, () => props.active],
+  syncPolling
+)
 
 onMounted(() => {
-  void fetchStatus()
-  document.addEventListener('visibilitychange', onVisibility)
+  if (shouldRender.value) {
+    void fetchStatus()
+  }
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('visibilitychange', onVisibility)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   if (copiedTimer) clearTimeout(copiedTimer)
   stopPolling()
 })
 </script>
 
 <template>
-  <!-- 功能下线时只对「还有事要收尾」的人渲染：已绑定的要能解绑，
-       绑定进行中的要能取消。其余人整块不渲染（连边框都不留）。
-       条件放在根元素而不是外层页面：组件照常挂载，onMounted 的
-       /qq-binding/status 仍会执行 —— 「绑定进行中」只有它知道，
-       上层的 /auth/me 此时报的是 bound=false。 -->
   <div
-    v-if="qqNotifyEnabled || isBound || hasActiveChallenge"
-    class="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-4 dark:border-neutral-700 dark:bg-neutral-800"
+    v-if="shouldRender"
+    class="space-y-4"
+    :aria-busy="refreshing"
   >
-    <div class="flex items-center justify-between gap-3">
-      <div>
-        <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">QQ 通知</h3>
-        <p class="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
-          绑定后可通过 QQ 私信接收站点通知
-        </p>
-      </div>
+    <div class="flex min-h-10 items-center justify-between gap-3">
+      <p class="text-sm text-[rgb(var(--muted))]">
+        <template v-if="!featureEnabled">
+          新绑定与消息投递均已暂停。
+        </template>
+        <template v-else>
+          当前连接状态会在此处更新。
+        </template>
+      </p>
       <button
         type="button"
-        class="shrink-0 text-xs text-neutral-500 hover:underline disabled:opacity-50 dark:text-neutral-400"
+        class="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-[rgb(var(--muted-strong))] transition hover:bg-[rgb(var(--panel))] hover:text-[rgb(var(--fg))] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60"
         :disabled="refreshing"
         @click="fetchStatus()"
       >
-        {{ refreshing ? '刷新中…' : '刷新' }}
+        <LucideIcon
+          :name="refreshing ? 'LoaderCircle' : 'RefreshCw'"
+          class="h-4 w-4"
+          :class="{ 'animate-spin': refreshing }"
+          aria-hidden="true"
+        />
+        {{ refreshing ? '检查中…' : '检查状态' }}
       </button>
     </div>
 
-    <div v-if="error" class="rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-900/20">
-      <div class="text-sm text-red-700 dark:text-red-300">{{ error }}</div>
+    <div
+      v-if="error"
+      class="flex items-start gap-3 rounded-lg border border-red-300/70 bg-red-50/90 p-3 text-sm text-red-800 dark:border-red-900/70 dark:bg-red-950/35 dark:text-red-200"
+      role="alert"
+    >
+      <LucideIcon
+        name="CircleAlert"
+        class="mt-0.5 h-4 w-4 shrink-0"
+        aria-hidden="true"
+      />
+      <span>{{ error }}</span>
     </div>
 
-    <div v-if="!statusKnown" class="py-4 text-center text-sm text-neutral-500 dark:text-neutral-400">
-      正在加载绑定状态…
+    <div
+      v-if="!statusKnown && !error && !summaryBound && !summaryPendingChallenge"
+      class="flex items-center gap-2 py-3 text-sm text-[rgb(var(--muted))]"
+      role="status"
+    >
+      <LucideIcon
+        name="LoaderCircle"
+        class="h-4 w-4 animate-spin"
+        aria-hidden="true"
+      />
+      正在确认连接状态…
     </div>
 
-    <!-- 已绑定 -->
-    <template v-else-if="isBound">
-      <!-- 功能下线期间要说清楚：绑定还在，但不会再推送。
-           不说的话用户会以为推送仍在正常工作，只是没有新动态。 -->
-      <p v-if="!qqNotifyEnabled" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-        QQ 通知功能已暂时关闭，目前不会推送任何消息。绑定仍保留，功能恢复后无需重新绑定；也可以在下方解绑。
-      </p>
-      <div class="rounded-xl border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900/30">
-        <div class="flex items-center justify-between gap-3">
+    <template v-if="effectiveBound">
+      <div
+        v-if="!featureEnabled"
+        class="rounded-lg border border-amber-300/70 bg-amber-50/90 p-3 text-sm leading-6 text-amber-950 dark:border-amber-800/70 dark:bg-amber-950/35 dark:text-amber-100"
+      >
+        现有绑定仍会保留，但目前不会发送消息。功能恢复后无需重新绑定；你也可以在这里解绑。
+      </div>
+      <div
+        v-else-if="!deliveryEnabled"
+        class="rounded-lg border border-amber-300/70 bg-amber-50/90 p-3 text-sm leading-6 text-amber-950 dark:border-amber-800/70 dark:bg-amber-950/35 dark:text-amber-100"
+      >
+        当前连接未处于可投递状态，暂时不会发送消息。你可以稍后重新检查，或在这里解绑。
+      </div>
+
+      <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <span
-                class="inline-block h-2 w-2 rounded-full"
-                :class="isPaused ? 'bg-amber-500' : 'bg-emerald-500'"
-                aria-hidden="true"
-              />
-              <span class="font-mono text-sm text-neutral-800 dark:text-neutral-100">
-                {{ binding?.addressMask }}
-              </span>
-              <span v-if="isPaused" class="text-xs text-amber-600 dark:text-amber-400">已暂停</span>
-            </div>
-            <div class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
-              出于隐私考虑只显示部分号码
-            </div>
+            <p class="text-xs font-medium text-[rgb(var(--muted))]">已保存的 QQ 连接</p>
+            <p class="mt-1 break-all font-mono text-sm font-semibold text-[rgb(var(--fg))]">
+              {{ effectiveAddressMask }}
+            </p>
+            <p class="mt-1 text-xs text-[rgb(var(--muted))]">为保护隐私，仅显示部分号码。</p>
           </div>
           <button
             type="button"
-            class="shrink-0 rounded-lg border border-neutral-200 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-700"
+            class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--panel-border))] px-4 py-2 text-sm font-medium text-[rgb(var(--fg))] transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-300/60 dark:hover:border-red-800 dark:hover:bg-red-950/35 dark:hover:text-red-200"
+            :aria-expanded="showUnbind"
+            aria-controls="qq-unbind-form"
             @click="showUnbind = !showUnbind"
           >
-            解绑
+            解绑 QQ
           </button>
         </div>
 
-        <div v-if="showUnbind" class="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-700">
-          <!-- 解绑要求密码：没有它，拿到会话的人可以静默把推送目标改成自己的 QQ，
-               持续窃取你的站点活动情报，而你只会以为「通知坏了」。 -->
-          <label class="text-xs font-semibold text-neutral-600 dark:text-neutral-400">
-            请输入登录密码以确认
+        <form
+          v-if="showUnbind"
+          id="qq-unbind-form"
+          class="mt-4 border-t border-[rgb(var(--panel-border))] pt-4"
+          @submit.prevent="handleUnbind"
+        >
+          <label
+            for="qq-unbind-password"
+            class="block text-sm font-medium text-[rgb(var(--fg))]"
+          >
+            登录密码
           </label>
+          <p
+            id="qq-unbind-password-hint"
+            class="mt-1 text-xs leading-5 text-[rgb(var(--muted))]"
+          >
+            解绑会移除这条 QQ 连接，需要当前登录密码确认。
+          </p>
           <input
+            id="qq-unbind-password"
             v-model="unbindPassword"
             type="password"
             autocomplete="current-password"
-            class="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-700"
-            @keyup.enter="handleUnbind"
+            required
+            aria-describedby="qq-unbind-password-hint qq-unbind-error"
+            :aria-invalid="unbindError ? 'true' : undefined"
+            class="mt-2 min-h-11 w-full rounded-lg border border-[rgb(var(--input-border))] bg-[rgb(var(--input-bg))] px-3 py-2 text-sm text-[rgb(var(--fg))] outline-none transition focus:border-[var(--g-accent-border)] focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="loading"
           >
-          <div v-if="unbindError" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ unbindError }}</div>
-          <div class="mt-2 flex gap-2">
+          <p
+            id="qq-unbind-error"
+            class="mt-2 min-h-5 text-sm text-red-700 dark:text-red-300"
+            role="alert"
+          >
+            {{ unbindError }}
+          </p>
+          <div class="mt-3 flex flex-wrap justify-end gap-3">
             <button
               type="button"
-              class="rounded-lg bg-red-600 px-3 py-1.5 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+              class="inline-flex min-h-11 items-center justify-center rounded-lg border border-[rgb(var(--panel-border))] px-4 py-2 text-sm font-medium text-[rgb(var(--muted-strong))] hover:bg-[rgb(var(--bg))] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)]"
               :disabled="loading"
-              @click="handleUnbind"
+              @click="closeUnbind"
             >
-              {{ loading ? '处理中…' : '确认解绑' }}
+              保留连接
             </button>
             <button
-              type="button"
-              class="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs text-neutral-600 dark:border-neutral-600 dark:text-neutral-300"
-              @click="showUnbind = false; unbindPassword = ''; unbindError = null"
+              type="submit"
+              class="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-700 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-red-600 dark:hover:bg-red-500 dark:focus:ring-offset-neutral-950"
+              :disabled="loading"
             >
-              取消
+              <LucideIcon
+                v-if="loading"
+                name="LoaderCircle"
+                class="h-4 w-4 animate-spin"
+                aria-hidden="true"
+              />
+              {{ loading ? '正在解绑…' : '确认解绑' }}
             </button>
           </div>
-        </div>
+        </form>
       </div>
     </template>
 
-    <!-- 绑定进行中：显示验证码与引导 -->
-    <template v-else-if="plainCode && !isExpired">
-      <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-700 dark:bg-neutral-900/30">
-        <div class="text-xs font-semibold text-neutral-600 dark:text-neutral-400">你的验证码</div>
-        <div class="mt-2 flex flex-wrap items-center gap-2">
-          <div class="flex gap-1.5">
-            <span
-              v-for="(g, i) in codeGroups"
-              :key="i"
-              class="rounded-lg bg-neutral-100 px-2.5 py-1.5 font-mono text-lg font-semibold tracking-[0.2em] text-neutral-900 dark:bg-neutral-700 dark:text-neutral-50"
-            >{{ g }}</span>
-          </div>
+    <template v-else-if="effectivePendingChallenge && !featureEnabled">
+      <div class="rounded-lg border border-amber-300/70 bg-amber-50/90 p-4 text-sm leading-6 text-amber-950 dark:border-amber-800/70 dark:bg-amber-950/35 dark:text-amber-100">
+        检测到一项未完成的 QQ 绑定。由于功能已暂停，这项任务无法继续，你可以安全地取消它。
+      </div>
+      <button
+        type="button"
+        class="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] px-4 py-2 text-sm font-semibold text-[rgb(var(--fg))] transition hover:bg-[rgb(var(--bg))] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:cursor-not-allowed disabled:opacity-60"
+        :disabled="loading"
+        @click="cancel()"
+      >
+        <LucideIcon
+          v-if="loading"
+          name="LoaderCircle"
+          class="h-4 w-4 animate-spin"
+          aria-hidden="true"
+        />
+        {{ loading ? '正在取消…' : '取消未完成的绑定' }}
+      </button>
+    </template>
+
+    <template v-else-if="plainCode && hasActiveChallenge && !isExpired">
+      <div class="rounded-lg border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] p-4">
+        <p class="text-sm font-medium text-[rgb(var(--fg))]">一次性验证码</p>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <span
+            v-for="(group, index) in codeGroups"
+            :key="`${group}-${index}`"
+            class="rounded-md bg-[rgb(var(--bg))] px-2.5 py-1.5 font-mono text-lg font-semibold tracking-[0.16em] text-[rgb(var(--fg))]"
+          >
+            {{ group }}
+          </span>
           <button
             type="button"
-            class="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-700"
+            class="inline-flex min-h-10 items-center rounded-lg border border-[rgb(var(--panel-border))] px-3 py-2 text-sm font-medium text-[rgb(var(--fg))] hover:bg-[rgb(var(--bg))]"
             @click="handleCopy"
           >
             {{ copied ? '已复制' : '复制' }}
           </button>
-          <span class="ml-auto font-mono text-sm text-neutral-500 dark:text-neutral-400" aria-live="polite">
+          <span class="ml-auto font-mono text-sm text-[rgb(var(--muted))]" aria-live="polite">
             {{ countdown }}
           </span>
         </div>
-        <p class="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
-          验证码只显示这一次，刷新页面后需要重新生成
+        <p class="mt-2 text-xs text-[rgb(var(--muted))]">
+          验证码只显示一次，刷新后无法再次查看。
         </p>
       </div>
 
-      <ol class="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
-        <li class="flex gap-2">
-          <span class="shrink-0 font-semibold text-neutral-400">1.</span>
-          <span>
-            在 QQ 里添加
-            <span class="font-mono font-semibold text-neutral-900 dark:text-neutral-100">{{ botQq || '机器人账号' }}</span>
-            为好友
-          </span>
-        </li>
-        <li class="flex gap-2">
-          <span class="shrink-0 font-semibold text-neutral-400">2.</span>
-          <span>
-            <strong class="text-neutral-900 dark:text-neutral-100">把上面的验证码填进「验证信息」</strong>
-            再发送申请
-          </span>
-        </li>
-        <li class="flex gap-2">
-          <span class="shrink-0 font-semibold text-neutral-400">3.</span>
-          <span>通过后本页会自动确认，无需再发消息</span>
-        </li>
+      <ol class="space-y-2 text-sm leading-6 text-[rgb(var(--muted-strong))]">
+        <li>1. 在 QQ 中添加 <span class="font-mono font-semibold text-[rgb(var(--fg))]">{{ botQq || '机器人账号' }}</span> 为好友。</li>
+        <li>2. 将上方验证码填写到好友申请的验证信息。</li>
+        <li>3. 验证通过后，本页会自动更新连接状态。</li>
       </ol>
 
-      <div class="flex items-center gap-2">
-        <span class="text-xs text-neutral-500 dark:text-neutral-400">
-          {{ refreshing ? '正在检查…' : '等待验证中' }}
-        </span>
+      <button
+        type="button"
+        class="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[rgb(var(--panel-border))] px-4 py-2 text-sm font-medium text-[rgb(var(--muted-strong))] hover:bg-[rgb(var(--panel))] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-border)] disabled:opacity-60"
+        :disabled="loading"
+        @click="cancel()"
+      >
+        取消绑定
+      </button>
+    </template>
+
+    <template v-else-if="effectivePendingChallenge || isExpired">
+      <div class="rounded-lg border border-amber-300/70 bg-amber-50/90 p-4 text-sm leading-6 text-amber-950 dark:border-amber-800/70 dark:bg-amber-950/35 dark:text-amber-100">
+        上一次验证码已过期或无法再次显示。你可以取消任务后重新开始。
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2">
         <button
           type="button"
-          class="ml-auto text-xs text-neutral-500 hover:underline disabled:opacity-50 dark:text-neutral-400"
+          class="inline-flex min-h-11 items-center justify-center rounded-lg border border-[rgb(var(--panel-border))] px-4 py-2 text-sm font-medium text-[rgb(var(--fg))] hover:bg-[rgb(var(--panel))] disabled:opacity-60"
           :disabled="loading"
           @click="cancel()"
         >
-          取消绑定
+          取消旧任务
+        </button>
+        <button
+          v-if="allowNewBinding"
+          type="button"
+          class="inline-flex min-h-11 items-center justify-center rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800 disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-white"
+          :disabled="loading"
+          @click="start()"
+        >
+          生成新验证码
         </button>
       </div>
     </template>
 
-    <!-- 码已过期 -->
-    <template v-else-if="isExpired || (hasActiveChallenge && !plainCode)">
-      <div class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-        <template v-if="!qqNotifyEnabled">
-          QQ 通知功能已暂时关闭，这次绑定无法继续。可以在下方取消它。
-        </template>
-        <template v-else-if="isExpired">验证码已过期，请重新生成。</template>
-        <template v-else>
-          上次生成的验证码没有显示在本页（可能是在其他设备或刷新前生成的）。请重新生成一个。
-        </template>
-      </div>
-      <!-- 功能关闭时给「取消」而不是「重新生成」：后者调的 /start 现在恒返回 503，
-           摆一个必然失败的按钮等于把人卡在这里 —— 而 /cancel 是刻意留着的。 -->
-      <button
-        v-if="!qqNotifyEnabled"
-        type="button"
-        class="w-full rounded-lg border border-neutral-300 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-700"
-        :disabled="loading"
-        @click="cancel()"
-      >
-        {{ loading ? '处理中…' : '取消绑定' }}
-      </button>
-      <button
-        v-else
-        type="button"
-        class="w-full rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
-        :disabled="loading"
-        @click="start()"
-      >
-        {{ loading ? '生成中…' : '重新生成验证码' }}
-      </button>
-    </template>
-
-
-    <!-- 未绑定 -->
-    <template v-else>
-      <p class="text-sm text-neutral-600 dark:text-neutral-300">
-        绑定 QQ 后，页面评分变化、评论、被关注作者的动态等通知可以直接发到你的 QQ。
+    <template v-else-if="allowNewBinding && statusKnown">
+      <p class="text-sm leading-6 text-[rgb(var(--muted))]">
+        尚未连接 QQ。开始后会生成一个只能使用一次的验证码。
       </p>
       <button
         type="button"
-        class="w-full rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
+        class="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-white dark:focus:ring-neutral-100 dark:focus:ring-offset-neutral-950"
         :disabled="loading"
         @click="start()"
       >
-        {{ loading ? '生成中…' : '开始绑定' }}
+        <LucideIcon
+          v-if="loading"
+          name="LoaderCircle"
+          class="h-4 w-4 animate-spin"
+          aria-hidden="true"
+        />
+        {{ loading ? '正在生成…' : '开始绑定' }}
       </button>
     </template>
   </div>

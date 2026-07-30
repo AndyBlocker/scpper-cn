@@ -18,7 +18,7 @@
       <div class="state-card">
         <h2>需要绑定 Wikidot 账号</h2>
         <p>请先在账号设置中绑定您的 Wikidot 账号才能使用 FTML 项目功能。</p>
-        <NuxtLink to="/account" class="btn btn-primary">前往绑定</NuxtLink>
+        <NuxtLink to="/account/connections" class="btn btn-primary">前往账号连接</NuxtLink>
       </div>
     </div>
 

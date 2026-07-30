@@ -18,6 +18,16 @@ export function getErrorMessage(error: unknown, fallback: string): string {
 
 export function getErrorStatus(error: unknown): number | null {
   const record = asRecord(error)
-  const raw = record?.status
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : null
+  const response = asRecord(record?.response)
+  const data = asRecord(record?.data)
+  const candidates = [
+    record?.status,
+    record?.statusCode,
+    response?.status,
+    data?.statusCode
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate
+  }
+  return null
 }

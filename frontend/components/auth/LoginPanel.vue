@@ -7,6 +7,25 @@
       </p>
     </div>
 
+    <div
+      v-if="reasonNotice"
+      class="flex items-start gap-3 rounded-xl border px-4 py-3 text-sm"
+      :class="reasonNotice.tone === 'success'
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+        : 'border-neutral-200 bg-neutral-100 text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200'"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <LucideIcon
+        :name="reasonNotice.tone === 'success' ? 'CheckCircle' : 'Info'"
+        class="mt-0.5 h-4 w-4 shrink-0"
+        stroke-width="2"
+        aria-hidden="true"
+      />
+      <span>{{ reasonNotice.message }}</span>
+    </div>
+
     <div class="rounded-lg border border-white/60 bg-white/75 p-6 shadow-sm backdrop-blur-xl sm:p-8 dark:border-white/10 dark:bg-neutral-950/65 dark:shadow-lg">
       <form class="space-y-6" @submit.prevent="handleLogin">
         <div class="space-y-2">
@@ -37,13 +56,18 @@
           >
         </div>
 
-        <div v-if="errorMessage" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-300">
+        <div
+          v-if="errorMessage"
+          class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-300"
+          role="alert"
+          aria-live="assertive"
+        >
           {{ errorMessage }}
         </div>
 
         <button
           type="submit"
-          class="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--g-accent)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgb(var(--accent)_/_0.6)] disabled:opacity-60 disabled:cursor-not-allowed dark:focus:ring-offset-neutral-950"
+          class="flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-neutral-800 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-neutral-500 focus:ring-offset-2 focus:ring-offset-white disabled:cursor-not-allowed disabled:bg-neutral-400 disabled:text-white dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-white dark:focus:ring-neutral-300 dark:focus:ring-offset-neutral-950 dark:disabled:bg-neutral-700 dark:disabled:text-neutral-300"
           :disabled="!canSubmit || isSubmitting"
         >
           <LucideIcon v-if="isSubmitting" name="Loader2" class="h-4 w-4 animate-spin" stroke-width="2" />
@@ -70,7 +94,8 @@ import { ref, computed } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 
 const router = useRouter()
-const { login, fetchCurrentUser } = useAuth()
+const route = useRoute()
+const { login } = useAuth()
 
 const email = ref('')
 const password = ref('')
@@ -78,18 +103,57 @@ const isSubmitting = ref(false)
 const errorMessage = ref('')
 
 const canSubmit = computed(() => email.value.trim().length > 0 && password.value.length > 0)
+const reasonNotice = computed(() => {
+  const reason = typeof route.query.reason === 'string' ? route.query.reason : ''
+  if (reason === 'password-changed') {
+    return {
+      tone: 'success' as const,
+      message: '密码已修改，请使用新密码重新登录。'
+    }
+  }
+  if (reason === 'logged-out') {
+    return {
+      tone: 'status' as const,
+      message: '你已安全退出登录。'
+    }
+  }
+  return null
+})
+
+function safeRedirectTarget(value: unknown): string {
+  if (typeof value !== 'string') return '/account'
+  const target = value.trim()
+  const hasControlCharacter = Array.from(target).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 31 || code === 127
+  })
+  if (
+    !target.startsWith('/')
+    || target.startsWith('//')
+    || target.includes('\\')
+    || hasControlCharacter
+  ) {
+    return '/account'
+  }
+  return target
+}
+
+const redirectTarget = computed(() => safeRedirectTarget(route.query.redirect))
 
 async function handleLogin() {
   if (!canSubmit.value || isSubmitting.value) return
   errorMessage.value = ''
   isSubmitting.value = true
-  const result = await login(email.value.trim(), password.value)
-  isSubmitting.value = false
-  if (result.ok) {
-    await fetchCurrentUser(true)
-    router.push('/account')
-  } else {
+  try {
+    const result = await login(email.value.trim(), password.value)
+    if (result.ok) {
+      // login DTO 已包含完整用户快照；无需再强制请求 /auth/me。
+      await router.replace(redirectTarget.value)
+      return
+    }
     errorMessage.value = result.error || '登录失败'
+  } finally {
+    isSubmitting.value = false
   }
 }
 </script>

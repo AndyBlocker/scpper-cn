@@ -18,7 +18,7 @@
       <div class="error-card">
         <h2>需要绑定 Wikidot</h2>
         <p>请先绑定 Wikidot 账号。</p>
-        <NuxtLink to="/account" class="btn btn-primary">前往绑定</NuxtLink>
+        <NuxtLink to="/account/connections" class="btn btn-primary">前往账号连接</NuxtLink>
       </div>
     </div>
 

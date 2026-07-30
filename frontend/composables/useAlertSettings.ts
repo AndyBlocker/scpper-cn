@@ -108,7 +108,10 @@ export function useAlertSettings() {
       if (res?.ok && res.preferences) {
         preferences.value = normalisePreferences(res.preferences);
       } else {
-        preferences.value = createDefaultPreferences();
+        // 无法确认服务端数据时保留上一次快照。若在这里写入本地默认值，
+        // 设置面板会把“读取失败”误判成一份真实偏好，用户下一次保存就可能
+        // 覆盖原有配置。
+        error.value = '加载提醒设置失败';
       }
     } catch (err) {
       console.warn('[alerts] load preferences failed', err);

@@ -12,10 +12,17 @@ export interface AuthUserPayload {
    * user-backend 刻意不把完整 QQ 号发到 BFF，所以 BFF 全链路（含前端）都拿不到它。
    * 完整号只在 user-backend 的投递路径与 backend dispatcher 的跨库只读查询里出现。
    */
-  qqBinding?: {
+  qqBinding: {
     bound: boolean;
     addressMask: string | null;
     status: string | null;
+    pendingChallenge: boolean;
+    capabilities: {
+      featureEnabled: boolean;
+      createBinding: boolean;
+      deliverNotifications: boolean;
+      manageExistingBinding: boolean;
+    };
   };
 }
 
@@ -38,6 +45,9 @@ export async function fetchAuthUser(req: Request): Promise<AuthUserPayload | nul
     }
     const data = await response.json();
     if (!data?.ok || !data.user) return null;
+    const bound = Boolean(data.user.qqBinding?.bound);
+    const pendingChallenge = Boolean(data.user.qqBinding?.pendingChallenge);
+    const capabilities = data.user.qqBinding?.capabilities;
     return {
       id: String(data.user.id),
       email: String(data.user.email || ''),
@@ -47,9 +57,20 @@ export async function fetchAuthUser(req: Request): Promise<AuthUserPayload | nul
       // 只有掩码。老版本 user-backend 不返回该字段时给安全默认值，
       // 免得调用方到处判 undefined 还漏掉一处。
       qqBinding: {
-        bound: Boolean(data.user.qqBinding?.bound),
+        bound,
         addressMask: data.user.qqBinding?.addressMask ?? null,
-        status: data.user.qqBinding?.status ?? null
+        status: data.user.qqBinding?.status ?? null,
+        pendingChallenge,
+        capabilities: {
+          // 兼容滚动发布中的旧 user-backend：缺失能力字段时按安全方向关闭
+          // 新建与投递，但仍根据已有摘要保留清理入口。
+          featureEnabled: Boolean(capabilities?.featureEnabled),
+          createBinding: Boolean(capabilities?.createBinding),
+          deliverNotifications: Boolean(capabilities?.deliverNotifications),
+          manageExistingBinding: capabilities?.manageExistingBinding == null
+            ? bound || pendingChallenge
+            : Boolean(capabilities.manageExistingBinding)
+        }
       }
     };
   } catch (err) {

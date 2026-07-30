@@ -209,7 +209,7 @@
         </div>
 
         <div class="pt-3 text-right text-[11px] text-neutral-400 dark:text-neutral-500">
-          收藏夹管理位于 <NuxtLink to="/account?tab=collections" class="text-[var(--g-accent)]">账号设置 · 收藏夹</NuxtLink>
+          前往 <NuxtLink to="/collections" class="text-[var(--g-accent)]">我的收藏夹</NuxtLink> 进行完整管理
         </div>
       </div>
     </transition>

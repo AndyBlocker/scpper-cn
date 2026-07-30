@@ -1,34 +1,33 @@
 <template>
   <div class="space-y-6">
-    <section class="relative overflow-hidden rounded-lg border border-neutral-200/80 bg-white p-8 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950">
-      <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-        <div class="max-w-2xl space-y-4">
-          <div class="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-neutral-500 shadow-sm backdrop-blur-sm dark:bg-neutral-900/70 dark:text-neutral-300">
-            <LucideIcon name="Sparkle" class="h-4 w-4 text-[var(--g-accent)]" />
-            管理收藏夹
-          </div>
-          <div class="space-y-2">
-            <h2 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">精心整理你的灵感清单</h2>
-            <p class="text-sm text-neutral-600 dark:text-neutral-400">
-              将喜欢的页面分门别类，搭配封面与批注，打造一个既好看又好用的收藏空间。
-            </p>
-          </div>
+    <section class="rounded-lg border border-neutral-200/80 bg-white p-4 shadow-sm dark:border-neutral-800/70 dark:bg-neutral-950 sm:p-5">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50">收藏夹管理</h2>
+          <p class="mt-1 text-sm leading-6 text-neutral-600 dark:text-neutral-400">
+            选择一个收藏夹查看条目，或新建收藏夹开始整理。
+          </p>
         </div>
         <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/95 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm transition hover:-translate-y-0.5 hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-200"
+            class="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] disabled:cursor-wait disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 sm:flex-none"
+            :disabled="loading"
             @click="handleRefresh"
           >
-            <LucideIcon name="RefreshCw" class="h-4 w-4" />
-            刷新
+            <LucideIcon
+              name="RefreshCw"
+              class="h-4 w-4"
+              :class="{ 'animate-spin': loading }"
+            />
+            {{ loading ? '刷新中…' : '刷新' }}
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full bg-[var(--g-accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5"
+            class="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:bg-white dark:focus:ring-neutral-100 dark:focus:ring-offset-neutral-950 sm:flex-none"
             @click="openCreate"
           >
-            <LucideIcon name="Plus" class="h-4.5 w-4.5" />
+            <LucideIcon name="Plus" class="h-4 w-4" />
             新建收藏夹
           </button>
         </div>
@@ -63,7 +62,7 @@
           <p>加载收藏夹失败：{{ error }}</p>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+            class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-neutral-200 bg-white/90 px-4 py-2 text-sm font-semibold text-neutral-600 transition hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
             @click="handleRefresh"
           >
             再试一次
@@ -185,7 +184,7 @@
             <div class="flex items-center gap-2">
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-white/90 px-4 py-1.5 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-neutral-200/80 bg-white/90 px-4 py-2 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                 @click="openEdit"
               >
                 <LucideIcon name="Pencil" class="h-3.5 w-3.5" />
@@ -193,7 +192,7 @@
               </button>
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full border border-red-300/70 bg-red-50/80 px-4 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100 dark:border-red-900/70 dark:bg-red-900/30 dark:text-red-200"
+                class="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-300/70 bg-red-50/80 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 dark:border-red-900/70 dark:bg-red-900/30 dark:text-red-200"
                 @click="confirmDelete"
               >
                 <LucideIcon name="Trash2" class="h-3.5 w-3.5" />
@@ -241,19 +240,27 @@
                       ID {{ item.page.wikidotId ?? item.page.id }}
                     </span>
                   </div>
+                  <label
+                    :for="`collection-item-annotation-${item.id}`"
+                    class="block text-xs font-medium text-neutral-600 dark:text-neutral-300"
+                  >
+                    {{ item.page.title ? `《${item.page.title}》的批注` : '页面批注' }}
+                  </label>
                   <textarea
+                    :id="`collection-item-annotation-${item.id}`"
                     v-model="annotations[item.id]"
                     rows="2"
                     maxlength="1200"
+                    :aria-describedby="`collection-item-annotation-hint-${item.id}`"
                     class="w-full rounded-xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 text-sm text-neutral-700 focus:border-[var(--g-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--g-accent-strong)] dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200"
                     placeholder="为这篇页面写点读后感或整理要点..."
                     @blur="handleAnnotationSave(item)"
                   />
                   <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-400 dark:text-neutral-500">
-                    <span>批注会自动保存，也可以随时在收藏面板中调整。</span>
+                    <span :id="`collection-item-annotation-hint-${item.id}`">批注会自动保存，也可以随时在收藏面板中调整。</span>
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-0.5 font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                      class="inline-flex min-h-10 items-center gap-1 rounded-lg border border-neutral-200/80 bg-white/90 px-3 py-2 font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                       @click="handleAnnotationSave(item)"
                     >
                       <LucideIcon name="Save" class="h-3 w-3" />
@@ -262,11 +269,12 @@
                   </div>
                 </div>
                 <div class="flex shrink-0 flex-col items-end gap-2">
-                  <div class="inline-flex items-center gap-2 rounded-full border border-neutral-200/80 bg-neutral-50/80 px-2 py-1 text-xs font-semibold text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200">
+                  <div class="inline-flex items-center gap-1 rounded-lg border border-neutral-200/80 bg-neutral-50/80 px-1 text-xs font-semibold text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/70 dark:text-neutral-200">
                     <button
                       type="button"
-                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[var(--g-accent)]"
+                      class="inline-flex h-10 w-10 items-center justify-center rounded-lg transition hover:text-[var(--g-accent)] disabled:opacity-40"
                       :disabled="index === 0"
+                      :aria-label="`将${item.page.title ? `《${item.page.title}》` : '此页面'}上移`"
                       @click="moveItem(index, index - 1)"
                     >
                       <LucideIcon name="ArrowUp" class="h-4 w-4" />
@@ -274,8 +282,9 @@
                     <span class="px-2 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">排序</span>
                     <button
                       type="button"
-                      class="inline-flex h-8 w-8 items-center justify-center rounded-full transition hover:text-[var(--g-accent)]"
+                      class="inline-flex h-10 w-10 items-center justify-center rounded-lg transition hover:text-[var(--g-accent)] disabled:opacity-40"
                       :disabled="index === activeItems.length - 1"
+                      :aria-label="`将${item.page.title ? `《${item.page.title}》` : '此页面'}下移`"
                       @click="moveItem(index, index + 1)"
                     >
                       <LucideIcon name="ArrowDown" class="h-4 w-4" />
@@ -283,7 +292,7 @@
                   </div>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-full border border-neutral-200/80 bg-white/90 px-3 py-1 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
+                    class="inline-flex min-h-10 items-center gap-1 rounded-lg border border-neutral-200/80 bg-white/90 px-3 py-2 text-xs font-semibold text-neutral-600 hover:border-[var(--g-accent-border)] hover:text-[var(--g-accent)] dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300"
                     @click="togglePin(item)"
                   >
                     <LucideIcon :name="item.pinned ? 'BookmarkX' : 'Bookmark'" class="h-3.5 w-3.5" />
@@ -291,7 +300,7 @@
                   </button>
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1 rounded-full border border-red-300/80 bg-red-50/80 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 dark:border-red-800/80 dark:bg-red-900/30 dark:text-red-200"
+                    class="inline-flex min-h-10 items-center gap-1 rounded-lg border border-red-300/80 bg-red-50/80 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100 dark:border-red-800/80 dark:bg-red-900/30 dark:text-red-200"
                     @click="remove(item)"
                   >
                     <LucideIcon name="Trash2" class="h-3 w-3" />
