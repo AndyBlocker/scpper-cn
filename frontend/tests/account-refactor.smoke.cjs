@@ -418,6 +418,26 @@ async function main() {
 
     await scenario(
       browser,
+      'account-route-announcer',
+      { linked: true },
+      async (page) => {
+        await page.goto(`${baseUrl}/account`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('heading', { name: '账号概览' }).waitFor()
+        await page
+          .getByRole('navigation', { name: '账号中心导航' })
+          .getByRole('link', { name: /个人资料/ })
+          .click()
+        await page.getByRole('heading', { name: '个人资料' }).waitFor()
+
+        const announcer = page.locator('.nuxt-route-announcer [role="alert"]')
+        await announcer.waitFor({ state: 'attached' })
+        assert.match(await announcer.innerText(), /个人资料/)
+        assert.equal(await announcer.getAttribute('aria-live'), 'polite')
+      }
+    )
+
+    await scenario(
+      browser,
       'connections-qq-hidden',
       { linked: false },
       async (page, requests) => {
@@ -867,7 +887,7 @@ async function main() {
       }
     )
 
-    const staleWriteOptions = { linked: true }
+    const staleWriteOptions = { linked: true, delayAuthAfterSwitch: 800 }
     await scenario(
       browser,
       'stale-account-write-is-rejected-by-user-boundary',
@@ -884,6 +904,8 @@ async function main() {
         // 的 /auth/me 重新解析 Cookie，而不是让用户在旧表单里反复失败。
         await page.getByText('second@example.com', { exact: true }).waitFor()
         await page.getByLabel('昵称', { exact: true }).waitFor()
+        assert.equal(new URL(page.url()).pathname, '/account/profile')
+        assert.equal(await page.getByRole('heading', { name: '账号登录' }).count(), 0)
 
         const writes = requests.filter(entry => entry.path === '/auth/profile')
         assert.equal(writes.length, 1)

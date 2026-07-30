@@ -1,4 +1,5 @@
 <template>
+  <NuxtRouteAnnouncer />
   <NuxtLayout>
     <NuxtPage />
   </NuxtLayout>
@@ -6,5 +7,4 @@
 
 <script setup lang="ts">
 </script>
-
 

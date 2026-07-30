@@ -51,7 +51,10 @@ async function handleSubmit() {
   const result = await updateProfile({ displayName: normalizedDisplayName.value })
   saving.value = false
 
-  if (!result.ok && status.value !== 'authenticated') {
+  // "unknown" is a temporary verification/error state, not proof that the
+  // session ended. Redirecting here can race account-mismatch recovery and
+  // send an otherwise authenticated user to the login page.
+  if (!result.ok && status.value === 'unauthenticated') {
     await navigateTo({
       path: '/auth/login',
       query: {

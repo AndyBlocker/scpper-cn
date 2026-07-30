@@ -117,7 +117,7 @@ export default defineNuxtPlugin((nuxtApp) => {
     onResponse({ options, response }) {
       handleResponseDebug(options, response.status);
     },
-    onResponseError({ options, response }) {
+    async onResponseError({ options, response }) {
       const status = response?.status ?? 0;
       const targetPath = (options as any)?._debugFetch?.targetPath || response?.url || '/';
       handleResponseDebug(options, status, true);
@@ -132,7 +132,11 @@ export default defineNuxtPlugin((nuxtApp) => {
         // snapshot. Re-resolve it once even when localStorage sync is blocked.
         // /auth/me is exempt from the expected-user header and from this hook,
         // so recovery cannot recursively trigger itself.
-        void requestExpectedUserMismatchRecovery(nuxtApp);
+        // Keep the failed caller suspended until the trusted auth snapshot has
+        // caught up with the cookie. Otherwise account forms can observe the
+        // transient "unknown" state and redirect to login even though recovery
+        // has already resolved a different, still-authenticated account.
+        await requestExpectedUserMismatchRecovery(nuxtApp);
       }
     }
   });
