@@ -1111,6 +1111,33 @@ export function currentHourUtc8(): number {
  * 正确的语义是：**周期到期并被处理过**就推进，与是否真的发出消息无关。
  * 内容若因暂时失败进了重发队列，那批自己带着 digestCutoff，不会丢。
  */
+/**
+ * 从水位线出发，跨过**所有已到期的空周期**，返回该停在哪个边界。
+ *
+ * 一轮只推进一个边界的话，一个停用很久的目标（暂停、移出灰度名单、
+ * 绑定失效后重连）恢复后要跑满「缺了多少天就多少轮」才能追上 ——
+ * 一年前的绑定重新启用，新通知要等约 365 轮（默认 60 秒一轮）才发得出。
+ *
+ * 只跨**没有待发内容**的周期：调用方只对 processedUserIds 里的用户调用它，
+ * 而有内容却没发出去的用户（hasUnsentInPeriod）根本进不到这里。
+ *
+ * @returns 该推进到的边界；null = 尚未到期，本轮不推进
+ */
+export function fastForwardDigestCutoff(
+  lastCutoff: Date | null,
+  digestHour: number,
+  now: number
+): Date | null {
+  let due = nextDigestDueAt(lastCutoff, digestHour);
+  if (now < due.getTime()) return null;
+  for (let guard = 0; guard < MAX_CUTOFF_SKIP; guard++) {
+    const next = nextDigestDueAt(due, digestHour);
+    if (now < next.getTime()) break;   // 下一个还没到期，停在这里
+    due = next;
+  }
+  return due;
+}
+
 async function advanceDigestWatermarks(
   prisma: PrismaClient,
   prefsByUser: Map<number, UserNotifyPrefs>,
@@ -1128,8 +1155,9 @@ async function advanceDigestWatermarks(
   for (const [userId, prefs] of prefsByUser) {
     if (prefs.mode !== 'DAILY_DIGEST') continue;
     if (!processedUserIds.has(userId)) continue;
-    const due = nextDigestDueAt(prefs.lastDigestCutoffAt, prefs.digestHour);
-    if (now < due.getTime()) continue;          // 还没到期
+    // 连续的空周期在一轮里全部跨完（见 fastForwardDigestCutoff）
+    const due = fastForwardDigestCutoff(prefs.lastDigestCutoffAt, prefs.digestHour, now);
+    if (!due) continue;                          // 还没到期
     if (prefs.lastDigestCutoffAt && due <= prefs.lastDigestCutoffAt) continue;
     // 条件里再判一次「只前进不后退」，因为 prefs 是**开轮时的快照**：
     // 本轮若跨过了被占用的边界并成功发出了更晚那一封，成功路径已经把水位线

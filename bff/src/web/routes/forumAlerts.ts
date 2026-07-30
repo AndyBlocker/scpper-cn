@@ -194,6 +194,11 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       }
 
       const alertType = normalizeAlertType(req.body?.type);
+      const readAllVisibility = await loadSiteVisibility(pool, recipientUserId);
+      if (readAllVisibility.disabled.has('FORUM_INTERACTION')) {
+        return res.json({ ok: true, updated: 0 });
+      }
+      const readAllParams: unknown[] = [recipientUserId, alertType];
       const result = await pool.query<{ id: number }>(
         `
           UPDATE "ForumInteractionAlert"
@@ -201,9 +206,15 @@ export function forumAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
           WHERE "recipientUserId" = $1
             AND ($2::text IS NULL OR type = CAST($2 AS "ForumInteractionAlertType"))
             AND "acknowledgedAt" IS NULL
+          -- 「全部已读」只能覆盖用户**实际看得见的**那些。
+          -- acknowledgedAt 是两个渠道共用的状态：QQ 投递器拿它判断「不必再推」。
+          -- 把站内隐藏的行一并标记，等于用户点一下「全部已读」就把待发的
+          -- QQ 通知悄悄杀掉了 —— 而他根本没看到过那些条目。
+          -- 判据与读取侧完全一致：类型被关掉的整类跳过，其余只覆盖边界之后的。
+            ${siteBoundaryClause(readAllVisibility.suppressedBefore.get('FORUM_INTERACTION'), readAllParams, '')}
           RETURNING id
         `,
-        [recipientUserId, alertType]
+        readAllParams
       );
 
       return res.json({ ok: true, updated: result.rowCount || 0 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useAlertSettings, type RevisionFilterOption } from '~/composables/useAlertSettings'
 import { useAuth } from '~/composables/useAuth'
 import { ALERT_METRICS, type AlertMetric } from '~/composables/useAlerts'
@@ -50,12 +50,27 @@ const dailyLimitInput = ref(20)
 const digestHourInput = ref(21)
 const modeInput = ref<'REALTIME' | 'DAILY_DIGEST'>('REALTIME')
 
+/** 这三个输入被用户改过、但还没点「保存推送设置」 */
+const channelDirty = ref(false)
+/** 正在由服务端值回填 —— 期间的变化不算用户改动 */
+let syncingChannel = false
+
 watch(channel, (c) => {
   if (!c) return
+  // 有未保存的改动时不要覆盖。矩阵那边勾一个复选框也会保存并返回 channel，
+  // 无条件同步会把用户刚调好的模式 / 时点 / 限额悄悄抹回服务端的值 ——
+  // 他要到点「保存推送设置」时才发现改动没了。
+  if (channelDirty.value) return
+  syncingChannel = true
   dailyLimitInput.value = c.qqDailyLimit
   digestHourInput.value = c.qqDigestHour
   modeInput.value = c.qqMode
+  void nextTick(() => { syncingChannel = false })
 }, { immediate: true, deep: true })
+
+watch([dailyLimitInput, digestHourInput, modeInput], () => {
+  if (!syncingChannel) channelDirty.value = true
+})
 
 /**
  * 切换某个类型在某个渠道上的开关。
@@ -108,7 +123,11 @@ async function saveChannelSetting() {
       qqDigestHour: digestHourInput.value
     }
   })
-  if (ok) flashSaved()
+  if (ok) {
+    // 保存成功后这三个输入与服务端一致了，重新接受回填
+    channelDirty.value = false
+    flashSaved()
+  }
 }
 
 const REVISION_OPTIONS: Array<{ value: RevisionFilterOption; label: string; hint: string }> = [
@@ -166,6 +185,8 @@ async function saveGeneration() {
 // 于是 B 看到的是一组永远禁用的控件，直到手动切走再切回来。
 // 身份世代号正是在那次 reset 里递增的，跟着它重新取数即可。
 watch(notifyIdentityEpoch, () => {
+  // A 的未保存改动不能挡住 B 的回填
+  channelDirty.value = false
   void fetchPreferences()
   void fetchNotifyPrefs()
 })

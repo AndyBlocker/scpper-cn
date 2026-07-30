@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nextDigestDueAt,
   resolveDigestCutoff,
+  fastForwardDigestCutoff,
   utc8DayOf, utc8HourToday } from '../src/jobs/NotificationDispatchJob.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -257,4 +258,37 @@ test('跨越有次数上限，异常水位线不会死循环', async () => {
   const r = await resolveCutoff(long, 9, allOccupied, now);
   assert.ok(r.skipped !== null, '确实跨越了');
   assert.ok(r.cutoff.getTime() > long.getTime(), '循环有界并正常返回');
+});
+
+// ── 空周期要在一轮里全部跨完（review 第二十二轮 P2）────────────
+// 一轮只推进一个边界的话，停用一年的绑定重新启用后，
+// 新通知要等约 365 轮（默认 60 秒一轮）才发得出。
+
+/** 直接驱动生产实现 */
+const fastForward = fastForwardDigestCutoff;
+
+test('一轮跨完所有已到期的空周期', () => {
+  const HOUR = 9;
+  const stale = new Date(Date.UTC(2026, 5, 1, 1, 0, 0));      // 约 50 天前
+  const now = Date.UTC(2026, 6, 21, 5, 0, 0);                  // day 21 13:00 UTC+8
+  const due = fastForward(stale, HOUR, now);
+  assert.equal(utc8DayOf(due), '2026-07-21', '一次就追到今天的边界，不是明天');
+  assert.ok(due.getTime() <= now, '停在最后一个**已到期**的边界上');
+  assert.ok(nextDigestDueAt(due, HOUR).getTime() > now, '再下一个尚未到期');
+});
+
+test('快进不会越过尚未到期的边界', () => {
+  const HOUR = 21;
+  const yesterday = new Date(Date.UTC(2026, 6, 20, 13, 0, 0)); // day20 21:00 UTC+8
+  const now = Date.UTC(2026, 6, 21, 5, 0, 0);                  // day21 13:00 —— 今天 21 点还没到
+  const due = fastForward(yesterday, HOUR, now);
+  assert.equal(due, null, '下一个边界尚未到期，本轮不推进');
+});
+
+test('只差一个周期时行为不变', () => {
+  const HOUR = 9;
+  const lastCutoff = new Date(Date.UTC(2026, 6, 20, 1, 0, 0)); // day20 09:00
+  const now = Date.UTC(2026, 6, 21, 5, 0, 0);                  // day21 13:00
+  const due = fastForward(lastCutoff, HOUR, now);
+  assert.equal(utc8DayOf(due), '2026-07-21', '推进到 day21 09:00，与快进前的行为一致');
 });

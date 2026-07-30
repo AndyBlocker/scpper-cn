@@ -389,6 +389,7 @@ export function alertsRouter(pool: Pool, redis: RedisClientType | null) {
           WHERE u."wikidotId" = $1
             AND pa."metric" = $2::"PageMetricType"
             AND pa."acknowledgedAt" IS NULL
+            ${siteBoundaryClause(siteBoundary, rootUnreadParams, 'pa')}
         `;
 
         const [alertsResult, unreadResult] = await Promise.all([
@@ -1011,6 +1012,18 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
         // 400 而非静默回落：拼错 metric 曾会把该用户所有评论提醒误标已读
         return res.status(400).json({ ok: false, error: 'invalid_metric' });
       }
+      // 站内不可见的行不能被「全部已读」波及，理由见下方注释
+      let readAllBoundary: Date | undefined;
+      const readAllUserId = await resolveAppUserId(pool, authUser);
+      if (readAllUserId != null) {
+        const visibility = await loadSiteVisibility(pool, readAllUserId);
+        const notifyType = METRIC_TO_NOTIFY_TYPE[metric];
+        if (notifyType && visibility.disabled.has(notifyType)) {
+          return res.json({ ok: true, updated: 0 });
+        }
+        readAllBoundary = notifyType ? visibility.suppressedBefore.get(notifyType) : undefined;
+      }
+      const readAllParams: unknown[] = [authUser.linkedWikidotId, metric];
       const sql = `
         UPDATE "PageMetricAlert" pa
         SET "acknowledgedAt" = COALESCE(pa."acknowledgedAt", NOW())
@@ -1020,9 +1033,15 @@ async function resolveNotifyPreferences(pool: Pool, userId: number): Promise<{
           AND u."wikidotId" = $1
           AND pa."metric" = $2::"PageMetricType"
           AND pa."acknowledgedAt" IS NULL
+          -- 「全部已读」只能覆盖用户**实际看得见的**那些。
+          -- acknowledgedAt 是两个渠道共用的状态：QQ 投递器拿它判断「不必再推」。
+          -- 把站内隐藏的行一并标记，等于用户点一下「全部已读」就把待发的
+          -- QQ 通知悄悄杀掉了 —— 而他根本没看到过那些条目。
+          -- 判据与读取侧完全一致：类型被关掉的整类跳过，其余只覆盖边界之后的。
+          ${siteBoundaryClause(readAllBoundary, readAllParams, 'pa')}
         RETURNING pa.id
       `;
-      const result = await pool.query<{ id: number }>(sql, [authUser.linkedWikidotId, metric]);
+      const result = await pool.query<{ id: number }>(sql, readAllParams);
       await invalidateAlertsCache(authUser.linkedWikidotId);
       res.json({ ok: true, updated: result.rowCount });
     } catch (error) {

@@ -225,13 +225,23 @@ export function followAlertsRouter(pool: Pool, _redis: RedisClientType | null) {
       if (!auth || auth.linkedWikidotId == null) return res.status(401).json({ ok: false, error: 'unauthenticated' });
       const followerId = await resolveFollowerId(pool, auth.linkedWikidotId);
       if (followerId == null) return res.status(404).json({ ok: false, error: 'user_not_found' });
+      const readAllVisibility = await loadSiteVisibility(pool, followerId);
+      if (readAllVisibility.disabled.has('FOLLOW_ACTIVITY')) {
+        return res.json({ ok: true, updated: 0 });
+      }
+      const readAllParams: unknown[] = [followerId];
       const result = await pool.query<{ id: number }>(
         `
           UPDATE "UserActivityAlert" SET "acknowledgedAt" = COALESCE("acknowledgedAt", NOW())
           WHERE "followerId" = $1 AND "acknowledgedAt" IS NULL
+          -- 「全部已读」只能覆盖用户**实际看得见的**那些。
+          -- acknowledgedAt 是两个渠道共用的状态：QQ 投递器拿它判断「不必再推」。
+          -- 把站内隐藏的行一并标记，等于用户点一下「全部已读」就把待发的
+          -- QQ 通知悄悄杀掉了 —— 而他根本没看到过那些条目。
+          ${siteBoundaryClause(readAllVisibility.suppressedBefore.get('FOLLOW_ACTIVITY'), readAllParams, '')}
           RETURNING id
         `,
-        [followerId]
+        readAllParams
       );
       res.json({ ok: true, updated: result.rowCount });
     } catch (e) {
