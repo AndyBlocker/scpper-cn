@@ -95,7 +95,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-4 dark:border-neutral-700 dark:bg-neutral-800">
+  <!-- 功能下线时只对「还有事要收尾」的人渲染：已绑定的要能解绑，
+       绑定进行中的要能取消。其余人整块不渲染（连边框都不留）。
+       条件放在根元素而不是外层页面：组件照常挂载，onMounted 的
+       /qq-binding/status 仍会执行 —— 「绑定进行中」只有它知道，
+       上层的 /auth/me 此时报的是 bound=false。 -->
+  <div
+    v-if="qqNotifyEnabled || isBound || hasActiveChallenge"
+    class="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-4 dark:border-neutral-700 dark:bg-neutral-800"
+  >
     <div class="flex items-center justify-between gap-3">
       <div>
         <h3 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">QQ 通知</h3>
@@ -273,12 +281,6 @@ onBeforeUnmount(() => {
       </button>
     </template>
 
-    <!-- 未绑定 + 功能已下线：只说明情况，不给发起入口 -->
-    <template v-else-if="!qqNotifyEnabled">
-      <p class="text-sm text-neutral-600 dark:text-neutral-300">
-        QQ 通知功能暂时关闭，目前无法绑定。
-      </p>
-    </template>
 
     <!-- 未绑定 -->
     <template v-else>

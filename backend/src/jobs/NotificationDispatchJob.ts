@@ -207,9 +207,18 @@ export interface DispatchSummary {
  * 或者机器重启后从旧 dump 恢复，投递器就会重新跑起来开始推消息 ——
  * 而此时界面上明明写着「不会推送」。关掉一个功能，得让它**跑起来也不干活**。
  *
- * 与 user-backend、前端的同名变量是同一套语义，恢复时三处一起开。
+ * 与 user-backend、前端的同名变量是同一套语义，恢复时三处一起开 ——
+ * 注意 backend 有**自己的** .env，不会读到 user-backend/.env 里那份。
+ *
+ * 写成函数而不是模块级常量：投递器启动过程中还会通过 ensureUserBackendEnv()
+ * 再加载一批环境变量，模块加载时就定死的话，那之后才就位的配置一律读不到。
  */
-const QQ_NOTIFY_ENABLED = /^(1|true|yes|on)$/i.test(process.env.QQ_NOTIFY_ENABLED ?? '');
+function qqNotifyEnabled(): boolean {
+  return /^(1|true|yes|on)$/i.test(process.env.QQ_NOTIFY_ENABLED ?? '');
+}
+
+/** 「功能已下线」这条只在**首次**打印，避免 60 秒一轮刷屏 */
+let disabledNoticeLogged = false;
 
 export async function runNotificationDispatch(options: DispatchOptions = {}): Promise<DispatchSummary> {
   const prisma = getPrismaClient();
@@ -219,9 +228,14 @@ export async function runNotificationDispatch(options: DispatchOptions = {}): Pr
 
   // 功能已下线：什么都不做，直接返回空结果。
   // 放在最前面（早于 --reset-circuit 等任何写操作），保证这条路径完全无副作用。
-  if (!QQ_NOTIFY_ENABLED) {
+  if (!qqNotifyEnabled()) {
     summary.skippedReason = 'feature_disabled';
-    console.warn('[notify] QQ 通知功能已下线（QQ_NOTIFY_ENABLED 未开启），本轮不做任何处理');
+    // 只提示一次。这个分支存在的意义正是「进程被误拉起来」，
+    // 而那种情况下循环每 60 秒走一次这里 —— 每轮两行日志会一直刷下去。
+    if (!disabledNoticeLogged) {
+      disabledNoticeLogged = true;
+      console.warn('[notify] QQ 通知功能已下线（QQ_NOTIFY_ENABLED 未开启），本轮及后续轮次均不做任何处理');
+    }
     return summary;
   }
 
