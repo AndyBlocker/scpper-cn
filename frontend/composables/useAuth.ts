@@ -41,6 +41,15 @@ interface AuthFetchInflight {
   promise: Promise<AuthUser | null>
 }
 
+interface AuthFetchOptions {
+  /**
+   * Passive foreground checks must not replace an already-rendered error card
+   * with the initial loading skeleton. Keep the last error visible until the
+   * request either succeeds or produces a new result.
+   */
+  preserveErrorWhileLoading?: boolean
+}
+
 interface AuthRuntime {
   epoch: number
   activeRequestsByEpoch: Map<number, number>
@@ -94,8 +103,7 @@ function useAuthState() {
   const status = useState<AuthStatus>('auth-status', () => 'unknown')
   const loading = useState<boolean>('auth-loading', () => false)
   const error = useState<string | null>('auth-error', () => null)
-  const sessionVerifying = useState<boolean>('auth-session-verifying', () => false)
-  return { user, status, loading, error, sessionVerifying }
+  return { user, status, loading, error }
 }
 
 const AUTH_SYNC_STORAGE_KEY = 'scpper:auth-session-version'
@@ -269,8 +277,7 @@ export function useAuth() {
     user,
     status,
     loading,
-    error: authError,
-    sessionVerifying
+    error: authError
   } = useAuthState()
   const runtime = getAuthRuntime(nuxtApp)
 
@@ -312,7 +319,7 @@ export function useAuth() {
    * 已在网络中的旧请求仍可结束，但只有当前世代的响应能写入共享状态。
    *
    * mutation 的优先级高于普通 focus/pageshow 验证：它开始时会同步撤销旧验证的
-   * UI 所有权，避免已经被新世代忽略的慢 GET 继续让账号页保持 inert。
+   * 运行时所有权，避免已经被新世代忽略的慢 GET 清理或覆盖后续验证状态。
    */
   function beginIdentityMutation() {
     if (runtime.sessionRevalidation) {
@@ -327,7 +334,6 @@ export function useAuth() {
     runtime.sessionValidationGeneration += 1
     runtime.sessionRevalidation = null
     runtime.sessionRevalidationInvalidatesSnapshot = false
-    sessionVerifying.value = false
 
     const epoch = supersedeCurrentEpoch()
     runtime.activeIdentityMutationEpoch = epoch
@@ -400,7 +406,11 @@ export function useAuth() {
     return responseStatus !== null && responseStatus >= 400 && responseStatus < 500
   }
 
-  async function fetchCurrentUser(force = false, identityMutationEpoch: number | null = null) {
+  async function fetchCurrentUser(
+    force = false,
+    identityMutationEpoch: number | null = null,
+    options: AuthFetchOptions = {}
+  ) {
     if (status.value === 'authenticated' && !authError.value && !force) {
       authDebug('[auth] fetchCurrentUser skip (already authenticated)')
       return user.value
@@ -425,7 +435,9 @@ export function useAuth() {
       return existing.promise
     }
     const requestEpoch = runtime.epoch
-    authError.value = null
+    if (!options.preserveErrorWhileLoading) {
+      authError.value = null
+    }
     beginRequest(requestEpoch)
 
     const requestPromise = (async () => {
@@ -496,9 +508,10 @@ export function useAuth() {
   /**
    * 重新验证浏览器当前 Cookie 对应的账号。
    *
-   * 普通前台恢复会保留最后一次可信快照，但用 sessionVerifying 暂停账号页交互；
+   * 普通前台恢复会在后台保留并校验最后一次可信快照，不遮挡页面或中断用户输入；
    * 收到其他标签页的身份变更通知时则立即清空快照，避免 A 的界面拿 B 的 Cookie
-   * 发出写请求。新通知会开启新世代，旧验证响应无法覆盖最新身份。
+   * 发出写请求。新通知会开启新世代，旧验证响应无法覆盖最新身份。所有私有写
+   * 仍由 expected-user 边界兜底，静默校验期间发生账号切换也不会写入错误账号。
    */
   async function revalidateSession(invalidateSnapshot = false) {
     if (!import.meta.client) return fetchCurrentUser(true)
@@ -528,9 +541,10 @@ export function useAuth() {
     runtime.sessionValidationGeneration += 1
     const validationGeneration = runtime.sessionValidationGeneration
     if (invalidateSnapshot) markSessionUnknown()
-    sessionVerifying.value = true
 
-    const verification = fetchCurrentUser(true)
+    const verification = fetchCurrentUser(true, null, {
+      preserveErrorWhileLoading: !invalidateSnapshot
+    })
     runtime.sessionRevalidation = verification
     runtime.sessionRevalidationInvalidatesSnapshot = invalidateSnapshot
     try {
@@ -539,7 +553,6 @@ export function useAuth() {
       if (runtime.sessionValidationGeneration === validationGeneration) {
         runtime.sessionRevalidation = null
         runtime.sessionRevalidationInvalidatesSnapshot = false
-        sessionVerifying.value = false
       }
     }
   }
@@ -861,6 +874,9 @@ export function useAuth() {
   const state = computed<AuthState>(() => {
     // 强制刷新失败时，最后一份可信用户快照仍可继续使用；error 可用于非阻断提示。
     if (isAuthenticated.value) return 'ready'
+    // 已确认未登录也是一份稳定快照。普通前台校验期间继续显示登录入口，
+    // 只有 hard revalidation 先把 status 置回 unknown 时才进入初始 loading。
+    if (status.value === 'unauthenticated') return 'unauthenticated'
     if (authError.value) return 'error'
     if (loading.value || status.value === 'unknown') return 'loading'
     return 'unauthenticated'
@@ -874,7 +890,6 @@ export function useAuth() {
     status,
     state,
     loading,
-    sessionVerifying,
     error: authError,
     authError,
     isAuthenticated,

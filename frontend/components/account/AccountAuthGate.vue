@@ -8,7 +8,6 @@ const {
   status,
   state,
   loading,
-  sessionVerifying,
   error,
   fetchCurrentUser
 } = useAuth()
@@ -134,29 +133,8 @@ onMounted(() => {
         重试
       </button>
     </div>
-    <div
-      :key="user.id"
-      class="relative"
-      :aria-busy="sessionVerifying"
-    >
-      <div
-        v-if="sessionVerifying"
-        class="absolute inset-0 z-20 flex cursor-wait items-start justify-center rounded-lg bg-[rgb(var(--bg)_/_0.72)] px-4 pt-6 backdrop-blur-[1px]"
-        role="status"
-        aria-live="polite"
-      >
-        <div class="sticky top-24 inline-flex items-center gap-2 rounded-full border border-[rgb(var(--panel-border))] bg-[rgb(var(--panel))] px-4 py-2 text-sm font-medium text-[rgb(var(--muted-strong))] shadow-lg">
-          <LucideIcon
-            name="LoaderCircle"
-            class="h-4 w-4 animate-spin"
-            aria-hidden="true"
-          />
-          正在确认当前账号…
-        </div>
-      </div>
-      <div :inert="sessionVerifying || undefined">
-        <slot :user="user" />
-      </div>
+    <div :key="user.id">
+      <slot :user="user" />
     </div>
   </template>
 
