@@ -30,6 +30,10 @@ async function waitForSignal(signal, label) {
   }
 }
 
+async function waitForNuxtHydration(page) {
+  await page.waitForFunction(() => Boolean(document.querySelector('#__nuxt')?.__vue_app__))
+}
+
 function authUser(displayName) {
   return authIdentity('race-user-1', 'race@example.com', displayName)
 }
@@ -69,15 +73,10 @@ async function fulfillJson(route, body, status = 200) {
 
 async function dispatchForegroundEvent(page) {
   await page.evaluate(() => {
-    // 将这一次事件移出应用内部的 1 秒防抖窗口，避免浏览器自身 pageshow/focus
-    // 调度时机让竞态测试偶发地只测到 debounce。
-    const realDateNow = Date.now
-    Date.now = () => realDateNow() + 60_000
-    try {
-      window.dispatchEvent(new Event('pageshow'))
-    } finally {
-      Date.now = realDateNow
-    }
+    // Initial navigation also emits pageshow. A persisted pageshow represents
+    // an actual bfcache foreground return and exercises the same production
+    // callback without corrupting the page clock used by later debounce checks.
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
   })
 }
 
@@ -90,6 +89,7 @@ async function prepareProfilePage(browser, apiHandler) {
   await page.route('**/api/**', async route => {
     const request = route.request()
     const url = new URL(request.url())
+    if (!url.pathname.startsWith('/api/')) return route.continue()
     const apiPath = url.pathname.slice('/api'.length)
 
     if (apiPath.startsWith('/avatar/')) {
@@ -110,15 +110,547 @@ async function prepareProfilePage(browser, apiHandler) {
   })
 
   await page.goto(`${baseUrl}/account/profile`, { waitUntil: 'domcontentloaded' })
+  await waitForNuxtHydration(page)
   await page.getByText('race@example.com', { exact: true }).waitFor()
   await page.getByLabel('昵称', { exact: true }).waitFor()
 
   return { context, page, pageErrors }
 }
 
+async function verifyPassiveForegroundDoesNotEnterGlobalLoading(browser) {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const pageErrors = []
+  const foregroundReadStarted = deferred()
+  const foregroundReadCompleted = deferred()
+  const releaseForegroundRead = deferred()
+  let delayNextAuthRead = false
+  let authReadCount = 0
+
+  page.on('pageerror', error => pageErrors.push(error))
+  await page.route('**/api/**', async route => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (!url.pathname.startsWith('/api/')) return route.continue()
+    const apiPath = url.pathname.slice('/api'.length)
+
+    if (apiPath.startsWith('/avatar/')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: transparentPng
+      })
+    }
+    if (apiPath === '/auth/me' && request.method() === 'GET') {
+      authReadCount += 1
+      const shouldDelay = delayNextAuthRead
+      delayNextAuthRead = false
+      if (shouldDelay) {
+        foregroundReadStarted.resolve()
+        await releaseForegroundRead.promise
+      }
+      await fulfillJson(route, authUser('全局加载回归用户'))
+      if (shouldDelay) foregroundReadCompleted.resolve()
+      return
+    }
+    if (apiPath === '/ftml-projects' && request.method() === 'GET') {
+      return fulfillJson(route, {
+        projects: [{
+          id: 'foreground-project-1',
+          title: '前台恢复不能卸载的项目',
+          pageTitle: null,
+          pageTags: [],
+          isArchived: false,
+          createdAt: iso,
+          updatedAt: iso
+        }]
+      })
+    }
+    if (apiPath === '/alerts') {
+      return fulfillJson(route, { ok: true, alerts: [], unreadCount: 0 })
+    }
+    if (apiPath === '/alerts/forum' || apiPath === '/alerts/follow') {
+      return fulfillJson(route, { ok: true, alerts: [], unreadCount: 0 })
+    }
+    await fulfillJson(route, { ok: false, error: `Unexpected API request: ${apiPath}` }, 404)
+  })
+
+  try {
+    await page.goto(`${baseUrl}/ftml-projects`, { waitUntil: 'domcontentloaded' })
+    await waitForNuxtHydration(page)
+    const projectTitle = page.getByText('前台恢复不能卸载的项目', { exact: true })
+    await projectTitle.waitFor()
+    const documentState = await page.evaluate(() => {
+      window.__ftmlForegroundDocumentToken = Math.random().toString(36)
+      return {
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__ftmlForegroundDocumentToken,
+        url: window.location.href
+      }
+    })
+    await projectTitle.evaluate(element => {
+      window.__ftmlProjectBeforeForeground = element.closest('.project-item')
+    })
+
+    delayNextAuthRead = true
+    await dispatchForegroundEvent(page)
+    await waitForSignal(foregroundReadStarted, 'FTML foreground /auth/me')
+
+    assert.equal(authReadCount, 2)
+    assert.equal(await page.getByText('正在验证登录状态...', { exact: true }).count(), 0)
+    assert.equal(await projectTitle.count(), 1)
+    assert.equal(
+      await projectTitle.evaluate(element => (
+        window.__ftmlProjectBeforeForeground === element.closest('.project-item')
+      )),
+      true,
+      'passive validation must not replace an authenticated tool with its initial auth gate'
+    )
+
+    releaseForegroundRead.resolve()
+    await waitForSignal(foregroundReadCompleted, 'FTML foreground /auth/me completion')
+    await page.waitForTimeout(50)
+
+    assert.equal(await page.getByText('正在验证登录状态...', { exact: true }).count(), 0)
+    assert.equal(
+      await projectTitle.evaluate(element => (
+        window.__ftmlProjectBeforeForeground === element.closest('.project-item')
+      )),
+      true,
+      'the authenticated tool must retain its DOM after passive validation completes'
+    )
+    assert.deepEqual(
+      await page.evaluate(() => ({
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__ftmlForegroundDocumentToken,
+        url: window.location.href
+      })),
+      documentState
+    )
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    releaseForegroundRead.resolve()
+    await context.close()
+  }
+}
+
+async function verifyForegroundIdentityChangeClearsPrivateView(browser) {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const pageErrors = []
+  const hardReadStarted = deferred()
+  const releaseHardRead = deferred()
+  const accountA = authIdentity('account-a', 'a@example.com', '账号 A')
+  const accountB = authIdentity('account-b', 'b@example.com', '账号 B')
+  let authReadCount = 0
+  let projectReadCount = 0
+
+  page.on('pageerror', error => pageErrors.push(error))
+  await page.route('**/api/**', async route => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (!url.pathname.startsWith('/api/')) return route.continue()
+    const apiPath = url.pathname.slice('/api'.length)
+
+    if (apiPath.startsWith('/avatar/')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: transparentPng
+      })
+    }
+    if (apiPath === '/auth/me' && request.method() === 'GET') {
+      authReadCount += 1
+      if (authReadCount === 1) return fulfillJson(route, accountA)
+      if (authReadCount === 2) return fulfillJson(route, accountB)
+      if (authReadCount === 3) {
+        hardReadStarted.resolve()
+        await releaseHardRead.promise
+      }
+      return fulfillJson(route, accountB)
+    }
+    if (apiPath === '/ftml-projects' && request.method() === 'GET') {
+      projectReadCount += 1
+      const isAccountARead = projectReadCount === 1
+      return fulfillJson(route, {
+        projects: [{
+          id: isAccountARead ? 'account-a-project' : 'account-b-project',
+          title: isAccountARead ? '账号 A 的私有项目' : '账号 B 的私有项目',
+          pageTitle: null,
+          pageTags: [],
+          isArchived: false,
+          createdAt: iso,
+          updatedAt: iso
+        }]
+      })
+    }
+    if (apiPath === '/alerts') {
+      return fulfillJson(route, { ok: true, alerts: [], unreadCount: 0 })
+    }
+    if (apiPath === '/alerts/forum' || apiPath === '/alerts/follow') {
+      return fulfillJson(route, { ok: true, alerts: [], unreadCount: 0 })
+    }
+    await fulfillJson(route, { ok: false, error: `Unexpected API request: ${apiPath}` }, 404)
+  })
+
+  try {
+    await page.goto(`${baseUrl}/ftml-projects`, { waitUntil: 'domcontentloaded' })
+    await waitForNuxtHydration(page)
+    const accountAProject = page.getByText('账号 A 的私有项目', { exact: true })
+    await accountAProject.waitFor()
+    const documentState = await page.evaluate(() => {
+      window.__identityChangeDocumentToken = Math.random().toString(36)
+      return {
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__identityChangeDocumentToken,
+        url: window.location.href
+      }
+    })
+
+    await dispatchForegroundEvent(page)
+    await waitForSignal(hardReadStarted, 'hard /auth/me after identity change')
+    await page.getByText('正在验证登录状态...', { exact: true }).waitFor()
+
+    assert.equal(authReadCount, 3)
+    assert.equal(await accountAProject.count(), 0)
+    assert.deepEqual(
+      await page.evaluate(() => ({
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__identityChangeDocumentToken,
+        url: window.location.href
+      })),
+      documentState,
+      'identity invalidation must clear private UI without reloading the document'
+    )
+
+    releaseHardRead.resolve()
+    await page.getByText('账号 B 的私有项目', { exact: true }).waitFor()
+
+    assert.equal(projectReadCount, 2)
+    assert.equal(await accountAProject.count(), 0)
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    releaseHardRead.resolve()
+    await context.close()
+  }
+}
+
+async function verifyForegroundProfileUpdatePreservesDraft(browser) {
+  const foregroundReadStarted = deferred()
+  const foregroundReadCompleted = deferred()
+  const releaseForegroundRead = deferred()
+  let authReadCount = 0
+  let delayNextAuthRead = false
+
+  const { context, page, pageErrors } = await prepareProfilePage(
+    browser,
+    async (route, apiPath, request) => {
+      if (apiPath === '/auth/me' && request.method() === 'GET') {
+        authReadCount += 1
+        const shouldDelay = delayNextAuthRead
+        delayNextAuthRead = false
+        if (shouldDelay) {
+          foregroundReadStarted.resolve()
+          await releaseForegroundRead.promise
+        }
+        await fulfillJson(route, authUser(shouldDelay ? '其他标签页的新昵称' : '服务端旧昵称'))
+        if (shouldDelay) foregroundReadCompleted.resolve()
+        return true
+      }
+      return false
+    }
+  )
+
+  try {
+    const profileInput = page.getByLabel('昵称', { exact: true })
+    await profileInput.fill('不能被覆盖的本地草稿')
+    await profileInput.evaluate(input => {
+      window.__profileDraftInputBeforeForeground = input
+    })
+
+    delayNextAuthRead = true
+    await dispatchForegroundEvent(page)
+    await waitForSignal(foregroundReadStarted, 'profile update foreground /auth/me')
+    releaseForegroundRead.resolve()
+    await waitForSignal(foregroundReadCompleted, 'profile update foreground /auth/me completion')
+    await page.waitForTimeout(50)
+
+    assert.equal(authReadCount, 2)
+    assert.equal(await profileInput.inputValue(), '不能被覆盖的本地草稿')
+    assert.equal(
+      await page.evaluate(() => (
+        window.__profileDraftInputBeforeForeground
+        === document.querySelector('#account-display-name')
+      )),
+      true,
+      'same-account profile refresh must keep the existing input mounted'
+    )
+    await page.getByRole('button', { name: '撤销更改', exact: true }).click()
+    assert.equal(
+      await profileInput.inputValue(),
+      '其他标签页的新昵称',
+      'undo must reveal the server snapshot applied by passive validation'
+    )
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    releaseForegroundRead.resolve()
+    await context.close()
+  }
+}
+
+async function verifyProfileRouteRoundTripPreservesDraft(browser) {
+  let authReadCount = 0
+  const { context, page, pageErrors } = await prepareProfilePage(
+    browser,
+    async (route, apiPath, request) => {
+      if (apiPath === '/auth/me' && request.method() === 'GET') {
+        authReadCount += 1
+        await fulfillJson(route, authUser('往返路由服务端昵称'))
+        return true
+      }
+      return false
+    }
+  )
+
+  try {
+    const profileInput = page.getByLabel('昵称', { exact: true })
+    await profileInput.fill('跨账号子页保留的草稿')
+    const documentState = await page.evaluate(() => {
+      window.__profileRoundTripDocumentToken = Math.random().toString(36)
+      return {
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__profileRoundTripDocumentToken
+      }
+    })
+
+    await page.getByRole('link', { name: /账号连接/ }).first().click()
+    await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+    await page.goBack()
+    await page.getByLabel('昵称', { exact: true }).waitFor()
+
+    assert.equal(await page.getByLabel('昵称', { exact: true }).inputValue(), '跨账号子页保留的草稿')
+    assert.equal(authReadCount, 1, 'SPA route round-trip must reuse the resolved auth snapshot')
+    assert.deepEqual(
+      await page.evaluate(() => ({
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__profileRoundTripDocumentToken
+      })),
+      documentState
+    )
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    await context.close()
+  }
+}
+
+async function verifyNormalizedProfileSaveClearsDraft(browser) {
+  const remoteReadStarted = deferred()
+  const remoteReadCompleted = deferred()
+  const releaseRemoteRead = deferred()
+  let displayName = '规范化前昵称'
+  let delayNextAuthRead = false
+  let authReadCount = 0
+  const submittedNames = []
+
+  const { context, page, pageErrors } = await prepareProfilePage(
+    browser,
+    async (route, apiPath, request) => {
+      if (apiPath === '/auth/me' && request.method() === 'GET') {
+        authReadCount += 1
+        const shouldDelay = delayNextAuthRead
+        delayNextAuthRead = false
+        if (shouldDelay) {
+          remoteReadStarted.resolve()
+          await releaseRemoteRead.promise
+        }
+        await fulfillJson(route, authUser(displayName))
+        if (shouldDelay) remoteReadCompleted.resolve()
+        return true
+      }
+      if (apiPath === '/auth/profile' && request.method() === 'PATCH') {
+        const submittedName = request.postDataJSON().displayName
+        submittedNames.push(submittedName)
+        displayName = submittedName.trim()
+        await fulfillJson(route, authUser(displayName))
+        return true
+      }
+      return false
+    }
+  )
+
+  try {
+    const profileInput = page.getByLabel('昵称', { exact: true })
+    await profileInput.fill('  已规范化昵称  ')
+    await page.getByRole('button', { name: '保存昵称', exact: true }).click()
+    await page.getByText('昵称已保存。', { exact: true }).waitFor()
+
+    assert.deepEqual(submittedNames, ['已规范化昵称'])
+    assert.equal(await profileInput.inputValue(), '已规范化昵称')
+
+    await page.getByRole('link', { name: /账号连接/ }).first().click()
+    await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+    await page.goBack()
+    await page.getByLabel('昵称', { exact: true }).waitFor()
+    assert.equal(
+      await page.getByLabel('昵称', { exact: true }).inputValue(),
+      '已规范化昵称',
+      'a successful canonical save must not restore its raw whitespace draft'
+    )
+
+    displayName = '其他标签页后续昵称'
+    delayNextAuthRead = true
+    await dispatchForegroundEvent(page)
+    await waitForSignal(remoteReadStarted, 'post-save foreground /auth/me')
+    releaseRemoteRead.resolve()
+    await waitForSignal(remoteReadCompleted, 'post-save foreground /auth/me completion')
+    await page.getByLabel('昵称', { exact: true }).waitFor({
+      state: 'visible'
+    })
+    await page.waitForFunction(() => (
+      document.querySelector('#account-display-name')?.value === '其他标签页后续昵称'
+    ))
+
+    assert.equal(authReadCount, 2)
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    releaseRemoteRead.resolve()
+    await context.close()
+  }
+}
+
+async function verifyProfileSavingSurvivesRouteRemount(browser) {
+  const profileWriteStarted = deferred()
+  const releaseProfileWrite = deferred()
+  let displayName = '保存状态服务端昵称'
+  let profileWriteCount = 0
+
+  const { context, page, pageErrors } = await prepareProfilePage(
+    browser,
+    async (route, apiPath, request) => {
+      if (apiPath === '/auth/me' && request.method() === 'GET') {
+        await fulfillJson(route, authUser(displayName))
+        return true
+      }
+      if (apiPath === '/auth/profile' && request.method() === 'PATCH') {
+        profileWriteCount += 1
+        const submittedName = request.postDataJSON().displayName
+        profileWriteStarted.resolve()
+        await releaseProfileWrite.promise
+        displayName = submittedName
+        await fulfillJson(route, authUser(displayName))
+        return true
+      }
+      return false
+    }
+  )
+
+  try {
+    await page.getByLabel('昵称', { exact: true }).fill('路由往返中的在途保存')
+    await page.getByRole('button', { name: '保存昵称', exact: true }).click()
+    await waitForSignal(profileWriteStarted, 'profile write before route remount')
+
+    await page.getByRole('link', { name: /账号连接/ }).first().click()
+    await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+    await page.goBack()
+
+    const remountedInput = page.getByLabel('昵称', { exact: true })
+    const remountedSave = page.getByRole('button', { name: '保存中…', exact: true })
+    await remountedInput.waitFor()
+    assert.equal(await remountedInput.isDisabled(), true)
+    assert.equal(await remountedSave.isDisabled(), true)
+
+    // Even a programmatic submit from the remounted form must not start a
+    // second PATCH while the first request still owns this user's save state.
+    await page.evaluate(() => {
+      document.querySelector('#account-display-name')
+        ?.closest('form')
+        ?.requestSubmit()
+    })
+    await page.waitForTimeout(100)
+    assert.equal(profileWriteCount, 1)
+
+    releaseProfileWrite.resolve()
+    await page.waitForFunction(() => (
+      document.querySelector('#account-display-name')?.disabled === false
+    ))
+    assert.equal(await remountedInput.inputValue(), '路由往返中的在途保存')
+    assert.equal(profileWriteCount, 1)
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    releaseProfileWrite.resolve()
+    await context.close()
+  }
+}
+
+async function verifyProfileFailureSurvivesRouteRemount(browser) {
+  const profileWriteStarted = deferred()
+  const releaseProfileWrite = deferred()
+  let profileWriteCount = 0
+
+  const { context, page, pageErrors } = await prepareProfilePage(
+    browser,
+    async (route, apiPath, request) => {
+      if (apiPath === '/auth/me' && request.method() === 'GET') {
+        await fulfillJson(route, authUser('失败反馈服务端昵称'))
+        return true
+      }
+      if (apiPath === '/auth/profile' && request.method() === 'PATCH') {
+        profileWriteCount += 1
+        profileWriteStarted.resolve()
+        await releaseProfileWrite.promise
+        await fulfillJson(route, { ok: false, error: '跨路由保存失败' }, 503)
+        return true
+      }
+      return false
+    }
+  )
+
+  try {
+    await page.getByLabel('昵称', { exact: true }).fill('失败后必须保留的草稿')
+    await page.getByRole('button', { name: '保存昵称', exact: true }).click()
+    await waitForSignal(profileWriteStarted, 'failing profile write before route remount')
+
+    await page.getByRole('link', { name: /账号连接/ }).first().click()
+    await page.getByRole('heading', { name: 'Wikidot 身份', exact: true }).waitFor()
+    await page.goBack()
+
+    const remountedInput = page.getByLabel('昵称', { exact: true })
+    await remountedInput.waitFor()
+    assert.equal(await remountedInput.isDisabled(), true)
+    assert.equal(
+      await page.getByRole('button', { name: '保存中…', exact: true }).isDisabled(),
+      true
+    )
+
+    releaseProfileWrite.resolve()
+    await page.getByText('跨路由保存失败', { exact: true }).waitFor()
+
+    assert.equal(await remountedInput.isEnabled(), true)
+    assert.equal(await remountedInput.inputValue(), '失败后必须保留的草稿')
+    assert.equal(profileWriteCount, 1)
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    releaseProfileWrite.resolve()
+    await context.close()
+  }
+}
+
 async function verifyResolvedGateStaysStableOnForeground(
   browser,
-  { label, heading, responseBody, responseStatus }
+  {
+    label,
+    heading,
+    responseBody,
+    responseStatus,
+    foregroundResponseBody = responseBody,
+    foregroundResponseStatus = responseStatus
+  }
 ) {
   const context = await browser.newContext()
   const page = await context.newPage()
@@ -131,7 +663,9 @@ async function verifyResolvedGateStaysStableOnForeground(
   page.on('pageerror', error => pageErrors.push(error))
   await page.route('**/api/**', async route => {
     const request = route.request()
-    const apiPath = new URL(request.url()).pathname.slice('/api'.length)
+    const url = new URL(request.url())
+    if (!url.pathname.startsWith('/api/')) return route.continue()
+    const apiPath = url.pathname.slice('/api'.length)
     if (apiPath === '/auth/me' && request.method() === 'GET') {
       const shouldDelay = delayNextAuthRead
       delayNextAuthRead = false
@@ -139,7 +673,11 @@ async function verifyResolvedGateStaysStableOnForeground(
         delayedReadStarted.resolve()
         await releaseDelayedRead.promise
       }
-      await fulfillJson(route, responseBody, responseStatus)
+      await fulfillJson(
+        route,
+        shouldDelay ? foregroundResponseBody : responseBody,
+        shouldDelay ? foregroundResponseStatus : responseStatus
+      )
       if (shouldDelay) delayedReadCompleted.resolve()
       return
     }
@@ -148,6 +686,7 @@ async function verifyResolvedGateStaysStableOnForeground(
 
   try {
     await page.goto(`${baseUrl}/account`, { waitUntil: 'domcontentloaded' })
+    await waitForNuxtHydration(page)
     const gateHeading = page.getByRole('heading', { name: heading, exact: true })
     await gateHeading.waitFor()
     const documentState = await page.evaluate(() => {
@@ -370,7 +909,9 @@ async function verifySupersededLoginRevalidatesFinalCookie(browser) {
 
   await page.route('**/api/**', async route => {
     const request = route.request()
-    const apiPath = new URL(request.url()).pathname.slice('/api'.length)
+    const url = new URL(request.url())
+    if (!url.pathname.startsWith('/api/')) return route.continue()
+    const apiPath = url.pathname.slice('/api'.length)
 
     if (apiPath === '/auth/me' && request.method() === 'GET') {
       if (!cookieIdentity) {
@@ -398,6 +939,11 @@ async function verifySupersededLoginRevalidatesFinalCookie(browser) {
 
   try {
     await page.goto(`${baseUrl}/auth/login`, { waitUntil: 'domcontentloaded' })
+    await waitForNuxtHydration(page)
+    // Wait for the initial /auth/me result to finish hydrating the shared
+    // layout before typing; otherwise dev-mode Suspense can replace the inputs
+    // after Playwright fills them.
+    await page.getByRole('link', { name: '登录', exact: true }).first().waitFor()
     await page.getByLabel('邮箱', { exact: true }).fill('b1@example.com')
     await page.getByLabel('密码', { exact: true }).fill('password-for-race-test')
     await page.getByRole('button', { name: '登录', exact: true }).click()
@@ -430,6 +976,20 @@ async function verifySupersededLoginRevalidatesFinalCookie(browser) {
 async function main() {
   const browser = await chromium.launch({ headless: true })
   try {
+    await verifyPassiveForegroundDoesNotEnterGlobalLoading(browser)
+    process.stdout.write('PASS passive foreground validation does not enter global auth loading\n')
+    await verifyForegroundIdentityChangeClearsPrivateView(browser)
+    process.stdout.write('PASS foreground identity change clears private view before switching accounts\n')
+    await verifyForegroundProfileUpdatePreservesDraft(browser)
+    process.stdout.write('PASS foreground same-account profile update preserves local draft\n')
+    await verifyProfileRouteRoundTripPreservesDraft(browser)
+    process.stdout.write('PASS profile route round-trip preserves local draft\n')
+    await verifyNormalizedProfileSaveClearsDraft(browser)
+    process.stdout.write('PASS normalized profile save clears its persisted draft\n')
+    await verifyProfileSavingSurvivesRouteRemount(browser)
+    process.stdout.write('PASS profile saving state survives route remount\n')
+    await verifyProfileFailureSurvivesRouteRemount(browser)
+    process.stdout.write('PASS profile save failure survives route remount\n')
     await verifyResolvedGateStaysStableOnForeground(browser, {
       label: 'unauthenticated',
       heading: '登录后继续',
@@ -437,6 +997,15 @@ async function main() {
       responseStatus: 401
     })
     process.stdout.write('PASS unauthenticated gate stays stable during foreground validation\n')
+    await verifyResolvedGateStaysStableOnForeground(browser, {
+      label: 'unauthenticated transient error',
+      heading: '登录后继续',
+      responseBody: { ok: false, error: '未登录' },
+      responseStatus: 401,
+      foregroundResponseBody: { ok: false, error: '认证服务暂时不可用' },
+      foregroundResponseStatus: 503
+    })
+    process.stdout.write('PASS passive foreground error preserves resolved unauthenticated gate\n')
     await verifyResolvedGateStaysStableOnForeground(browser, {
       label: 'error',
       heading: '暂时无法读取账号信息',

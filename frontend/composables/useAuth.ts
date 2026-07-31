@@ -48,6 +48,14 @@ interface AuthFetchOptions {
    * request either succeeds or produces a new result.
    */
   preserveErrorWhileLoading?: boolean
+  /**
+   * Same-account foreground session checks are a background safety net. They
+   * must not flip the shared loading flag: several authenticated tools use that
+   * flag as an initial-auth gate and would otherwise destroy and recreate their
+   * entire UI whenever the browser tab becomes active again. A response for a
+   * different identity is escalated to the hard path before it is applied.
+   */
+  background?: boolean
 }
 
 interface AuthRuntime {
@@ -270,6 +278,23 @@ function parseAuthUser(
   }
 }
 
+function authUsersEqual(left: AuthUser | null, right: AuthUser): boolean {
+  if (!left) return false
+  return left.id === right.id
+    && left.email === right.email
+    && left.displayName === right.displayName
+    && left.linkedWikidotId === right.linkedWikidotId
+    && left.lastLoginAt === right.lastLoginAt
+    && left.qqBinding.bound === right.qqBinding.bound
+    && left.qqBinding.addressMask === right.qqBinding.addressMask
+    && left.qqBinding.status === right.qqBinding.status
+    && left.qqBinding.pendingChallenge === right.qqBinding.pendingChallenge
+    && left.qqBinding.capabilities.featureEnabled === right.qqBinding.capabilities.featureEnabled
+    && left.qqBinding.capabilities.createBinding === right.qqBinding.capabilities.createBinding
+    && left.qqBinding.capabilities.deliverNotifications === right.qqBinding.capabilities.deliverNotifications
+    && left.qqBinding.capabilities.manageExistingBinding === right.qqBinding.capabilities.manageExistingBinding
+}
+
 export function useAuth() {
   const nuxtApp = useNuxtApp()
   const { $bff } = nuxtApp
@@ -395,6 +420,15 @@ export function useAuth() {
     }
   }
 
+  function preserveResolvedSnapshotOnBackgroundError(cause: unknown) {
+    const hasResolvedSnapshot = status.value === 'unauthenticated'
+      || (status.value === 'authenticated' && Boolean(user.value))
+    if (!hasResolvedSnapshot) return false
+
+    authDebug('[auth] passive session validation kept the last resolved snapshot', cause)
+    return true
+  }
+
   function markSessionUnknown() {
     user.value = null
     status.value = 'unknown'
@@ -435,10 +469,11 @@ export function useAuth() {
       return existing.promise
     }
     const requestEpoch = runtime.epoch
+    const trackLoading = !options.background
     if (!options.preserveErrorWhileLoading) {
       authError.value = null
     }
-    beginRequest(requestEpoch)
+    if (trackLoading) beginRequest(requestEpoch)
 
     const requestPromise = (async () => {
       try {
@@ -467,19 +502,46 @@ export function useAuth() {
           if (!parsedUser.ok) {
             console.warn('[auth] fetchCurrentUser received an invalid user payload')
             authDebug('[auth] invalid /auth/me user payload', parsedUser.reason)
-            markAuthResolutionError(new Error('认证服务返回了无效的用户资料'))
+            const cause = new Error('认证服务返回了无效的用户资料')
+            if (!options.background || !preserveResolvedSnapshotOnBackgroundError(cause)) {
+              markAuthResolutionError(cause)
+            }
             return user.value
           }
-          user.value = parsedUser.value
+          const nextUser = parsedUser.value
+          if (
+            options.background
+            && status.value === 'authenticated'
+            && user.value
+            && user.value.id !== nextUser.id
+          ) {
+            // A missed cross-tab broadcast can leave account A rendered while
+            // the shared cookie already belongs to account B. Same-account
+            // foreground checks stay invisible, but a real identity change
+            // must take the hard path so every private view drops A's data
+            // before B becomes interactive.
+            authDebug('[auth] passive validation detected an identity change', {
+              previousId: user.value.id,
+              nextId: nextUser.id
+            })
+            void revalidateSession(true)
+            return user.value
+          }
+          if (!authUsersEqual(user.value, nextUser)) {
+            user.value = nextUser
+          }
           status.value = 'authenticated'
           authError.value = null
           authDebug('[auth] fetchCurrentUser success', {
-            id: user.value.id,
-            linkedWikidotId: user.value.linkedWikidotId
+            id: nextUser.id,
+            linkedWikidotId: nextUser.linkedWikidotId
           })
         } else {
           console.warn('[auth] fetchCurrentUser received an unexpected response')
-          markAuthResolutionError(new Error(res?.error || '认证服务返回了无效响应'))
+          const cause = new Error(res?.error || '认证服务返回了无效响应')
+          if (!options.background || !preserveResolvedSnapshotOnBackgroundError(cause)) {
+            markAuthResolutionError(cause)
+          }
         }
       } catch (cause: unknown) {
         if (!isCurrent(requestEpoch)) {
@@ -491,10 +553,12 @@ export function useAuth() {
           authDebug('[auth] fetchCurrentUser 401 (unauthenticated)')
         } else {
           console.warn('[auth] failed to fetch current user:', cause)
-          markAuthResolutionError(cause)
+          if (!options.background || !preserveResolvedSnapshotOnBackgroundError(cause)) {
+            markAuthResolutionError(cause)
+          }
         }
       } finally {
-        endRequest(requestEpoch)
+        if (trackLoading) endRequest(requestEpoch)
         if (runtime.fetchInflight?.epoch === requestEpoch) {
           runtime.fetchInflight = null
         }
@@ -508,7 +572,8 @@ export function useAuth() {
   /**
    * 重新验证浏览器当前 Cookie 对应的账号。
    *
-   * 普通前台恢复会在后台保留并校验最后一次可信快照，不遮挡页面或中断用户输入；
+   * 普通前台恢复会在后台保留并校验同一账号的最后一次可信快照，不遮挡页面或中断
+   * 用户输入；若响应属于另一账号，则升级为强制校验并先清除旧账号私有界面。
    * 收到其他标签页的身份变更通知时则立即清空快照，避免 A 的界面拿 B 的 Cookie
    * 发出写请求。新通知会开启新世代，旧验证响应无法覆盖最新身份。所有私有写
    * 仍由 expected-user 边界兜底，静默校验期间发生账号切换也不会写入错误账号。
@@ -523,6 +588,13 @@ export function useAuth() {
       authDebug('[auth] passive session validation skipped (identity mutation in-flight)')
       runtime.pendingPassiveSessionValidation = true
       return user.value
+    }
+
+    // An explicit/initial auth read already in flight has stronger ownership
+    // than a foreground hint. Reuse it instead of superseding its epoch and
+    // clearing the loading state that its caller intentionally exposed.
+    if (!invalidateSnapshot && runtime.fetchInflight) {
+      return runtime.fetchInflight.promise
     }
 
     if (!invalidateSnapshot && runtime.sessionRevalidation) {
@@ -543,7 +615,8 @@ export function useAuth() {
     if (invalidateSnapshot) markSessionUnknown()
 
     const verification = fetchCurrentUser(true, null, {
-      preserveErrorWhileLoading: !invalidateSnapshot
+      preserveErrorWhileLoading: !invalidateSnapshot,
+      background: !invalidateSnapshot
     })
     runtime.sessionRevalidation = verification
     runtime.sessionRevalidationInvalidatesSnapshot = invalidateSnapshot
@@ -575,8 +648,20 @@ export function useAuth() {
     if (!import.meta.client || runtime.sessionSyncListenersInstalled) return
     runtime.sessionSyncListenersInstalled = true
 
-    const validateOnForeground = () => {
+    const validateOnForeground = (event?: Event) => {
       if (document.hidden) return
+      // The browser also emits pageshow for the initial navigation. Initial
+      // session discovery already owns that phase; only a bfcache restoration
+      // is a genuine foreground return.
+      if (
+        event?.type === 'pageshow'
+        && (!('persisted' in event) || event.persisted !== true)
+      ) {
+        return
+      }
+      // Do not race the first session read, but allow a resolved error card to
+      // retry quietly when the user returns to the tab.
+      if (status.value === 'unknown' && !authError.value) return
       const now = Date.now()
       if (now - runtime.lastForegroundValidationAt < FOREGROUND_VALIDATION_DEBOUNCE_MS) {
         return
