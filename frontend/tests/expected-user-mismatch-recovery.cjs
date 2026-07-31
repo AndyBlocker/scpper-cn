@@ -73,7 +73,9 @@ async function main() {
 
   await page.route('**/api/**', async route => {
     const request = route.request()
-    const apiPath = new URL(request.url()).pathname.slice('/api'.length)
+    const url = new URL(request.url())
+    if (!url.pathname.startsWith('/api/')) return route.continue()
+    const apiPath = url.pathname.slice('/api'.length)
 
     if (apiPath.startsWith('/avatar/')) {
       return route.fulfill({

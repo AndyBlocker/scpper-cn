@@ -7,21 +7,119 @@ const props = defineProps<{
   user: AuthUser
 }>()
 
+type ProfileSaveMessage = { tone: 'success' | 'error'; text: string }
+interface ProfileSaveState {
+  requestId: string | null
+  saving: boolean
+  message: ProfileSaveMessage | null
+}
+
 const { updateProfile, status } = useAuth()
-const displayName = ref('')
-const saving = ref(false)
-const message = ref<{ tone: 'success' | 'error'; text: string } | null>(null)
+const profileUserId = props.user.id
+const displayNameDrafts = useState<Record<string, string>>(
+  'account-profile-display-name-drafts',
+  () => ({})
+)
+const displayNameSaveStates = useState<Record<string, ProfileSaveState>>(
+  'account-profile-display-name-save-states',
+  () => ({})
+)
+
+function normalizeDisplayName(value: string | null | undefined) {
+  return (value || '').trim()
+}
+
+const displayName = ref(
+  displayNameDrafts.value[profileUserId] ?? (props.user.displayName || '')
+)
+const saving = computed(() => (
+  displayNameSaveStates.value[profileUserId]?.saving === true
+))
+const message = computed(() => (
+  displayNameSaveStates.value[profileUserId]?.message ?? null
+))
+let lastServerDisplayName = normalizeDisplayName(props.user.displayName)
+
+function saveDisplayNameDraft(value: string) {
+  const serverValue = normalizeDisplayName(props.user.displayName)
+  const nextDrafts = { ...displayNameDrafts.value }
+  if (normalizeDisplayName(value) === serverValue) delete nextDrafts[profileUserId]
+  else nextDrafts[profileUserId] = value
+  displayNameDrafts.value = nextDrafts
+}
+
+function clearSubmittedDisplayNameDraft(submittedValue: string) {
+  const savedDraft = displayNameDrafts.value[profileUserId]
+  if (
+    savedDraft !== undefined
+    && normalizeDisplayName(savedDraft) !== submittedValue
+  ) {
+    return
+  }
+
+  const nextDrafts = { ...displayNameDrafts.value }
+  delete nextDrafts[profileUserId]
+  displayNameDrafts.value = nextDrafts
+}
+
+function beginDisplayNameSave() {
+  if (displayNameSaveStates.value[profileUserId]?.saving) return null
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  displayNameSaveStates.value = {
+    ...displayNameSaveStates.value,
+    [profileUserId]: { requestId, saving: true, message: null }
+  }
+  return requestId
+}
+
+function finishDisplayNameSave(
+  requestId: string,
+  nextMessage: ProfileSaveMessage | null
+) {
+  const current = displayNameSaveStates.value[profileUserId]
+  if (!current || current.requestId !== requestId) return
+  displayNameSaveStates.value = {
+    ...displayNameSaveStates.value,
+    [profileUserId]: { requestId, saving: false, message: nextMessage }
+  }
+}
+
+function clearDisplayNameMessage() {
+  const current = displayNameSaveStates.value[profileUserId]
+  if (!current?.message) return
+  displayNameSaveStates.value = {
+    ...displayNameSaveStates.value,
+    [profileUserId]: { ...current, message: null }
+  }
+}
 
 watch(
   () => props.user.displayName,
   value => {
-    displayName.value = value || ''
+    const nextServerDisplayName = normalizeDisplayName(value)
+    const savedDraft = displayNameDrafts.value[profileUserId]
+    const currentDisplayName = normalizeDisplayName(displayName.value)
+
+    // A passive /auth/me response may carry an updated server profile. Never
+    // overwrite a local draft merely because the browser tab became active.
+    // If there is no draft, keep the input synchronized with the server.
+    if (currentDisplayName === nextServerDisplayName) {
+      displayName.value = nextServerDisplayName
+      saveDisplayNameDraft(displayName.value)
+    } else if (savedDraft !== undefined) {
+      displayName.value = savedDraft
+    } else if (currentDisplayName === lastServerDisplayName) {
+      displayName.value = nextServerDisplayName
+    }
+    lastServerDisplayName = nextServerDisplayName
   },
   { immediate: true }
 )
 
-const normalizedDisplayName = computed(() => displayName.value.trim())
-const isDirty = computed(() => normalizedDisplayName.value !== (props.user.displayName || ''))
+const normalizedDisplayName = computed(() => normalizeDisplayName(displayName.value))
+const isDirty = computed(() => (
+  normalizedDisplayName.value !== normalizeDisplayName(props.user.displayName)
+))
 const canSave = computed(() => (
   normalizedDisplayName.value.length >= 1
   && normalizedDisplayName.value.length <= 64
@@ -35,26 +133,39 @@ const avatarId = computed(() => {
 
 function resetDisplayName() {
   displayName.value = props.user.displayName || ''
-  message.value = null
+  saveDisplayNameDraft(displayName.value)
+  clearDisplayNameMessage()
 }
 
 function handleDisplayNameInput() {
   // 成功或失败提示只描述上一次提交。用户再次编辑后立即清除，避免把尚未
   // 保存的新值误报为“已保存”。
-  message.value = null
+  clearDisplayNameMessage()
+  saveDisplayNameDraft(displayName.value)
 }
 
 async function handleSubmit() {
   if (!canSave.value) return
-  saving.value = true
-  message.value = null
-  const result = await updateProfile({ displayName: normalizedDisplayName.value })
-  saving.value = false
+  const submittedDisplayName = normalizedDisplayName.value
+  const requestId = beginDisplayNameSave()
+  if (!requestId) return
+
+  let result: Awaited<ReturnType<typeof updateProfile>>
+  try {
+    result = await updateProfile({ displayName: submittedDisplayName })
+  } catch {
+    finishDisplayNameSave(requestId, {
+      tone: 'error',
+      text: '保存失败，请稍后重试。'
+    })
+    return
+  }
 
   // "unknown" is a temporary verification/error state, not proof that the
   // session ended. Redirecting here can race account-mismatch recovery and
   // send an otherwise authenticated user to the login page.
   if (!result.ok && status.value === 'unauthenticated') {
+    finishDisplayNameSave(requestId, null)
     await navigateTo({
       path: '/auth/login',
       query: {
@@ -65,9 +176,21 @@ async function handleSubmit() {
     return
   }
 
-  message.value = result.ok
-    ? { tone: 'success', text: '昵称已保存。' }
-    : { tone: 'error', text: result.error || '保存失败，请稍后重试。' }
+  if (result.ok) {
+    // The API stores the canonical trimmed value. Clear only the draft that
+    // belongs to this submission, so a newer edit can never be discarded by a
+    // late response from an older request.
+    clearSubmittedDisplayNameDraft(submittedDisplayName)
+    if (normalizeDisplayName(displayName.value) === submittedDisplayName) {
+      displayName.value = submittedDisplayName
+    }
+    finishDisplayNameSave(requestId, { tone: 'success', text: '昵称已保存。' })
+  } else {
+    finishDisplayNameSave(requestId, {
+      tone: 'error',
+      text: result.error || '保存失败，请稍后重试。'
+    })
+  }
 }
 </script>
 
