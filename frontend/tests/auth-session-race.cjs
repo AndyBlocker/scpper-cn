@@ -116,6 +116,95 @@ async function prepareProfilePage(browser, apiHandler) {
   return { context, page, pageErrors }
 }
 
+async function verifyResolvedGateStaysStableOnForeground(
+  browser,
+  { label, heading, responseBody, responseStatus }
+) {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const pageErrors = []
+  const delayedReadStarted = deferred()
+  const delayedReadCompleted = deferred()
+  const releaseDelayedRead = deferred()
+  let delayNextAuthRead = false
+
+  page.on('pageerror', error => pageErrors.push(error))
+  await page.route('**/api/**', async route => {
+    const request = route.request()
+    const apiPath = new URL(request.url()).pathname.slice('/api'.length)
+    if (apiPath === '/auth/me' && request.method() === 'GET') {
+      const shouldDelay = delayNextAuthRead
+      delayNextAuthRead = false
+      if (shouldDelay) {
+        delayedReadStarted.resolve()
+        await releaseDelayedRead.promise
+      }
+      await fulfillJson(route, responseBody, responseStatus)
+      if (shouldDelay) delayedReadCompleted.resolve()
+      return
+    }
+    await fulfillJson(route, { ok: false, error: `Unexpected API request: ${apiPath}` }, 404)
+  })
+
+  try {
+    await page.goto(`${baseUrl}/account`, { waitUntil: 'domcontentloaded' })
+    const gateHeading = page.getByRole('heading', { name: heading, exact: true })
+    await gateHeading.waitFor()
+    const documentState = await page.evaluate(() => {
+      window.__accountGateDocumentToken = Math.random().toString(36)
+      return {
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__accountGateDocumentToken,
+        url: window.location.href
+      }
+    })
+    await gateHeading.evaluate(element => {
+      window.__accountGateBeforeForeground = element.closest('section')
+    })
+
+    delayNextAuthRead = true
+    await dispatchForegroundEvent(page)
+    await waitForSignal(delayedReadStarted, `${label} foreground /auth/me`)
+
+    assert.equal(await gateHeading.count(), 1)
+    assert.equal(await page.getByText('正在确认登录状态…', { exact: true }).count(), 0)
+    assert.equal(
+      await gateHeading.evaluate(element => (
+        window.__accountGateBeforeForeground === element.closest('section')
+      )),
+      true,
+      `${label} gate must remain mounted while passive validation is pending`
+    )
+
+    releaseDelayedRead.resolve()
+    await waitForSignal(delayedReadCompleted, `${label} foreground /auth/me completion`)
+    await page.waitForTimeout(50)
+
+    assert.equal(await gateHeading.count(), 1)
+    assert.equal(
+      await gateHeading.evaluate(element => (
+        window.__accountGateBeforeForeground === element.closest('section')
+      )),
+      true,
+      `${label} gate must remain mounted after passive validation completes`
+    )
+    assert.deepEqual(
+      await page.evaluate(() => ({
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        token: window.__accountGateDocumentToken,
+        url: window.location.href
+      })),
+      documentState
+    )
+    assert.equal(pageErrors.length, 0, pageErrors.map(error => error.stack).join('\n'))
+  } finally {
+    releaseDelayedRead.resolve()
+    await context.close()
+  }
+}
+
 async function verifyPassiveForegroundCannotSupersedeMutation(browser) {
   const postStarted = deferred()
   const releasePost = deferred()
@@ -213,23 +302,38 @@ async function verifyMutationTakesOverSlowValidation(browser) {
   )
 
   try {
-    await page.getByLabel('昵称', { exact: true }).fill('写入接管慢验证')
+    const profileInput = page.getByLabel('昵称', { exact: true })
+    await profileInput.fill('写入接管慢验证')
+    const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin)
+    await profileInput.evaluate(input => {
+      window.__accountProfileInputBeforeForeground = input
+    })
     delayNextAuthRead = true
+    // Playwright 的无头模式不会稳定更新真实标签页的 document.hidden，
+    // 直接派发同一 foreground 回调依赖的 pageshow 事件来覆盖该路径。
     await dispatchForegroundEvent(page)
     await waitForSignal(slowGetStarted, 'foreground /auth/me')
 
     const verifyingStatus = page.getByText('正在确认当前账号…', { exact: true })
-    await verifyingStatus.waitFor()
+    assert.equal(
+      await verifyingStatus.count(),
+      0,
+      'passive foreground validation must not cover the account page'
+    )
+    assert.equal(await profileInput.isEnabled(), true)
+    assert.equal(await profileInput.inputValue(), '写入接管慢验证')
+    assert.equal(
+      await page.evaluate(() => (
+        window.__accountProfileInputBeforeForeground
+        === document.querySelector('#account-display-name')
+      )),
+      true,
+      'passive foreground validation must keep the existing account form mounted'
+    )
+    assert.equal(await page.evaluate(() => performance.timeOrigin), documentTimeOrigin)
 
-    // AccountAuthGate 在验证期间会让表单 inert；直接派发 submit 模拟已经进入
-    // Vue 事件队列的 mutation，验证 composable 的状态接管，而不是浏览器点击行为。
-    await page.getByLabel('昵称', { exact: true }).evaluate(input => {
-      input.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    })
+    await page.getByRole('button', { name: '保存昵称' }).click()
     await waitForSignal(postStarted, 'profile POST taking over session validation')
-
-    // 慢 GET 尚未释放；mutation 开始后必须立即撤销旧验证的 overlay/inert 所有权。
-    await verifyingStatus.waitFor({ state: 'hidden', timeout: 1_000 })
 
     releasePost.resolve()
     await page.getByText('昵称已保存。', { exact: true }).waitFor()
@@ -326,6 +430,20 @@ async function verifySupersededLoginRevalidatesFinalCookie(browser) {
 async function main() {
   const browser = await chromium.launch({ headless: true })
   try {
+    await verifyResolvedGateStaysStableOnForeground(browser, {
+      label: 'unauthenticated',
+      heading: '登录后继续',
+      responseBody: { ok: false, error: '未登录' },
+      responseStatus: 401
+    })
+    process.stdout.write('PASS unauthenticated gate stays stable during foreground validation\n')
+    await verifyResolvedGateStaysStableOnForeground(browser, {
+      label: 'error',
+      heading: '暂时无法读取账号信息',
+      responseBody: { ok: false, error: '认证服务暂时不可用' },
+      responseStatus: 503
+    })
+    process.stdout.write('PASS error gate stays stable during foreground validation\n')
     await verifyPassiveForegroundCannotSupersedeMutation(browser)
     process.stdout.write('PASS passive foreground validation yields to identity mutation\n')
     await verifyMutationTakesOverSlowValidation(browser)
