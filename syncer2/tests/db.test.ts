@@ -38,6 +38,14 @@ import {
   toPgTimestamptz,
   withTransaction,
 } from '../src/store/db.js';
+import { recordPageScan, startIngestRun } from '../src/store/meta.js';
+import {
+  PAGE_SCAN_ERROR_MAX_UTF8_BYTES,
+  pgTextSanitizationCounters,
+  sanitizePageScanError,
+  sanitizePgText,
+  toPgJson,
+} from '../src/store/pgText.js';
 
 /** 与 db.ts 里同一个"无整点/整日对称性"的探针时刻。 */
 const PROBE_EPOCH_MS = Date.UTC(2026, 6, 27, 12, 34, 56, 789); // 2026-07-27T12:34:56.789Z
@@ -335,5 +343,101 @@ describe('withTransaction：失败必须回滚（发现层"宁可重算，绝不
     assert.equal(afterCommit.rows[0]!.n, '1');
 
     await query(pool, 'test:cleanup', 'DROP TABLE tx_probe');
+  });
+});
+
+describe('PostgreSQL 自由文本边界：NUL / 孤立代理项必须可落库且留痕', () => {
+  it('纯函数保留合法代理对，替换 NUL 与两种孤立代理项，并增加计数', () => {
+    const before = pgTextSanitizationCounters();
+    const input = `A\u0000B\uD800C\uDC00D😀`;
+    const cleaned = sanitizePgText(input, { context: 'test:pg-text' });
+    assert.equal(cleaned.value, 'A�B�C�D😀');
+    assert.equal(cleaned.sanitation.nulCodeUnits, 1);
+    assert.equal(cleaned.sanitation.loneSurrogates, 2);
+    const afterCounters = pgTextSanitizationCounters();
+    assert.equal(afterCounters.nulCodeUnits - before.nulCodeUnits, 1);
+    assert.equal(afterCounters.loneSurrogates - before.loneSurrogates, 2);
+    assert.deepEqual(
+      JSON.parse(toPgJson({ ['键\u0000']: '值\u0000' }, 'test:json-key')),
+      { '键�': '值�' },
+    );
+  });
+
+  it('正文 text 与 JSONB 中的站点文本经统一边界后真实写入 TEMP 表', async () => {
+    await query(
+      pool,
+      'test:pg-text:create',
+      'CREATE TEMP TABLE pg_text_probe (body text NOT NULL, attrs jsonb NOT NULL)',
+    );
+    await query(
+      pool,
+      'test:pg-text:insert',
+      'INSERT INTO pg_text_probe(body, attrs) VALUES ($1::text, $2::jsonb)',
+      [
+        '正文\u0000尾\uD800',
+        toPgJson(
+          {
+            source_wikitext: '源码\u0000尾\uD800',
+            text_content: '渲染\u0000尾\uDC00',
+          },
+          'test:content-json',
+        ),
+      ],
+    );
+    const result = await query<{
+      body: string;
+      source: string;
+      text_content: string;
+    }>(
+      pool,
+      'test:pg-text:read',
+      `SELECT body,
+              attrs->>'source_wikitext' AS source,
+              attrs->>'text_content' AS text_content
+         FROM pg_text_probe`,
+    );
+    assert.deepEqual(result.rows[0], {
+      body: '正文�尾�',
+      source: '源码�尾�',
+      text_content: '渲染�尾�',
+    });
+    await query(pool, 'test:pg-text:drop', 'DROP TABLE pg_text_probe');
+  });
+
+  it('record_page_scan 的任意错误证据清洗、UTF-8 安全截断并在行内留标记', async () => {
+    const source = `test:nulfix:${process.pid}`;
+    const runId = await startIngestRun(pool, source, PROBE_ISO);
+    assert.notEqual(runId, null);
+    const raw = `前缀\u0000中间\uD800${'界'.repeat(20_000)}`;
+    await recordPageScan(pool, {
+      runId,
+      pageId: 999_990_001,
+      kind: 'content',
+      status: 'failed',
+      error: raw,
+    });
+    const result = await query<{ error: string; bytes: number }>(
+      pool,
+      'test:page-scan:read-sanitized',
+      `SELECT error, octet_length(error)::int AS bytes
+         FROM meta.page_scan
+        WHERE run_id = $1 AND page_id = $2 AND kind = 'content'`,
+      [runId, 999_990_001],
+    );
+    const stored = result.rows[0]!;
+    assert.ok(stored.bytes <= PAGE_SCAN_ERROR_MAX_UTF8_BYTES);
+    assert.doesNotMatch(stored.error, /\u0000/);
+    assert.match(
+      stored.error,
+      /\[syncer2:text_sanitized nul=1 lone_surrogate=1 truncated=1\]$/,
+    );
+    assert.equal(
+      sanitizePageScanError(raw),
+      stored.error,
+      '持久化值必须与共享证据清洗器同源',
+    );
+    await query(pool, 'test:page-scan:cleanup', 'DELETE FROM meta.ingest_run WHERE id = $1', [
+      runId,
+    ]);
   });
 });

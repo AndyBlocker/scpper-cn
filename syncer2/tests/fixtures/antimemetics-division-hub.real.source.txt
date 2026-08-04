@@ -1,0 +1,29 @@
+[!--
+
+以下译自qntm的原英文页面：
+
+这个页面只是一个主页面（container），可以显示几个段落（fragment）页面中的一个。显示取决于URL中的偏移量（offset）。
+
+看这儿：http://scp-wiki-cn.wikidot.com/listpages-magic-and-you
+
+若需编辑可在此处显示的段落页面，请前往：
+
+Offset 0:http://scp-wiki-cn.wikidot.com/fragment:antimemetics-division-hub-main（译注：主页面）
+
+Offset 1:http://scp-wiki-cn.wikidot.com/fragment:antimemetics-division-hub-marion（译注：Marion Wheeler的人设页）
+
+Offset 2:http://scp-wiki-cn.wikidot.com/fragment:antimemetics-division-hub-adam（译注：Adam Wheeler的人设页）
+
+--]
+
+[[module ListPages  category="fragment" parent="." limit="1" order="created_at" offset="@URL|0"]]
+
+%%content%%
+
+[[/module]]
+
+[[include :scp-wiki-cn:component:license-box
+| author = qntm
+]]
+
+[[include :scp-wiki-cn:component:license-box-end]]

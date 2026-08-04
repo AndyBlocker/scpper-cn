@@ -7,20 +7,14 @@
  * `trg_immutable` 只拦 UPDATE / DELETE / TRUNCATE，INSERT 是放行的；
  * 真正让"应用层写错代码也写不进事实表"成立的是 GRANT 矩阵。
  *
- * ── 为什么写成条件跳过 ──────────────────────────────────────────────────────────
- * 实测权限现实：`user_dxzbdi` 有 rolcreatedb=t，但 **rolsuper=f、rolcreaterole=f**。
- * 所以 `migrations/9000_roles_grants.sql.ADMIN` 这一步执行不了，五个角色现在还不存在。
- * 把断言写死会让本文件在角色落地前永久红灯，写掉又会让它永久缺位 —— 两者都不可接受。
- * 本文件因此分三层，能跑多少跑多少，跳过的每一条都打印补救指令：
+ * 五个 NOLOGIN 组角色已经由 DBA 落地，因此角色缺失不再是可接受的跳过条件。本文件分四层：
  *
- *   第 1 层  **现在就能跑**：PUBLIC 不得持有任何事实表 DML、不得能执行任何 apply_*。
+ *   第 1 层  PUBLIC 不得持有任何事实表 DML、不得能执行任何 apply_*。
  *            （这一层不依赖角色 —— 0006 第 8 节的 REVOKE ALL FROM PUBLIC 已生效）
- *   第 2 层  角色存在则跑**目录级**断言：has_table_privilege('bff_role', …) 必须全 false。
- *            不需要成员资格，DBA 一执行 9000 就自动生效。
- *   第 3 层  当前账号是 bff_role 成员（或 superuser）则跑**行为级**断言：
- *            `SET ROLE bff_role` 后真的 INSERT 一次，必须 42501。
- *
- * 跳过 ≠ 通过：报告里 skip 独立成列，总计行看得见。
+ *   第 2 层  对 bff / ingestor / projector 跑目录级 GRANT 矩阵硬断言。
+ *   第 3 层  用 has_table_privilege / has_function_privilege 验证 bff_role 的等价行为边界。
+ *            user_dxzbdi 不是这些组角色的成员，不能 SET ROLE；目录函数无需成员资格。
+ *   第 4 层  用当前账号可切换的 pg_database_owner 实际执行非法写入，确认 SQLSTATE=42501。
  */
 
 import test from 'node:test';
@@ -29,18 +23,7 @@ import { Report } from './helpers/report.js';
 
 const ROLES = ['bff_role', 'ingestor_role', 'projector_role', 'avatar_worker_role', 'migration_role'];
 
-/**
- * 角色不存在时统一打印的补救指令。
- * 推荐路径是 9001 + 9002 的拆分（9001 只有 5 条 CREATE ROLE，是唯一需要 CREATEROLE 的动作；
- * 9002 的 GRANT/REVOKE 只要求对象属主身份，应用账号自己就能跑）。9000 是历史上的一把梭版本。
- */
-const HINT_9000 =
-  '角色不存在 ⇒ 跳过。补救：由 DBA（superuser 或持 CREATEROLE）执行 ' +
-  'migrations/9001_create_roles.sql.ADMIN（仅 5 条 CREATE ROLE），然后应用账号重跑 ' +
-  'migrations/9002_grants.sql + 0006 第 8 节补 GRANT EXECUTE，本断言即自动生效。' +
-  '交接单见 docs/dba-handoff.md。';
-
-test('T6.6 · 权限矩阵：bff_role 写事实表被拒（角色未落地则条件跳过）', async (t) => {
+test('T6.6 · 权限矩阵：五个组角色已落地，bff_role 写事实表被拒', async (t) => {
   const rep = new Report('T6.6 · 权限矩阵（bff_role 写 ingest.vote_event 必须 42501）');
   const s = await openSess('t6');
 
@@ -57,13 +40,14 @@ test('T6.6 · 权限矩阵：bff_role 写事实表被拒（角色未落地则条
       `SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[]) ORDER BY rolname`,
       [ROLES],
     );
-    const have = new Set(existing.map((r) => r.rolname));
-    rep.chk(
+    const actualRoles = existing.map((r) => r.rolname);
+    rep.eq(
       'T6.6 环境',
-      '记录当前账号与角色落地情况',
-      true,
+      '五个 NOLOGIN 组角色全部存在',
+      actualRoles,
+      [...ROLES].sort(),
       `current_user=${String(who['cur'])} rolsuper=${String(who['rolsuper'])} ` +
-        `rolcreaterole=${String(who['rolcreaterole'])} 已建角色=[${[...have].join(',') || '无'}]`,
+        `rolcreaterole=${String(who['rolcreaterole'])} 已建角色=[${actualRoles.join(',') || '无'}]`,
     );
 
     // =================================================================================
@@ -72,6 +56,7 @@ test('T6.6 · 权限矩阵：bff_role 写事实表被拒（角色未落地则条
     await t.test('第1层 PUBLIC 边界（无需角色）', async () => {
       const factTables = [
         'ingest.vote_event',
+        'ingest.vote_snapshot_event',
         'ingest.attribution_event',
         'ingest.page_life_event',
         'ingest.page_attr_history',
@@ -140,155 +125,142 @@ test('T6.6 · 权限矩阵：bff_role 写事实表被拒（角色未落地则条
     // =================================================================================
     // 第 2 层 · 目录级：角色存在即可断言，无需成员资格
     // =================================================================================
-    await t.test('第2层 目录级权限矩阵（需角色已建）', async () => {
-      if (!have.has('bff_role')) {
-        rep.skip('第2层 目录级', "has_table_privilege('bff_role','ingest.vote_event','INSERT') = false", HINT_9000);
-        rep.skip('第2层 目录级', "bff_role 对 serve Tier-1 无 UPDATE", HINT_9000);
-        rep.skip('第2层 目录级', 'bff_role 对 meta.* 零权限', HINT_9000);
-      } else {
-        const neg = await s.one<Record<string, boolean>>(
-          'bff-neg',
-          `SELECT has_table_privilege('bff_role','ingest.vote_event','INSERT')  AS ins_vote_event,
-                  has_table_privilege('bff_role','ingest.vote_event','UPDATE')  AS upd_vote_event,
-                  has_table_privilege('bff_role','ingest.vote_event','DELETE')  AS del_vote_event,
-                  has_table_privilege('bff_role','serve.vote_current','UPDATE') AS upd_vote_current,
-                  has_table_privilege('bff_role','serve.page_current','UPDATE') AS upd_page_current,
-                  has_table_privilege('bff_role','meta.ingest_run','INSERT')    AS ins_meta_run,
-                  has_table_privilege('bff_role','meta.revoke_candidate','SELECT') AS sel_meta_cand`,
-        );
-        rep.eq(
-          '第2层 目录级',
-          'bff_role 对 ingest.vote_event 无任何 DML',
-          {
-            ins: neg['ins_vote_event'],
-            upd: neg['upd_vote_event'],
-            del: neg['del_vote_event'],
-          },
-          { ins: false, upd: false, del: false },
-        );
-        rep.eq(
-          '第2层 目录级',
-          'bff_role 对 serve Tier-1 投影无 UPDATE',
-          { vc: neg['upd_vote_current'], pc: neg['upd_page_current'] },
-          { vc: false, pc: false },
-        );
-        rep.eq(
-          '第2层 目录级',
-          'bff_role 对 meta.* 零权限',
-          { ins: neg['ins_meta_run'], sel: neg['sel_meta_cand'] },
-          { ins: false, sel: false },
-        );
-        const pos = await s.one<Record<string, boolean>>(
-          'bff-pos',
-          `SELECT has_table_privilege('bff_role','serve.page_current','SELECT') AS sel_page_current,
-                  has_function_privilege('bff_role',
-                    'ingest.ensure_user(text,int,text,text,text,text,int)', 'EXECUTE') AS exec_ensure_user`,
-        );
-        rep.eq(
-          '第2层 目录级',
-          '正面对照：bff_role 能 SELECT serve 读面、能 EXECUTE ensure_user',
-          { sel: pos['sel_page_current'], exec: pos['exec_ensure_user'] },
-          { sel: true, exec: true },
-        );
-      }
+    await t.test('第2层 目录级权限矩阵（角色缺失即失败）', async () => {
+      const neg = await s.one<Record<string, boolean>>(
+        'bff-neg',
+        `SELECT has_table_privilege('bff_role','ingest.vote_event','INSERT')  AS ins_vote_event,
+                has_table_privilege('bff_role','ingest.vote_event','UPDATE')  AS upd_vote_event,
+                has_table_privilege('bff_role','ingest.vote_event','DELETE')  AS del_vote_event,
+                has_table_privilege('bff_role','ingest.vote_snapshot_event','INSERT') AS ins_vote_snapshot,
+                has_table_privilege('bff_role','serve.vote_current','UPDATE') AS upd_vote_current,
+                has_table_privilege('bff_role','serve.page_current','UPDATE') AS upd_page_current,
+                has_table_privilege('bff_role','meta.ingest_run','INSERT')    AS ins_meta_run,
+                has_table_privilege('bff_role','meta.revoke_candidate','SELECT') AS sel_meta_cand`,
+      );
+      rep.eq(
+        '第2层 目录级',
+        'bff_role 对 ingest.vote_event 无任何 DML',
+        {
+          ins: neg['ins_vote_event'],
+          upd: neg['upd_vote_event'],
+          del: neg['del_vote_event'],
+          snapshotIns: neg['ins_vote_snapshot'],
+        },
+        { ins: false, upd: false, del: false, snapshotIns: false },
+      );
+      rep.eq(
+        '第2层 目录级',
+        'bff_role 对 serve Tier-1 投影无 UPDATE',
+        { vc: neg['upd_vote_current'], pc: neg['upd_page_current'] },
+        { vc: false, pc: false },
+      );
+      rep.eq(
+        '第2层 目录级',
+        'bff_role 对 meta.* 零权限',
+        { ins: neg['ins_meta_run'], sel: neg['sel_meta_cand'] },
+        { ins: false, sel: false },
+      );
+      const pos = await s.one<Record<string, boolean>>(
+        'bff-pos',
+        `SELECT has_table_privilege('bff_role','serve.page_current','SELECT') AS sel_page_current,
+                has_function_privilege('bff_role',
+                  'ingest.ensure_user(text,int,text,text,text,text,int)', 'EXECUTE') AS exec_ensure_user`,
+      );
+      rep.eq(
+        '第2层 目录级',
+        '正面对照：bff_role 能 SELECT serve 读面、能 EXECUTE ensure_user',
+        { sel: pos['sel_page_current'], exec: pos['exec_ensure_user'] },
+        { sel: true, exec: true },
+      );
 
-      if (!have.has('ingestor_role')) {
-        rep.skip('第2层 目录级', 'ingestor_role 不能直写事实表但能 EXECUTE apply_*', HINT_9000);
-      } else {
-        const ing = await s.one<Record<string, boolean>>(
-          'ingestor',
-          `SELECT has_table_privilege('ingestor_role','ingest.vote_event','INSERT')  AS direct_insert,
-                  has_table_privilege('ingestor_role','serve.vote_current','UPDATE') AS direct_update,
-                  has_function_privilege('ingestor_role',
-                    'ingest.apply_vote_observation(int,int,int,timestamptz,timestamptz,text,text,bigint,int)',
-                    'EXECUTE') AS exec_apply`,
-        );
-        rep.eq(
-          '第2层 目录级',
-          'ingestor_role 对事实表零直接 DML，只能经 SECURITY DEFINER 函数',
-          { ins: ing['direct_insert'], upd: ing['direct_update'], exec: ing['exec_apply'] },
-          { ins: false, upd: false, exec: true },
-        );
-      }
+      const ing = await s.one<Record<string, boolean>>(
+        'ingestor',
+        `SELECT has_table_privilege('ingestor_role','ingest.vote_event','INSERT')  AS direct_insert,
+                has_table_privilege('ingestor_role','ingest.vote_snapshot_event','INSERT') AS snapshot_insert,
+                has_table_privilege('ingestor_role','serve.vote_current','UPDATE') AS direct_update,
+                has_function_privilege('ingestor_role',
+                  'ingest.apply_vote_observation(int,int,int,timestamptz,timestamptz,text,text,bigint,int)',
+                  'EXECUTE') AS exec_apply`,
+      );
+      rep.eq(
+        '第2层 目录级',
+        'ingestor_role 对事实表零直接 DML，只能经 SECURITY DEFINER 函数',
+        {
+          ins: ing['direct_insert'],
+          snapshotIns: ing['snapshot_insert'],
+          upd: ing['direct_update'],
+          exec: ing['exec_apply'],
+        },
+        { ins: false, snapshotIns: false, upd: false, exec: true },
+      );
 
-      if (!have.has('projector_role')) {
-        rep.skip('第2层 目录级', 'projector_role 不写事实 / 不写 Tier-1、可写 Tier-2', HINT_9000);
-      } else {
-        const proj = await s.one<Record<string, boolean>>(
-          'projector',
-          `SELECT has_table_privilege('projector_role','ingest.vote_event','INSERT') AS ins_fact,
-                  has_table_privilege('projector_role','serve.page_current','UPDATE') AS upd_tier1,
-                  has_table_privilege('projector_role','serve.page_stats','UPDATE')   AS upd_tier2`,
-        );
-        rep.eq(
-          '第2层 目录级',
-          'projector_role 不写事实、不写 Tier-1、可写 Tier-2',
-          { fact: proj['ins_fact'], t1: proj['upd_tier1'], t2: proj['upd_tier2'] },
-          { fact: false, t1: false, t2: true },
-        );
-      }
+      const proj = await s.one<Record<string, boolean>>(
+        'projector',
+        `SELECT has_table_privilege('projector_role','ingest.vote_event','INSERT') AS ins_fact,
+                has_table_privilege('projector_role','ingest.vote_snapshot_event','SELECT') AS sel_snapshot,
+                has_table_privilege('projector_role','serve.page_current','UPDATE') AS upd_tier1,
+                has_table_privilege('projector_role','serve.page_stats','UPDATE')   AS upd_tier2`,
+      );
+      rep.eq(
+        '第2层 目录级',
+        'projector_role 不写事实、不写 Tier-1、可写 Tier-2',
+        {
+          fact: proj['ins_fact'],
+          snapshotRead: proj['sel_snapshot'],
+          t1: proj['upd_tier1'],
+          t2: proj['upd_tier2'],
+        },
+        { fact: false, snapshotRead: true, t1: false, t2: true },
+      );
     });
 
     // =================================================================================
-    // 第 3 层 · 行为级：真的 SET ROLE bff_role 再 INSERT，必须 42501
+    // 第 3 层 · bff_role 等价行为边界：目录权限函数无需当前账号具备成员资格
     // =================================================================================
-    await t.test('第3层 行为级 42501（需 bff_role 成员资格）', async () => {
-      if (!have.has('bff_role')) {
-        rep.skip('第3层 行为级', 'SET ROLE bff_role 后 INSERT ingest.vote_event ⇒ 42501', HINT_9000);
-        return;
-      }
-      const canSet = await s.val<boolean>(
-        'can-set-role',
-        `SELECT pg_has_role(session_user, 'bff_role', 'MEMBER')`,
+    await t.test('第3层 bff_role 等价行为边界（无需 SET ROLE）', async () => {
+      const bff = await s.one<Record<string, boolean>>(
+        'bff-effective-boundary',
+        `SELECT has_schema_privilege('bff_role','ingest','USAGE') AS ingest_usage,
+                has_schema_privilege('bff_role','serve','USAGE') AS serve_usage,
+                has_table_privilege('bff_role','ingest.vote_event','INSERT') AS insert_fact,
+                has_table_privilege('bff_role','serve.page_current','UPDATE') AS update_tier1,
+                has_table_privilege('bff_role','serve.page_current','SELECT') AS select_tier1,
+                has_function_privilege('bff_role',
+                  'ingest.ensure_user(text,int,text,text,text,text,int)', 'EXECUTE') AS exec_ensure_user`,
       );
-      if (!canSet) {
-        rep.skip(
-          '第3层 行为级',
-          'SET ROLE bff_role 后 INSERT ingest.vote_event ⇒ 42501',
-          `当前账号不是 bff_role 成员（且非 superuser）⇒ 跳过。补救：GRANT bff_role TO ${String(who['sess'])};` +
-            '（需 superuser 或该角色的 ADMIN OPTION）。或用 9000 第 11 节的登录账号模板另建连接跑本层。',
-        );
-        return;
-      }
-
-      await s.q('set-role', `SET ROLE bff_role`);
-      try {
-        const err = await s.expectError(
-          'bff-insert',
-          `INSERT INTO ingest.vote_event(page_id, voter_id, kind, old_direction, new_direction,
-                                         occurred_at, observed_at, time_precision, source)
-           VALUES (1, 1, 'vote', NULL, 1, now(), now(), 'observed', 'test_illegal')`,
-        );
-        rep.eq(
-          '第3层 行为级',
-          'bff_role INSERT ingest.vote_event ⇒ 42501（权限拒，不是触发器拦）',
-          err.sqlstate,
-          '42501',
-          err.message.slice(0, 90),
-        );
-        const err2 = await s.expectError(
-          'bff-update-tier1',
-          `UPDATE serve.page_current SET rating = rating + 1 WHERE page_id = -1`,
-        );
-        rep.eq('第3层 行为级', 'bff_role UPDATE serve.page_current ⇒ 42501', err2.sqlstate, '42501');
-        const okSel = await s.num('bff-select', `SELECT count(*) FROM serve.page_current`);
-        rep.chk('第3层 行为级', '正面对照：bff_role 能 SELECT serve.page_current', okSel !== null, `${okSel} 行`);
-      } finally {
-        await s.q('reset-role', `RESET ROLE`);
-      }
+      rep.eq(
+        '第3层 等价行为边界',
+        'bff_role 可到达 schema，但只能读 serve / 调允许函数，不能直写事实或 Tier-1',
+        {
+          ingestUsage: bff['ingest_usage'],
+          serveUsage: bff['serve_usage'],
+          insertFact: bff['insert_fact'],
+          updateTier1: bff['update_tier1'],
+          selectTier1: bff['select_tier1'],
+          execEnsureUser: bff['exec_ensure_user'],
+        },
+        {
+          ingestUsage: true,
+          serveUsage: true,
+          insertFact: false,
+          updateTier1: false,
+          selectTier1: true,
+          execEnsureUser: true,
+        },
+      );
     });
 
     // =================================================================================
     // 第 4 层 · 机制自检：用一个**现存的无权角色**把 T6.6 的行为级路径完整排演一遍
     // =================================================================================
-    // 第 3 层在角色落地前必然跳过，而"跳过的断言"没有任何证明力 —— 它连自己写对了都证明不了。
+    // user_dxzbdi 不是 bff_role 成员，不能直接 SET ROLE 做行为测试。
     // 这一层用 `pg_database_owner`（预定义角色，当前账号作为库主天然是其成员，
     // 且它对 ingest/serve 零权限）把同一条路径真的走一遍：
     //   GRANT USAGE ON SCHEMA → SET LOCAL ROLE → INSERT 事实表 ⇒ 必须 42501（表级，不是 schema 级）
     // 这样能证明的事：
     //   ① `SET ROLE` + 捕获 sqlstate 这套机制本身可用；
     //   ② `ingest.vote_event` 对**任何未被授权的角色**都是 42501，而不是靠触发器拦；
-    //   ③ 第 3 层的断言体一旦角色到位就能原样生效（只差把角色名换成 bff_role）。
+    //   ③ 第 3 层的目录权限假设确实会在执行层表现为 42501。
     // 全程包在一个事务里并 ROLLBACK —— GRANT/REVOKE 在 PG 里是事务性的，
     // 所以这些临时授权不会泄漏出测试（末尾有一条负向断言专门证明这一点）。
     await t.test('第4层 机制自检：无权角色写事实表确实 42501（不依赖 9000）', async () => {

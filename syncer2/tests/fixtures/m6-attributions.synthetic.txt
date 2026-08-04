@@ -1,0 +1,14 @@
++++ SCP：
+
+||~ 标题||~ 用户||~ 类型||~ 时间||
+
+||scp-001||Alice||作者||2020-01-02||
+||scp-002||Bob||翻译||2017-10||
+||scp-broken||Missing Type|| ||
+
++++ 旧论坛用户名对照（不是署名表）：
+
+||~ 旧论坛ID||~ Wiki ID ||
+
+||Old Alice||Alice||
+||Old Bob||Bob||

@@ -1,0 +1,27 @@
+<!-- 固定结构 fixture：四类用户都出现；两个无 id deleted 必须保留成两行，不能按 id=0 塌缩。 -->
+<h2>页面被以下用户评分：</h2>
+<div style="-moz-column-count:3">
+  <span class="printuser avatarhover">
+    <a href="http://www.wikidot.com/user:info/alpha" onclick="WIKIDOT.page.listeners.userInfo(101); return false;"><img src="/avatar.php?userid=101"/></a>
+    <a href="http://www.wikidot.com/user:info/alpha" onclick="WIKIDOT.page.listeners.userInfo(101); return false;">Alpha</a>
+  </span>
+  <span style="color:#777"> + </span><br/>
+
+  <span class="printuser deleted" data-id="202">(user deleted)</span>
+  <span style="color:#777"> - </span><br/>
+
+  <span class="printuser deleted">(user deleted)</span>
+  <span style="color:#777"> + </span><br/>
+
+  <span class="printuser deleted">(user deleted)</span>
+  <span style="color:#777"> - </span><br/>
+
+  <span class="printuser guest"><img src="https://www.gravatar.com/avatar/abc"/>Guest One</span>
+  <span style="color:#777"> + </span><br/>
+
+  <span class="printuser anonymous">Anonymous <span class="ip">(203.0.113.7)</span></span>
+  <span style="color:#777"> + </span><br/>
+
+  <span class="printuser anonymous">Anonymous <span class="ip">(198.51.100.9)</span></span>
+  <span style="color:#777"> - </span><br/>
+</div>

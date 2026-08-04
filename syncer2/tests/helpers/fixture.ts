@@ -16,8 +16,8 @@
  * 这里会立刻以"删不掉"的形式炸出来）。
  *
  * 所有测试对象都落在专属 id 段，清理靠这个段来定位，绝不 `DELETE ... WHERE true`：
- *   · page.wikidot_id  ∈ [970_000_000, 979_999_999]
- *   · user.wikidot_id  ∈ [980_000_000, 989_999_999]
+ *   · page.wikidot_id  ∈ [2_100_000_000, 2_109_999_999]
+ *   · user.wikidot_id  ∈ [2_110_000_000, 2_119_999_999]
  *   · 非 wikidot 用户   anon_key LIKE 'ts2test:%'
  *   · meta.ingest_run  source = 'test_syncer2'
  *   · projection_cursor projection LIKE 'test\_%'
@@ -27,10 +27,12 @@
 import type { Sess } from './pg.js';
 import { toPgTimestamptz } from './pg.js';
 
-export const PAGE_WID_LO = 970_000_000;
-export const PAGE_WID_HI = 979_999_999;
-export const USER_WID_LO = 980_000_000;
-export const USER_WID_HI = 989_999_999;
+// 旧段 970m/980m 与真实 Wikidot id 重叠：2026-07-28 清理曾误删 9 个 S1 page。
+// 改用 int4 顶部的测试保留段；启动/清理仍只按 wikidot_id，不碰 v1 page.id 值域。
+export const PAGE_WID_LO = 2_100_000_000;
+export const PAGE_WID_HI = 2_109_999_999;
+export const USER_WID_LO = 2_110_000_000;
+export const USER_WID_HI = 2_119_999_999;
 export const TEST_KEY_PREFIX = 'ts2test:';
 export const TEST_RUN_SOURCE = 'test_syncer2';
 export const TEST_PROJECTION_PREFIX = 'test_';

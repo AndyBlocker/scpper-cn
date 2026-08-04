@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 
 import { extractPageIdentity, slugToUrl } from '../src/page/identity.js';
 import { parseWikiCategories, parseProbePolicy, amcProbePolicyFor, randomToken7 } from '../src/http/amc.js';
-import { isIpLike } from '../src/http/egress.js';
+import { isIpLike, proxyInboundPortFromUrl } from '../src/http/egress.js';
 import { backoffFrom } from '../src/store/queues.js';
 
 /** 2026-07-27 实测 scp-cn-1000 整页 GET 的 WIKIREQUEST 段（逐字）。 */
@@ -142,6 +142,12 @@ describe('http/egress: 出口 IP 形状校验', () => {
     assert.equal(isIpLike('999.1.1.1'), false);
     assert.equal(isIpLike(''), false);
     assert.equal(isIpLike('not-an-ip'), false);
+  });
+
+  it('mihomo 归因钉住当前代理入口端口，不能混入另一入口的 DIRECT', () => {
+    assert.equal(proxyInboundPortFromUrl('http://127.0.0.1:7891'), '7891');
+    assert.equal(proxyInboundPortFromUrl('http://127.0.0.1'), '80');
+    assert.equal(proxyInboundPortFromUrl(null), null);
   });
 });
 

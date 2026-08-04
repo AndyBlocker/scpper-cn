@@ -3,7 +3,7 @@
 // =====================================================================================
 // 目标库 : scpper-v2（env SYNCER2_DATABASE_URL），与 v1 生产库 scpper-cn 物理隔离
 // 生成于 : `npx prisma db pull` 从**已建好的真实库**反向introspect（不是手写），
-//          再人工修正关系字段命名。2026-07-27 实测：84 表 ↔ 84 model 一对一，
+//          再人工修正关系字段命名。2026-07-27 实测：86 表 ↔ 86 model 一对一，
 //          16 个分区子表被正确排除。
 //
 // ── 为什么是独立文件，而不是改 backend/prisma/schema.prisma ─────────────────────────
@@ -116,7 +116,6 @@
 //   在本文件里表现为 `@@index([...(ops: raw("gin_trgm_ops"))], type: Gin)`。
 //   trgm 只支撑 ILIKE，不支撑 pgroonga 的 `&@~` —— 读侧写 `&@~` 分支会**报错**而不是变慢。
 // =====================================================================================
-
 generator client {
   provider        = "prisma-client-js"
   output          = "../node_modules/.prisma/syncer2-client"
@@ -452,15 +451,18 @@ model attribution_event {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model content_blob {
-  sha256       Bytes          @id
-  source       String?
-  text_content String?
-  byte_len     Int
-  text_len     Int            @default(0)
-  created_at   DateTime       @default(now()) @db.Timestamptz(6)
-  page_source  page_source[]
-  revision     revision[]
-  page_current page_current[]
+  sha256                       Bytes                          @id
+  source                       String?
+  text_content                 String?
+  byte_len                     Int
+  text_len                     Int                            @default(0)
+  created_at                   DateTime                       @default(now()) @db.Timestamptz(6)
+  text_content_basis           String                         @default("wikidot_html")
+  page_source                  page_source[]
+  revision                     revision[]
+  revision_source_delta        revision_source_delta[]
+  revision_source_backfill_job revision_source_backfill_job[]
+  page_current                 page_current[]
 
   @@schema("ingest")
 }
@@ -492,14 +494,15 @@ model forum_post {
   edited_at             DateTime?                 @db.Timestamptz(6)
   is_deleted            Boolean                   @default(false)
   observed_at           DateTime                  @db.Timestamptz(6)
+  created_by_type       String?
   alerts_as_parent_post forum_interaction_alert[] @relation("forum_interaction_alert_parent_post_idToforum_post")
   alerts_as_post        forum_interaction_alert[] @relation("forum_interaction_alert_post_idToforum_post")
   user                  user?                     @relation(fields: [author_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   forum_thread          forum_thread              @relation(fields: [thread_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  @@index([text_plain(ops: raw("gin_trgm_ops"))], map: "fp_search_trgm", type: Gin)
   @@index([thread_id, created_at], map: "fp_thread")
-  @@index([title(ops: raw("gin_trgm_ops"))], map: "fp_title_search_trgm", type: Gin)
+  @@index([text_plain], map: "fp_search")
+  @@index([title], map: "fp_title_search")
   @@schema("ingest")
 }
 
@@ -515,6 +518,8 @@ model forum_thread {
   post_count              Int                       @default(0)
   is_deleted              Boolean                   @default(false)
   last_synced_at          DateTime                  @db.Timestamptz(6)
+  page_id_source          String?
+  description             String?
   forum_interaction_alert forum_interaction_alert[]
   forum_post              forum_post[]
   forum_category          forum_category            @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -527,31 +532,35 @@ model forum_thread {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model page {
-  id                      Int                       @id
-  wikidot_id              Int                       @unique
-  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
-  forum_interaction_alert forum_interaction_alert[]
-  page_metric_alert       page_metric_alert[]
-  page_metric_watch       page_metric_watch[]
-  page_view_event         page_view_event[]
-  tag_definition          tag_definition[]
-  tag_guide_sync          tag_guide_sync?
-  user_activity_alert     user_activity_alert[]
-  user_collection_item    user_collection_item[]
-  attribution_event       attribution_event[]
-  forum_thread            forum_thread[]
-  page_attr_history       page_attr_history[]
-  page_life_event         page_life_event[]
-  lineage_as_predecessor  page_lineage[]            @relation("page_lineage_predecessor_idTopage")
-  lineage_as_successor    page_lineage?             @relation("page_lineage_successor_idTopage")
-  page_slug_history       page_slug_history[]
-  page_source             page_source[]
-  revision                revision[]
-  vote_event              vote_event[]
-  attribution_current     attribution_current[]
-  page_current            page_current?
-  page_semantic           page_semantic?
-  vote_current            vote_current[]
+  id                            Int                            @id
+  wikidot_id                    Int                            @unique
+  created_at                    DateTime                       @default(now()) @db.Timestamptz(6)
+  forum_interaction_alert       forum_interaction_alert[]
+  page_metric_alert             page_metric_alert[]
+  page_metric_watch             page_metric_watch[]
+  page_view_event               page_view_event[]
+  tag_definition                tag_definition[]
+  tag_guide_sync                tag_guide_sync?
+  user_activity_alert           user_activity_alert[]
+  user_collection_item          user_collection_item[]
+  attribution_event             attribution_event[]
+  forum_thread                  forum_thread[]
+  page_attr_history             page_attr_history[]
+  page_life_event               page_life_event[]
+  lineage_as_predecessor        page_lineage[]                 @relation("page_lineage_predecessor_idTopage")
+  lineage_as_successor          page_lineage?                  @relation("page_lineage_successor_idTopage")
+  page_slug_history             page_slug_history[]
+  page_source                   page_source[]
+  revision                      revision[]
+  revision_source_delta         revision_source_delta[]
+  vote_event                    vote_event[]
+  vote_snapshot_event           vote_snapshot_event[]
+  v1_attribution_map            v1_attribution_map[]
+  v1_page_life_divergence_audit v1_page_life_divergence_audit?
+  attribution_current           attribution_current[]
+  page_current                  page_current?
+  page_semantic                 page_semantic?
+  vote_current                  vote_current[]
 
   @@schema("ingest")
 }
@@ -611,6 +620,7 @@ model page_slug_history {
   valid_to   DateTime? @db.Timestamptz(6)
   page       page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@unique([page_id, slug, valid_from], map: "psh_backfill_identity")
   @@index([slug], map: "psh_slug")
   @@schema("ingest")
 }
@@ -632,21 +642,24 @@ model page_source {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model revision {
-  seq                 BigInt                @id @default(autoincrement())
-  page_id             Int
-  wikidot_revision_id BigInt?               @unique
-  rev_no              Int?
-  type                String?
-  author_id           Int?
-  occurred_at         DateTime              @db.Timestamptz(6)
-  comment             String?
-  source_sha          Bytes?
-  observed_at         DateTime              @db.Timestamptz(6)
-  source              String
-  user_activity_alert user_activity_alert[]
-  user                user?                 @relation(fields: [author_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  page                page                  @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  content_blob        content_blob?         @relation(fields: [source_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+  seq                                                                     BigInt                        @id @default(autoincrement())
+  page_id                                                                 Int
+  wikidot_revision_id                                                     BigInt?                       @unique
+  rev_no                                                                  Int?
+  type                                                                    String?
+  author_id                                                               Int?
+  occurred_at                                                             DateTime                      @db.Timestamptz(6)
+  comment                                                                 String?
+  source_sha                                                              Bytes?
+  observed_at                                                             DateTime                      @db.Timestamptz(6)
+  source                                                                  String
+  user_activity_alert                                                     user_activity_alert[]
+  user                                                                    user?                         @relation(fields: [author_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  page                                                                    page                          @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  content_blob                                                            content_blob?                 @relation(fields: [source_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+  revision_source_delta_revision_source_delta_from_revision_seqTorevision revision_source_delta[]       @relation("revision_source_delta_from_revision_seqTorevision")
+  revision_source_delta_revision_source_delta_revision_seqTorevision      revision_source_delta?        @relation("revision_source_delta_revision_seqTorevision")
+  revision_source_backfill_job                                            revision_source_backfill_job?
 
   @@index([author_id, occurred_at], map: "rev_author")
   @@index([page_id, occurred_at(sort: Desc), seq(sort: Desc)], map: "rev_page")
@@ -664,6 +677,7 @@ model user {
   display_name                String?
   created_at                  DateTime                  @default(now()) @db.Timestamptz(6)
   wikidot_unix_name           String?
+  username_is_legacy          Boolean                   @default(false)
   collection_account_owner    collection_account_owner?
   forum_alerts_as_actor       forum_interaction_alert[] @relation("forum_interaction_alert_actor_user_idTouser")
   forum_alerts_as_recipient   forum_interaction_alert[] @relation("forum_interaction_alert_recipient_user_idTouser")
@@ -680,11 +694,12 @@ model user {
   forum_thread                forum_thread[]
   revision                    revision[]
   vote_event                  vote_event[]
+  v1_attribution_map          v1_attribution_map[]
   attribution_current         attribution_current[]
   vote_current                vote_current[]
 
-  @@index([display_name(ops: raw("gin_trgm_ops"))], map: "u_display_pgroonga_trgm", type: Gin)
-  @@index([username(ops: raw("gin_trgm_ops"))], map: "u_username_pgroonga_trgm", type: Gin)
+  @@index([display_name], map: "u_display_pgroonga")
+  @@index([username], map: "u_username_pgroonga")
   @@schema("ingest")
 }
 
@@ -708,6 +723,29 @@ model vote_event {
 
   @@index([page_id, seq], map: "ve_page")
   @@index([voter_id, seq], map: "ve_voter")
+  @@schema("ingest")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model vote_snapshot_event {
+  seq                 BigInt   @id @default(autoincrement())
+  page_id             Int
+  observed_at         DateTime @db.Timestamptz(6)
+  source              String
+  run_id              BigInt?
+  snapshot_hash       Bytes
+  row_count           Int
+  rating              Int
+  unique_voter_count  Int
+  unique_voter_rating Int
+  rating_delta        Int
+  up_delta            Int
+  down_delta          Int
+  affected_voter_ids  Int[]    @default([])
+  page                page     @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, seq], map: "vse_page_seq")
+  @@index([run_id], map: "vse_run")
   @@schema("ingest")
 }
 
@@ -796,16 +834,17 @@ model forum_scan_task {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model image_ingest_job {
-  id             BigInt    @id @default(autoincrement())
+  id             BigInt     @id @default(autoincrement())
   page_id        Int
   normalized_url String
-  status         String    @default("pending")
-  attempts       Int       @default(0)
+  status         String     @default("pending")
+  attempts       Int        @default(0)
   locked_by      String?
-  locked_at      DateTime? @db.Timestamptz(6)
+  locked_at      DateTime?  @db.Timestamptz(6)
   error          String?
-  created_at     DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+  created_at     DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime   @default(now()) @db.Timestamptz(6)
+  page_image     page_image @relation(fields: [page_id, normalized_url], references: [page_id, normalized_url], onDelete: Cascade, onUpdate: NoAction, map: "image_ingest_job_page_image_fk")
 
   @@unique([page_id, normalized_url])
   @@schema("meta")
@@ -824,24 +863,31 @@ model ingest_gate {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model ingest_run {
-  id                               BigInt                  @id @default(autoincrement())
+  id                               BigInt                    @id @default(autoincrement())
   source                           String
-  started_at                       DateTime                @default(now()) @db.Timestamptz(6)
-  finished_at                      DateTime?               @db.Timestamptz(6)
-  status                           String                  @default("running")
+  started_at                       DateTime                  @default(now()) @db.Timestamptz(6)
+  finished_at                      DateTime?                 @db.Timestamptz(6)
+  status                           String                    @default("running")
   pages_enumerated                 Int?
   remote_total                     Int?
   remote_total_source              String?
   batches_total                    Int?
   batches_failed                   Int?
-  transport_failure_rate           Float?                  @db.Real
-  exit_ip_stats                    Json                    @default("{}")
-  parse_fingerprint                Json                    @default("{}")
-  stats                            Json                    @default("{}")
-  coverage_ratio                   Float?                  @default(dbgenerated("((pages_enumerated)::real / (NULLIF(remote_total, 0))::double precision)")) @db.Real
+  transport_failure_rate           Float?                    @db.Real
+  exit_ip_stats                    Json                      @default("{}")
+  parse_fingerprint                Json                      @default("{}")
+  stats                            Json                      @default("{}")
+  coverage_ratio                   Float?                    @default(dbgenerated("((pages_enumerated)::real / (NULLIF(remote_total, 0))::double precision)")) @db.Real
+  incremental_drift_state          incremental_drift_state[]
+  incremental_page_state           incremental_page_state[]
+  incremental_signal               incremental_signal[]
   page_scan                        page_scan[]
-  baselines_computed_from_this_run parse_health_baseline[] @relation("parse_health_baseline_computed_from_runToingest_run")
-  baselines_breached_at_this_run   parse_health_baseline[] @relation("parse_health_baseline_last_breach_runToingest_run")
+  page_scan_run_summary            page_scan_run_summary[]
+  baselines_computed_from_this_run parse_health_baseline[]   @relation("parse_health_baseline_computed_from_runToingest_run")
+  baselines_breached_at_this_run   parse_health_baseline[]   @relation("parse_health_baseline_last_breach_runToingest_run")
+  reconcile_report                 reconcile_report[]
+  revision_coverage_metric         revision_coverage_metric?
+  revision_source_pilot            revision_source_pilot[]
   revoke_candidate                 revoke_candidate[]
   write_freeze                     write_freeze[]
 
@@ -852,16 +898,79 @@ model ingest_run {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model irreconcilable {
-  page_id      Int
-  kind         String
-  local_value  Json
-  remote_value Json
-  first_seen   DateTime  @default(now()) @db.Timestamptz(6)
-  last_checked DateTime  @default(now()) @db.Timestamptz(6)
-  checks       Int       @default(1)
-  resolved_at  DateTime? @db.Timestamptz(6)
+  page_id        Int
+  kind           String
+  local_value    Json
+  remote_value   Json
+  first_seen     DateTime  @default(now()) @db.Timestamptz(6)
+  last_checked   DateTime  @default(now()) @db.Timestamptz(6)
+  checks         Int       @default(1)
+  resolved_at    DateTime? @db.Timestamptz(6)
+  result_hash    Bytes?
+  next_review_at DateTime? @db.Timestamptz(6)
+  locked_by      String?
+  locked_at      DateTime? @db.Timestamptz(6)
 
   @@id([page_id, kind])
+  @@schema("meta")
+}
+
+/// L0/L1 independent cross-process baselines; advanced only after a complete successful scan.
+model incremental_page_state {
+  slug                 String      @id
+  page_id              Int?
+  last_l0_revision     Int?
+  last_l0_updated_at   DateTime?   @db.Timestamptz(6)
+  last_l0_seen_at      DateTime?   @db.Timestamptz(6)
+  last_l1_revision     Int?
+  last_l1_rating       Int?
+  last_l1_rating_votes Int?
+  last_l1_seen_at      DateTime?   @db.Timestamptz(6)
+  last_l1_run_id       BigInt?
+  updated_at           DateTime    @default(now()) @db.Timestamptz(6)
+  ingest_run           ingest_run? @relation(fields: [last_l1_run_id], references: [id], onUpdate: NoAction)
+
+  @@index([last_l0_seen_at(sort: Desc)], map: "ips_l0_seen")
+  @@index([last_l1_seen_at(sort: Desc)], map: "ips_l1_seen")
+  @@schema("meta")
+}
+
+/// Per-page evidence emitted independently by every freshness layer.
+model incremental_signal {
+  run_id      BigInt
+  layer       String
+  slug        String
+  page_id     Int?
+  signal      String
+  detected_at DateTime   @default(now()) @db.Timestamptz(6)
+  details     Json       @default("{}")
+  ingest_run  ingest_run @relation(fields: [run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([run_id, layer, slug, signal])
+  @@index([layer, signal, detected_at(sort: Desc)], map: "is_layer_signal_detected")
+  @@index([slug, detected_at(sort: Desc)], map: "is_slug_detected")
+  @@schema("meta")
+}
+
+/// Persistent L0 coverage proof computed from every successful L1 revision snapshot.
+model revision_coverage_metric {
+  l1_run_id            BigInt     @id
+  window_started_at    DateTime   @db.Timestamptz(6)
+  window_ended_at      DateTime   @db.Timestamptz(6)
+  l1_revision_changes  Int
+  l0_captured_changes  Int
+  l0_missed_changes    Int
+  coverage_rate        Decimal?   @db.Decimal
+  rolling_7d_changes   Int
+  rolling_7d_captured  Int
+  rolling_7d_coverage  Decimal?   @db.Decimal
+  sample_missed_slugs  String[]   @default([])
+  measured_at          DateTime   @default(now()) @db.Timestamptz(6)
+  is_baseline_init     Boolean    @default(false)
+  baseline_init_reason String?
+  ingest_run           ingest_run @relation(fields: [l1_run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([measured_at(sort: Desc)], map: "rcm_measured_at")
   @@schema("meta")
 }
 
@@ -901,6 +1010,28 @@ model page_scan {
 
   @@id([run_id, page_id, kind])
   @@index([page_id, kind, scanned_at(sort: Desc)], map: "ps_page_kind")
+  @@index([scanned_at], map: "ps_scanned_at")
+  @@schema("meta")
+}
+
+/// Run-level page-scan evidence retained after successful page rows expire.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_scan_run_summary {
+  run_id             BigInt
+  kind               String
+  status             String
+  pages              BigInt
+  claimed_pages      BigInt
+  fetched_pages      BigInt
+  checksum_ok_pages  BigInt
+  checksum_bad_pages BigInt
+  first_scanned_at   DateTime   @db.Timestamptz(6)
+  last_scanned_at    DateTime   @db.Timestamptz(6)
+  refreshed_at       DateTime   @default(now()) @db.Timestamptz(6)
+  ingest_run         ingest_run @relation(fields: [run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([run_id, kind, status])
+  @@index([run_id], map: "psrs_run")
   @@schema("meta")
 }
 
@@ -925,10 +1056,13 @@ model parse_health_baseline {
   last_breach_value     Decimal?    @db.Decimal
   last_breach_run       BigInt?
   breach_count          Int         @default(0)
+  mode                  String      @default("unspecified")
+  population_type       String      @default("unspecified")
+  min_history_windows   Int         @default(3)
   computed_from_run_rel ingest_run? @relation("parse_health_baseline_computed_from_runToingest_run", fields: [computed_from_run], references: [id], onUpdate: NoAction)
   last_breach_run_rel   ingest_run? @relation("parse_health_baseline_last_breach_runToingest_run", fields: [last_breach_run], references: [id], onUpdate: NoAction)
 
-  @@id([source, metric])
+  @@id([source, mode, population_type, metric])
   @@schema("meta")
 }
 
@@ -1086,18 +1220,19 @@ model vote_quarantine {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model write_freeze {
-  domain        String      @id
-  frozen        Boolean     @default(false)
+  domain        String                  @id
+  frozen        Boolean                 @default(false)
   reason        String?
-  frozen_at     DateTime?   @db.Timestamptz(6)
+  frozen_at     DateTime?               @db.Timestamptz(6)
   frozen_by     String?
-  released_at   DateTime?   @db.Timestamptz(6)
+  released_at   DateTime?               @db.Timestamptz(6)
   released_by   String?
   breach_metric String?
   breach_run    BigInt?
-  freeze_count  Int         @default(0)
-  updated_at    DateTime    @default(now()) @db.Timestamptz(6)
-  ingest_run    ingest_run? @relation(fields: [breach_run], references: [id], onUpdate: NoAction)
+  freeze_count  Int                     @default(0)
+  updated_at    DateTime                @default(now()) @db.Timestamptz(6)
+  alert_after   Unsupported("interval") @default(dbgenerated("'00:30:00'::interval"))
+  ingest_run    ingest_run?             @relation(fields: [breach_run], references: [id], onUpdate: NoAction)
 
   @@schema("meta")
 }
@@ -1234,39 +1369,44 @@ model leaderboard_cache {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model page_current {
-  page_id              Int           @id
-  wikidot_id           Int           @unique
-  slug                 String
-  status               String
-  deleted_at           DateTime?     @db.Timestamptz(6)
-  deleted_at_precision String?
-  title                String?
-  alternate_title      String?
-  tags                 String[]      @default([])
-  category             String?
-  parent_page_id       Int?
-  first_published_at   DateTime?     @db.Timestamptz(6)
-  discussion_thread_id BigInt?
-  rating               Int           @default(0)
-  vote_up              Int           @default(0)
-  vote_down            Int           @default(0)
-  vote_revoked         Int           @default(0)
-  revision_count       Int           @default(0)
-  comment_count        Int           @default(0)
-  attribution_count    Int           @default(0)
-  source_sha           Bytes?
-  search_text          String?
-  cursor_seq           BigInt        @default(0)
-  updated_at           DateTime      @default(now()) @db.Timestamptz(6)
-  page                 page          @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  content_blob         content_blob? @relation(fields: [source_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+  page_id                        Int            @id
+  wikidot_id                     Int            @unique
+  slug                           String
+  status                         String
+  deleted_at                     DateTime?      @db.Timestamptz(6)
+  deleted_at_precision           String?
+  title                          String?
+  alternate_title                String?
+  tags                           String[]       @default([])
+  category                       String?
+  parent_page_id                 Int?
+  first_published_at             DateTime?      @db.Timestamptz(6)
+  discussion_thread_id           BigInt?
+  rating                         Int            @default(0)
+  unique_voter_rating            Int            @default(0)
+  unique_voter_count             Int            @default(0)
+  vote_up                        Int            @default(0)
+  vote_down                      Int            @default(0)
+  vote_revoked                   Int            @default(0)
+  revision_count                 Int            @default(0)
+  comment_count                  Int            @default(0)
+  attribution_count              Int            @default(0)
+  source_sha                     Bytes?
+  search_text                    String?
+  cursor_seq                     BigInt         @default(0)
+  updated_at                     DateTime       @default(now()) @db.Timestamptz(6)
+  last_complete_vote_snapshot_at DateTime?      @db.Timestamptz(6)
+  page                           page           @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  parent                         page_current?  @relation("page_current_parent", fields: [parent_page_id], references: [page_id], onDelete: Restrict, onUpdate: NoAction, map: "page_current_parent_page_fk")
+  children                       page_current[] @relation("page_current_parent")
+  content_blob                   content_blob?  @relation(fields: [source_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
 
-  @@index([alternate_title(ops: raw("gin_trgm_ops"))], map: "pc_alt_search_trgm", type: Gin)
-  @@index([search_text(ops: raw("gin_trgm_ops"))], map: "pc_search_trgm", type: Gin)
   @@index([slug], map: "pc_slug")
   @@index([status, rating(sort: Desc)], map: "pc_status_rating")
   @@index([tags], map: "pc_tags", type: Gin)
-  @@index([title(ops: raw("gin_trgm_ops"))], map: "pc_title_search_trgm", type: Gin)
+  @@index([alternate_title], map: "pc_alt_search")
+  @@index([search_text], map: "pc_search")
+  @@index([title], map: "pc_title_search")
   @@schema("serve")
 }
 
@@ -1291,19 +1431,20 @@ model page_daily_stats {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model page_image {
-  page_id         Int
-  normalized_url  String
-  origin_url      String
-  display_url     String?
-  status          String       @default("pending")
-  asset_sha       Bytes?
-  extracted_at    DateTime     @default(now()) @db.Timestamptz(6)
-  last_queued_at  DateTime?    @db.Timestamptz(6)
-  last_fetched_at DateTime?    @db.Timestamptz(6)
-  failure_count   Int          @default(0)
-  last_error      String?
-  metadata        Json?
-  image_asset     image_asset? @relation(fields: [asset_sha], references: [hash_sha256], onDelete: NoAction, onUpdate: NoAction)
+  page_id          Int
+  normalized_url   String
+  origin_url       String
+  display_url      String?
+  status           String            @default("pending")
+  asset_sha        Bytes?
+  extracted_at     DateTime          @default(now()) @db.Timestamptz(6)
+  last_queued_at   DateTime?         @db.Timestamptz(6)
+  last_fetched_at  DateTime?         @db.Timestamptz(6)
+  failure_count    Int               @default(0)
+  last_error       String?
+  metadata         Json?
+  image_ingest_job image_ingest_job?
+  image_asset      image_asset?      @relation(fields: [asset_sha], references: [hash_sha256], onDelete: NoAction, onUpdate: NoAction)
 
   @@id([page_id, normalized_url])
   @@index([status], map: "pi_status")
@@ -1561,6 +1702,7 @@ model user_stats {
   page_count            Int       @default(0)
   votes_cast_up         Int       @default(0)
   votes_cast_down       Int       @default(0)
+  voted_page_count      Int       @default(0)
   votes_received_up     Int       @default(0)
   votes_received_down   Int       @default(0)
   rating_scp            Int?
@@ -1639,17 +1781,22 @@ model user_vote_interaction {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model vote_current {
-  page_id        Int
-  voter_id       Int
-  direction      Int       @db.SmallInt
-  first_voted_at DateTime? @db.Timestamptz(6)
-  last_voted_at  DateTime  @db.Timestamptz(6)
-  last_precision String
-  last_seq       BigInt
-  page           page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  user           user      @relation(fields: [voter_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  page_id              Int
+  voter_id             Int
+  direction            Int       @db.SmallInt
+  first_voted_at       DateTime? @db.Timestamptz(6)
+  last_voted_at        DateTime  @db.Timestamptz(6)
+  last_precision       String
+  last_seq             BigInt
+  source_row_ordinal   Int       @default(0)
+  source_identity_key  String?
+  snapshot_hash        Bytes?
+  snapshot_observed_at DateTime? @db.Timestamptz(6)
+  snapshot_source      String?
+  page                 page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user                 user      @relation(fields: [voter_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  @@id([page_id, voter_id])
+  @@id([page_id, voter_id, source_row_ordinal])
   @@index([page_id, last_voted_at(sort: Desc), voter_id], map: "vc_page_time")
   @@index([voter_id, last_voted_at(sort: Desc)], map: "vc_voter")
   @@schema("serve")
@@ -1672,17 +1819,18 @@ model vote_daily {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model embedding_model {
-  model_id      Int             @id @db.SmallInt
-  name          String          @unique
-  dim           Int
-  metric        String          @default("cosine")
-  normalized    Boolean         @default(true)
-  storage       String          @default("halfvec")
-  is_active     Boolean         @default(false)
-  endpoint      String?
-  notes         String?
-  created_at    DateTime        @default(now()) @db.Timestamptz(6)
-  page_semantic page_semantic[]
+  model_id        Int               @id @db.SmallInt
+  name            String            @unique
+  dim             Int
+  metric          String            @default("cosine")
+  normalized      Boolean           @default(true)
+  storage         String            @default("halfvec")
+  is_active       Boolean           @default(false)
+  endpoint        String?
+  notes           String?
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  chunk_embedding chunk_embedding[]
+  page_semantic   page_semantic[]
 
   @@schema("serve")
 }
@@ -1714,19 +1862,21 @@ model page_semantic {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model text_chunk {
-  text_sha     Bytes
-  chunker      String
-  chunk_index  Int          @db.SmallInt
-  chunk_total  Int          @db.SmallInt
-  char_start   Int
-  char_end     Int
-  content      String
-  text_len     Int
-  created_at   DateTime     @default(now()) @db.Timestamptz(6)
-  text_chunker text_chunker @relation(fields: [chunker], references: [chunker], onDelete: NoAction, onUpdate: NoAction)
+  text_sha        Bytes
+  chunker         String
+  chunk_index     Int               @db.SmallInt
+  chunk_total     Int               @db.SmallInt
+  char_start      Int
+  char_end        Int
+  content         String
+  text_len        Int
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  chunk_embedding chunk_embedding[]
+  text_chunker    text_chunker      @relation(fields: [chunker], references: [chunker], onDelete: NoAction, onUpdate: NoAction)
 
   @@id([text_sha, chunker, chunk_index])
   @@index([chunker], map: "tc_chunker")
+  @@index([content], map: "tc_content_pgroonga")
   @@schema("serve")
 }
 
@@ -1746,6 +1896,272 @@ model text_chunker {
   text_chunk    text_chunk[]
 
   @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model reconcile_report {
+  id                 BigInt      @id @default(autoincrement())
+  run_id             BigInt?
+  mode               String
+  status             String
+  observed_at        DateTime    @db.Timestamptz(6)
+  finished_at        DateTime    @db.Timestamptz(6)
+  lag_window_seconds Int         @default(3600)
+  compared_count     Int         @default(0)
+  difference_count   Int         @default(0)
+  unexplained_count  Int         @default(0)
+  report             Json
+  qq_summary         Json
+  created_at         DateTime    @default(now()) @db.Timestamptz(6)
+  ingest_run         ingest_run? @relation(fields: [run_id], references: [id], onUpdate: NoAction)
+
+  @@index([mode, observed_at(sort: Desc)], map: "rr_mode_observed")
+  @@index([status, observed_at(sort: Desc)], map: "rr_status_observed")
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model chunk_embedding {
+  text_sha        Bytes
+  chunker         String
+  chunk_index     Int                    @db.SmallInt
+  model_id        Int                    @db.SmallInt
+  embedding       Unsupported("halfvec")
+  created_at      DateTime               @default(now()) @db.Timestamptz(6)
+  embedding_model embedding_model        @relation(fields: [model_id], references: [model_id], onDelete: NoAction, onUpdate: NoAction)
+  text_chunk      text_chunk             @relation(fields: [text_sha, chunker, chunk_index], references: [text_sha, chunker, chunk_index], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([text_sha, chunker, chunk_index, model_id])
+  @@index([embedding], map: "ce_hnsw")
+  @@index([model_id], map: "ce_model")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v1_attribution_map {
+  v1_attribution_id  Int       @id
+  v1_page_version_id Int
+  page_id            Int
+  v1_user_id         Int?
+  anon_key           String?
+  actor_id           Int
+  role               String
+  ord                Int
+  at_date            DateTime? @db.Date
+  user               user      @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  page               page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id], map: "v1am_page")
+  @@index([v1_page_version_id], map: "v1am_pv")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model v1_backfill_artifact_freeze {
+  artifact    String   @id
+  row_count   BigInt
+  fingerprint String
+  frozen_at   DateTime @default(now()) @db.Timestamptz(6)
+  frozen_by   String   @default(dbgenerated("CURRENT_USER"))
+
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v1_legacy_snapshot {
+  source_table       String   @id
+  row_count          BigInt
+  source_fingerprint String
+  target_fingerprint String
+  source_database    String
+  import_script_path String   @default("backend/src/cli/legacy-vote-migrate.ts")
+  copied_at          DateTime @default(now()) @db.Timestamptz(6)
+  frozen_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@schema("meta")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model v1_legacy_snapshot_pages {
+  Id        BigInt? @unique(map: "v1lsp_id") @map("__Id")
+  WikidotId BigInt
+  SiteId    BigInt
+  Name      String
+  Title     String?
+
+  @@ignore
+  @@schema("meta")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model v1_legacy_snapshot_vote_history {
+  Id            BigInt?   @unique(map: "v1lsvh_id") @map("__Id")
+  PageId        BigInt
+  UserId        BigInt
+  Value         Int?      @db.SmallInt
+  DateTime      DateTime? @db.Timestamptz(6)
+  DeltaFromPrev Int?      @db.SmallInt
+
+  @@ignore
+  @@schema("meta")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model v1_legacy_snapshot_votes {
+  Id            BigInt?   @unique(map: "v1lsv_id") @map("__Id")
+  PageId        BigInt
+  UserId        BigInt
+  Value         Int?      @db.SmallInt
+  DateTime      DateTime? @db.Timestamptz(6)
+  DeltaFromPrev Int?      @db.SmallInt
+
+  @@ignore
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v1_page_life_divergence_audit {
+  page_id                    Int      @id
+  v1_page_is_deleted         Boolean
+  v1_current_version_id      Int
+  v1_current_version_deleted Boolean
+  resolved_deleted           Boolean
+  resolution                 String
+  captured_at                DateTime @default(now()) @db.Timestamptz(6)
+  page                       page     @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v1_anonymous_actor_remap_audit {
+  old_id                 Int      @id
+  new_id                 Int      @unique
+  old_kind               String
+  old_wikidot_id         Int?
+  old_anon_key           String?
+  old_username           String?
+  old_display_name       String?
+  old_created_at         DateTime @db.Timestamptz(6)
+  old_wikidot_unix_name  String?
+  old_username_is_legacy Boolean
+  references_before      Json
+  v1_max_user_id         Int
+  reserved_start         Int
+  safety_factor          Int
+  remap_reason           String
+  remapped_at            DateTime @default(now()) @db.Timestamptz(6)
+  remapped_by            String   @default(dbgenerated("SESSION_USER"))
+
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model revision_source_delta {
+  revision_seq                                               BigInt        @id
+  page_id                                                    Int
+  from_revision_seq                                          BigInt?
+  from_wikidot_revision_id                                   BigInt?
+  to_wikidot_revision_id                                     BigInt        @unique(map: "rsd_wikidot_revision")
+  from_rev_no                                                Int?
+  to_rev_no                                                  Int?
+  parser_version                                             String
+  patch                                                      Json
+  before_sha256                                              Bytes?
+  after_sha256                                               Bytes
+  anchor_sha                                                 Bytes?
+  before_tags                                                String[]
+  after_tags                                                 String[]
+  before_occurred_at                                         DateTime?     @db.Timestamptz(6)
+  after_occurred_at                                          DateTime      @db.Timestamptz(6)
+  source_changed                                             Boolean
+  remote_response_sha256                                     Bytes?
+  remote_response_bytes                                      Int?
+  observed_at                                                DateTime      @default(now()) @db.Timestamptz(6)
+  source                                                     String        @default("wikidot_page_diff")
+  content_blob                                               content_blob? @relation(fields: [anchor_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+  revision_revision_source_delta_from_revision_seqTorevision revision?     @relation("revision_source_delta_from_revision_seqTorevision", fields: [from_revision_seq], references: [seq], onDelete: NoAction, onUpdate: NoAction)
+  page                                                       page          @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  revision_revision_source_delta_revision_seqTorevision      revision      @relation("revision_source_delta_revision_seqTorevision", fields: [revision_seq], references: [seq], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, after_occurred_at, revision_seq], map: "rsd_page_revision")
+  @@schema("ingest")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model revision_source_backfill_job {
+  revision_seq             BigInt        @id
+  page_id                  Int
+  wikidot_id               Int
+  wikidot_revision_id      BigInt
+  from_revision_seq        BigInt?
+  from_wikidot_revision_id BigInt?
+  ordinal                  Int
+  revision_total           Int
+  is_anchor                Boolean
+  status                   String        @default("pending")
+  attempts                 Int           @default(0)
+  consecutive_failures     Int           @default(0)
+  not_before               DateTime      @default(now()) @db.Timestamptz(6)
+  locked_by                String?
+  locked_at                DateTime?     @db.Timestamptz(6)
+  last_error               String?
+  created_at               DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime      @default(now()) @db.Timestamptz(6)
+  strategy                 String        @default("page-source-v1")
+  source_sha               Bytes?
+  source_bytes             Int?
+  response_bytes           Int?
+  blob_inserted            Boolean?
+  completed_at             DateTime?     @db.Timestamptz(6)
+  revision                 revision      @relation(fields: [revision_seq], references: [seq], onDelete: NoAction, onUpdate: NoAction)
+  content_blob             content_blob? @relation(fields: [source_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, ordinal], map: "rsbj_page")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model revision_source_pilot {
+  parser_version  String      @id
+  run_id          BigInt?
+  sample_count    Int
+  exact_matches   Int
+  failed_count    Int
+  passed          Boolean
+  anchor_interval Int
+  detail          Json        @default("{}")
+  checked_at      DateTime    @default(now()) @db.Timestamptz(6)
+  ingest_run      ingest_run? @relation(fields: [run_id], references: [id], onUpdate: NoAction)
+
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model incremental_drift_state {
+  page_id                  Int
+  kind                     String
+  slug                     String
+  first_detected_at        DateTime   @db.Timestamptz(6)
+  last_detected_at         DateTime   @db.Timestamptz(6)
+  last_observation_run_id  BigInt
+  consecutive_observations Int        @default(1)
+  local_value              Json
+  remote_value             Json
+  last_enqueued_at         DateTime?  @db.Timestamptz(6)
+  resolved_at              DateTime?  @db.Timestamptz(6)
+  ingest_run               ingest_run @relation(fields: [last_observation_run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([page_id, kind])
+  @@schema("meta")
 }
 
 enum collection_visibility {

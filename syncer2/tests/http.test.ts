@@ -128,6 +128,15 @@ async function startServer(): Promise<TestServer> {
         res.writeHead(404);
         res.end('nope');
         return;
+      case '/gzip-404': {
+        const body = gzipSync(Buffer.from('页面不存在：这是解压后的可读错误体', 'utf8'));
+        res.writeHead(404, {
+          'content-encoding': 'gzip',
+          'content-type': 'text/plain; charset=utf-8',
+        });
+        res.end(body);
+        return;
+      }
       case '/302':
         res.writeHead(302, { location: '/ok' });
         res.end();
@@ -135,6 +144,14 @@ async function startServer(): Promise<TestServer> {
       case '/reset':
         // 实测形态：AMC POST 缺 Referer 时边缘直接重置 TCP 连接。
         req.socket.destroy();
+        return;
+      case '/flaky-reset':
+        if (state.hitsOf(path) <= state.flakyFailures) {
+          req.socket.destroy();
+          return;
+        }
+        res.writeHead(200);
+        res.end('recovered');
         return;
       default:
         res.writeHead(418);
@@ -250,6 +267,28 @@ describe('§1 请求头契约：构造期就炸，不给"退化成 503 洪水"�
       assert.equal(echoed.headers['referer'], 'http://referer.example/');
       // 这条头实测值 1 MB/次（sitemap 1.14 MB → gzip 180 KB）
       assert.equal(echoed.headers['accept-encoding'], 'gzip, deflate, br');
+    } finally {
+      await c.close();
+    }
+  });
+});
+
+describe('请求启动节流：补账客户端遵守最小尝试间隔', () => {
+  it('两个连续业务请求的启动间隔不会突破配置的 QPS 上限', async () => {
+    const minIntervalMs = 50;
+    const c = mk({ minRequestIntervalMs: minIntervalMs });
+    server.reset();
+    try {
+      const started = performance.now();
+      await c.get(`${server.base}/ok`, 'rate:first');
+      await c.get(`${server.base}/ok`, 'rate:second');
+      const elapsed = performance.now() - started;
+      assert.equal(server.hitsOf('/ok'), 2);
+      // 给调度/时钟 5ms 余量；错误实现（完全没等待）通常 <10ms。
+      assert.ok(
+        elapsed >= minIntervalMs - 5,
+        `期望至少 ${minIntervalMs - 5}ms，实际 ${elapsed.toFixed(1)}ms`,
+      );
     } finally {
       await c.close();
     }
@@ -434,6 +473,34 @@ describe('§3 500：与 503 分开处理，正常重试到 maxAttempts', () => {
     }
   });
 
+  it('probe 瞬时 reset 后成功：探针单独记账，业务失败率分母仍为 0', async () => {
+    const c = mk({ maxAttempts: 3, breakerReset: 6 });
+    server.reset();
+    server.flakyFailures = 1;
+    try {
+      const res = await c.get(`${server.base}/flaky-reset`, 'probe:amc');
+      assert.equal(res.status, 200);
+      assert.equal(server.hitsOf('/flaky-reset'), 2);
+      assert.deepEqual(c.healthStats(), {
+        business: {
+          requests: 0,
+          attempts: 0,
+          statusBuckets: {},
+          transportFailures: 0,
+        },
+        probe: {
+          requests: 1,
+          attempts: 2,
+          statusBuckets: { '200': 1 },
+          transportFailures: 0,
+        },
+      });
+      assert.deepEqual(c.stats().statusBuckets, { '200': 1, transport: 1 });
+    } finally {
+      await c.close();
+    }
+  });
+
   it('4xx / 3xx 立即抛、零重试、不计熔断；3xx 刻意不跟随', async () => {
     const c = mk({ maxAttempts: 3 });
     server.reset();
@@ -458,6 +525,24 @@ describe('§3 500：与 503 分开处理，正常重试到 maxAttempts', () => {
       assert.equal(st.consecutive503, 0);
       assert.equal(st.breakerOpen, false);
       assert.equal(st.retries, 0);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it('回归：gzip 404 先解压再构造错误消息，压缩头的 NUL 不得泄漏', async () => {
+    const c = mk({ maxAttempts: 1 });
+    server.reset();
+    try {
+      await assert.rejects(c.get(`${server.base}/gzip-404`, 'm'), (err: unknown) => {
+        assert.ok(err instanceof HttpStatusError);
+        assert.equal(err.status, 404);
+        assert.match(err.message, /页面不存在：这是解压后的可读错误体/);
+        assert.doesNotMatch(err.message, /\u0000/);
+        assert.doesNotMatch(err.message, /[\u0001-\u0008\u000b\u000c\u000e-\u001f]/);
+        return true;
+      });
+      assert.equal(server.hitsOf('/gzip-404'), 1);
     } finally {
       await c.close();
     }

@@ -1,0 +1,40 @@
+<!--
+  2026-07-27 生产响应结构的最小重建：
+  · 标记位于 td[2]，不是旧 ContentScanner 假定的 td[1]
+  · revision 9002 同时带“页面源代码已变更 + 标题已变更”
+  · deleted printuser 的 data-id 保留真实 wikidot 用户 id
+-->
+<table class="page-history">
+  <tbody>
+    <tr id="revision-row-9003">
+      <td>2.</td>
+      <td><input type="radio" name="from" value="9003"></td>
+      <td><span class="spantip" title="页面源代码已变更">S</span></td>
+      <td>V S R</td>
+      <td><span class="printuser avatarhover"><a href="http://www.wikidot.com/user:info/alice" onclick="WIKIDOT.page.listeners.userInfo(12345); return false;">Alice</a></span></td>
+      <td><span class="odate time_1781028002">09 Jun 2026 18:00</span></td>
+      <td>修正文案 &amp; 链接</td>
+    </tr>
+    <tr id="revision-row-9002">
+      <td>1.</td>
+      <td><input type="radio" name="from" value="9002"></td>
+      <td>
+        <span class="spantip" title="页面源代码已变更">S</span>
+        <span class="spantip" title="标题已变更">T</span>
+      </td>
+      <td>V S R</td>
+      <td><span class="printuser deleted" data-id="10356112">(account deleted)</span></td>
+      <td><span class="odate time_1781025889">09 Jun 2026 17:24</span></td>
+      <td></td>
+    </tr>
+    <tr id="revision-row-9001">
+      <td>0.</td>
+      <td><input type="radio" name="from" value="9001"></td>
+      <td><span class="spantip" title="创建新页面">N</span></td>
+      <td>V S R</td>
+      <td><span class="printuser">访客作者</span></td>
+      <td><span class="odate time_1781000000">09 Jun 2026 10:00</span></td>
+      <td>创建</td>
+    </tr>
+  </tbody>
+</table>
