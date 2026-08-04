@@ -6,7 +6,8 @@
  *   sitemap_page_1.xml     → 1.14 MB 原始 / **gzip 180 KB / 1.16 s / 10,000 条**
  *   4 个 page sitemap 合计 → gzip ≈ 620 KB / ≈ 5 s / **35,983 个唯一 slug**
  *   lastmod                → 精确到秒的 UTC，实测 === ListPages %%updated_at%%（5/5 逐秒相等）
- *   排序                    → 近似按 lastmod 全局降序：page_1 ≈ 最近 3.7 个月内被修改的全部页面
+ *   排序                    → 最后活动（编辑∨投票∨评论），不是 lastmod 降序；
+ *                            可比较 page_1 的相对位置做活动信号，但严禁 lastmod 早停
  *   缓存                    → cache-control: no-cache, must-revalidate；**无 ETag / 无 Last-Modified**
  *                            → 不支持条件 GET，每轮都是全量下载（gzip 后可忽略）
  *   枚举域                  → 排除 `deleted:` 分类；也不含 `forum:`
@@ -201,6 +202,23 @@ export function fetchPageSitemapDelta(
   logger?: Logger,
 ): Promise<SitemapFetchResult> {
   return fetchSitemapFamily(http, baseUrl, { kind: 'page', limit: 1, concurrency: 1, ...(logger ? { logger } : {}) });
+}
+
+/**
+ * L1 固定成本入口：直接抓 sitemap_page_1，不先取 sitemap.xml。
+ * 该函数的网络预算恒为 1 个 wiki GET；TTL 实测为 60 分钟。
+ */
+export function fetchPageSitemapActivityHead(
+  http: HttpClient,
+  baseUrl: string,
+  logger?: Logger,
+): Promise<SitemapFile> {
+  const entry: SitemapIndexEntry = {
+    loc: sitemapFileUrl(baseUrl, 'page', 1),
+    kind: 'page',
+    index: 1,
+  };
+  return fetchSitemapFile(http, entry, logger);
 }
 
 /** full 模式：抓全部 page sitemap（实测 4 个 / gzip 620 KB / ≈5 s / 35,983 slug）。 */

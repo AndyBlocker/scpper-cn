@@ -101,6 +101,8 @@ export interface EgressAttributorOptions {
   mihomoApi: string | null;
   /** 只统计目标 host 的连接（例：scp-wiki-cn.wikidot.com）。 */
   hostFilter: string;
+  /** 只统计当前 HttpClient 所用 mihomo 入口，避免混入其它进程/端口的同 host 连接。 */
+  proxyInboundPort: string | null;
   /** mihomo 采样最小间隔（ms）。 */
   mihomoMinIntervalMs?: number;
   probeTimeoutMs?: number;
@@ -110,6 +112,7 @@ export interface EgressAttributorOptions {
 const ATTRIBUTION_NOTE =
   'byIp = 采样自 IP 回显探针，语义是「池构成」而非逐请求出口（实测 mihomo 每连接换 IP，' +
   '连续三次探针得到三个不同 IP）；byNode = mihomo /connections 的 chains[0]，是按连接的真值。' +
+  'mihomo 连接同时按目标 host 与当前代理入口端口过滤，避免混入其它进程的 DIRECT；' +
   '定位坏节点请优先看 transportFailureByNode。';
 
 export class EgressAttributor {
@@ -143,6 +146,7 @@ export class EgressAttributor {
       maxProbes: Math.max(0, opts.maxProbes),
       mihomoApi: opts.mihomoApi && opts.mihomoApi.trim() !== '' ? opts.mihomoApi.replace(/\/+$/, '') : null,
       hostFilter: opts.hostFilter,
+      proxyInboundPort: opts.proxyInboundPort,
       mihomoMinIntervalMs: opts.mihomoMinIntervalMs ?? 250,
       probeTimeoutMs: opts.probeTimeoutMs ?? 5_000,
     };
@@ -287,7 +291,12 @@ export class EgressAttributor {
       const payload = (await res.body.json()) as {
         connections?: Array<{
           chains?: string[];
-          metadata?: { host?: string; sniffHost?: string; remoteDestination?: string };
+          metadata?: {
+            host?: string;
+            sniffHost?: string;
+            remoteDestination?: string;
+            inboundPort?: string;
+          };
         }>;
       };
       this.#mihomoReachable = true;
@@ -296,6 +305,12 @@ export class EgressAttributor {
       for (const c of payload.connections ?? []) {
         const host = `${c.metadata?.host ?? ''}|${c.metadata?.sniffHost ?? ''}`;
         if (!host.includes(this.#opts.hostFilter)) continue;
+        if (
+          this.#opts.proxyInboundPort !== null &&
+          c.metadata?.inboundPort !== this.#opts.proxyInboundPort
+        ) {
+          continue;
+        }
         const node = c.chains?.[0];
         if (!node) continue;
         hit++;
@@ -317,6 +332,15 @@ export class EgressAttributor {
       this.#log.debug('mihomo 控制器采样失败（降级为无节点归因）', { error: String(err) });
     }
   }
+}
+
+export function proxyInboundPortFromUrl(proxyUrl: string | null): string | null {
+  if (proxyUrl === null || proxyUrl.trim() === '') return null;
+  const parsed = new URL(proxyUrl);
+  if (parsed.port !== '') return parsed.port;
+  if (parsed.protocol === 'http:') return '80';
+  if (parsed.protocol === 'https:') return '443';
+  return null;
 }
 
 /**

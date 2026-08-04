@@ -33,7 +33,12 @@ import { Agent, ProxyAgent, request, type Dispatcher } from 'undici';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { performance } from 'node:perf_hooks';
 import { createLogger, type Logger } from '../util/log.js';
-import { EgressAttributor, type EgressAttributorOptions, type ExitIpStats } from './egress.js';
+import {
+  EgressAttributor,
+  proxyInboundPortFromUrl,
+  type EgressAttributorOptions,
+  type ExitIpStats,
+} from './egress.js';
 
 // ─── 错误类型 ────────────────────────────────────────────────────────────────
 
@@ -112,6 +117,33 @@ export interface HttpClientStats {
   breakerReason: string | null;
 }
 
+export interface HttpHealthScopeStats {
+  /** 完成的逻辑请求数；一次请求内部的重试不重复计数。 */
+  requests: number;
+  attempts: number;
+  /** 最终结果分桶；重试后成功只记最终 2xx，不把瞬时 reset 伪装成失败请求。 */
+  statusBuckets: Record<string, number>;
+  /** 最终因传输错误耗尽的逻辑请求数。 */
+  transportFailures: number;
+}
+
+export interface HttpHealthStats {
+  /** 真正采集业务数据的请求；这是 parse-health 唯一允许使用的分母。 */
+  business: HttpHealthScopeStats;
+  /** mode=probe:* 的启动探针，单独留证但不参与业务失败率。 */
+  probe: HttpHealthScopeStats;
+}
+
+export function businessTransportFailureRate(http: HttpClient): number | null {
+  const business = http.healthStats().business;
+  return business.requests === 0 ? null : business.transportFailures / business.requests;
+}
+
+export function businessHttpStatusDistribution(http: HttpClient): Record<string, number> | null {
+  const business = http.healthStats().business;
+  return business.requests === 0 ? null : business.statusBuckets;
+}
+
 export interface HttpClientOptions {
   userAgent: string;
   referer: string;
@@ -126,6 +158,8 @@ export interface HttpClientOptions {
   breakerReset?: number;
   /** dispatcher 连接池大小。 */
   connections?: number;
+  /** 相邻 HTTP 尝试的最小启动间隔；用于有明确 QPS 预算的补账任务。 */
+  minRequestIntervalMs?: number;
   logger?: Logger;
   /** 每条请求遥测的回调（可选，用于流式落盘）。 */
   onTelemetry?: (t: RequestTelemetry) => void;
@@ -134,7 +168,7 @@ export interface HttpClientOptions {
    * 省略 = 不做归因（exitIpStats() 返回 null）。dispatcher 由 client 自己注入 ——
    * 探针必须走**同一个代理池**才有意义。
    */
-  egress?: Omit<EgressAttributorOptions, 'dispatcher' | 'logger'>;
+  egress?: Omit<EgressAttributorOptions, 'dispatcher' | 'logger' | 'proxyInboundPort'>;
 }
 
 export interface HttpRequestOptions {
@@ -256,6 +290,7 @@ export class HttpClient {
   readonly #maxAttempts: number;
   readonly #breaker503: number;
   readonly #breakerReset: number;
+  #minRequestIntervalMs: number;
   readonly #log: Logger;
   readonly #onTelemetry: ((t: RequestTelemetry) => void) | undefined;
   readonly #telemetry: RequestTelemetry[] = [];
@@ -265,6 +300,8 @@ export class HttpClient {
   #consecutive503 = 0;
   #consecutiveResets = 0;
   #breakerReason: string | null = null;
+  #lastAttemptStartedAt = Number.NEGATIVE_INFINITY;
+  #paceTail: Promise<void> = Promise.resolve();
 
   #stats: HttpClientStats = {
     requests: 0,
@@ -279,13 +316,23 @@ export class HttpClient {
     breakerOpen: false,
     breakerReason: null,
   };
+  #health: HttpHealthStats = {
+    business: emptyHealthScope(),
+    probe: emptyHealthScope(),
+  };
 
   constructor(opts: HttpClientOptions) {
     this.#log = opts.logger ?? createLogger('http');
     this.#timeoutMs = opts.timeoutMs ?? 30_000;
     this.#maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
-    this.#breaker503 = Math.max(1, opts.breaker503 ?? 3);
-    this.#breakerReset = Math.max(1, opts.breakerReset ?? 6);
+    // 采集规格铁律：基线传输失败率约 2.3%，N=5 的误跳闸概率约 6e-9。
+    // 这里也用 5，避免绕过 config.ts 直接构造客户端时退回旧的 3/6。
+    this.#breaker503 = Math.max(1, opts.breaker503 ?? 5);
+    this.#breakerReset = Math.max(1, opts.breakerReset ?? 5);
+    this.#minRequestIntervalMs = Math.max(
+      0,
+      Math.floor(opts.minRequestIntervalMs ?? 0),
+    );
     this.#onTelemetry = opts.onTelemetry;
     this.proxyUrl = opts.proxyUrl && opts.proxyUrl.trim() !== '' ? opts.proxyUrl.trim() : null;
 
@@ -317,6 +364,7 @@ export class HttpClient {
       ? new EgressAttributor({
           ...opts.egress,
           dispatcher: this.#dispatcher,
+          proxyInboundPort: proxyInboundPortFromUrl(this.proxyUrl),
           logger: this.#log.child('egress'),
         })
       : null;
@@ -329,6 +377,7 @@ export class HttpClient {
       maxAttempts: this.#maxAttempts,
       breaker503: this.#breaker503,
       breakerReset: this.#breakerReset,
+      minRequestIntervalMs: this.#minRequestIntervalMs,
     });
   }
 
@@ -344,6 +393,15 @@ export class HttpClient {
     this.#log.info('assertHeaders 通过', {
       userAgent: this.#baseHeaders['user-agent'],
       referer: this.#baseHeaders['referer'],
+    });
+  }
+
+  /** 在任务认领后按批次启用/关闭请求启动节流；不会取消已经发出的请求。 */
+  setMinRequestIntervalMs(value: number): void {
+    this.#minRequestIntervalMs = Math.max(0, Math.floor(value));
+    this.#lastAttemptStartedAt = Number.NEGATIVE_INFINITY;
+    this.#log.info('请求启动节流已更新', {
+      minRequestIntervalMs: this.#minRequestIntervalMs,
     });
   }
 
@@ -363,6 +421,19 @@ export class HttpClient {
       consecutiveResets: this.#consecutiveResets,
       breakerOpen: this.breakerOpen,
       breakerReason: this.#breakerReason,
+    };
+  }
+
+  /**
+   * 面向全局 parse-health 的逻辑请求口径。
+   *
+   * `stats()` 仍保留全部逐尝试诊断（含 probe 和已恢复的瞬时错误）；健康判定必须使用
+   * 本口径，避免空队列启动探针的一次 reset 把 n=1 算成 50% 全局故障。
+   */
+  healthStats(): HttpHealthStats {
+    return {
+      business: cloneHealthScope(this.#health.business),
+      probe: cloneHealthScope(this.#health.probe),
     };
   }
 
@@ -427,6 +498,10 @@ export class HttpClient {
 
     try {
       while (attempts < maxAttempts) {
+        await this.#paceRequestAttempt();
+        if (this.#breakerReason !== null) {
+          throw new CircuitOpenError(this.#breakerReason);
+        }
         attempts++;
         this.#stats.attempts++;
 
@@ -480,7 +555,10 @@ export class HttpClient {
             };
           }
 
-          const snippet = raw.subarray(0, 200).toString('utf-8').replace(/\s+/g, ' ').trim();
+          // 非 2xx 也可能被 gzip/br 压缩。旧实现把压缩字节直接当 UTF-8：
+          // gzip 头的 mtime/xfl/os 字段天然含 0x00，随后进入 HttpStatusError.message，
+          // 最终让 meta.record_page_scan(error text) 自身报 22021。
+          const snippet = errorBodySnippet(raw, resHeaders['content-encoding'] ?? null);
           lastError = new HttpStatusError(lastStatus, url, snippet);
         } catch (err) {
           if (err instanceof CircuitOpenError || err instanceof HeaderContractError) throw err;
@@ -529,6 +607,26 @@ export class HttpClient {
       // 「某几个节点坏了」这个问题只有在失败的那一刻采样才答得上来。
       await this.#egress?.afterRequest(false);
       throw err;
+    }
+  }
+
+  async #paceRequestAttempt(): Promise<void> {
+    if (this.#minRequestIntervalMs === 0) return;
+    let release = (): void => undefined;
+    const previous = this.#paceTail;
+    this.#paceTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      const waitMs = Math.max(
+        0,
+        this.#lastAttemptStartedAt + this.#minRequestIntervalMs - performance.now(),
+      );
+      if (waitMs > 0) await sleep(waitMs);
+      this.#lastAttemptStartedAt = performance.now();
+    } finally {
+      release();
     }
   }
 
@@ -598,6 +696,12 @@ export class HttpClient {
     this.#stats.decodedBytes += t.decodedBytes;
     this.#stats.totalDurationMs += t.durationMs;
     this.#telemetry.push(t);
+    const scope = t.mode.startsWith('probe:') ? this.#health.probe : this.#health.business;
+    scope.requests++;
+    scope.attempts += t.attempts;
+    const bucket = t.status === null ? 'transport' : String(t.status);
+    scope.statusBuckets[bucket] = (scope.statusBuckets[bucket] ?? 0) + 1;
+    if (!t.ok && t.status === null) scope.transportFailures++;
     this.#onTelemetry?.(t);
     this.#log.debug('request', {
       mode: t.mode,
@@ -609,6 +713,14 @@ export class HttpClient {
     });
     return t;
   }
+}
+
+function emptyHealthScope(): HttpHealthScopeStats {
+  return { requests: 0, attempts: 0, statusBuckets: {}, transportFailures: 0 };
+}
+
+function cloneHealthScope(scope: HttpHealthScopeStats): HttpHealthScopeStats {
+  return { ...scope, statusBuckets: { ...scope.statusBuckets } };
 }
 
 // ─── 辅助 ────────────────────────────────────────────────────────────────────
@@ -647,6 +759,23 @@ export function decodeBody(raw: Buffer, contentEncoding: string | null): Buffer 
     throw new Error(`解压失败（content-encoding=${contentEncoding}）: ${describeError(e)}`);
   }
   return raw;
+}
+
+function errorBodySnippet(raw: Buffer, contentEncoding: string | null): string {
+  let decoded: Buffer;
+  try {
+    decoded = decodeBody(raw, contentEncoding);
+  } catch (err) {
+    // HTTP 状态仍是首要证据；错误页压缩损坏不能把它改判成“传输失败”，也绝不回退
+    // 到把原始压缩字节塞进人类消息。
+    return `[响应体解压失败：${describeError(err)}]`;
+  }
+  return [...decoded.toString('utf8')]
+    .slice(0, 200)
+    .join('')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '\ufffd')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function backoffMs(attempt: number): number {
