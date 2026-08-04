@@ -1,0 +1,119 @@
+// =====================================================================================
+// syncer2/prisma/schema.prisma —— scpper-v2（四 schema 新模型）的 Prisma 映射（TODO #9）
+// =====================================================================================
+// 目标库 : scpper-v2（env SYNCER2_DATABASE_URL），与 v1 生产库 scpper-cn 物理隔离
+// 生成于 : `npx prisma db pull` 从**已建好的真实库**反向introspect（不是手写），
+//          再人工修正关系字段命名。2026-07-27 实测：84 表 ↔ 84 model 一对一，
+//          16 个分区子表被正确排除。
+//
+// ── 为什么是独立文件，而不是改 backend/prisma/schema.prisma ─────────────────────────
+//   backend/prisma/schema.prisma 是 **v1 生产** 在用的：datasource 指 DATABASE_URL
+//   （= scpper-cn），模型名 PascalCase 对应 v1 的 Prisma 表名，并且带
+//   `extensions = [pgroonga]`。两库在并行期同时存在、schema 完全不同。
+//   复用同一个文件必然要在 datasource 上做分支，而 Prisma 的 datasource 是**单例**，
+//   一个 schema 文件只能对一个库生成一个 client。硬合并的后果是：
+//     * v1 的 `prisma migrate status` / `db pull` 会把 v2 的表当成"漂移"要求删掉；
+//     * 生成的 client 里 `prisma.page`（v2 ingest.page）和 `prisma.Page`（v1）同时存在，
+//       BFF 拿错一个就是跨库读，而类型系统看不出来。
+//   所以：两个文件、两个 client 输出目录（本文件 output 指向
+//   node_modules/.prisma/syncer2-client），并行期两个 client 并存、显式各自 import。
+//
+// ── 🔴 红线：本文件**只作读侧类型来源，绝不可用于 prisma migrate** ────────────────────
+//   权威 DDL 是 syncer2/migrations/*.sql。`prisma migrate dev/deploy` 会按本文件
+//   重建 schema，而 db pull **系统性地丢掉或谎报**下面这些结构（数字都是 2026-07-27 实测）：
+//
+//   1. 分区表 —— `ingest.vote_event` 是 `PARTITION BY RANGE(seq)`。
+//      db pull 自己就警告 "These tables are partition tables, which are not yet fully
+//      supported"，并把它降级成一张普通表。更危险的是主键那一行：
+//          seq BigInt @id @default(autoincrement())
+//      这是**谎报**。真实 DDL 是 `seq bigint PRIMARY KEY DEFAULT nextval('ingest.fact_seq')`,
+//      fact_seq 是 vote_event / revision / attribution_event / page_life_event
+//      **四张表共享**的全局摄入序，既是分区键也是 serve Tier-2 投影游标的推进单位。
+//      autoincrement() 会生成一条 vote_event 自己独占的 bigserial ⇒ 四张事实表之间的
+//      全序归并直接失效，而这件事在类型层面完全看不出来。
+//      ⇒ 若哪天真要让 Prisma 管迁移，vote_event / revision / attribution_event /
+//        page_life_event 四个 model 必须整体排除在 migrate 之外。
+//
+//   2. 部分索引 30 条，db pull **静默丢弃**（不是把 WHERE 抹掉后保留 —— 那更糟，
+//      这里是整条不出现）。其中 8 条是**部分唯一索引**，丢的是唯一性保证本身：
+//          ingest.page_slug_history  psh_current                          「每页至多一个当前 slug」
+//          ingest.page_attr_history  pah_current                          SCD2 当前区间唯一
+//          ingest.page_source        ps_rev
+//          ingest.revision           rev_pending
+//          serve.page_version_display pvd_current
+//          serve.embedding_model      em_one_active                       「至多一个 active 模型」
+//          app.user_activity_alert    uniq_user_activity_follow_revision   告警去重
+//          app.user_activity_alert    uniq_user_activity_follow_attr_event 告警去重
+//      Prisma Client 的**读**不受影响（索引只是加速/约束，不改列集）；受影响的是
+//      「按本文件重建库」这一条路径 —— 重建出来的库允许一页有两个当前 slug。
+//
+//   3. CHECK 约束 86 条，Prisma 完全不支持（db pull 逐条列进 warning）。
+//      包括 `vote_event.kind IN ('vote','revote','revoke')`、
+//      `user.kind IN ('wikidot','guest','anon','synthetic')` 以及
+//      「kind='wikidot' ⇒ wikidot_id NOT NULL」这类跨列 CHECK。
+//      ⇒ **写路径不能依赖 Prisma 的类型来保证词表**。ingest 的写入本来就只走
+//        apply_* 函数（见第 5 条），但 app schema 的写是 BFF 直写的，
+//        那 5 个原生 PG 枚举（0004_app.sql 设计约定 #4）之所以保留成枚举而不是
+//        text+CHECK，正是为了让 Prisma 能生成同名 TS 联合类型 —— 唯一能被 Prisma
+//        表达出来的那一类约束。
+//
+//   4. 触发器 28 个不可见。ingest 8 张事实表的 `trg_immutable` / `trg_no_truncate`、
+//      serve.page_daily_stats.views 的单调守卫、tick 表的 append-only 守卫，
+//      在 Prisma 侧全无痕迹。`prisma.vote_event.update()` 在类型上完全合法，
+//      运行时被触发器以 25006 拒掉。这是**故意如此**（权限+触发器才是边界），
+//      但读代码的人需要知道类型合法 ≠ 运行时允许。
+//
+//   5. 函数 46 个（34 个 SECURITY DEFINER）不可见：10 个 apply_* 转移函数、
+//      register_page / ensure_user、meta 的游标与门控函数。
+//      Prisma 没有存储过程映射，一律走 `prisma.$queryRaw` / `$executeRaw`。
+//      **ingest schema 的正确写法只有这一条**：
+//          await prisma.$executeRaw`SELECT ingest.apply_vote_observation(...)`
+//      任何 `prisma.vote_event.create()` 都绕过了 CAS 转移与 page_current 增量维护
+//      （v1 fast-vote 直写聚合列致盲脏页检测就是这个形态的成品）。
+//
+//   6. 索引 NULLS 顺序：db pull 警告 10 条 `NULLS FIRST/LAST` 非默认排序不被支持
+//      （us_rating_* 系列、uar_type_achieved、up_user_created、tvc_latest）。
+//      这些是排行榜分页的排序索引，重建后会退化成默认 NULL 顺序 ⇒ 分页会跳行。
+//
+//   7. 列注释：0001–0100 里大量 `COMMENT ON COLUMN`（设计决策与实测结论都写在那里）
+//      在本文件只表现为一行 `/// This model ... has comments in the database`。
+//      看语义要回去看 migrations/*.sql，不要拿本文件当文档。
+//
+// ── 命名决策：保留 snake_case model 名，不改 PascalCase ────────────────────────────
+//   v1 的 schema.prisma 是 PascalCase，因为 v1 的**表名**就是 PascalCase（Prisma 建的）。
+//   v2 的 DDL 通篇 snake_case，如果这里改成 PascalCase + @@map，就出现两套名字：
+//   写 SQL / 读迁移文件时是 `serve.page_current`，写 TS 时是 `prisma.pageCurrent`。
+//   并行期需要频繁在 migrations SQL 与 BFF 代码之间对照，一套名字的价值高于命名风格统一。
+//   ⇒ model 名 = 表名，逐字一致，零 @@map。
+//
+//   唯一做了人工修正的是**关系字段名**：同一张表有多个外键指向同一模型时，
+//   db pull 会生成 `user_forum_interaction_alert_actor_user_idTouser` 这种名字（24 处）。
+//   已全部改成语义名（actor / recipient / follower / target_user / predecessor / successor …）。
+//   ⚠ `@relation("...")` 里的**关系名字符串**刻意保持 db pull 的原值不动 ——
+//     它是两侧配对的键，改它等于要同步改两处，而它不出现在生成的 API 里。
+//
+// ── 维护流程（实测可重复）─────────────────────────────────────────────────────────
+//   库结构变了之后：
+//       cd syncer2 && npx prisma db pull --schema prisma/schema.prisma
+//       npx prisma validate --schema prisma/schema.prisma
+//       npx prisma generate --schema prisma/schema.prisma
+//   **一律用 `prisma/pull.sh`，不要直接跑 `prisma db pull`。** 原因是 2026-07-27 实测出的
+//   一条不对称行为：
+//     ✓ re-introspection **会保留**人工改过的关系字段名（24 处重命名重跑 pull 后全部存活），
+//       也会正确吸收并行任务新加的表（实测一次 pull 吸收了 4 张新 serve 表）；
+//     ✗ 但它**会把本注释块整块删掉** —— schema.prisma 顶部的 `//` 行不属于 Prisma AST 的
+//       任何节点，db pull 重写文件时不落盘（`///` 文档注释才会保留）。
+//   所以本注释块的权威副本在 `prisma/schema.header.prisma`，pull.sh 每次重新拼回文件头。
+//   直接跑 db pull 不会报错，只会静默把这一整块（连同上面 7 条降级说明）删掉。
+//
+//   pull.sh 还做一件事：pull 之后 grep 一遍 `To[a-z]` 报告新出现的丑关系名
+//   （新表的多重外键会再次生成 `xxx_yyy_zzz_idTouser` 这种名字，需要人工命名）。
+//
+// ── pgroonga / 全文搜索 ────────────────────────────────────────────────────────────
+//   本文件 datasource **不带** `extensions = [pgroonga]`（v1 的带）。
+//   理由：scpper-v2 上 pgroonga 扩展建不出来（需 superuser，实测 42501），
+//   0005_indexes_pgroonga.sql 已降级为 7 条 pg_trgm GIN 索引，
+//   在本文件里表现为 `@@index([...(ops: raw("gin_trgm_ops"))], type: Gin)`。
+//   trgm 只支撑 ILIKE，不支撑 pgroonga 的 `&@~` —— 读侧写 `&@~` 分支会**报错**而不是变慢。
+// =====================================================================================
+

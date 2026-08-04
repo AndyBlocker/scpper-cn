@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  **人造** urlset：专门堆 loc/lastmod 的边缘形态。
+  实测（chase_sm.1.xml 10,000 条）里 loc 全是小写、无百分号编码、无 XML 实体，
+  所以下面这些形态**当前不出现在真实响应里** —— 它们钉的是 slugFromLoc / normalizeLastmod
+  的归一化契约，防的是"站点某天开始输出这些形态时静默错位"。每条都注了它测什么。
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<!-- 站点根：无 slug。必须被计入 parse_drop_rate，不能静默丢。 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/</loc><lastmod>2026-07-27T07:24:33+00:00</lastmod></url>
+<!-- 正常条目 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/scp-cn-1000</loc><lastmod>2026-07-27T07:24:33+00:00</lastmod></url>
+<!-- https 协议：与 http 等价（协议/域名都被剥掉） -->
+<url><loc>https://scp-wiki-cn.wikidot.com/scp-cn-1000</loc><lastmod>2026-07-27T09:00:00+00:00</lastmod></url>
+<!-- 尾斜杠：剥掉后与不带尾斜杠同一个 slug -->
+<url><loc>http://scp-wiki-cn.wikidot.com/scp-cn-1001/</loc><lastmod>2026-07-27T01:00:00+00:00</lastmod></url>
+<!-- 大写：归一化为小写 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/SCP-CN-1002</loc><lastmod>2026-07-27T02:00:00+00:00</lastmod></url>
+<!-- category 前缀：保留 wikidot 原生 fullname 形态 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/wanderers:some-page</loc><lastmod>2026-07-26T02:00:00+00:00</lastmod></url>
+<!-- 百分号编码的中文 slug（"测试"）：必须解码 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/%E6%B5%8B%E8%AF%95</loc><lastmod>2026-07-25T02:00:00+00:00</lastmod></url>
+<!-- 非法百分号编码：退回原样，不丢条目 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/bad-%zz-escape</loc><lastmod>2026-07-24T02:00:00+00:00</lastmod></url>
+<!-- XML 实体：&amp; 必须被解码成 & -->
+<url><loc>http://scp-wiki-cn.wikidot.com/a&amp;b</loc><lastmod>2026-07-23T02:00:00+00:00</lastmod></url>
+<!-- 无 lastmod：计入 missing_lastmod_rate，但不丢条目 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/no-lastmod-page</loc></url>
+<!-- lastmod 带非 UTC 偏移：必须换算到 UTC，不能截断偏移 -->
+<url><loc>http://scp-wiki-cn.wikidot.com/offset-lastmod</loc><lastmod>2026-07-27T16:00:00+08:00</lastmod></url>
+<!-- lastmod 是垃圾串：normalizeLastmod → null（条目仍保留） -->
+<url><loc>http://scp-wiki-cn.wikidot.com/garbage-lastmod</loc><lastmod>not-a-date</lastmod></url>
+<!-- 属性形式的元素 + 元素名大小写混写：正则必须容忍 -->
+<url><LOC xml:lang="zh">http://scp-wiki-cn.wikidot.com/weird-markup</LOC><LastMod>2026-07-22T02:00:00+00:00</LastMod></url>
+<!-- loc 内外有空白：trim 掉 -->
+<url><loc>
+  http://scp-wiki-cn.wikidot.com/whitespace-page
+</loc><lastmod> 2026-07-21T02:00:00+00:00 </lastmod></url>
+</urlset>

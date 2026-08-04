@@ -1,0 +1,3 @@
+# 原始采集产物与只读 DB 导出，体积大且可由 sitemap-probe.sh 重新生成
+data/
+__pycache__/

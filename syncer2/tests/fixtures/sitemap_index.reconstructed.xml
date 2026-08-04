@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  按 2026-07-27 实测结构**重建**的 sitemap 索引（不是原始响应字节）。
+  实测事实（experiments/sitemap-probe.md、src/sitemap/fetch.ts 文件头）：
+    sitemap.xml → 4 × sitemap_page_N + 9 × sitemap_thread_N + 1 × sitemap_category_1，共 14 条。
+  之所以要重建：probe 脚本当时只落盘了子 sitemap（urlset），没保存索引响应本体；
+  而 experiments/data/ 整个目录是 gitignore 的，测试不能依赖它。
+  重建只保证**结构**与实测一致（元素、命名约定、条目数），不声称是逐字节原样。
+-->
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_page_1.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_page_2.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_page_3.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_page_4.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_1.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_2.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_3.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_4.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_5.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_6.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_7.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_8.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_thread_9.xml</loc></sitemap>
+<sitemap><loc>http://scp-wiki-cn.wikidot.com/sitemap_category_1.xml</loc></sitemap>
+</sitemapindex>

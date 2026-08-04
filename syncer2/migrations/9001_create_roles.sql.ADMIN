@@ -1,0 +1,82 @@
+-- =====================================================================================
+-- 9001_create_roles.sql.ADMIN —— 五个组角色的创建（**DBA 唯一需要执行的部分**）
+-- =====================================================================================
+--
+--            ★★★ 需要 CREATEROLE 或 superuser。整份文件只有 CREATE ROLE。 ★★★
+--
+-- 【为什么从 9000 里拆出来 —— 2026-07-27 逐语句实测的结论】
+--   9000_roles_grants.sql.ADMIN 有 456 行，但其中**只有 CREATE ROLE / COMMENT ON ROLE
+--   这两类语句**真的需要特权。其余全部（GRANT / REVOKE / ALTER DEFAULT PRIVILEGES）
+--   由**对象属主**执行即可，而四个 schema 与全部 78 张表的属主就是应用账号 user_dxzbdi
+--   （实测：pg_namespace.nspowner = user_dxzbdi ×4；pg_database.datdba = user_dxzbdi；
+--     schema public 属 pg_database_owner，而 user_dxzbdi 是其成员 ⇒ 也能改）。
+--
+--   所以 DBA 的动作面被压缩到这一个文件：**5 条 CREATE ROLE + 5 条 COMMENT**。
+--   剩下的授权矩阵放在 `9002_grants.sql`，由 apply.sh 用普通应用账号执行、可反复重跑。
+--
+--   这样拆的收益：
+--     · DBA 要审阅的代码从 456 行降到 ~50 行，且不含任何 GRANT —— 审阅成本与风险都最低；
+--     · 授权矩阵今后随 schema 演进而修改时，**不再需要每次都找 DBA**；
+--     · 角色一旦建成，`9002_grants.sql` 立刻把权限补齐，无需人工衔接。
+--
+-- 【只做本文件、不做 9002 的后果】角色存在但零权限（NOLOGIN 组角色，本身也连不上库），
+--   等于什么都没变。两个文件必须成对执行，顺序：9001（DBA）→ 9002（应用账号）。
+--
+-- 【执行方式】
+--   sudo -u postgres psql -p 5434 -d scpper-v2 -v ON_ERROR_STOP=1 \
+--        -f 9001_create_roles.sql.ADMIN
+--   或任何具备 CREATEROLE 的账号。**注意连的是 scpper-v2，不是 scpper-cn。**
+--
+-- 【幂等】CREATE ROLE 走 DO + duplicate_object 吞掉；COMMENT 无条件覆盖。可反复重跑。
+--
+-- 【安全边界】本文件不 CREATE DATABASE、不改 postgresql.conf / pg_hba.conf、
+--   不触碰 scpper-cn / scpper-syncer / scpper_user 三个库的任何对象与权限。
+--   建出来的 5 个角色是 NOLOGIN，不新增任何可登录入口。
+-- =====================================================================================
+
+BEGIN;
+
+-- 前置：确认连的是 v2 库，不是生产库（与 0001~0006 同一道闸）
+DO $$
+BEGIN
+  IF current_database() IN ('scpper-cn', 'scpper_cn') THEN
+    RAISE EXCEPTION '拒绝执行：当前库是 %，v2 的角色脚本只能作用于 scpper-v2。', current_database();
+  END IF;
+END $$;
+
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY[
+    'bff_role',           -- BFF 读面 + app 自有域写
+    'ingestor_role',      -- 采集器：只 EXECUTE apply_* + 写 meta 管道状态
+    'projector_role',     -- 投影器：读 ingest，写 serve Tier-2 与 app 告警实例
+    'avatar_worker_role', -- avatar-agent 图片 worker
+    'migration_role'      -- 唯一可绕过不可变触发器，仅迁移窗口启用
+  ] LOOP
+    BEGIN
+      -- NOLOGIN：组角色不带密码、不能登录。真正的登录账号见 9002 文件末尾的模板。
+      -- NOINHERIT：登录账号必须显式 SET ROLE 才拿到权限（或自己建成 INHERIT）。
+      EXECUTE format('CREATE ROLE %I NOLOGIN NOINHERIT', r);
+      RAISE NOTICE '已创建角色 %', r;
+    EXCEPTION WHEN duplicate_object THEN
+      RAISE NOTICE '角色 % 已存在，跳过创建', r;
+    END;
+  END LOOP;
+END $$;
+
+COMMENT ON ROLE bff_role           IS 'v2: BFF 读面(serve.* + ingest 身份/事件/论坛表)+ app 自有域写。对 ingest 事实表与 serve Tier-1 投影零 DML。';
+COMMENT ON ROLE ingestor_role      IS 'v2: 采集器。仅 EXECUTE ingest.apply_*/register_page/ensure_user + 写 meta 管道状态表。对 ingest/serve 的任何表无直接 DML。';
+COMMENT ON ROLE projector_role     IS 'v2: 投影器。SELECT ingest.*，写 serve Tier-2(不含三张 Tier-1)，写 app 告警实例与标签域，推 meta.projection_cursor。';
+COMMENT ON ROLE avatar_worker_role IS 'v2: avatar-agent 图片 worker。serve.page_image / serve.image_asset / meta.image_ingest_job(FOR UPDATE SKIP LOCKED 认领)。';
+COMMENT ON ROLE migration_role     IS 'v2: 迁移窗口专用。唯一被不可变触发器放行的角色，平时不应授予任何登录账号。';
+
+COMMIT;
+
+-- =====================================================================================
+-- 执行完请回执一行（供应用侧确认可以跑 9002）：
+--   SELECT rolname, rolcanlogin, rolinherit FROM pg_roles
+--    WHERE rolname IN ('bff_role','ingestor_role','projector_role',
+--                      'avatar_worker_role','migration_role') ORDER BY 1;
+--   期望：5 行，rolcanlogin 全 f，rolinherit 全 f。
+-- =====================================================================================

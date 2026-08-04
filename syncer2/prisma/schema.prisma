@@ -1,0 +1,1790 @@
+// =====================================================================================
+// syncer2/prisma/schema.prisma —— scpper-v2（四 schema 新模型）的 Prisma 映射（TODO #9）
+// =====================================================================================
+// 目标库 : scpper-v2（env SYNCER2_DATABASE_URL），与 v1 生产库 scpper-cn 物理隔离
+// 生成于 : `npx prisma db pull` 从**已建好的真实库**反向introspect（不是手写），
+//          再人工修正关系字段命名。2026-07-27 实测：84 表 ↔ 84 model 一对一，
+//          16 个分区子表被正确排除。
+//
+// ── 为什么是独立文件，而不是改 backend/prisma/schema.prisma ─────────────────────────
+//   backend/prisma/schema.prisma 是 **v1 生产** 在用的：datasource 指 DATABASE_URL
+//   （= scpper-cn），模型名 PascalCase 对应 v1 的 Prisma 表名，并且带
+//   `extensions = [pgroonga]`。两库在并行期同时存在、schema 完全不同。
+//   复用同一个文件必然要在 datasource 上做分支，而 Prisma 的 datasource 是**单例**，
+//   一个 schema 文件只能对一个库生成一个 client。硬合并的后果是：
+//     * v1 的 `prisma migrate status` / `db pull` 会把 v2 的表当成"漂移"要求删掉；
+//     * 生成的 client 里 `prisma.page`（v2 ingest.page）和 `prisma.Page`（v1）同时存在，
+//       BFF 拿错一个就是跨库读，而类型系统看不出来。
+//   所以：两个文件、两个 client 输出目录（本文件 output 指向
+//   node_modules/.prisma/syncer2-client），并行期两个 client 并存、显式各自 import。
+//
+// ── 🔴 红线：本文件**只作读侧类型来源，绝不可用于 prisma migrate** ────────────────────
+//   权威 DDL 是 syncer2/migrations/*.sql。`prisma migrate dev/deploy` 会按本文件
+//   重建 schema，而 db pull **系统性地丢掉或谎报**下面这些结构（数字都是 2026-07-27 实测）：
+//
+//   1. 分区表 —— `ingest.vote_event` 是 `PARTITION BY RANGE(seq)`。
+//      db pull 自己就警告 "These tables are partition tables, which are not yet fully
+//      supported"，并把它降级成一张普通表。更危险的是主键那一行：
+//          seq BigInt @id @default(autoincrement())
+//      这是**谎报**。真实 DDL 是 `seq bigint PRIMARY KEY DEFAULT nextval('ingest.fact_seq')`,
+//      fact_seq 是 vote_event / revision / attribution_event / page_life_event
+//      **四张表共享**的全局摄入序，既是分区键也是 serve Tier-2 投影游标的推进单位。
+//      autoincrement() 会生成一条 vote_event 自己独占的 bigserial ⇒ 四张事实表之间的
+//      全序归并直接失效，而这件事在类型层面完全看不出来。
+//      ⇒ 若哪天真要让 Prisma 管迁移，vote_event / revision / attribution_event /
+//        page_life_event 四个 model 必须整体排除在 migrate 之外。
+//
+//   2. 部分索引 30 条，db pull **静默丢弃**（不是把 WHERE 抹掉后保留 —— 那更糟，
+//      这里是整条不出现）。其中 8 条是**部分唯一索引**，丢的是唯一性保证本身：
+//          ingest.page_slug_history  psh_current                          「每页至多一个当前 slug」
+//          ingest.page_attr_history  pah_current                          SCD2 当前区间唯一
+//          ingest.page_source        ps_rev
+//          ingest.revision           rev_pending
+//          serve.page_version_display pvd_current
+//          serve.embedding_model      em_one_active                       「至多一个 active 模型」
+//          app.user_activity_alert    uniq_user_activity_follow_revision   告警去重
+//          app.user_activity_alert    uniq_user_activity_follow_attr_event 告警去重
+//      Prisma Client 的**读**不受影响（索引只是加速/约束，不改列集）；受影响的是
+//      「按本文件重建库」这一条路径 —— 重建出来的库允许一页有两个当前 slug。
+//
+//   3. CHECK 约束 86 条，Prisma 完全不支持（db pull 逐条列进 warning）。
+//      包括 `vote_event.kind IN ('vote','revote','revoke')`、
+//      `user.kind IN ('wikidot','guest','anon','synthetic')` 以及
+//      「kind='wikidot' ⇒ wikidot_id NOT NULL」这类跨列 CHECK。
+//      ⇒ **写路径不能依赖 Prisma 的类型来保证词表**。ingest 的写入本来就只走
+//        apply_* 函数（见第 5 条），但 app schema 的写是 BFF 直写的，
+//        那 5 个原生 PG 枚举（0004_app.sql 设计约定 #4）之所以保留成枚举而不是
+//        text+CHECK，正是为了让 Prisma 能生成同名 TS 联合类型 —— 唯一能被 Prisma
+//        表达出来的那一类约束。
+//
+//   4. 触发器 28 个不可见。ingest 8 张事实表的 `trg_immutable` / `trg_no_truncate`、
+//      serve.page_daily_stats.views 的单调守卫、tick 表的 append-only 守卫，
+//      在 Prisma 侧全无痕迹。`prisma.vote_event.update()` 在类型上完全合法，
+//      运行时被触发器以 25006 拒掉。这是**故意如此**（权限+触发器才是边界），
+//      但读代码的人需要知道类型合法 ≠ 运行时允许。
+//
+//   5. 函数 46 个（34 个 SECURITY DEFINER）不可见：10 个 apply_* 转移函数、
+//      register_page / ensure_user、meta 的游标与门控函数。
+//      Prisma 没有存储过程映射，一律走 `prisma.$queryRaw` / `$executeRaw`。
+//      **ingest schema 的正确写法只有这一条**：
+//          await prisma.$executeRaw`SELECT ingest.apply_vote_observation(...)`
+//      任何 `prisma.vote_event.create()` 都绕过了 CAS 转移与 page_current 增量维护
+//      （v1 fast-vote 直写聚合列致盲脏页检测就是这个形态的成品）。
+//
+//   6. 索引 NULLS 顺序：db pull 警告 10 条 `NULLS FIRST/LAST` 非默认排序不被支持
+//      （us_rating_* 系列、uar_type_achieved、up_user_created、tvc_latest）。
+//      这些是排行榜分页的排序索引，重建后会退化成默认 NULL 顺序 ⇒ 分页会跳行。
+//
+//   7. 列注释：0001–0100 里大量 `COMMENT ON COLUMN`（设计决策与实测结论都写在那里）
+//      在本文件只表现为一行 `/// This model ... has comments in the database`。
+//      看语义要回去看 migrations/*.sql，不要拿本文件当文档。
+//
+// ── 命名决策：保留 snake_case model 名，不改 PascalCase ────────────────────────────
+//   v1 的 schema.prisma 是 PascalCase，因为 v1 的**表名**就是 PascalCase（Prisma 建的）。
+//   v2 的 DDL 通篇 snake_case，如果这里改成 PascalCase + @@map，就出现两套名字：
+//   写 SQL / 读迁移文件时是 `serve.page_current`，写 TS 时是 `prisma.pageCurrent`。
+//   并行期需要频繁在 migrations SQL 与 BFF 代码之间对照，一套名字的价值高于命名风格统一。
+//   ⇒ model 名 = 表名，逐字一致，零 @@map。
+//
+//   唯一做了人工修正的是**关系字段名**：同一张表有多个外键指向同一模型时，
+//   db pull 会生成 `user_forum_interaction_alert_actor_user_idTouser` 这种名字（24 处）。
+//   已全部改成语义名（actor / recipient / follower / target_user / predecessor / successor …）。
+//   ⚠ `@relation("...")` 里的**关系名字符串**刻意保持 db pull 的原值不动 ——
+//     它是两侧配对的键，改它等于要同步改两处，而它不出现在生成的 API 里。
+//
+// ── 维护流程（实测可重复）─────────────────────────────────────────────────────────
+//   库结构变了之后：
+//       cd syncer2 && npx prisma db pull --schema prisma/schema.prisma
+//       npx prisma validate --schema prisma/schema.prisma
+//       npx prisma generate --schema prisma/schema.prisma
+//   **一律用 `prisma/pull.sh`，不要直接跑 `prisma db pull`。** 原因是 2026-07-27 实测出的
+//   一条不对称行为：
+//     ✓ re-introspection **会保留**人工改过的关系字段名（24 处重命名重跑 pull 后全部存活），
+//       也会正确吸收并行任务新加的表（实测一次 pull 吸收了 4 张新 serve 表）；
+//     ✗ 但它**会把本注释块整块删掉** —— schema.prisma 顶部的 `//` 行不属于 Prisma AST 的
+//       任何节点，db pull 重写文件时不落盘（`///` 文档注释才会保留）。
+//   所以本注释块的权威副本在 `prisma/schema.header.prisma`，pull.sh 每次重新拼回文件头。
+//   直接跑 db pull 不会报错，只会静默把这一整块（连同上面 7 条降级说明）删掉。
+//
+//   pull.sh 还做一件事：pull 之后 grep 一遍 `To[a-z]` 报告新出现的丑关系名
+//   （新表的多重外键会再次生成 `xxx_yyy_zzz_idTouser` 这种名字，需要人工命名）。
+//
+// ── pgroonga / 全文搜索 ────────────────────────────────────────────────────────────
+//   本文件 datasource **不带** `extensions = [pgroonga]`（v1 的带）。
+//   理由：scpper-v2 上 pgroonga 扩展建不出来（需 superuser，实测 42501），
+//   0005_indexes_pgroonga.sql 已降级为 7 条 pg_trgm GIN 索引，
+//   在本文件里表现为 `@@index([...(ops: raw("gin_trgm_ops"))], type: Gin)`。
+//   trgm 只支撑 ILIKE，不支撑 pgroonga 的 `&@~` —— 读侧写 `&@~` 分支会**报错**而不是变慢。
+// =====================================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../node_modules/.prisma/syncer2-client"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("SYNCER2_DATABASE_URL")
+  schemas  = ["app", "ingest", "meta", "serve"]
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model collection_account_owner {
+  account_id String   @id
+  user_id    Int      @unique
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("app")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model forum_interaction_alert {
+  id                Int                          @id @default(autoincrement())
+  recipient_user_id Int
+  actor_user_id     Int?
+  actor_wikidot_id  Int?
+  actor_name        String?
+  type              forum_interaction_alert_type
+  post_id           BigInt
+  parent_post_id    BigInt?
+  thread_id         BigInt
+  page_id           Int?
+  post_title        String?
+  post_excerpt      String?
+  detected_at       DateTime                     @default(now()) @db.Timestamptz(6)
+  acknowledged_at   DateTime?                    @db.Timestamptz(6)
+  created_at        DateTime                     @default(now()) @db.Timestamptz(6)
+  actor             user?                        @relation("forum_interaction_alert_actor_user_idTouser", fields: [actor_user_id], references: [id], onUpdate: NoAction)
+  page              page?                        @relation(fields: [page_id], references: [id], onUpdate: NoAction)
+  parent_post       forum_post?                  @relation("forum_interaction_alert_parent_post_idToforum_post", fields: [parent_post_id], references: [id], onUpdate: NoAction)
+  post              forum_post                   @relation("forum_interaction_alert_post_idToforum_post", fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  recipient         user                         @relation("forum_interaction_alert_recipient_user_idTouser", fields: [recipient_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  forum_thread      forum_thread                 @relation(fields: [thread_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([recipient_user_id, type, post_id], map: "uniq_forum_interaction_alert_recipient_type_post")
+  @@index([page_id, detected_at], map: "idx_forum_interaction_alert_page_detected")
+  @@index([post_id], map: "idx_forum_interaction_alert_post")
+  @@index([recipient_user_id, acknowledged_at, detected_at], map: "idx_forum_interaction_alert_recipient_ack_detected")
+  @@index([thread_id, detected_at], map: "idx_forum_interaction_alert_thread_detected")
+  @@schema("app")
+}
+
+model page_metric_alert {
+  id                Int               @id @default(autoincrement())
+  watch_id          Int
+  page_id           Int
+  metric            page_metric_type
+  prev_value        Float?
+  new_value         Float?
+  diff_value        Float?
+  detected_at       DateTime          @default(now()) @db.Timestamptz(6)
+  acknowledged_at   DateTime?         @db.Timestamptz(6)
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
+  page              page              @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  page_metric_watch page_metric_watch @relation(fields: [watch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([metric, detected_at], map: "idx_alert_metric_detected_at")
+  @@index([page_id, metric], map: "idx_alert_page_metric")
+  @@index([watch_id, detected_at], map: "idx_alert_watch_detected_at")
+  @@schema("app")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_metric_watch {
+  id                Int                        @id @default(autoincrement())
+  page_id           Int
+  user_id           Int
+  metric            page_metric_type
+  threshold_type    page_metric_threshold_type @default(ANY_CHANGE)
+  threshold_value   Float?
+  last_observed     Float?
+  source            String
+  muted_at          DateTime?                  @db.Timestamptz(6)
+  config            Json?
+  created_at        DateTime                   @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime                   @default(now()) @db.Timestamptz(6)
+  page_metric_alert page_metric_alert[]
+  page              page                       @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user              user                       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([page_id, user_id, metric, source], map: "uniq_watch_owner_metric_source")
+  @@index([page_id, metric], map: "idx_watch_page_metric")
+  @@index([user_id, metric], map: "idx_watch_user_metric")
+  @@schema("app")
+}
+
+model page_view_event {
+  id              BigInt   @id @default(autoincrement())
+  page_id         Int
+  wikidot_id      Int
+  client_hash     String
+  client_ip       String?
+  user_agent      String?
+  component       String?
+  source          String?
+  referer_host    String?
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  accept_language String?
+  ua_platform     String?
+  ua_brand_major  String?
+  ua_family       String?
+  softprint       String?
+  visitor_token   String?
+  tls_fingerprint String?
+  page            page     @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([page_id, created_at], map: "idx_pve_page_created")
+  @@index([page_id, client_hash, created_at], map: "idx_pve_page_hash")
+  @@index([page_id, client_ip, user_agent, created_at], map: "idx_pve_page_ip_ua")
+  @@index([wikidot_id, created_at], map: "idx_pve_wikidot")
+  @@schema("app")
+}
+
+model tag_definition {
+  id              Int      @id @default(autoincrement())
+  tag_chinese     String   @unique
+  tag_english     String?
+  description     String?
+  source_page_url String
+  source_page_id  Int?
+  category        String?
+  is_official     Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @default(now()) @db.Timestamptz(6)
+  page            page?    @relation(fields: [source_page_id], references: [id], onUpdate: NoAction)
+
+  @@index([category], map: "idx_tag_definition_category")
+  @@index([tag_english], map: "idx_tag_definition_english")
+  @@index([source_page_url], map: "idx_tag_definition_source")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model tag_guide_sync {
+  id             Int       @id @default(autoincrement())
+  page_id        Int       @unique
+  page_url       String?
+  last_blob_sha  Bytes?
+  tags_extracted Int       @default(0)
+  last_synced_at DateTime? @db.Timestamptz(6)
+  sync_status    String    @default("pending")
+  error_message  String?
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+  page           page      @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("app")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model tracking_debug_event {
+  id                 BigInt   @id @default(autoincrement())
+  kind               String
+  page_id            Int?
+  user_id            Int?
+  wikidot_id         Int?
+  username           String?
+  client_hash        String?
+  client_ip_raw      String?
+  client_ip_resolved String?
+  remote_address     String?
+  forwarded_for      String?
+  user_agent_raw     String?
+  user_agent_trimmed String?
+  referer_raw        String?
+  referer_host       String?
+  component          String?
+  source             String?
+  deduped            Boolean?
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  headers            Json?
+  query              Json?
+
+  @@index([created_at])
+  @@index([kind])
+  @@schema("app")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model user_activity_alert {
+  id                    Int                @id @default(autoincrement())
+  follow_id             Int
+  follower_id           Int
+  target_user_id        Int
+  page_id               Int
+  type                  user_activity_type
+  revision_seq          BigInt?
+  attribution_event_seq BigInt?
+  detected_at           DateTime           @default(now()) @db.Timestamptz(6)
+  acknowledged_at       DateTime?          @db.Timestamptz(6)
+  created_at            DateTime           @default(now()) @db.Timestamptz(6)
+  attribution_event     attribution_event? @relation(fields: [attribution_event_seq], references: [seq], onUpdate: NoAction)
+  user_follow           user_follow        @relation(fields: [follow_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  follower              user               @relation("user_activity_alert_follower_idTouser", fields: [follower_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  page                  page               @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  revision              revision?          @relation(fields: [revision_seq], references: [seq], onUpdate: NoAction)
+  target_user           user               @relation("user_activity_alert_target_user_idTouser", fields: [target_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([follow_id, acknowledged_at], map: "idx_user_activity_follow_ack")
+  @@index([follower_id, detected_at(sort: Desc)], map: "idx_user_activity_follower_detected")
+  @@index([page_id, type], map: "idx_user_activity_page_type")
+  @@schema("app")
+}
+
+model user_collection {
+  id                   Int                    @id @default(autoincrement())
+  owner_id             Int
+  title                String
+  slug                 String
+  visibility           collection_visibility  @default(PRIVATE)
+  description          String?
+  notes                String?
+  cover_image_url      String?
+  cover_image_offset_x Float                  @default(0)
+  cover_image_offset_y Float                  @default(0)
+  cover_image_scale    Float                  @default(1)
+  is_default           Boolean                @default(false)
+  published_at         DateTime?              @db.Timestamptz(6)
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  user                 user                   @relation(fields: [owner_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user_collection_item user_collection_item[]
+
+  @@unique([owner_id, slug], map: "uniq_collection_owner_slug")
+  @@index([owner_id, visibility], map: "idx_collection_owner_vis")
+  @@index([slug], map: "idx_collection_slug")
+  @@schema("app")
+}
+
+model user_collection_item {
+  id              Int             @id @default(autoincrement())
+  collection_id   Int
+  page_id         Int
+  annotation      String?
+  ord             Float           @default(0)
+  pinned          Boolean         @default(false)
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime        @default(now()) @db.Timestamptz(6)
+  user_collection user_collection @relation(fields: [collection_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  page            page            @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([collection_id, page_id], map: "uniq_collection_item_page")
+  @@index([collection_id, ord], map: "idx_collection_item_order")
+  @@index([page_id], map: "idx_collection_item_page")
+  @@schema("app")
+}
+
+model user_follow {
+  id                  Int                   @id @default(autoincrement())
+  follower_id         Int
+  target_user_id      Int
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  user_activity_alert user_activity_alert[]
+  follower            user                  @relation("user_follow_follower_idTouser", fields: [follower_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  target_user         user                  @relation("user_follow_target_user_idTouser", fields: [target_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([follower_id, target_user_id], map: "uniq_user_follow_pair")
+  @@index([target_user_id], map: "idx_user_follow_target")
+  @@schema("app")
+}
+
+model user_metric_preference {
+  id         Int              @id @default(autoincrement())
+  user_id    Int
+  metric     page_metric_type
+  config     Json?
+  created_at DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at DateTime         @default(now()) @db.Timestamptz(6)
+  user       user             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, metric], map: "uniq_user_metric_preference")
+  @@schema("app")
+}
+
+model user_pixel_event {
+  id              BigInt   @id @default(autoincrement())
+  user_id         Int
+  wikidot_id      Int?
+  username        String
+  client_hash     String
+  client_ip       String?
+  user_agent      String?
+  component       String?
+  source          String?
+  referer_host    String?
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  accept_language String?
+  ua_platform     String?
+  ua_brand_major  String?
+  ua_family       String?
+  softprint       String?
+  visitor_token   String?
+  tls_fingerprint String?
+  user            user     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id, created_at], map: "idx_upe_user_created")
+  @@index([user_id, client_hash, created_at], map: "idx_upe_user_hash")
+  @@index([user_id, client_ip, user_agent, created_at], map: "idx_upe_user_ip_ua")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model attribution_event {
+  seq                 BigInt                @id @default(autoincrement())
+  page_id             Int
+  actor_id            Int
+  role                String
+  action              String
+  at_date             DateTime?             @db.Date
+  observed_at         DateTime              @db.Timestamptz(6)
+  source              String
+  user_activity_alert user_activity_alert[]
+  user                user                  @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  page                page                  @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, seq], map: "ae_page")
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model content_blob {
+  sha256       Bytes          @id
+  source       String?
+  text_content String?
+  byte_len     Int
+  text_len     Int            @default(0)
+  created_at   DateTime       @default(now()) @db.Timestamptz(6)
+  page_source  page_source[]
+  revision     revision[]
+  page_current page_current[]
+
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model forum_category {
+  id             BigInt         @id
+  title          String?
+  description    String?
+  thread_count   Int            @default(0)
+  post_count     Int            @default(0)
+  last_synced_at DateTime       @db.Timestamptz(6)
+  forum_thread   forum_thread[]
+
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model forum_post {
+  id                    BigInt                    @id
+  thread_id             BigInt
+  parent_post_id        BigInt?
+  author_user_id        Int?
+  author_name           String?
+  title                 String?
+  text_html             String?
+  text_plain            String?
+  created_at            DateTime                  @db.Timestamptz(6)
+  edited_at             DateTime?                 @db.Timestamptz(6)
+  is_deleted            Boolean                   @default(false)
+  observed_at           DateTime                  @db.Timestamptz(6)
+  alerts_as_parent_post forum_interaction_alert[] @relation("forum_interaction_alert_parent_post_idToforum_post")
+  alerts_as_post        forum_interaction_alert[] @relation("forum_interaction_alert_post_idToforum_post")
+  user                  user?                     @relation(fields: [author_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  forum_thread          forum_thread              @relation(fields: [thread_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([text_plain(ops: raw("gin_trgm_ops"))], map: "fp_search_trgm", type: Gin)
+  @@index([thread_id, created_at], map: "fp_thread")
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "fp_title_search_trgm", type: Gin)
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model forum_thread {
+  id                      BigInt                    @id
+  category_id             BigInt
+  page_id                 Int?
+  title                   String
+  created_by_user_id      Int?
+  created_by_name         String?
+  created_at              DateTime                  @db.Timestamptz(6)
+  post_count              Int                       @default(0)
+  is_deleted              Boolean                   @default(false)
+  last_synced_at          DateTime                  @db.Timestamptz(6)
+  forum_interaction_alert forum_interaction_alert[]
+  forum_post              forum_post[]
+  forum_category          forum_category            @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user                    user?                     @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  page                    page?                     @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id], map: "ft_page")
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page {
+  id                      Int                       @id
+  wikidot_id              Int                       @unique
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  forum_interaction_alert forum_interaction_alert[]
+  page_metric_alert       page_metric_alert[]
+  page_metric_watch       page_metric_watch[]
+  page_view_event         page_view_event[]
+  tag_definition          tag_definition[]
+  tag_guide_sync          tag_guide_sync?
+  user_activity_alert     user_activity_alert[]
+  user_collection_item    user_collection_item[]
+  attribution_event       attribution_event[]
+  forum_thread            forum_thread[]
+  page_attr_history       page_attr_history[]
+  page_life_event         page_life_event[]
+  lineage_as_predecessor  page_lineage[]            @relation("page_lineage_predecessor_idTopage")
+  lineage_as_successor    page_lineage?             @relation("page_lineage_successor_idTopage")
+  page_slug_history       page_slug_history[]
+  page_source             page_source[]
+  revision                revision[]
+  vote_event              vote_event[]
+  attribution_current     attribution_current[]
+  page_current            page_current?
+  page_semantic           page_semantic?
+  vote_current            vote_current[]
+
+  @@schema("ingest")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_attr_history {
+  id         BigInt    @id @default(autoincrement())
+  page_id    Int
+  attr       String
+  value      Json
+  valid_from DateTime  @db.Timestamptz(6)
+  valid_to   DateTime? @db.Timestamptz(6)
+  source     String
+  page       page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, attr, valid_from], map: "pah_timeline")
+  @@schema("ingest")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_life_event {
+  seq                BigInt    @id @default(autoincrement())
+  page_id            Int
+  kind               String
+  occurred_at        DateTime? @db.Timestamptz(6)
+  occurred_precision String
+  observed_at        DateTime  @db.Timestamptz(6)
+  source             String
+  page               page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, seq], map: "ple_page")
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_lineage {
+  successor_id   Int      @id
+  predecessor_id Int
+  kind           String   @default("recreate")
+  confidence     Float?   @db.Real
+  decided_by     String
+  decided_at     DateTime @default(now()) @db.Timestamptz(6)
+  predecessor    page     @relation("page_lineage_predecessor_idTopage", fields: [predecessor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  successor      page     @relation("page_lineage_successor_idTopage", fields: [successor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_slug_history {
+  id         BigInt    @id @default(autoincrement())
+  page_id    Int
+  slug       String
+  valid_from DateTime  @db.Timestamptz(6)
+  valid_to   DateTime? @db.Timestamptz(6)
+  page       page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([slug], map: "psh_slug")
+  @@schema("ingest")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_source {
+  id           BigInt       @id @default(autoincrement())
+  page_id      Int
+  rev_no       Int?
+  blob_sha     Bytes
+  observed_at  DateTime     @db.Timestamptz(6)
+  content_blob content_blob @relation(fields: [blob_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+  page         page         @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, observed_at(sort: Desc)], map: "ps_page")
+  @@schema("ingest")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model revision {
+  seq                 BigInt                @id @default(autoincrement())
+  page_id             Int
+  wikidot_revision_id BigInt?               @unique
+  rev_no              Int?
+  type                String?
+  author_id           Int?
+  occurred_at         DateTime              @db.Timestamptz(6)
+  comment             String?
+  source_sha          Bytes?
+  observed_at         DateTime              @db.Timestamptz(6)
+  source              String
+  user_activity_alert user_activity_alert[]
+  user                user?                 @relation(fields: [author_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  page                page                  @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  content_blob        content_blob?         @relation(fields: [source_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([author_id, occurred_at], map: "rev_author")
+  @@index([page_id, occurred_at(sort: Desc), seq(sort: Desc)], map: "rev_page")
+  @@schema("ingest")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model user {
+  id                          Int                       @id
+  kind                        String
+  wikidot_id                  Int?                      @unique
+  anon_key                    String?                   @unique
+  username                    String?
+  display_name                String?
+  created_at                  DateTime                  @default(now()) @db.Timestamptz(6)
+  wikidot_unix_name           String?
+  collection_account_owner    collection_account_owner?
+  forum_alerts_as_actor       forum_interaction_alert[] @relation("forum_interaction_alert_actor_user_idTouser")
+  forum_alerts_as_recipient   forum_interaction_alert[] @relation("forum_interaction_alert_recipient_user_idTouser")
+  page_metric_watch           page_metric_watch[]
+  activity_alerts_as_follower user_activity_alert[]     @relation("user_activity_alert_follower_idTouser")
+  activity_alerts_as_target   user_activity_alert[]     @relation("user_activity_alert_target_user_idTouser")
+  user_collection             user_collection[]
+  follows_as_follower         user_follow[]             @relation("user_follow_follower_idTouser")
+  follows_as_target           user_follow[]             @relation("user_follow_target_user_idTouser")
+  user_metric_preference      user_metric_preference[]
+  user_pixel_event            user_pixel_event[]
+  attribution_event           attribution_event[]
+  forum_post                  forum_post[]
+  forum_thread                forum_thread[]
+  revision                    revision[]
+  vote_event                  vote_event[]
+  attribution_current         attribution_current[]
+  vote_current                vote_current[]
+
+  @@index([display_name(ops: raw("gin_trgm_ops"))], map: "u_display_pgroonga_trgm", type: Gin)
+  @@index([username(ops: raw("gin_trgm_ops"))], map: "u_username_pgroonga_trgm", type: Gin)
+  @@schema("ingest")
+}
+
+/// This table is a partition table and requires additional setup for migrations. Visit https://pris.ly/d/partition-tables for more info.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model vote_event {
+  seq            BigInt    @id @default(autoincrement())
+  page_id        Int
+  voter_id       Int
+  kind           String
+  old_direction  Int?      @db.SmallInt
+  new_direction  Int?      @db.SmallInt
+  occurred_at    DateTime? @db.Timestamptz(6)
+  observed_at    DateTime  @db.Timestamptz(6)
+  time_precision String
+  source         String
+  run_id         BigInt?
+  page           page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user           user      @relation(fields: [voter_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([page_id, seq], map: "ve_page")
+  @@index([voter_id, seq], map: "ve_voter")
+  @@schema("ingest")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model backfill_gate_run {
+  id         BigInt   @id @default(autoincrement())
+  gate       String
+  mode       String
+  passed     Boolean
+  assertions Int      @default(0)
+  skipped    Int      @default(0)
+  detail     Json?
+  ran_at     DateTime @default(now()) @db.Timestamptz(6)
+  ran_by     String   @default(dbgenerated("CURRENT_USER"))
+
+  @@index([gate, ran_at(sort: Desc)], map: "bgr_gate")
+  @@schema("meta")
+}
+
+model backfill_progress {
+  domain       String
+  shard        String   @default("")
+  last_page_id Int      @default(0)
+  done_count   BigInt   @default(0)
+  total_count  BigInt?
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([domain, shard])
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model dedup_audit {
+  id         BigInt   @id @default(autoincrement())
+  v1_vote_id BigInt
+  rule       String
+  kept_ref   String?
+  confidence String?
+  note       String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([rule, created_at], map: "da_rule")
+  @@index([v1_vote_id], map: "da_v1")
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model fact_quarantine {
+  id             BigInt    @id @default(autoincrement())
+  domain         String
+  page_id        Int?
+  natural_key    String?
+  raw            Json
+  reason         String
+  source         String
+  run_id         BigInt?
+  observed_at    DateTime? @db.Timestamptz(6)
+  quarantined_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([domain, quarantined_at(sort: Desc)], map: "fq_domain")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model forum_scan_task {
+  id               BigInt    @id @default(autoincrement())
+  kind             String
+  target_id        BigInt
+  reasons          String[]  @default([])
+  priority         Int       @default(0)
+  not_before       DateTime? @db.Timestamptz(6)
+  attempts         Int       @default(0)
+  stable_count     Int       @default(0)
+  last_result_hash Bytes?
+  locked_by        String?
+  locked_at        DateTime? @db.Timestamptz(6)
+  first_seen_at    DateTime  @default(now()) @db.Timestamptz(6)
+  last_seen_at     DateTime  @default(now()) @db.Timestamptz(6)
+  seen_count       Int       @default(1)
+
+  @@unique([kind, target_id])
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model image_ingest_job {
+  id             BigInt    @id @default(autoincrement())
+  page_id        Int
+  normalized_url String
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  locked_by      String?
+  locked_at      DateTime? @db.Timestamptz(6)
+  error          String?
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([page_id, normalized_url])
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ingest_gate {
+  txid       BigInt   @id
+  seq_floor  BigInt
+  started_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([seq_floor], map: "ig_floor")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ingest_run {
+  id                               BigInt                  @id @default(autoincrement())
+  source                           String
+  started_at                       DateTime                @default(now()) @db.Timestamptz(6)
+  finished_at                      DateTime?               @db.Timestamptz(6)
+  status                           String                  @default("running")
+  pages_enumerated                 Int?
+  remote_total                     Int?
+  remote_total_source              String?
+  batches_total                    Int?
+  batches_failed                   Int?
+  transport_failure_rate           Float?                  @db.Real
+  exit_ip_stats                    Json                    @default("{}")
+  parse_fingerprint                Json                    @default("{}")
+  stats                            Json                    @default("{}")
+  coverage_ratio                   Float?                  @default(dbgenerated("((pages_enumerated)::real / (NULLIF(remote_total, 0))::double precision)")) @db.Real
+  page_scan                        page_scan[]
+  baselines_computed_from_this_run parse_health_baseline[] @relation("parse_health_baseline_computed_from_runToingest_run")
+  baselines_breached_at_this_run   parse_health_baseline[] @relation("parse_health_baseline_last_breach_runToingest_run")
+  revoke_candidate                 revoke_candidate[]
+  write_freeze                     write_freeze[]
+
+  @@index([source, started_at(sort: Desc)], map: "ir_source_started")
+  @@index([status, started_at(sort: Desc)], map: "ir_status")
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model irreconcilable {
+  page_id      Int
+  kind         String
+  local_value  Json
+  remote_value Json
+  first_seen   DateTime  @default(now()) @db.Timestamptz(6)
+  last_checked DateTime  @default(now()) @db.Timestamptz(6)
+  checks       Int       @default(1)
+  resolved_at  DateTime? @db.Timestamptz(6)
+
+  @@id([page_id, kind])
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model observation_queue {
+  id           BigInt    @id @default(autoincrement())
+  page_id      Int?
+  wikidot_id   Int
+  kind         String
+  payload      Json
+  enqueued_at  DateTime  @default(now()) @db.Timestamptz(6)
+  status       String    @default("pending")
+  attempts     Int       @default(0)
+  error        String?
+  processed_at DateTime? @db.Timestamptz(6)
+
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_scan {
+  run_id            BigInt
+  page_id           Int
+  kind              String
+  status            String
+  claimed_total     Int?
+  fetched_total     Int?
+  checksum_ok       Boolean?
+  result_hash       Bytes?
+  error             String?
+  scanned_at        DateTime   @default(now()) @db.Timestamptz(6)
+  checksum_expected Int?
+  checksum_actual   Int?
+  ingest_run        ingest_run @relation(fields: [run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([run_id, page_id, kind])
+  @@index([page_id, kind, scanned_at(sort: Desc)], map: "ps_page_kind")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model parse_health_baseline {
+  source                String
+  metric                String
+  window_days           Int         @default(7)
+  sample_count          Int         @default(0)
+  baseline_value        Decimal?    @db.Decimal
+  baseline_stddev       Decimal?    @db.Decimal
+  lower_bound           Decimal?    @db.Decimal
+  upper_bound           Decimal?    @db.Decimal
+  max_rel_deviation     Decimal?    @db.Decimal
+  direction             String      @default("both")
+  action                String      @default("freeze_write")
+  enabled               Boolean     @default(true)
+  computed_from_run     BigInt?
+  computed_at           DateTime    @default(now()) @db.Timestamptz(6)
+  last_breach_at        DateTime?   @db.Timestamptz(6)
+  last_breach_value     Decimal?    @db.Decimal
+  last_breach_run       BigInt?
+  breach_count          Int         @default(0)
+  computed_from_run_rel ingest_run? @relation("parse_health_baseline_computed_from_runToingest_run", fields: [computed_from_run], references: [id], onUpdate: NoAction)
+  last_breach_run_rel   ingest_run? @relation("parse_health_baseline_last_breach_runToingest_run", fields: [last_breach_run], references: [id], onUpdate: NoAction)
+
+  @@id([source, metric])
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model pending_page {
+  slug          String    @id
+  first_seen_at DateTime  @default(now()) @db.Timestamptz(6)
+  last_seen_at  DateTime  @default(now()) @db.Timestamptz(6)
+  seen_count    Int       @default(1)
+  discovered_by String    @default("wikidot_sitemap")
+  reasons       String[]  @default([])
+  priority      Int       @default(0)
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  not_before    DateTime? @db.Timestamptz(6)
+  locked_by     String?
+  locked_at     DateTime? @db.Timestamptz(6)
+  wikidot_id    Int?
+  page_id       Int?
+  category_id   Int?
+  observed_slug String?
+  http_status   Int?
+  last_error    String?
+  resolved_at   DateTime? @db.Timestamptz(6)
+
+  @@index([status, last_seen_at(sort: Desc)], map: "pp_status")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model projection_cursor {
+  projection   String   @id
+  event_domain String
+  last_seq     BigInt   @default(0)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+  rebuild_from String
+
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model revoke_candidate {
+  page_id        Int
+  voter_id       Int
+  last_direction Int?        @db.SmallInt
+  confirmations  Int         @default(1)
+  first_seen_at  DateTime    @default(now()) @db.Timestamptz(6)
+  last_seen_at   DateTime    @default(now()) @db.Timestamptz(6)
+  observed_at    DateTime    @default(now()) @db.Timestamptz(6)
+  last_run_id    BigInt?
+  source         String      @default("wikidot")
+  gate_result    Json        @default("{}")
+  gate_passed    Boolean     @default(false)
+  status         String      @default("pending")
+  held_reason    String?
+  promoted_seq   BigInt?
+  resolved_at    DateTime?   @db.Timestamptz(6)
+  resolved_by    String?
+  note           String?
+  ingest_run     ingest_run? @relation(fields: [last_run_id], references: [id], onUpdate: NoAction)
+
+  @@id([page_id, voter_id])
+  @@index([status, last_seen_at(sort: Desc)], map: "rc_open")
+  @@index([voter_id, status], map: "rc_voter")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model scan_task {
+  id               BigInt    @id @default(autoincrement())
+  page_id          Int
+  kind             String
+  reasons          String[]  @default([])
+  priority         Int       @default(0)
+  not_before       DateTime? @db.Timestamptz(6)
+  attempts         Int       @default(0)
+  stable_count     Int       @default(0)
+  last_result_hash Bytes?
+  locked_by        String?
+  locked_at        DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([page_id, kind])
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v1_identity {
+  entity     String
+  v1_id      Int
+  wikidot_id Int?
+  detail     Json?
+
+  @@id([entity, v1_id])
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v1_identity_load {
+  entity          String   @id
+  source_database String
+  expected_rows   BigInt
+  loaded_at       DateTime @default(now()) @db.Timestamptz(6)
+  loader          String   @default(dbgenerated("CURRENT_USER"))
+  note            String?
+
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v1_version_map {
+  v1_page_version_id Int       @id
+  page_id            Int
+  valid_from         DateTime  @db.Timestamptz(6)
+  valid_to           DateTime? @db.Timestamptz(6)
+  is_deleted         Boolean   @default(false)
+  version_no         Int?
+
+  @@index([page_id, valid_from], map: "vvm_page")
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model v2_baseline {
+  metric      String   @id
+  value       Decimal? @db.Decimal
+  detail      Json?
+  captured_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model vote_quarantine {
+  id             BigInt    @id @default(autoincrement())
+  page_id        Int?
+  voter_key      String?
+  raw            Json
+  reason         String
+  source         String
+  occurred_at    DateTime? @db.Timestamptz(6)
+  quarantined_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([page_id, quarantined_at(sort: Desc)], map: "vq_page")
+  @@index([reason, quarantined_at(sort: Desc)], map: "vq_reason")
+  @@schema("meta")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model write_freeze {
+  domain        String      @id
+  frozen        Boolean     @default(false)
+  reason        String?
+  frozen_at     DateTime?   @db.Timestamptz(6)
+  frozen_by     String?
+  released_at   DateTime?   @db.Timestamptz(6)
+  released_by   String?
+  breach_metric String?
+  breach_run    BigInt?
+  freeze_count  Int         @default(0)
+  updated_at    DateTime    @default(now()) @db.Timestamptz(6)
+  ingest_run    ingest_run? @relation(fields: [breach_run], references: [id], onUpdate: NoAction)
+
+  @@schema("meta")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model attribution_current {
+  page_id    Int
+  role       String
+  actor_id   Int
+  ord        Int       @default(0)
+  at_date    DateTime? @db.Date
+  is_display Boolean   @default(true)
+  last_seq   BigInt
+  user       user      @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  page       page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([page_id, role, actor_id])
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model category_index_forecast_tick {
+  category             String
+  as_of_ts             DateTime @db.Timestamptz(6)
+  settle_day           DateTime @db.Date
+  hour_offset          Int
+  forecast_score       Decimal  @db.Decimal
+  forecast_index       Decimal  @db.Decimal
+  day_close_score      Decimal  @db.Decimal
+  day_close_index      Decimal  @db.Decimal
+  prev_day_close_index Decimal  @db.Decimal
+  is_stale             Boolean  @default(false)
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([category, as_of_ts])
+  @@unique([category, settle_day, hour_offset], map: "cift_day_hour")
+  @@index([category, settle_day], map: "cift_category_settle_day")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model category_index_tick {
+  category          String
+  as_of_ts          DateTime  @db.Timestamptz(6)
+  watermark_ts      DateTime? @db.Timestamptz(6)
+  vote_cutoff_date  DateTime  @db.Date
+  vote_rule_version String    @default("utc8-t+1-v1")
+  score_signal_raw  Decimal   @default(0) @db.Decimal
+  score_ref         Decimal   @default(0) @db.Decimal
+  score_provisional Decimal   @default(0) @db.Decimal
+  index_mark        Decimal   @db.Decimal
+  crowd_drag        Decimal   @default(0) @db.Decimal
+  noise             Decimal   @default(0) @db.Decimal
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([category, as_of_ts])
+  @@index([watermark_ts], map: "cit_watermark")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model content_records {
+  record_type    String
+  page_id        Int
+  page_title     String?
+  source_length  Int?
+  content_length Int?
+  complexity     Json?
+  computed_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([record_type, page_id])
+  @@index([record_type, source_length(sort: Desc)], map: "cr_source_length")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model image_asset {
+  hash_sha256     Bytes        @id
+  perceptual_hash String?
+  mime            String?
+  bytes           Int?
+  width           Int?
+  height          Int?
+  storage_path    String?
+  canonical_url   String?
+  source_hosts    String[]     @default([])
+  status          String       @default("ready")
+  first_seen_at   DateTime     @default(now()) @db.Timestamptz(6)
+  last_fetched_at DateTime?    @db.Timestamptz(6)
+  error_message   String?
+  created_at      DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime     @default(now()) @db.Timestamptz(6)
+  page_image      page_image[]
+
+  @@index([status], map: "ia_status")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model interesting_facts {
+  category     String
+  type         String
+  date_context DateTime @default(dbgenerated("'-infinity'::date")) @db.Date
+  tag_context  String   @default("")
+  rank         Int      @default(1)
+  title        String
+  description  String?
+  value        String?
+  metadata     Json?
+  page_id      Int?
+  user_id      Int?
+  is_active    Boolean  @default(true)
+  computed_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([category, type, date_context, tag_context, rank])
+  @@index([computed_at], map: "if_computed_at")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model leaderboard_cache {
+  key         String
+  period      String
+  payload     Json
+  computed_at DateTime  @default(now()) @db.Timestamptz(6)
+  expires_at  DateTime? @db.Timestamptz(6)
+
+  @@id([key, period])
+  @@index([expires_at], map: "lc_expires")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_current {
+  page_id              Int           @id
+  wikidot_id           Int           @unique
+  slug                 String
+  status               String
+  deleted_at           DateTime?     @db.Timestamptz(6)
+  deleted_at_precision String?
+  title                String?
+  alternate_title      String?
+  tags                 String[]      @default([])
+  category             String?
+  parent_page_id       Int?
+  first_published_at   DateTime?     @db.Timestamptz(6)
+  discussion_thread_id BigInt?
+  rating               Int           @default(0)
+  vote_up              Int           @default(0)
+  vote_down            Int           @default(0)
+  vote_revoked         Int           @default(0)
+  revision_count       Int           @default(0)
+  comment_count        Int           @default(0)
+  attribution_count    Int           @default(0)
+  source_sha           Bytes?
+  search_text          String?
+  cursor_seq           BigInt        @default(0)
+  updated_at           DateTime      @default(now()) @db.Timestamptz(6)
+  page                 page          @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  content_blob         content_blob? @relation(fields: [source_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([alternate_title(ops: raw("gin_trgm_ops"))], map: "pc_alt_search_trgm", type: Gin)
+  @@index([search_text(ops: raw("gin_trgm_ops"))], map: "pc_search_trgm", type: Gin)
+  @@index([slug], map: "pc_slug")
+  @@index([status, rating(sort: Desc)], map: "pc_status_rating")
+  @@index([tags], map: "pc_tags", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "pc_title_search_trgm", type: Gin)
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_daily_stats {
+  page_id       Int
+  date          DateTime @db.Date
+  views         Int      @default(0)
+  votes_up      Int      @default(0)
+  votes_down    Int      @default(0)
+  total_votes   Int?     @default(dbgenerated("(votes_up + votes_down)"))
+  unique_voters Int      @default(0)
+  revisions     Int      @default(0)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([page_id, date])
+  @@index([date], map: "pds_date")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_image {
+  page_id         Int
+  normalized_url  String
+  origin_url      String
+  display_url     String?
+  status          String       @default("pending")
+  asset_sha       Bytes?
+  extracted_at    DateTime     @default(now()) @db.Timestamptz(6)
+  last_queued_at  DateTime?    @db.Timestamptz(6)
+  last_fetched_at DateTime?    @db.Timestamptz(6)
+  failure_count   Int          @default(0)
+  last_error      String?
+  metadata        Json?
+  image_asset     image_asset? @relation(fields: [asset_sha], references: [hash_sha256], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([page_id, normalized_url])
+  @@index([status], map: "pi_status")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_reference {
+  from_page_id    Int
+  to_page_id      Int?
+  kind            String
+  target_path     String
+  target_fragment String?
+  display_texts   String[] @default([])
+  occurrence      Int      @default(1)
+  computed_at     DateTime @default(now()) @db.Timestamptz(6)
+  target_slug     String
+
+  @@id([from_page_id, target_slug, kind])
+  @@index([target_path], map: "pr_path")
+  @@index([to_page_id, kind], map: "pr_to")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_reference_graph_snapshot {
+  id           BigInt   @id @default(autoincrement())
+  label        String   @unique
+  description  String?
+  stats        Json
+  generated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([generated_at(sort: Desc)], map: "prgs_generated_at")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_stats {
+  page_id     Int      @id
+  uv          Int
+  dv          Int
+  wilson95    Float    @db.Real
+  controversy Float    @db.Real
+  like_ratio  Float    @db.Real
+  computed_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([controversy(sort: Desc)], map: "ps_controversy")
+  @@index([wilson95(sort: Desc)], map: "ps_wilson95")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_version_display {
+  page_id         Int
+  version_no      Int
+  valid_from      DateTime  @db.Timestamptz(6)
+  valid_to        DateTime? @db.Timestamptz(6)
+  title           String?
+  alternate_title String?
+  tags            String[]
+  category        String?
+  life_kind       String?
+
+  @@id([page_id, version_no])
+  @@index([page_id, valid_from(sort: Desc)], map: "pvd_page_time")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model rating_records {
+  record_type String
+  timeframe   String    @default("")
+  page_id     Int
+  page_title  String?
+  rating      Int?
+  vote_count  Int?
+  controversy Float?    @db.Real
+  wilson95    Float?    @db.Real
+  value       Decimal?  @db.Decimal
+  achieved_at DateTime? @db.Timestamptz(6)
+  computed_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([record_type, timeframe, page_id])
+  @@index([record_type, timeframe, rating(sort: Desc)], map: "rr_type_rating")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model series_stats {
+  series            Int      @id
+  total             Int
+  used              Int      @default(0)
+  free_numbers      Int[]    @default([])
+  is_open           Boolean  @default(false)
+  usage_percentage  Float?   @default(dbgenerated("\nCASE\n    WHEN (total > 0) THEN ((used)::real / (total)::real)\n    ELSE (0)::real\nEND")) @db.Real
+  milestone_page_id Int?
+  updated_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([is_open], map: "ss_open")
+  @@index([usage_percentage(sort: Desc)], map: "ss_usage")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model site_overview_daily {
+  date               DateTime @id @db.Date
+  users_total        Int      @default(0)
+  users_contributors Int      @default(0)
+  users_authors      Int      @default(0)
+  users_active       Int      @default(0)
+  pages_total        Int      @default(0)
+  pages_originals    Int      @default(0)
+  pages_translations Int      @default(0)
+  votes_up           Int      @default(0)
+  votes_down         Int      @default(0)
+  revisions_total    Int      @default(0)
+  computed_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model site_stats {
+  id                 Int      @id @default(1) @db.SmallInt
+  total_users        Int      @default(0)
+  active_users       Int      @default(0)
+  total_pages        Int      @default(0)
+  total_votes_state  BigInt   @default(0)
+  total_votes_events BigInt   @default(0)
+  new_users_today    Int      @default(0)
+  new_pages_today    Int      @default(0)
+  new_votes_today    Int      @default(0)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model tag_records {
+  tag         String
+  record_type String
+  page_id     Int?
+  user_id     Int?
+  value       Decimal? @db.Decimal
+  metadata    Json?
+  computed_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([tag, record_type])
+  @@index([record_type], map: "tr_record_type")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model tag_validation_cache {
+  tag              String    @id
+  status           String
+  page_count       Int       @default(0)
+  latest_page_date DateTime? @db.Timestamptz(6)
+  detail           Json      @default("{}")
+  checked_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([checked_at], map: "tvc_checked")
+  @@index([latest_page_date(sort: Desc)], map: "tvc_latest")
+  @@index([status], map: "tvc_status")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model time_milestones {
+  period          String
+  period_value    String
+  milestone_type  String
+  page_id         Int
+  page_title      String?
+  page_rating     Int?
+  page_created_at DateTime? @db.Timestamptz(6)
+  computed_at     DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([period, period_value, milestone_type])
+  @@index([page_id], map: "tm_page")
+  @@index([milestone_type], map: "tm_type")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model trending_stats {
+  entity_type String
+  entity_id   Int?
+  period      String
+  score       Decimal  @db.Decimal
+  label       String?
+  metadata    Json?
+  computed_at DateTime @default(now()) @db.Timestamptz(6)
+  entity_key  String
+
+  @@id([entity_type, entity_key, period])
+  @@index([entity_type, period, score(sort: Desc)], map: "ts_type_period_score")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model user_activity_records {
+  record_type       String
+  user_id           Int
+  user_display_name String?
+  value             Decimal?  @db.Decimal
+  achieved_at       DateTime? @db.Timestamptz(6)
+  context           Json?
+  computed_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([record_type, user_id])
+  @@index([record_type, achieved_at(sort: Desc)], map: "uar_type_achieved")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model user_attr_daily {
+  user_id      Int
+  day          DateTime @db.Date
+  up           Int      @default(0)
+  down         Int      @default(0)
+  rating_delta Int
+  cum_rating   Int
+
+  @@id([user_id, day])
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model user_page {
+  user_id              Int
+  page_id              Int
+  roles                String[]
+  effective_created_at DateTime? @db.Timestamptz(6)
+  group_key            String?
+
+  @@id([user_id, page_id])
+  @@index([page_id], map: "up_page")
+  @@index([user_id, effective_created_at(sort: Desc)], map: "up_user_created")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model user_stats {
+  user_id               Int       @id
+  total_rating          Int       @default(0)
+  overall_rating        Float?    @db.Real
+  page_count            Int       @default(0)
+  votes_cast_up         Int       @default(0)
+  votes_cast_down       Int       @default(0)
+  votes_received_up     Int       @default(0)
+  votes_received_down   Int       @default(0)
+  rating_scp            Int?
+  rating_translation    Int?
+  rating_goi            Int?
+  rating_story          Int?
+  rating_wanderers      Int?
+  rating_art            Int?
+  count_scp             Int?
+  count_translation     Int?
+  count_goi             Int?
+  count_story           Int?
+  count_wanderers       Int?
+  count_art             Int?
+  rank_total            Int?
+  rank_scp              Int?
+  rank_translation      Int?
+  rank_goi              Int?
+  rank_story            Int?
+  rank_wanderers        Int?
+  rank_art              Int?
+  first_activity_at     DateTime? @db.Timestamptz(6)
+  first_activity_type   String?
+  first_activity_detail Json?
+  last_activity_at      DateTime? @db.Timestamptz(6)
+  last_activity_type    String?
+  last_activity_detail  Json?
+  forum_post_count      Int       @default(0)
+  computed_at           DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([overall_rating(sort: Desc)], map: "us_overall_rating")
+  @@index([rank_art], map: "us_rank_art")
+  @@index([rank_goi], map: "us_rank_goi")
+  @@index([rank_scp], map: "us_rank_scp")
+  @@index([rank_story], map: "us_rank_story")
+  @@index([rank_total], map: "us_rank_total")
+  @@index([rank_translation], map: "us_rank_translation")
+  @@index([rank_wanderers], map: "us_rank_wanderers")
+  @@index([rating_art(sort: Desc)], map: "us_rating_art")
+  @@index([rating_goi(sort: Desc)], map: "us_rating_goi")
+  @@index([rating_scp(sort: Desc)], map: "us_rating_scp")
+  @@index([rating_story(sort: Desc)], map: "us_rating_story")
+  @@index([rating_translation(sort: Desc)], map: "us_rating_translation")
+  @@index([rating_wanderers(sort: Desc)], map: "us_rating_wanderers")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model user_tag_preference {
+  user_id      Int
+  tag          String
+  up_count     Int       @default(0)
+  down_count   Int       @default(0)
+  total        Int       @default(0)
+  last_vote_at DateTime? @db.Timestamptz(6)
+
+  @@id([user_id, tag])
+  @@index([tag, up_count(sort: Desc)], map: "utp_tag")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model user_vote_interaction {
+  from_user_id Int
+  to_user_id   Int
+  up_count     Int       @default(0)
+  down_count   Int       @default(0)
+  total        Int       @default(0)
+  last_vote_at DateTime? @db.Timestamptz(6)
+
+  @@id([from_user_id, to_user_id])
+  @@index([to_user_id, down_count(sort: Desc)], map: "uvi_to")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model vote_current {
+  page_id        Int
+  voter_id       Int
+  direction      Int       @db.SmallInt
+  first_voted_at DateTime? @db.Timestamptz(6)
+  last_voted_at  DateTime  @db.Timestamptz(6)
+  last_precision String
+  last_seq       BigInt
+  page           page      @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user           user      @relation(fields: [voter_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([page_id, voter_id])
+  @@index([page_id, last_voted_at(sort: Desc), voter_id], map: "vc_page_time")
+  @@index([voter_id, last_voted_at(sort: Desc)], map: "vc_voter")
+  @@schema("serve")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model vote_daily {
+  page_id    Int
+  day        DateTime @db.Date
+  up         Int      @default(0)
+  down       Int      @default(0)
+  revoked    Int      @default(0)
+  cum_rating Int
+
+  @@id([page_id, day])
+  @@index([day], map: "vd_day")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model embedding_model {
+  model_id      Int             @id @db.SmallInt
+  name          String          @unique
+  dim           Int
+  metric        String          @default("cosine")
+  normalized    Boolean         @default(true)
+  storage       String          @default("halfvec")
+  is_active     Boolean         @default(false)
+  endpoint      String?
+  notes         String?
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  page_semantic page_semantic[]
+
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model page_semantic {
+  page_id         Int              @id
+  text_sha        Bytes
+  text_len        Int
+  chunker         String
+  chunk_count     Int              @db.SmallInt
+  truncated       Boolean          @default(false)
+  extractor       String
+  extracted_at    DateTime         @default(now()) @db.Timestamptz(6)
+  model_id        Int?             @db.SmallInt
+  embedded_at     DateTime?        @db.Timestamptz(6)
+  source_blob_sha Bytes?
+  cursor_seq      BigInt?
+  updated_at      DateTime         @default(now()) @db.Timestamptz(6)
+  text_chunker    text_chunker     @relation(fields: [chunker], references: [chunker], onDelete: NoAction, onUpdate: NoAction)
+  embedding_model embedding_model? @relation(fields: [model_id], references: [model_id], onDelete: NoAction, onUpdate: NoAction)
+  page            page             @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([text_sha], map: "ps_text_sha")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model text_chunk {
+  text_sha     Bytes
+  chunker      String
+  chunk_index  Int          @db.SmallInt
+  chunk_total  Int          @db.SmallInt
+  char_start   Int
+  char_end     Int
+  content      String
+  text_len     Int
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  text_chunker text_chunker @relation(fields: [chunker], references: [chunker], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([text_sha, chunker, chunk_index])
+  @@index([chunker], map: "tc_chunker")
+  @@schema("serve")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model text_chunker {
+  chunker       String          @id
+  strategy      String
+  window_chars  Int
+  stride_chars  Int
+  max_chunks    Int
+  normalizer    String
+  is_active     Boolean         @default(false)
+  notes         String?
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  page_semantic page_semantic[]
+  text_chunk    text_chunk[]
+
+  @@schema("serve")
+}
+
+enum collection_visibility {
+  PRIVATE
+  PUBLIC
+
+  @@schema("app")
+}
+
+enum forum_interaction_alert_type {
+  PAGE_REPLY
+  DIRECT_REPLY
+  MENTION
+
+  @@schema("app")
+}
+
+enum page_metric_threshold_type {
+  ANY_CHANGE
+  ABSOLUTE
+  PERCENT
+
+  @@schema("app")
+}
+
+enum page_metric_type {
+  COMMENT_COUNT
+  VOTE_COUNT
+  RATING
+  REVISION_COUNT
+  SCORE
+
+  @@schema("app")
+}
+
+enum user_activity_type {
+  REVISION
+  ATTRIBUTION
+  ATTRIBUTION_REMOVED
+
+  @@schema("app")
+}

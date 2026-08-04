@@ -1,0 +1,475 @@
+-- =====================================================================================
+-- 9000_roles_grants.sql.ADMIN —— v2 五角色权限矩阵("权限即边界")
+-- =====================================================================================
+--
+--                        ★★★ 本文件需要 DBA 用超级用户执行 ★★★
+--
+-- 【为什么带 .ADMIN 后缀、不进主迁移流程】
+--   当前应用账号 `user_dxzbdi` 有 CREATEDB,但**没有 CREATEROLE、也不是 superuser**
+--   (2026-07-27 实测)。CREATE ROLE / GRANT ... TO <role> 这一整套动作它执行不了。
+--   如果把本文件混进 0001~0004 的主迁移序列,迁移会在第一条 CREATE ROLE 上整体失败,
+--   连带把已经能跑的 schema 迁移一起卡死。因此单独拆出,由 DBA 用超级用户
+--   (或具备 CREATEROLE 的管理账号)手工执行一次。
+--
+-- 【未执行的后果 —— 明确写出来,避免被当成"可选优化"】
+--   v2 **仍然可以运行**:所有对象归 user_dxzbdi 所有,它对一切有全权。
+--   但会缺失设计文档 §3.5 / §4.8.2 的这一层防护:
+--     · 应用层写错代码就能绕过 apply_* 函数直写 ingest.vote_event / serve.vote_current
+--       —— v1 fast-vote lightweightBridge 直写聚合列致盲脏页检测,正是这个形态的事故;
+--     · BFF 可以写事实表(Phase 1 的合入 gate"bff_role 写 vote_event 必须被拒"无法验证);
+--     · 追踪表"只 additive、不 UPDATE 旧事件行"的红线没有强制手段;
+--     · 不可变触发器的 migration_role 例外判据没有承载体。
+--   结论:不执行不阻塞上线,但"重复在物理上不可构造"的五重保证会掉到四重,
+--   第 2 条(写路径独占)退化为纯口头约定。建议在 Phase 1 gate 之前完成。
+--
+-- 【依赖】0001_ingest.sql / 0002_serve.sql / 0003_meta.sql / 0004_app.sql 已全部执行,
+--         且 apply_* 转移函数族已创建(否则函数 EXECUTE 授权段会 NOTICE 提示为空)。
+--
+-- 【可重复执行】所有 CREATE ROLE 走 DO + duplicate_object 吞掉;GRANT/REVOKE 幂等。
+--         包在单个 BEGIN/COMMIT 里,任何一步失败全部回滚。
+--
+-- 【执行方式】
+--   psql "postgresql://<superuser>@localhost:5434/scpper-v2" -v ON_ERROR_STOP=1 \
+--        -f 9000_roles_grants.sql.ADMIN
+--
+-- 【要改的地方只有一处】下面的 scpper.v2_owner —— 填 0001~0004 的对象属主。
+-- =====================================================================================
+
+BEGIN;
+
+-- 对象属主:ALTER DEFAULT PRIVILEGES 必须按属主声明,否则后续新建的表不会自动继承授权。
+SET LOCAL scpper.v2_owner = 'user_dxzbdi';
+
+
+-- =====================================================================================
+-- 0. 前置检查:四个 schema 必须已存在(避免半套授权)
+-- =====================================================================================
+DO $$
+DECLARE missing text[];
+BEGIN
+  SELECT array_agg(s) INTO missing
+  FROM unnest(ARRAY['ingest','serve','app','meta']) AS s
+  WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = s);
+
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少 schema: %。请先执行 0001~0004 的迁移。', array_to_string(missing, ', ');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_setting('scpper.v2_owner')) THEN
+    RAISE EXCEPTION '属主角色 % 不存在,请修正文件顶部的 scpper.v2_owner。',
+      current_setting('scpper.v2_owner');
+  END IF;
+END $$;
+
+
+-- =====================================================================================
+-- 1. 五个组角色(NOLOGIN)——文档 §4.1 权限矩阵
+--    组角色不带密码不能登录;真正的登录账号在文件末尾的模板里 GRANT ... TO 进来。
+--    这样密码轮换 / 加第二个 projector 实例都不用重写权限。
+-- =====================================================================================
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY[
+    'bff_role',           -- BFF 读面 + app 自有域写
+    'ingestor_role',      -- 采集器:只 EXECUTE apply_* + 写 meta 管道状态
+    'projector_role',     -- 投影器:读 ingest,写 serve Tier-2 与 app 告警实例
+    'avatar_worker_role', -- avatar-agent 图片 worker
+    'migration_role'      -- 唯一可绕过不可变触发器,仅迁移窗口启用
+  ] LOOP
+    BEGIN
+      EXECUTE format('CREATE ROLE %I NOLOGIN NOINHERIT', r);
+      RAISE NOTICE '已创建角色 %', r;
+    EXCEPTION WHEN duplicate_object THEN
+      RAISE NOTICE '角色 % 已存在,跳过创建', r;
+    END;
+  END LOOP;
+END $$;
+
+COMMENT ON ROLE bff_role           IS 'v2: BFF 读面(serve.* + ingest 身份/事件/论坛表)+ app 自有域写。对 ingest 事实表与 serve Tier-1 投影零 DML。';
+COMMENT ON ROLE ingestor_role      IS 'v2: 采集器。仅 EXECUTE ingest.apply_*/register_page/ensure_user + 写 meta 管道状态表。对 ingest/serve 的任何表无直接 DML。';
+COMMENT ON ROLE projector_role     IS 'v2: 投影器。SELECT ingest.*,写 serve Tier-2(不含三张 Tier-1),写 app 告警实例与标签域,推 meta.projection_cursor。';
+COMMENT ON ROLE avatar_worker_role IS 'v2: avatar-agent 图片 worker。serve.page_image / serve.image_asset / meta.image_ingest_job(FOR UPDATE SKIP LOCKED 认领)。';
+COMMENT ON ROLE migration_role     IS 'v2: 迁移窗口专用。唯一被不可变触发器放行的角色,平时不应授予任何登录账号。';
+
+
+-- =====================================================================================
+-- 2. 数据库与 schema 级
+-- =====================================================================================
+DO $$
+DECLARE r text;
+BEGIN
+  -- 收口 PUBLIC 对本库的默认 CONNECT / TEMPORARY
+  EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database());
+  FOREACH r IN ARRAY ARRAY['bff_role','ingestor_role','projector_role','avatar_worker_role','migration_role'] LOOP
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), r);
+  END LOOP;
+  -- TEMPORARY 必须还回去:文档 §5.3 的 apply_vote_history 用"临时集合 ⋈ vote_current"
+  -- 做集合化 CAS,批量投影重建同理。只 REVOKE 不还,批量路径会在 CREATE TEMP TABLE 上炸。
+  FOREACH r IN ARRAY ARRAY['ingestor_role','projector_role','migration_role'] LOOP
+    EXECUTE format('GRANT TEMPORARY ON DATABASE %I TO %I', current_database(), r);
+  END LOOP;
+END $$;
+
+-- public schema 收口:v2 的对象一个都不放在 public,PUBLIC 也不该能在里面建东西
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- USAGE(仅"能看见 schema 里的对象名",不含任何对象权限)
+GRANT USAGE ON SCHEMA ingest, serve, app, meta TO bff_role;
+GRANT USAGE ON SCHEMA ingest, serve, app, meta TO ingestor_role;
+GRANT USAGE ON SCHEMA ingest, serve, app, meta TO projector_role;
+GRANT USAGE ON SCHEMA serve, meta              TO avatar_worker_role;
+GRANT USAGE ON SCHEMA ingest, serve, app, meta TO migration_role;
+
+
+-- =====================================================================================
+-- 3. 【关键】把函数从 PUBLIC 手里收回来
+-- =====================================================================================
+-- PG 默认 PUBLIC 对新建函数有 EXECUTE。apply_* 是 SECURITY DEFINER(以属主身份运行、
+-- 拥有事实表全权),若不收回,任何能连库的角色都能调用它写事实——整个"权限即边界"
+-- 会从这里漏光。这一条是本文件里最容易被漏掉、后果最严重的一条。
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ingest FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA serve  FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA app    FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA meta   FROM PUBLIC;
+
+
+-- =====================================================================================
+-- 4. bff_role —— 唯一读面 + app 自有域写
+-- =====================================================================================
+
+-- 4.1 serve.*:全部只读(文档 §6"BFF 唯一读面 = serve.*")
+GRANT SELECT ON ALL TABLES IN SCHEMA serve TO bff_role;
+
+-- 4.2 ingest 身份表
+GRANT SELECT ON ingest.page, ingest.page_lineage, ingest.page_slug_history, ingest."user"
+  TO bff_role;
+
+-- 4.3 ingest 事件表(显式事件语义端点用:改票历史 tab / revisions / 版本时间线)
+GRANT SELECT ON ingest.vote_event, ingest.revision, ingest.page_life_event, ingest.page_attr_history
+  TO bff_role;
+
+-- 4.4 ingest 论坛三表(BFF 第二大读域,38+ 处引用)
+GRANT SELECT ON ingest.forum_category, ingest.forum_thread, ingest.forum_post
+  TO bff_role;
+
+-- 4.5 【相对文档 §4.1 的补充】内容表两张。
+--     文档 §4.1 的 bff 清单没列它们,但 §6.7 明写"修订源码经 page_source→content_blob"、
+--     §6.16 明写 "/versions/:key/source 映射 page_source(page_id, rev_no)"。
+--     不授权则这两个端点在读切换当天直接 500。只读,不含任何 DML。
+GRANT SELECT ON ingest.page_source, ingest.content_blob TO bff_role;
+
+-- 4.6 app 自有域:完全可写
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  app.user_collection,
+  app.user_collection_item,
+  app.collection_account_owner,
+  app.user_follow,
+  app.user_metric_preference,
+  app.page_metric_watch
+TO bff_role;
+
+-- 4.7 告警实例三表:BFF 只读 + 只能改已读态(列级授权,文档 §4.6)
+GRANT SELECT ON app.page_metric_alert, app.user_activity_alert, app.forum_interaction_alert
+  TO bff_role;
+GRANT UPDATE (acknowledged_at) ON app.page_metric_alert      TO bff_role;
+GRANT UPDATE (acknowledged_at) ON app.user_activity_alert    TO bff_role;
+GRANT UPDATE (acknowledged_at) ON app.forum_interaction_alert TO bff_role;
+
+-- 4.8 追踪三表:只 INSERT + SELECT。
+--     这就是"只 additive、不 UPDATE 旧事件行"红线的强制手段(见 0004 设计约定 5)。
+--     刻意不给 DELETE:保留期清理由运维/属主执行,不走 BFF。
+GRANT SELECT, INSERT ON app.page_view_event, app.user_pixel_event, app.tracking_debug_event
+  TO bff_role;
+
+-- 4.9 标签域:BFF 只读(写入者是 projector 的同步 job)
+GRANT SELECT ON app.tag_definition, app.tag_guide_sync TO bff_role;
+
+-- 4.10 铸造用户的唯一入口
+DO $$
+DECLARE fn text;
+BEGIN
+  FOR fn IN SELECT p.oid::regprocedure::text
+            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'ingest' AND p.proname = 'ensure_user'
+  LOOP
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO bff_role', fn);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO ingestor_role', fn);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO projector_role', fn);
+  END LOOP;
+END $$;
+
+-- 4.11 页面层级读面。
+DO $$
+DECLARE fn text; r text;
+BEGIN
+  FOR fn IN
+    SELECT p.oid::regprocedure::text
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'serve'
+       AND p.proname IN ('page_children', 'page_subtree')
+  LOOP
+    FOREACH r IN ARRAY ARRAY['bff_role','ingestor_role','projector_role','migration_role'] LOOP
+      EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', fn, r);
+    END LOOP;
+  END LOOP;
+END $$;
+
+
+-- =====================================================================================
+-- 5. ingestor_role —— 仅 EXECUTE apply_* 函数族(文档 §4.1)
+-- =====================================================================================
+DO $$
+DECLARE rec record; n int := 0;
+BEGIN
+  FOR rec IN
+    SELECT p.oid::regprocedure::text AS sig, p.proname
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'ingest'
+      AND (p.proname LIKE 'apply\_%' OR p.proname IN ('register_page','ensure_user'))
+  LOOP
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO ingestor_role', rec.sig);
+    n := n + 1;
+  END LOOP;
+
+  IF n = 0 THEN
+    RAISE NOTICE '⚠ ingest schema 里没有找到 apply_*/register_page/ensure_user 函数 —— '
+                 '转移函数迁移尚未执行。函数上线后请**重跑本文件**补授权。';
+  ELSE
+    RAISE NOTICE '已向 ingestor_role 授权 % 个转移函数', n;
+  END IF;
+END $$;
+
+-- 【相对文档 §4.1 的显式偏离,理由写在这里】
+--   文档原文:"ingestor_role:仅 EXECUTE apply_* 函数族;对任何表无直接 DML。"
+--   但 §5.5 的游标安全机制要求**摄入事务自己**在分配 seq 之前
+--   `INSERT INTO meta.ingest_gate(...)`、提交前 DELETE;§5.5 调度段要求采集器自己写
+--   meta.scan_task / meta.page_scan / meta.ingest_run。这些不是事实,是管道对自己的观测。
+--   把它们也包成 SECURITY DEFINER 函数成本高收益低(它们没有任何"不可构造"的不变量要守)。
+--   因此:**ingest/serve 的任何表仍然零 DML(红线不变)**,但 meta 里采集器职责范围内的
+--   表给完整 DML。不给的:projection_cursor(projector 的)、v2_baseline / v1_version_map /
+--   dedup_audit(迁移的)、image_ingest_job(projector 建、avatar worker 认领)。
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  meta.ingest_run,
+  meta.page_scan,
+  meta.scan_task,
+  meta.observation_queue,
+  meta.ingest_gate,
+  meta.vote_quarantine,
+  meta.revoke_candidate,
+  meta.irreconcilable,
+  meta.backfill_progress
+TO ingestor_role;
+
+-- 熔断比对是只读的:基线由 projector/运维 job 维护,采集器只读它来决定是否冻结写入。
+GRANT SELECT ON meta.parse_health_baseline TO ingestor_role;
+-- 但越界留痕要写回(last_breach_*/breach_count),列级授权
+GRANT UPDATE (last_breach_at, last_breach_value, last_breach_run, breach_count)
+  ON meta.parse_health_baseline TO ingestor_role;
+
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA meta TO ingestor_role;  -- bigserial 主键需要
+
+-- 采集器需要读身份表来把 fullname/wikidot_id 解析成 page_id(不经函数解析不了)
+GRANT SELECT ON ingest.page, ingest.page_slug_history, ingest."user" TO ingestor_role;
+-- M5 完整 thread 快照以只读集合差生成 post 软删 tombstone；事实写入仍只能走 apply_*。
+GRANT SELECT ON ingest.forum_category, ingest.forum_thread, ingest.forum_post TO ingestor_role;
+GRANT SELECT ON serve.page_current, serve.vote_current TO ingestor_role;  -- diff 基准,只读
+
+
+-- =====================================================================================
+-- 6. projector_role —— 读事实,写 Tier-2 投影
+-- =====================================================================================
+GRANT SELECT ON ALL TABLES IN SCHEMA ingest TO projector_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA serve  TO projector_role;
+
+-- serve:先全给,再把三张 Tier-1 投影收回来。
+-- 这样将来新增的 Tier-2 表自动落在正确的一侧(默认可写),而 Tier-1 的边界是显式声明的。
+-- TRUNCATE 必须给:文档 §6"全量重建契约 = TRUNCATE + cursor=0 + 重放"。
+GRANT INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA serve TO projector_role;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON
+  serve.vote_current, serve.attribution_current, serve.page_current
+FROM projector_role;
+
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA serve TO projector_role;
+
+-- app:告警实例三表由分析 job INSERT;标签同步 job 全权
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  app.page_metric_alert, app.user_activity_alert, app.forum_interaction_alert,
+  app.tag_definition, app.tag_guide_sync
+TO projector_role;
+-- 订阅/关注/收藏是告警的输入,只读
+GRANT SELECT ON
+  app.page_metric_watch, app.user_metric_preference, app.user_follow,
+  app.user_collection, app.user_collection_item, app.collection_account_owner
+TO projector_role;
+-- 分析域(用户画像/浏览统计)读追踪事件
+GRANT SELECT ON app.page_view_event, app.user_pixel_event TO projector_role;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA app TO projector_role;
+
+-- meta:推游标 + 维护解析健康基线 + 建图片任务;其余只读
+GRANT SELECT ON ALL TABLES IN SCHEMA meta TO projector_role;
+GRANT INSERT, UPDATE, DELETE ON
+  meta.projection_cursor,
+  meta.parse_health_baseline,
+  meta.image_ingest_job
+TO projector_role;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA meta TO projector_role;
+
+
+-- =====================================================================================
+-- 7. avatar_worker_role —— 图片摄入 worker
+-- =====================================================================================
+-- 文档 §4.1 写的是 "SELECT/UPDATE serve.page_image、serve.image_asset、
+-- meta.image_ingest_job"。这里对 image_asset 与 image_ingest_job **额外给 INSERT**:
+-- worker 下载到一个新资产时必须能落 serve.image_asset 新行(sha256 主键,内容寻址),
+-- 只有 UPDATE 它就永远写不进第一份资产。认领模式 FOR UPDATE SKIP LOCKED 需要 SELECT+UPDATE。
+-- serve.page_image / serve.image_asset 在设计文档 §4.5 里只以简写形式列出(不是完整 DDL),
+-- 实际表名以 0002_serve.sql 为准 —— 这里用 to_regclass 做软探测,缺表只 NOTICE 不中断,
+-- 免得整份权限脚本被一张命名分歧的表卡死。
+DO $$
+DECLARE t text; found boolean := false;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['serve.page_image','serve.image_asset'] LOOP
+    IF to_regclass(t) IS NOT NULL THEN
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %s TO avatar_worker_role', t);
+      found := true;
+    ELSE
+      RAISE NOTICE '⚠ 未找到 % —— avatar_worker_role 对该表未授权,请在 0002 落地后重跑本文件。', t;
+    END IF;
+  END LOOP;
+  IF found THEN
+    EXECUTE 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA serve TO avatar_worker_role';
+  END IF;
+END $$;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON meta.image_ingest_job TO avatar_worker_role;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA meta TO avatar_worker_role;
+-- worker 需要知道图片挂在哪个页面(只读)
+GRANT SELECT ON serve.page_current TO avatar_worker_role;
+
+
+-- =====================================================================================
+-- 8. migration_role —— 迁移窗口专用,唯一可绕过不可变触发器
+-- =====================================================================================
+GRANT ALL ON ALL TABLES    IN SCHEMA ingest, serve, app, meta TO migration_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA ingest, serve, app, meta TO migration_role;
+DO $$
+DECLARE rec record;
+BEGIN
+  FOR rec IN
+    SELECT p.oid::regprocedure::text AS sig
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname IN ('ingest','serve','app','meta') AND p.prokind = 'f'
+  LOOP
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO migration_role', rec.sig);
+  END LOOP;
+END $$;
+
+-- 【与不可变触发器的契约 —— 写给实现 0001/0002 触发器的人】
+--   触发器的放行判据请统一写成:
+--       IF pg_has_role(session_user, 'migration_role', 'MEMBER') THEN RETURN NEW; END IF;
+--   用 session_user 而不是 current_user:apply_* 是 SECURITY DEFINER,函数体内
+--   current_user 永远是属主(它本来就有全权),用 current_user 判会导致
+--   "任何经函数的写都被当成迁移写",例外形同虚设。
+--   同时:migration_role 平时**不要**授予任何登录账号,迁移窗口开始时 GRANT、
+--   窗口结束后 REVOKE,并把两次操作记进运维日志。
+
+
+-- =====================================================================================
+-- 9. ALTER DEFAULT PRIVILEGES —— 让**将来新建**的对象自动落在正确的一侧
+-- =====================================================================================
+-- 没有这一段,后续任何一个新表都会以"PUBLIC 可 EXECUTE 函数 / 各角色无权限"的默认态
+-- 出生,权限矩阵会随时间静默腐烂。
+DO $$
+DECLARE o text := current_setting('scpper.v2_owner');
+BEGIN
+  -- 函数:一律先从 PUBLIC 收回
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ingest, serve, app, meta REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', o);
+
+  -- serve:bff 只读;projector 可写(Tier-1 三表的 REVOKE 已在第 6 段显式声明,
+  --        新建的 serve 表默认视为 Tier-2)
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA serve GRANT SELECT ON TABLES TO bff_role', o);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA serve GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO projector_role', o);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA serve GRANT USAGE ON SEQUENCES TO projector_role', o);
+
+  -- ingest:projector 只读。**刻意不给 bff 任何默认权限** —— 新增的 ingest 表默认
+  --         对 BFF 不可见,必须像 §4.2~§4.5 那样逐表显式授权。这正是"读只读投影"
+  --         纪律的执行点:想让 BFF 读一张新事实表,必须有人显式写一行 GRANT。
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ingest GRANT SELECT ON TABLES TO projector_role', o);
+
+  -- app:bff 与 projector 共同域,新表默认双方可写(具体收窄仍靠显式 REVOKE/列级授权)
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bff_role', o);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO projector_role', o);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA app GRANT USAGE ON SEQUENCES TO bff_role, projector_role', o);
+
+  -- meta:ingestor 与 projector 可写,bff 完全无权(管道状态不对外)
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA meta GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ingestor_role, projector_role', o);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA meta GRANT USAGE ON SEQUENCES TO ingestor_role, projector_role', o);
+
+  -- migration:一切
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ingest, serve, app, meta GRANT ALL ON TABLES TO migration_role', o);
+  EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ingest, serve, app, meta GRANT ALL ON SEQUENCES TO migration_role', o);
+END $$;
+
+
+-- =====================================================================================
+-- 10. 负向断言:显式 REVOKE(即使 GRANT 段没给过,写出来也是文档)
+-- =====================================================================================
+-- Phase 1 的合入 gate 之一是"bff_role 写 vote_event 必须被拒",这里把该结论固化。
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA ingest FROM bff_role;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA serve  FROM bff_role;
+REVOKE ALL ON ALL TABLES IN SCHEMA meta FROM bff_role;
+
+-- 采集器对事实表与 Tier-1 投影零直接 DML:只能经 SECURITY DEFINER 函数
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA ingest FROM ingestor_role;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA serve  FROM ingestor_role;
+
+-- 投影器不写事实
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA ingest FROM projector_role;
+
+COMMIT;
+
+
+-- =====================================================================================
+-- 11. 登录账号模板(需要 DBA 按环境填写后单独执行,故留在事务外并注释掉)
+-- =====================================================================================
+-- CREATE ROLE scpper_bff       LOGIN PASSWORD '***' IN ROLE bff_role;
+-- CREATE ROLE scpper_ingestor  LOGIN PASSWORD '***' IN ROLE ingestor_role;
+-- CREATE ROLE scpper_projector LOGIN PASSWORD '***' IN ROLE projector_role;
+-- CREATE ROLE scpper_avatar    LOGIN PASSWORD '***' IN ROLE avatar_worker_role;
+-- -- migration_role 不建常驻登录账号;迁移窗口临时 GRANT 给执行者,窗口结束立刻:
+-- --   REVOKE migration_role FROM <执行者>;
+--
+-- 注意组角色建成了 NOINHERIT:登录账号需要显式 `SET ROLE bff_role;` 才拿到权限,
+-- 或把登录账号建成 INHERIT(`CREATE ROLE ... LOGIN INHERIT IN ROLE bff_role`)。
+-- 推荐 INHERIT(应用侧不用改连接初始化),NOINHERIT 只用于人工运维账号。
+
+
+-- =====================================================================================
+-- 12. 自检查询(执行后手工跑,验证"权限即边界"真的成立)
+-- =====================================================================================
+-- -- (a) bff 不能写事实表 —— 必须全部返回 false
+-- SELECT has_table_privilege('bff_role','ingest.vote_event','INSERT')      AS bff_can_insert_vote_event,
+--        has_table_privilege('bff_role','serve.vote_current','UPDATE')     AS bff_can_update_vote_current,
+--        has_table_privilege('bff_role','serve.page_current','UPDATE')     AS bff_can_update_page_current,
+--        has_table_privilege('bff_role','app.page_view_event','DELETE')    AS bff_can_delete_tracking;
+--
+-- -- (b) 采集器不能直写事实表 —— 必须全部返回 false
+-- SELECT has_table_privilege('ingestor_role','ingest.vote_event','INSERT') AS ingestor_direct_insert,
+--        has_table_privilege('ingestor_role','serve.vote_current','UPDATE') AS ingestor_direct_update;
+--
+-- -- (c) 投影器不能写 Tier-1 —— 必须 false;能写 Tier-2 —— 必须 true
+-- SELECT has_table_privilege('projector_role','serve.page_current','UPDATE') AS projector_tier1,
+--        has_table_privilege('projector_role','serve.page_stats','UPDATE')   AS projector_tier2;
+--
+-- -- (d) PUBLIC 不能执行任何 apply_* —— 必须返回 0 行
+-- SELECT p.oid::regprocedure
+-- FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+-- WHERE n.nspname='ingest' AND p.proname LIKE 'apply\_%'
+--   AND has_function_privilege('public', p.oid, 'EXECUTE');
+--
+-- -- (e) 列级授权生效:bff 只能改已读态 —— 第一列 true,第二列 false
+-- SELECT has_column_privilege('bff_role','app.page_metric_alert','acknowledged_at','UPDATE') AS can_ack,
+--        has_column_privilege('bff_role','app.page_metric_alert','new_value','UPDATE')       AS can_forge_value;
+-- =====================================================================================

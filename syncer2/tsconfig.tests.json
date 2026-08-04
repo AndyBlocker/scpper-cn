@@ -1,0 +1,14 @@
+{
+  // 测试的类型检查单独一个 config：主 tsconfig 的 include 是 src/**（rootDir=src、要出 dist），
+  // 把 tests/ 塞进去会污染构建产物结构。这里只做 --noEmit 的类型检查。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": ".",
+    // 测试里有 fs/path/url，以及 node:test —— types 与主配置一致（只 node）。
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

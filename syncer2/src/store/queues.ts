@@ -1,0 +1,413 @@
+/**
+ * 两条「未消化数据」队列的写入门面（TODO #14）：
+ *   meta.pending_page      真·新页身份解析队列（slug 主键，page_id 尚不存在）
+ *   meta.forum_scan_task   thread / category sitemap 差集队列
+ *
+ * DDL 见 migrations/0012_collector_queues.sql（含"为什么不复用 meta.scan_task"的完整理由）。
+ *
+ * ── 全文件贯穿的一条纪律：发现侧 UPSERT 绝不覆盖执行侧状态 ────────────────────
+ * 允许被发现侧改的列只有：last_seen_at / seen_count / reasons / priority(取大)。
+ * `attempts` / `not_before` / `stable_count` / `status` / `locked_*` 一律不碰。
+ * 理由不是洁癖：一个持续出现在 sitemap 里的坏 slug（例如私有页，永远解析不出 pageId）
+ * 如果每轮发现都把 attempts 与 not_before 清零，就变成**每 10 分钟重试一次、永不退避**
+ * 的死循环 —— 这正是 v1 DirtyPage 整表重建冲掉退避状态的同型病根（synthesis §5.4）。
+ */
+
+import type { Pool } from 'pg';
+import { query, toPgTimestamptz } from './db.js';
+import { chunk } from '../util/concurrency.js';
+import { createLogger } from '../util/log.js';
+
+const log = createLogger('queues');
+
+const UNDEFINED_TABLE = '42P01';
+
+function isMissingRelation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === UNDEFINED_TABLE;
+}
+
+// ─── meta.pending_page ───────────────────────────────────────────────────────
+
+export interface PendingPageRow {
+  slug: string;
+  reasons: string[];
+  priority?: number;
+  discoveredBy?: string;
+}
+
+export interface PendingUpsertResult {
+  available: boolean;
+  /** 受影响行数（新插 + 刷新）。PG 的 ON CONFLICT DO UPDATE 无法区分两者，故只报总数。 */
+  affected: number;
+  /** 表中当前 status='pending' 的总数（冷启动闸的输入）。 */
+  pendingTotal: number;
+}
+
+/**
+ * 把「真·新页」slug 入队。幂等：ON CONFLICT (slug) 只刷发现侧列。
+ */
+export async function upsertPendingPages(
+  pool: Pool,
+  rows: readonly PendingPageRow[],
+  seenAt: string,
+): Promise<PendingUpsertResult> {
+  if (rows.length === 0) {
+    return { available: true, affected: 0, pendingTotal: await countPendingPages(pool) };
+  }
+  const ts = toPgTimestamptz(seenAt);
+  let affected = 0;
+  try {
+    // 5 列 × 500 行 = 2500 参数（+1 时间戳），远低于 65535
+    for (const part of chunk(rows, 500)) {
+      const values: unknown[] = [];
+      const tuples: string[] = [];
+      const tsIndex = part.length * 4 + 1;
+      part.forEach((r, i) => {
+        const b = i * 4;
+        tuples.push(
+          `($${b + 1}, $${b + 2}::text[], $${b + 3}, $${b + 4}, $${tsIndex}::timestamptz, $${tsIndex}::timestamptz)`,
+        );
+        values.push(r.slug, r.reasons, r.priority ?? 0, r.discoveredBy ?? 'wikidot_sitemap');
+      });
+      values.push(ts);
+      const res = await query(
+        pool,
+        'meta.pending_page:upsert',
+        `INSERT INTO meta.pending_page AS pp
+           (slug, reasons, priority, discovered_by, first_seen_at, last_seen_at)
+         VALUES ${tuples.join(', ')}
+         ON CONFLICT (slug) DO UPDATE
+            SET last_seen_at = GREATEST(pp.last_seen_at, EXCLUDED.last_seen_at),
+                seen_count   = pp.seen_count + 1,
+                reasons      = ARRAY(SELECT DISTINCT e FROM unnest(pp.reasons || EXCLUDED.reasons) AS e),
+                priority     = GREATEST(pp.priority, EXCLUDED.priority)`,
+        values,
+      );
+      affected += res.rowCount ?? 0;
+    }
+    return { available: true, affected, pendingTotal: await countPendingPages(pool) };
+  } catch (err) {
+    if (isMissingRelation(err)) {
+      log.warn('meta.pending_page 尚未建表（0012 未落地），跳过入队', { rows: rows.length });
+      return { available: false, affected: 0, pendingTotal: 0 };
+    }
+    throw err;
+  }
+}
+
+export async function countPendingPages(pool: Pool): Promise<number> {
+  try {
+    const res = await query<{ n: string }>(
+      pool,
+      'meta.pending_page:count',
+      `SELECT count(*)::text AS n FROM meta.pending_page WHERE status = 'pending'`,
+    );
+    return Number(res.rows[0]?.n ?? '0');
+  } catch (err) {
+    if (isMissingRelation(err)) return 0;
+    throw err;
+  }
+}
+
+export async function pendingStatusBreakdown(pool: Pool): Promise<Record<string, number>> {
+  try {
+    const res = await query<{ status: string; n: string }>(
+      pool,
+      'meta.pending_page:breakdown',
+      `SELECT status, count(*)::text AS n FROM meta.pending_page GROUP BY status ORDER BY status`,
+    );
+    return Object.fromEntries(res.rows.map((r) => [r.status, Number(r.n)]));
+  } catch (err) {
+    if (isMissingRelation(err)) return {};
+    throw err;
+  }
+}
+
+export interface ClaimedPending {
+  slug: string;
+  attempts: number;
+  seenCount: number;
+  reasons: string[];
+}
+
+/**
+ * 认领待解析 slug。`FOR UPDATE SKIP LOCKED` + 立刻写 locked_by/attempts，
+ * 所以两个并发消化者不会抢到同一行（这是"短进程 + 调度器重启"模型下的必要条件：
+ * 上一轮被 SIGKILL 的进程会留下 locked_by，由 `lockStaleAfterMs` 回收）。
+ */
+export async function claimPendingPages(
+  pool: Pool,
+  limit: number,
+  workerId: string,
+  lockStaleAfterMs = 15 * 60_000,
+): Promise<ClaimedPending[]> {
+  if (limit <= 0) return [];
+  try {
+    const res = await query<{ slug: string; attempts: number; seen_count: number; reasons: string[] }>(
+      pool,
+      'meta.pending_page:claim',
+      `WITH picked AS (
+         SELECT slug FROM meta.pending_page
+          WHERE status = 'pending'
+            AND (not_before IS NULL OR not_before <= now())
+            AND (locked_by IS NULL OR locked_at < now() - ($3::bigint || ' milliseconds')::interval)
+          ORDER BY priority DESC, not_before NULLS FIRST, first_seen_at
+          LIMIT $2
+          FOR UPDATE SKIP LOCKED
+       )
+       UPDATE meta.pending_page pp
+          SET locked_by = $1, locked_at = now(), attempts = pp.attempts + 1
+         FROM picked
+        WHERE pp.slug = picked.slug
+        RETURNING pp.slug, pp.attempts, pp.seen_count, pp.reasons`,
+      [workerId, limit, String(lockStaleAfterMs)],
+    );
+    return res.rows.map((r) => ({
+      slug: r.slug,
+      attempts: r.attempts,
+      seenCount: r.seen_count,
+      reasons: r.reasons ?? [],
+    }));
+  } catch (err) {
+    if (isMissingRelation(err)) {
+      log.warn('meta.pending_page 尚未建表，无法认领');
+      return [];
+    }
+    throw err;
+  }
+}
+
+export interface PendingResolution {
+  slug: string;
+  status: 'resolved' | 'gone' | 'mismatch' | 'failed';
+  wikidotId?: number | null;
+  pageId?: number | null;
+  categoryId?: number | null;
+  observedSlug?: string | null;
+  httpStatus?: number | null;
+  error?: string | null;
+  /** failed 时的下次可尝试时刻（指数退避）。 */
+  notBefore?: string | null;
+}
+
+/** 回写单条解析结果。释放锁；`failed` 保留在队列里并带上退避。 */
+export async function finishPendingPage(pool: Pool, r: PendingResolution): Promise<void> {
+  try {
+    await query(
+      pool,
+      'meta.pending_page:finish',
+      `UPDATE meta.pending_page
+          SET status = $2,
+              wikidot_id = COALESCE($3, wikidot_id),
+              page_id = COALESCE($4, page_id),
+              category_id = COALESCE($5, category_id),
+              observed_slug = COALESCE($6, observed_slug),
+              http_status = $7,
+              last_error = $8,
+              not_before = $9::timestamptz,
+              resolved_at = CASE WHEN $2 = 'resolved' THEN now() ELSE resolved_at END,
+              locked_by = NULL,
+              locked_at = NULL
+        WHERE slug = $1`,
+      [
+        r.slug,
+        r.status,
+        r.wikidotId ?? null,
+        r.pageId ?? null,
+        r.categoryId ?? null,
+        r.observedSlug ?? null,
+        r.httpStatus ?? null,
+        r.error ?? null,
+        r.notBefore === undefined || r.notBefore === null ? null : toPgTimestamptz(r.notBefore),
+      ],
+    );
+  } catch (err) {
+    if (isMissingRelation(err)) return;
+    throw err;
+  }
+}
+
+/**
+ * 指数退避：1h → 4h → 24h → 7d（与 meta.scan_task 的退避阶梯同口径）。
+ * 上限 7 天而不是无限增长：私有页/永久坏 slug 应该**低频保留**而不是被丢掉，
+ * 因为它们随时可能变公开。
+ */
+export function backoffFrom(attempts: number, now = Date.now()): string {
+  const ladderMs = [60 * 60_000, 4 * 60 * 60_000, 24 * 60 * 60_000, 7 * 24 * 60 * 60_000];
+  const idx = Math.min(Math.max(attempts, 1) - 1, ladderMs.length - 1);
+  return new Date(now + ladderMs[idx]!).toISOString();
+}
+
+// ─── ingest.register_page ────────────────────────────────────────────────────
+
+export interface ExistingIdentity {
+  pageId: number;
+  /** ingest.page_slug_history 里 valid_to IS NULL 的那一行（可能为 null：历史缺行）。 */
+  currentSlug: string | null;
+}
+
+/**
+ * 先查 wikidot_id 是否已有身份行。
+ *
+ * **为什么不能只调 register_page 了事：** register_page 是幂等的身份查询/铸造，
+ * 它对已存在的 wikidot_id **直接返回既有 page_id 且刻意不改 slug**
+ * （"slug 变更走 apply_page_meta，那里才有 SCD2 + renamed 事件"）。
+ * 于是"sitemap 报出一个新 slug，而这个 wikidot_id 已经在库里挂着旧 slug"这一情形——
+ * 也就是**改名**——如果直接 register_page 并把 pending 标成 resolved，
+ * 改名这件事就被静默吞掉了：page_slug_history 里当前 slug 还是旧的，
+ * 而队列已经认为"这条处理完了"。
+ * 所以这里先查一次（本地 SQL，零 wikidot 成本），改名走单独的分支。
+ */
+export async function lookupIdentityByWikidotId(
+  pool: Pool,
+  wikidotId: number,
+): Promise<ExistingIdentity | null> {
+  const res = await query<{ page_id: number; current_slug: string | null }>(
+    pool,
+    'ingest.page:lookup_by_wikidot_id',
+    `SELECT p.id AS page_id, psh.slug AS current_slug
+       FROM ingest.page p
+       LEFT JOIN ingest.page_slug_history psh
+              ON psh.page_id = p.id AND psh.valid_to IS NULL
+      WHERE p.wikidot_id = $1`,
+    [wikidotId],
+  );
+  const row = res.rows[0];
+  if (row === undefined) return null;
+  return { pageId: Number(row.page_id), currentSlug: row.current_slug };
+}
+
+/**
+ * 调 ingest.register_page 铸身份（幂等，已存在则直接返回既有 page_id）。
+ * 用具名参数：签名有 7 个参数且中间有默认值，位置传参一改签名就会静默错位。
+ */
+export async function registerPage(
+  pool: Pool,
+  args: { wikidotId: number; slug: string; observedAt: string; source?: string; runId?: number | null },
+): Promise<number> {
+  const res = await query<{ page_id: number }>(
+    pool,
+    'ingest.register_page',
+    `SELECT ingest.register_page(
+              p_wikidot_id => $1,
+              p_slug       => $2,
+              p_observed   => $3::timestamptz,
+              p_source     => $4,
+              p_run        => $5
+            ) AS page_id`,
+    [
+      args.wikidotId,
+      args.slug,
+      toPgTimestamptz(args.observedAt),
+      args.source ?? 'wikidot',
+      args.runId ?? null,
+    ],
+  );
+  const id = res.rows[0]?.page_id;
+  if (id === undefined || id === null) {
+    throw new Error(`register_page 未返回 page_id（wikidot_id=${args.wikidotId}, slug=${args.slug}）`);
+  }
+  return Number(id);
+}
+
+// ─── meta.forum_scan_task ────────────────────────────────────────────────────
+
+export type ForumTargetKind = 'thread' | 'category';
+
+export interface ForumEnqueueRow {
+  kind: ForumTargetKind;
+  targetId: number;
+  reasons: string[];
+  priority?: number;
+}
+
+/** 取库内已知的 thread / category id（差集的本地一侧）。 */
+export async function fetchKnownForumIds(
+  pool: Pool,
+  kind: ForumTargetKind,
+): Promise<{ available: boolean; known: Set<number>; deleted: Set<number> }> {
+  const table = kind === 'thread' ? 'ingest.forum_thread' : 'ingest.forum_category';
+  // forum_category 没有 is_deleted 列（当前态表 + 不物理删除），故只有 thread 查它
+  const sql =
+    kind === 'thread'
+      ? `SELECT id::text AS id, is_deleted FROM ingest.forum_thread`
+      : `SELECT id::text AS id, false AS is_deleted FROM ingest.forum_category`;
+  try {
+    const res = await query<{ id: string; is_deleted: boolean }>(pool, `${table}:ids`, sql);
+    const known = new Set<number>();
+    const deleted = new Set<number>();
+    for (const row of res.rows) {
+      const id = Number(row.id);
+      known.add(id);
+      if (row.is_deleted) deleted.add(id);
+    }
+    return { available: true, known, deleted };
+  } catch (err) {
+    if (isMissingRelation(err)) {
+      log.warn(`${table} 尚未建表，无法做差集`);
+      return { available: false, known: new Set(), deleted: new Set() };
+    }
+    throw err;
+  }
+}
+
+/** 入队 thread / category 差集。幂等：ON CONFLICT (kind,target_id) 只刷发现侧列。 */
+export async function enqueueForumTargets(
+  pool: Pool,
+  rows: readonly ForumEnqueueRow[],
+  seenAt: string,
+): Promise<{ available: boolean; affected: number }> {
+  if (rows.length === 0) return { available: true, affected: 0 };
+  const ts = toPgTimestamptz(seenAt);
+  let affected = 0;
+  try {
+    for (const part of chunk(rows, 500)) {
+      const values: unknown[] = [];
+      const tuples: string[] = [];
+      const tsIndex = part.length * 4 + 1;
+      part.forEach((r, i) => {
+        const b = i * 4;
+        tuples.push(
+          `($${b + 1}, $${b + 2}, $${b + 3}::text[], $${b + 4}, $${tsIndex}::timestamptz, $${tsIndex}::timestamptz)`,
+        );
+        values.push(r.kind, r.targetId, r.reasons, r.priority ?? 0);
+      });
+      values.push(ts);
+      const res = await query(
+        pool,
+        'meta.forum_scan_task:enqueue',
+        `INSERT INTO meta.forum_scan_task AS fst
+           (kind, target_id, reasons, priority, first_seen_at, last_seen_at)
+         VALUES ${tuples.join(', ')}
+         ON CONFLICT (kind, target_id) DO UPDATE
+            SET last_seen_at = GREATEST(fst.last_seen_at, EXCLUDED.last_seen_at),
+                seen_count   = fst.seen_count + 1,
+                reasons      = ARRAY(SELECT DISTINCT e FROM unnest(fst.reasons || EXCLUDED.reasons) AS e),
+                priority     = GREATEST(fst.priority, EXCLUDED.priority)`,
+        values,
+      );
+      affected += res.rowCount ?? 0;
+    }
+    return { available: true, affected };
+  } catch (err) {
+    if (isMissingRelation(err)) {
+      log.warn('meta.forum_scan_task 尚未建表（0012 未落地），跳过入队', { rows: rows.length });
+      return { available: false, affected: 0 };
+    }
+    throw err;
+  }
+}
+
+export async function forumQueueBreakdown(pool: Pool): Promise<Record<string, number>> {
+  try {
+    const res = await query<{ kind: string; n: string }>(
+      pool,
+      'meta.forum_scan_task:breakdown',
+      `SELECT kind, count(*)::text AS n FROM meta.forum_scan_task GROUP BY kind ORDER BY kind`,
+    );
+    return Object.fromEntries(res.rows.map((r) => [r.kind, Number(r.n)]));
+  } catch (err) {
+    if (isMissingRelation(err)) return {};
+    throw err;
+  }
+}

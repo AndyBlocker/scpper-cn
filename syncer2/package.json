@@ -1,0 +1,46 @@
+{
+  "name": "scpper-cn-syncer2",
+  "version": "0.1.0",
+  "description": "SCPper CN v2 采集层：wikidot 直连常驻源 + sitemap 发现通道（短进程 CLI，无常驻 loop）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "build": "tsc",
+    "test": "node --import tsx/esm --test --test-concurrency=1 'tests/**/*.test.ts'",
+    "test:offline": "node --import tsx/esm --test tests/http.test.ts tests/parse.test.ts",
+    "test:db": "node --import tsx/esm --test tests/db.test.ts",
+    "test:gates": "node --import tsx/esm --test --test-concurrency=1 --test-reporter=spec tests/t5-vote-batch.test.ts tests/t6-role-permission.test.ts tests/t7-cursor-safety.test.ts",
+    "test:t5": "node --import tsx/esm --test --test-reporter=spec tests/t5-vote-batch.test.ts",
+    "test:t6": "node --import tsx/esm --test --test-reporter=spec tests/t6-role-permission.test.ts",
+    "test:t7": "node --import tsx/esm --test --test-reporter=spec tests/t7-cursor-safety.test.ts",
+    "sitemap:delta": "node --import tsx/esm src/cli/sitemap-scan.ts --mode delta",
+    "sitemap:full": "node --import tsx/esm src/cli/sitemap-scan.ts --mode full",
+    "sitemap:threads": "node --import tsx/esm src/cli/sitemap-scan.ts --mode threads",
+    "sitemap:category": "node --import tsx/esm src/cli/sitemap-scan.ts --mode category",
+    "sitemap:delta:dry": "node --import tsx/esm src/cli/sitemap-scan.ts --mode delta --dry-run",
+    "resolve:pages": "node --import tsx/esm src/cli/resolve-pages.ts",
+    "resolve:pages:dry": "node --import tsx/esm src/cli/resolve-pages.ts --dry-run --limit 5",
+    "prisma:pull": "./prisma/pull.sh",
+    "prisma:check": "./prisma/pull.sh --check",
+    "gate:load-v1": "./checks/load_v1_identity.sh",
+    "gate:backfill": "psql \"$SYNCER2_DATABASE_URL\" -f checks/backfill_finalize.sql",
+    "gate:backfill:dry": "psql \"$SYNCER2_DATABASE_URL\" -v gate_mode=dryrun -f checks/backfill_finalize.sql"
+  },
+  "dependencies": {
+    "@ukwhatn/wikidot": "^4.3.1",
+    "commander": "^14.0.0",
+    "dotenv": "^16.4.5",
+    "pg": "^8.16.3",
+    "tsx": "^4.21.0",
+    "undici": "^7.22.0"
+  },
+  "devDependencies": {
+    "@prisma/client": "^5.22.0",
+    "@types/node": "^22.5.4",
+    "@types/pg": "^8.16.0",
+    "prisma": "^5.22.0",
+    "typescript": "^5.9.3"
+  }
+}

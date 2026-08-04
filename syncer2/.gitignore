@@ -1,0 +1,22 @@
+node_modules/
+dist/
+package-lock.json
+
+# Environment
+.env
+.env.local
+.env.production
+
+# 短进程之间的本地状态（sitemap 快照等），可安全删除，删掉只会让下一轮退化为 bootstrap
+state/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
