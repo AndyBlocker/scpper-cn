@@ -1,7 +1,7 @@
 /**
  * 两条「未消化数据」队列的写入门面（TODO #14）：
  *   meta.pending_page      真·新页身份解析队列（slug 主键，page_id 尚不存在）
- *   meta.forum_scan_task   thread / category sitemap 差集队列
+ *   meta.forum_scan_task   thread sitemap 新 id + category 周期枚举队列
  *
  * DDL 见 migrations/0012_collector_queues.sql（含"为什么不复用 meta.scan_task"的完整理由）。
  *
@@ -15,6 +15,7 @@
 
 import type { Pool } from 'pg';
 import { query, toPgTimestamptz } from './db.js';
+import { toPgJson } from './pgText.js';
 import { chunk } from '../util/concurrency.js';
 import { createLogger } from '../util/log.js';
 
@@ -227,6 +228,25 @@ export async function finishPendingPage(pool: Pool, r: PendingResolution): Promi
   }
 }
 
+/** 我方写冻结/进程停止不算目标失败：释放认领并退回本轮白烧的 attempt。 */
+export async function releasePendingPageClaim(
+  pool: Pool,
+  slug: string,
+  workerId: string,
+): Promise<void> {
+  await query(
+    pool,
+    'meta.pending_page:release_claim',
+    `UPDATE meta.pending_page
+        SET locked_by = NULL,
+            locked_at = NULL,
+            attempts = GREATEST(0, attempts - 1),
+            not_before = now()
+      WHERE slug = $1 AND locked_by = $2 AND status = 'pending'`,
+    [slug, workerId],
+  );
+}
+
 /**
  * 指数退避：1h → 4h → 24h → 7d（与 meta.scan_task 的退避阶梯同口径）。
  * 上限 7 天而不是无限增长：私有页/永久坏 slug 应该**低频保留**而不是被丢掉，
@@ -310,6 +330,53 @@ export async function registerPage(
   return Number(id);
 }
 
+export interface SlugReuseIdentityResult {
+  predecessor_id: number;
+  predecessor_wikidot_id: number;
+  successor_id: number;
+  successor_wikidot_id: number;
+  slug: string;
+  deleted_event_seq: number | null;
+  lineage_candidate_inserted: boolean;
+}
+
+/**
+ * 同 slug 的整页身份与任务身份不一致时，原子完成旧→新生命周期接力。
+ * 事实写入全部封装在 SECURITY DEFINER 函数内；采集角色不获得 ingest/serve 表 DML。
+ */
+export async function applySlugReuseIdentity(
+  pool: Pool,
+  args: {
+    predecessorId: number;
+    observedWikidotId: number;
+    slug: string;
+    observedAt: string;
+    runId?: number | null;
+  },
+): Promise<SlugReuseIdentityResult> {
+  const result = await query<{ result: SlugReuseIdentityResult }>(
+    pool,
+    'ingest.apply_slug_reuse_identity',
+    `SELECT ingest.apply_slug_reuse_identity(
+       $1::int, $2::int, $3::text, $4::timestamptz, $5::bigint
+     ) AS result`,
+    [
+      args.predecessorId,
+      args.observedWikidotId,
+      args.slug,
+      toPgTimestamptz(args.observedAt),
+      args.runId ?? null,
+    ],
+  );
+  const row = result.rows[0]?.result;
+  if (row === undefined || row === null) {
+    throw new Error(
+      `apply_slug_reuse_identity 未返回结果（predecessor=${args.predecessorId}, slug=${args.slug}）`,
+    );
+  }
+  return row;
+}
+
 // ─── meta.forum_scan_task ────────────────────────────────────────────────────
 
 export type ForumTargetKind = 'thread' | 'category';
@@ -351,7 +418,10 @@ export async function fetchKnownForumIds(
   }
 }
 
-/** 入队 thread / category 差集。幂等：ON CONFLICT (kind,target_id) 只刷发现侧列。 */
+/**
+ * 入队 thread 发现差集 / category 周期枚举。
+ * category 任务会周期重入，用完整分类分页裁决 thread 存亡；ON CONFLICT 只刷发现侧列。
+ */
 export async function enqueueForumTargets(
   pool: Pool,
   rows: readonly ForumEnqueueRow[],
@@ -410,4 +480,381 @@ export async function forumQueueBreakdown(pool: Pool): Promise<Record<string, nu
     if (isMissingRelation(err)) return {};
     throw err;
   }
+}
+
+// ─── M5 forum-scan 消费侧 ───────────────────────────────────────────────────
+
+export interface ClaimedForumTarget {
+  taskId: number;
+  kind: ForumTargetKind;
+  targetId: number;
+  attempts: number;
+  stableCount: number;
+  lastResultHash: Buffer | null;
+  reasons: string[];
+}
+
+export interface ForumTargetFilter {
+  threadId?: number | null;
+  categoryId?: number | null;
+}
+
+/**
+ * 认领 thread 新 id / category 周期枚举任务。
+ *
+ * category 排在 thread 前：空库第一轮必须先把 FK 父表补齐，再允许 thread upsert。
+ * exact filter 只用于定向修复/小样本，不改变正常调度语义。
+ */
+export async function claimForumTargets(
+  pool: Pool,
+  requestedLimit: number,
+  workerId: string,
+  filter: ForumTargetFilter = {},
+  lockStaleAfterMs = 30 * 60_000,
+): Promise<ClaimedForumTarget[]> {
+  const limit = Math.min(50, Math.max(0, Math.floor(requestedLimit)));
+  if (limit === 0) return [];
+  const res = await query<{
+    id: string;
+    kind: ForumTargetKind;
+    target_id: string;
+    attempts: number;
+    stable_count: number;
+    last_result_hash: Buffer | null;
+    reasons: string[];
+  }>(
+    pool,
+    'meta.forum_scan_task:claim',
+    `WITH picked AS (
+       SELECT fst.id
+         FROM meta.forum_scan_task fst
+        WHERE (fst.not_before IS NULL OR fst.not_before <= now())
+          AND (
+            fst.locked_by IS NULL
+            OR fst.locked_at < now() - ($3::bigint || ' milliseconds')::interval
+          )
+          AND ($4::bigint IS NULL OR (fst.kind = 'thread' AND fst.target_id = $4))
+          AND ($5::bigint IS NULL OR (fst.kind = 'category' AND fst.target_id = $5))
+        ORDER BY (fst.kind = 'category') DESC,
+                 fst.priority DESC,
+                 fst.not_before NULLS FIRST,
+                 fst.id
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+     )
+     UPDATE meta.forum_scan_task fst
+        SET locked_by = $1,
+            locked_at = now(),
+            attempts = fst.attempts + 1
+       FROM picked
+      WHERE fst.id = picked.id
+      RETURNING fst.id::text, fst.kind, fst.target_id::text, fst.attempts,
+                fst.stable_count, fst.last_result_hash, fst.reasons`,
+    [
+      workerId,
+      limit,
+      String(lockStaleAfterMs),
+      filter.threadId ?? null,
+      filter.categoryId ?? null,
+    ],
+  );
+  return res.rows.map((row) => ({
+    taskId: Number(row.id),
+    kind: row.kind,
+    targetId: Number(row.target_id),
+    attempts: Number(row.attempts),
+    stableCount: Number(row.stable_count),
+    lastResultHash: row.last_result_hash,
+    reasons: row.reasons,
+  }));
+}
+
+export interface FinishForumTargetArgs {
+  workerId: string;
+  status: 'ok' | 'partial' | 'failed';
+  resultHash?: Buffer | null;
+  now: string;
+}
+
+export interface FinishForumTargetResult {
+  action: 'deleted' | 'retried';
+  stableCount: number;
+  notBefore: string | null;
+}
+
+/** 成功即删；partial/failed 保留并按 1h→4h→24h→7d 退避。 */
+export async function finishForumTarget(
+  pool: Pool,
+  task: ClaimedForumTarget,
+  args: FinishForumTargetArgs,
+): Promise<FinishForumTargetResult> {
+  if (args.status === 'ok') {
+    await query(
+      pool,
+      'meta.forum_scan_task:finish_success',
+      `DELETE FROM meta.forum_scan_task WHERE id = $1 AND locked_by = $2`,
+      [task.taskId, args.workerId],
+    );
+    return { action: 'deleted', stableCount: 0, notBefore: null };
+  }
+
+  const sameHash =
+    args.resultHash !== undefined &&
+    args.resultHash !== null &&
+    task.lastResultHash !== null &&
+    task.lastResultHash.equals(args.resultHash);
+  const stableCount = args.resultHash ? (sameHash ? task.stableCount + 1 : 1) : 0;
+  const notBefore = backoffFrom(
+    stableCount >= 3 ? stableCount - 2 : task.attempts,
+    Date.parse(toPgTimestamptz(args.now)),
+  );
+  await query(
+    pool,
+    'meta.forum_scan_task:finish_retry',
+    `UPDATE meta.forum_scan_task
+        SET stable_count = $3,
+            last_result_hash = COALESCE($4, last_result_hash),
+            not_before = $5::timestamptz,
+            locked_by = NULL,
+            locked_at = NULL
+      WHERE id = $1 AND locked_by = $2`,
+    [task.taskId, args.workerId, stableCount, args.resultHash ?? null, notBefore],
+  );
+  return { action: 'retried', stableCount, notBefore };
+}
+
+/** 进程异常/熔断时释放 forum_scan_task 锁，但保留 attempts。 */
+export async function releaseForumTargetLocks(
+  pool: Pool,
+  taskIds: readonly number[],
+  workerId: string,
+): Promise<number> {
+  if (taskIds.length === 0) return 0;
+  const result = await query(
+    pool,
+    'meta.forum_scan_task:release_locks',
+    `UPDATE meta.forum_scan_task
+        SET locked_by = NULL,
+            locked_at = NULL,
+            not_before = COALESCE(not_before, now() + interval '1 hour')
+      WHERE id = ANY($1::bigint[]) AND locked_by = $2`,
+    [taskIds, workerId],
+  );
+  return result.rowCount ?? 0;
+}
+
+export interface ClaimedDiscussionTask {
+  taskId: number;
+  pageId: number;
+  wikidotId: number;
+  slug: string;
+  kind: 'forum' | 'discussion';
+  claimedTotal: number;
+  expectedThreadId: number | null;
+  attempts: number;
+  stableCount: number;
+  lastResultHash: Buffer | null;
+  reasons: string[];
+}
+
+/** 认领 Tier1 评论变化产生的页级论坛任务。 */
+export async function claimDiscussionTasks(
+  pool: Pool,
+  requestedLimit: number,
+  workerId: string,
+  pageId: number | null = null,
+  lockStaleAfterMs = 30 * 60_000,
+): Promise<ClaimedDiscussionTask[]> {
+  const limit = Math.min(50, Math.max(0, Math.floor(requestedLimit)));
+  if (limit === 0) return [];
+  const result = await query<{
+    id: string;
+    page_id: number;
+    wikidot_id: number;
+    slug: string;
+    kind: 'forum' | 'discussion';
+    comment_count: number;
+    discussion_thread_id: string | null;
+    attempts: number;
+    stable_count: number;
+    last_result_hash: Buffer | null;
+    reasons: string[];
+  }>(
+    pool,
+    'meta.scan_task:claim_discussion',
+    `WITH picked AS (
+       SELECT st.id
+         FROM meta.scan_task st
+         JOIN serve.page_current pc ON pc.page_id = st.page_id
+        WHERE st.kind IN ('forum', 'discussion')
+          AND pc.status = 'live'
+          AND ($4::int IS NULL OR st.page_id = $4)
+          AND (st.not_before IS NULL OR st.not_before <= now())
+          AND (
+            st.locked_by IS NULL
+            OR st.locked_at < now() - ($3::bigint || ' milliseconds')::interval
+          )
+        ORDER BY st.priority DESC, st.not_before NULLS FIRST, st.id
+        LIMIT $2
+        FOR UPDATE OF st SKIP LOCKED
+     )
+     UPDATE meta.scan_task st
+        SET locked_by = $1,
+            locked_at = now(),
+            attempts = st.attempts + 1
+       FROM picked, serve.page_current pc
+      WHERE st.id = picked.id
+        AND pc.page_id = st.page_id
+      RETURNING st.id::text, st.page_id, pc.wikidot_id, pc.slug, st.kind,
+                pc.comment_count, pc.discussion_thread_id::text,
+                st.attempts, st.stable_count, st.last_result_hash, st.reasons`,
+    [workerId, limit, String(lockStaleAfterMs), pageId],
+  );
+  return result.rows.map((row) => ({
+    taskId: Number(row.id),
+    pageId: Number(row.page_id),
+    wikidotId: Number(row.wikidot_id),
+    slug: row.slug,
+    kind: row.kind,
+    claimedTotal: Number(row.comment_count),
+    expectedThreadId:
+      row.discussion_thread_id === null ? null : Number(row.discussion_thread_id),
+    attempts: Number(row.attempts),
+    stableCount: Number(row.stable_count),
+    lastResultHash: row.last_result_hash,
+    reasons: row.reasons,
+  }));
+}
+
+export interface FinishDiscussionTaskArgs {
+  workerId: string;
+  status: 'ok' | 'partial' | 'failed';
+  resultHash?: Buffer | null;
+  localValue?: Record<string, unknown>;
+  remoteValue?: Record<string, unknown>;
+  now: string;
+}
+
+/** 页级任务遵守 scan_task 的成功删除 + stable_count 收敛语义。 */
+export async function finishDiscussionTask(
+  pool: Pool,
+  task: ClaimedDiscussionTask,
+  args: FinishDiscussionTaskArgs,
+): Promise<{ action: 'deleted' | 'retried' | 'irreconcilable'; stableCount: number; notBefore: string | null }> {
+  const now = toPgTimestamptz(args.now);
+  if (args.status === 'ok') {
+    await query(
+      pool,
+      'meta.irreconcilable:discussion_resolve',
+      `UPDATE meta.irreconcilable
+          SET resolved_at = $3::timestamptz,
+              last_checked = $3::timestamptz
+        WHERE page_id = $1 AND kind = $2 AND resolved_at IS NULL`,
+      [task.pageId, task.kind, now],
+    );
+    await query(
+      pool,
+      'meta.scan_task:finish_discussion_success',
+      `DELETE FROM meta.scan_task WHERE id = $1 AND locked_by = $2`,
+      [task.taskId, args.workerId],
+    );
+    return { action: 'deleted', stableCount: 0, notBefore: null };
+  }
+
+  const sameHash =
+    args.resultHash !== undefined &&
+    args.resultHash !== null &&
+    task.lastResultHash !== null &&
+    task.lastResultHash.equals(args.resultHash);
+  const stableCount = args.resultHash ? (sameHash ? task.stableCount + 1 : 1) : 0;
+  const converged = stableCount >= 3;
+  const notBefore = backoffFrom(
+    converged ? stableCount - 2 : task.attempts,
+    Date.parse(now),
+  );
+  if (converged) {
+    await query(
+      pool,
+      'meta.irreconcilable:discussion_converge',
+      `WITH terminal AS (
+         INSERT INTO meta.irreconcilable AS i
+           (page_id, kind, local_value, remote_value, result_hash,
+            first_seen, last_checked, checks, next_review_at,
+            resolved_at, locked_by, locked_at)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5,
+                 $6::timestamptz, $6::timestamptz, 1,
+                 $6::timestamptz + interval '7 days',
+                 NULL, NULL, NULL)
+         ON CONFLICT (page_id, kind) DO UPDATE
+           SET local_value = EXCLUDED.local_value,
+               remote_value = EXCLUDED.remote_value,
+               result_hash = EXCLUDED.result_hash,
+               first_seen = CASE
+                 WHEN i.resolved_at IS NOT NULL THEN EXCLUDED.first_seen
+                 ELSE i.first_seen
+               END,
+               last_checked = EXCLUDED.last_checked,
+               checks = CASE
+                 WHEN i.resolved_at IS NOT NULL THEN 1
+                 ELSE i.checks + 1
+               END,
+               next_review_at = EXCLUDED.next_review_at,
+               resolved_at = NULL,
+               locked_by = NULL,
+               locked_at = NULL
+         RETURNING 1
+       )
+       DELETE FROM meta.scan_task st
+        WHERE st.id = $7
+          AND st.locked_by = $8
+          AND EXISTS (SELECT 1 FROM terminal)`,
+      [
+        task.pageId,
+        task.kind,
+        toPgJson(args.localValue ?? {}, 'queues.irreconcilable.local_value'),
+        toPgJson(args.remoteValue ?? {}, 'queues.irreconcilable.remote_value'),
+        args.resultHash,
+        now,
+        task.taskId,
+        args.workerId,
+      ],
+    );
+    return { action: 'irreconcilable', stableCount, notBefore: null };
+  }
+  await query(
+    pool,
+    'meta.scan_task:finish_discussion_retry',
+    `UPDATE meta.scan_task
+        SET stable_count = $3,
+            last_result_hash = COALESCE($4, last_result_hash),
+            not_before = $5::timestamptz,
+            locked_by = NULL,
+            locked_at = NULL
+      WHERE id = $1 AND locked_by = $2`,
+    [task.taskId, args.workerId, stableCount, args.resultHash ?? null, notBefore],
+  );
+  return {
+    action: 'retried',
+    stableCount,
+    notBefore,
+  };
+}
+
+export async function releaseDiscussionTaskLocks(
+  pool: Pool,
+  taskIds: readonly number[],
+  workerId: string,
+): Promise<number> {
+  if (taskIds.length === 0) return 0;
+  const result = await query(
+    pool,
+    'meta.scan_task:release_discussion_locks',
+    `UPDATE meta.scan_task
+        SET locked_by = NULL,
+            locked_at = NULL,
+            not_before = COALESCE(not_before, now() + interval '1 hour')
+      WHERE id = ANY($1::bigint[]) AND locked_by = $2`,
+    [taskIds, workerId],
+  );
+  return result.rowCount ?? 0;
 }

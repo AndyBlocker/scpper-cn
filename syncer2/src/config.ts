@@ -34,6 +34,12 @@ export interface Syncer2Config {
   stateDir: string;
   minEnumeratedRatio: number;
   absenceCircuit: number;
+  /** user_page/user_stats 是否纳入已删页作品；默认 false 与 v1 一致，等待产品裁决。 */
+  projectIncludeDeletedPages: boolean;
+  /** L0/L1 的共同调度周期。只允许 15 或 30 分钟；调度器必须使用同一个值。 */
+  incrementalFrequencyMinutes: 15 | 30;
+  /** L0 updated_at 回看窗口；默认 2h，至少覆盖四个共同调度周期。 */
+  l0WindowHours: number;
 
   // ── 出口归因（TODO #12：meta.ingest_run.exit_ip_stats）────────────────────
   /** IP 回显探针 URL。空 = 关闭 IP 采样（仍可用 mihomo 节点归因）。 */
@@ -101,12 +107,39 @@ function num(key: string, fallback: number): number {
   return n;
 }
 
+function bool(key: string, fallback: boolean): boolean {
+  const v = process.env[key];
+  if (v === undefined || v.trim() === '') return fallback;
+  const normalized = v.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  throw new ConfigError(`环境变量 ${key} 不是布尔值（true/false）：${v}`);
+}
+
 export function loadConfig(opts: { requireDatabase?: boolean } = {}): Syncer2Config {
   loadEnv();
   const requireDatabase = opts.requireDatabase !== false;
 
   const siteBaseUrl = str('SYNCER2_SITE_BASE_URL', 'https://scp-wiki-cn.wikidot.com').replace(/\/+$/, '');
   const proxyRaw = process.env.SYNCER2_HTTP_PROXY;
+  const incrementalFrequencyMinutes = num('SYNCER2_INCREMENTAL_FREQUENCY_MINUTES', 30);
+  if (incrementalFrequencyMinutes !== 15 && incrementalFrequencyMinutes !== 30) {
+    throw new ConfigError(
+      `SYNCER2_INCREMENTAL_FREQUENCY_MINUTES 只允许 15 或 30，收到 ${incrementalFrequencyMinutes}`,
+    );
+  }
+  const l0WindowHours = num('SYNCER2_L0_WINDOW_HOURS', 2);
+  const minimumWindowHours = (incrementalFrequencyMinutes * 4) / 60;
+  if (
+    !Number.isInteger(l0WindowHours) ||
+    l0WindowHours < minimumWindowHours ||
+    l0WindowHours > 24
+  ) {
+    throw new ConfigError(
+      `SYNCER2_L0_WINDOW_HOURS 必须是 ${minimumWindowHours}..24 的整数，` +
+        `以覆盖至少四个 L0 周期；收到 ${l0WindowHours}`,
+    );
+  }
 
   return {
     databaseUrl: requireDatabase ? str('SYNCER2_DATABASE_URL') : (process.env.SYNCER2_DATABASE_URL ?? ''),
@@ -117,12 +150,16 @@ export function loadConfig(opts: { requireDatabase?: boolean } = {}): Syncer2Con
     referer: str('SYNCER2_REFERER', `${siteBaseUrl}/`),
     httpTimeoutMs: num('SYNCER2_HTTP_TIMEOUT_MS', 30_000),
     httpMaxAttempts: num('SYNCER2_HTTP_MAX_ATTEMPTS', 3),
-    breaker503: num('SYNCER2_HTTP_503_BREAKER', 3),
-    breakerReset: num('SYNCER2_HTTP_RESET_BREAKER', 6),
+    // 传输基线失败率约 2.3%，连续 5 次的误跳闸概率约 6e-9；与采集规格铁律一致。
+    breaker503: num('SYNCER2_HTTP_503_BREAKER', 5),
+    breakerReset: num('SYNCER2_HTTP_RESET_BREAKER', 5),
     httpConcurrency: num('SYNCER2_HTTP_CONCURRENCY', 2),
     stateDir: path.resolve(PROJECT_ROOT, str('SYNCER2_STATE_DIR', './state')),
     minEnumeratedRatio: num('SYNCER2_MIN_ENUMERATED_RATIO', 0.98),
     absenceCircuit: num('SYNCER2_ABSENCE_CIRCUIT', 500),
+    projectIncludeDeletedPages: bool('SYNCER2_PROJECT_INCLUDE_DELETED_PAGES', false),
+    incrementalFrequencyMinutes,
+    l0WindowHours,
 
     // ── 出口归因 ─────────────────────────────────────────────────────────────
     // 这三个用 optional()（空值 = 关闭）而不是 str()（空值 = 报错）：

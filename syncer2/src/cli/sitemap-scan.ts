@@ -42,15 +42,17 @@ import {
   fetchPageSitemapDelta,
   fetchSitemapIndex,
   fetchThreadSitemaps,
-  isExcludedFromSitemap,
   type SitemapFetchResult,
 } from '../sitemap/fetch.js';
+import {
+  inferDeletionCandidates,
+  type DeletionInferenceReport,
+} from '../collect/deletion.js';
 import type { SitemapEntry } from '../sitemap/parse.js';
 import { normalizeSitemapEntries } from '../sitemap/normalize.js';
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
 import {
   enqueueScanTasks,
-  fetchLiveSlugs,
   finishIngestRun,
   insertPageScans,
   resolveSlugs,
@@ -112,6 +114,7 @@ async function main(): Promise<void> {
   const config = loadConfig({ requireDatabase: !opts.dryRun });
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
+  const populationType = sitemapPopulationType(opts.mode);
 
   const siteHost = new URL(config.siteBaseUrl).host;
   const http = new HttpClient({
@@ -180,17 +183,23 @@ async function main(): Promise<void> {
     const durationMs = Date.now() - t0;
     const stats = {
       mode: opts.mode,
+      layer: opts.mode === 'full' ? 'L2' : null,
+      population_type: populationType,
+      // M7 删除推断只接受 full + all；把策略落进 run，不能靠 CLI 默认值猜证据完整性。
+      pageScanPolicy: opts.pageScan,
       ...outcome.stats,
       durationMs,
       http: http.stats(),
+      httpHealth: http.healthStats(),
       proxy: http.proxyUrl ?? null,
       // 启动自检 #3 的结论进 stats：探针通过与否、AMC status、拿到的 category 映射
       // （站点换皮/改分类时能定位时点），以及代理泄漏判据。
       startupProbe: probeReport,
       dryRun: opts.dryRun,
     };
+    let parseHealth = null;
     if (pool) {
-      await finishIngestRun(pool, runId, {
+      parseHealth = await finishIngestRun(pool, runId, {
         status: outcome.status,
         finishedAt: new Date().toISOString(),
         pagesEnumerated: outcome.pagesEnumerated,
@@ -201,21 +210,30 @@ async function main(): Promise<void> {
         transportFailureRate: transportFailureRate(http),
         exitIpStats: exitIpStatsJson(http),
         parseFingerprint: outcome.parseFingerprint,
+        populationType,
         stats,
       });
     }
+    let deletionInference: DeletionInferenceReport | null = null;
+    if (pool && runId !== null && opts.mode === 'full' && outcome.status === 'ok') {
+      // 必须等 ingest_run.status='ok' 落库后再做删除推断；模块内部还会要求
+      // ListPages 独立完整轮 + 紧邻上一组双源缺席，首轮绝不下任务。
+      deletionInference = await inferDeletionCandidates(pool, runId);
+    }
 
     emitSummary({
-      ok: outcome.status === 'ok',
+      ok: outcome.status === 'ok' || outcome.status === 'partial',
       mode: opts.mode,
       runId,
       status: outcome.status,
       durationMs,
       ...outcome.summary,
+      parseHealth,
+      deletionInference,
       http: compactHttpStats(http),
       egress: compactEgress(http),
     });
-    process.exitCode = outcome.status === 'ok' ? 0 : 1;
+    process.exitCode = outcome.status === 'ok' || outcome.status === 'partial' ? 0 : 1;
   } catch (err) {
     const durationMs = Date.now() - t0;
     const breaker = err instanceof CircuitOpenError;
@@ -234,14 +252,20 @@ async function main(): Promise<void> {
         transportFailureRate: transportFailureRate(http),
         // 失败轮**尤其**要落出口归因：整轮失败时"是哪几个节点坏了"正是唯一想知道的事
         exitIpStats: exitIpStatsJson(http),
-        parseFingerprint: { http_status_dist: http.stats().statusBuckets },
+        parseFingerprint: { http_status_dist: http.healthStats().business.statusBuckets },
         stats: {
+          mode: opts.mode,
+          layer: opts.mode === 'full' ? 'L2' : null,
+          population_type: populationType,
+          pageScanPolicy: opts.pageScan,
           error: String(err),
           breaker,
           durationMs,
           http: http.stats(),
+          httpHealth: http.healthStats(),
           startupProbe: probeReport,
         },
+        populationType,
       }).catch((e) => log.error('收尾写 ingest_run 也失败了', { error: String(e) }));
     }
     emitSummary({
@@ -260,6 +284,20 @@ async function main(): Promise<void> {
   } finally {
     await http.close();
     await pool?.end().catch(() => undefined);
+  }
+}
+
+function sitemapPopulationType(mode: Mode): string {
+  switch (mode) {
+    case 'full':
+      return 'l2_sitemap_absence';
+    case 'delta':
+      return 'diagnostic_change_slice';
+    case 'threads':
+    case 'category':
+      return 'forum_scoped_scan';
+    case 'index':
+      return 'sitemap_index_probe';
   }
 }
 
@@ -309,7 +347,10 @@ async function runIndex(http: HttpClient, config: Syncer2Config): Promise<ModeOu
     remoteTotalSource: null,
     batchesTotal: 1,
     batchesFailed: 0,
-    parseFingerprint: { http_status_dist: http.stats().statusBuckets, parse_drop_rate: 0 },
+    parseFingerprint: {
+      http_status_dist: http.healthStats().business.statusBuckets,
+      parse_drop_rate: 0,
+    },
     stats: { children: idx.entries.length, byKind, locs: idx.entries.map((e) => e.loc) },
     summary: { children: idx.entries.length, byKind },
   };
@@ -318,13 +359,14 @@ async function runIndex(http: HttpClient, config: Syncer2Config): Promise<ModeOu
 /**
  * thread / category 族：只有存在性，没有 lastmod。
  *
- * 除计数外，这里做 **TODO #14 的差集入队**：
- *   sitemap 的 thread/category id ∖ ingest.forum_thread/forum_category 的 id
- *   → meta.forum_scan_task（幂等 UNIQUE(kind,target_id)，只刷发现侧列）。
+ * 除计数外，这里做 **TODO #14 的队列入队**：
+ *   · thread sitemap id ∖ ingest.forum_thread.id → 新 thread 抓取；
+ *   · category sitemap 正向全集 → 周期分类级完整枚举。
  *
  * 反向差集（库里有、sitemap 没有）**刻意不产出任何东西**：实测 sitemap 对
  * `翻译预定区(归档)`(882986) 与 `垃圾桶`(2020429) 两个隐藏分类系统性失明
- * （sitemap 14 个 category vs 库内 16 个，thread 侧同源缺失 950 条），
+ * （sitemap 14 个 category vs 库内 16 个；thread 反向差 3,309 条，其中两类
+ * 分别贡献 1,672 / 674，另有单页讨论 950），
  * 所以"sitemap 没有"根本不构成消失证据 —— 与 page 侧 absence 要过三重门控同一条纪律。
  */
 async function runExistenceOnly(
@@ -361,7 +403,7 @@ async function runExistenceOnly(
     numericIds.add(Number(m[1]));
   }
 
-  // ── 差集入队 ───────────────────────────────────────────────────────────────
+  // ── thread 新 id / category 周期枚举入队 ───────────────────────────────────
   const enqueue = {
     available: false,
     known: 0,
@@ -369,6 +411,19 @@ async function runExistenceOnly(
     revived: 0,
     affected: 0,
     sampleMissing: [] as number[],
+  };
+  const coverage: {
+    status: 'ok' | 'partial';
+    absenceInference: 'disabled_global_sitemap';
+    localAbsent: number;
+    sampleLocalAbsent: number[];
+    warning: string | null;
+  } = {
+    status: 'ok',
+    absenceInference: 'disabled_global_sitemap',
+    localAbsent: 0,
+    sampleLocalAbsent: [],
+    warning: null,
   };
   if (pool && !opts.dryRun && numericIds.size > 0) {
     const local = await fetchKnownForumIds(pool, kind);
@@ -379,22 +434,49 @@ async function runExistenceOnly(
         if (!local.known.has(id)) missing.push(id);
         else if (local.deleted.has(id)) revived.push(id);
       }
-      const rows: ForumEnqueueRow[] = [
-        ...missing.map((id) => ({
+      const localAbsent = [...local.known].filter((id) => !numericIds.has(id));
+      coverage.localAbsent = localAbsent.length;
+      coverage.sampleLocalAbsent = localAbsent.slice(0, 50);
+      if (localAbsent.length > 0) {
+        coverage.status = 'partial';
+        coverage.warning =
+          kind === 'category'
+            ? `${localAbsent.length} 个库内分类在 category sitemap 整体缺席；` +
+              '分类下 thread 一律不判删，存亡只交给分类级完整枚举'
+            : `${localAbsent.length} 个库内 thread 不在 thread sitemap；` +
+              '全站反向差集禁止判删，存亡只交给分类级完整枚举';
+        log.warn('论坛 sitemap 覆盖为 partial；反向差仅告警，不产生删除', {
           kind,
-          targetId: id,
-          reasons: [`sitemap_unknown_${kind}`],
-          priority: 5,
-        })),
-        // 库里标了 is_deleted 而 sitemap 仍列出 ⇒ 复活或误标。优先级更高：
-        // v1 有过"页面复活但 isDeleted 没复位"的成套 bug，论坛侧同型问题要在发现层就抓住。
-        ...revived.map((id) => ({
-          kind,
-          targetId: id,
-          reasons: ['sitemap_present_but_deleted'],
-          priority: 10,
-        })),
-      ];
+          localAbsent: localAbsent.length,
+          sample: coverage.sampleLocalAbsent,
+        });
+      }
+      const rows: ForumEnqueueRow[] =
+        kind === 'category'
+          ? [...numericIds].map((id) => ({
+              kind,
+              targetId: id,
+              reasons: local.known.has(id)
+                ? ['sitemap_category_enumeration']
+                : ['sitemap_unknown_category', 'sitemap_category_enumeration'],
+              priority: local.known.has(id) ? 1 : 5,
+            }))
+          : [
+              ...missing.map((id) => ({
+                kind,
+                targetId: id,
+                reasons: ['sitemap_unknown_thread'],
+                priority: 5,
+              })),
+              // 库里标了 is_deleted 而 sitemap 仍列出 ⇒ 复活或误标。优先级更高：
+              // v1 有过"页面复活但 isDeleted 没复位"的成套 bug，论坛侧同型问题要在发现层就抓住。
+              ...revived.map((id) => ({
+                kind,
+                targetId: id,
+                reasons: ['sitemap_present_but_deleted'],
+                priority: 10,
+              })),
+            ];
       const res = await enqueueForumTargets(pool, rows, startedAt);
       enqueue.available = res.available;
       enqueue.known = local.known.size;
@@ -402,7 +484,7 @@ async function runExistenceOnly(
       enqueue.revived = revived.length;
       enqueue.affected = res.affected;
       enqueue.sampleMissing = missing.slice(0, 50);
-      log.info('论坛差集入队完成', {
+      log.info('论坛发现/分类枚举入队完成', {
         kind,
         sitemap: numericIds.size,
         known: local.known.size,
@@ -422,7 +504,7 @@ async function runExistenceOnly(
     batchesTotal: result.files.length + 1,
     batchesFailed: 0,
     parseFingerprint: {
-      http_status_dist: http.stats().statusBuckets,
+      http_status_dist: http.healthStats().business.statusBuckets,
       parse_drop_rate: norm.parseDropRate,
       sitemap_dedupe_rate: norm.dedupeRate,
       // 解析不出 forum/{t,c}-<id> 的比例。从 ~0 跳起来 = 论坛 URL 形态变了，要人看。
@@ -442,6 +524,7 @@ async function runExistenceOnly(
       decodedBytes: result.decodedBytes,
       forumEnqueue: enqueue,
       forumQueue: queue,
+      forumCoverage: coverage,
     },
     summary: {
       files: result.files.length,
@@ -452,6 +535,8 @@ async function runExistenceOnly(
       forumMissing: enqueue.missing,
       forumRevived: enqueue.revived,
       forumEnqueued: enqueue.affected,
+      coverageStatus: coverage.status,
+      localAbsent: coverage.localAbsent,
     },
   };
 }
@@ -499,11 +584,6 @@ async function runPageScan(
     regressed: diff.regressed.length,
     unchanged: diff.unchanged,
   });
-
-  // ── absence（删除推断）：**只在 full 轮、且过三重门控时**才算 ──────────────
-  const absence = isFull
-    ? await computeAbsence(pool, opts, config, observed, base, result)
-    : { eligible: false, reason: 'delta 轮只覆盖全站切片，结构上无权推断删除', absentSlugs: [], absentPages: [] as Array<{ slug: string; pageId: number }>, circuitTripped: false };
 
   // ── 落库 ────────────────────────────────────────────────────────────────
   const changedSlugs = [...diff.newSlugs, ...diff.advanced.map((a) => a.slug)];
@@ -574,11 +654,6 @@ async function runPageScan(
         continue;
       }
       tasks.push({ pageId, kind: 'content', reasons: ['sitemap_lastmod_advanced'], priority: 5 });
-    }
-    if (absence.eligible && !absence.circuitTripped) {
-      for (const p of absence.absentPages) {
-        tasks.push({ pageId: p.pageId, kind: 'confirm_deleted', reasons: ['sitemap_absent'], priority: 1 });
-      }
     }
     tasksEnqueued = await enqueueScanTasks(pool, tasks);
 
@@ -657,9 +732,11 @@ async function runPageScan(
     regressed: diff.regressed.length,
     unchanged: diff.unchanged,
     unresolvedSlugs: unresolvedSlugs.length,
-    absentEligible: absence.eligible,
-    absent: absence.absentSlugs.length,
-    absenceCircuitTripped: absence.circuitTripped,
+    // 删除推断必须等本 run 收尾成 status=ok 后由 collect/deletion.ts 执行；
+    // 这里保留旧摘要键但不提前声称有资格。
+    absentEligible: false,
+    absent: 0,
+    absenceCircuitTripped: false,
     pageScansWritten,
     tasksEnqueued,
     pendingEnqueued: pendingEnqueue.enqueued,
@@ -681,7 +758,7 @@ async function runPageScan(
     batchesTotal: result.files.length + 1,
     batchesFailed: 0,
     parseFingerprint: {
-      http_status_dist: http.stats().statusBuckets,
+      http_status_dist: http.healthStats().business.statusBuckets,
       // 解析丢弃率：被丢掉的条目（无 slug 的站点根）/ 总条目。
       // 这个数一旦从 ~0.0001 跳起来，说明 loc 格式变了，是 R10 全局解析健康熔断的输入。
       parse_drop_rate: norm.parseDropRate,
@@ -693,13 +770,13 @@ async function runPageScan(
       skippedNoSlug,
       skippedNoLastmod,
       duplicateSlugs: norm.duplicateSlugs,
-      absenceReason: absence.reason,
+      absenceReason: 'deferred_until_run_finished',
       pendingEnqueue,
       // 明细截断：ingest_run.stats 不该变成事实存储
       sampleNewSlugs: diff.newSlugs.slice(0, 50),
       sampleAdvanced: diff.advanced.slice(0, 50),
       sampleRegressed: diff.regressed.slice(0, 50),
-      sampleAbsent: absence.absentSlugs.slice(0, 50),
+      sampleAbsent: [],
       sampleUnresolvedSlugs: unresolvedSlugs.slice(0, 200),
       fileBreakdown: result.files.map((f) => ({
         url: f.url,
@@ -711,83 +788,6 @@ async function runPageScan(
     },
     summary,
   };
-}
-
-/**
- * absence（删除推断）的三重门控。**任何一条不满足就不产出 confirm_deleted。**
- *
- *   G1 必须是 full 轮，且没有走命名约定 fallback（fallback 可能漏掉新增分片 = 1 万页"消失"）
- *   G2 本轮枚举数 / 上一次 full 的枚举数 ≥ minEnumeratedRatio（默认 0.98）
- *   G3 absent 数量 ≤ absenceCircuit（默认 500）—— 超了是批量熔断，只告警不下任务
- *
- * 另外结构性排除 `deleted:` / `forum:` 前缀：实测 sitemap 的枚举域本就不含它们，
- * 缺席不构成任何删除证据。
- *
- * 即使全部通过，产出的也只是 kind='confirm_deleted' 的**待确认任务**，不是删除事件本身——
- * 按定稿协议，单页需连续 ≥2 个完整 run 未见才允许落 'deleted'，且要单点确认。
- */
-async function computeAbsence(
-  pool: Pool | null,
-  opts: CliOptions,
-  config: Syncer2Config,
-  observed: ReadonlyMap<string, string>,
-  previous: SitemapSnapshot,
-  result: SitemapFetchResult,
-): Promise<{
-  eligible: boolean;
-  reason: string;
-  absentSlugs: string[];
-  absentPages: Array<{ slug: string; pageId: number }>;
-  circuitTripped: boolean;
-}> {
-  const none = { absentSlugs: [] as string[], absentPages: [] as Array<{ slug: string; pageId: number }>, circuitTripped: false };
-
-  if (result.usedFallback) {
-    return { eligible: false, reason: 'G1 失败：索引不可用、走了命名约定 fallback，分片可能不全', ...none };
-  }
-  if (opts.dryRun || !pool) {
-    return { eligible: false, reason: 'dry-run 不做 absence 推断', ...none };
-  }
-
-  const baseline = previous.lastFullCount;
-  if (baseline !== null && baseline > 0) {
-    const ratio = observed.size / baseline;
-    if (ratio < config.minEnumeratedRatio) {
-      return {
-        eligible: false,
-        reason: `G2 失败：本轮枚举 ${observed.size} / 上轮 full ${baseline} = ${ratio.toFixed(4)} < ${config.minEnumeratedRatio}`,
-        ...none,
-      };
-    }
-  } else {
-    return { eligible: false, reason: 'G2 无基准：还没有过一次成功的 full 轮，本轮只建基准', ...none };
-  }
-
-  const live = await fetchLiveSlugs(pool);
-  if (!live.available) {
-    return { eligible: false, reason: 'serve.page_current 不可用（schema 未落地）', ...none };
-  }
-
-  const absentPages = live.rows.filter(
-    (r) => !observed.has(r.slug) && !isExcludedFromSitemap(r.slug),
-  );
-  const absentSlugs = absentPages.map((r) => r.slug);
-
-  if (absentSlugs.length > config.absenceCircuit) {
-    log.error('absence 批量熔断：缺席页数超阈值，本轮一个 confirm_deleted 都不下', {
-      absent: absentSlugs.length,
-      threshold: config.absenceCircuit,
-    });
-    return {
-      eligible: true,
-      reason: `G3 熔断：absent ${absentSlugs.length} > 阈值 ${config.absenceCircuit}`,
-      absentSlugs,
-      absentPages,
-      circuitTripped: true,
-    };
-  }
-
-  return { eligible: true, reason: '三重门控通过', absentSlugs, absentPages, circuitTripped: false };
 }
 
 // ─── 辅助 ────────────────────────────────────────────────────────────────────
@@ -806,9 +806,9 @@ function maybeEmitEntries(opts: CliOptions, entries: readonly SitemapEntry[]): v
 
 /** 传输层失败率（未拿到状态码的尝试 / 总尝试）。实测基线 ≈0.023，是 IP 池健康度的单一指标。 */
 function transportFailureRate(http: HttpClient): number | null {
-  const s = http.stats();
-  if (s.attempts === 0) return null;
-  return (s.statusBuckets['transport'] ?? 0) / s.attempts;
+  const s = http.healthStats().business;
+  if (s.requests === 0) return null;
+  return s.transportFailures / s.requests;
 }
 
 /**

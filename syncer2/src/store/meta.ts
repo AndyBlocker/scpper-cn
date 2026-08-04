@@ -35,6 +35,14 @@ import type { Pool, PoolClient } from 'pg';
 import { query, toPgTimestamptz } from './db.js';
 import { chunk } from '../util/concurrency.js';
 import { createLogger } from '../util/log.js';
+import {
+  evaluateParseHealth,
+  metricCurrentSampleCount,
+  normalizeParseFingerprint,
+  resolveParseHealthStratum,
+  type ParseHealthReport,
+} from '../health/parseHealth.js';
+import { sanitizePageScanError, toPgJson } from './pgText.js';
 
 const log = createLogger('meta');
 
@@ -45,7 +53,7 @@ function isMissingRelation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === UNDEFINED_TABLE;
 }
 
-export type RunStatus = 'running' | 'ok' | 'failed' | 'aborted';
+export type RunStatus = 'running' | 'ok' | 'partial' | 'failed' | 'aborted';
 
 /**
  * 词表的**权威定义在 SQL 侧**（migrations/0003_meta.sql + 0007_meta_gaps.sql 的
@@ -65,7 +73,8 @@ export type PageScanKind =
   | 'attributions'
   | 'forum'
   | 'discussion'   // 0007：单页讨论区（与 forum 分开，见 0007 §1 注释）
-  | 'files';       // 0007：页面附件列表
+  | 'files'        // 0007：页面附件列表
+  | 'revision_source';
 export type PageScanStatus = 'ok' | 'partial' | 'failed';
 export type ScanTaskKind =
   | 'meta'
@@ -86,6 +95,9 @@ export interface PageScanRow {
   status: PageScanStatus;
   claimedTotal?: number | null;
   fetchedTotal?: number | null;
+  checksumOk?: boolean | null;
+  checksumExpected?: number | null;
+  checksumActual?: number | null;
   resultHash?: Buffer | null;
   error?: string | null;
 }
@@ -105,11 +117,61 @@ export function sitemapResultHash(slug: string, lastmod: string | null): Buffer 
 
 // ─── ingest_run ──────────────────────────────────────────────────────────────
 
+/**
+ * 把超时仍停在 running 的旧 run 收成 aborted。
+ *
+ * finish 只在优雅路径执行，进程被杀 / 数据库重启（如 openssl 安全更新触发的
+ * postgres restart）时那一步根本没机会跑，行就永远停在 running。这些幽灵行既让
+ * 「有多少轮真的死掉」不可见，也会污染任何按 status 统计的口径——同一天里
+ * NUL 那个 bug 是「记录失败时自己失败」，这里是「连记录的机会都没有」，
+ * 都属于系统无法如实描述自身状态。
+ *
+ * 阈值取 6 小时：远大于最慢的一轮（L3 全字段周扫），不会误伤仍在跑的长任务。
+ */
+export async function reapStaleIngestRuns(
+  pool: Pool,
+  staleHours = 6,
+): Promise<number> {
+  if (!Number.isFinite(staleHours) || staleHours <= 0) {
+    throw new RangeError(`悬挂 run 回收阈值必须为正数小时，收到 ${String(staleHours)}`);
+  }
+  try {
+    const res = await query<{ id: string }>(
+      pool,
+      'meta.ingest_run:reap_stale',
+      `UPDATE meta.ingest_run
+          SET status = 'aborted',
+              finished_at = now(),
+              stats = stats || jsonb_build_object(
+                'aborted_reason', 'stale_running_reaped',
+                'stale_hours', $1::numeric
+              )
+        WHERE status = 'running'
+          AND started_at < now() - make_interval(hours => $1::int)
+        RETURNING id`,
+      [staleHours],
+    );
+    if (res.rows.length > 0) {
+      log.warn('回收悬挂 run（进程未能写回终态）', {
+        count: res.rows.length,
+        ids: res.rows.slice(0, 20).map((r) => Number(r.id)),
+      });
+    }
+    return res.rows.length;
+  } catch (err) {
+    // 回收是尽力而为的清理，绝不能反过来阻断本轮采集。
+    if (isMissingRelation(err)) return 0;
+    log.warn('悬挂 run 回收失败，不阻断本轮', { error: String(err) });
+    return 0;
+  }
+}
+
 export async function startIngestRun(
   pool: Pool,
   source: string,
   startedAt: string,
 ): Promise<number | null> {
+  await reapStaleIngestRuns(pool);
   try {
     const res = await query<{ id: string }>(
       pool,
@@ -145,7 +207,10 @@ export interface FinishRunArgs {
   batchesTotal?: number | null;
   /** 重试 ≥N 次仍失败的批数。判据是"批级重试耗尽"，不是"任一请求失败"。 */
   batchesFailed?: number | null;
-  /** 传输层失败率（失败请求 / 总请求）。实测基线 ≈0.023。 */
+  /**
+   * 业务逻辑请求最终因传输错误耗尽的比例。探针、内部重试次数和重试后成功的瞬时错误
+   * 不进入分子/分母；逐尝试诊断仍保存在 stats.http。
+   */
   transportFailureRate?: number | null;
   /**
    * 出口归因（TODO #12）。49 节点轮换池无 fallback 无健康检查，不记出口 IP 则
@@ -160,6 +225,12 @@ export interface FinishRunArgs {
   exitIpStats?: Record<string, unknown> | null;
   /** 解析分布指纹，键名须与 meta.parse_health_baseline.metric 对齐。 */
   parseFingerprint?: Record<string, unknown> | null;
+  /** R10 第三维基线分层；未传时由 stats/mode/domain 按统一规则推导。 */
+  populationType?: string | null;
+  /** 测试/迁移可显式关闭；生产采集轮默认每轮都执行 R10 比对。 */
+  evaluateParseHealth?: boolean;
+  /** 我方写冻结等已知状态可让整轮只留证；不得反馈成新的健康判决。 */
+  healthDecisionSkipReason?: string | null;
   stats: unknown;
 }
 
@@ -167,10 +238,46 @@ export async function finishIngestRun(
   pool: Pool,
   runId: number | null,
   args: FinishRunArgs,
-): Promise<void> {
-  if (runId === null) return;
+): Promise<ParseHealthReport | null> {
+  if (runId === null) return null;
   try {
-    await query(
+    const evidenceFingerprint = await pageScanHealthFingerprint(pool, runId);
+    const suppliedSampleCounts = sampleCounts(args.parseFingerprint?.['sample_counts']);
+    const pageSampleCount =
+      args.pagesEnumerated !== null && args.pagesEnumerated >= 0
+        ? args.pagesEnumerated
+        : null;
+    const fallbackSampleCounts =
+      pageSampleCount === null
+        ? {}
+        : Object.fromEntries(
+            Object.entries(args.parseFingerprint ?? {})
+              .filter(
+                ([metric, value]) =>
+                  metric !== 'sample_counts' &&
+                  metric !== 'http_status_dist' &&
+                  metric !== 'transport_failure_rate' &&
+                  metric !== 'exit_ip_dist' &&
+                  metric !== 'revision_type_dist' &&
+                  value !== null &&
+                  value !== undefined &&
+                  suppliedSampleCounts[metric] === undefined,
+              )
+              .map(([metric]) => [metric, pageSampleCount]),
+          );
+    const fingerprint = normalizeParseFingerprint(
+      {
+        ...(args.parseFingerprint ?? {}),
+        ...evidenceFingerprint,
+        sample_counts: {
+          ...fallbackSampleCounts,
+          ...suppliedSampleCounts,
+          ...evidenceFingerprint.sample_counts,
+        },
+      },
+      args.exitIpStats,
+    );
+    const finished = await query<{ source: string }>(
       pool,
       'meta.ingest_run:finish',
       `UPDATE meta.ingest_run
@@ -185,7 +292,8 @@ export async function finishIngestRun(
               exit_ip_stats = $10::jsonb,
               parse_fingerprint = $11::jsonb,
               stats = $12::jsonb
-        WHERE id = $1`,
+        WHERE id = $1
+        RETURNING source`,
       [
         runId,
         args.status,
@@ -196,22 +304,163 @@ export async function finishIngestRun(
         args.batchesTotal ?? null,
         args.batchesFailed ?? null,
         args.transportFailureRate ?? null,
-        JSON.stringify(args.exitIpStats ?? {}),
-        JSON.stringify(args.parseFingerprint ?? {}),
-        JSON.stringify(args.stats ?? {}),
+        toPgJson(args.exitIpStats ?? {}, 'meta.ingest_run.exit_ip_stats'),
+        toPgJson(fingerprint, 'meta.ingest_run.parse_fingerprint'),
+        toPgJson(args.stats ?? {}, 'meta.ingest_run.stats'),
       ],
     );
+    if (args.evaluateParseHealth === false) return null;
+    const source = finished.rows[0]?.source;
+    if (!source) throw new Error(`finishIngestRun: run ${runId} 不存在`);
+    const stats =
+      typeof args.stats === 'object' && args.stats !== null && !Array.isArray(args.stats)
+        ? (args.stats as Record<string, unknown>)
+        : {};
+    const stratum = resolveParseHealthStratum(
+      source,
+      typeof stats['mode'] === 'string' ? stats['mode'] : null,
+      args.populationType,
+      stats,
+    );
+    const decisionSkipReason =
+      args.healthDecisionSkipReason?.trim() ||
+      (stratum.populationType === 'probe'
+        ? 'probe_only'
+        : args.batchesTotal === 0 &&
+            metricCurrentSampleCount(fingerprint, 'http_status_dist') === 0
+          ? 'empty_queue_no_business_requests'
+          : null);
+    return evaluateParseHealth(pool, {
+      runId,
+      source,
+      mode: stratum.mode,
+      populationType: stratum.populationType,
+      fingerprint,
+      exitIpStats: args.exitIpStats,
+      decisionSkipReason,
+      // 测试/合成 run 不应在共享 v2 库永久留下十行默认策略。
+      ensurePolicies: !/^(?:test|synthetic)(?:_|:|$)/.test(source),
+    });
   } catch (err) {
-    if (isMissingRelation(err)) return;
+    if (isMissingRelation(err)) return null;
     throw err;
   }
 }
 
+async function pageScanHealthFingerprint(
+  pool: Pool,
+  runId: number,
+): Promise<{
+  fetched_claimed_ratio: number | null;
+  checksum_ok_rate: number | null;
+  sample_counts: Record<string, number>;
+}> {
+  const evidence = await query<{
+    fetched_claimed_ratio: string | number | null;
+    checksum_ok_rate: string | number | null;
+    fetched_claimed_samples: string | number;
+    checksum_samples: string | number;
+  }>(
+    pool,
+    'parse_health:page_scan_fingerprint',
+    `SELECT
+       avg(
+         CASE
+           WHEN claimed_total = 0 THEN CASE WHEN fetched_total = 0 THEN 1.0 ELSE 0.0 END
+           ELSE fetched_total::numeric / claimed_total
+         END
+       ) FILTER (
+         WHERE kind = 'votes'
+           AND claimed_total IS NOT NULL
+           AND fetched_total IS NOT NULL
+           AND COALESCE(error, '') NOT LIKE 'write_frozen:%'
+       ) AS fetched_claimed_ratio,
+       avg((checksum_ok::int)::numeric) FILTER (
+         WHERE kind = 'votes'
+           AND checksum_ok IS NOT NULL
+           AND COALESCE(error, '') NOT LIKE 'write_frozen:%'
+       ) AS checksum_ok_rate,
+       count(*) FILTER (
+         WHERE kind = 'votes'
+           AND claimed_total IS NOT NULL
+           AND fetched_total IS NOT NULL
+           AND COALESCE(error, '') NOT LIKE 'write_frozen:%'
+       ) AS fetched_claimed_samples,
+       count(*) FILTER (
+         WHERE kind = 'votes'
+           AND checksum_ok IS NOT NULL
+           AND COALESCE(error, '') NOT LIKE 'write_frozen:%'
+       ) AS checksum_samples
+     FROM meta.page_scan
+    WHERE run_id = $1`,
+    [runId],
+  );
+  const row = evidence.rows[0];
+  return {
+    fetched_claimed_ratio:
+      row?.fetched_claimed_ratio === null || row?.fetched_claimed_ratio === undefined
+        ? null
+        : Number(row.fetched_claimed_ratio),
+    checksum_ok_rate:
+      row?.checksum_ok_rate === null || row?.checksum_ok_rate === undefined
+        ? null
+        : Number(row.checksum_ok_rate),
+    sample_counts: {
+      fetched_claimed_ratio: Number(row?.fetched_claimed_samples ?? 0),
+      checksum_ok_rate: Number(row?.checksum_samples ?? 0),
+    },
+  };
+}
+
+function sampleCounts(value: unknown): Record<string, number> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, raw]) => [key, Number(raw)] as const)
+      .filter(([, count]) => Number.isFinite(count) && count >= 0),
+  );
+}
+
 // ─── page_scan ───────────────────────────────────────────────────────────────
 
+export interface RecordPageScanArgs extends PageScanRow {
+  runId: number | null;
+}
+
 /**
- * 批量写扫描证据行。ON CONFLICT DO NOTHING —— 同一 run 内重复投递是幂等的
- * （CLI 崩溃后调度器重启会带新 run_id，不会撞上）。
+ * 单页证据的唯一 TS 写入口。error 在这里统一清洗并按 16 KiB 截断，且追加清洗标记；
+ * 调用方不再各自拼 meta.record_page_scan，以免失败内容本身卡死证据链。
+ */
+export async function recordPageScan(
+  pool: Pool | PoolClient,
+  args: RecordPageScanArgs,
+): Promise<void> {
+  await query(
+    pool,
+    `meta.record_page_scan:${args.kind}`,
+    `SELECT meta.record_page_scan(
+       $1::bigint, $2::int, $3::text, $4::text,
+       $5::int, $6::int, $7::boolean, $8::int, $9::int, $10::bytea, $11::text
+     )`,
+    [
+      args.runId,
+      args.pageId,
+      args.kind,
+      args.status,
+      args.claimedTotal ?? null,
+      args.fetchedTotal ?? null,
+      args.checksumOk ?? null,
+      args.checksumExpected ?? null,
+      args.checksumActual ?? null,
+      args.resultHash ?? null,
+      sanitizePageScanError(args.error, `page_scan:${args.kind}:${args.pageId}`),
+    ],
+  );
+}
+
+/**
+ * 批量写扫描证据行。同一 run/page/kind 重放时覆盖本次观测列，语义与
+ * meta.record_page_scan 一致；CLI 崩溃后调度器重启通常会带新 run_id。
  */
 export async function insertPageScans(
   pool: Pool,
@@ -223,27 +472,49 @@ export async function insertPageScans(
   const ts = toPgTimestamptz(scannedAt);
   let written = 0;
   try {
-    // 9 列 × 500 行 = 4500 参数，远低于 65535 上限。
+    // 12 列 × 500 行（scanned_at 共用一个参数），远低于 65535 上限。
     for (const part of chunk(rows, 500)) {
       const values: unknown[] = [];
       const tuples: string[] = [];
       part.forEach((r, i) => {
-        const b = i * 8;
+        const b = i * 11;
         tuples.push(
-          `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${
-            part.length * 8 + 1
+          `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, $${b + 11}, $${
+            part.length * 11 + 1
           }::timestamptz)`,
         );
-        values.push(runId, r.pageId, r.kind, r.status, r.claimedTotal ?? null, r.fetchedTotal ?? null, r.resultHash ?? null, r.error ?? null);
+        values.push(
+          runId,
+          r.pageId,
+          r.kind,
+          r.status,
+          r.claimedTotal ?? null,
+          r.fetchedTotal ?? null,
+          r.checksumOk ?? null,
+          r.checksumExpected ?? null,
+          r.checksumActual ?? null,
+          r.resultHash ?? null,
+          sanitizePageScanError(r.error, `page_scan:${r.kind}:${r.pageId}`),
+        );
       });
       values.push(ts);
       const res = await query(
         pool,
         'meta.page_scan:insert',
         `INSERT INTO meta.page_scan
-           (run_id, page_id, kind, status, claimed_total, fetched_total, result_hash, error, scanned_at)
+           (run_id, page_id, kind, status, claimed_total, fetched_total, checksum_ok,
+            checksum_expected, checksum_actual, result_hash, error, scanned_at)
          VALUES ${tuples.join(', ')}
-         ON CONFLICT (run_id, page_id, kind) DO NOTHING`,
+         ON CONFLICT (run_id, page_id, kind) DO UPDATE
+            SET status = EXCLUDED.status,
+                claimed_total = EXCLUDED.claimed_total,
+                fetched_total = EXCLUDED.fetched_total,
+                checksum_ok = EXCLUDED.checksum_ok,
+                checksum_expected = EXCLUDED.checksum_expected,
+                checksum_actual = EXCLUDED.checksum_actual,
+                result_hash = COALESCE(EXCLUDED.result_hash, meta.page_scan.result_hash),
+                error = EXCLUDED.error,
+                scanned_at = EXCLUDED.scanned_at`,
         values,
       );
       written += res.rowCount ?? 0;
@@ -277,7 +548,10 @@ export async function enqueueScanTasks(
       const tuples: string[] = [];
       part.forEach((r, i) => {
         const b = i * 5;
-        tuples.push(`($${b + 1}, $${b + 2}, $${b + 3}::text[], $${b + 4}, $${b + 5}::timestamptz)`);
+        tuples.push(
+          `($${b + 1}::int, $${b + 2}::text, $${b + 3}::text[], ` +
+          `$${b + 4}::int, $${b + 5}::timestamptz)`,
+        );
         values.push(
           r.pageId,
           r.kind,
@@ -290,7 +564,16 @@ export async function enqueueScanTasks(
         pool,
         'meta.scan_task:enqueue',
         `INSERT INTO meta.scan_task AS st (page_id, kind, reasons, priority, not_before)
-         VALUES ${tuples.join(', ')}
+         SELECT input.page_id, input.kind, input.reasons, input.priority, input.not_before
+           FROM (VALUES ${tuples.join(', ')})
+                AS input(page_id, kind, reasons, priority, not_before)
+          WHERE NOT EXISTS (
+            SELECT 1
+              FROM meta.irreconcilable i
+             WHERE i.page_id = input.page_id
+               AND i.kind = input.kind
+               AND i.resolved_at IS NULL
+          )
          ON CONFLICT (page_id, kind) DO UPDATE
             SET reasons = ARRAY(SELECT DISTINCT e FROM unnest(st.reasons || EXCLUDED.reasons) AS e),
                 priority = GREATEST(st.priority, EXCLUDED.priority),
@@ -343,8 +626,11 @@ export async function resolveSlugs(
   for (const [source, sql] of [
     [
       'page_slug_history',
-      `SELECT slug, page_id FROM ingest.page_slug_history
-        WHERE valid_to IS NULL AND slug = ANY($1::text[])`,
+      `SELECT psh.slug, psh.page_id
+         FROM ingest.page_slug_history psh
+         LEFT JOIN serve.page_current pc ON pc.page_id = psh.page_id
+        WHERE psh.valid_to IS NULL AND psh.slug = ANY($1::text[])
+        ORDER BY (pc.status = 'live') DESC, pc.deleted_at DESC NULLS LAST, psh.id DESC`,
     ],
     [
       'page_current',

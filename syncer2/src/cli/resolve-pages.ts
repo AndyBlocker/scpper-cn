@@ -6,6 +6,8 @@
  *      → 顺手给新铸的 page 下一个 `scan_task(kind='meta')`（元数据还没抓过）
  *        与 `scan_task(kind='new_page_highfreq')`（实测 37.9% 的被删页活不过 24 小时，
  *        83.2% 活不过 7 天，新页必须进 2–4h 高频队列而不是 sweep 轮转）。
+ *        若发现原因来自 L0 updated_at 窗口，再补 content + revisions_full；这样改名/新页
+ *        在拿到 page_id 前不会丢掉 L0 已发现的内容编辑。
  *
  * ── 三条硬纪律 ──────────────────────────────────────────────────────────────
  * 1. **逐页独立容错。** 实测 `@ukwhatn/wikidot` 的 acquirePageIds 是"批量"接口但
@@ -45,6 +47,7 @@ import {
   lookupIdentityByWikidotId,
   pendingStatusBreakdown,
   registerPage,
+  releasePendingPageClaim,
 } from '../store/queues.js';
 
 const log = createLogger('resolve-pages');
@@ -101,6 +104,7 @@ async function main(): Promise<void> {
     gone: 0,
     mismatch: 0,
     failed: 0,
+    writeFreezeSkipped: 0,
     tasksEnqueued: 0,
   };
   const samples: Array<Record<string, unknown>> = [];
@@ -294,6 +298,36 @@ async function main(): Promise<void> {
           });
         }
 
+        if (row.reasons.includes('l0_updated_at_window')) {
+          tasks.push(
+            {
+              pageId,
+              kind: 'content',
+              reasons: ['l0_updated_at_window_after_identity'],
+              priority: 40,
+            },
+            {
+              pageId,
+              kind: 'revisions_full',
+              reasons: ['l0_updated_at_window_after_identity'],
+              priority: 40,
+            },
+          );
+          const metaTask = tasks.find((task) => task.kind === 'meta');
+          if (metaTask === undefined) {
+            tasks.push({
+              pageId,
+              kind: 'meta',
+              reasons: ['l0_new_or_renamed_page_after_identity'],
+              priority: 40,
+            });
+          } else {
+            metaTask.reasons = [
+              ...new Set([...metaTask.reasons, 'l0_new_or_renamed_page_after_identity']),
+            ];
+            metaTask.priority = Math.max(metaTask.priority ?? 0, 40);
+          }
+        }
         counters.tasksEnqueued += await enqueueScanTasks(pool, tasks);
 
         if (samples.length < 20) {
@@ -310,6 +344,14 @@ async function main(): Promise<void> {
       } catch (err) {
         // CircuitOpenError 要中断整轮（出口坏了），其它异常只算这一页失败
         if (err instanceof CircuitOpenError) throw err;
+        if (pgCode(err) === 'PGF01') {
+          counters.writeFreezeSkipped++;
+          await releasePendingPageClaim(pool, row.slug, workerId);
+          log.warn('写冻结跳过 pending page；不计失败/健康分母', {
+            slug: row.slug,
+          });
+          return;
+        }
         counters.failed++;
         log.warn('单页解析异常（不影响其它页）', { slug: row.slug, error: String(err) });
         await finishPendingPage(pool, {
@@ -325,7 +367,7 @@ async function main(): Promise<void> {
     const durationMs = Date.now() - t0;
     // 判定：认领了却一条都没成功（且不是"全是 gone"）= 本轮失败，交调度器重启
     const hardFailure =
-      counters.claimed > 0 &&
+      counters.claimed - counters.writeFreezeSkipped > 0 &&
       counters.resolved === 0 &&
       counters.alreadyRegistered === 0 &&
       counters.renamed === 0 &&
@@ -337,22 +379,39 @@ async function main(): Promise<void> {
       finishedAt: new Date().toISOString(),
       pagesEnumerated: counters.resolved + counters.alreadyRegistered + counters.renamed,
       remoteTotal: null,
-      batchesTotal: counters.claimed,
+      batchesTotal: counters.claimed - counters.writeFreezeSkipped,
       batchesFailed: counters.failed,
       transportFailureRate: transportFailureRate(http),
       exitIpStats: http.exitIpStats() as unknown as Record<string, unknown>,
       parseFingerprint: {
-        http_status_dist: http.stats().statusBuckets,
+        http_status_dist: http.healthStats().business.statusBuckets,
         // 解析丢弃率：抓到 200 却抽不出 pageId 的比例。跳起来 = 页面模板变了。
         identity_parse_drop_rate:
-          counters.claimed === 0 ? 0 : counters.failed / counters.claimed,
+          counters.claimed - counters.writeFreezeSkipped === 0
+            ? null
+            : counters.failed / (counters.claimed - counters.writeFreezeSkipped),
+        sample_counts: {
+          identity_parse_drop_rate: counters.claimed - counters.writeFreezeSkipped,
+        },
       },
+      populationType: 'targeted_queue',
+      healthDecisionSkipReason:
+        counters.claimed > 0 &&
+        counters.claimed === counters.writeFreezeSkipped
+          ? 'write_freeze_only'
+          : null,
       stats: {
+        mode: 'resolve_pages',
+        population_type: 'targeted_queue',
         ...counters,
+        healthExclusions: {
+          write_freeze: counters.writeFreezeSkipped,
+        },
         durationMs,
         pendingBefore: pendingTotal,
         pendingByStatus: byStatus,
         http: http.stats(),
+        httpHealth: http.healthStats(),
         startupProbe: probeReport,
         samples,
       },
@@ -390,7 +449,14 @@ async function main(): Promise<void> {
       batchesFailed: counters.failed,
       transportFailureRate: transportFailureRate(http),
       exitIpStats: http.exitIpStats() as unknown as Record<string, unknown>,
-      stats: { ...counters, error: String(err), breaker, durationMs, http: http.stats() },
+      stats: {
+        ...counters,
+        error: String(err),
+        breaker,
+        durationMs,
+        http: http.stats(),
+        httpHealth: http.healthStats(),
+      },
     }).catch((e) => log.error('收尾写 ingest_run 也失败了', { error: String(e) }));
     emitSummary({
       ok: false,
@@ -406,6 +472,14 @@ async function main(): Promise<void> {
     await http.close();
     await pool.end().catch(() => undefined);
   }
+}
+
+function pgCode(err: unknown): string | null {
+  return typeof err === 'object' &&
+    err !== null &&
+    typeof (err as { code?: unknown }).code === 'string'
+    ? String((err as { code: string }).code)
+    : null;
 }
 
 /**
@@ -431,9 +505,9 @@ async function mapLimited<T>(
 }
 
 function transportFailureRate(http: HttpClient): number | null {
-  const s = http.stats();
-  if (s.attempts === 0) return null;
-  return (s.statusBuckets['transport'] ?? 0) / s.attempts;
+  const s = http.healthStats().business;
+  if (s.requests === 0) return null;
+  return s.transportFailures / s.requests;
 }
 
 function parseArgs(): CliOptions {

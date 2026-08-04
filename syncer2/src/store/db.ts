@@ -20,6 +20,7 @@
 
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 import { createLogger, type Logger } from '../util/log.js';
+import { sanitizePgValue } from './pgText.js';
 
 const log = createLogger('db');
 
@@ -97,9 +98,13 @@ export async function query<R extends QueryResultRow = QueryResultRow>(
   params?: readonly unknown[],
 ): Promise<QueryResult<R>> {
   assertNoRawDates(params, label);
+  const safeParams =
+    params === undefined
+      ? undefined
+      : sanitizePgValue(params, { context: `query:${label}` }).value;
   const startedAt = Date.now();
   try {
-    const res = await db.query<R>(sql, params as unknown[] | undefined);
+    const res = await db.query<R>(sql, safeParams as unknown[] | undefined);
     log.debug('query ok', { label, rows: res.rowCount, ms: Date.now() - startedAt });
     return res;
   } catch (err) {
