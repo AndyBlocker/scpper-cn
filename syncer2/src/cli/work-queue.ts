@@ -24,6 +24,8 @@ import {
   claimWorkTasks,
   CONSECUTIVE_PAGE_FAILURE_LIMIT,
   detectKindStarvation,
+  RUN_BUDGET_MS,
+  WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
   finishWorkTask,
   releaseIrreconcilableReviewLocks,
   releaseWorkTaskLocks,
@@ -49,9 +51,9 @@ const log = createLogger('work-queue');
 
 /** 任务种类最久等待超过该小时数即判排队饥饿。取 6 小时：远大于正常清空所需（约 11 分钟）。 */
 const STARVATION_ALERT_HOURS = 6;
+
 const SOURCE = 'wikidot_tier2';
-/** 补账预算 0.10 QPS：所有业务请求（含重试与 revisions 分页）至少间隔 10 秒。 */
-export const WORK_QUEUE_MIN_REQUEST_INTERVAL_MS = 10_000;
+
 
 interface CliOptions {
   limit: number;
@@ -248,9 +250,31 @@ async function main(): Promise<void> {
       cache: new Map(),
     };
     let consecutiveFailures = 0;
+    let stoppedByRuntimeBudget = false;
 
     for (const task of claimed) {
       if (http.breakerOpen || counters.stoppedByFailureLimit) break;
+      /*
+       * 时间预算优先于条数预算。
+       *
+       * 0.10 QPS 意味着 50 个任务光限速等待就要 500 秒，加上请求与解析必然逼近
+       * systemd 的 TimeoutStartSec=10min。此前队列几乎只有 new_page_highfreq
+       * （新页小、快）才勉强压得进去；work-queue 公平性修好、votes_full 得以进入之后
+       * 立刻超时，每轮被 SIGTERM 杀死、只消耗 5 秒 CPU 就退出，任务认领了却没人做完——
+       * 表现为「配额生效了但队列反而越积越多」。
+       *
+       * 被信号杀死时无法优雅收尾：未完成任务只能等锁陈旧回收，本轮进度全部作废。
+       * 因此必须在硬超时之前自己停下来，把已完成的部分正常结账。
+       */
+      if (Date.now() - startedMs >= RUN_BUDGET_MS) {
+        stoppedByRuntimeBudget = true;
+        log.info('达到单轮时间预算，提前收尾（剩余任务下轮继续）', {
+          budgetSec: RUN_BUDGET_MS / 1000,
+          processed: counters.processed,
+          remaining: claimed.length - counters.processed,
+        });
+        break;
+      }
       let outcome: WorkHandlerOutcome;
       try {
         outcome = await WORK_HANDLER_REGISTRY[task.kind](task, context);
@@ -450,6 +474,7 @@ async function main(): Promise<void> {
       status,
       health,
       starvation,
+      stoppedByRuntimeBudget,
       runId,
       durationMs,
       registeredKinds: REGISTERED_WORK_KINDS,
