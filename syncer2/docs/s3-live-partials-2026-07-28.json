@@ -1,0 +1,6398 @@
+{
+  "generatedAt": "2026-07-28T06:04:19.419Z",
+  "reason": "Wikidot WhoRated 返回重复自然身份行；四门未过，未采用为状态机种子",
+  "counts": {
+    "wikidotDuplicateSameDirection": 436,
+    "wikidotDuplicateOppositeDirection": 19,
+    "unresolvedIdentity": 0,
+    "other": 0
+  },
+  "pages": [
+    {
+      "pageId": 338,
+      "slug": "cliche-con-2019",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=3 != claimed_total=4",
+        "checksum=3 != claimed_rating=4"
+      ],
+      "claimedTotal": 4,
+      "claimedRating": 4,
+      "fetched": 3,
+      "checksum": 3
+    },
+    {
+      "pageId": 379,
+      "slug": "cn40kdrweddell",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=35 != claimed_total=36",
+        "checksum=31 != claimed_rating=32"
+      ],
+      "claimedTotal": 36,
+      "claimedRating": 32,
+      "fetched": 35,
+      "checksum": 31
+    },
+    {
+      "pageId": 435,
+      "slug": "10th-noodle",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=35 != claimed_total=36",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 36,
+      "claimedRating": 18,
+      "fetched": 35,
+      "checksum": 17
+    },
+    {
+      "pageId": 542,
+      "slug": "2016summer-ggpincus",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=16 != claimed_total=17",
+        "checksum=10 != claimed_rating=11"
+      ],
+      "claimedTotal": 17,
+      "claimedRating": 11,
+      "fetched": 16,
+      "checksum": 10
+    },
+    {
+      "pageId": 652,
+      "slug": "4-50-from-paddington",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=22 != claimed_total=23",
+        "checksum=14 != claimed_rating=15"
+      ],
+      "claimedTotal": 23,
+      "claimedRating": 15,
+      "fetched": 22,
+      "checksum": 14
+    },
+    {
+      "pageId": 769,
+      "slug": "aboutwenquancheng",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=26 != claimed_total=27",
+        "checksum=24 != claimed_rating=25"
+      ],
+      "claimedTotal": 27,
+      "claimedRating": 25,
+      "fetched": 26,
+      "checksum": 24
+    },
+    {
+      "pageId": 793,
+      "slug": "ac12txzn",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=55 != claimed_total=56",
+        "checksum=53 != claimed_rating=54"
+      ],
+      "claimedTotal": 56,
+      "claimedRating": 54,
+      "fetched": 55,
+      "checksum": 53
+    },
+    {
+      "pageId": 965,
+      "slug": "ai-qing-zi-bei-yu-cheng-nuo",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=44 != claimed_total=45",
+        "checksum=22 != claimed_rating=23"
+      ],
+      "claimedTotal": 45,
+      "claimedRating": 23,
+      "fetched": 44,
+      "checksum": 22
+    },
+    {
+      "pageId": 1035,
+      "slug": "allen3723-s-personnel-file",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=16 != claimed_total=17",
+        "checksum=16 != claimed_rating=17"
+      ],
+      "claimedTotal": 17,
+      "claimedRating": 17,
+      "fetched": 16,
+      "checksum": 16
+    },
+    {
+      "pageId": 1166,
+      "slug": "ambrose-youxia",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=107 != claimed_total=108",
+        "checksum=103 != claimed_rating=104"
+      ],
+      "claimedTotal": 108,
+      "claimedRating": 104,
+      "fetched": 107,
+      "checksum": 103
+    },
+    {
+      "pageId": 1286,
+      "slug": "anne-blyrn",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=59 != claimed_total=60",
+        "checksum=49 != claimed_rating=50"
+      ],
+      "claimedTotal": 60,
+      "claimedRating": 50,
+      "fetched": 59,
+      "checksum": 49
+    },
+    {
+      "pageId": 1291,
+      "slug": "an-normal-mission",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=73 != claimed_total=74",
+        "checksum=65 != claimed_rating=66"
+      ],
+      "claimedTotal": 74,
+      "claimedRating": 66,
+      "fetched": 73,
+      "checksum": 65
+    },
+    {
+      "pageId": 1460,
+      "slug": "ared-hub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=93 != claimed_total=94",
+        "checksum=93 != claimed_rating=94"
+      ],
+      "claimedTotal": 94,
+      "claimedRating": 94,
+      "fetched": 93,
+      "checksum": 93
+    },
+    {
+      "pageId": 1793,
+      "slug": "a-site-19-christmas-carol",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=22 != claimed_total=23",
+        "checksum=22 != claimed_rating=23"
+      ],
+      "claimedTotal": 23,
+      "claimedRating": 23,
+      "fetched": 22,
+      "checksum": 22
+    },
+    {
+      "pageId": 1862,
+      "slug": "a-tale-of-the-black-king",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=77 != claimed_total=78",
+        "checksum=77 != claimed_rating=78"
+      ],
+      "claimedTotal": 78,
+      "claimedRating": 78,
+      "fetched": 77,
+      "checksum": 77
+    },
+    {
+      "pageId": 2336,
+      "slug": "busuzhike",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=12 != claimed_total=13",
+        "checksum=10 != claimed_rating=11"
+      ],
+      "claimedTotal": 13,
+      "claimedRating": 11,
+      "fetched": 12,
+      "checksum": 10
+    },
+    {
+      "pageId": 2370,
+      "slug": "calculateloneliness",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=36 != claimed_total=37",
+        "checksum=14 != claimed_rating=15"
+      ],
+      "claimedTotal": 37,
+      "claimedRating": 15,
+      "fetched": 36,
+      "checksum": 14
+    },
+    {
+      "pageId": 2417,
+      "slug": "carl-ryzen",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=33 != claimed_total=35",
+        "checksum=31 != claimed_rating=33"
+      ],
+      "claimedTotal": 35,
+      "claimedRating": 33,
+      "fetched": 33,
+      "checksum": 31
+    },
+    {
+      "pageId": 2490,
+      "slug": "chao",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=33 != claimed_total=34",
+        "checksum=25 != claimed_rating=26"
+      ],
+      "claimedTotal": 34,
+      "claimedRating": 26,
+      "fetched": 33,
+      "checksum": 25
+    },
+    {
+      "pageId": 2551,
+      "slug": "children-study",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=82 != claimed_total=83",
+        "checksum=68 != claimed_rating=69"
+      ],
+      "claimedTotal": 83,
+      "claimedRating": 69,
+      "fetched": 82,
+      "checksum": 68
+    },
+    {
+      "pageId": 2564,
+      "slug": "chinese-valentine-s-day",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=63 != claimed_total=64",
+        "checksum=61 != claimed_rating=62"
+      ],
+      "claimedTotal": 64,
+      "claimedRating": 62,
+      "fetched": 63,
+      "checksum": 61
+    },
+    {
+      "pageId": 2593,
+      "slug": "chubbybunny",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=12 != claimed_total=13",
+        "checksum=12 != claimed_rating=13"
+      ],
+      "claimedTotal": 13,
+      "claimedRating": 13,
+      "fetched": 12,
+      "checksum": 12
+    },
+    {
+      "pageId": 2599,
+      "slug": "chu-silk-manuscript",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=94 != claimed_total=95",
+        "checksum=90 != claimed_rating=91"
+      ],
+      "claimedTotal": 95,
+      "claimedRating": 91,
+      "fetched": 94,
+      "checksum": 90
+    },
+    {
+      "pageId": 2669,
+      "slug": "coloredbucket",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=65 != claimed_total=66",
+        "checksum=47 != claimed_rating=48"
+      ],
+      "claimedTotal": 66,
+      "claimedRating": 48,
+      "fetched": 65,
+      "checksum": 47
+    },
+    {
+      "pageId": 2921,
+      "slug": "component:wechat",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=109 != claimed_total=110",
+        "checksum=105 != claimed_rating=106"
+      ],
+      "claimedTotal": 110,
+      "claimedRating": 106,
+      "fetched": 109,
+      "checksum": 105
+    },
+    {
+      "pageId": 2976,
+      "slug": "conservation-of-wtf",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=14 != claimed_total=15",
+        "checksum=14 != claimed_rating=15"
+      ],
+      "claimedTotal": 15,
+      "claimedRating": 15,
+      "fetched": 14,
+      "checksum": 14
+    },
+    {
+      "pageId": 3239,
+      "slug": "dark-side-hub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=3 != claimed_total=4",
+        "checksum=3 != claimed_rating=4"
+      ],
+      "claimedTotal": 4,
+      "claimedRating": 4,
+      "fetched": 3,
+      "checksum": 3
+    },
+    {
+      "pageId": 3346,
+      "slug": "deep-six-event",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=70 != claimed_total=71",
+        "checksum=62 != claimed_rating=63"
+      ],
+      "claimedTotal": 71,
+      "claimedRating": 63,
+      "fetched": 70,
+      "checksum": 62
+    },
+    {
+      "pageId": 3403,
+      "slug": "deleted:scp-cn-1375",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=32 != claimed_total=33",
+        "checksum=10 != claimed_rating=11"
+      ],
+      "claimedTotal": 33,
+      "claimedRating": 11,
+      "fetched": 32,
+      "checksum": 10
+    },
+    {
+      "pageId": 3413,
+      "slug": "deleted:scp-cn-1464",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=36 != claimed_total=37",
+        "checksum=8 != claimed_rating=7"
+      ],
+      "claimedTotal": 37,
+      "claimedRating": 7,
+      "fetched": 36,
+      "checksum": 8
+    },
+    {
+      "pageId": 3649,
+      "slug": "doomsday-tales",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=73 != claimed_total=74",
+        "checksum=71 != claimed_rating=72"
+      ],
+      "claimedTotal": 74,
+      "claimedRating": 72,
+      "fetched": 73,
+      "checksum": 71
+    },
+    {
+      "pageId": 3900,
+      "slug": "eat-if-necessary",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=44 != claimed_total=45",
+        "checksum=44 != claimed_rating=45"
+      ],
+      "claimedTotal": 45,
+      "claimedRating": 45,
+      "fetched": 44,
+      "checksum": 44
+    },
+    {
+      "pageId": 3996,
+      "slug": "endin",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=93 != claimed_total=94",
+        "checksum=87 != claimed_rating=88"
+      ],
+      "claimedTotal": 94,
+      "claimedRating": 88,
+      "fetched": 93,
+      "checksum": 87
+    },
+    {
+      "pageId": 4001,
+      "slug": "endless-journey",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=35 != claimed_total=36",
+        "checksum=33 != claimed_rating=34"
+      ],
+      "claimedTotal": 36,
+      "claimedRating": 34,
+      "fetched": 35,
+      "checksum": 33
+    },
+    {
+      "pageId": 4023,
+      "slug": "endro-reversi",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=102 != claimed_total=103",
+        "checksum=98 != claimed_rating=99"
+      ],
+      "claimedTotal": 103,
+      "claimedRating": 99,
+      "fetched": 102,
+      "checksum": 98
+    },
+    {
+      "pageId": 4039,
+      "slug": "erhuanmimeng",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:6685812 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=27",
+        "checksum=null != claimed_rating=23"
+      ],
+      "claimedTotal": 27,
+      "claimedRating": 23,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 4121,
+      "slug": "ex-aid",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:6343343 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=53",
+        "checksum=null != claimed_rating=47"
+      ],
+      "claimedTotal": 53,
+      "claimedRating": 47,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 4134,
+      "slug": "exclusion-principle-iii",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=17 != claimed_total=18",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 18,
+      "claimedRating": 18,
+      "fetched": 17,
+      "checksum": 17
+    },
+    {
+      "pageId": 6920,
+      "slug": "g-d-0191",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=68 != claimed_total=69",
+        "checksum=66 != claimed_rating=67"
+      ],
+      "claimedTotal": 69,
+      "claimedRating": 67,
+      "fetched": 68,
+      "checksum": 66
+    },
+    {
+      "pageId": 7119,
+      "slug": "gongkuanlvxing",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:6351300 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=30",
+        "checksum=null != claimed_rating=20"
+      ],
+      "claimedTotal": 30,
+      "claimedRating": 20,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 7157,
+      "slug": "gp-phy-2877341",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=42 != claimed_total=43",
+        "checksum=36 != claimed_rating=37"
+      ],
+      "claimedTotal": 43,
+      "claimedRating": 37,
+      "fetched": 42,
+      "checksum": 36
+    },
+    {
+      "pageId": 7193,
+      "slug": "grass-writer",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=45 != claimed_total=46",
+        "checksum=45 != claimed_rating=46"
+      ],
+      "claimedTotal": 46,
+      "claimedRating": 46,
+      "fetched": 45,
+      "checksum": 45
+    },
+    {
+      "pageId": 7244,
+      "slug": "gsk-killready",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=43 != claimed_total=44",
+        "checksum=41 != claimed_rating=42"
+      ],
+      "claimedTotal": 44,
+      "claimedRating": 42,
+      "fetched": 43,
+      "checksum": 41
+    },
+    {
+      "pageId": 7366,
+      "slug": "hard-to-name-0719",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=46 != claimed_total=47",
+        "checksum=44 != claimed_rating=45"
+      ],
+      "claimedTotal": 47,
+      "claimedRating": 45,
+      "fetched": 46,
+      "checksum": 44
+    },
+    {
+      "pageId": 7472,
+      "slug": "helloworld",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=31 != claimed_total=32",
+        "checksum=25 != claimed_rating=26"
+      ],
+      "claimedTotal": 32,
+      "claimedRating": 26,
+      "fetched": 31,
+      "checksum": 25
+    },
+    {
+      "pageId": 7502,
+      "slug": "hero-no-jihyou",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=4 != claimed_total=5",
+        "checksum=4 != claimed_rating=5"
+      ],
+      "claimedTotal": 5,
+      "claimedRating": 5,
+      "fetched": 4,
+      "checksum": 4
+    },
+    {
+      "pageId": 7668,
+      "slug": "howtosaveyourself",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=30 != claimed_total=31",
+        "checksum=20 != claimed_rating=21"
+      ],
+      "claimedTotal": 31,
+      "claimedRating": 21,
+      "fetched": 30,
+      "checksum": 20
+    },
+    {
+      "pageId": 7758,
+      "slug": "i-am-shoca-vegetable-bird",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=82 != claimed_total=83",
+        "checksum=64 != claimed_rating=65"
+      ],
+      "claimedTotal": 83,
+      "claimedRating": 65,
+      "fetched": 82,
+      "checksum": 64
+    },
+    {
+      "pageId": 7806,
+      "slug": "iferys-thirty-years-war",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=53 != claimed_total=54",
+        "checksum=49 != claimed_rating=50"
+      ],
+      "claimedTotal": 54,
+      "claimedRating": 50,
+      "fetched": 53,
+      "checksum": 49
+    },
+    {
+      "pageId": 7973,
+      "slug": "innerwish",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:3292243 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=24",
+        "checksum=null != claimed_rating=20"
+      ],
+      "claimedTotal": 24,
+      "claimedRating": 20,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 7995,
+      "slug": "in-symphony",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=12 != claimed_total=13",
+        "checksum=12 != claimed_rating=13"
+      ],
+      "claimedTotal": 13,
+      "claimedRating": 13,
+      "fetched": 12,
+      "checksum": 12
+    },
+    {
+      "pageId": 8191,
+      "slug": "i-wanna-track",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=49 != claimed_total=50",
+        "checksum=31 != claimed_rating=32"
+      ],
+      "claimedTotal": 50,
+      "claimedRating": 32,
+      "fetched": 49,
+      "checksum": 31
+    },
+    {
+      "pageId": 8274,
+      "slug": "jixing",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=38 != claimed_total=39",
+        "checksum=36 != claimed_rating=37"
+      ],
+      "claimedTotal": 39,
+      "claimedRating": 37,
+      "fetched": 38,
+      "checksum": 36
+    },
+    {
+      "pageId": 8378,
+      "slug": "karldark-s-personnel-file",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=20 != claimed_total=21",
+        "checksum=20 != claimed_rating=21"
+      ],
+      "claimedTotal": 21,
+      "claimedRating": 21,
+      "fetched": 20,
+      "checksum": 20
+    },
+    {
+      "pageId": 8388,
+      "slug": "k-class-list-cn",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=115 != claimed_total=116",
+        "checksum=113 != claimed_rating=114"
+      ],
+      "claimedTotal": 116,
+      "claimedRating": 114,
+      "fetched": 115,
+      "checksum": 113
+    },
+    {
+      "pageId": 8429,
+      "slug": "kindom-coming",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=53 != claimed_total=54",
+        "checksum=53 != claimed_rating=54"
+      ],
+      "claimedTotal": 54,
+      "claimedRating": 54,
+      "fetched": 53,
+      "checksum": 53
+    },
+    {
+      "pageId": 8526,
+      "slug": "l",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=15 != claimed_total=16",
+        "checksum=15 != claimed_rating=16"
+      ],
+      "claimedTotal": 16,
+      "claimedRating": 16,
+      "fetched": 15,
+      "checksum": 15
+    },
+    {
+      "pageId": 8602,
+      "slug": "leaves-return-to-roots",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=24 != claimed_total=25",
+        "checksum=24 != claimed_rating=25"
+      ],
+      "claimedTotal": 25,
+      "claimedRating": 25,
+      "fetched": 24,
+      "checksum": 24
+    },
+    {
+      "pageId": 8681,
+      "slug": "level-c-1976",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=62 != claimed_total=63",
+        "checksum=62 != claimed_rating=63"
+      ],
+      "claimedTotal": 63,
+      "claimedRating": 63,
+      "fetched": 62,
+      "checksum": 62
+    },
+    {
+      "pageId": 8686,
+      "slug": "l-homme-et-son-esclave",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=4 != claimed_total=5",
+        "checksum=4 != claimed_rating=5"
+      ],
+      "claimedTotal": 5,
+      "claimedRating": 5,
+      "fetched": 4,
+      "checksum": 4
+    },
+    {
+      "pageId": 8756,
+      "slug": "list-of-missing-books",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=81 != claimed_total=82",
+        "checksum=75 != claimed_rating=76"
+      ],
+      "claimedTotal": 82,
+      "claimedRating": 76,
+      "fetched": 81,
+      "checksum": 75
+    },
+    {
+      "pageId": 8761,
+      "slug": "listpages-magic-and-you",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=66 != claimed_total=67",
+        "checksum=66 != claimed_rating=67"
+      ],
+      "claimedTotal": 67,
+      "claimedRating": 67,
+      "fetched": 66,
+      "checksum": 66
+    },
+    {
+      "pageId": 8846,
+      "slug": "log-of-anomalous-items-cn:00028",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=45 != claimed_total=46",
+        "checksum=19 != claimed_rating=20"
+      ],
+      "claimedTotal": 46,
+      "claimedRating": 20,
+      "fetched": 45,
+      "checksum": 19
+    },
+    {
+      "pageId": 8852,
+      "slug": "log-of-anomalous-items-cn:00044",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=74 != claimed_total=75",
+        "checksum=66 != claimed_rating=67"
+      ],
+      "claimedTotal": 75,
+      "claimedRating": 67,
+      "fetched": 74,
+      "checksum": 66
+    },
+    {
+      "pageId": 8956,
+      "slug": "log-of-anomalous-items-cn:00255",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=19 != claimed_total=20",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 20,
+      "claimedRating": 18,
+      "fetched": 19,
+      "checksum": 17
+    },
+    {
+      "pageId": 8979,
+      "slug": "log-of-anomalous-items-cn:00308",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=68 != claimed_total=69",
+        "checksum=48 != claimed_rating=49"
+      ],
+      "claimedTotal": 69,
+      "claimedRating": 49,
+      "fetched": 68,
+      "checksum": 48
+    },
+    {
+      "pageId": 9006,
+      "slug": "log-of-anomalous-items-cn:00360",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=90 != claimed_total=91",
+        "checksum=82 != claimed_rating=83"
+      ],
+      "claimedTotal": 91,
+      "claimedRating": 83,
+      "fetched": 90,
+      "checksum": 82
+    },
+    {
+      "pageId": 9063,
+      "slug": "log-of-anomalous-items-cn:00452",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=79 != claimed_total=80",
+        "checksum=65 != claimed_rating=66"
+      ],
+      "claimedTotal": 80,
+      "claimedRating": 66,
+      "fetched": 79,
+      "checksum": 65
+    },
+    {
+      "pageId": 9106,
+      "slug": "log-of-anomalous-items-cn:00544",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=58 != claimed_total=60"
+      ],
+      "claimedTotal": 60,
+      "claimedRating": 52,
+      "fetched": 58,
+      "checksum": 52
+    },
+    {
+      "pageId": 9124,
+      "slug": "log-of-anomalous-items-cn:00570",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:6940667 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=31",
+        "checksum=null != claimed_rating=29"
+      ],
+      "claimedTotal": 31,
+      "claimedRating": 29,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 9151,
+      "slug": "log-of-anomalous-items-cn:00611",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=9 != claimed_total=10",
+        "checksum=9 != claimed_rating=10"
+      ],
+      "claimedTotal": 10,
+      "claimedRating": 10,
+      "fetched": 9,
+      "checksum": 9
+    },
+    {
+      "pageId": 9194,
+      "slug": "log-of-anomalous-items-cn:00678",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=31 != claimed_total=32",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 32,
+      "claimedRating": 30,
+      "fetched": 31,
+      "checksum": 29
+    },
+    {
+      "pageId": 9232,
+      "slug": "log-of-anomalous-items-cn:00723",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=27 != claimed_total=28",
+        "checksum=25 != claimed_rating=26"
+      ],
+      "claimedTotal": 28,
+      "claimedRating": 26,
+      "fetched": 27,
+      "checksum": 25
+    },
+    {
+      "pageId": 9500,
+      "slug": "log-of-anomalous-items-cn:01087",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=4 != claimed_total=5",
+        "checksum=2 != claimed_rating=3"
+      ],
+      "claimedTotal": 5,
+      "claimedRating": 3,
+      "fetched": 4,
+      "checksum": 2
+    },
+    {
+      "pageId": 9515,
+      "slug": "log-of-anomalous-items-cn:01108",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=28 != claimed_total=29",
+        "checksum=28 != claimed_rating=29"
+      ],
+      "claimedTotal": 29,
+      "claimedRating": 29,
+      "fetched": 28,
+      "checksum": 28
+    },
+    {
+      "pageId": 9530,
+      "slug": "log-of-anomalous-items-cn:01127",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=6 != claimed_total=7",
+        "checksum=4 != claimed_rating=5"
+      ],
+      "claimedTotal": 7,
+      "claimedRating": 5,
+      "fetched": 6,
+      "checksum": 4
+    },
+    {
+      "pageId": 9677,
+      "slug": "log-of-anomalous-items-cn:01334",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=7 != claimed_total=8",
+        "checksum=3 != claimed_rating=4"
+      ],
+      "claimedTotal": 8,
+      "claimedRating": 4,
+      "fetched": 7,
+      "checksum": 3
+    },
+    {
+      "pageId": 9797,
+      "slug": "log-of-anomalous-items-cn:01501",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=20 != claimed_total=21",
+        "checksum=16 != claimed_rating=17"
+      ],
+      "claimedTotal": 21,
+      "claimedRating": 17,
+      "fetched": 20,
+      "checksum": 16
+    },
+    {
+      "pageId": 10124,
+      "slug": "m13-diapason",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=14 != claimed_total=15",
+        "checksum=12 != claimed_rating=13"
+      ],
+      "claimedTotal": 15,
+      "claimedRating": 13,
+      "fetched": 14,
+      "checksum": 12
+    },
+    {
+      "pageId": 10172,
+      "slug": "malocs",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=40 != claimed_total=41",
+        "checksum=10 != claimed_rating=11"
+      ],
+      "claimedTotal": 41,
+      "claimedRating": 11,
+      "fetched": 40,
+      "checksum": 10
+    },
+    {
+      "pageId": 10254,
+      "slug": "mcde-bio-h-v-t5512348",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=34 != claimed_total=35",
+        "checksum=32 != claimed_rating=33"
+      ],
+      "claimedTotal": 35,
+      "claimedRating": 33,
+      "fetched": 34,
+      "checksum": 32
+    },
+    {
+      "pageId": 10402,
+      "slug": "miracle-sing-time",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=82 != claimed_total=83",
+        "checksum=80 != claimed_rating=81"
+      ],
+      "claimedTotal": 83,
+      "claimedRating": 81,
+      "fetched": 82,
+      "checksum": 80
+    },
+    {
+      "pageId": 10470,
+      "slug": "montauk-hesitation",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=68 != claimed_total=69",
+        "checksum=60 != claimed_rating=61"
+      ],
+      "claimedTotal": 69,
+      "claimedRating": 61,
+      "fetched": 68,
+      "checksum": 60
+    },
+    {
+      "pageId": 10538,
+      "slug": "mr-mario",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=51 != claimed_total=52",
+        "checksum=43 != claimed_rating=44"
+      ],
+      "claimedTotal": 52,
+      "claimedRating": 44,
+      "fetched": 51,
+      "checksum": 43
+    },
+    {
+      "pageId": 10573,
+      "slug": "murder-in-site-cn-91",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=31 != claimed_total=32",
+        "checksum=31 != claimed_rating=32"
+      ],
+      "claimedTotal": 32,
+      "claimedRating": 32,
+      "fetched": 31,
+      "checksum": 31
+    },
+    {
+      "pageId": 10872,
+      "slug": "no-gugu",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=47 != claimed_total=48",
+        "checksum=41 != claimed_rating=42"
+      ],
+      "claimedTotal": 48,
+      "claimedRating": 42,
+      "fetched": 47,
+      "checksum": 41
+    },
+    {
+      "pageId": 10896,
+      "slug": "noology",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=42 != claimed_total=43",
+        "checksum=34 != claimed_rating=35"
+      ],
+      "claimedTotal": 43,
+      "claimedRating": 35,
+      "fetched": 42,
+      "checksum": 34
+    },
+    {
+      "pageId": 11053,
+      "slug": "of-dragons-and-serpents",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=38 != claimed_total=39",
+        "checksum=38 != claimed_rating=39"
+      ],
+      "claimedTotal": 39,
+      "claimedRating": 39,
+      "fetched": 38,
+      "checksum": 38
+    },
+    {
+      "pageId": 11056,
+      "slug": "off-the-record",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=33 != claimed_total=34",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 34,
+      "claimedRating": 30,
+      "fetched": 33,
+      "checksum": 29
+    },
+    {
+      "pageId": 11133,
+      "slug": "old:continued-deliberations",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1 != claimed_total=2",
+        "checksum=1 != claimed_rating=2"
+      ],
+      "claimedTotal": 2,
+      "claimedRating": 2,
+      "fetched": 1,
+      "checksum": 1
+    },
+    {
+      "pageId": 11168,
+      "slug": "old:goc-are-gunfuckers",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=36 != claimed_total=37",
+        "checksum=28 != claimed_rating=29"
+      ],
+      "claimedTotal": 37,
+      "claimedRating": 29,
+      "fetched": 36,
+      "checksum": 28
+    },
+    {
+      "pageId": 11668,
+      "slug": "one-hundred-pumpkins-of-solitude",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=89 != claimed_total=90",
+        "checksum=85 != claimed_rating=86"
+      ],
+      "claimedTotal": 90,
+      "claimedRating": 86,
+      "fetched": 89,
+      "checksum": 85
+    },
+    {
+      "pageId": 11690,
+      "slug": "only-milk",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=56 != claimed_total=57",
+        "checksum=44 != claimed_rating=45"
+      ],
+      "claimedTotal": 57,
+      "claimedRating": 45,
+      "fetched": 56,
+      "checksum": 44
+    },
+    {
+      "pageId": 12007,
+      "slug": "pez1",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=63 != claimed_total=64",
+        "checksum=51 != claimed_rating=52"
+      ],
+      "claimedTotal": 64,
+      "claimedRating": 52,
+      "fetched": 63,
+      "checksum": 51
+    },
+    {
+      "pageId": 12083,
+      "slug": "playing-god",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=19 != claimed_total=20",
+        "checksum=19 != claimed_rating=20"
+      ],
+      "claimedTotal": 20,
+      "claimedRating": 20,
+      "fetched": 19,
+      "checksum": 19
+    },
+    {
+      "pageId": 12257,
+      "slug": "project-proposal-2025-003",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=38 != claimed_total=39",
+        "checksum=38 != claimed_rating=39"
+      ],
+      "claimedTotal": 39,
+      "claimedRating": 39,
+      "fetched": 38,
+      "checksum": 38
+    },
+    {
+      "pageId": 12331,
+      "slug": "puppy",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=48 != claimed_total=49",
+        "checksum=44 != claimed_rating=45"
+      ],
+      "claimedTotal": 49,
+      "claimedRating": 45,
+      "fetched": 48,
+      "checksum": 44
+    },
+    {
+      "pageId": 12442,
+      "slug": "ratemod:sentimentbar-credit:start",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=27 != claimed_total=28",
+        "checksum=25 != claimed_rating=26"
+      ],
+      "claimedTotal": 28,
+      "claimedRating": 26,
+      "fetched": 27,
+      "checksum": 25
+    },
+    {
+      "pageId": 12557,
+      "slug": "remember-the-pain",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=53 != claimed_total=54",
+        "checksum=51 != claimed_rating=52"
+      ],
+      "claimedTotal": 54,
+      "claimedRating": 52,
+      "fetched": 53,
+      "checksum": 51
+    },
+    {
+      "pageId": 12717,
+      "slug": "rounderhouse-gold-proposal",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=40 != claimed_total=41",
+        "checksum=40 != claimed_rating=41"
+      ],
+      "claimedTotal": 41,
+      "claimedRating": 41,
+      "fetched": 40,
+      "checksum": 40
+    },
+    {
+      "pageId": 12788,
+      "slug": "sanshi",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=52 != claimed_total=53",
+        "checksum=22 != claimed_rating=21"
+      ],
+      "claimedTotal": 53,
+      "claimedRating": 21,
+      "fetched": 52,
+      "checksum": 22
+    },
+    {
+      "pageId": 12888,
+      "slug": "scp-001-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=69 != claimed_total=70",
+        "checksum=61 != claimed_rating=62"
+      ],
+      "claimedTotal": 70,
+      "claimedRating": 62,
+      "fetched": 69,
+      "checksum": 61
+    },
+    {
+      "pageId": 12927,
+      "slug": "scp-004",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=90 != claimed_total=91",
+        "checksum=82 != claimed_rating=83"
+      ],
+      "claimedTotal": 91,
+      "claimedRating": 83,
+      "fetched": 90,
+      "checksum": 82
+    },
+    {
+      "pageId": 12993,
+      "slug": "scp-012",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=89 != claimed_total=90",
+        "checksum=83 != claimed_rating=84"
+      ],
+      "claimedTotal": 90,
+      "claimedRating": 84,
+      "fetched": 89,
+      "checksum": 83
+    },
+    {
+      "pageId": 13256,
+      "slug": "theme:monotypical",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=49 != claimed_total=50",
+        "checksum=49 != claimed_rating=50"
+      ],
+      "claimedTotal": 50,
+      "claimedRating": 50,
+      "fetched": 49,
+      "checksum": 49
+    },
+    {
+      "pageId": 13274,
+      "slug": "scp-076-2",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=71 != claimed_total=72",
+        "checksum=69 != claimed_rating=70"
+      ],
+      "claimedTotal": 72,
+      "claimedRating": 70,
+      "fetched": 71,
+      "checksum": 69
+    },
+    {
+      "pageId": 13453,
+      "slug": "scp-1033",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=22 != claimed_total=23",
+        "checksum=22 != claimed_rating=23"
+      ],
+      "claimedTotal": 23,
+      "claimedRating": 23,
+      "fetched": 22,
+      "checksum": 22
+    },
+    {
+      "pageId": 14921,
+      "slug": "scp-194",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=17 != claimed_total=18",
+        "checksum=13 != claimed_rating=14"
+      ],
+      "claimedTotal": 18,
+      "claimedRating": 14,
+      "fetched": 17,
+      "checksum": 13
+    },
+    {
+      "pageId": 14947,
+      "slug": "scp-1958",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=11 != claimed_total=12",
+        "checksum=9 != claimed_rating=10"
+      ],
+      "claimedTotal": 12,
+      "claimedRating": 10,
+      "fetched": 11,
+      "checksum": 9
+    },
+    {
+      "pageId": 16053,
+      "slug": "scp-2756",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:5228319 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=4",
+        "checksum=null != claimed_rating=2"
+      ],
+      "claimedTotal": 4,
+      "claimedRating": 2,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 16408,
+      "slug": "scp-3035",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=73 != claimed_total=74",
+        "checksum=73 != claimed_rating=74"
+      ],
+      "claimedTotal": 74,
+      "claimedRating": 74,
+      "fetched": 73,
+      "checksum": 73
+    },
+    {
+      "pageId": 17406,
+      "slug": "scp-4004",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=23 != claimed_total=24",
+        "checksum=21 != claimed_rating=22"
+      ],
+      "claimedTotal": 24,
+      "claimedRating": 22,
+      "fetched": 23,
+      "checksum": 21
+    },
+    {
+      "pageId": 18087,
+      "slug": "scp-4710",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 deleted:6441099 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=18",
+        "checksum=null != claimed_rating=14"
+      ],
+      "claimedTotal": 18,
+      "claimedRating": 14,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 19079,
+      "slug": "scp-5815",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=4 != claimed_total=5",
+        "checksum=4 != claimed_rating=5"
+      ],
+      "claimedTotal": 5,
+      "claimedRating": 5,
+      "fetched": 4,
+      "checksum": 4
+    },
+    {
+      "pageId": 19714,
+      "slug": "scp-cn-3150",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=64 != claimed_total=65",
+        "checksum=6 != claimed_rating=7"
+      ],
+      "claimedTotal": 65,
+      "claimedRating": 7,
+      "fetched": 64,
+      "checksum": 6
+    },
+    {
+      "pageId": 20040,
+      "slug": "scp-7061",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=12 != claimed_total=13",
+        "checksum=6 != claimed_rating=5"
+      ],
+      "claimedTotal": 13,
+      "claimedRating": 5,
+      "fetched": 12,
+      "checksum": 6
+    },
+    {
+      "pageId": 20609,
+      "slug": "scp-8000-ex",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=18 != claimed_total=19",
+        "checksum=12 != claimed_rating=13"
+      ],
+      "claimedTotal": 19,
+      "claimedRating": 13,
+      "fetched": 18,
+      "checksum": 12
+    },
+    {
+      "pageId": 20620,
+      "slug": "scp-8008",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=47 != claimed_total=48",
+        "checksum=-13 != claimed_rating=-14"
+      ],
+      "claimedTotal": 48,
+      "claimedRating": -14,
+      "fetched": 47,
+      "checksum": -13
+    },
+    {
+      "pageId": 20895,
+      "slug": "scp-cn-3741",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=57 != claimed_total=58",
+        "checksum=37 != claimed_rating=38"
+      ],
+      "claimedTotal": 58,
+      "claimedRating": 38,
+      "fetched": 57,
+      "checksum": 37
+    },
+    {
+      "pageId": 21309,
+      "slug": "scp-cc-by-sa-3-0-co",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=20 != claimed_total=21",
+        "checksum=20 != claimed_rating=21"
+      ],
+      "claimedTotal": 21,
+      "claimedRating": 21,
+      "fetched": 20,
+      "checksum": 20
+    },
+    {
+      "pageId": 21346,
+      "slug": "scp-cn-012",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=113 != claimed_total=114",
+        "checksum=95 != claimed_rating=96"
+      ],
+      "claimedTotal": 114,
+      "claimedRating": 96,
+      "fetched": 113,
+      "checksum": 95
+    },
+    {
+      "pageId": 21416,
+      "slug": "scp-cn-062",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=42 != claimed_total=43",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 43,
+      "claimedRating": 27,
+      "fetched": 42,
+      "checksum": 26
+    },
+    {
+      "pageId": 21505,
+      "slug": "scp-cn-1031",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=96 != claimed_total=97",
+        "checksum=42 != claimed_rating=43"
+      ],
+      "claimedTotal": 97,
+      "claimedRating": 43,
+      "fetched": 96,
+      "checksum": 42
+    },
+    {
+      "pageId": 21538,
+      "slug": "scp-cn-1052",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=38 != claimed_total=39",
+        "checksum=34 != claimed_rating=35"
+      ],
+      "claimedTotal": 39,
+      "claimedRating": 35,
+      "fetched": 38,
+      "checksum": 34
+    },
+    {
+      "pageId": 21616,
+      "slug": "scp-cn-1115",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=57 != claimed_total=59"
+      ],
+      "claimedTotal": 59,
+      "claimedRating": 41,
+      "fetched": 57,
+      "checksum": 41
+    },
+    {
+      "pageId": 21687,
+      "slug": "scp-cn-1172",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=45 != claimed_total=46",
+        "checksum=31 != claimed_rating=32"
+      ],
+      "claimedTotal": 46,
+      "claimedRating": 32,
+      "fetched": 45,
+      "checksum": 31
+    },
+    {
+      "pageId": 21794,
+      "slug": "scp-cn-1251",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=37 != claimed_total=38",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 38,
+      "claimedRating": 30,
+      "fetched": 37,
+      "checksum": 29
+    },
+    {
+      "pageId": 21846,
+      "slug": "scp-cn-1296",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=61 != claimed_total=62",
+        "checksum=59 != claimed_rating=60"
+      ],
+      "claimedTotal": 62,
+      "claimedRating": 60,
+      "fetched": 61,
+      "checksum": 59
+    },
+    {
+      "pageId": 21847,
+      "slug": "scp-cn-129600-ex",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=34 != claimed_total=35",
+        "checksum=18 != claimed_rating=19"
+      ],
+      "claimedTotal": 35,
+      "claimedRating": 19,
+      "fetched": 34,
+      "checksum": 18
+    },
+    {
+      "pageId": 21848,
+      "slug": "scp-cn-1297",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=76 != claimed_total=77",
+        "checksum=38 != claimed_rating=39"
+      ],
+      "claimedTotal": 77,
+      "claimedRating": 39,
+      "fetched": 76,
+      "checksum": 38
+    },
+    {
+      "pageId": 21871,
+      "slug": "scp-cn-1318",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=66 != claimed_total=67",
+        "checksum=46 != claimed_rating=47"
+      ],
+      "claimedTotal": 67,
+      "claimedRating": 47,
+      "fetched": 66,
+      "checksum": 46
+    },
+    {
+      "pageId": 21902,
+      "slug": "scp-cn-1344",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=89 != claimed_total=90",
+        "checksum=77 != claimed_rating=78"
+      ],
+      "claimedTotal": 90,
+      "claimedRating": 78,
+      "fetched": 89,
+      "checksum": 77
+    },
+    {
+      "pageId": 21931,
+      "slug": "scp-cn-1369",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 deleted:5651123 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=81",
+        "checksum=null != claimed_rating=49"
+      ],
+      "claimedTotal": 81,
+      "claimedRating": 49,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 22013,
+      "slug": "scp-cn-1441",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=37 != claimed_total=38",
+        "checksum=33 != claimed_rating=34"
+      ],
+      "claimedTotal": 38,
+      "claimedRating": 34,
+      "fetched": 37,
+      "checksum": 33
+    },
+    {
+      "pageId": 22239,
+      "slug": "scp-cn-164",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:3694873 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=64",
+        "checksum=null != claimed_rating=26"
+      ],
+      "claimedTotal": 64,
+      "claimedRating": 26,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 22274,
+      "slug": "scp-cn-167",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=78 != claimed_total=79",
+        "checksum=70 != claimed_rating=71"
+      ],
+      "claimedTotal": 79,
+      "claimedRating": 71,
+      "fetched": 78,
+      "checksum": 70
+    },
+    {
+      "pageId": 22296,
+      "slug": "scp-cn-1688",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=31 != claimed_total=32",
+        "checksum=25 != claimed_rating=26"
+      ],
+      "claimedTotal": 32,
+      "claimedRating": 26,
+      "fetched": 31,
+      "checksum": 25
+    },
+    {
+      "pageId": 22312,
+      "slug": "scp-cn-1702",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=62 != claimed_total=63",
+        "checksum=50 != claimed_rating=51"
+      ],
+      "claimedTotal": 63,
+      "claimedRating": 51,
+      "fetched": 62,
+      "checksum": 50
+    },
+    {
+      "pageId": 22315,
+      "slug": "scp-cn-1705",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=47 != claimed_total=48",
+        "checksum=45 != claimed_rating=46"
+      ],
+      "claimedTotal": 48,
+      "claimedRating": 46,
+      "fetched": 47,
+      "checksum": 45
+    },
+    {
+      "pageId": 22544,
+      "slug": "scp-cn-1906",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=95 != claimed_total=96",
+        "checksum=83 != claimed_rating=84"
+      ],
+      "claimedTotal": 96,
+      "claimedRating": 84,
+      "fetched": 95,
+      "checksum": 83
+    },
+    {
+      "pageId": 22635,
+      "slug": "scp-cn-1984",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=75 != claimed_total=76",
+        "checksum=55 != claimed_rating=56"
+      ],
+      "claimedTotal": 76,
+      "claimedRating": 56,
+      "fetched": 75,
+      "checksum": 55
+    },
+    {
+      "pageId": 22708,
+      "slug": "scp-cn-2043",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=73 != claimed_total=74",
+        "checksum=55 != claimed_rating=56"
+      ],
+      "claimedTotal": 74,
+      "claimedRating": 56,
+      "fetched": 73,
+      "checksum": 55
+    },
+    {
+      "pageId": 22720,
+      "slug": "scp-cn-2055",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=44 != claimed_total=45",
+        "checksum=44 != claimed_rating=45"
+      ],
+      "claimedTotal": 45,
+      "claimedRating": 45,
+      "fetched": 44,
+      "checksum": 44
+    },
+    {
+      "pageId": 22725,
+      "slug": "scp-cn-206",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=106 != claimed_total=107",
+        "checksum=96 != claimed_rating=97"
+      ],
+      "claimedTotal": 107,
+      "claimedRating": 97,
+      "fetched": 106,
+      "checksum": 96
+    },
+    {
+      "pageId": 22913,
+      "slug": "scp-cn-2255",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=98 != claimed_total=99",
+        "checksum=94 != claimed_rating=95"
+      ],
+      "claimedTotal": 99,
+      "claimedRating": 95,
+      "fetched": 98,
+      "checksum": 94
+    },
+    {
+      "pageId": 22915,
+      "slug": "scp-cn-2229",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=29 != claimed_total=30",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 30,
+      "claimedRating": 30,
+      "fetched": 29,
+      "checksum": 29
+    },
+    {
+      "pageId": 23015,
+      "slug": "scp-cn-2322",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=59 != claimed_total=60",
+        "checksum=57 != claimed_rating=58"
+      ],
+      "claimedTotal": 60,
+      "claimedRating": 58,
+      "fetched": 59,
+      "checksum": 57
+    },
+    {
+      "pageId": 23037,
+      "slug": "scp-cn-2343",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=64 != claimed_total=65",
+        "checksum=48 != claimed_rating=49"
+      ],
+      "claimedTotal": 65,
+      "claimedRating": 49,
+      "fetched": 64,
+      "checksum": 48
+    },
+    {
+      "pageId": 23070,
+      "slug": "scp-cn-2374",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=108 != claimed_total=110",
+        "checksum=88 != claimed_rating=90"
+      ],
+      "claimedTotal": 110,
+      "claimedRating": 90,
+      "fetched": 108,
+      "checksum": 88
+    },
+    {
+      "pageId": 23097,
+      "slug": "scp-cn-2398",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=37 != claimed_total=38",
+        "checksum=23 != claimed_rating=24"
+      ],
+      "claimedTotal": 38,
+      "claimedRating": 24,
+      "fetched": 37,
+      "checksum": 23
+    },
+    {
+      "pageId": 23104,
+      "slug": "scp-cn-2404",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=46 != claimed_total=47",
+        "checksum=30 != claimed_rating=31"
+      ],
+      "claimedTotal": 47,
+      "claimedRating": 31,
+      "fetched": 46,
+      "checksum": 30
+    },
+    {
+      "pageId": 23114,
+      "slug": "scp-cn-2413",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=64 != claimed_total=65",
+        "checksum=20 != claimed_rating=19"
+      ],
+      "claimedTotal": 65,
+      "claimedRating": 19,
+      "fetched": 64,
+      "checksum": 20
+    },
+    {
+      "pageId": 23298,
+      "slug": "scp-cn-258",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=28 != claimed_total=29",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 29,
+      "claimedRating": 27,
+      "fetched": 28,
+      "checksum": 26
+    },
+    {
+      "pageId": 23319,
+      "slug": "scp-cn-2599",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=96 != claimed_total=97",
+        "checksum=78 != claimed_rating=79"
+      ],
+      "claimedTotal": 97,
+      "claimedRating": 79,
+      "fetched": 96,
+      "checksum": 78
+    },
+    {
+      "pageId": 23429,
+      "slug": "scp-cn-2701",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=46 != claimed_total=47",
+        "checksum=42 != claimed_rating=43"
+      ],
+      "claimedTotal": 47,
+      "claimedRating": 43,
+      "fetched": 46,
+      "checksum": 42
+    },
+    {
+      "pageId": 23480,
+      "slug": "scp-cn-2749",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=57 != claimed_total=58",
+        "checksum=43 != claimed_rating=44"
+      ],
+      "claimedTotal": 58,
+      "claimedRating": 44,
+      "fetched": 57,
+      "checksum": 43
+    },
+    {
+      "pageId": 23513,
+      "slug": "scp-cn-2779",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=32 != claimed_total=33",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 33,
+      "claimedRating": 27,
+      "fetched": 32,
+      "checksum": 26
+    },
+    {
+      "pageId": 23627,
+      "slug": "scp-cn-2880",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=104 != claimed_total=105",
+        "checksum=100 != claimed_rating=101"
+      ],
+      "claimedTotal": 105,
+      "claimedRating": 101,
+      "fetched": 104,
+      "checksum": 100
+    },
+    {
+      "pageId": 23672,
+      "slug": "scp-cn-2921",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=99 != claimed_total=100",
+        "checksum=91 != claimed_rating=92"
+      ],
+      "claimedTotal": 100,
+      "claimedRating": 92,
+      "fetched": 99,
+      "checksum": 91
+    },
+    {
+      "pageId": 23750,
+      "slug": "scp-cn-2991",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=45 != claimed_total=46",
+        "checksum=33 != claimed_rating=34"
+      ],
+      "claimedTotal": 46,
+      "claimedRating": 34,
+      "fetched": 45,
+      "checksum": 33
+    },
+    {
+      "pageId": 23889,
+      "slug": "scp-cn-3105",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=63 != claimed_total=64",
+        "checksum=23 != claimed_rating=24"
+      ],
+      "claimedTotal": 64,
+      "claimedRating": 24,
+      "fetched": 63,
+      "checksum": 23
+    },
+    {
+      "pageId": 24165,
+      "slug": "scp-cn-3379",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=48 != claimed_total=49",
+        "checksum=36 != claimed_rating=37"
+      ],
+      "claimedTotal": 49,
+      "claimedRating": 37,
+      "fetched": 48,
+      "checksum": 36
+    },
+    {
+      "pageId": 24394,
+      "slug": "scp-cn-364",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=23 != claimed_total=24",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 24,
+      "claimedRating": 18,
+      "fetched": 23,
+      "checksum": 17
+    },
+    {
+      "pageId": 24419,
+      "slug": "scp-cn-3666",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=44 != claimed_total=45",
+        "checksum=30 != claimed_rating=31"
+      ],
+      "claimedTotal": 45,
+      "claimedRating": 31,
+      "fetched": 44,
+      "checksum": 30
+    },
+    {
+      "pageId": 24448,
+      "slug": "scp-cn-3702",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=50 != claimed_total=51",
+        "checksum=42 != claimed_rating=43"
+      ],
+      "claimedTotal": 51,
+      "claimedRating": 43,
+      "fetched": 50,
+      "checksum": 42
+    },
+    {
+      "pageId": 24489,
+      "slug": "scp-cn-3746",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=103 != claimed_total=104",
+        "checksum=93 != claimed_rating=94"
+      ],
+      "claimedTotal": 104,
+      "claimedRating": 94,
+      "fetched": 103,
+      "checksum": 93
+    },
+    {
+      "pageId": 24495,
+      "slug": "scp-cn-3753",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=33 != claimed_total=34",
+        "checksum=21 != claimed_rating=22"
+      ],
+      "claimedTotal": 34,
+      "claimedRating": 22,
+      "fetched": 33,
+      "checksum": 21
+    },
+    {
+      "pageId": 24568,
+      "slug": "scp-cn-3835",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=28 != claimed_total=29",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 29,
+      "claimedRating": 27,
+      "fetched": 28,
+      "checksum": 26
+    },
+    {
+      "pageId": 24591,
+      "slug": "scp-cn-3868",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=78 != claimed_total=79",
+        "checksum=78 != claimed_rating=79"
+      ],
+      "claimedTotal": 79,
+      "claimedRating": 79,
+      "fetched": 78,
+      "checksum": 78
+    },
+    {
+      "pageId": 24599,
+      "slug": "scp-cn-3876",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=120 != claimed_total=121",
+        "checksum=104 != claimed_rating=105"
+      ],
+      "claimedTotal": 121,
+      "claimedRating": 105,
+      "fetched": 120,
+      "checksum": 104
+    },
+    {
+      "pageId": 24626,
+      "slug": "scp-cn-3903",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=64 != claimed_total=65",
+        "checksum=62 != claimed_rating=63"
+      ],
+      "claimedTotal": 65,
+      "claimedRating": 63,
+      "fetched": 64,
+      "checksum": 62
+    },
+    {
+      "pageId": 24840,
+      "slug": "scp-cn-498",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=32 != claimed_total=33",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 33,
+      "claimedRating": 27,
+      "fetched": 32,
+      "checksum": 26
+    },
+    {
+      "pageId": 24903,
+      "slug": "scp-cn-549",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=38 != claimed_total=39",
+        "checksum=32 != claimed_rating=33"
+      ],
+      "claimedTotal": 39,
+      "claimedRating": 33,
+      "fetched": 38,
+      "checksum": 32
+    },
+    {
+      "pageId": 24952,
+      "slug": "scp-cn-589",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=53 != claimed_total=54",
+        "checksum=45 != claimed_rating=46"
+      ],
+      "claimedTotal": 54,
+      "claimedRating": 46,
+      "fetched": 53,
+      "checksum": 45
+    },
+    {
+      "pageId": 25069,
+      "slug": "scp-cn-689",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=85 != claimed_total=86",
+        "checksum=79 != claimed_rating=80"
+      ],
+      "claimedTotal": 86,
+      "claimedRating": 80,
+      "fetched": 85,
+      "checksum": 79
+    },
+    {
+      "pageId": 25086,
+      "slug": "scp-cn-703-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=69 != claimed_total=70",
+        "checksum=35 != claimed_rating=36"
+      ],
+      "claimedTotal": 70,
+      "claimedRating": 36,
+      "fetched": 69,
+      "checksum": 35
+    },
+    {
+      "pageId": 25174,
+      "slug": "scp-cn-774",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=59 != claimed_total=60",
+        "checksum=49 != claimed_rating=50"
+      ],
+      "claimedTotal": 60,
+      "claimedRating": 50,
+      "fetched": 59,
+      "checksum": 49
+    },
+    {
+      "pageId": 25337,
+      "slug": "scp-cn-919",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=33 != claimed_total=34",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 34,
+      "claimedRating": 30,
+      "fetched": 33,
+      "checksum": 29
+    },
+    {
+      "pageId": 25362,
+      "slug": "scp-cn-942",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=47 != claimed_total=48",
+        "checksum=29 != claimed_rating=28"
+      ],
+      "claimedTotal": 48,
+      "claimedRating": 28,
+      "fetched": 47,
+      "checksum": 29
+    },
+    {
+      "pageId": 25384,
+      "slug": "scp-cn-959",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=49 != claimed_total=50",
+        "checksum=45 != claimed_rating=46"
+      ],
+      "claimedTotal": 50,
+      "claimedRating": 46,
+      "fetched": 49,
+      "checksum": 45
+    },
+    {
+      "pageId": 25440,
+      "slug": "scp-cn-x143-0",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=89 != claimed_total=92",
+        "checksum=81 != claimed_rating=84"
+      ],
+      "claimedTotal": 92,
+      "claimedRating": 84,
+      "fetched": 89,
+      "checksum": 81
+    },
+    {
+      "pageId": 25982,
+      "slug": "semimonth-202403-02",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=46 != claimed_total=47",
+        "checksum=46 != claimed_rating=47"
+      ],
+      "claimedTotal": 47,
+      "claimedRating": 47,
+      "fetched": 46,
+      "checksum": 46
+    },
+    {
+      "pageId": 25983,
+      "slug": "seven-steps-from-the-sun",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=72 != claimed_total=73",
+        "checksum=70 != claimed_rating=71"
+      ],
+      "claimedTotal": 73,
+      "claimedRating": 71,
+      "fetched": 72,
+      "checksum": 70
+    },
+    {
+      "pageId": 26048,
+      "slug": "sex-hamburger",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=88 != claimed_total=89",
+        "checksum=52 != claimed_rating=51"
+      ],
+      "claimedTotal": 89,
+      "claimedRating": 51,
+      "fetched": 88,
+      "checksum": 52
+    },
+    {
+      "pageId": 26129,
+      "slug": "shi-shui-de-feng-sha",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=17 != claimed_total=18",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 18,
+      "claimedRating": 18,
+      "fetched": 17,
+      "checksum": 17
+    },
+    {
+      "pageId": 26160,
+      "slug": "short-stories:00013",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=90 != claimed_total=91",
+        "checksum=84 != claimed_rating=85"
+      ],
+      "claimedTotal": 91,
+      "claimedRating": 85,
+      "fetched": 90,
+      "checksum": 84
+    },
+    {
+      "pageId": 26535,
+      "slug": "singularity",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=29 != claimed_total=30",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 30,
+      "claimedRating": 30,
+      "fetched": 29,
+      "checksum": 29
+    },
+    {
+      "pageId": 26556,
+      "slug": "site-514",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=100 != claimed_total=101",
+        "checksum=88 != claimed_rating=89"
+      ],
+      "claimedTotal": 101,
+      "claimedRating": 89,
+      "fetched": 100,
+      "checksum": 88
+    },
+    {
+      "pageId": 26727,
+      "slug": "somewhere-i-have-never-traveled",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=59 != claimed_total=60",
+        "checksum=47 != claimed_rating=48"
+      ],
+      "claimedTotal": 60,
+      "claimedRating": 48,
+      "fetched": 59,
+      "checksum": 47
+    },
+    {
+      "pageId": 26817,
+      "slug": "spc-cn-665",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=37 != claimed_total=38",
+        "checksum=33 != claimed_rating=34"
+      ],
+      "claimedTotal": 38,
+      "claimedRating": 34,
+      "fetched": 37,
+      "checksum": 33
+    },
+    {
+      "pageId": 26967,
+      "slug": "stream-980",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=21 != claimed_total=22",
+        "checksum=19 != claimed_rating=20"
+      ],
+      "claimedTotal": 22,
+      "claimedRating": 20,
+      "fetched": 21,
+      "checksum": 19
+    },
+    {
+      "pageId": 27013,
+      "slug": "summer-contest-2021",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=57 != claimed_total=58",
+        "checksum=53 != claimed_rating=54"
+      ],
+      "claimedTotal": 58,
+      "claimedRating": 54,
+      "fetched": 57,
+      "checksum": 53
+    },
+    {
+      "pageId": 27014,
+      "slug": "summer-contest-2022",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=59 != claimed_total=60",
+        "checksum=59 != claimed_rating=60"
+      ],
+      "claimedTotal": 60,
+      "claimedRating": 60,
+      "fetched": 59,
+      "checksum": 59
+    },
+    {
+      "pageId": 27053,
+      "slug": "super-hot",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=14 != claimed_total=15",
+        "checksum=12 != claimed_rating=13"
+      ],
+      "claimedTotal": 15,
+      "claimedRating": 13,
+      "fetched": 14,
+      "checksum": 12
+    },
+    {
+      "pageId": 27136,
+      "slug": "tachibana-yuuki-s-personnel-file",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:7275798 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=43",
+        "checksum=null != claimed_rating=39"
+      ],
+      "claimedTotal": 43,
+      "claimedRating": 39,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 27231,
+      "slug": "tell-you-tales",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=77 != claimed_total=78",
+        "checksum=75 != claimed_rating=76"
+      ],
+      "claimedTotal": 78,
+      "claimedRating": 76,
+      "fetched": 77,
+      "checksum": 75
+    },
+    {
+      "pageId": 27280,
+      "slug": "that-is-too-easy",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:4485997 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=30",
+        "checksum=null != claimed_rating=16"
+      ],
+      "claimedTotal": 30,
+      "claimedRating": 16,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 27370,
+      "slug": "the-book-of-gnosis-repairers-vol-of-psalms-part-1",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=52 != claimed_total=53",
+        "checksum=48 != claimed_rating=49"
+      ],
+      "claimedTotal": 53,
+      "claimedRating": 49,
+      "fetched": 52,
+      "checksum": 48
+    },
+    {
+      "pageId": 27408,
+      "slug": "the-coldest-war-hub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=28 != claimed_total=29",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 29,
+      "claimedRating": 27,
+      "fetched": 28,
+      "checksum": 26
+    },
+    {
+      "pageId": 27589,
+      "slug": "the-iron-wolf",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=11 != claimed_total=12",
+        "checksum=11 != claimed_rating=12"
+      ],
+      "claimedTotal": 12,
+      "claimedRating": 12,
+      "fetched": 11,
+      "checksum": 11
+    },
+    {
+      "pageId": 27728,
+      "slug": "theme:aero-glass",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=88 != claimed_total=89",
+        "checksum=88 != claimed_rating=89"
+      ],
+      "claimedTotal": 89,
+      "claimedRating": 89,
+      "fetched": 88,
+      "checksum": 88
+    },
+    {
+      "pageId": 27751,
+      "slug": "theme:blankstyle",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=12 != claimed_total=13",
+        "checksum=12 != claimed_rating=13"
+      ],
+      "claimedTotal": 13,
+      "claimedRating": 13,
+      "fetched": 12,
+      "checksum": 12
+    },
+    {
+      "pageId": 27756,
+      "slug": "theme:calamity",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=7 != claimed_total=8",
+        "checksum=7 != claimed_rating=8"
+      ],
+      "claimedTotal": 8,
+      "claimedRating": 8,
+      "fetched": 7,
+      "checksum": 7
+    },
+    {
+      "pageId": 27908,
+      "slug": "theme:paradigm-inapplicable-sigma",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=36 != claimed_total=37",
+        "checksum=36 != claimed_rating=37"
+      ],
+      "claimedTotal": 37,
+      "claimedRating": 37,
+      "fetched": 36,
+      "checksum": 36
+    },
+    {
+      "pageId": 27982,
+      "slug": "theme:steam-guide",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=98 != claimed_total=99",
+        "checksum=98 != claimed_rating=99"
+      ],
+      "claimedTotal": 99,
+      "claimedRating": 99,
+      "fetched": 98,
+      "checksum": 98
+    },
+    {
+      "pageId": 28075,
+      "slug": "the-old-gospel-of-fuxi-that-wuyou",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=76 != claimed_total=77",
+        "checksum=76 != claimed_rating=77"
+      ],
+      "claimedTotal": 77,
+      "claimedRating": 77,
+      "fetched": 76,
+      "checksum": 76
+    },
+    {
+      "pageId": 28143,
+      "slug": "the-real-adventures-in-capitalism",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=33 != claimed_total=34",
+        "checksum=33 != claimed_rating=34"
+      ],
+      "claimedTotal": 34,
+      "claimedRating": 34,
+      "fetched": 33,
+      "checksum": 33
+    },
+    {
+      "pageId": 28199,
+      "slug": "the-sea-of-necromancy-i",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=29 != claimed_total=30",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 30,
+      "claimedRating": 30,
+      "fetched": 29,
+      "checksum": 29
+    },
+    {
+      "pageId": 28240,
+      "slug": "the-song-of-alagadda",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=55 != claimed_total=56",
+        "checksum=29 != claimed_rating=30"
+      ],
+      "claimedTotal": 56,
+      "claimedRating": 30,
+      "fetched": 55,
+      "checksum": 29
+    },
+    {
+      "pageId": 28377,
+      "slug": "the-young-man",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=62 != claimed_total=63",
+        "checksum=62 != claimed_rating=63"
+      ],
+      "claimedTotal": 63,
+      "claimedRating": 63,
+      "fetched": 62,
+      "checksum": 62
+    },
+    {
+      "pageId": 28539,
+      "slug": "to-new-world",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=30 != claimed_total=31",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 31,
+      "claimedRating": 27,
+      "fetched": 30,
+      "checksum": 26
+    },
+    {
+      "pageId": 28670,
+      "slug": "turbulence-1",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=53 != claimed_total=54",
+        "checksum=51 != claimed_rating=52"
+      ],
+      "claimedTotal": 54,
+      "claimedRating": 52,
+      "fetched": 53,
+      "checksum": 51
+    },
+    {
+      "pageId": 28671,
+      "slug": "turbulence-10",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=32 != claimed_total=33",
+        "checksum=30 != claimed_rating=31"
+      ],
+      "claimedTotal": 33,
+      "claimedRating": 31,
+      "fetched": 32,
+      "checksum": 30
+    },
+    {
+      "pageId": 28674,
+      "slug": "turbulence-2",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=40 != claimed_total=41",
+        "checksum=38 != claimed_rating=39"
+      ],
+      "claimedTotal": 41,
+      "claimedRating": 39,
+      "fetched": 40,
+      "checksum": 38
+    },
+    {
+      "pageId": 28821,
+      "slug": "unusual-incidents-unit-hub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=18 != claimed_total=19",
+        "checksum=18 != claimed_rating=19"
+      ],
+      "claimedTotal": 19,
+      "claimedRating": 19,
+      "fetched": 18,
+      "checksum": 18
+    },
+    {
+      "pageId": 28933,
+      "slug": "vodkawells",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=96 != claimed_total=97",
+        "checksum=42 != claimed_rating=43"
+      ],
+      "claimedTotal": 97,
+      "claimedRating": 43,
+      "fetched": 96,
+      "checksum": 42
+    },
+    {
+      "pageId": 29150,
+      "slug": "wanderers:anchoring",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=15 != claimed_total=16",
+        "checksum=15 != claimed_rating=16"
+      ],
+      "claimedTotal": 16,
+      "claimedRating": 16,
+      "fetched": 15,
+      "checksum": 15
+    },
+    {
+      "pageId": 29151,
+      "slug": "wanderers:ancient-wooden-case",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:8742522 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=21",
+        "checksum=null != claimed_rating=11"
+      ],
+      "claimedTotal": 21,
+      "claimedRating": 11,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 29171,
+      "slug": "wanderers:ao-sora",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=88 != claimed_total=89",
+        "checksum=78 != claimed_rating=79"
+      ],
+      "claimedTotal": 89,
+      "claimedRating": 79,
+      "fetched": 88,
+      "checksum": 78
+    },
+    {
+      "pageId": 29183,
+      "slug": "wanderers:a-rising-wave",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=3 != claimed_total=4",
+        "checksum=3 != claimed_rating=4"
+      ],
+      "claimedTotal": 4,
+      "claimedRating": 4,
+      "fetched": 3,
+      "checksum": 3
+    },
+    {
+      "pageId": 29268,
+      "slug": "wanderers:buhuixiewen",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=46 != claimed_total=47",
+        "checksum=32 != claimed_rating=31"
+      ],
+      "claimedTotal": 47,
+      "claimedRating": 31,
+      "fetched": 46,
+      "checksum": 32
+    },
+    {
+      "pageId": 29288,
+      "slug": "wanderers:catch-wind",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=37 != claimed_total=38",
+        "checksum=31 != claimed_rating=32"
+      ],
+      "claimedTotal": 38,
+      "claimedRating": 32,
+      "fetched": 37,
+      "checksum": 31
+    },
+    {
+      "pageId": 29429,
+      "slug": "wanderers:dying-world",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=60 != claimed_total=62",
+        "checksum=60 != claimed_rating=62"
+      ],
+      "claimedTotal": 62,
+      "claimedRating": 62,
+      "fetched": 60,
+      "checksum": 60
+    },
+    {
+      "pageId": 29487,
+      "slug": "wanderers:fall-into-the-abyss",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=52 != claimed_total=53",
+        "checksum=50 != claimed_rating=51"
+      ],
+      "claimedTotal": 53,
+      "claimedRating": 51,
+      "fetched": 52,
+      "checksum": 50
+    },
+    {
+      "pageId": 29547,
+      "slug": "wanderers:from-mariana-philharmonic-orchestra",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=21 != claimed_total=22",
+        "checksum=21 != claimed_rating=22"
+      ],
+      "claimedTotal": 22,
+      "claimedRating": 22,
+      "fetched": 21,
+      "checksum": 21
+    },
+    {
+      "pageId": 29617,
+      "slug": "wanderers:hashiqi",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=39 != claimed_total=40",
+        "checksum=33 != claimed_rating=34"
+      ],
+      "claimedTotal": 40,
+      "claimedRating": 34,
+      "fetched": 39,
+      "checksum": 33
+    },
+    {
+      "pageId": 29663,
+      "slug": "wanderers:human-eater",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=132 != claimed_total=133",
+        "checksum=112 != claimed_rating=113"
+      ],
+      "claimedTotal": 133,
+      "claimedRating": 113,
+      "fetched": 132,
+      "checksum": 112
+    },
+    {
+      "pageId": 29853,
+      "slug": "wanderers:mademoiselle-hondermare",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=28 != claimed_total=29",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 29,
+      "claimedRating": 27,
+      "fetched": 28,
+      "checksum": 26
+    },
+    {
+      "pageId": 29927,
+      "slug": "wanderers:museum-and-the-stars",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=101 != claimed_total=102",
+        "checksum=73 != claimed_rating=74"
+      ],
+      "claimedTotal": 102,
+      "claimedRating": 74,
+      "fetched": 101,
+      "checksum": 73
+    },
+    {
+      "pageId": 29945,
+      "slug": "wanderers:neeee",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=32 != claimed_total=33",
+        "checksum=26 != claimed_rating=27"
+      ],
+      "claimedTotal": 33,
+      "claimedRating": 27,
+      "fetched": 32,
+      "checksum": 26
+    },
+    {
+      "pageId": 30101,
+      "slug": "wanderers:rainway",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=26 != claimed_total=27",
+        "checksum=24 != claimed_rating=25"
+      ],
+      "claimedTotal": 27,
+      "claimedRating": 25,
+      "fetched": 26,
+      "checksum": 24
+    },
+    {
+      "pageId": 30120,
+      "slug": "wanderers:repairment-of-east-ew-qi-420",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=58 != claimed_total=59",
+        "checksum=58 != claimed_rating=59"
+      ],
+      "claimedTotal": 59,
+      "claimedRating": 59,
+      "fetched": 58,
+      "checksum": 58
+    },
+    {
+      "pageId": 30133,
+      "slug": "wanderers:ritsu-yuu",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=21 != claimed_total=22",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 22,
+      "claimedRating": 18,
+      "fetched": 21,
+      "checksum": 17
+    },
+    {
+      "pageId": 30287,
+      "slug": "wanderers:swamp",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=21 != claimed_total=22",
+        "checksum=21 != claimed_rating=22"
+      ],
+      "claimedTotal": 22,
+      "claimedRating": 22,
+      "fetched": 21,
+      "checksum": 21
+    },
+    {
+      "pageId": 30331,
+      "slug": "wanderers:the-christmas-elegy",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=71 != claimed_total=72",
+        "checksum=65 != claimed_rating=66"
+      ],
+      "claimedTotal": 72,
+      "claimedRating": 66,
+      "fetched": 71,
+      "checksum": 65
+    },
+    {
+      "pageId": 30477,
+      "slug": "wanderers:the-song8",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=30 != claimed_total=31",
+        "checksum=30 != claimed_rating=31"
+      ],
+      "claimedTotal": 31,
+      "claimedRating": 31,
+      "fetched": 30,
+      "checksum": 30
+    },
+    {
+      "pageId": 30513,
+      "slug": "wanderers:the-wandering-wanderer",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=25 != claimed_total=26",
+        "checksum=21 != claimed_rating=22"
+      ],
+      "claimedTotal": 26,
+      "claimedRating": 22,
+      "fetched": 25,
+      "checksum": 21
+    },
+    {
+      "pageId": 30556,
+      "slug": "wanderers:travellers-book-end-of-the-world",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=21 != claimed_total=22",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 22,
+      "claimedRating": 18,
+      "fetched": 21,
+      "checksum": 17
+    },
+    {
+      "pageId": 30624,
+      "slug": "wanderers:watch-stars-with-lives",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=39 != claimed_total=40",
+        "checksum=27 != claimed_rating=28"
+      ],
+      "claimedTotal": 40,
+      "claimedRating": 28,
+      "fetched": 39,
+      "checksum": 27
+    },
+    {
+      "pageId": 30689,
+      "slug": "wanderers:wrrrrr",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=33 != claimed_total=34",
+        "checksum=13 != claimed_rating=12"
+      ],
+      "claimedTotal": 34,
+      "claimedRating": 12,
+      "fetched": 33,
+      "checksum": 13
+    },
+    {
+      "pageId": 30692,
+      "slug": "wanderers:wuti",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=20 != claimed_total=21",
+        "checksum=20 != claimed_rating=21"
+      ],
+      "claimedTotal": 21,
+      "claimedRating": 21,
+      "fetched": 20,
+      "checksum": 20
+    },
+    {
+      "pageId": 30710,
+      "slug": "wanderers:yasuharasuzu-no-tameni",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=67 != claimed_total=68",
+        "checksum=67 != claimed_rating=68"
+      ],
+      "claimedTotal": 68,
+      "claimedRating": 68,
+      "fetched": 67,
+      "checksum": 67
+    },
+    {
+      "pageId": 31030,
+      "slug": "wimsb",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=54 != claimed_total=55",
+        "checksum=18 != claimed_rating=19"
+      ],
+      "claimedTotal": 55,
+      "claimedRating": 19,
+      "fetched": 54,
+      "checksum": 18
+    },
+    {
+      "pageId": 31179,
+      "slug": "xhh",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=85 != claimed_total=86",
+        "checksum=7 != claimed_rating=8"
+      ],
+      "claimedTotal": 86,
+      "claimedRating": 8,
+      "fetched": 85,
+      "checksum": 7
+    },
+    {
+      "pageId": 31298,
+      "slug": "yixue563",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=35 != claimed_total=36",
+        "checksum=33 != claimed_rating=34"
+      ],
+      "claimedTotal": 36,
+      "claimedRating": 34,
+      "fetched": 35,
+      "checksum": 33
+    },
+    {
+      "pageId": 31332,
+      "slug": "you-and-she",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=89 != claimed_total=90",
+        "checksum=81 != claimed_rating=82"
+      ],
+      "claimedTotal": 90,
+      "claimedRating": 82,
+      "fetched": 89,
+      "checksum": 81
+    },
+    {
+      "pageId": 31360,
+      "slug": "your-circuits-dead-theres-something-wrong",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=54 != claimed_total=55",
+        "checksum=50 != claimed_rating=51"
+      ],
+      "claimedTotal": 55,
+      "claimedRating": 51,
+      "fetched": 54,
+      "checksum": 50
+    },
+    {
+      "pageId": 31450,
+      "slug": "zhengzhi",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=41 != claimed_total=42",
+        "checksum=41 != claimed_rating=42"
+      ],
+      "claimedTotal": 42,
+      "claimedRating": 42,
+      "fetched": 41,
+      "checksum": 41
+    },
+    {
+      "pageId": 31539,
+      "slug": "a-report-on-evertworth",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=83 != claimed_total=84",
+        "checksum=79 != claimed_rating=78"
+      ],
+      "claimedTotal": 84,
+      "claimedRating": 78,
+      "fetched": 83,
+      "checksum": 79
+    },
+    {
+      "pageId": 31565,
+      "slug": "black-hole-era",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=245 != claimed_total=246",
+        "checksum=245 != claimed_rating=246"
+      ],
+      "claimedTotal": 246,
+      "claimedRating": 246,
+      "fetched": 245,
+      "checksum": 245
+    },
+    {
+      "pageId": 31574,
+      "slug": "breach",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=590 != claimed_total=592",
+        "checksum=546 != claimed_rating=548"
+      ],
+      "claimedTotal": 592,
+      "claimedRating": 548,
+      "fetched": 590,
+      "checksum": 546
+    },
+    {
+      "pageId": 31599,
+      "slug": "china-history-of-daevite",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=147 != claimed_total=148",
+        "checksum=129 != claimed_rating=130"
+      ],
+      "claimedTotal": 148,
+      "claimedRating": 130,
+      "fetched": 147,
+      "checksum": 129
+    },
+    {
+      "pageId": 31639,
+      "slug": "darkequation-s-proposal",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=887 != claimed_total=888",
+        "checksum=841 != claimed_rating=842"
+      ],
+      "claimedTotal": 888,
+      "claimedRating": 842,
+      "fetched": 887,
+      "checksum": 841
+    },
+    {
+      "pageId": 31643,
+      "slug": "deduction-department2",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=188 != claimed_total=190",
+        "checksum=184 != claimed_rating=186"
+      ],
+      "claimedTotal": 190,
+      "claimedRating": 186,
+      "fetched": 188,
+      "checksum": 184
+    },
+    {
+      "pageId": 31647,
+      "slug": "deny-deny-deny",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=449 != claimed_total=451",
+        "checksum=441 != claimed_rating=443"
+      ],
+      "claimedTotal": 451,
+      "claimedRating": 443,
+      "fetched": 449,
+      "checksum": 441
+    },
+    {
+      "pageId": 31663,
+      "slug": "don-quijote",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=679 != claimed_total=680",
+        "checksum=665 != claimed_rating=666"
+      ],
+      "claimedTotal": 680,
+      "claimedRating": 666,
+      "fetched": 679,
+      "checksum": 665
+    },
+    {
+      "pageId": 31665,
+      "slug": "doom",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=399 != claimed_total=400",
+        "checksum=383 != claimed_rating=384"
+      ],
+      "claimedTotal": 400,
+      "claimedRating": 384,
+      "fetched": 399,
+      "checksum": 383
+    },
+    {
+      "pageId": 31674,
+      "slug": "dr-hormress",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=459 != claimed_total=463",
+        "checksum=-381 != claimed_rating=-385"
+      ],
+      "claimedTotal": 463,
+      "claimedRating": -385,
+      "fetched": 459,
+      "checksum": -381
+    },
+    {
+      "pageId": 31688,
+      "slug": "embracechaos",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:4142571 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=111",
+        "checksum=null != claimed_rating=95"
+      ],
+      "claimedTotal": 111,
+      "claimedRating": 95,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 31693,
+      "slug": "end-of-light",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=208 != claimed_total=209",
+        "checksum=204 != claimed_rating=205"
+      ],
+      "claimedTotal": 209,
+      "claimedRating": 205,
+      "fetched": 208,
+      "checksum": 204
+    },
+    {
+      "pageId": 31708,
+      "slug": "extinction-and-revival-of-the-magic",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=155 != claimed_total=156",
+        "checksum=139 != claimed_rating=140"
+      ],
+      "claimedTotal": 156,
+      "claimedRating": 140,
+      "fetched": 155,
+      "checksum": 139
+    },
+    {
+      "pageId": 31713,
+      "slug": "falling-into-stars",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=782 != claimed_total=783",
+        "checksum=768 != claimed_rating=769"
+      ],
+      "claimedTotal": 783,
+      "claimedRating": 769,
+      "fetched": 782,
+      "checksum": 768
+    },
+    {
+      "pageId": 31724,
+      "slug": "fishbonefishbone",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=148 != claimed_total=149",
+        "checksum=144 != claimed_rating=143"
+      ],
+      "claimedTotal": 149,
+      "claimedRating": 143,
+      "fetched": 148,
+      "checksum": 144
+    },
+    {
+      "pageId": 31734,
+      "slug": "foundation-political-jokes",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1099 != claimed_total=1100",
+        "checksum=1061 != claimed_rating=1062"
+      ],
+      "claimedTotal": 1100,
+      "claimedRating": 1062,
+      "fetched": 1099,
+      "checksum": 1061
+    },
+    {
+      "pageId": 31735,
+      "slug": "foundation-political-jokes-2",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=532 != claimed_total=533",
+        "checksum=528 != claimed_rating=529"
+      ],
+      "claimedTotal": 533,
+      "claimedRating": 529,
+      "fetched": 532,
+      "checksum": 528
+    },
+    {
+      "pageId": 31746,
+      "slug": "fragment:the-dragon-lord",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=151 != claimed_total=152",
+        "checksum=75 != claimed_rating=74"
+      ],
+      "claimedTotal": 152,
+      "claimedRating": 74,
+      "fetched": 151,
+      "checksum": 75
+    },
+    {
+      "pageId": 31748,
+      "slug": "freedomkoo-s-proposal",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=486 != claimed_total=488",
+        "checksum=436 != claimed_rating=438"
+      ],
+      "claimedTotal": 488,
+      "claimedRating": 438,
+      "fetched": 486,
+      "checksum": 436
+    },
+    {
+      "pageId": 31749,
+      "slug": "free-wifi",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=413 != claimed_total=414",
+        "checksum=409 != claimed_rating=410"
+      ],
+      "claimedTotal": 414,
+      "claimedRating": 410,
+      "fetched": 413,
+      "checksum": 409
+    },
+    {
+      "pageId": 31764,
+      "slug": "gallery-writing",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=53 != claimed_total=54",
+        "checksum=53 != claimed_rating=54"
+      ],
+      "claimedTotal": 54,
+      "claimedRating": 54,
+      "fetched": 53,
+      "checksum": 53
+    },
+    {
+      "pageId": 31767,
+      "slug": "gao-kao-zuo-wen-pao-ti",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=235 != claimed_total=236",
+        "checksum=133 != claimed_rating=134"
+      ],
+      "claimedTotal": 236,
+      "claimedRating": 134,
+      "fetched": 235,
+      "checksum": 133
+    },
+    {
+      "pageId": 31770,
+      "slug": "gec-hub-page",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=484 != claimed_total=485",
+        "checksum=468 != claimed_rating=469"
+      ],
+      "claimedTotal": 485,
+      "claimedRating": 469,
+      "fetched": 484,
+      "checksum": 468
+    },
+    {
+      "pageId": 31774,
+      "slug": "ghost-in-the-scarlet-sheep",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=153 != claimed_total=154",
+        "checksum=131 != claimed_rating=132"
+      ],
+      "claimedTotal": 154,
+      "claimedRating": 132,
+      "fetched": 153,
+      "checksum": 131
+    },
+    {
+      "pageId": 31777,
+      "slug": "goc-hub-page",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=74 != claimed_total=75",
+        "checksum=74 != claimed_rating=75"
+      ],
+      "claimedTotal": 75,
+      "claimedRating": 75,
+      "fetched": 74,
+      "checksum": 74
+    },
+    {
+      "pageId": 31778,
+      "slug": "goc-supplemental-equipment",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=32 != claimed_total=33",
+        "checksum=30 != claimed_rating=31"
+      ],
+      "claimedTotal": 33,
+      "claimedRating": 31,
+      "fetched": 32,
+      "checksum": 30
+    },
+    {
+      "pageId": 31815,
+      "slug": "happynewyearoftherabbit",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=136 != claimed_total=137",
+        "checksum=136 != claimed_rating=137"
+      ],
+      "claimedTotal": 137,
+      "claimedRating": 137,
+      "fetched": 136,
+      "checksum": 136
+    },
+    {
+      "pageId": 31831,
+      "slug": "helpme",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=187 != claimed_total=188",
+        "checksum=143 != claimed_rating=144"
+      ],
+      "claimedTotal": 188,
+      "claimedRating": 144,
+      "fetched": 187,
+      "checksum": 143
+    },
+    {
+      "pageId": 31840,
+      "slug": "how-not-to-screw-yourself-in-the-scp-foundation",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=181 != claimed_total=182",
+        "checksum=163 != claimed_rating=164"
+      ],
+      "claimedTotal": 182,
+      "claimedRating": 164,
+      "fetched": 181,
+      "checksum": 163
+    },
+    {
+      "pageId": 31865,
+      "slug": "immortal",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=693 != claimed_total=694",
+        "checksum=671 != claimed_rating=672"
+      ],
+      "claimedTotal": 694,
+      "claimedRating": 672,
+      "fetched": 693,
+      "checksum": 671
+    },
+    {
+      "pageId": 31870,
+      "slug": "insect",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=355 != claimed_total=356",
+        "checksum=293 != claimed_rating=292"
+      ],
+      "claimedTotal": 356,
+      "claimedRating": 292,
+      "fetched": 355,
+      "checksum": 293
+    },
+    {
+      "pageId": 31881,
+      "slug": "jack-bright-resting-at-last",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=941 != claimed_total=942",
+        "checksum=919 != claimed_rating=920"
+      ],
+      "claimedTotal": 942,
+      "claimedRating": 920,
+      "fetched": 941,
+      "checksum": 919
+    },
+    {
+      "pageId": 31901,
+      "slug": "kawaii-o5-3",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:9701672 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=2066",
+        "checksum=null != claimed_rating=1810"
+      ],
+      "claimedTotal": 2066,
+      "claimedRating": 1810,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 31906,
+      "slug": "k-e",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=25 != claimed_total=26",
+        "checksum=25 != claimed_rating=26"
+      ],
+      "claimedTotal": 26,
+      "claimedRating": 26,
+      "fetched": 25,
+      "checksum": 25
+    },
+    {
+      "pageId": 31911,
+      "slug": "kill-that-foundation-man",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=746 != claimed_total=747",
+        "checksum=682 != claimed_rating=683"
+      ],
+      "claimedTotal": 747,
+      "claimedRating": 683,
+      "fetched": 746,
+      "checksum": 682
+    },
+    {
+      "pageId": 31917,
+      "slug": "knockin-on-the-gate-guardian-s-door",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=205 != claimed_total=206",
+        "checksum=195 != claimed_rating=196"
+      ],
+      "claimedTotal": 206,
+      "claimedRating": 196,
+      "fetched": 205,
+      "checksum": 195
+    },
+    {
+      "pageId": 31928,
+      "slug": "last-order",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=844 != claimed_total=845",
+        "checksum=826 != claimed_rating=827"
+      ],
+      "claimedTotal": 845,
+      "claimedRating": 827,
+      "fetched": 844,
+      "checksum": 826
+    },
+    {
+      "pageId": 31933,
+      "slug": "level-c-104",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=154 != claimed_total=155",
+        "checksum=128 != claimed_rating=129"
+      ],
+      "claimedTotal": 155,
+      "claimedRating": 129,
+      "fetched": 154,
+      "checksum": 128
+    },
+    {
+      "pageId": 31949,
+      "slug": "log-of-anomalous-items-cn:00098",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=338 != claimed_total=340",
+        "checksum=326 != claimed_rating=328"
+      ],
+      "claimedTotal": 340,
+      "claimedRating": 328,
+      "fetched": 338,
+      "checksum": 326
+    },
+    {
+      "pageId": 31957,
+      "slug": "log-of-anomalous-items-cn:00226",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=137 != claimed_total=139",
+        "checksum=135 != claimed_rating=137"
+      ],
+      "claimedTotal": 139,
+      "claimedRating": 137,
+      "fetched": 137,
+      "checksum": 135
+    },
+    {
+      "pageId": 31962,
+      "slug": "log-of-anomalous-items-cn:00533",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=261 != claimed_total=262",
+        "checksum=229 != claimed_rating=230"
+      ],
+      "claimedTotal": 262,
+      "claimedRating": 230,
+      "fetched": 261,
+      "checksum": 229
+    },
+    {
+      "pageId": 31963,
+      "slug": "log-of-anomalous-items-cn:00536",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=118 != claimed_total=119",
+        "checksum=94 != claimed_rating=95"
+      ],
+      "claimedTotal": 119,
+      "claimedRating": 95,
+      "fetched": 118,
+      "checksum": 94
+    },
+    {
+      "pageId": 31965,
+      "slug": "mcf-goc-self-rescue-guide",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=425 != claimed_total=426",
+        "checksum=385 != claimed_rating=386"
+      ],
+      "claimedTotal": 426,
+      "claimedRating": 386,
+      "fetched": 425,
+      "checksum": 385
+    },
+    {
+      "pageId": 31967,
+      "slug": "members-pages-cn",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=51 != claimed_total=52",
+        "checksum=49 != claimed_rating=50"
+      ],
+      "claimedTotal": 52,
+      "claimedRating": 50,
+      "fetched": 51,
+      "checksum": 49
+    },
+    {
+      "pageId": 31978,
+      "slug": "loyal-forever",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=365 != claimed_total=366",
+        "checksum=341 != claimed_rating=342"
+      ],
+      "claimedTotal": 366,
+      "claimedRating": 342,
+      "fetched": 365,
+      "checksum": 341
+    },
+    {
+      "pageId": 31985,
+      "slug": "main",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=3486 != claimed_total=3490",
+        "checksum=3170 != claimed_rating=3174"
+      ],
+      "claimedTotal": 3490,
+      "claimedRating": 3174,
+      "fetched": 3486,
+      "checksum": 3170
+    },
+    {
+      "pageId": 31989,
+      "slug": "maybe-artwork-im-not-sure",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=320 != claimed_total=321",
+        "checksum=160 != claimed_rating=161"
+      ],
+      "claimedTotal": 321,
+      "claimedRating": 161,
+      "fetched": 320,
+      "checksum": 160
+    },
+    {
+      "pageId": 32012,
+      "slug": "moyo-s-personnel-file",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=297 != claimed_total=298",
+        "checksum=-213 != claimed_rating=-214"
+      ],
+      "claimedTotal": 298,
+      "claimedRating": -214,
+      "fetched": 297,
+      "checksum": -213
+    },
+    {
+      "pageId": 32043,
+      "slug": "ninth-s-proposal",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=314 != claimed_total=315",
+        "checksum=224 != claimed_rating=225"
+      ],
+      "claimedTotal": 315,
+      "claimedRating": 225,
+      "fetched": 314,
+      "checksum": 224
+    },
+    {
+      "pageId": 32047,
+      "slug": "no-answer",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=105 != claimed_total=106",
+        "checksum=47 != claimed_rating=48"
+      ],
+      "claimedTotal": 106,
+      "claimedRating": 48,
+      "fetched": 105,
+      "checksum": 47
+    },
+    {
+      "pageId": 32053,
+      "slug": "no-offset",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1246 != claimed_total=1247",
+        "checksum=1222 != claimed_rating=1223"
+      ],
+      "claimedTotal": 1247,
+      "claimedRating": 1223,
+      "fetched": 1246,
+      "checksum": 1222
+    },
+    {
+      "pageId": 32087,
+      "slug": "panghuang",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=418 != claimed_total=420",
+        "checksum=402 != claimed_rating=404"
+      ],
+      "claimedTotal": 420,
+      "claimedRating": 404,
+      "fetched": 418,
+      "checksum": 402
+    },
+    {
+      "pageId": 32091,
+      "slug": "past-whisper",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=167 != claimed_total=168",
+        "checksum=143 != claimed_rating=144"
+      ],
+      "claimedTotal": 168,
+      "claimedRating": 144,
+      "fetched": 167,
+      "checksum": 143
+    },
+    {
+      "pageId": 32106,
+      "slug": "play-class-d",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=742 != claimed_total=745",
+        "checksum=724 != claimed_rating=727"
+      ],
+      "claimedTotal": 745,
+      "claimedRating": 727,
+      "fetched": 742,
+      "checksum": 724
+    },
+    {
+      "pageId": 32126,
+      "slug": "rating-against-traditions",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=519 != claimed_total=520",
+        "checksum=479 != claimed_rating=480"
+      ],
+      "claimedTotal": 520,
+      "claimedRating": 480,
+      "fetched": 519,
+      "checksum": 479
+    },
+    {
+      "pageId": 32128,
+      "slug": "reality-cat-5h8m5-312df-13src",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=409 != claimed_total=410",
+        "checksum=391 != claimed_rating=392"
+      ],
+      "claimedTotal": 410,
+      "claimedRating": 392,
+      "fetched": 409,
+      "checksum": 391
+    },
+    {
+      "pageId": 32129,
+      "slug": "reality-kondraki",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=130 != claimed_total=131",
+        "checksum=106 != claimed_rating=107"
+      ],
+      "claimedTotal": 131,
+      "claimedRating": 107,
+      "fetched": 130,
+      "checksum": 106
+    },
+    {
+      "pageId": 32140,
+      "slug": "rhodes-island-operators-database",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=322 != claimed_total=323",
+        "checksum=232 != claimed_rating=233"
+      ],
+      "claimedTotal": 323,
+      "claimedRating": 233,
+      "fetched": 322,
+      "checksum": 232
+    },
+    {
+      "pageId": 32147,
+      "slug": "runrunrun",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=469 != claimed_total=470",
+        "checksum=459 != claimed_rating=460"
+      ],
+      "claimedTotal": 470,
+      "claimedRating": 460,
+      "fetched": 469,
+      "checksum": 459
+    },
+    {
+      "pageId": 32164,
+      "slug": "scp-002",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=201 != claimed_total=202",
+        "checksum=191 != claimed_rating=192"
+      ],
+      "claimedTotal": 202,
+      "claimedRating": 192,
+      "fetched": 201,
+      "checksum": 191
+    },
+    {
+      "pageId": 32185,
+      "slug": "scp-173",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=2680 != claimed_total=2683",
+        "checksum=2652 != claimed_rating=2655"
+      ],
+      "claimedTotal": 2683,
+      "claimedRating": 2655,
+      "fetched": 2680,
+      "checksum": 2652
+    },
+    {
+      "pageId": 32188,
+      "slug": "scp-173-but-it-s-a-collaborative-log-cn",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=178 != claimed_total=179",
+        "checksum=172 != claimed_rating=173"
+      ],
+      "claimedTotal": 179,
+      "claimedRating": 173,
+      "fetched": 178,
+      "checksum": 172
+    },
+    {
+      "pageId": 32189,
+      "slug": "scp-1762",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=303 != claimed_total=304",
+        "checksum=301 != claimed_rating=302"
+      ],
+      "claimedTotal": 304,
+      "claimedRating": 302,
+      "fetched": 303,
+      "checksum": 301
+    },
+    {
+      "pageId": 32199,
+      "slug": "scp-2662",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=175 != claimed_total=176",
+        "checksum=175 != claimed_rating=176"
+      ],
+      "claimedTotal": 176,
+      "claimedRating": 176,
+      "fetched": 175,
+      "checksum": 175
+    },
+    {
+      "pageId": 32203,
+      "slug": "scp-294",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=147 != claimed_total=148",
+        "checksum=147 != claimed_rating=148"
+      ],
+      "claimedTotal": 148,
+      "claimedRating": 148,
+      "fetched": 147,
+      "checksum": 147
+    },
+    {
+      "pageId": 32216,
+      "slug": "scp-326",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=324 != claimed_total=325",
+        "checksum=-212 != claimed_rating=-213"
+      ],
+      "claimedTotal": 325,
+      "claimedRating": -213,
+      "fetched": 324,
+      "checksum": -212
+    },
+    {
+      "pageId": 32224,
+      "slug": "scp-3999",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=2007 != claimed_total=2008",
+        "checksum=1963 != claimed_rating=1964"
+      ],
+      "claimedTotal": 2008,
+      "claimedRating": 1964,
+      "fetched": 2007,
+      "checksum": 1963
+    },
+    {
+      "pageId": 32228,
+      "slug": "scp-4098",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=233 != claimed_total=234",
+        "checksum=233 != claimed_rating=234"
+      ],
+      "claimedTotal": 234,
+      "claimedRating": 234,
+      "fetched": 233,
+      "checksum": 233
+    },
+    {
+      "pageId": 32230,
+      "slug": "scp-4205",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=210 != claimed_total=211",
+        "checksum=206 != claimed_rating=207"
+      ],
+      "claimedTotal": 211,
+      "claimedRating": 207,
+      "fetched": 210,
+      "checksum": 206
+    },
+    {
+      "pageId": 32236,
+      "slug": "scp-5000",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1014 != claimed_total=1015",
+        "checksum=1002 != claimed_rating=1003"
+      ],
+      "claimedTotal": 1015,
+      "claimedRating": 1003,
+      "fetched": 1014,
+      "checksum": 1002
+    },
+    {
+      "pageId": 32252,
+      "slug": "scp-682",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=401 != claimed_total=403",
+        "checksum=377 != claimed_rating=379"
+      ],
+      "claimedTotal": 403,
+      "claimedRating": 379,
+      "fetched": 401,
+      "checksum": 377
+    },
+    {
+      "pageId": 32264,
+      "slug": "scp-914",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=248 != claimed_total=249",
+        "checksum=246 != claimed_rating=247"
+      ],
+      "claimedTotal": 249,
+      "claimedRating": 247,
+      "fetched": 248,
+      "checksum": 246
+    },
+    {
+      "pageId": 32269,
+      "slug": "scp-cn-001-ex",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=306 != claimed_total=307",
+        "checksum=294 != claimed_rating=295"
+      ],
+      "claimedTotal": 307,
+      "claimedRating": 295,
+      "fetched": 306,
+      "checksum": 294
+    },
+    {
+      "pageId": 32271,
+      "slug": "scp-cn-001-j-7s",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=203 != claimed_total=204",
+        "checksum=175 != claimed_rating=176"
+      ],
+      "claimedTotal": 204,
+      "claimedRating": 176,
+      "fetched": 203,
+      "checksum": 175
+    },
+    {
+      "pageId": 32273,
+      "slug": "scp-cn-002-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=312 != claimed_total=313",
+        "checksum=294 != claimed_rating=295"
+      ],
+      "claimedTotal": 313,
+      "claimedRating": 295,
+      "fetched": 312,
+      "checksum": 294
+    },
+    {
+      "pageId": 32275,
+      "slug": "scp-cn-003-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=163 != claimed_total=164",
+        "checksum=147 != claimed_rating=148"
+      ],
+      "claimedTotal": 164,
+      "claimedRating": 148,
+      "fetched": 163,
+      "checksum": 147
+    },
+    {
+      "pageId": 32283,
+      "slug": "scp-cn-007",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=158 != claimed_total=159",
+        "checksum=150 != claimed_rating=151"
+      ],
+      "claimedTotal": 159,
+      "claimedRating": 151,
+      "fetched": 158,
+      "checksum": 150
+    },
+    {
+      "pageId": 32301,
+      "slug": "scp-cn-033",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=951 != claimed_total=952",
+        "checksum=925 != claimed_rating=926"
+      ],
+      "claimedTotal": 952,
+      "claimedRating": 926,
+      "fetched": 951,
+      "checksum": 925
+    },
+    {
+      "pageId": 32314,
+      "slug": "scp-cn-059",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=782 != claimed_total=783",
+        "checksum=738 != claimed_rating=739"
+      ],
+      "claimedTotal": 783,
+      "claimedRating": 739,
+      "fetched": 782,
+      "checksum": 738
+    },
+    {
+      "pageId": 32317,
+      "slug": "scp-cn-066",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1741 != claimed_total=1744",
+        "checksum=1665 != claimed_rating=1668"
+      ],
+      "claimedTotal": 1744,
+      "claimedRating": 1668,
+      "fetched": 1741,
+      "checksum": 1665
+    },
+    {
+      "pageId": 32335,
+      "slug": "scp-cn-1001",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1032 != claimed_total=1034",
+        "checksum=880 != claimed_rating=882"
+      ],
+      "claimedTotal": 1034,
+      "claimedRating": 882,
+      "fetched": 1032,
+      "checksum": 880
+    },
+    {
+      "pageId": 32354,
+      "slug": "scp-cn-1050",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=246 != claimed_total=247",
+        "checksum=208 != claimed_rating=209"
+      ],
+      "claimedTotal": 247,
+      "claimedRating": 209,
+      "fetched": 246,
+      "checksum": 208
+    },
+    {
+      "pageId": 32368,
+      "slug": "scp-cn-1109",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=3688 != claimed_total=3690",
+        "checksum=3514 != claimed_rating=3516"
+      ],
+      "claimedTotal": 3690,
+      "claimedRating": 3516,
+      "fetched": 3688,
+      "checksum": 3514
+    },
+    {
+      "pageId": 32370,
+      "slug": "scp-cn-1111",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=784 != claimed_total=785",
+        "checksum=758 != claimed_rating=759"
+      ],
+      "claimedTotal": 785,
+      "claimedRating": 759,
+      "fetched": 784,
+      "checksum": 758
+    },
+    {
+      "pageId": 32392,
+      "slug": "scp-cn-1218",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=118 != claimed_total=119",
+        "checksum=60 != claimed_rating=61"
+      ],
+      "claimedTotal": 119,
+      "claimedRating": 61,
+      "fetched": 118,
+      "checksum": 60
+    },
+    {
+      "pageId": 32402,
+      "slug": "scp-cn-1265",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=120 != claimed_total=121",
+        "checksum=78 != claimed_rating=79"
+      ],
+      "claimedTotal": 121,
+      "claimedRating": 79,
+      "fetched": 120,
+      "checksum": 78
+    },
+    {
+      "pageId": 32408,
+      "slug": "scp-cn-1353",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=558 != claimed_total=559",
+        "checksum=546 != claimed_rating=547"
+      ],
+      "claimedTotal": 559,
+      "claimedRating": 547,
+      "fetched": 558,
+      "checksum": 546
+    },
+    {
+      "pageId": 32418,
+      "slug": "scp-cn-1466",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=549 != claimed_total=550",
+        "checksum=527 != claimed_rating=528"
+      ],
+      "claimedTotal": 550,
+      "claimedRating": 528,
+      "fetched": 549,
+      "checksum": 527
+    },
+    {
+      "pageId": 32425,
+      "slug": "scp-cn-152-ex",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=173 != claimed_total=174",
+        "checksum=165 != claimed_rating=166"
+      ],
+      "claimedTotal": 174,
+      "claimedRating": 166,
+      "fetched": 173,
+      "checksum": 165
+    },
+    {
+      "pageId": 32426,
+      "slug": "scp-cn-1548",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=111 != claimed_total=112",
+        "checksum=91 != claimed_rating=92"
+      ],
+      "claimedTotal": 112,
+      "claimedRating": 92,
+      "fetched": 111,
+      "checksum": 91
+    },
+    {
+      "pageId": 32427,
+      "slug": "scp-cn-1559",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=2100 != claimed_total=2101",
+        "checksum=2056 != claimed_rating=2057"
+      ],
+      "claimedTotal": 2101,
+      "claimedRating": 2057,
+      "fetched": 2100,
+      "checksum": 2056
+    },
+    {
+      "pageId": 32441,
+      "slug": "scp-cn-1700",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=133 != claimed_total=134",
+        "checksum=111 != claimed_rating=112"
+      ],
+      "claimedTotal": 134,
+      "claimedRating": 112,
+      "fetched": 133,
+      "checksum": 111
+    },
+    {
+      "pageId": 32446,
+      "slug": "scp-cn-1730",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=151 != claimed_total=152",
+        "checksum=127 != claimed_rating=128"
+      ],
+      "claimedTotal": 152,
+      "claimedRating": 128,
+      "fetched": 151,
+      "checksum": 127
+    },
+    {
+      "pageId": 32451,
+      "slug": "scp-cn-1770",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=80 != claimed_total=81",
+        "checksum=68 != claimed_rating=69"
+      ],
+      "claimedTotal": 81,
+      "claimedRating": 69,
+      "fetched": 80,
+      "checksum": 68
+    },
+    {
+      "pageId": 32477,
+      "slug": "scp-cn-1987",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=304 != claimed_total=305",
+        "checksum=156 != claimed_rating=157"
+      ],
+      "claimedTotal": 305,
+      "claimedRating": 157,
+      "fetched": 304,
+      "checksum": 156
+    },
+    {
+      "pageId": 32479,
+      "slug": "scp-cn-1995",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:5379370 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=128",
+        "checksum=null != claimed_rating=60"
+      ],
+      "claimedTotal": 128,
+      "claimedRating": 60,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 32480,
+      "slug": "scp-cn-1996",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=144 != claimed_total=145",
+        "checksum=126 != claimed_rating=127"
+      ],
+      "claimedTotal": 145,
+      "claimedRating": 127,
+      "fetched": 144,
+      "checksum": 126
+    },
+    {
+      "pageId": 32483,
+      "slug": "scp-cn-1999",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=989 != claimed_total=990",
+        "checksum=949 != claimed_rating=950"
+      ],
+      "claimedTotal": 990,
+      "claimedRating": 950,
+      "fetched": 989,
+      "checksum": 949
+    },
+    {
+      "pageId": 32484,
+      "slug": "scp-cn-2000",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=5578 != claimed_total=5580",
+        "checksum=5368 != claimed_rating=5370"
+      ],
+      "claimedTotal": 5580,
+      "claimedRating": 5370,
+      "fetched": 5578,
+      "checksum": 5368
+    },
+    {
+      "pageId": 32485,
+      "slug": "scpcn2000contesthub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=183 != claimed_total=184",
+        "checksum=179 != claimed_rating=180"
+      ],
+      "claimedTotal": 184,
+      "claimedRating": 180,
+      "fetched": 183,
+      "checksum": 179
+    },
+    {
+      "pageId": 32486,
+      "slug": "scp-cn-2000-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=802 != claimed_total=803",
+        "checksum=734 != claimed_rating=735"
+      ],
+      "claimedTotal": 803,
+      "claimedRating": 735,
+      "fetched": 802,
+      "checksum": 734
+    },
+    {
+      "pageId": 32514,
+      "slug": "scp-cn-2111",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=722 != claimed_total=723",
+        "checksum=658 != claimed_rating=659"
+      ],
+      "claimedTotal": 723,
+      "claimedRating": 659,
+      "fetched": 722,
+      "checksum": 658
+    },
+    {
+      "pageId": 32543,
+      "slug": "scp-cn-2317",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=462 != claimed_total=463",
+        "checksum=432 != claimed_rating=433"
+      ],
+      "claimedTotal": 463,
+      "claimedRating": 433,
+      "fetched": 462,
+      "checksum": 432
+    },
+    {
+      "pageId": 32547,
+      "slug": "scp-cn-2346",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=126 != claimed_total=127",
+        "checksum=102 != claimed_rating=103"
+      ],
+      "claimedTotal": 127,
+      "claimedRating": 103,
+      "fetched": 126,
+      "checksum": 102
+    },
+    {
+      "pageId": 32559,
+      "slug": "scp-cn-2444",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=105 != claimed_total=106",
+        "checksum=97 != claimed_rating=98"
+      ],
+      "claimedTotal": 106,
+      "claimedRating": 98,
+      "fetched": 105,
+      "checksum": 97
+    },
+    {
+      "pageId": 32565,
+      "slug": "scp-cn-2470",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=474 != claimed_total=475",
+        "checksum=450 != claimed_rating=451"
+      ],
+      "claimedTotal": 475,
+      "claimedRating": 451,
+      "fetched": 474,
+      "checksum": 450
+    },
+    {
+      "pageId": 32567,
+      "slug": "scp-cn-2500",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=444 != claimed_total=446",
+        "checksum=404 != claimed_rating=406"
+      ],
+      "claimedTotal": 446,
+      "claimedRating": 406,
+      "fetched": 444,
+      "checksum": 404
+    },
+    {
+      "pageId": 32571,
+      "slug": "scp-cn-2510",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=817 != claimed_total=819",
+        "checksum=725 != claimed_rating=727"
+      ],
+      "claimedTotal": 819,
+      "claimedRating": 727,
+      "fetched": 817,
+      "checksum": 725
+    },
+    {
+      "pageId": 32577,
+      "slug": "scp-cn-2684",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=129 != claimed_total=130",
+        "checksum=53 != claimed_rating=54"
+      ],
+      "claimedTotal": 130,
+      "claimedRating": 54,
+      "fetched": 129,
+      "checksum": 53
+    },
+    {
+      "pageId": 32584,
+      "slug": "scp-cn-2760",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=276 != claimed_total=277",
+        "checksum=270 != claimed_rating=271"
+      ],
+      "claimedTotal": 277,
+      "claimedRating": 271,
+      "fetched": 276,
+      "checksum": 270
+    },
+    {
+      "pageId": 32589,
+      "slug": "scp-cn-2801",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:6422109 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=3239",
+        "checksum=null != claimed_rating=3143"
+      ],
+      "claimedTotal": 3239,
+      "claimedRating": 3143,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 32599,
+      "slug": "scp-cn-2879",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=405 != claimed_total=407",
+        "checksum=339 != claimed_rating=341"
+      ],
+      "claimedTotal": 407,
+      "claimedRating": 341,
+      "fetched": 405,
+      "checksum": 339
+    },
+    {
+      "pageId": 32608,
+      "slug": "scp-cn-296",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:6453919 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=904",
+        "checksum=null != claimed_rating=750"
+      ],
+      "claimedTotal": 904,
+      "claimedRating": 750,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 32616,
+      "slug": "scp-cn-2984",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=175 != claimed_total=176",
+        "checksum=141 != claimed_rating=142"
+      ],
+      "claimedTotal": 176,
+      "claimedRating": 142,
+      "fetched": 175,
+      "checksum": 141
+    },
+    {
+      "pageId": 32622,
+      "slug": "scp-cn-2999",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=2719 != claimed_total=2722",
+        "checksum=2649 != claimed_rating=2652"
+      ],
+      "claimedTotal": 2722,
+      "claimedRating": 2652,
+      "fetched": 2719,
+      "checksum": 2649
+    },
+    {
+      "pageId": 32643,
+      "slug": "scp-cn-3077",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=197 != claimed_total=198",
+        "checksum=83 != claimed_rating=84"
+      ],
+      "claimedTotal": 198,
+      "claimedRating": 84,
+      "fetched": 197,
+      "checksum": 83
+    },
+    {
+      "pageId": 32647,
+      "slug": "scp-cn-3100",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=374 != claimed_total=375",
+        "checksum=240 != claimed_rating=239"
+      ],
+      "claimedTotal": 375,
+      "claimedRating": 239,
+      "fetched": 374,
+      "checksum": 240
+    },
+    {
+      "pageId": 32686,
+      "slug": "scp-cn-3612",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=756 != claimed_total=757",
+        "checksum=728 != claimed_rating=729"
+      ],
+      "claimedTotal": 757,
+      "claimedRating": 729,
+      "fetched": 756,
+      "checksum": 728
+    },
+    {
+      "pageId": 32701,
+      "slug": "scp-cn-3819",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1025 != claimed_total=1026",
+        "checksum=969 != claimed_rating=970"
+      ],
+      "claimedTotal": 1026,
+      "claimedRating": 970,
+      "fetched": 1025,
+      "checksum": 969
+    },
+    {
+      "pageId": 32706,
+      "slug": "scp-cn-3907",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=431 != claimed_total=432",
+        "checksum=411 != claimed_rating=412"
+      ],
+      "claimedTotal": 432,
+      "claimedRating": 412,
+      "fetched": 431,
+      "checksum": 411
+    },
+    {
+      "pageId": 32710,
+      "slug": "scp-cn-3969",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=931 != claimed_total=932",
+        "checksum=887 != claimed_rating=888"
+      ],
+      "claimedTotal": 932,
+      "claimedRating": 888,
+      "fetched": 931,
+      "checksum": 887
+    },
+    {
+      "pageId": 32712,
+      "slug": "scp-cn-3989",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=148 != claimed_total=149",
+        "checksum=134 != claimed_rating=135"
+      ],
+      "claimedTotal": 149,
+      "claimedRating": 135,
+      "fetched": 148,
+      "checksum": 134
+    },
+    {
+      "pageId": 32717,
+      "slug": "scp-cn-3999",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1631 != claimed_total=1633",
+        "checksum=1491 != claimed_rating=1493"
+      ],
+      "claimedTotal": 1633,
+      "claimedRating": 1493,
+      "fetched": 1631,
+      "checksum": 1491
+    },
+    {
+      "pageId": 32719,
+      "slug": "scp-cn-400",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=135 != claimed_total=139"
+      ],
+      "claimedTotal": 139,
+      "claimedRating": 113,
+      "fetched": 135,
+      "checksum": 113
+    },
+    {
+      "pageId": 32734,
+      "slug": "scp-cn-463",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=742 != claimed_total=743",
+        "checksum=288 != claimed_rating=289"
+      ],
+      "claimedTotal": 743,
+      "claimedRating": 289,
+      "fetched": 742,
+      "checksum": 288
+    },
+    {
+      "pageId": 32744,
+      "slug": "scp-cn-510",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=236 != claimed_total=237",
+        "checksum=208 != claimed_rating=209"
+      ],
+      "claimedTotal": 237,
+      "claimedRating": 209,
+      "fetched": 236,
+      "checksum": 208
+    },
+    {
+      "pageId": 32752,
+      "slug": "scp-cn-586",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:3657876 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=334",
+        "checksum=null != claimed_rating=328"
+      ],
+      "claimedTotal": 334,
+      "claimedRating": 328,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 32762,
+      "slug": "scp-cn-647",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=864 != claimed_total=865",
+        "checksum=808 != claimed_rating=809"
+      ],
+      "claimedTotal": 865,
+      "claimedRating": 809,
+      "fetched": 864,
+      "checksum": 808
+    },
+    {
+      "pageId": 32763,
+      "slug": "scp-cn-648-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1366 != claimed_total=1369",
+        "checksum=1290 != claimed_rating=1293"
+      ],
+      "claimedTotal": 1369,
+      "claimedRating": 1293,
+      "fetched": 1366,
+      "checksum": 1290
+    },
+    {
+      "pageId": 32776,
+      "slug": "scp-cn-698",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=260 != claimed_total=261",
+        "checksum=242 != claimed_rating=243"
+      ],
+      "claimedTotal": 261,
+      "claimedRating": 243,
+      "fetched": 260,
+      "checksum": 242
+    },
+    {
+      "pageId": 32789,
+      "slug": "scp-cn-797",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=414 != claimed_total=416",
+        "checksum=404 != claimed_rating=406"
+      ],
+      "claimedTotal": 416,
+      "claimedRating": 406,
+      "fetched": 414,
+      "checksum": 404
+    },
+    {
+      "pageId": 32796,
+      "slug": "scp-cn-858",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=410 != claimed_total=411",
+        "checksum=398 != claimed_rating=399"
+      ],
+      "claimedTotal": 411,
+      "claimedRating": 399,
+      "fetched": 410,
+      "checksum": 398
+    },
+    {
+      "pageId": 32800,
+      "slug": "scp-cn-888-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=639 != claimed_total=640",
+        "checksum=579 != claimed_rating=580"
+      ],
+      "claimedTotal": 640,
+      "claimedRating": 580,
+      "fetched": 639,
+      "checksum": 579
+    },
+    {
+      "pageId": 32806,
+      "slug": "scp-cn-929",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=220 != claimed_total=221",
+        "checksum=24 != claimed_rating=25"
+      ],
+      "claimedTotal": 221,
+      "claimedRating": 25,
+      "fetched": 220,
+      "checksum": 24
+    },
+    {
+      "pageId": 32808,
+      "slug": "scp-cn-963-j",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=4723 != claimed_total=4725",
+        "checksum=4439 != claimed_rating=4441"
+      ],
+      "claimedTotal": 4725,
+      "claimedRating": 4441,
+      "fetched": 4723,
+      "checksum": 4439
+    },
+    {
+      "pageId": 32810,
+      "slug": "scp-cn-968",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=376 != claimed_total=377",
+        "checksum=292 != claimed_rating=293"
+      ],
+      "claimedTotal": 377,
+      "claimedRating": 293,
+      "fetched": 376,
+      "checksum": 292
+    },
+    {
+      "pageId": 32815,
+      "slug": "scp-cn-985",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1363 != claimed_total=1364",
+        "checksum=1287 != claimed_rating=1288"
+      ],
+      "claimedTotal": 1364,
+      "claimedRating": 1288,
+      "fetched": 1363,
+      "checksum": 1287
+    },
+    {
+      "pageId": 32816,
+      "slug": "scp-cn-988",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=473 != claimed_total=474",
+        "checksum=383 != claimed_rating=384"
+      ],
+      "claimedTotal": 474,
+      "claimedRating": 384,
+      "fetched": 473,
+      "checksum": 383
+    },
+    {
+      "pageId": 32826,
+      "slug": "scp-containment-breach-secondly",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=3707 != claimed_total=3709",
+        "checksum=3451 != claimed_rating=3453"
+      ],
+      "claimedTotal": 3709,
+      "claimedRating": 3453,
+      "fetched": 3707,
+      "checksum": 3451
+    },
+    {
+      "pageId": 32849,
+      "slug": "scp-series-5",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=31 != claimed_total=32",
+        "checksum=31 != claimed_rating=32"
+      ],
+      "claimedTotal": 32,
+      "claimedRating": 32,
+      "fetched": 31,
+      "checksum": 31
+    },
+    {
+      "pageId": 32883,
+      "slug": "shujia-bigtalk",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=138 != claimed_total=139",
+        "checksum=124 != claimed_rating=125"
+      ],
+      "claimedTotal": 139,
+      "claimedRating": 125,
+      "fetched": 138,
+      "checksum": 124
+    },
+    {
+      "pageId": 32907,
+      "slug": "site-cn-82-2020",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=104 != claimed_total=105",
+        "checksum=94 != claimed_rating=95"
+      ],
+      "claimedTotal": 105,
+      "claimedRating": 95,
+      "fetched": 104,
+      "checksum": 94
+    },
+    {
+      "pageId": 32913,
+      "slug": "snow-art",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=90 != claimed_total=91",
+        "checksum=84 != claimed_rating=85"
+      ],
+      "claimedTotal": 91,
+      "claimedRating": 85,
+      "fetched": 90,
+      "checksum": 84
+    },
+    {
+      "pageId": 32916,
+      "slug": "song-of-people-song-of-liberation-army",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=116 != claimed_total=117",
+        "checksum=72 != claimed_rating=73"
+      ],
+      "claimedTotal": 117,
+      "claimedRating": 73,
+      "fetched": 116,
+      "checksum": 72
+    },
+    {
+      "pageId": 32929,
+      "slug": "statement-on-disabling-offset",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=4645 != claimed_total=4649",
+        "checksum=-4443 != claimed_rating=-4447"
+      ],
+      "claimedTotal": 4649,
+      "claimedRating": -4447,
+      "fetched": 4645,
+      "checksum": -4443
+    },
+    {
+      "pageId": 32943,
+      "slug": "taboo",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=300 != claimed_total=301",
+        "checksum=274 != claimed_rating=275"
+      ],
+      "claimedTotal": 301,
+      "claimedRating": 275,
+      "fetched": 300,
+      "checksum": 274
+    },
+    {
+      "pageId": 32960,
+      "slug": "thecabininthewoods",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=363 != claimed_total=364",
+        "checksum=315 != claimed_rating=316"
+      ],
+      "claimedTotal": 364,
+      "claimedRating": 316,
+      "fetched": 363,
+      "checksum": 315
+    },
+    {
+      "pageId": 32962,
+      "slug": "the-day-of-flowers-and-resurrection-through-death",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=140 != claimed_total=141",
+        "checksum=136 != claimed_rating=137"
+      ],
+      "claimedTotal": 141,
+      "claimedRating": 137,
+      "fetched": 140,
+      "checksum": 136
+    },
+    {
+      "pageId": 32965,
+      "slug": "the-death-of-plague-doctor",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=360 != claimed_total=361",
+        "checksum=324 != claimed_rating=325"
+      ],
+      "claimedTotal": 361,
+      "claimedRating": 325,
+      "fetched": 360,
+      "checksum": 324
+    },
+    {
+      "pageId": 32967,
+      "slug": "the-foundation-dissolved",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=156 != claimed_total=157",
+        "checksum=70 != claimed_rating=69"
+      ],
+      "claimedTotal": 157,
+      "claimedRating": 69,
+      "fetched": 156,
+      "checksum": 70
+    },
+    {
+      "pageId": 32985,
+      "slug": "the-lord-of-jambudvipa",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=163 != claimed_total=164",
+        "checksum=149 != claimed_rating=150"
+      ],
+      "claimedTotal": 164,
+      "claimedRating": 150,
+      "fetched": 163,
+      "checksum": 149
+    },
+    {
+      "pageId": 32993,
+      "slug": "there-is-always-a-last-time-for-everything",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=288 != claimed_total=289",
+        "checksum=284 != claimed_rating=285"
+      ],
+      "claimedTotal": 289,
+      "claimedRating": 285,
+      "fetched": 288,
+      "checksum": 284
+    },
+    {
+      "pageId": 33013,
+      "slug": "time-is-a-place",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=235 != claimed_total=236",
+        "checksum=211 != claimed_rating=212"
+      ],
+      "claimedTotal": 236,
+      "claimedRating": 212,
+      "fetched": 235,
+      "checksum": 211
+    },
+    {
+      "pageId": 33037,
+      "slug": "upvote-for-who-hub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=250 != claimed_total=251",
+        "checksum=244 != claimed_rating=245"
+      ],
+      "claimedTotal": 251,
+      "claimedRating": 245,
+      "fetched": 250,
+      "checksum": 244
+    },
+    {
+      "pageId": 33039,
+      "slug": "v2-1",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=744 != claimed_total=745",
+        "checksum=722 != claimed_rating=723"
+      ],
+      "claimedTotal": 745,
+      "claimedRating": 723,
+      "fetched": 744,
+      "checksum": 722
+    },
+    {
+      "pageId": 33057,
+      "slug": "wanderers:dawnwell",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=396 != claimed_total=397",
+        "checksum=394 != claimed_rating=395"
+      ],
+      "claimedTotal": 397,
+      "claimedRating": 395,
+      "fetched": 396,
+      "checksum": 394
+    },
+    {
+      "pageId": 33070,
+      "slug": "wanderers:how-to-read-this-word",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=156 != claimed_total=157",
+        "checksum=144 != claimed_rating=145"
+      ],
+      "claimedTotal": 157,
+      "claimedRating": 145,
+      "fetched": 156,
+      "checksum": 144
+    },
+    {
+      "pageId": 33072,
+      "slug": "wanderers:in-coffin",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=252 != claimed_total=253",
+        "checksum=238 != claimed_rating=239"
+      ],
+      "claimedTotal": 253,
+      "claimedRating": 239,
+      "fetched": 252,
+      "checksum": 238
+    },
+    {
+      "pageId": 33099,
+      "slug": "wanderers:the-child-seeking-water",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=114 != claimed_total=115",
+        "checksum=112 != claimed_rating=113"
+      ],
+      "claimedTotal": 115,
+      "claimedRating": 113,
+      "fetched": 114,
+      "checksum": 112
+    },
+    {
+      "pageId": 33118,
+      "slug": "wandering-fleet",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=191 != claimed_total=193",
+        "checksum=177 != claimed_rating=179"
+      ],
+      "claimedTotal": 193,
+      "claimedRating": 179,
+      "fetched": 191,
+      "checksum": 177
+    },
+    {
+      "pageId": 33120,
+      "slug": "weapons-and-equipments-list",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=572 != claimed_total=574",
+        "checksum=568 != claimed_rating=570"
+      ],
+      "claimedTotal": 574,
+      "claimedRating": 570,
+      "fetched": 572,
+      "checksum": 568
+    },
+    {
+      "pageId": 33132,
+      "slug": "whereishome",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=844 != claimed_total=845",
+        "checksum=704 != claimed_rating=703"
+      ],
+      "claimedTotal": 845,
+      "claimedRating": 703,
+      "fetched": 844,
+      "checksum": 704
+    },
+    {
+      "pageId": 33146,
+      "slug": "wontoninsurgency",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1626 != claimed_total=1627",
+        "checksum=1588 != claimed_rating=1589"
+      ],
+      "claimedTotal": 1627,
+      "claimedRating": 1589,
+      "fetched": 1626,
+      "checksum": 1588
+    },
+    {
+      "pageId": 33152,
+      "slug": "wu-yu",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=176 != claimed_total=177",
+        "checksum=158 != claimed_rating=159"
+      ],
+      "claimedTotal": 177,
+      "claimedRating": 159,
+      "fetched": 176,
+      "checksum": 158
+    },
+    {
+      "pageId": 33161,
+      "slug": "yanwangye",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=370 != claimed_total=371",
+        "checksum=352 != claimed_rating=353"
+      ],
+      "claimedTotal": 371,
+      "claimedRating": 353,
+      "fetched": 370,
+      "checksum": 352
+    },
+    {
+      "pageId": 33190,
+      "slug": "114514leitra",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=80 != claimed_total=81",
+        "checksum=74 != claimed_rating=75"
+      ],
+      "claimedTotal": 81,
+      "claimedRating": 75,
+      "fetched": 80,
+      "checksum": 74
+    },
+    {
+      "pageId": 33191,
+      "slug": "2019scp-cn-report",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=122 != claimed_total=123",
+        "checksum=122 != claimed_rating=123"
+      ],
+      "claimedTotal": 123,
+      "claimedRating": 123,
+      "fetched": 122,
+      "checksum": 122
+    },
+    {
+      "pageId": 33195,
+      "slug": "2521-escaped",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=1585 != claimed_total=1586",
+        "checksum=1557 != claimed_rating=1558"
+      ],
+      "claimedTotal": 1586,
+      "claimedRating": 1558,
+      "fetched": 1585,
+      "checksum": 1557
+    },
+    {
+      "pageId": 33196,
+      "slug": "29-ways-to-summon",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=534 != claimed_total=535",
+        "checksum=526 != claimed_rating=527"
+      ],
+      "claimedTotal": 535,
+      "claimedRating": 527,
+      "fetched": 534,
+      "checksum": 526
+    },
+    {
+      "pageId": 33199,
+      "slug": "a120-suicide-guide",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=390 != claimed_total=391",
+        "checksum=304 != claimed_rating=303"
+      ],
+      "claimedTotal": 391,
+      "claimedRating": 303,
+      "fetched": 390,
+      "checksum": 304
+    },
+    {
+      "pageId": 33217,
+      "slug": "aegnus",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=60 != claimed_total=61",
+        "checksum=54 != claimed_rating=53"
+      ],
+      "claimedTotal": 61,
+      "claimedRating": 53,
+      "fetched": 60,
+      "checksum": 54
+    },
+    {
+      "pageId": 33381,
+      "slug": "semimonth-202508-02",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=73 != claimed_total=74",
+        "checksum=71 != claimed_rating=72"
+      ],
+      "claimedTotal": 74,
+      "claimedRating": 72,
+      "fetched": 73,
+      "checksum": 71
+    },
+    {
+      "pageId": 33385,
+      "slug": "kern-art-mech-n-meat",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=51 != claimed_total=52",
+        "checksum=51 != claimed_rating=52"
+      ],
+      "claimedTotal": 52,
+      "claimedRating": 52,
+      "fetched": 51,
+      "checksum": 51
+    },
+    {
+      "pageId": 33568,
+      "slug": "chengwu",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=20 != claimed_total=21",
+        "checksum=4 != claimed_rating=5"
+      ],
+      "claimedTotal": 21,
+      "claimedRating": 5,
+      "fetched": 20,
+      "checksum": 4
+    },
+    {
+      "pageId": 33892,
+      "slug": "scp-resource-assessment-system",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=54 != claimed_total=55",
+        "checksum=46 != claimed_rating=47"
+      ],
+      "claimedTotal": 55,
+      "claimedRating": 47,
+      "fetched": 54,
+      "checksum": 46
+    },
+    {
+      "pageId": 34127,
+      "slug": "wanderers:but-the-fish-king",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=54 != claimed_total=55",
+        "checksum=46 != claimed_rating=47"
+      ],
+      "claimedTotal": 55,
+      "claimedRating": 47,
+      "fetched": 54,
+      "checksum": 46
+    },
+    {
+      "pageId": 101142,
+      "slug": "scp-9330",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=4 != claimed_total=5",
+        "checksum=4 != claimed_rating=5"
+      ],
+      "claimedTotal": 5,
+      "claimedRating": 5,
+      "fetched": 4,
+      "checksum": 4
+    },
+    {
+      "pageId": 101328,
+      "slug": "scp-cn-4999",
+      "status": "failed",
+      "reasons": [
+        "WhoRated 同一身份 wikidot:4921516 同时出现 +/−，无法决定当前态",
+        "is_complete=false",
+        "entries=null != claimed_total=1190",
+        "checksum=null != claimed_rating=1102"
+      ],
+      "claimedTotal": 1190,
+      "claimedRating": 1102,
+      "fetched": null,
+      "checksum": null
+    },
+    {
+      "pageId": 101440,
+      "slug": "scp-cn-4004",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=495 != claimed_total=496",
+        "checksum=449 != claimed_rating=450"
+      ],
+      "claimedTotal": 496,
+      "claimedRating": 450,
+      "fetched": 495,
+      "checksum": 449
+    },
+    {
+      "pageId": 101502,
+      "slug": "scp-cn-4000",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=2413 != claimed_total=2415",
+        "checksum=2329 != claimed_rating=2331"
+      ],
+      "claimedTotal": 2415,
+      "claimedRating": 2331,
+      "fetched": 2413,
+      "checksum": 2329
+    },
+    {
+      "pageId": 101601,
+      "slug": "scp-cn-4399",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=506 != claimed_total=507",
+        "checksum=402 != claimed_rating=403"
+      ],
+      "claimedTotal": 507,
+      "claimedRating": 403,
+      "fetched": 506,
+      "checksum": 402
+    },
+    {
+      "pageId": 101617,
+      "slug": "scp-cn-3301-art",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=79 != claimed_total=80",
+        "checksum=79 != claimed_rating=80"
+      ],
+      "claimedTotal": 80,
+      "claimedRating": 80,
+      "fetched": 79,
+      "checksum": 79
+    },
+    {
+      "pageId": 101868,
+      "slug": "ai-and-ai",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=30 != claimed_total=31",
+        "checksum=28 != claimed_rating=29"
+      ],
+      "claimedTotal": 31,
+      "claimedRating": 29,
+      "fetched": 30,
+      "checksum": 28
+    },
+    {
+      "pageId": 102119,
+      "slug": "scp-cn-3756",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=35 != claimed_total=36",
+        "checksum=9 != claimed_rating=10"
+      ],
+      "claimedTotal": 36,
+      "claimedRating": 10,
+      "fetched": 35,
+      "checksum": 9
+    },
+    {
+      "pageId": 102321,
+      "slug": "potato-server-hub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=102 != claimed_total=103",
+        "checksum=30 != claimed_rating=29"
+      ],
+      "claimedTotal": 103,
+      "claimedRating": 29,
+      "fetched": 102,
+      "checksum": 30
+    },
+    {
+      "pageId": 102750,
+      "slug": "semimonth-202602-01",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=65 != claimed_total=66",
+        "checksum=65 != claimed_rating=66"
+      ],
+      "claimedTotal": 66,
+      "claimedRating": 66,
+      "fetched": 65,
+      "checksum": 65
+    },
+    {
+      "pageId": 102786,
+      "slug": "revolving-stars",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=51 != claimed_total=52",
+        "checksum=43 != claimed_rating=44"
+      ],
+      "claimedTotal": 52,
+      "claimedRating": 44,
+      "fetched": 51,
+      "checksum": 43
+    },
+    {
+      "pageId": 102891,
+      "slug": "the-diminishing-tide",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=28 != claimed_total=29",
+        "checksum=22 != claimed_rating=23"
+      ],
+      "claimedTotal": 29,
+      "claimedRating": 23,
+      "fetched": 28,
+      "checksum": 22
+    },
+    {
+      "pageId": 102915,
+      "slug": "next-generation-hub",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=127 != claimed_total=128",
+        "checksum=123 != claimed_rating=124"
+      ],
+      "claimedTotal": 128,
+      "claimedRating": 124,
+      "fetched": 127,
+      "checksum": 123
+    },
+    {
+      "pageId": 102951,
+      "slug": "linnanshiji",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=206 != claimed_total=207",
+        "checksum=144 != claimed_rating=145"
+      ],
+      "claimedTotal": 207,
+      "claimedRating": 145,
+      "fetched": 206,
+      "checksum": 144
+    },
+    {
+      "pageId": 102996,
+      "slug": "justvektor-strikes-again",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=57 != claimed_total=58",
+        "checksum=53 != claimed_rating=54"
+      ],
+      "claimedTotal": 58,
+      "claimedRating": 54,
+      "fetched": 57,
+      "checksum": 53
+    },
+    {
+      "pageId": 103062,
+      "slug": "redflylovestory",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=41 != claimed_total=42",
+        "checksum=37 != claimed_rating=38"
+      ],
+      "claimedTotal": 42,
+      "claimedRating": 38,
+      "fetched": 41,
+      "checksum": 37
+    },
+    {
+      "pageId": 103326,
+      "slug": "game-over-xylynn-qwrvyn",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=51 != claimed_total=52",
+        "checksum=51 != claimed_rating=52"
+      ],
+      "claimedTotal": 52,
+      "claimedRating": 52,
+      "fetched": 51,
+      "checksum": 51
+    },
+    {
+      "pageId": 104107,
+      "slug": "scp-cn-4660",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=48 != claimed_total=49",
+        "checksum=44 != claimed_rating=45"
+      ],
+      "claimedTotal": 49,
+      "claimedRating": 45,
+      "fetched": 48,
+      "checksum": 44
+    },
+    {
+      "pageId": 104112,
+      "slug": "snow-cabin-and-simo",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=94 != claimed_total=95",
+        "checksum=94 != claimed_rating=95"
+      ],
+      "claimedTotal": 95,
+      "claimedRating": 95,
+      "fetched": 94,
+      "checksum": 94
+    },
+    {
+      "pageId": 104314,
+      "slug": "sacabamkyogre",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=76 != claimed_total=77",
+        "checksum=76 != claimed_rating=77"
+      ],
+      "claimedTotal": 77,
+      "claimedRating": 77,
+      "fetched": 76,
+      "checksum": 76
+    },
+    {
+      "pageId": 104523,
+      "slug": "agent-asriel-great-man",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=89 != claimed_total=90",
+        "checksum=89 != claimed_rating=90"
+      ],
+      "claimedTotal": 90,
+      "claimedRating": 90,
+      "fetched": 89,
+      "checksum": 89
+    },
+    {
+      "pageId": 104704,
+      "slug": "scp-cn-000",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=520 != claimed_total=521",
+        "checksum=402 != claimed_rating=403"
+      ],
+      "claimedTotal": 521,
+      "claimedRating": 403,
+      "fetched": 520,
+      "checksum": 402
+    },
+    {
+      "pageId": 104858,
+      "slug": "fraud-gang",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=105 != claimed_total=106",
+        "checksum=61 != claimed_rating=62"
+      ],
+      "claimedTotal": 106,
+      "claimedRating": 62,
+      "fetched": 105,
+      "checksum": 61
+    },
+    {
+      "pageId": 104898,
+      "slug": "scp-cn-4840",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=109 != claimed_total=110",
+        "checksum=93 != claimed_rating=94"
+      ],
+      "claimedTotal": 110,
+      "claimedRating": 94,
+      "fetched": 109,
+      "checksum": 93
+    },
+    {
+      "pageId": 105170,
+      "slug": "scp-cn-4314",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=17 != claimed_total=18",
+        "checksum=17 != claimed_rating=18"
+      ],
+      "claimedTotal": 18,
+      "claimedRating": 18,
+      "fetched": 17,
+      "checksum": 17
+    },
+    {
+      "pageId": 105338,
+      "slug": "scp-cn-4056",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=51 != claimed_total=52",
+        "checksum=35 != claimed_rating=36"
+      ],
+      "claimedTotal": 52,
+      "claimedRating": 36,
+      "fetched": 51,
+      "checksum": 35
+    },
+    {
+      "pageId": 105339,
+      "slug": "semimonth-202605-02",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=112 != claimed_total=113",
+        "checksum=112 != claimed_rating=113"
+      ],
+      "claimedTotal": 113,
+      "claimedRating": 113,
+      "fetched": 112,
+      "checksum": 112
+    },
+    {
+      "pageId": 105417,
+      "slug": "wanderers:i-love-you",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=62 != claimed_total=63",
+        "checksum=60 != claimed_rating=61"
+      ],
+      "claimedTotal": 63,
+      "claimedRating": 61,
+      "fetched": 62,
+      "checksum": 60
+    },
+    {
+      "pageId": 105945,
+      "slug": "scp-cn-4186",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=26 != claimed_total=27",
+        "checksum=22 != claimed_rating=23"
+      ],
+      "claimedTotal": 27,
+      "claimedRating": 23,
+      "fetched": 26,
+      "checksum": 22
+    },
+    {
+      "pageId": 106044,
+      "slug": "ethanpanauthor",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=70 != claimed_total=71",
+        "checksum=70 != claimed_rating=71"
+      ],
+      "claimedTotal": 71,
+      "claimedRating": 71,
+      "fetched": 70,
+      "checksum": 70
+    },
+    {
+      "pageId": 106405,
+      "slug": "e-m-o-enthusiasm",
+      "status": "partial",
+      "reasons": [
+        "is_complete=false",
+        "entries=62 != claimed_total=63",
+        "checksum=60 != claimed_rating=61"
+      ],
+      "claimedTotal": 63,
+      "claimedRating": 61,
+      "fetched": 62,
+      "checksum": 60
+    }
+  ]
+}

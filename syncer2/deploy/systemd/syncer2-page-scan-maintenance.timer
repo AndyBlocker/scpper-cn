@@ -1,0 +1,11 @@
+[Unit]
+Description=syncer2 page_scan aggregation and retention hourly
+
+[Timer]
+OnCalendar=*-*-* *:55:00 Asia/Shanghai
+AccuracySec=2min
+Persistent=false
+Unit=syncer2-job@page-scan-maintenance.service
+
+[Install]
+WantedBy=timers.target

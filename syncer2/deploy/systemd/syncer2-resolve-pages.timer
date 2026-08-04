@@ -1,0 +1,11 @@
+[Unit]
+Description=syncer2 resolve newly discovered page identities every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/5:00 Asia/Shanghai
+AccuracySec=20s
+Persistent=false
+Unit=syncer2-job@resolve-pages.service
+
+[Install]
+WantedBy=timers.target

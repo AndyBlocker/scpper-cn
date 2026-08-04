@@ -1,0 +1,11 @@
+[Unit]
+Description=syncer2 forum and observed-member refresh daily
+
+[Timer]
+OnCalendar=*-*-* 05:43:00 Asia/Shanghai
+AccuracySec=2min
+Persistent=false
+Unit=syncer2-job@forum-consume.service
+
+[Install]
+WantedBy=timers.target

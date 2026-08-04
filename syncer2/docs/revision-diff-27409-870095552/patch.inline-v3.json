@@ -1,0 +1,12 @@
+[
+  {
+    "at": 2179,
+    "delete": "[[module CSS]]\n\n@import url(/component:broken-masquerade-theme/code/1);\n",
+    "insert": ""
+  },
+  {
+    "at": 2252,
+    "delete": "[[/module]]\n",
+    "insert": ""
+  }
+]

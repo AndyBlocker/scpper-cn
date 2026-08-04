@@ -1,0 +1,12 @@
+[Unit]
+Description=syncer2 L3 full-field Tier1 fallback weekly
+
+[Timer]
+# 周日全字段兜底；保留 :55 错峰且不与 L0/L1/L2 同分钟启动。
+OnCalendar=Sun *-*-* 04:55:00 Asia/Shanghai
+AccuracySec=2min
+Persistent=false
+Unit=syncer2-job@l3.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=syncer2 single-run job (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/scpper/syncer2
+EnvironmentFile=/etc/scpper/syncer2.env
+Environment=PATH=/opt/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env npm run schedule:%i
+# 未单列的轻量作业使用有限默认值；各生产实例在同目录的 drop-in 中按实测覆盖。
+TimeoutStartSec=15min
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+Nice=10
+
+# 调度只允许 timer 启动一次性短进程。禁止改成 PM2 restart_delay：正常退出也会累计
+# restart 次数，快速失败循环最终把 app 打成 errored；这正是 v1 三个常驻 loop
+# 2,388 次静默失败的病根。若改用 PM2，只能用 cron_restart + autorestart:false。

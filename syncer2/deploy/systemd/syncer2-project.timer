@@ -1,0 +1,12 @@
+[Unit]
+Description=syncer2 L2 fact projector every ten minutes
+
+[Timer]
+# 置于 :04/:14/...，避开 L0(:02/:32)、L1(:07/:37)、L2(:27) 与维护(:55)的启动分钟。
+OnCalendar=*-*-* *:04/10:00 Asia/Shanghai
+AccuracySec=20s
+Persistent=false
+Unit=syncer2-job@project.service
+
+[Install]
+WantedBy=timers.target

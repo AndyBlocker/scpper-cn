@@ -1,0 +1,75 @@
+{
+  "target": {
+    "pageId": 23676,
+    "wikidotId": 1437499623,
+    "fromRevisionId": 1497968220,
+    "toRevisionId": 1497968268
+  },
+  "capturedAt": "2026-07-29T04:25:01.893Z",
+  "files": {
+    "diffRawHtml": {
+      "bytes": 67555,
+      "sha256": "af0b4a7de439989f98a26869d3c04357b1a4224aadbf774d1b8ee2048ec7551e"
+    },
+    "beforeRawHtml": {
+      "bytes": 66990,
+      "sha256": "2650a7ba35949450d86414249df7a0df9a7d03307aa9ab941d582b8f8475c7e7"
+    },
+    "afterRawHtml": {
+      "bytes": 67050,
+      "sha256": "dfee9b1c872952cafa149a16331c029ecd5583bc5f90ce27407bc6b81d19882f"
+    },
+    "beforeSource": {
+      "bytes": 60779,
+      "sha256": "f81ba334de1148c390b0890111325669cf66eaf0648bf16f830b5a680c42ebc8"
+    },
+    "afterSource": {
+      "bytes": 60813,
+      "sha256": "107727ced805b73339e681400183477384765d7ddd137add0bcdaaa137e18153"
+    }
+  },
+  "diffParser": {
+    "version": "inline-v3",
+    "responseBytes": 67555,
+    "patchHunks": 1,
+    "beforeVsPageSource": {
+      "equal": true,
+      "firstDifferentByte": null,
+      "commonSuffixBytes": 0,
+      "expectedBytes": 60779,
+      "actualBytes": 60779,
+      "expectedSha256": "f81ba334de1148c390b0890111325669cf66eaf0648bf16f830b5a680c42ebc8",
+      "actualSha256": "f81ba334de1148c390b0890111325669cf66eaf0648bf16f830b5a680c42ebc8",
+      "expectedContextHex": "6e6965204a61efbc9a2a2ae6938de380820a0a0a0a2a2a416e6472657720426f6f6defbc9a2a2ae5afb9e590a7efbc9f0a0a0a0a0a0a5b5b2f6469765d5d0a0a5b5b2f636f6c6c61707369626c655d5d",
+      "actualContextHex": "6e6965204a61efbc9a2a2ae6938de380820a0a0a0a2a2a416e6472657720426f6f6defbc9a2a2ae5afb9e590a7efbc9f0a0a0a0a0a0a5b5b2f6469765d5d0a0a5b5b2f636f6c6c61707369626c655d5d",
+      "contextStart": 60699
+    },
+    "afterVsPageSource": {
+      "equal": true,
+      "firstDifferentByte": null,
+      "commonSuffixBytes": 0,
+      "expectedBytes": 60813,
+      "actualBytes": 60813,
+      "expectedSha256": "107727ced805b73339e681400183477384765d7ddd137add0bcdaaa137e18153",
+      "actualSha256": "107727ced805b73339e681400183477384765d7ddd137add0bcdaaa137e18153",
+      "expectedContextHex": "6e6965204a61efbc9a2a2ae6938de380820a0a0a0a2a2a416e6472657720426f6f6defbc9a2a2ae5afb9e590a7efbc9f0a0a0a0a0a0a5b5b2f6469765d5d0a0a5b5b2f636f6c6c61707369626c655d5d",
+      "actualContextHex": "6e6965204a61efbc9a2a2ae6938de380820a0a0a0a2a2a416e6472657720426f6f6defbc9a2a2ae5afb9e590a7efbc9f0a0a0a0a0a0a5b5b2f6469765d5d0a0a5b5b2f636f6c6c61707369626c655d5d",
+      "contextStart": 60733
+    }
+  },
+  "http": {
+    "requests": 3,
+    "attempts": 3,
+    "wireBytes": 106501,
+    "decodedBytes": 349179,
+    "totalDurationMs": 1419.1361680000002,
+    "statusBuckets": {
+      "200": 3
+    },
+    "retries": 0,
+    "consecutive503": 0,
+    "consecutiveResets": 0,
+    "breakerOpen": false,
+    "breakerReason": null
+  }
+}

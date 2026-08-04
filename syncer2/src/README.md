@@ -32,13 +32,19 @@
 代价是每次执行要重新建连接、重新读快照。实测这个代价可以忽略：
 delta 轮总耗时约 1.2 秒，其中 sitemap 请求本身就占 1.16 秒。
 
-**调度建议**（与设计定稿的 L0 分层一致）：
+**调度建议**（默认 30 分钟；完整表见 `../docs/RUNBOOK.md`）：
 
 ```
-*/10 * * * *   sitemap-scan --mode delta     # 10 分钟，1 请求 / 180 KB
-17 */4 * * *   sitemap-scan --mode full      # 4 小时，4 请求 / 620 KB，absence 基准
-23 5 * * *     sitemap-scan --mode threads   # 1 天，9 请求
+2,32 * * * *  incremental-scan --layer l0  # updated_at last 2 hours，1–3 请求
+7,37 * * * *  incremental-scan --layer l1  # 四字段全站投票，约 145 请求，禁止早停
+17 * * * *    sitemap-scan --mode full     # L2 absence/第二枚举源，1–5 请求
+37 3 * * 0    tier1-scan                   # L3 全字段，每周
 ```
+
+L0 两小时窗口覆盖 4 个 30 分钟周期；L1 的 `revisions` 与 L0 交叉核对并把持续覆盖率写
+`meta.revision_coverage_metric`。成功的非 dry-run L1 必须一轮一行；首次比较、L1 超过
+`1.75 × 调度周期` 的断档、或窗口端点缺少连续 L0 时写 `is_baseline_init=true`。该行保留
+审计证据，但不进入 rolling、不告警。sitemap 上浮不再用于推断投票。
 
 调度器负责重启，进程负责**如实退出**。所以本项目里没有任何 `while (true)`，
 也没有任何"失败了就 sleep 一下再试"的顶层循环——重试只存在于**单个 HTTP 请求**这一层，
@@ -194,6 +200,11 @@ reasons / priority(取大)`，**绝不覆盖** `attempts / not_before / stable_c
 locked_*`。理由不是洁癖：一个持续出现在 sitemap 里的坏 slug（例如私有页，永远解析不出
 pageId）如果每轮发现都把退避清零，就变成**每 10 分钟重试一次、永不退避**的死循环 ——
 v1 DirtyPage 整表 `deleteMany + createMany` 重建冲掉退避与收敛状态，就是这个病根。
+
+页级 `scan_task` 还有一个更严格的终态：确定性矛盾的同一 `result_hash` 连续出现 3 次后，
+任务写入 `meta.irreconcilable` 并从常规队列删除。发现侧必须跳过所有未解决终态，不能靠
+重复发现复活它。独立终态队列每 7 天复查：同哈希只续期，新哈希才关闭终态并以
+`stable_count=1` 回到 `scan_task`；临时复查失败也只在终态表内退避。
 
 消化侧（`cli/resolve-pages.ts`）的三条纪律：
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=syncer2 L2 full sitemap absence baseline hourly
+
+[Timer]
+# L1 按 1,045 秒实测通常在 :24/:54 前退出，L2 置于下一条链路前。
+OnCalendar=*-*-* *:27:00 Asia/Shanghai
+AccuracySec=1min
+Persistent=false
+Unit=syncer2-job@l2.service
+
+[Install]
+WantedBy=timers.target

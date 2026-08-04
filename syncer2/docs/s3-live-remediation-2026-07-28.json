@@ -1,0 +1,4083 @@
+{
+  "version": 1,
+  "generatedAt": "2026-07-28T06:04:19.536Z",
+  "mode": "dry-run-no-facts",
+  "queue": {
+    "requested": false,
+    "kind": "votes_full",
+    "candidates": 1681,
+    "affected": 0
+  },
+  "tier1": {
+    "status": "ok",
+    "pages": 36181,
+    "remoteTotal": 36181,
+    "observedAt": "2026-07-28T06:00:25.745Z"
+  },
+  "whoRated": {
+    "candidates": 1681,
+    "tier1Resolved": 1681,
+    "missingTier1": 0,
+    "requested": 1,
+    "resumed": 1680,
+    "accepted": 1226,
+    "partial": 455,
+    "missingResult": 0,
+    "http": {
+      "requests": 147,
+      "attempts": 147,
+      "wireBytes": 4120390,
+      "decodedBytes": 17836526,
+      "totalDurationMs": 399019.8710460002,
+      "statusBuckets": {
+        "200": 147
+      },
+      "retries": 0,
+      "consecutive503": 0,
+      "consecutiveResets": 0,
+      "breakerOpen": false,
+      "breakerReason": null
+    }
+  },
+  "originalGate": {
+    "matched": 32402,
+    "pages": 34083,
+    "rate": 0.9506792242466919
+  },
+  "remediatedGate": {
+    "matched": 33628,
+    "pages": 34083,
+    "mismatched": 455,
+    "rate": 0.986650236188129,
+    "pass": true
+  },
+  "freshTier1Audit": {
+    "matched": 33557,
+    "pages": 34073,
+    "mismatched": 516,
+    "rate": 0.9848560443753118
+  },
+  "partialAttribution": {
+    "wikidotDuplicateSameDirection": 436,
+    "wikidotDuplicateOppositeDirection": 19,
+    "unresolvedIdentity": 0,
+    "other": 0
+  },
+  "partialManifest": {
+    "path": "docs/s3-live-partials-2026-07-28.json",
+    "sha256": "1777193a92fa7d81f5ee24ba0ad970db5459e89c92ced006070cdc34f0a0d0c7"
+  },
+  "missingTier1": [],
+  "freshResidual": [
+    {
+      "pageId": 338,
+      "slug": "cliche-con-2019",
+      "effectiveRating": 3,
+      "claimedRating": 4,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 342,
+      "slug": "clinical-tone-declassified",
+      "effectiveRating": 35,
+      "claimedRating": 36,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 343,
+      "slug": "clinical-vs-complex",
+      "effectiveRating": 37,
+      "claimedRating": 38,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 379,
+      "slug": "cn40kdrweddell",
+      "effectiveRating": 31,
+      "claimedRating": 32,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 435,
+      "slug": "10th-noodle",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 542,
+      "slug": "2016summer-ggpincus",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 652,
+      "slug": "4-50-from-paddington",
+      "effectiveRating": 14,
+      "claimedRating": 15,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 769,
+      "slug": "aboutwenquancheng",
+      "effectiveRating": 24,
+      "claimedRating": 25,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 793,
+      "slug": "ac12txzn",
+      "effectiveRating": 53,
+      "claimedRating": 54,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 965,
+      "slug": "ai-qing-zi-bei-yu-cheng-nuo",
+      "effectiveRating": 22,
+      "claimedRating": 23,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 1035,
+      "slug": "allen3723-s-personnel-file",
+      "effectiveRating": 16,
+      "claimedRating": 17,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 1166,
+      "slug": "ambrose-youxia",
+      "effectiveRating": 103,
+      "claimedRating": 104,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 1286,
+      "slug": "anne-blyrn",
+      "effectiveRating": 49,
+      "claimedRating": 50,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 1291,
+      "slug": "an-normal-mission",
+      "effectiveRating": 65,
+      "claimedRating": 66,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 1460,
+      "slug": "ared-hub",
+      "effectiveRating": 93,
+      "claimedRating": 94,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 1793,
+      "slug": "a-site-19-christmas-carol",
+      "effectiveRating": 22,
+      "claimedRating": 23,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 1862,
+      "slug": "a-tale-of-the-black-king",
+      "effectiveRating": 77,
+      "claimedRating": 78,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2147,
+      "slug": "blackcat-s-proposal-2",
+      "effectiveRating": 26,
+      "claimedRating": 25,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 2336,
+      "slug": "busuzhike",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2370,
+      "slug": "calculateloneliness",
+      "effectiveRating": 14,
+      "claimedRating": 15,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2417,
+      "slug": "carl-ryzen",
+      "effectiveRating": 31,
+      "claimedRating": 33,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2490,
+      "slug": "chao",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2522,
+      "slug": "chat-guide",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 2551,
+      "slug": "children-study",
+      "effectiveRating": 68,
+      "claimedRating": 69,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2564,
+      "slug": "chinese-valentine-s-day",
+      "effectiveRating": 61,
+      "claimedRating": 62,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2593,
+      "slug": "chubbybunny",
+      "effectiveRating": 12,
+      "claimedRating": 13,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2599,
+      "slug": "chu-silk-manuscript",
+      "effectiveRating": 90,
+      "claimedRating": 91,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2637,
+      "slug": "classified-and-you",
+      "effectiveRating": 20,
+      "claimedRating": 21,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 2669,
+      "slug": "coloredbucket",
+      "effectiveRating": 47,
+      "claimedRating": 48,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2921,
+      "slug": "component:wechat",
+      "effectiveRating": 63,
+      "claimedRating": 106,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 2976,
+      "slug": "conservation-of-wtf",
+      "effectiveRating": 14,
+      "claimedRating": 15,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 3239,
+      "slug": "dark-side-hub",
+      "effectiveRating": 3,
+      "claimedRating": 4,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 3273,
+      "slug": "dcl-1",
+      "effectiveRating": 34,
+      "claimedRating": 35,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 3346,
+      "slug": "deep-six-event",
+      "effectiveRating": 62,
+      "claimedRating": 63,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 3403,
+      "slug": "deleted:scp-cn-1375",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 3413,
+      "slug": "deleted:scp-cn-1464",
+      "effectiveRating": 10,
+      "claimedRating": 7,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 3649,
+      "slug": "doomsday-tales",
+      "effectiveRating": 70,
+      "claimedRating": 72,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 3784,
+      "slug": "dr-kondraki-s-personnel-file",
+      "effectiveRating": 34,
+      "claimedRating": 35,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 3900,
+      "slug": "eat-if-necessary",
+      "effectiveRating": 44,
+      "claimedRating": 45,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 3996,
+      "slug": "endin",
+      "effectiveRating": 87,
+      "claimedRating": 88,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 4001,
+      "slug": "endless-journey",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 4023,
+      "slug": "endro-reversi",
+      "effectiveRating": 98,
+      "claimedRating": 99,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 4039,
+      "slug": "erhuanmimeng",
+      "effectiveRating": 24,
+      "claimedRating": 23,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 4121,
+      "slug": "ex-aid",
+      "effectiveRating": 48,
+      "claimedRating": 47,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 4134,
+      "slug": "exclusion-principle-iii",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 6920,
+      "slug": "g-d-0191",
+      "effectiveRating": 66,
+      "claimedRating": 67,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7119,
+      "slug": "gongkuanlvxing",
+      "effectiveRating": 21,
+      "claimedRating": 20,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7157,
+      "slug": "gp-phy-2877341",
+      "effectiveRating": 36,
+      "claimedRating": 37,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7193,
+      "slug": "grass-writer",
+      "effectiveRating": 45,
+      "claimedRating": 46,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7244,
+      "slug": "gsk-killready",
+      "effectiveRating": 41,
+      "claimedRating": 42,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7366,
+      "slug": "hard-to-name-0719",
+      "effectiveRating": 44,
+      "claimedRating": 45,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7414,
+      "slug": "harrylinrui",
+      "effectiveRating": 78,
+      "claimedRating": 79,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 7439,
+      "slug": "health-friend",
+      "effectiveRating": 43,
+      "claimedRating": 44,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 7472,
+      "slug": "helloworld",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7502,
+      "slug": "hero-no-jihyou",
+      "effectiveRating": 4,
+      "claimedRating": 5,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7668,
+      "slug": "howtosaveyourself",
+      "effectiveRating": 20,
+      "claimedRating": 21,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7758,
+      "slug": "i-am-shoca-vegetable-bird",
+      "effectiveRating": 64,
+      "claimedRating": 65,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7775,
+      "slug": "iceberg-personnel-file",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 7776,
+      "slug": "iceberg-puts-135-on-ice",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 7806,
+      "slug": "iferys-thirty-years-war",
+      "effectiveRating": 49,
+      "claimedRating": 50,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7973,
+      "slug": "innerwish",
+      "effectiveRating": 21,
+      "claimedRating": 20,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 7995,
+      "slug": "in-symphony",
+      "effectiveRating": 12,
+      "claimedRating": 13,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8191,
+      "slug": "i-wanna-track",
+      "effectiveRating": 31,
+      "claimedRating": 32,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8274,
+      "slug": "jixing",
+      "effectiveRating": 36,
+      "claimedRating": 37,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8378,
+      "slug": "karldark-s-personnel-file",
+      "effectiveRating": 20,
+      "claimedRating": 21,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8388,
+      "slug": "k-class-list-cn",
+      "effectiveRating": 113,
+      "claimedRating": 114,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8429,
+      "slug": "kindom-coming",
+      "effectiveRating": 53,
+      "claimedRating": 54,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8526,
+      "slug": "l",
+      "effectiveRating": 15,
+      "claimedRating": 16,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8602,
+      "slug": "leaves-return-to-roots",
+      "effectiveRating": 24,
+      "claimedRating": 25,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8681,
+      "slug": "level-c-1976",
+      "effectiveRating": 62,
+      "claimedRating": 63,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8686,
+      "slug": "l-homme-et-son-esclave",
+      "effectiveRating": 4,
+      "claimedRating": 5,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8712,
+      "slug": "life-s-cold",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 8756,
+      "slug": "list-of-missing-books",
+      "effectiveRating": 75,
+      "claimedRating": 76,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8761,
+      "slug": "listpages-magic-and-you",
+      "effectiveRating": 66,
+      "claimedRating": 67,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8846,
+      "slug": "log-of-anomalous-items-cn:00028",
+      "effectiveRating": 19,
+      "claimedRating": 20,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8852,
+      "slug": "log-of-anomalous-items-cn:00044",
+      "effectiveRating": 66,
+      "claimedRating": 67,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8956,
+      "slug": "log-of-anomalous-items-cn:00255",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 8979,
+      "slug": "log-of-anomalous-items-cn:00308",
+      "effectiveRating": 48,
+      "claimedRating": 49,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9006,
+      "slug": "log-of-anomalous-items-cn:00360",
+      "effectiveRating": 82,
+      "claimedRating": 83,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9063,
+      "slug": "log-of-anomalous-items-cn:00452",
+      "effectiveRating": 65,
+      "claimedRating": 66,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9106,
+      "slug": "log-of-anomalous-items-cn:00544",
+      "effectiveRating": 54,
+      "claimedRating": 52,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9124,
+      "slug": "log-of-anomalous-items-cn:00570",
+      "effectiveRating": 30,
+      "claimedRating": 29,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9151,
+      "slug": "log-of-anomalous-items-cn:00611",
+      "effectiveRating": 9,
+      "claimedRating": 10,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9194,
+      "slug": "log-of-anomalous-items-cn:00678",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9232,
+      "slug": "log-of-anomalous-items-cn:00723",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9470,
+      "slug": "log-of-anomalous-items-cn:01052",
+      "effectiveRating": 7,
+      "claimedRating": 8,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 9483,
+      "slug": "log-of-anomalous-items-cn:01066",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 9500,
+      "slug": "log-of-anomalous-items-cn:01087",
+      "effectiveRating": 2,
+      "claimedRating": 3,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9515,
+      "slug": "log-of-anomalous-items-cn:01108",
+      "effectiveRating": 28,
+      "claimedRating": 29,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9530,
+      "slug": "log-of-anomalous-items-cn:01127",
+      "effectiveRating": 4,
+      "claimedRating": 5,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9677,
+      "slug": "log-of-anomalous-items-cn:01334",
+      "effectiveRating": 3,
+      "claimedRating": 4,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9797,
+      "slug": "log-of-anomalous-items-cn:01501",
+      "effectiveRating": 16,
+      "claimedRating": 17,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 9974,
+      "slug": "longest-day-of-abel-adamovich",
+      "effectiveRating": 24,
+      "claimedRating": 25,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 10124,
+      "slug": "m13-diapason",
+      "effectiveRating": 12,
+      "claimedRating": 13,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10172,
+      "slug": "malocs",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10254,
+      "slug": "mcde-bio-h-v-t5512348",
+      "effectiveRating": 32,
+      "claimedRating": 33,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10402,
+      "slug": "miracle-sing-time",
+      "effectiveRating": 80,
+      "claimedRating": 81,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10470,
+      "slug": "montauk-hesitation",
+      "effectiveRating": 60,
+      "claimedRating": 61,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10538,
+      "slug": "mr-mario",
+      "effectiveRating": 43,
+      "claimedRating": 44,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10573,
+      "slug": "murder-in-site-cn-91",
+      "effectiveRating": 31,
+      "claimedRating": 32,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10872,
+      "slug": "no-gugu",
+      "effectiveRating": 41,
+      "claimedRating": 42,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 10896,
+      "slug": "noology",
+      "effectiveRating": 34,
+      "claimedRating": 35,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 11053,
+      "slug": "of-dragons-and-serpents",
+      "effectiveRating": 38,
+      "claimedRating": 39,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 11056,
+      "slug": "off-the-record",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 11133,
+      "slug": "old:continued-deliberations",
+      "effectiveRating": 1,
+      "claimedRating": 2,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 11168,
+      "slug": "old:goc-are-gunfuckers",
+      "effectiveRating": 28,
+      "claimedRating": 29,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 11668,
+      "slug": "one-hundred-pumpkins-of-solitude",
+      "effectiveRating": 85,
+      "claimedRating": 86,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 11690,
+      "slug": "only-milk",
+      "effectiveRating": 44,
+      "claimedRating": 45,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 11942,
+      "slug": "payday",
+      "effectiveRating": 14,
+      "claimedRating": 15,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 11944,
+      "slug": "pcs-administration",
+      "effectiveRating": 88,
+      "claimedRating": 89,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 12007,
+      "slug": "pez1",
+      "effectiveRating": 51,
+      "claimedRating": 52,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12083,
+      "slug": "playing-god",
+      "effectiveRating": 19,
+      "claimedRating": 20,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12257,
+      "slug": "project-proposal-2025-003",
+      "effectiveRating": 37,
+      "claimedRating": 39,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12331,
+      "slug": "puppy",
+      "effectiveRating": 44,
+      "claimedRating": 45,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12442,
+      "slug": "ratemod:sentimentbar-credit:start",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12557,
+      "slug": "remember-the-pain",
+      "effectiveRating": 51,
+      "claimedRating": 52,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12717,
+      "slug": "rounderhouse-gold-proposal",
+      "effectiveRating": 40,
+      "claimedRating": 41,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12788,
+      "slug": "sanshi",
+      "effectiveRating": 22,
+      "claimedRating": 21,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12818,
+      "slug": "sbdcl",
+      "effectiveRating": 85,
+      "claimedRating": 86,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 12888,
+      "slug": "scp-001-j",
+      "effectiveRating": 61,
+      "claimedRating": 62,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12927,
+      "slug": "scp-004",
+      "effectiveRating": 82,
+      "claimedRating": 83,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 12993,
+      "slug": "scp-012",
+      "effectiveRating": 83,
+      "claimedRating": 84,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 13256,
+      "slug": "theme:monotypical",
+      "effectiveRating": 44,
+      "claimedRating": 50,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 13274,
+      "slug": "scp-076-2",
+      "effectiveRating": 69,
+      "claimedRating": 70,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 13453,
+      "slug": "scp-1033",
+      "effectiveRating": 22,
+      "claimedRating": 23,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 13771,
+      "slug": "scp-122",
+      "effectiveRating": 39,
+      "claimedRating": 40,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 13792,
+      "slug": "scp-1233",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 14921,
+      "slug": "scp-194",
+      "effectiveRating": 13,
+      "claimedRating": 14,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 14947,
+      "slug": "scp-1958",
+      "effectiveRating": 9,
+      "claimedRating": 10,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 15151,
+      "slug": "scp-208",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 15719,
+      "slug": "scp-250",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 16053,
+      "slug": "scp-2756",
+      "effectiveRating": 3,
+      "claimedRating": 2,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 16408,
+      "slug": "scp-3035",
+      "effectiveRating": 72,
+      "claimedRating": 74,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 16409,
+      "slug": "scp-3035-exploration-log",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 16546,
+      "slug": "scp-3140",
+      "effectiveRating": 9,
+      "claimedRating": 10,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 16643,
+      "slug": "scp-3220",
+      "effectiveRating": 22,
+      "claimedRating": 23,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 17184,
+      "slug": "scp-3790",
+      "effectiveRating": 65,
+      "claimedRating": 66,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 17406,
+      "slug": "scp-4004",
+      "effectiveRating": 21,
+      "claimedRating": 22,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 18087,
+      "slug": "scp-4710",
+      "effectiveRating": 15,
+      "claimedRating": 14,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 18984,
+      "slug": "scp-570",
+      "effectiveRating": 18,
+      "claimedRating": 19,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 19034,
+      "slug": "scp-577",
+      "effectiveRating": 13,
+      "claimedRating": 14,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 19079,
+      "slug": "scp-5815",
+      "effectiveRating": 4,
+      "claimedRating": 5,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 19117,
+      "slug": "scp-5865",
+      "effectiveRating": 11,
+      "claimedRating": 12,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 19714,
+      "slug": "scp-cn-3150",
+      "effectiveRating": 6,
+      "claimedRating": 7,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 20030,
+      "slug": "scp-705",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 20040,
+      "slug": "scp-7061",
+      "effectiveRating": 6,
+      "claimedRating": 5,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 20609,
+      "slug": "scp-8000-ex",
+      "effectiveRating": 12,
+      "claimedRating": 13,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 20620,
+      "slug": "scp-8008",
+      "effectiveRating": -13,
+      "claimedRating": -14,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 20895,
+      "slug": "scp-cn-3741",
+      "effectiveRating": 37,
+      "claimedRating": 38,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21309,
+      "slug": "scp-cc-by-sa-3-0-co",
+      "effectiveRating": 20,
+      "claimedRating": 21,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21346,
+      "slug": "scp-cn-012",
+      "effectiveRating": 95,
+      "claimedRating": 96,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21416,
+      "slug": "scp-cn-062",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21505,
+      "slug": "scp-cn-1031",
+      "effectiveRating": 42,
+      "claimedRating": 43,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21538,
+      "slug": "scp-cn-1052",
+      "effectiveRating": 34,
+      "claimedRating": 35,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21616,
+      "slug": "scp-cn-1115",
+      "effectiveRating": 43,
+      "claimedRating": 41,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21687,
+      "slug": "scp-cn-1172",
+      "effectiveRating": 31,
+      "claimedRating": 32,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21794,
+      "slug": "scp-cn-1251",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21846,
+      "slug": "scp-cn-1296",
+      "effectiveRating": 59,
+      "claimedRating": 60,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21847,
+      "slug": "scp-cn-129600-ex",
+      "effectiveRating": 18,
+      "claimedRating": 19,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21848,
+      "slug": "scp-cn-1297",
+      "effectiveRating": 38,
+      "claimedRating": 39,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21871,
+      "slug": "scp-cn-1318",
+      "effectiveRating": 46,
+      "claimedRating": 47,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21902,
+      "slug": "scp-cn-1344",
+      "effectiveRating": 77,
+      "claimedRating": 78,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 21931,
+      "slug": "scp-cn-1369",
+      "effectiveRating": 50,
+      "claimedRating": 49,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22013,
+      "slug": "scp-cn-1441",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22239,
+      "slug": "scp-cn-164",
+      "effectiveRating": 27,
+      "claimedRating": 26,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22274,
+      "slug": "scp-cn-167",
+      "effectiveRating": 70,
+      "claimedRating": 71,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22296,
+      "slug": "scp-cn-1688",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22312,
+      "slug": "scp-cn-1702",
+      "effectiveRating": 50,
+      "claimedRating": 51,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22315,
+      "slug": "scp-cn-1705",
+      "effectiveRating": 45,
+      "claimedRating": 46,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22544,
+      "slug": "scp-cn-1906",
+      "effectiveRating": 83,
+      "claimedRating": 84,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22635,
+      "slug": "scp-cn-1984",
+      "effectiveRating": 55,
+      "claimedRating": 56,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22708,
+      "slug": "scp-cn-2043",
+      "effectiveRating": 55,
+      "claimedRating": 56,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22720,
+      "slug": "scp-cn-2055",
+      "effectiveRating": 44,
+      "claimedRating": 45,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22725,
+      "slug": "scp-cn-206",
+      "effectiveRating": 96,
+      "claimedRating": 97,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22913,
+      "slug": "scp-cn-2255",
+      "effectiveRating": 94,
+      "claimedRating": 95,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 22915,
+      "slug": "scp-cn-2229",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23015,
+      "slug": "scp-cn-2322",
+      "effectiveRating": 57,
+      "claimedRating": 58,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23037,
+      "slug": "scp-cn-2343",
+      "effectiveRating": 48,
+      "claimedRating": 49,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23070,
+      "slug": "scp-cn-2374",
+      "effectiveRating": 87,
+      "claimedRating": 90,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23097,
+      "slug": "scp-cn-2398",
+      "effectiveRating": 23,
+      "claimedRating": 24,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23104,
+      "slug": "scp-cn-2404",
+      "effectiveRating": 30,
+      "claimedRating": 31,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23114,
+      "slug": "scp-cn-2413",
+      "effectiveRating": 22,
+      "claimedRating": 19,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23298,
+      "slug": "scp-cn-258",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23319,
+      "slug": "scp-cn-2599",
+      "effectiveRating": 78,
+      "claimedRating": 79,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23429,
+      "slug": "scp-cn-2701",
+      "effectiveRating": 42,
+      "claimedRating": 43,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23480,
+      "slug": "scp-cn-2749",
+      "effectiveRating": 43,
+      "claimedRating": 44,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23513,
+      "slug": "scp-cn-2779",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23627,
+      "slug": "scp-cn-2880",
+      "effectiveRating": 100,
+      "claimedRating": 101,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23672,
+      "slug": "scp-cn-2921",
+      "effectiveRating": 91,
+      "claimedRating": 92,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23750,
+      "slug": "scp-cn-2991",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 23889,
+      "slug": "scp-cn-3105",
+      "effectiveRating": 23,
+      "claimedRating": 24,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24165,
+      "slug": "scp-cn-3379",
+      "effectiveRating": 36,
+      "claimedRating": 37,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24394,
+      "slug": "scp-cn-364",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24419,
+      "slug": "scp-cn-3666",
+      "effectiveRating": 30,
+      "claimedRating": 31,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24448,
+      "slug": "scp-cn-3702",
+      "effectiveRating": 42,
+      "claimedRating": 43,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24489,
+      "slug": "scp-cn-3746",
+      "effectiveRating": 93,
+      "claimedRating": 94,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24495,
+      "slug": "scp-cn-3753",
+      "effectiveRating": 21,
+      "claimedRating": 22,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24568,
+      "slug": "scp-cn-3835",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24591,
+      "slug": "scp-cn-3868",
+      "effectiveRating": 78,
+      "claimedRating": 79,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24599,
+      "slug": "scp-cn-3876",
+      "effectiveRating": 104,
+      "claimedRating": 105,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24626,
+      "slug": "scp-cn-3903",
+      "effectiveRating": 62,
+      "claimedRating": 63,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24840,
+      "slug": "scp-cn-498",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24903,
+      "slug": "scp-cn-549",
+      "effectiveRating": 32,
+      "claimedRating": 33,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 24952,
+      "slug": "scp-cn-589",
+      "effectiveRating": 45,
+      "claimedRating": 46,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25069,
+      "slug": "scp-cn-689",
+      "effectiveRating": 79,
+      "claimedRating": 80,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25086,
+      "slug": "scp-cn-703-j",
+      "effectiveRating": 35,
+      "claimedRating": 36,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25174,
+      "slug": "scp-cn-774",
+      "effectiveRating": 49,
+      "claimedRating": 50,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25337,
+      "slug": "scp-cn-919",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25362,
+      "slug": "scp-cn-942",
+      "effectiveRating": 31,
+      "claimedRating": 28,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25384,
+      "slug": "scp-cn-959",
+      "effectiveRating": 45,
+      "claimedRating": 46,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25440,
+      "slug": "scp-cn-x143-0",
+      "effectiveRating": 81,
+      "claimedRating": 84,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25982,
+      "slug": "semimonth-202403-02",
+      "effectiveRating": 46,
+      "claimedRating": 47,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 25983,
+      "slug": "seven-steps-from-the-sun",
+      "effectiveRating": 70,
+      "claimedRating": 71,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26048,
+      "slug": "sex-hamburger",
+      "effectiveRating": 52,
+      "claimedRating": 51,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26129,
+      "slug": "shi-shui-de-feng-sha",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26160,
+      "slug": "short-stories:00013",
+      "effectiveRating": 84,
+      "claimedRating": 85,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26535,
+      "slug": "singularity",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26556,
+      "slug": "site-514",
+      "effectiveRating": 88,
+      "claimedRating": 89,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26727,
+      "slug": "somewhere-i-have-never-traveled",
+      "effectiveRating": 47,
+      "claimedRating": 48,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26817,
+      "slug": "spc-cn-665",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 26967,
+      "slug": "stream-980",
+      "effectiveRating": 19,
+      "claimedRating": 20,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27013,
+      "slug": "summer-contest-2021",
+      "effectiveRating": 53,
+      "claimedRating": 54,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27014,
+      "slug": "summer-contest-2022",
+      "effectiveRating": 59,
+      "claimedRating": 60,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27053,
+      "slug": "super-hot",
+      "effectiveRating": 12,
+      "claimedRating": 13,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27136,
+      "slug": "tachibana-yuuki-s-personnel-file",
+      "effectiveRating": 40,
+      "claimedRating": 39,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27167,
+      "slug": "tales-from-parawatch-welcome-to-the-internet",
+      "effectiveRating": 19,
+      "claimedRating": 20,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 27223,
+      "slug": "technical-words",
+      "effectiveRating": 37,
+      "claimedRating": 38,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 27231,
+      "slug": "tell-you-tales",
+      "effectiveRating": 75,
+      "claimedRating": 76,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27280,
+      "slug": "that-is-too-easy",
+      "effectiveRating": 17,
+      "claimedRating": 16,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27370,
+      "slug": "the-book-of-gnosis-repairers-vol-of-psalms-part-1",
+      "effectiveRating": 48,
+      "claimedRating": 49,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27408,
+      "slug": "the-coldest-war-hub",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27589,
+      "slug": "the-iron-wolf",
+      "effectiveRating": 11,
+      "claimedRating": 12,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27728,
+      "slug": "theme:aero-glass",
+      "effectiveRating": 88,
+      "claimedRating": 89,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27751,
+      "slug": "theme:blankstyle",
+      "effectiveRating": 10,
+      "claimedRating": 13,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27756,
+      "slug": "theme:calamity",
+      "effectiveRating": 7,
+      "claimedRating": 8,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27908,
+      "slug": "theme:paradigm-inapplicable-sigma",
+      "effectiveRating": 36,
+      "claimedRating": 37,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 27982,
+      "slug": "theme:steam-guide",
+      "effectiveRating": 36,
+      "claimedRating": 99,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28075,
+      "slug": "the-old-gospel-of-fuxi-that-wuyou",
+      "effectiveRating": 76,
+      "claimedRating": 77,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28143,
+      "slug": "the-real-adventures-in-capitalism",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28199,
+      "slug": "the-sea-of-necromancy-i",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28240,
+      "slug": "the-song-of-alagadda",
+      "effectiveRating": 29,
+      "claimedRating": 30,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28377,
+      "slug": "the-young-man",
+      "effectiveRating": 62,
+      "claimedRating": 63,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28539,
+      "slug": "to-new-world",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28670,
+      "slug": "turbulence-1",
+      "effectiveRating": 51,
+      "claimedRating": 52,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28671,
+      "slug": "turbulence-10",
+      "effectiveRating": 30,
+      "claimedRating": 31,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28674,
+      "slug": "turbulence-2",
+      "effectiveRating": 38,
+      "claimedRating": 39,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28821,
+      "slug": "unusual-incidents-unit-hub",
+      "effectiveRating": 18,
+      "claimedRating": 19,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 28933,
+      "slug": "vodkawells",
+      "effectiveRating": 42,
+      "claimedRating": 43,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29150,
+      "slug": "wanderers:anchoring",
+      "effectiveRating": 15,
+      "claimedRating": 16,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29151,
+      "slug": "wanderers:ancient-wooden-case",
+      "effectiveRating": 10,
+      "claimedRating": 11,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29171,
+      "slug": "wanderers:ao-sora",
+      "effectiveRating": 78,
+      "claimedRating": 79,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29183,
+      "slug": "wanderers:a-rising-wave",
+      "effectiveRating": 3,
+      "claimedRating": 4,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29268,
+      "slug": "wanderers:buhuixiewen",
+      "effectiveRating": 32,
+      "claimedRating": 31,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29288,
+      "slug": "wanderers:catch-wind",
+      "effectiveRating": 31,
+      "claimedRating": 32,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29429,
+      "slug": "wanderers:dying-world",
+      "effectiveRating": 60,
+      "claimedRating": 62,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29487,
+      "slug": "wanderers:fall-into-the-abyss",
+      "effectiveRating": 50,
+      "claimedRating": 51,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29547,
+      "slug": "wanderers:from-mariana-philharmonic-orchestra",
+      "effectiveRating": 21,
+      "claimedRating": 22,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29617,
+      "slug": "wanderers:hashiqi",
+      "effectiveRating": 33,
+      "claimedRating": 34,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29663,
+      "slug": "wanderers:human-eater",
+      "effectiveRating": 112,
+      "claimedRating": 113,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29811,
+      "slug": "wanderers-library-hub",
+      "effectiveRating": 28,
+      "claimedRating": 29,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 29853,
+      "slug": "wanderers:mademoiselle-hondermare",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29927,
+      "slug": "wanderers:museum-and-the-stars",
+      "effectiveRating": 73,
+      "claimedRating": 74,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 29945,
+      "slug": "wanderers:neeee",
+      "effectiveRating": 26,
+      "claimedRating": 27,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30101,
+      "slug": "wanderers:rainway",
+      "effectiveRating": 24,
+      "claimedRating": 25,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30120,
+      "slug": "wanderers:repairment-of-east-ew-qi-420",
+      "effectiveRating": 58,
+      "claimedRating": 59,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30133,
+      "slug": "wanderers:ritsu-yuu",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30287,
+      "slug": "wanderers:swamp",
+      "effectiveRating": 21,
+      "claimedRating": 22,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30331,
+      "slug": "wanderers:the-christmas-elegy",
+      "effectiveRating": 65,
+      "claimedRating": 66,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30477,
+      "slug": "wanderers:the-song8",
+      "effectiveRating": 30,
+      "claimedRating": 31,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30513,
+      "slug": "wanderers:the-wandering-wanderer",
+      "effectiveRating": 21,
+      "claimedRating": 22,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30556,
+      "slug": "wanderers:travellers-book-end-of-the-world",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30624,
+      "slug": "wanderers:watch-stars-with-lives",
+      "effectiveRating": 27,
+      "claimedRating": 28,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30689,
+      "slug": "wanderers:wrrrrr",
+      "effectiveRating": 15,
+      "claimedRating": 12,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30692,
+      "slug": "wanderers:wuti",
+      "effectiveRating": 20,
+      "claimedRating": 21,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 30710,
+      "slug": "wanderers:yasuharasuzu-no-tameni",
+      "effectiveRating": 67,
+      "claimedRating": 68,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31030,
+      "slug": "wimsb",
+      "effectiveRating": 18,
+      "claimedRating": 19,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31179,
+      "slug": "xhh",
+      "effectiveRating": 7,
+      "claimedRating": 8,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31298,
+      "slug": "yixue563",
+      "effectiveRating": 32,
+      "claimedRating": 34,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31332,
+      "slug": "you-and-she",
+      "effectiveRating": 81,
+      "claimedRating": 82,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31360,
+      "slug": "your-circuits-dead-theres-something-wrong",
+      "effectiveRating": 50,
+      "claimedRating": 51,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31450,
+      "slug": "zhengzhi",
+      "effectiveRating": 41,
+      "claimedRating": 42,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31539,
+      "slug": "a-report-on-evertworth",
+      "effectiveRating": 79,
+      "claimedRating": 78,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31563,
+      "slug": "blackcat-s-proposal",
+      "effectiveRating": 88,
+      "claimedRating": 87,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 31565,
+      "slug": "black-hole-era",
+      "effectiveRating": 245,
+      "claimedRating": 246,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31574,
+      "slug": "breach",
+      "effectiveRating": 546,
+      "claimedRating": 548,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31599,
+      "slug": "china-history-of-daevite",
+      "effectiveRating": 129,
+      "claimedRating": 130,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31639,
+      "slug": "darkequation-s-proposal",
+      "effectiveRating": 841,
+      "claimedRating": 842,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31643,
+      "slug": "deduction-department2",
+      "effectiveRating": 184,
+      "claimedRating": 186,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31647,
+      "slug": "deny-deny-deny",
+      "effectiveRating": 441,
+      "claimedRating": 443,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31663,
+      "slug": "don-quijote",
+      "effectiveRating": 665,
+      "claimedRating": 666,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31665,
+      "slug": "doom",
+      "effectiveRating": 383,
+      "claimedRating": 384,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31674,
+      "slug": "dr-hormress",
+      "effectiveRating": -379,
+      "claimedRating": -385,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31688,
+      "slug": "embracechaos",
+      "effectiveRating": 96,
+      "claimedRating": 95,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31693,
+      "slug": "end-of-light",
+      "effectiveRating": 204,
+      "claimedRating": 205,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31708,
+      "slug": "extinction-and-revival-of-the-magic",
+      "effectiveRating": 139,
+      "claimedRating": 140,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31713,
+      "slug": "falling-into-stars",
+      "effectiveRating": 768,
+      "claimedRating": 769,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31724,
+      "slug": "fishbonefishbone",
+      "effectiveRating": 146,
+      "claimedRating": 143,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31734,
+      "slug": "foundation-political-jokes",
+      "effectiveRating": 1061,
+      "claimedRating": 1062,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31735,
+      "slug": "foundation-political-jokes-2",
+      "effectiveRating": 528,
+      "claimedRating": 529,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31746,
+      "slug": "fragment:the-dragon-lord",
+      "effectiveRating": 66,
+      "claimedRating": 74,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31748,
+      "slug": "freedomkoo-s-proposal",
+      "effectiveRating": 436,
+      "claimedRating": 438,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31749,
+      "slug": "free-wifi",
+      "effectiveRating": 409,
+      "claimedRating": 410,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31764,
+      "slug": "gallery-writing",
+      "effectiveRating": 53,
+      "claimedRating": 54,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31767,
+      "slug": "gao-kao-zuo-wen-pao-ti",
+      "effectiveRating": 133,
+      "claimedRating": 134,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31770,
+      "slug": "gec-hub-page",
+      "effectiveRating": 468,
+      "claimedRating": 469,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31774,
+      "slug": "ghost-in-the-scarlet-sheep",
+      "effectiveRating": 131,
+      "claimedRating": 132,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31777,
+      "slug": "goc-hub-page",
+      "effectiveRating": 74,
+      "claimedRating": 75,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31778,
+      "slug": "goc-supplemental-equipment",
+      "effectiveRating": 30,
+      "claimedRating": 31,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31783,
+      "slug": "gods-beyond-absolute-infinity",
+      "effectiveRating": 352,
+      "claimedRating": 353,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 31805,
+      "slug": "guide-hub",
+      "effectiveRating": 82,
+      "claimedRating": 83,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 31815,
+      "slug": "happynewyearoftherabbit",
+      "effectiveRating": 136,
+      "claimedRating": 137,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31831,
+      "slug": "helpme",
+      "effectiveRating": 142,
+      "claimedRating": 144,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31840,
+      "slug": "how-not-to-screw-yourself-in-the-scp-foundation",
+      "effectiveRating": 163,
+      "claimedRating": 164,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31865,
+      "slug": "immortal",
+      "effectiveRating": 671,
+      "claimedRating": 672,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31870,
+      "slug": "insect",
+      "effectiveRating": 293,
+      "claimedRating": 292,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31881,
+      "slug": "jack-bright-resting-at-last",
+      "effectiveRating": 919,
+      "claimedRating": 920,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31906,
+      "slug": "k-e",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31911,
+      "slug": "kill-that-foundation-man",
+      "effectiveRating": 682,
+      "claimedRating": 683,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31917,
+      "slug": "knockin-on-the-gate-guardian-s-door",
+      "effectiveRating": 195,
+      "claimedRating": 196,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31928,
+      "slug": "last-order",
+      "effectiveRating": 826,
+      "claimedRating": 827,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31933,
+      "slug": "level-c-104",
+      "effectiveRating": 128,
+      "claimedRating": 129,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31949,
+      "slug": "log-of-anomalous-items-cn:00098",
+      "effectiveRating": 326,
+      "claimedRating": 328,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31957,
+      "slug": "log-of-anomalous-items-cn:00226",
+      "effectiveRating": 135,
+      "claimedRating": 137,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31962,
+      "slug": "log-of-anomalous-items-cn:00533",
+      "effectiveRating": 229,
+      "claimedRating": 230,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31963,
+      "slug": "log-of-anomalous-items-cn:00536",
+      "effectiveRating": 94,
+      "claimedRating": 95,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31965,
+      "slug": "mcf-goc-self-rescue-guide",
+      "effectiveRating": 385,
+      "claimedRating": 386,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31967,
+      "slug": "members-pages-cn",
+      "effectiveRating": 49,
+      "claimedRating": 50,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31978,
+      "slug": "loyal-forever",
+      "effectiveRating": 341,
+      "claimedRating": 342,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31985,
+      "slug": "main",
+      "effectiveRating": 3170,
+      "claimedRating": 3174,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 31989,
+      "slug": "maybe-artwork-im-not-sure",
+      "effectiveRating": 160,
+      "claimedRating": 161,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32012,
+      "slug": "moyo-s-personnel-file",
+      "effectiveRating": -211,
+      "claimedRating": -214,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32043,
+      "slug": "ninth-s-proposal",
+      "effectiveRating": 224,
+      "claimedRating": 225,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32047,
+      "slug": "no-answer",
+      "effectiveRating": 47,
+      "claimedRating": 48,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32053,
+      "slug": "no-offset",
+      "effectiveRating": 1222,
+      "claimedRating": 1223,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32087,
+      "slug": "panghuang",
+      "effectiveRating": 402,
+      "claimedRating": 404,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32091,
+      "slug": "past-whisper",
+      "effectiveRating": 143,
+      "claimedRating": 144,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32106,
+      "slug": "play-class-d",
+      "effectiveRating": 724,
+      "claimedRating": 727,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32126,
+      "slug": "rating-against-traditions",
+      "effectiveRating": 479,
+      "claimedRating": 480,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32128,
+      "slug": "reality-cat-5h8m5-312df-13src",
+      "effectiveRating": 391,
+      "claimedRating": 392,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32129,
+      "slug": "reality-kondraki",
+      "effectiveRating": 106,
+      "claimedRating": 107,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32140,
+      "slug": "rhodes-island-operators-database",
+      "effectiveRating": 232,
+      "claimedRating": 233,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32147,
+      "slug": "runrunrun",
+      "effectiveRating": 459,
+      "claimedRating": 460,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32164,
+      "slug": "scp-002",
+      "effectiveRating": 191,
+      "claimedRating": 192,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32185,
+      "slug": "scp-173",
+      "effectiveRating": 2652,
+      "claimedRating": 2655,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32186,
+      "slug": "scp-1730",
+      "effectiveRating": 586,
+      "claimedRating": 587,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32188,
+      "slug": "scp-173-but-it-s-a-collaborative-log-cn",
+      "effectiveRating": 172,
+      "claimedRating": 173,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32189,
+      "slug": "scp-1762",
+      "effectiveRating": 301,
+      "claimedRating": 302,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32199,
+      "slug": "scp-2662",
+      "effectiveRating": 175,
+      "claimedRating": 176,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32203,
+      "slug": "scp-294",
+      "effectiveRating": 147,
+      "claimedRating": 148,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32216,
+      "slug": "scp-326",
+      "effectiveRating": -212,
+      "claimedRating": -213,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32224,
+      "slug": "scp-3999",
+      "effectiveRating": 1963,
+      "claimedRating": 1964,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32228,
+      "slug": "scp-4098",
+      "effectiveRating": 233,
+      "claimedRating": 234,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32230,
+      "slug": "scp-4205",
+      "effectiveRating": 206,
+      "claimedRating": 207,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32236,
+      "slug": "scp-5000",
+      "effectiveRating": 1001,
+      "claimedRating": 1003,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32242,
+      "slug": "scp-5140",
+      "effectiveRating": 180,
+      "claimedRating": 181,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32252,
+      "slug": "scp-682",
+      "effectiveRating": 377,
+      "claimedRating": 379,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32264,
+      "slug": "scp-914",
+      "effectiveRating": 246,
+      "claimedRating": 247,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32269,
+      "slug": "scp-cn-001-ex",
+      "effectiveRating": 294,
+      "claimedRating": 295,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32271,
+      "slug": "scp-cn-001-j-7s",
+      "effectiveRating": 175,
+      "claimedRating": 176,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32273,
+      "slug": "scp-cn-002-j",
+      "effectiveRating": 294,
+      "claimedRating": 295,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32275,
+      "slug": "scp-cn-003-j",
+      "effectiveRating": 147,
+      "claimedRating": 148,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32283,
+      "slug": "scp-cn-007",
+      "effectiveRating": 150,
+      "claimedRating": 151,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32301,
+      "slug": "scp-cn-033",
+      "effectiveRating": 925,
+      "claimedRating": 926,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32307,
+      "slug": "scp-cn-048",
+      "effectiveRating": 1095,
+      "claimedRating": 1096,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32314,
+      "slug": "scp-cn-059",
+      "effectiveRating": 737,
+      "claimedRating": 739,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32317,
+      "slug": "scp-cn-066",
+      "effectiveRating": 1664,
+      "claimedRating": 1668,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32332,
+      "slug": "scp-cn-1000",
+      "effectiveRating": 2657,
+      "claimedRating": 2658,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32335,
+      "slug": "scp-cn-1001",
+      "effectiveRating": 880,
+      "claimedRating": 882,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32354,
+      "slug": "scp-cn-1050",
+      "effectiveRating": 208,
+      "claimedRating": 209,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32368,
+      "slug": "scp-cn-1109",
+      "effectiveRating": 3513,
+      "claimedRating": 3516,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32370,
+      "slug": "scp-cn-1111",
+      "effectiveRating": 758,
+      "claimedRating": 759,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32392,
+      "slug": "scp-cn-1218",
+      "effectiveRating": 60,
+      "claimedRating": 61,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32402,
+      "slug": "scp-cn-1265",
+      "effectiveRating": 78,
+      "claimedRating": 79,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32408,
+      "slug": "scp-cn-1353",
+      "effectiveRating": 546,
+      "claimedRating": 547,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32418,
+      "slug": "scp-cn-1466",
+      "effectiveRating": 527,
+      "claimedRating": 528,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32425,
+      "slug": "scp-cn-152-ex",
+      "effectiveRating": 165,
+      "claimedRating": 166,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32426,
+      "slug": "scp-cn-1548",
+      "effectiveRating": 91,
+      "claimedRating": 92,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32427,
+      "slug": "scp-cn-1559",
+      "effectiveRating": 2056,
+      "claimedRating": 2057,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32441,
+      "slug": "scp-cn-1700",
+      "effectiveRating": 111,
+      "claimedRating": 112,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32446,
+      "slug": "scp-cn-1730",
+      "effectiveRating": 127,
+      "claimedRating": 128,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32451,
+      "slug": "scp-cn-1770",
+      "effectiveRating": 68,
+      "claimedRating": 69,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32477,
+      "slug": "scp-cn-1987",
+      "effectiveRating": 156,
+      "claimedRating": 157,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32479,
+      "slug": "scp-cn-1995",
+      "effectiveRating": 61,
+      "claimedRating": 60,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32480,
+      "slug": "scp-cn-1996",
+      "effectiveRating": 126,
+      "claimedRating": 127,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32483,
+      "slug": "scp-cn-1999",
+      "effectiveRating": 949,
+      "claimedRating": 950,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32484,
+      "slug": "scp-cn-2000",
+      "effectiveRating": 5368,
+      "claimedRating": 5370,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32485,
+      "slug": "scpcn2000contesthub",
+      "effectiveRating": 179,
+      "claimedRating": 180,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32486,
+      "slug": "scp-cn-2000-j",
+      "effectiveRating": 734,
+      "claimedRating": 735,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32514,
+      "slug": "scp-cn-2111",
+      "effectiveRating": 658,
+      "claimedRating": 659,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32543,
+      "slug": "scp-cn-2317",
+      "effectiveRating": 432,
+      "claimedRating": 433,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32547,
+      "slug": "scp-cn-2346",
+      "effectiveRating": 102,
+      "claimedRating": 103,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32559,
+      "slug": "scp-cn-2444",
+      "effectiveRating": 97,
+      "claimedRating": 98,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32565,
+      "slug": "scp-cn-2470",
+      "effectiveRating": 450,
+      "claimedRating": 451,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32567,
+      "slug": "scp-cn-2500",
+      "effectiveRating": 404,
+      "claimedRating": 406,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32571,
+      "slug": "scp-cn-2510",
+      "effectiveRating": 724,
+      "claimedRating": 727,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32577,
+      "slug": "scp-cn-2684",
+      "effectiveRating": 53,
+      "claimedRating": 54,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32581,
+      "slug": "scp-cn-2736",
+      "effectiveRating": 152,
+      "claimedRating": 153,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32584,
+      "slug": "scp-cn-2760",
+      "effectiveRating": 270,
+      "claimedRating": 271,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32589,
+      "slug": "scp-cn-2801",
+      "effectiveRating": 2534,
+      "claimedRating": 3143,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32599,
+      "slug": "scp-cn-2879",
+      "effectiveRating": 339,
+      "claimedRating": 341,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32608,
+      "slug": "scp-cn-296",
+      "effectiveRating": 751,
+      "claimedRating": 750,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32614,
+      "slug": "scp-cn-2982",
+      "effectiveRating": 1364,
+      "claimedRating": 1365,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32616,
+      "slug": "scp-cn-2984",
+      "effectiveRating": 141,
+      "claimedRating": 142,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32622,
+      "slug": "scp-cn-2999",
+      "effectiveRating": 2649,
+      "claimedRating": 2652,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32643,
+      "slug": "scp-cn-3077",
+      "effectiveRating": 83,
+      "claimedRating": 84,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32647,
+      "slug": "scp-cn-3100",
+      "effectiveRating": 240,
+      "claimedRating": 239,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32663,
+      "slug": "scp-cn-3231",
+      "effectiveRating": 227,
+      "claimedRating": 228,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32686,
+      "slug": "scp-cn-3612",
+      "effectiveRating": 728,
+      "claimedRating": 729,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32701,
+      "slug": "scp-cn-3819",
+      "effectiveRating": 968,
+      "claimedRating": 970,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32706,
+      "slug": "scp-cn-3907",
+      "effectiveRating": 411,
+      "claimedRating": 412,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32710,
+      "slug": "scp-cn-3969",
+      "effectiveRating": 887,
+      "claimedRating": 888,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32712,
+      "slug": "scp-cn-3989",
+      "effectiveRating": 134,
+      "claimedRating": 135,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32717,
+      "slug": "scp-cn-3999",
+      "effectiveRating": 1492,
+      "claimedRating": 1493,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32719,
+      "slug": "scp-cn-400",
+      "effectiveRating": 117,
+      "claimedRating": 113,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32720,
+      "slug": "scp-cn-4000j-j",
+      "effectiveRating": 333,
+      "claimedRating": 332,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 32734,
+      "slug": "scp-cn-463",
+      "effectiveRating": 288,
+      "claimedRating": 289,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32744,
+      "slug": "scp-cn-510",
+      "effectiveRating": 208,
+      "claimedRating": 209,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32752,
+      "slug": "scp-cn-586",
+      "effectiveRating": 329,
+      "claimedRating": 328,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32762,
+      "slug": "scp-cn-647",
+      "effectiveRating": 807,
+      "claimedRating": 809,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32763,
+      "slug": "scp-cn-648-j",
+      "effectiveRating": 1290,
+      "claimedRating": 1293,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32776,
+      "slug": "scp-cn-698",
+      "effectiveRating": 242,
+      "claimedRating": 243,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32789,
+      "slug": "scp-cn-797",
+      "effectiveRating": 404,
+      "claimedRating": 406,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32796,
+      "slug": "scp-cn-858",
+      "effectiveRating": 398,
+      "claimedRating": 399,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32800,
+      "slug": "scp-cn-888-j",
+      "effectiveRating": 579,
+      "claimedRating": 580,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32806,
+      "slug": "scp-cn-929",
+      "effectiveRating": 24,
+      "claimedRating": 25,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32808,
+      "slug": "scp-cn-963-j",
+      "effectiveRating": 4438,
+      "claimedRating": 4441,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32810,
+      "slug": "scp-cn-968",
+      "effectiveRating": 292,
+      "claimedRating": 293,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32815,
+      "slug": "scp-cn-985",
+      "effectiveRating": 1287,
+      "claimedRating": 1288,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32816,
+      "slug": "scp-cn-988",
+      "effectiveRating": 382,
+      "claimedRating": 384,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32826,
+      "slug": "scp-containment-breach-secondly",
+      "effectiveRating": 3451,
+      "claimedRating": 3453,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32849,
+      "slug": "scp-series-5",
+      "effectiveRating": 31,
+      "claimedRating": 32,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32883,
+      "slug": "shujia-bigtalk",
+      "effectiveRating": 124,
+      "claimedRating": 125,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32907,
+      "slug": "site-cn-82-2020",
+      "effectiveRating": 94,
+      "claimedRating": 95,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32913,
+      "slug": "snow-art",
+      "effectiveRating": 84,
+      "claimedRating": 85,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32916,
+      "slug": "song-of-people-song-of-liberation-army",
+      "effectiveRating": 72,
+      "claimedRating": 73,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32929,
+      "slug": "statement-on-disabling-offset",
+      "effectiveRating": -4445,
+      "claimedRating": -4447,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32943,
+      "slug": "taboo",
+      "effectiveRating": 274,
+      "claimedRating": 275,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32960,
+      "slug": "thecabininthewoods",
+      "effectiveRating": 315,
+      "claimedRating": 316,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32962,
+      "slug": "the-day-of-flowers-and-resurrection-through-death",
+      "effectiveRating": 136,
+      "claimedRating": 137,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32965,
+      "slug": "the-death-of-plague-doctor",
+      "effectiveRating": 324,
+      "claimedRating": 325,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32967,
+      "slug": "the-foundation-dissolved",
+      "effectiveRating": 70,
+      "claimedRating": 69,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32985,
+      "slug": "the-lord-of-jambudvipa",
+      "effectiveRating": 149,
+      "claimedRating": 150,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 32993,
+      "slug": "there-is-always-a-last-time-for-everything",
+      "effectiveRating": 284,
+      "claimedRating": 285,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33013,
+      "slug": "time-is-a-place",
+      "effectiveRating": 211,
+      "claimedRating": 212,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33037,
+      "slug": "upvote-for-who-hub",
+      "effectiveRating": 244,
+      "claimedRating": 245,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33039,
+      "slug": "v2-1",
+      "effectiveRating": 722,
+      "claimedRating": 723,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33057,
+      "slug": "wanderers:dawnwell",
+      "effectiveRating": 394,
+      "claimedRating": 395,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33070,
+      "slug": "wanderers:how-to-read-this-word",
+      "effectiveRating": 144,
+      "claimedRating": 145,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33072,
+      "slug": "wanderers:in-coffin",
+      "effectiveRating": 237,
+      "claimedRating": 239,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33099,
+      "slug": "wanderers:the-child-seeking-water",
+      "effectiveRating": 112,
+      "claimedRating": 113,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33118,
+      "slug": "wandering-fleet",
+      "effectiveRating": 177,
+      "claimedRating": 179,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33120,
+      "slug": "weapons-and-equipments-list",
+      "effectiveRating": 568,
+      "claimedRating": 570,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33132,
+      "slug": "whereishome",
+      "effectiveRating": 704,
+      "claimedRating": 703,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33146,
+      "slug": "wontoninsurgency",
+      "effectiveRating": 1588,
+      "claimedRating": 1589,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33152,
+      "slug": "wu-yu",
+      "effectiveRating": 158,
+      "claimedRating": 159,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33161,
+      "slug": "yanwangye",
+      "effectiveRating": 352,
+      "claimedRating": 353,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33190,
+      "slug": "114514leitra",
+      "effectiveRating": 74,
+      "claimedRating": 75,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33191,
+      "slug": "2019scp-cn-report",
+      "effectiveRating": 122,
+      "claimedRating": 123,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33195,
+      "slug": "2521-escaped",
+      "effectiveRating": 1557,
+      "claimedRating": 1558,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33196,
+      "slug": "29-ways-to-summon",
+      "effectiveRating": 526,
+      "claimedRating": 527,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33199,
+      "slug": "a120-suicide-guide",
+      "effectiveRating": 304,
+      "claimedRating": 303,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33217,
+      "slug": "aegnus",
+      "effectiveRating": 54,
+      "claimedRating": 53,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33323,
+      "slug": "cuckoo8",
+      "effectiveRating": 128,
+      "claimedRating": 129,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 33381,
+      "slug": "semimonth-202508-02",
+      "effectiveRating": 71,
+      "claimedRating": 72,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33385,
+      "slug": "kern-art-mech-n-meat",
+      "effectiveRating": 51,
+      "claimedRating": 52,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33568,
+      "slug": "chengwu",
+      "effectiveRating": 4,
+      "claimedRating": 5,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 33892,
+      "slug": "scp-resource-assessment-system",
+      "effectiveRating": 45,
+      "claimedRating": 47,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 34127,
+      "slug": "wanderers:but-the-fish-king",
+      "effectiveRating": 46,
+      "claimedRating": 47,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 101142,
+      "slug": "scp-9330",
+      "effectiveRating": 4,
+      "claimedRating": 5,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 101328,
+      "slug": "scp-cn-4999",
+      "effectiveRating": 1101,
+      "claimedRating": 1102,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 101440,
+      "slug": "scp-cn-4004",
+      "effectiveRating": 449,
+      "claimedRating": 450,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 101447,
+      "slug": "scp-cn-4001",
+      "effectiveRating": 589,
+      "claimedRating": 590,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 101502,
+      "slug": "scp-cn-4000",
+      "effectiveRating": 2328,
+      "claimedRating": 2331,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 101601,
+      "slug": "scp-cn-4399",
+      "effectiveRating": 402,
+      "claimedRating": 403,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 101617,
+      "slug": "scp-cn-3301-art",
+      "effectiveRating": 79,
+      "claimedRating": 80,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 101868,
+      "slug": "ai-and-ai",
+      "effectiveRating": 28,
+      "claimedRating": 29,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102119,
+      "slug": "scp-cn-3756",
+      "effectiveRating": 8,
+      "claimedRating": 10,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102256,
+      "slug": "scp-cn-4969",
+      "effectiveRating": 76,
+      "claimedRating": 77,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 102321,
+      "slug": "potato-server-hub",
+      "effectiveRating": 32,
+      "claimedRating": 29,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102750,
+      "slug": "semimonth-202602-01",
+      "effectiveRating": 65,
+      "claimedRating": 66,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102786,
+      "slug": "revolving-stars",
+      "effectiveRating": 43,
+      "claimedRating": 44,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102882,
+      "slug": "jiahao-and-10086",
+      "effectiveRating": 94,
+      "claimedRating": 95,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 102891,
+      "slug": "the-diminishing-tide",
+      "effectiveRating": 22,
+      "claimedRating": 23,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102915,
+      "slug": "next-generation-hub",
+      "effectiveRating": 122,
+      "claimedRating": 124,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102951,
+      "slug": "linnanshiji",
+      "effectiveRating": 144,
+      "claimedRating": 145,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 102996,
+      "slug": "justvektor-strikes-again",
+      "effectiveRating": 53,
+      "claimedRating": 54,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 103062,
+      "slug": "redflylovestory",
+      "effectiveRating": 37,
+      "claimedRating": 38,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 103326,
+      "slug": "game-over-xylynn-qwrvyn",
+      "effectiveRating": 51,
+      "claimedRating": 52,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 104107,
+      "slug": "scp-cn-4660",
+      "effectiveRating": 44,
+      "claimedRating": 45,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 104112,
+      "slug": "snow-cabin-and-simo",
+      "effectiveRating": 94,
+      "claimedRating": 95,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 104314,
+      "slug": "sacabamkyogre",
+      "effectiveRating": 76,
+      "claimedRating": 77,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 104435,
+      "slug": "scp-cn-4203",
+      "effectiveRating": 25,
+      "claimedRating": 26,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 104523,
+      "slug": "agent-asriel-great-man",
+      "effectiveRating": 89,
+      "claimedRating": 90,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 104525,
+      "slug": "scp-cn-4417",
+      "effectiveRating": 14,
+      "claimedRating": 15,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 104704,
+      "slug": "scp-cn-000",
+      "effectiveRating": 404,
+      "claimedRating": 403,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 104813,
+      "slug": "scp-cn-4432",
+      "effectiveRating": 231,
+      "claimedRating": 233,
+      "originalMismatch": false,
+      "cause": "page_changed_since_v1_snapshot"
+    },
+    {
+      "pageId": 104858,
+      "slug": "fraud-gang",
+      "effectiveRating": 61,
+      "claimedRating": 62,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 104898,
+      "slug": "scp-cn-4840",
+      "effectiveRating": 93,
+      "claimedRating": 94,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 105170,
+      "slug": "scp-cn-4314",
+      "effectiveRating": 17,
+      "claimedRating": 18,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    },
+    {
+      "pageId": 105338,
+      "slug": "scp-cn-4056",
+      "effectiveRating": 35,
+      "claimedRating": 36,
+      "originalMismatch": true,
+      "cause": "parser_or_four_gate"
+    }
+  ],
+  "stateManifest": {
+    "path": "state/s3-live-votes-2026-07-28.ndjson",
+    "sha256": "26156bf73535df415ebb132800d9c39b496620999cd0616469e8430cfbb89b02"
+  },
+  "safety": {
+    "v1ReadOnly": true,
+    "factSeqAllocated": false,
+    "voteFactsWritten": false,
+    "stageWritten": false
+  }
+}

@@ -1,0 +1,45 @@
+seq,page_id,slug,voter,new_direction,observed_at,scan_status,baseline_total,final_total,baseline_rating,final_rating,attribution
+2859292,1840,a-story-from-the-past,Tioup,1,2026-07-28 18:46:14.754+08,partial,90,91,86,87,tier1_delta_confirmed
+2859293,3959,eldritch-application,Eeeee_e,1,2026-07-28 18:49:31.277+08,partial,48,49,48,49,tier1_delta_confirmed
+2859294,4178,experiment-log-447-a,Eeeee_e,1,2026-07-28 18:49:50.808+08,partial,50,51,50,51,tier1_delta_confirmed
+2859295,9711,log-of-anomalous-items-cn:01387,Isaac Wang,1,2026-07-28 18:58:30.701+08,ok,65,65,61,61,balanced_voter_set_change
+2859296,9810,log-of-anomalous-items-cn:01518,DVA24,1,2026-07-28 18:58:38.77+08,ok,8,8,6,6,balanced_voter_set_change
+2859297,10494,mortal-emulator-apple,Mr 09_doctor,1,2026-07-28 18:59:40.667+08,ok,4,4,4,4,balanced_voter_set_change
+2859298,13022,scp-016,Eeeee_e,1,2026-07-28 19:03:30.978+08,partial,51,52,51,52,tier1_delta_confirmed
+2859299,14637,scp-1764,Eeeee_e,1,2026-07-28 19:05:52.391+08,partial,5,6,5,6,tier1_delta_confirmed
+2859300,14647,scp-1771,Icevine Taraxa,1,2026-07-28 19:05:52.554+08,partial,1,2,1,2,tier1_delta_confirmed
+2859301,14648,scp-1772,Icevine Taraxa,1,2026-07-28 19:05:52.568+08,partial,5,6,5,6,tier1_delta_confirmed
+2859302,14651,scp-1775,Icevine Taraxa,1,2026-07-28 19:05:52.607+08,partial,4,5,4,5,tier1_delta_confirmed
+2859303,19657,scp-6555,DrZH_Voss,1,2026-07-28 19:14:42.52+08,partial,8,9,8,9,tier1_delta_confirmed
+2859304,20622,scp-8009,Eeeee_e,1,2026-07-28 19:16:20.046+08,partial,13,14,13,14,tier1_delta_confirmed
+2859305,20758,scp-823,Eeeee_e,1,2026-07-28 19:16:36.062+08,partial,21,22,21,22,tier1_delta_confirmed
+2859306,21075,scp-889,DVA24,1,2026-07-28 19:17:07.61+08,ok,4,4,4,4,balanced_voter_set_change
+2859307,29563,wanderers:gardenia,Mathew_Miao,1,2026-07-28 19:30:23.272+08,ok,25,25,11,11,balanced_voter_set_change
+2859308,31244,yamizushi-file-no488,Hederaydra,1,2026-07-28 19:34:27.647+08,partial,99,100,93,94,tier1_delta_confirmed
+2859309,31663,don-quijote,ABoredShark,1,2026-07-28 19:35:20.019+08,partial,680,681,666,667,tier1_delta_confirmed
+2859310,31670,dr-clef-s-proposal,Eeeee_e,1,2026-07-28 19:35:20.36+08,partial,159,160,141,142,tier1_delta_confirmed
+2859311,31911,kill-that-foundation-man,ABoredShark,1,2026-07-28 19:35:58.295+08,partial,747,748,683,684,tier1_delta_confirmed
+2859312,31909,kill-d-class,RouheLing,1,2026-07-28 19:35:58.281+08,partial,1127,1128,1045,1046,tier1_delta_confirmed
+2859313,32053,no-offset,Jian ran,1,2026-07-28 19:36:27.449+08,partial,1247,1248,1223,1224,tier1_delta_confirmed
+2859314,32169,scp-048,Eeeee_e,1,2026-07-28 19:36:57.021+08,partial,185,186,179,180,tier1_delta_confirmed
+2859315,32205,scp-3000,Eeeee_e,1,2026-07-28 19:36:58.07+08,partial,406,407,398,399,tier1_delta_confirmed
+2859316,32236,scp-5000,characoal,1,2026-07-28 19:37:07.189+08,partial,1016,1017,1004,1005,tier1_delta_confirmed
+2859317,32484,scp-cn-2000,big baka,1,2026-07-28 19:38:04.772+08,partial,5580,5581,5370,5371,tier1_delta_confirmed
+2859318,32571,scp-cn-2510,Psilocybin,-1,2026-07-28 19:38:29.055+08,partial,820,821,728,727,tier1_delta_confirmed
+2859319,32626,scp-cn-3001,silver1211,1,2026-07-28 19:38:43.091+08,partial,1092,1093,1004,1005,tier1_delta_confirmed
+2859320,32701,scp-cn-3819,Jidou233,1,2026-07-28 19:38:57.324+08,partial,1026,1028,970,972,tier1_delta_confirmed
+2859321,32701,scp-cn-3819,Ana_lyst,1,2026-07-28 19:38:57.324+08,partial,1026,1028,970,972,tier1_delta_confirmed
+2859322,34246,wanderers:asukailoveyou,Mathew_Miao,1,2026-07-28 19:41:54.009+08,ok,24,24,20,20,balanced_voter_set_change
+2859323,34428,machine-kfc-a,blackhuchance,1,2026-07-28 19:42:07.062+08,ok,70,70,26,26,balanced_voter_set_change
+2859324,101440,scp-cn-4004,zsm123,1,2026-07-28 19:42:48.35+08,partial,496,497,450,451,tier1_delta_confirmed
+2859325,102253,scp-cn-4830,xiaogeng,1,2026-07-28 19:43:35.389+08,partial,48,49,32,33,tier1_delta_confirmed
+2859326,102379,a-story-of-qiudiange,poouu,1,2026-07-28 19:43:43.879+08,partial,23,24,15,16,tier1_delta_confirmed
+2859327,103100,semimonth-202602-02,Maya wlg66,1,2026-07-28 19:44:27.467+08,ok,90,90,90,90,balanced_voter_set_change
+2859328,105276,meaningless-fable,snser,-1,2026-07-28 19:46:33.856+08,ok,43,43,9,9,balanced_voter_set_change
+2859342,106670,awiflyash,DARK REDppp,-1,2026-07-28 19:47:45.422+08,ok,95,95,3,3,balanced_voter_set_change
+2859343,106670,awiflyash,Zhichongh,1,2026-07-28 19:47:45.422+08,ok,95,95,3,3,balanced_voter_set_change
+2859344,106782,scp-cn-4272,LPCaCO3,1,2026-07-28 19:47:50.005+08,partial,46,47,42,43,tier1_delta_confirmed
+2859345,106788,anna-speech,dy2794,1,2026-07-28 19:47:50.045+08,partial,48,49,42,43,tier1_delta_confirmed
+2859346,106812,mortal-emulator-vam-mid,xinsanhao,1,2026-07-28 19:47:52.071+08,partial,42,45,42,45,tier1_delta_confirmed
+2859347,106812,mortal-emulator-vam-mid,LAN_Sapphire,1,2026-07-28 19:47:52.071+08,partial,42,45,42,45,tier1_delta_confirmed
+2859348,106812,mortal-emulator-vam-mid,Hederaydra,1,2026-07-28 19:47:52.071+08,partial,42,45,42,45,tier1_delta_confirmed

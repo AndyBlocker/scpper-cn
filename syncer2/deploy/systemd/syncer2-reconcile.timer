@@ -1,0 +1,11 @@
+[Unit]
+Description=syncer2 M10 reconciliation and CROM canary daily
+
+[Timer]
+OnCalendar=*-*-* 06:13:00 Asia/Shanghai
+AccuracySec=2min
+Persistent=false
+Unit=syncer2-job@reconcile.service
+
+[Install]
+WantedBy=timers.target

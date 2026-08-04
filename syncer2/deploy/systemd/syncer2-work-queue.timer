@@ -1,0 +1,12 @@
+[Unit]
+Description=syncer2 work queue every minute after the previous run exits
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=5s
+Persistent=false
+Unit=syncer2-job@work-queue.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=syncer2 L0 updated-at incremental scan every 30 minutes
+
+[Timer]
+# 与 L1 同频但提前 5 分钟；两小时窗口对本周期有 4 倍重叠。
+OnCalendar=*-*-* *:02,32:00 Asia/Shanghai
+AccuracySec=1min
+Persistent=false
+Unit=syncer2-job@l0.service
+
+[Install]
+WantedBy=timers.target

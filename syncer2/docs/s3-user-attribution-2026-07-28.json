@@ -1,0 +1,4725 @@
+{
+    "users": [
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 32524,
+            "new_live": 6,
+            "old_live": 5,
+            "all_drift": 0.60000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 105581,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:32890423",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 4536321,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 2,
+            "display_name": "Lijsisjhsh",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 53938,
+            "new_live": 15,
+            "old_live": 14,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 104704,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:27016737",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 8439024,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "redreader",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 6,
+            "user_id": 183854,
+            "new_live": 6,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 105625,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:29586742",
+                    "newDirection": -1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 5674456,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "Cassian Frostbourne",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 471255,
+            "new_live": 12,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 101135,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18889062",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 6869775,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "waffle2316",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 7,
+            "user_id": 637743,
+            "new_live": 6,
+            "old_live": 5,
+            "all_drift": 0.40000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 33752,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:9293309",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 5450233,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 1,
+            "display_name": "Spiritual Paint",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 10,
+            "user_id": 2923100,
+            "new_live": 10,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 10801,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18889445",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 9753963,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "Swellpool23",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 8783669,
+            "new_live": 5,
+            "old_live": 4,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 33752,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:7897267",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 9656696,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "KSX",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 20,
+            "user_id": 13251256,
+            "new_live": 19,
+            "old_live": 18,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 8820,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18889151",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 9786193,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 1,
+            "display_name": "Tofu_Knights",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 20,
+            "user_id": 108211421,
+            "new_live": 20,
+            "old_live": 19,
+            "all_drift": 0.05263157894736842105,
+            "live_drift": 0.05263157894736842105,
+            "pair_diffs": [
+                {
+                    "pageId": 31901,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:17940080",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 9870693,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "DrBeonidado",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 19,
+            "user_id": 114030722,
+            "new_live": 14,
+            "old_live": 13,
+            "all_drift": 0.46153846153846153846,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 31014,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18154863",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 8258459,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 5,
+            "display_name": "Dalvik",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 143085924,
+            "new_live": 2,
+            "old_live": 1,
+            "all_drift": 1.00000000000000000000,
+            "live_drift": 1.00000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 103733,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18418466",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 10297244,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "Myrias",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 147161854,
+            "new_live": 18,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 103680,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18915571",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 6554081,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "ZJX-173",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 157525957,
+            "new_live": 17,
+            "old_live": 15,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.13333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 103952,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18647812",
+                    "newDirection": 1,
+                    "oldDirection": null
+                },
+                {
+                    "pageId": 103953,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18647814",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 10296107,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 1,
+            "display_name": "hahamaya",
+            "crom_old_pv_pairs": 2,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 1,
+            "user_id": 159329211,
+            "new_live": 1,
+            "old_live": 0,
+            "all_drift": 1.00000000000000000000,
+            "live_drift": 1.00000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 22923,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:18891279",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 9737409,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "wd:9737409",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 9,
+            "user_id": 175579954,
+            "new_live": 7,
+            "old_live": 6,
+            "all_drift": 0.50000000000000000000,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 104467,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:19172228",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 9027936,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 2,
+            "display_name": "Action_Wei",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 247927912,
+            "new_live": 4,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 105944,
+                    "reason": "new_only_crom_old_pageversion",
+                    "finalRef": "v1:33192712",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 10435385,
+            "attribution": "crom_old_pageversion_scope",
+            "new_deleted": 0,
+            "display_name": "Fullback",
+            "crom_old_pv_pairs": 1,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 11,
+            "user_id": 15512,
+            "new_live": 10,
+            "old_live": 9,
+            "all_drift": 0.22222222222222222222,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 31399,
+                    "reason": "new_only_legacy",
+                    "finalRef": "legacy:history:24788",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 7109111,
+            "attribution": "legacy_current_pv_scope",
+            "new_deleted": 1,
+            "display_name": "astudent",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 1,
+            "has_intermediate_state": true,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 65613,
+            "new_live": 11,
+            "old_live": 10,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.10000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 16053,
+                    "reason": "new_only_legacy",
+                    "finalRef": "legacy:votes:157112461",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 5228319,
+            "attribution": "legacy_current_pv_scope",
+            "new_deleted": 1,
+            "display_name": "SkyWu",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 1,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 545062,
+            "new_live": 13,
+            "old_live": 12,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.08333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 22239,
+                    "reason": "new_only_legacy",
+                    "finalRef": "legacy:votes:71283673",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 3694873,
+            "attribution": "legacy_current_pv_scope",
+            "new_deleted": 1,
+            "display_name": "claudefaber",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 1,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 608204,
+            "new_live": 9,
+            "old_live": 8,
+            "all_drift": 0.50000000000000000000,
+            "live_drift": 0.12500000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32479,
+                    "reason": "new_only_legacy",
+                    "finalRef": "legacy:votes:414976806",
+                    "newDirection": 1,
+                    "oldDirection": null
+                }
+            ],
+            "wikidot_id": 5379370,
+            "attribution": "legacy_current_pv_scope",
+            "new_deleted": 3,
+            "display_name": "lkh99dz",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 1,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 0
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 22,
+            "user_id": 14938,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.29411764705882352941,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6346304,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 6,
+            "display_name": "caoanhe",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 20,
+            "user_id": 15762,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.17647058823529411765,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 6652,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6065410,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 4,
+            "display_name": "Trees   jasper",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 15858,
+            "new_live": 14,
+            "old_live": 15,
+            "all_drift": 0.06666666666666666667,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5389687,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "LOSERLPSS",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 18050,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 2780,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5040305,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "HariboLethality",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 28,
+            "user_id": 20023,
+            "new_live": 28,
+            "old_live": 30,
+            "all_drift": 0.06666666666666666667,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 6767,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 31831,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7957315,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "albpur Deucattus",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 43,
+            "user_id": 20368,
+            "new_live": 43,
+            "old_live": 46,
+            "all_drift": 0.06521739130434782609,
+            "live_drift": 0.06521739130434782609,
+            "pair_diffs": [
+                {
+                    "pageId": 2834,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7975483,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Asaerror",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": true,
+            "stale_latestvote_pairs": 3
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 17,
+            "user_id": 21329,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.05555555555555555556,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5714358,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "novus_hmiry",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 21418,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7817873,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "QMD_LG",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 113,
+            "user_id": 21743,
+            "new_live": 99,
+            "old_live": 105,
+            "all_drift": 0.07619047619047619048,
+            "live_drift": 0.05714285714285714286,
+            "pair_diffs": [
+                {
+                    "pageId": 6485,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 6486,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 6487,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 6488,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 6489,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 6490,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6629025,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 14,
+            "display_name": "wd:6629025",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 6
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 23218,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 3320373,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "UDP_LINK",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": true,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 17,
+            "user_id": 23242,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.05555555555555555556,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 3818128,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "baiyu",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 55,
+            "user_id": 23243,
+            "new_live": 53,
+            "old_live": 61,
+            "all_drift": 0.09836065573770491803,
+            "live_drift": 0.13114754098360655738,
+            "pair_diffs": [
+                {
+                    "pageId": 2780,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27955,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27966,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27987,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27990,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32988,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4053112,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "R74",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": true,
+            "stale_latestvote_pairs": 8
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 17,
+            "user_id": 24040,
+            "new_live": 14,
+            "old_live": 15,
+            "all_drift": 0.13333333333333333333,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 27826,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7879043,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 3,
+            "display_name": "cetacea",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 26390,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7618982,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Supreme man",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 350,
+            "user_id": 28312,
+            "new_live": 274,
+            "old_live": 289,
+            "all_drift": 0.21107266435986159170,
+            "live_drift": 0.05190311418685121107,
+            "pair_diffs": [
+                {
+                    "pageId": 2780,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 2921,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 13318,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27741,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27750,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27752,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27776,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27812,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27897,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 28007,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 28019,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32988,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32990,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7377988,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 76,
+            "display_name": "Dream wanderer",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 15
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 20,
+            "user_id": 29841,
+            "new_live": 18,
+            "old_live": 19,
+            "all_drift": 0.05263157894736842105,
+            "live_drift": 0.05263157894736842105,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6695950,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Zanker",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 30524,
+            "new_live": 9,
+            "old_live": 10,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.10000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 4688,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4442107,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 3,
+            "display_name": "LemonRemix",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 56,
+            "user_id": 31241,
+            "new_live": 21,
+            "old_live": 23,
+            "all_drift": 1.4347826086956522,
+            "live_drift": 0.08695652173913043478,
+            "pair_diffs": [
+                {
+                    "pageId": 4797,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": -1
+                },
+                {
+                    "pageId": 4798,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": -1
+                }
+            ],
+            "wikidot_id": 5338693,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 35,
+            "display_name": "qwer817",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 33687,
+            "new_live": 18,
+            "old_live": 19,
+            "all_drift": 0.05263157894736842105,
+            "live_drift": 0.05263157894736842105,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6391127,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "konglv",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 19,
+            "user_id": 35097,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.05555555555555555556,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7526921,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "FK999",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 36238,
+            "new_live": 18,
+            "old_live": 19,
+            "all_drift": 0.05263157894736842105,
+            "live_drift": 0.05263157894736842105,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6904543,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "GoChinaGoChina",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 36561,
+            "new_live": 13,
+            "old_live": 14,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7952250,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Mr_Crow ja",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 36701,
+            "new_live": 13,
+            "old_live": 15,
+            "all_drift": 0.06666666666666666667,
+            "live_drift": 0.13333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7063047,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 1,
+            "display_name": "Lonely Han",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 37681,
+            "new_live": 12,
+            "old_live": 13,
+            "all_drift": 0.07692307692307692308,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6367354,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "ScottPeak",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 19,
+            "user_id": 38434,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.05555555555555555556,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6351671,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Rainy_Stars",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 43300,
+            "new_live": 14,
+            "old_live": 15,
+            "all_drift": 0.06666666666666666667,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7187754,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Xiangyx",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 43563,
+            "new_live": 12,
+            "old_live": 13,
+            "all_drift": 0.15384615384615384615,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7310108,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 3,
+            "display_name": "Dr- JUST-OFF",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 11,
+            "user_id": 43606,
+            "new_live": 11,
+            "old_live": 12,
+            "all_drift": 0.08333333333333333333,
+            "live_drift": 0.08333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7870074,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "shenlan",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": true,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 13,
+            "user_id": 44102,
+            "new_live": 11,
+            "old_live": 12,
+            "all_drift": 0.08333333333333333333,
+            "live_drift": 0.08333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7678946,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "jsyasj",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 19,
+            "user_id": 45403,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.05555555555555555556,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5684299,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "kingdom war",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 10,
+            "user_id": 47481,
+            "new_live": 10,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 27989,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7122522,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "MTFbaizhou",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 49178,
+            "new_live": 15,
+            "old_live": 16,
+            "all_drift": 0.06250000000000000000,
+            "live_drift": 0.06250000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 2970200,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "BASQUM",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 50547,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7221502,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Dr LuDuan",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 52852,
+            "new_live": 14,
+            "old_live": 15,
+            "all_drift": 0.06666666666666666667,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7555136,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "cilbuperteivos",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": true,
+            "has_pm2": true,
+            "new_all": 22,
+            "user_id": 53848,
+            "new_live": 21,
+            "old_live": 24,
+            "all_drift": 0.08333333333333333333,
+            "live_drift": 0.12500000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 27738,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27806,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7480082,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 1,
+            "display_name": "Neuron769",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 3
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 55205,
+            "new_live": 12,
+            "old_live": 13,
+            "all_drift": 0.07692307692307692308,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5267450,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Mr_Guan",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 58497,
+            "new_live": 15,
+            "old_live": 16,
+            "all_drift": 0.12500000000000000000,
+            "live_drift": 0.06250000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6456338,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 3,
+            "display_name": "Dr Cecil",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 11,
+            "user_id": 61292,
+            "new_live": 11,
+            "old_live": 12,
+            "all_drift": 0.08333333333333333333,
+            "live_drift": 0.08333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 27839,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6251559,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Researcher Dr Davis",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 66329,
+            "new_live": 10,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7942854,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Alightyear",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 16,
+            "user_id": 68581,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5409343,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "yykfky",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 71544,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 2076,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 8049904,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Licarus",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 82735,
+            "new_live": 15,
+            "old_live": 16,
+            "all_drift": 0.06250000000000000000,
+            "live_drift": 0.06250000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7931649,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "zero-0-453",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 23,
+            "user_id": 82971,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.27777777777777777778,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7718481,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 6,
+            "display_name": "DimoIre",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 35,
+            "user_id": 84228,
+            "new_live": 29,
+            "old_live": 32,
+            "all_drift": 0.09375000000000000000,
+            "live_drift": 0.09375000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 27929,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32987,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7971423,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 6,
+            "display_name": "deepender",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 3
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 39,
+            "user_id": 84366,
+            "new_live": 39,
+            "old_live": 42,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 27804,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27926,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7827766,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "wd:7827766",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 3
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 85070,
+            "new_live": 15,
+            "old_live": 16,
+            "all_drift": 0.06250000000000000000,
+            "live_drift": 0.06250000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 2780,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7723786,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "naivedexieren",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 37,
+            "user_id": 85501,
+            "new_live": 37,
+            "old_live": 43,
+            "all_drift": 0.13953488372093023256,
+            "live_drift": 0.13953488372093023256,
+            "pair_diffs": [
+                {
+                    "pageId": 21409,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 21410,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 21420,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32313,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32314,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32317,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5697804,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Jshoua",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 6
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 85607,
+            "new_live": 12,
+            "old_live": 13,
+            "all_drift": 0.07692307692307692308,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 3356,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 3671347,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "sanks269",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 6,
+            "user_id": 86836,
+            "new_live": 6,
+            "old_live": 7,
+            "all_drift": 0.14285714285714285714,
+            "live_drift": 0.14285714285714285714,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6648740,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "6a6",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 9,
+            "user_id": 91585,
+            "new_live": 9,
+            "old_live": 10,
+            "all_drift": 0.10000000000000000000,
+            "live_drift": 0.10000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7210679,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Roplem",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 17,
+            "user_id": 96646,
+            "new_live": 15,
+            "old_live": 16,
+            "all_drift": 0.06250000000000000000,
+            "live_drift": 0.06250000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6249596,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "melohady",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 99543,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 2828,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7667664,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "LLT77",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 9,
+            "user_id": 100403,
+            "new_live": 9,
+            "old_live": 12,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 2871,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 2921,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 27747,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7617962,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "zkm1108",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 3
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 10,
+            "user_id": 100540,
+            "new_live": 10,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7960711,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "kill Comet",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 105075,
+            "new_live": 15,
+            "old_live": 16,
+            "all_drift": 0.12500000000000000000,
+            "live_drift": 0.06250000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7367761,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 3,
+            "display_name": "seven live",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 107549,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 27729,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6222835,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Blaze  Chen",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 1,
+            "user_id": 109749,
+            "new_live": 1,
+            "old_live": 2,
+            "all_drift": 0.50000000000000000000,
+            "live_drift": 0.50000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 3980972,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "CALENDULA-S",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 16,
+            "user_id": 109822,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5498990,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "SlaveTurtle",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 26,
+            "user_id": 111038,
+            "new_live": 15,
+            "old_live": 17,
+            "all_drift": 0.52941176470588235294,
+            "live_drift": 0.11764705882352941176,
+            "pair_diffs": [
+                {
+                    "pageId": 5967,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 5968,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6579968,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 11,
+            "display_name": "chara068",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 111521,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6707431,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "akmtt",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 10,
+            "user_id": 113478,
+            "new_live": 10,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7938761,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Drxujia",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 16,
+            "user_id": 115366,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6245109,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "dawnfall",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 9,
+            "user_id": 124183,
+            "new_live": 9,
+            "old_live": 10,
+            "all_drift": 0.10000000000000000000,
+            "live_drift": 0.10000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32368,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5100771,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "lan_blue",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 16,
+            "user_id": 126318,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7969888,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Foxtrot_2",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 129091,
+            "new_live": 13,
+            "old_live": 14,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 4714,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6127292,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "BLACKEPEAT",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 35,
+            "user_id": 131346,
+            "new_live": 35,
+            "old_live": 37,
+            "all_drift": 0.05405405405405405405,
+            "live_drift": 0.05405405405405405405,
+            "pair_diffs": [
+                {
+                    "pageId": 19207,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7908131,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Takilot Soviet",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 13,
+            "user_id": 132289,
+            "new_live": 13,
+            "old_live": 14,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6248868,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "shadowash",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 16,
+            "user_id": 133124,
+            "new_live": 14,
+            "old_live": 15,
+            "all_drift": 0.06666666666666666667,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5975793,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "SergioStone",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 136114,
+            "new_live": 14,
+            "old_live": 15,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 6485,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7639650,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 4,
+            "display_name": "wd:7639650",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 10,
+            "user_id": 136785,
+            "new_live": 10,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 4688,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7378806,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Minort",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 137130,
+            "new_live": 12,
+            "old_live": 13,
+            "all_drift": 0.07692307692307692308,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6312922,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Smoked Fish",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 15,
+            "user_id": 137643,
+            "new_live": 15,
+            "old_live": 16,
+            "all_drift": 0.06250000000000000000,
+            "live_drift": 0.06250000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 3698051,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Schrodingersg",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 139666,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5587600,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Watch Assassins",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 145282,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7498087,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "0Prince0",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 20,
+            "user_id": 155922,
+            "new_live": 20,
+            "old_live": 22,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 5949,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6346725,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Walker Abrasun",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": true,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 156923,
+            "new_live": 18,
+            "old_live": 19,
+            "all_drift": 0.05263157894736842105,
+            "live_drift": 0.05263157894736842105,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5237248,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "TPF",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 6,
+            "user_id": 159333,
+            "new_live": 6,
+            "old_live": 7,
+            "all_drift": 0.14285714285714285714,
+            "live_drift": 0.14285714285714285714,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7790215,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "reliable_ly0411",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 161765,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 4714,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6314398,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Rivte",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 1,
+            "user_id": 168212,
+            "new_live": 1,
+            "old_live": 3,
+            "all_drift": 0.66666666666666666667,
+            "live_drift": 0.66666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 5229,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 5230,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7858332,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "SM12",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 181563,
+            "new_live": 5,
+            "old_live": 7,
+            "all_drift": 0.28571428571428571429,
+            "live_drift": 0.28571428571428571429,
+            "pair_diffs": [
+                {
+                    "pageId": 31746,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 2999604,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "ICE MOON",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 13,
+            "user_id": 185619,
+            "new_live": 13,
+            "old_live": 14,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6682396,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Mi1ikShaKe",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 22,
+            "user_id": 188269,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.22222222222222222222,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4743815,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 5,
+            "display_name": "Lucas_Zweig",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 192349,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6746160,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "InducedDrag",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 3,
+            "user_id": 209253,
+            "new_live": 3,
+            "old_live": 4,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4139320,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "GwhLte",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 3,
+            "user_id": 213293,
+            "new_live": 3,
+            "old_live": 4,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7987656,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "SWXS",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 216509,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": -1
+                }
+            ],
+            "wikidot_id": 5999547,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Rita*rosswise",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 14,
+            "user_id": 222025,
+            "new_live": 14,
+            "old_live": 15,
+            "all_drift": 0.06666666666666666667,
+            "live_drift": 0.06666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6206023,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Teuir",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 9,
+            "user_id": 225166,
+            "new_live": 9,
+            "old_live": 10,
+            "all_drift": 0.10000000000000000000,
+            "live_drift": 0.10000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6997640,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "zhouzixin",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 10,
+            "user_id": 236061,
+            "new_live": 10,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7898459,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "watercold",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 6,
+            "user_id": 249773,
+            "new_live": 6,
+            "old_live": 7,
+            "all_drift": 0.14285714285714285714,
+            "live_drift": 0.14285714285714285714,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 3800136,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "lu16h5",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 275843,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 3268944,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Srthu",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 6,
+            "user_id": 286297,
+            "new_live": 6,
+            "old_live": 7,
+            "all_drift": 0.14285714285714285714,
+            "live_drift": 0.14285714285714285714,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7852248,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "andrewar",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 16,
+            "user_id": 287643,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7522340,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "BenjaminDetsuhane",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 13,
+            "user_id": 300952,
+            "new_live": 13,
+            "old_live": 14,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6026870,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "LHYLKY",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 303118,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6537988,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "DEE90",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 17,
+            "user_id": 315611,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.05555555555555555556,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6734094,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "ling shark",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 13,
+            "user_id": 325794,
+            "new_live": 13,
+            "old_live": 14,
+            "all_drift": 0.07142857142857142857,
+            "live_drift": 0.07142857142857142857,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 8017206,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Serming",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 10,
+            "user_id": 368983,
+            "new_live": 10,
+            "old_live": 11,
+            "all_drift": 0.09090909090909090909,
+            "live_drift": 0.09090909090909090909,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7092422,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Trobone777",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 391007,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7987440,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "cycinty",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 16,
+            "user_id": 392956,
+            "new_live": 16,
+            "old_live": 17,
+            "all_drift": 0.05882352941176470588,
+            "live_drift": 0.05882352941176470588,
+            "pair_diffs": [
+                {
+                    "pageId": 19262,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": -1
+                }
+            ],
+            "wikidot_id": 7257289,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Textely",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 7,
+            "user_id": 400175,
+            "new_live": 7,
+            "old_live": 8,
+            "all_drift": 0.12500000000000000000,
+            "live_drift": 0.12500000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 22526,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7455536,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Awenitic",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 17,
+            "user_id": 410827,
+            "new_live": 17,
+            "old_live": 18,
+            "all_drift": 0.05555555555555555556,
+            "live_drift": 0.05555555555555555556,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7252288,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "wry6",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 7,
+            "user_id": 427456,
+            "new_live": 7,
+            "old_live": 8,
+            "all_drift": 0.12500000000000000000,
+            "live_drift": 0.12500000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4372989,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "ORGsu",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 7,
+            "user_id": 432975,
+            "new_live": 7,
+            "old_live": 8,
+            "all_drift": 0.12500000000000000000,
+            "live_drift": 0.12500000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7083183,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Gen Rommel",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 22,
+            "user_id": 511855,
+            "new_live": 18,
+            "old_live": 19,
+            "all_drift": 0.15789473684210526316,
+            "live_drift": 0.05263157894736842105,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7885985,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 4,
+            "display_name": "Fang Yichen",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 530548,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6263009,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "buzhongyao",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 6,
+            "user_id": 557540,
+            "new_live": 6,
+            "old_live": 7,
+            "all_drift": 0.14285714285714285714,
+            "live_drift": 0.14285714285714285714,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6687101,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Mrs sword",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 625828,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7791533,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "ElricOwen",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 659383,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7844718,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Doctor13zhang^",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 681048,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7976547,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "jimkraf",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 18,
+            "user_id": 796920,
+            "new_live": 18,
+            "old_live": 19,
+            "all_drift": 0.05263157894736842105,
+            "live_drift": 0.05263157894736842105,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7891096,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Unknown_Self",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 828840,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5340925,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "zhsiru",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 3,
+            "user_id": 863272,
+            "new_live": 3,
+            "old_live": 4,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7819519,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "CookedCrab",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 3,
+            "user_id": 879018,
+            "new_live": 3,
+            "old_live": 4,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 27982,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7952897,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "W-Dust",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": true,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 9,
+            "user_id": 952352,
+            "new_live": 9,
+            "old_live": 10,
+            "all_drift": 0.10000000000000000000,
+            "live_drift": 0.10000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7957653,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Cletta Rix",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 1243077,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6727219,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "X Asimov",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 1244987,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 31746,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7469996,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "seiuon",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 1245039,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 8010718,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Zesecret",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 1270009,
+            "new_live": 12,
+            "old_live": 13,
+            "all_drift": 0.07692307692307692308,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6292446,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "NightForest",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 1278991,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7957034,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Fiment",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 12,
+            "user_id": 1284738,
+            "new_live": 12,
+            "old_live": 13,
+            "all_drift": 0.07692307692307692308,
+            "live_drift": 0.07692307692307692308,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6982123,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "SaoYear",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 1319913,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7940237,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Faster_DeepBlue",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 1319920,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7952495,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "YizhouTech",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 1322805,
+            "new_live": 5,
+            "old_live": 6,
+            "all_drift": 0.16666666666666666667,
+            "live_drift": 0.16666666666666666667,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7965124,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Skat Megrez",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 3,
+            "user_id": 1345733,
+            "new_live": 3,
+            "old_live": 4,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32972,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7183120,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Annualring0113",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 0,
+            "user_id": 1346506,
+            "new_live": 0,
+            "old_live": 1,
+            "all_drift": 1.00000000000000000000,
+            "live_drift": 1.00000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 31912,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4328512,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Electro Rex",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 1357320,
+            "new_live": 8,
+            "old_live": 9,
+            "all_drift": 0.11111111111111111111,
+            "live_drift": 0.11111111111111111111,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6153499,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Michael and Trevor",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 1441569,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 8005231,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Azilaord",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 5,
+            "user_id": 1443441,
+            "new_live": 5,
+            "old_live": 7,
+            "all_drift": 0.28571428571428571429,
+            "live_drift": 0.28571428571428571429,
+            "pair_diffs": [
+                {
+                    "pageId": 32414,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                },
+                {
+                    "pageId": 32826,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 8049939,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Peppermint_R_L",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 2
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 1453646,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7666908,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "442",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 8,
+            "user_id": 1457244,
+            "new_live": 6,
+            "old_live": 7,
+            "all_drift": 0.14285714285714285714,
+            "live_drift": 0.14285714285714285714,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6146164,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 2,
+            "display_name": "Z2J",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 4,
+            "user_id": 1457409,
+            "new_live": 4,
+            "old_live": 5,
+            "all_drift": 0.20000000000000000000,
+            "live_drift": 0.20000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7176507,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "xzy(cn)",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 9,
+            "user_id": 1504342,
+            "new_live": 9,
+            "old_live": 10,
+            "all_drift": 0.10000000000000000000,
+            "live_drift": 0.10000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6483086,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "XIAOMOJIANG",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 1504475,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 5143143,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Dr icebear",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 1,
+            "user_id": 1518856,
+            "new_live": 1,
+            "old_live": 2,
+            "all_drift": 0.50000000000000000000,
+            "live_drift": 0.50000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7860666,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "yaoliao",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 0,
+            "user_id": 1532566,
+            "new_live": 0,
+            "old_live": 1,
+            "all_drift": 1.00000000000000000000,
+            "live_drift": 1.00000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4924464,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "EVIDRAL",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 0,
+            "user_id": 1532568,
+            "new_live": 0,
+            "old_live": 1,
+            "all_drift": 1.00000000000000000000,
+            "live_drift": 1.00000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 4919211,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Afollou",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 3,
+            "user_id": 1532689,
+            "new_live": 3,
+            "old_live": 4,
+            "all_drift": 0.25000000000000000000,
+            "live_drift": 0.25000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6194161,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "MuteElectron",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 2,
+            "user_id": 1532804,
+            "new_live": 2,
+            "old_live": 3,
+            "all_drift": 0.33333333333333333333,
+            "live_drift": 0.33333333333333333333,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 6755605,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "Researcherlai",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 0,
+            "user_id": 1532888,
+            "new_live": 0,
+            "old_live": 1,
+            "all_drift": 1.00000000000000000000,
+            "live_drift": 1.00000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 7299191,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "ALEX14134",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        },
+        {
+            "has_r2": false,
+            "has_pm2": false,
+            "new_all": 0,
+            "user_id": 1533103,
+            "new_live": 0,
+            "old_live": 1,
+            "all_drift": 1.00000000000000000000,
+            "live_drift": 1.00000000000000000000,
+            "pair_diffs": [
+                {
+                    "pageId": 32589,
+                    "reason": "old_only_no_final",
+                    "finalRef": null,
+                    "newDirection": null,
+                    "oldDirection": 1
+                }
+            ],
+            "wikidot_id": 8033814,
+            "attribution": "v1_latestvote_without_source_event",
+            "new_deleted": 0,
+            "display_name": "lydjdks",
+            "crom_old_pv_pairs": 0,
+            "legacy_scope_pairs": 0,
+            "has_intermediate_state": false,
+            "stale_latestvote_pairs": 1
+        }
+    ],
+    "categories": {
+        "legacy_current_pv_scope": 4,
+        "crom_old_pageversion_scope": 16,
+        "v1_latestvote_without_source_event": 141
+    },
+    "definition": "abs(new-old)/max(old,1)>5%; old=LatestVote@current live PageVersion; new=A3 final state",
+    "generatedAt": "2026-07-28T06:05:56.87672+00:00",
+    "residualUsers": 161,
+    "candidateSignals": {
+        "plusMinus2Users": 1,
+        "r2TimezoneUsers": 1,
+        "revoteOrRevokeUsers": 7
+    },
+    "overFiveAllUsers": 9377,
+    "unattributedUsers": 0,
+    "anonymousResidualUsers": 0,
+    "explainedByDeletedPages": 9216
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=syncer2 L1 minimal full-site scan every 30 minutes
+
+[Timer]
+# 沿用全站扫描的 :07/:37 错峰；vote 与 revision 声明在同一轮、同一频率发现。
+OnCalendar=*-*-* *:07,37:00 Asia/Shanghai
+AccuracySec=1min
+Persistent=false
+Unit=syncer2-job@l1.service
+
+[Install]
+WantedBy=timers.target

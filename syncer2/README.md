@@ -27,15 +27,15 @@ SCPper CN **v2 采集层**。
 
 | 模块 | 文件 | 职责 |
 |---|---|---|
-| **迁移** | `migrations/0001`–`0100` + `apply.sh` | 四 schema DDL（88 表 + 1 视图）+ 46 个函数 + 不可变触发器 |
+| **迁移** | `migrations/0001`–`0100` + `apply.sh` | 四 schema DDL（89 表 + 2 视图）+ 46 个函数 + 不可变触发器 |
 | **冒烟** | `migrations/smoke_test.sql` | 296 个断言把写路径逐条跑通（末尾 `ROLLBACK`，不留数据） |
 | **只读断言** | `checks/*.sql` + `checks/run_checks.sh` | 落地后的结构/登记/接线漂移检测（纯只读，可对生产库跑） |
-| **测试** | `tests/*.test.ts`（7 个文件） | `npm test` = **102 通过 / 0 失败**：HTTP 护栏 / 解析红线 / 时区回环 / 出口归因 / 游标安全（多会话）/ 投票批量与属性生成器 / 权限矩阵 |
+| **测试** | `tests/*.test.ts`（当前 16 个文件） | `npm test` = **208 通过 / 0 失败 / 0 跳过**：HTTP 护栏 / 解析红线 / 时区回环 / 出口归因 / 游标安全（多会话）/ 投票批量与属性生成器 / 权限矩阵 / 新采集模块 |
 | **回填 gate** | `checks/load_v1_identity.sh` + `checks/backfill_finalize.sql` | Phase 2 回填的前置载入器与 50 条收尾断言（对 v1 只读） |
 | **授权** | `migrations/9001_create_roles.sql.ADMIN` + `9002_grants.sql` | 9000 的拆分：DBA 只跑 5 条 `CREATE ROLE`，其余授权矩阵 + 权限边界强制自检由应用账号跑 |
 | **DBA 交接** | `docs/dba-handoff.md` | 两项特权动作的完整步骤 / 验证方法 / 不做的后果 / 回滚；含"无 superuser 通道"的四条实测证据 |
 | **语义检索决策** | `docs/embedding-migration.md` | `PageEmbedding` 的归属、"切换时全量重算"的实测依据与 23.1 小时成本账 |
-| **Prisma 映射** | `prisma/schema.prisma` + `prisma/pull.sh` | v2 的**只读侧类型来源**（84 model / 4 schema）；`pull.sh` 是唯一维护入口 |
+| **Prisma 映射** | `prisma/schema.prisma` + `prisma/pull.sh` | v2 的**只读侧类型来源**（86 model / 4 schema）；`pull.sh` 是唯一维护入口 |
 | **设计修订** | `../docs/data-model-v2-addendum-2026-07-27.md` | 设计文档的修订附录（不改原文）：被推翻的结论、R1–R15 落地状态、六个 blocker、唯一常驻源决策的代价 |
 | HTTP 层 | `src/http/client.ts` | 请求头契约自检、per-client dispatcher、503/重置独立熔断、逐请求遥测 |
 | 出口归因 | `src/http/egress.ts` | IP 回显探针（池构成）+ mihomo `chains[0]`（按连接真值）⇒ `meta.ingest_run.exit_ip_stats` |
@@ -45,6 +45,13 @@ SCPper CN **v2 采集层**。
 | sitemap 抓取 | `src/sitemap/fetch.ts` | index → page/thread/category 全族，gzip 传输 |
 | DB 层 | `src/store/db.ts` | pg 池 + **时区硬守卫**（裸 Date 拒收 + 已知 epoch 回环自检） |
 | meta 写入 | `src/store/meta.ts` | `ingest_run` / `page_scan` / `scan_task` 的写入门面 + slug→page_id 解析 |
+| 投票 Tier2 | `src/collect/votes.ts` | WhoRated 四类身份解析、四重门控、Σsign 校验、空列表红线、`apply_vote_snapshot` |
+| 投票队列 | `src/store/workQueue.ts` + `src/cli/work-queue.ts` | Tier1 证据认领、≤50 短进程、90d sweep、7d/3h 高频页、确定性矛盾终态与每周复查 |
+| 论坛 M5 | `src/collect/forum.ts` + `src/cli/forum-scan.ts` | 五个匿名 AMC 模块、thread/category sitemap 差集消费、页级讨论反解、当前态 upsert + 完整快照软删 |
+| 删除推断 | `src/collect/deletion.ts` | 双源完整性 + 连续两轮缺席 + 500/1.5% 熔断 + 单页 404 确认 |
+| 解析健康 | `src/health/parseHealth.ts` | 原始指纹 + claimed/fetched/checksum 完整性指标、同 `(source,mode,population_type)` 的 7 日基线、N≥3 后按生产者影响域冻结（采集证据不停） |
+| L2 projector | `src/project/*.ts` + `src/cli/project.ts` | 八张 M8 投影；`safe_seq_watermark()` 游标、逐投影锁、冻结检查、bootstrap 排除、views 保全 |
+| M10 对账层 | `src/reconcile/*.ts` + `src/cli/reconcile.ts` | v1/v2 三轨、CROM 全量五项、站内三角、`meta.reconcile_report` 与 qqbot 单行 JSON |
 | 本地快照 | `src/store/snapshot.ts` | 跨短进程传递上一轮 sitemap 状态（原子写、损坏即 bootstrap） |
 | 队列 | `src/store/queues.ts` | `meta.pending_page` / `meta.forum_scan_task` 的入队与认领（发现侧 UPSERT 绝不覆盖执行侧状态） |
 | CLI | `src/cli/sitemap-scan.ts` | 单次短进程，stdout 单行 JSON，失败非零退出 |
@@ -113,10 +120,10 @@ psql "$SYNCER2_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/smoke_test.sql | t
 # ⑤ 只读漂移断言（投影登记 + 熔断接线）
 ./checks/run_checks.sh
 
-# ⑥ 语义检索域冒烟（pgvector 缺失时 11 通过 / 2 跳过属预期）
+# ⑥ 语义检索域冒烟（vector 已就绪：13 通过 / 0 跳过）
 psql "$SYNCER2_DATABASE_URL" -v ON_ERROR_STOP=1 -f checks/embedding_smoke.sql | tail -3
 
-# ⑦ 全部 TS 测试（离线 + 真连库，102 条）
+# ⑦ 全部 TS 测试（离线 + 真连库，当前 153 条）
 npm test
 ```
 
@@ -137,7 +144,7 @@ npm test
 | 4 | `0004_app.sql` | BFF 与分析 job 的可写域 14 表 + 5 个原生枚举 | 0001 |
 | 5 | `0005_indexes_pgroonga.sql` | 全文索引，扩展缺失时自动降级 | 0001 + 0002 |
 | 6 | `0006_functions.sql` | 10 个 `apply_*` + 不可变/白名单/SCD2 触发器 + 游标安全机制 | 0001 + 0002 + **0003** |
-| 7 | `0007_meta_gaps.sql` | `scan_task`/`page_scan` 词表补齐 + `meta.write_freeze`（R10 熔断物理开关）+ Tier-2 投影登记（首遍 27，`0008` 落地后重跑得 31） | 0002 + **0003** |
+| 7 | `0007_meta_gaps.sql` | `scan_task`/`page_scan` 词表补齐 + `meta.write_freeze`（R10 熔断物理开关）+ Tier-2 投影登记（首遍 27；`0008` 后为 31，无 vector 时少 `chunk_embedding`；当前为 32） | 0002 + **0003** |
 | 8 | `0008_serve_embedding.sql` | 语义检索域：`text_chunk` / `chunk_embedding` / `page_semantic` + 两张契约表 + `embedding_backlog` 视图；**pgvector 缺失时降级跳过向量段** | 0001 + 0002 + 0003 |
 | 9 | `0009_serve_modeling_decisions.sql` | 两处产品决策的落地（红链、标签维度趋势），**可整体回退** | 0002 |
 | 12 | `0012_collector_queues.sql` | `meta.pending_page` + `meta.forum_scan_task` 两张采集队列表 | 0001 + 0003 |
@@ -171,12 +178,12 @@ npm test
 | schema | 表 | 说明 |
 |---|---|---|
 | `ingest` | 18（13 普通表 + 1 分区父表 + 4 分区） | `vote_event` 分区：`p0000`（冷回填）/ `p0001` / `p0002` / `pdefault`（必须恒空） |
-| `serve` | 34 + 1 视图 | Tier-1 三张 + Tier-2 三十一张（0002 的 27 + 0008 的 4），每张都有 `rebuild_from` 注释；视图 = `embedding_backlog` |
-| `meta` | 22 | 0003 的 15 张 + 0006 的 `fact_quarantine` + 0007 的 `write_freeze` + 0012 的 2 张 + 0100 的 3 张 |
+| `serve` | 35 + 1 视图 | Tier-1 三张 + Tier-2 三十二张（0002 的 27 + 0008 的 5），每张都有 `rebuild_from` 注释；视图 = `embedding_backlog` |
+| `meta` | 23 + 1 视图 | 23 张状态表；视图 = `write_freeze_alert_state` |
 | `app` | 14 | 收藏 / 关注 / 偏好 / 告警 / 追踪 / 标签 |
 
-合计 **88 表 + 1 视图**。`serve.chunk_embedding` 因 pgvector 缺失**未创建**（装好扩展重跑 0008
-即补齐，届时 serve 为 35 表 / Tier-2 为 32 张）。
+合计 **89 表 + 2 视图**。`serve.chunk_embedding` 已在 vector 0.8.3 上补建，
+`embedding` 列为 `halfvec(1024)`；serve 为 35 表 / Tier-2 为 32 张。
 
 函数 **46 个**：`ingest` 24 个（21 个 `SECURITY DEFINER`）、`meta` 16 个（13 个 `SECURITY DEFINER`，
 其中 0007 新增 6 个：`write_freeze` 五件套 + `freeze_bypass_enabled`）、
@@ -185,7 +192,13 @@ npm test
 （0007 §4 自己 `REVOKE`，因为 0006 第 8 节只扫它运行那一刻存在的函数）。触发器：`ingest` 侧 8 张表各挂 `trg_immutable` + `trg_no_truncate`，
 且 `vote_event` 的 4 个分区**逐分区补挂**（语句级 TRUNCATE 触发器不从父表传播）。
 
-### pgroonga 不可用 —— 已自动降级为 pg_trgm
+### pgroonga 切换完成（此前自动降级为 pg_trgm）
+
+> **2026-07-27 19:46:20 +08:00 状态更新**：真实 `scpper-v2` 已安装 pgroonga 4.0.6，
+> 重跑 `0005_indexes_pgroonga.sql` 得到 `pgroonga 索引就绪:7 条`。7 条均
+> `indisvalid=true / indisready=true` 后，已在带数量守卫的事务里 DROP 恰好 7 条
+> `*_trgm`；收尾查询为 `pgroonga=7 / named_trgm=0`。下文保留扩展缺失时的降级记录，
+> 作为故障回退与切换顺序的依据。
 
 实测：`pgroonga 4.0.6` 在这台机器上**装了二进制但没建扩展**，且它不是 trusted extension
 （控制文件无 `trusted = true`），`CREATE EXTENSION pgroonga` 需要 superuser。
@@ -229,6 +242,12 @@ DROP 语句与判据见 `docs/dba-handoff.md` §3.4（那 7 条 DROP 应用账�
 
 ### 角色与授权：DBA 面已压到 ~50 行（2026-07-27 更新）
 
+> **2026-07-27 收尾状态**：`bff_role` / `ingestor_role` / `projector_role` /
+> `avatar_worker_role` / `migration_role` 五个 `NOLOGIN` 组角色已由 DBA 建成。
+> 应用账号完整重跑 `apply.sh` 后，`9002` §10 的 **8 条负向 + 2 条正向**强制自检全过；
+> DBA 另行复核的 7 条 `has_*_privilege` 断言也全部符合预期。T6.6 已改为不依赖成员资格的
+> `has_table_privilege` / `has_function_privilege` 硬断言，实跑 **24/24、0 skip**。
+
 **实测的权限现实**（四条通道全部走死，详见 `docs/dba-handoff.md` §1）：
 
 ```
@@ -265,10 +284,10 @@ pg_hba.conf                  → 文件 0640 postgres:postgres 读不到；pg_hb
 2. **第 10 节是强制自检**，角色齐全时任一边界不成立就 `RAISE EXCEPTION` 让迁移失败
    —— 把"权限即边界"从口头约定变成迁移失败条件。
 
-**已经在真实 `scpper-v2` 上生效的部分**（不依赖角色）：`REVOKE ALL ON DATABASE ... FROM PUBLIC`、
+**角色落地前已经在真实 `scpper-v2` 上生效的部分**（不依赖角色）：`REVOKE ALL ON DATABASE ... FROM PUBLIC`、
 `REVOKE CREATE ON SCHEMA public FROM PUBLIC`、四个 schema 的
 `REVOKE EXECUTE ON ALL FUNCTIONS FROM PUBLIC`、`ALTER DEFAULT PRIVILEGES` 的 PUBLIC 收回。
-之后 `smoke_test.sql` **249/249 仍全绿**（确认收口没打断任何写路径），
+之后当时的 `smoke_test.sql` **249/249 全绿**（当前扩充后的基线为 296/296），
 `has_table_privilege('public','ingest.vote_event','INSERT')` = `f`，PUBLIC 对 `apply_*` 的 EXECUTE = 0。
 
 > 副作用要知情：收回 PUBLIC 的 `CONNECT` 后，只有属主 `user_dxzbdi` 能连 `scpper-v2`；
@@ -289,10 +308,11 @@ t_bff  → UPDATE app.page_metric_alert SET new_value      ERROR（列级拒绝�
 t_bff  → UPDATE app.page_metric_alert SET acknowledged_at 成功（列级放行）                          ✅
 ```
 
-⇒ `smoke_test.sql` 一直缺位的 **T6.6 至此有了实证**。角色在生产落地后把这 11 条固化成
-TS 测试即可（见后续 TODO）。
+⇒ `smoke_test.sql` 一直缺位的 **T6.6 至此有了实证**。角色落地后已把边界固化为
+不需要 `SET ROLE` 的 TS 目录权限断言；真实 `42501` 路径继续由可切换的
+`pg_database_owner` 机制自检覆盖。
 
-**不执行的后果，别当成可选优化**：v2 仍然能跑（所有对象归 `user_dxzbdi`，它有全权），
+**以下是角色落地前的风险记录（现已解除）**：v2 当时仍然能跑（所有对象归 `user_dxzbdi`，它有全权），
 但会缺掉"权限即边界"这一层：应用层写错代码就能绕过 `apply_*` 直写 `ingest.vote_event`
 （v1 fast-vote 直写聚合列致盲脏页检测正是这个形态的事故）、BFF 能写事实表、
 追踪表"只 additive"没有强制手段、不可变触发器的 `migration_role` 例外没有承载体
@@ -376,8 +396,9 @@ TS 测试即可（见后续 TODO）。
   I7 pending 候选与"已是撤票终态"不矛盾、`vote_event_pdefault` 恒空。
 
 **冒烟做不到的三组已补齐**（原「尚未覆盖」项，见下「多连接 TS 测试」）：T7.1/T7.2 的**多会话**
-乱序提交注入、T5.2 的 5,575 条大批与属性测试生成器、T6.6 的 `bff_role` 权限被拒（条件跳过 +
-用现存无权角色做机制排演）。三个文件在 `tests/t{5,6,7}-*.test.ts`，实测 **98 通过 / 0 失败 / 6 跳过**。
+乱序提交注入、T5.2 的 5,575 条大批与属性测试生成器、T6.6 的 `bff_role` 权限边界
+（目录权限硬断言 + 用现存无权角色做真实 42501 机制排演）。三个文件在
+`tests/t{5,6,7}-*.test.ts`，内部 Report 实测 **105 通过 / 0 失败 / 0 跳过**。
 
 新增两节（2026-07-27 第二轮，47 条）：
 
@@ -465,7 +486,65 @@ npm run sitemap:delta:dry
 # 正常一轮
 npm run sitemap:delta
 npm run sitemap:full
+npm run project
 ```
+
+### M8 L2 projector
+
+```bash
+# 单次增量运行八张投影（默认）
+npm run project
+
+# 只跑一张；user_stats 会自动先刷新 user_page
+npm run project -- --projection user_stats
+
+# 全量重建。page_daily_stats 只归零/逐列 upsert 可再生列，绝不 TRUNCATE/改 views
+npm run project:rebuild
+
+# 可选常驻形态：30 秒一轮，10 分钟无成功心跳主动退出
+npm run project -- --watch --interval-seconds 30 --stale-minutes 10
+```
+
+每张投影独立事务并持有独立 advisory lock；事务内按顺序执行
+`meta.assert_writes_allowed('projection')` → `meta.safe_seq_watermark()` → 折叠/upsert →
+`meta.advance_projection_cursor()`。禁止读取 `fact_seq.last_value` 作为游标水位。
+
+**待产品决策：`user_page` / `user_stats` 是否纳入已删页作品。** 当前默认
+`SYNCER2_PROJECT_INCLUDE_DELETED_PAGES=false`，与 v1 一致（不纳入）；设为 `true` 或传
+`--include-deleted-pages` 即切到纳入口径。两种路径都有自动化测试。无论该开关为何值，
+`user_stats.first_activity_* / last_activity_*` 都按规格包含已删页活动。
+
+### M10 对账层
+
+```bash
+# 每日完整轮：v1/v2 三轨 + CROM 全游标 + 完整 sitemap/ListPages 快照三角
+SYNCER2_V1_DATABASE_URL='postgresql://.../scpper-cn' npm run reconcile
+
+# qqbot 消费：stdout 恰好一行紧凑 JSON，日志全部走 stderr
+SYNCER2_V1_DATABASE_URL='postgresql://.../scpper-cn' npm run reconcile:qq
+
+# 显式网络诊断小样本（两者都强制 partial，绝不伪装成全量通过）
+npm run reconcile -- --mode triangle --live-listpages-batches 1 --triangle-pages 3 --qq-summary
+npm run reconcile -- --mode crom --crom-max-pages 3 --qq-summary
+```
+
+面向 QQ 的持续简报（只读 `scpper-v2`，stdout 恰好一行 JSON）：
+
+```bash
+npm run -s qq:report
+```
+
+该简报把 M10 三轨/三角与 `revision_coverage_metric`、分层 run 成功率、传输与
+出口分布、解析指纹、熔断、队列和 `page_scan` 体积合并。对象内的
+`dailyMessage` 与 `alertMessage` 是两个独立投递通道：健康日报一日一次；覆盖
+miss、parity 越阈、熔断、积压或连续失败只在异常状态转换时立即推送。对象不含
+连接串、token、出口 IP/节点名或原始错误栈。
+
+默认 CROM 不设页数上限，必须走到 `hasNextPage=false`；CROM 的 `HttpClient` 明确
+`proxyUrl=null`，不占 Wikidot IP 池。Wikidot 三角仍复用统一 HTTP 层并走
+`SYNCER2_HTTP_PROXY`。v1 连接先校验库名，再在每组查询中执行 `BEGIN READ ONLY`；
+唯一写入目标是 `scpper-v2` 的 `meta.reconcile_report`。首日白名单/冻结轨只建立基线，
+状态为 `partial`，此后才验证“稳定不增长”与 checksum 不变。
 
 ## CLI 契约
 
@@ -500,27 +579,23 @@ node --import tsx/esm src/cli/sitemap-scan.ts --mode <delta|full|threads|categor
 
 ## 调度
 
-```cron
-*/10 * * * *   cd /path/to/syncer2 && npm run -s sitemap:delta   >> /var/log/syncer2-delta.jsonl
-17  */4 * * *  cd /path/to/syncer2 && npm run -s sitemap:full    >> /var/log/syncer2-full.jsonl
-23  5  * * *   cd /path/to/syncer2 && npm run -s sitemap:threads >> /var/log/syncer2-threads.jsonl
-```
-
-日志文件本身就是一份 NDJSON 遥测流。**不要**用 PM2 的常驻模式跑这些命令——理由见 `src/README.md` §1。
+生产调度已改为 `deploy/systemd/syncer2-l0.timer` 至 `syncer2-l3.timer`：
+L0/L1 默认同为每 30 分钟（可一起改 15 分钟）、L2 full sitemap 每小时、L3 每周。
+请求预算与启用命令以 `docs/RUNBOOK.md` §3/§6 为准。
 
 ---
 
 ## 采集层自动化测试（`tests/http.test.ts` / `parse.test.ts` / `db.test.ts` / `egress-identity.test.ts`）
 
 ```bash
-npm test              # 全部 7 个测试文件（含 schema 侧的 T5/T6/T7 gate，需要 scpper-v2）
+npm test              # 当前全部 16 个测试文件（含 schema 侧的 T5/T6/T7 gate，需要 scpper-v2）
 npm run test:offline  # 只跑 HTTP + 解析：不连库、不发一个外网请求（本地测试服）
 npm run test:db       # 只跑时区回环（需要 scpper-v2）
 npm run typecheck:tests
 ```
 
-> **`npm test` 的当前基线：`tests 102 / pass 102 / fail 0`**（node:test 口径，约 30 s）。
-> 内部 `Report` 口径另有 6 条 `skip`，全在 `t6-role-permission.test.ts`，等 `9001` 建角色后自动生效。
+> **`npm test` 的当前基线：`tests 208 / pass 208 / fail 0 / skipped 0`**（node:test 口径，约 30 s）。
+> T6 内部 Report 为 24/24、0 skip；五个角色缺任意一个都会直接失败。
 > 跑之前先 `cp .env.example .env` 并填 `SYNCER2_DATABASE_URL` —— 连不上库是**失败**而不是跳过（刻意如此）。
 
 三组测试对应的是**采集层三道护栏**，都是把前几轮的手工验证固化下来的（2026-07-27，75 条断言组全绿）：
@@ -545,22 +620,23 @@ npm run typecheck:tests
 npm run test:gates    # 三组一起，串行（--test-concurrency=1）
 npm run test:t7       # 多会话游标安全
 npm run test:t5       # 5,575 票大批 + 属性生成器
-npm run test:t6       # 权限矩阵（角色未落地则条件跳过）
+npm run test:t6       # 权限矩阵（24 条硬断言，0 skip）
 ```
 
 `migrations/smoke_test.sql` 是**单文件单事务**的 psql 脚本，结构上做不到三件事：开两个连接、
 在测试侧生成随机数据并报告 seed、以 `SET ROLE` 切身份。这三组因此必须落在 TS 侧
-（`node:test` + `tsx`，零新依赖）。实测 **98 通过 / 0 失败 / 6 跳过**：
+（`node:test` + `tsx`，零新依赖）。内部 Report 实测 **105 通过 / 0 失败 / 0 跳过**：
 
 | 文件 | 断言 | 钉住的失效模式 |
 |---|---|---|
 | `tests/t7-cursor-safety.test.ts` | 32 | **静默漏投影**。写者 A 取到 seq 后不提交、B 后取先提交 ⇒ `safe_seq_watermark()` 必须返回 NULL 或 < A 的 seq，`projection_window()` 必须给空窗口。同一断言组里带**反例基线**：此刻 `fact_seq.last_value` 已越过 A 的 seq（朴素水位会漏投），且**只用 `min(seq_floor)` 的表机制也已越过**（T7.5 的 MVCC 边界，防止有人"优化"掉屏障锁）。四写者交错提交 8 轮后断言每条 `vote_event` 被**恰好消费一次**（0 漏 / 0 重复）；回滚写者烧掉的 seq 不让游标卡住；拿不到水位时 `advance_projection_cursor` 抛 `55006` 且游标一动不动 |
 | `tests/t5-vote-batch.test.ts` | 49 | **批量与逐行分歧**。5,575 票（实测最大页 scp-cn-2000 的真实票数）同时走 `apply_vote_snapshot`（集合化）与 `apply_vote_observation` 逐行 N 次，比**三个口径**：事件序列逐位 + 事件多重集对称差 + `vote_current` 全表 + `page_current` 四列。初始快照 / 30% 转移的第二轮 / 重放各比一次。属性生成器 60 轮随机快照（seed 可复现），覆盖 `direction=±2`、同 voter 多记录、混合 kind（wikidot/anon/guest/synthetic）、空快照、`is_complete=false`、`claimed_total` 不符、checksum 不符、`policy=forbidden`，逐轮断言 9 条不变式（I1–I4 折叠、事件链 `old = prev.new`、首事件必为 `vote`、幻影 revoke 零条、`|direction|≤1`、门控③ 候选表不含非可见 kind、事件数单调、重放幂等、`pdefault` 恒空） |
-| `tests/t6-role-permission.test.ts` | 17 + 6 跳过 | **"权限即边界"缺位**。分四层：① PUBLIC 对 8 张事实表零 DML、对任何 `SECURITY DEFINER` 函数零 EXECUTE（现在就全绿）；② 角色存在则跑目录级 `has_table_privilege` 矩阵（**不需要成员资格**，DBA 一执行 9000 就自动生效）；③ 有成员资格则 `SET ROLE bff_role` 真 INSERT 一次要 `42501`；④ **机制自检**：用 `pg_database_owner`（现存、对 ingest/serve 零权限、当前账号天然是其成员）把 ③ 的路径完整排演一遍 —— 表级 `42501` 实测成立，临时 GRANT 随事务 ROLLBACK 完全消失 |
+| `tests/t6-role-permission.test.ts` | 24 | **"权限即边界"缺位**。分四层：① PUBLIC 对 8 张事实表零 DML、对任何 `SECURITY DEFINER` 函数零 EXECUTE；② 五个角色必须存在，bff / ingestor / projector 跑目录级 `has_table_privilege` / `has_function_privilege` 矩阵；③ 因 `user_dxzbdi` 不是组角色成员，用目录函数直接验证 bff 的等价行为边界（无需 `SET ROLE`）；④ **机制自检**：用当前账号天然可切换的 `pg_database_owner` 把非法写入路径完整排演一遍 —— 表级 `42501` 实测成立，临时 GRANT 随事务 ROLLBACK 完全消失 |
 
 设计取向说明：
 
-- **跳过 ≠ 通过**。T6.6 的 5 条目录级断言 + 1 条行为级断言在角色落地前必然跳过，报告里 skip 独立成列、每条打印补救指令（执行 `9000_roles_grants.sql.ADMIN` + 重跑 0006 第 8 节）。第 ④ 层的存在就是因为"跳过的断言连自己写对了都证明不了"。
+- **T6.6 不再允许跳过**。五个 NOLOGIN 角色缺任意一个都会直接失败；原 6 条 skip 已全部转成
+  真断言。第 ④ 层保留真实 `42501` 行为注入，证明目录权限判据与执行层拒绝一致。
 - **数据策略按测试形态分两种**：T5 是单会话 ⇒ 全程一个事务 + `ROLLBACK`，零残留（只有序列前进，序列本就不回滚，与冒烟同理）；T7 的被测对象**就是跨会话可见性**，回滚在语义上用不了 ⇒ 真提交 + 末尾按专属 id 段删除，并有一条"零残留"正向断言。删事实表要靠 `SET LOCAL scpper.bypass_guard='on'`（0006 第 3 节的迁移逃生舱），于是清理本身顺带成了逃生舱的回归。
 - **专属 id 段**：`page.wikidot_id ∈ [970000000, 979999999]`、`user.wikidot_id ∈ [980000000, 989999999]`、非 wikidot 用户 `anon_key LIKE 'ts2test:%'`、`ingest_run.source = 'test_syncer2'`、`projection_cursor.projection LIKE 'test_%'`。与冒烟的 990001+ 段不重叠，两套可并存。连接串另有受保护库黑名单（含 URL 解码），指到 `scpper-cn` 直接拒绝启动。
 - **变异验证**（确认不变式真的会红）：`UPDATE serve.page_current SET rating = rating + 7`（模拟 v1 fast-vote 直写聚合列）⇒ I1–I4 检出 1 页；直插一条 `old_direction` 与前一事件 `new_direction` 不符的 `revote` + 一条以 `revote` 开头的事件链 ⇒ 链断裂检出 2 条、首事件检出 1 条。三条负对照都在事务里跑完 `ROLLBACK`。
@@ -590,10 +666,10 @@ npm run test:t6       # 权限矩阵（角色未落地则条件跳过）
 | 枚举稳定性 | 两次全量快照相隔 78 分钟：唯一 slug 数 35,983 = 35,983，新增 0 / 消失 0，覆盖下界 `B` 完全相同 ⇒ **可放心作 absence 基准** |
 | 对比 | 全站枚举：sitemap 4 请求 / 620 KB / 5 s **vs** ListPages 145 请求 / 6 MB / 430 s |
 
-**sitemap 在架构里的正确位置（修订后）**：**枚举完整性 / absence 基准 / 第二独立源**，
-不是发现层。它的价值是**"全、便宜、独立、对修订洪水结构性免疫"**，不是"快"。
-发现层交给 `ListPages order=updated_at desc` 与 `order=created_at desc`（各 1 请求 @3 min，
-滞后 48 s – >13 min）。
+**sitemap 在架构里的正确位置（最终修订）**：full sitemap 只做**枚举完整性 /
+absence 基准 / 第二独立源**。sitemap 上浮与投票活动的相关性假设已废弃；投票由同频 L1
+四字段全站 ListPages 直接扫描。编辑/新页由 L0
+`ListPages updated_at="last 2 hours"` 捕获。
 
 **四条必须遵守的硬约束**（写错了表现为幻影删除或漏检，不是性能问题）：
 
@@ -625,6 +701,8 @@ npm run test:t6       # 权限矩阵（角色未落地则条件跳过）
   （与之相反，`SYNCER2_HTTP_PROXY` 留空是合法的，意为"不走代理"。）
 - `SYNCER2_DATABASE_URL` — v2 独立库。**syncer2 不持有主库 `scpper-cn` 的连接串**，
   并行期主库是只读的，采集层根本不该有能力碰它。
+- `SYNCER2_PROJECT_INCLUDE_DELETED_PAGES` — M8 的显式待决口径开关。默认 `false`
+  （`user_page` / `user_stats` 不纳入已删页作品，与 v1 一致）；产品裁决前不得静默改默认值。
 
 ## 依赖说明
 
@@ -708,29 +786,53 @@ npm run test:t6       # 权限矩阵（角色未落地则条件跳过）
 
 ## 当前完成度
 
-> 最后一次全量校验：**2026-07-27 整合验证**——`DROP DATABASE` → 从零 `apply.sh` → 幂等重跑
-> → 冒烟 → checks → 全部 TS 测试 → 采集层端到端，全绿。明细见下节「整合验证」。
+> 最后一次数据库收尾校验：**2026-07-27 19:46–20:05 +08:00**——未重建数据库，
+> 在当前 `scpper-v2` 上完成 PGroonga 不停机切换、vector 表补齐、完整幂等 `apply.sh`、
+> 冒烟与 checks。明细见下节「DBA 收尾验收」。
 
 | 交付项 | 状态 |
 |---|---|
-| 四 schema 完整 DDL（`ingest`/`serve`/`meta`/`app`，**88 表 + 1 视图**） | ✅ 从零重建实测通过，幂等重跑零错误 |
+| 四 schema 完整 DDL（`ingest`/`serve`/`meta`/`app`，**89 表 + 1 视图**） | ✅ 从零重建实测通过；vector 到位后补齐 `serve.chunk_embedding`，幂等重跑零错误 |
 | 10 个 `apply_*` 转移函数 + 不可变触发器（合计 46 个函数） | ✅ 已落地，296 个冒烟断言全绿 |
 | 迁移执行器 `apply.sh` | ✅ 顺序执行 / 遇错报文件+行号 / 受保护库黑名单 |
 | 冒烟脚本 `smoke_test.sql` | ✅ 296/296，`ROLLBACK` 不留数据；空库与有数据的库上各跑过 |
-| 只读漂移断言 `checks/` | ✅ `run_checks.sh` 两条全过（Tier-2 31 表 / 31 行登记；14 个写入函数全接熔断） |
+| 只读漂移断言 `checks/` | ✅ `run_checks.sh` 两条全过（Tier-2 32 表 / 32 行登记；14 个写入函数全接熔断） |
 | sitemap 采集层原型 | ✅ 五种模式（index/delta/full/category/threads）+ `resolve-pages` 端到端实跑 |
 | sitemap 刷新周期实测 | ✅ TTL ≈ 60 min；**并据此推翻了"sitemap 做发现层"的原设计**（见 `experiments/sitemap-probe.md` + `../docs/data-model-v2-addendum-2026-07-27.md` §1） |
 | 设计文档修订附录 | ✅ `../docs/data-model-v2-addendum-2026-07-27.md`（R1–R15 落地状态 / 六个 blocker / 唯一常驻源决策的理由与代价 / 11 条悬空决策） |
-| 五角色 + 授权矩阵 | 🔶 **授权脚本已写完并验证通过，只等 DBA 跑 5 条 `CREATE ROLE`**。DBA 面已从 456 行压到 ~50 行（`9001`）；其余 `9002_grants.sql` 应用账号自己能跑，已在同版本容器上端到端验证（含 11 条权限边界实测）。交接单：`docs/dba-handoff.md` |
-| pgroonga 全文索引 | 🔶 生产仍是 pg_trgm 降级态，但**完整切换路径已在同版本容器（PG 17.10 + pgroonga 4.0.6）演练通过**：装扩展 → 重跑 0005 得 7 条 pgroonga 索引 → `&@~` 可用 → DROP 7 条 `*_trgm` 后仍可用。只等 DBA 一条 `CREATE EXTENSION` |
-| 冒烟做不到的三组（T5.2 / T6.6 / T7.1-7.2） | ✅ `tests/t{5,6,7}-*.test.ts`，**98 通过 / 0 失败 / 6 跳过**（跳过的 6 条等 `9001` 建角色后自动生效），`npm run test:gates` |
-| 采集层自动化测试（HTTP 护栏 / 解析红线 / 时区 / 出口归因） | ✅ `tests/{http,parse,db,egress-identity}.test.ts`；`npm test` 全量 **102 通过 / 0 失败** |
-| 语义检索域归属 + embedding 重算决策 | ✅ `docs/embedding-migration.md` + `0008_serve_embedding.sql` + `checks/embedding_smoke.sql`（11 通过 / 2 待 pgvector） |
+| 五角色 + 授权矩阵 | ✅ 五个 `NOLOGIN` 组角色已建；完整 `apply.sh` 后 `9002` §10 的 **8 负向 + 2 正向**全过，DBA 独立复核 7 条 `has_*_privilege` 断言全符预期；T6.6 为 24/24、0 skip |
+| pgroonga 全文索引 | ✅ `scpper-v2` 已装 pgroonga 4.0.6；`0005` 幂等重跑确认 7 条索引全部 valid/ready，随后 DROP 7 条降级 `*_trgm`，终态 pgroonga=7 / named trgm=0 |
+| 冒烟做不到的三组（T5.2 / T6.6 / T7.1-7.2） | ✅ `tests/t{5,6,7}-*.test.ts`，内部 Report **105 通过 / 0 失败 / 0 跳过**，`npm run test:gates` |
+| 全量自动化测试 | ✅ 2026-07-27 22:12:50–22:13:20 +08:00 独占实跑 `npm test`：**tests 208 / pass 208 / fail 0 / skipped 0** |
+| M5 论坛采集 | ✅ 五个模块匿名读取；差集/页级队列消费；真实 `scp-2823` 样本 4 请求落 1 thread + 2 posts，thread.page_id=25 |
+| 语义检索域归属 + embedding 重算决策 | ✅ vector 0.8.3 到位；`serve.chunk_embedding(halfvec(1024))` + HNSW 已补齐，cursor/注释逐字一致；`embedding_smoke` 13/13、0 skip |
 | 采集队列与新页消化链路 | ✅ `0012_collector_queues.sql` + `src/store/queues.ts` + `src/cli/resolve-pages.ts`，端到端实跑（含冷启动闸拦截） |
-| Tier-2 投影 projector | ⛔ 未开始（表已建；`meta.projection_cursor` **31 行登记已完成**，见 `0007` §3 + `0008` §8 —— 前置条件已就绪） |
+| Tier-2 投影 projector | ✅ M8 八张 L2 已实现；安全水位/逐投影锁/冻结检查/bootstrap 排除/views 保全/双 deleted-page 口径均有测试与真实 v2 小样本 |
+| M10 对账层 | ✅ 三轨 / CROM 全量五项 / 站内三角 / QQ 单行摘要已实现；真实小样本 12 请求，详细结果见 `docs/build-report-10.md` |
 | Phase 2 v1→v2 回填 | ⛔ 回填本体未开始；**收尾 gate 已就绪并端到端演练过**（47,861 页 + 37,455 用户搬进独立测试库 `scpper-v2-gatetest`，gate 50/50 全绿；见下「Phase 2 回填收尾 gate」） |
 | Phase 2 回填收尾 gate | ✅ `0100_backfill_gate.sql` + `checks/backfill_finalize.sql` + `checks/load_v1_identity.sh`，正反两条路径各实测（含 A2.1 抓出 25 个被合并的 guest 身份） |
-| Prisma multiSchema 映射 | ✅ `prisma/schema.prisma`（独立文件，84 model / 4 schema），`validate` + `generate` 通过；7 条降级说明写在文件头 |
+| Prisma multiSchema 映射 | ✅ `prisma/schema.prisma`（独立文件，86 model / 4 schema），`validate` + `generate` 通过；7 条降级说明写在文件头 |
+
+---
+
+## DBA 收尾验收（2026-07-27，CST / UTC+8）
+
+本轮只在现有 `scpper-v2` 上做幂等迁移、索引切换与事务内测试，**没有 DROP DATABASE**。
+
+| 实际执行时间 | 验收项 | 实际结果 |
+|---|---|---|
+| 19:46:20 | `0005_indexes_pgroonga.sql` + 索引切换 | 幂等重跑打印 `pgroonga 索引就绪:7 条`；7 条均 valid/ready 后事务内 DROP 7 条 `*_trgm`；终态 7 / 0 |
+| 19:46:28 | `0008_serve_embedding.sql` | `serve.chunk_embedding` 已就绪，`halfvec(1024)` + valid HNSW；Tier-2 32 表 / cursor 32 行；`rebuild_from` 与表注释逐字相等 |
+| 19:47 | `npm run test:t6` | node:test 5/5；内部权限 Report **24/24、0 fail、0 skip** |
+| 20:04:18–20:04:19 | 完整 `apply.sh --quiet` | 最终工作树的 13 个迁移文件全部成功；9002 权限强制自检通过；PUBLIC 可执行的 SECURITY DEFINER 函数为 0 |
+| 20:04:27 | `migrations/smoke_test.sql` | **296/296**，15 节 0 失败，末尾 `ROLLBACK` |
+| 20:04:27 | `checks/run_checks.sh` | **2/2**：Tier-2 32/32 且注释逐字一致；14 个写入函数熔断接线正确 |
+| 20:04:27 | `checks/embedding_smoke.sql` | **13/13、0 skip**；原 E10/E11 均真实执行通过 |
+| 20:25:39–20:26:08 | `npm test` | **tests 185 / suites 41 / pass 185 / fail 0 / skipped 0** |
+
+全量测试第一次执行时，恰逢并行 M1–M4 尚在补齐 `workQueue` 导出，曾观测到 1 条暂态导入失败；
+未越界修改其文件。其后一次重跑又与外部 `npm test` 重叠，T7 因对方持有摄入 advisory lock
+按设计返回空水位；待并行接口落齐且外部数据库测试进程退出后按上表独占重跑，全量 153/153。
 
 ---
 
@@ -752,7 +854,9 @@ npm run test:t6       # 权限矩阵（角色未落地则条件跳过）
 `tests/` 文件互不 import、`helpers/` 只被 T5/T6/T7 用；`src/store/meta.ts` 的两个 TS 联合类型与
 `0007` 的 CHECK 词表**逐值相等**（`page_scan.kind` 8 项、`scan_task.kind` 11 项，已用 SQL 对过）。
 
-### 从零重建的实测结果
+### 从零重建的实测结果（DBA 收尾前的历史基线）
+
+下表保留扩展与角色尚未落地时的整合快照；当前终态与最新数字见上方「DBA 收尾验收」。
 
 | 步骤 | 结果 |
 |---|---|
@@ -764,7 +868,7 @@ npm run test:t6       # 权限矩阵（角色未落地则条件跳过）
 | `checks/embedding_smoke.sql` | 11 通过 / 2 跳过（E10/E11 是 halfvec 类型本身，等 pgvector） |
 | `npx tsc --noEmit` + `tsc -p tsconfig.tests.json` | 均 exit 0 |
 | `npm test`（7 个测试文件） | **tests 102 / pass 102 / fail 0**；内部 Report：T5 49/49、T6 17 通过 + 6 跳过（等角色）、T7 32/32 |
-| `npm run prisma:check` | `valid 🚀` + `Generated Prisma Client`；自检「model 数 = 非分区表数 = 84」「分区子表未混入」「无丑关系名」 |
+| `npm run prisma:check` | `valid 🚀` + `Generated Prisma Client`；自检「model 数 = 非分区表数 = 86」「分区子表未混入」「无丑关系名」 |
 | 采集层端到端 | 见下表 |
 | 收尾复查 | 测试专属 id 段（page `97xxxxxxx` / user `98xxxxxxx` / `source='test_syncer2'` / `projection_cursor test_%`）**全部 0 行**；`meta.write_freeze` 9 域全 `frozen=false`；`source='synthetic'` 的 run 0 条 |
 
@@ -790,15 +894,13 @@ npm run test:t6       # 权限矩阵（角色未落地则条件跳过）
 这个安慰剂形态确实被堵住；`checks/load_v1_identity.sh --dry-run` 对 v1 只发 `SELECT count(*)` /
 `COPY … TO STDOUT`，实测 page 47,862 / user 37,456 / gacha 36,957，目标库零写入。
 
-### 整合期没做的事（明确列出，别当成已完成）
+### 整合期没做的事（历史快照；前两项现已收尾）
 
-- **`9001_create_roles.sql.ADMIN` 仍未执行**（需 CREATEROLE）。因此 `0006` §8 / `0007` §4 /
-  `0012` §3 / `9002` §2–§7 的 GRANT 段全部走"角色不存在 ⇒ 跳过"分支，`9002` §10 的强制自检
-  也跳过。**角色落地后的正确动作是重跑整个 `./apply.sh`**（全部文件幂等，一次覆盖以上四处），
-  而不是逐个 `--only`。
-- **pgvector / pgroonga 仍未安装**（需 superuser）。因此 `serve.chunk_embedding` 未创建、
-  `text_chunk` 的 pgroonga 索引未建、全文检索仍是 `pg_trgm` 降级态。装完各自重跑
-  `0008` / `0005` 即补齐（都幂等）。
+- ✅ **角色缺口已于 2026-07-27 收口**：五个 NOLOGIN 角色已建，完整 `apply.sh` 已重跑；
+  `9002` §10 的 8 负向 + 2 正向全过，T6 为 24/24、0 skip。
+- ✅ **扩展缺口已于 2026-07-27 收口**：vector 0.8.3 / pgroonga 4.0.6 已安装；
+  `serve.chunk_embedding`、chunk FTS 与 7 条页面/用户/论坛 PGroonga 索引均就绪，
+  7 条降级 `*_trgm` 已在 valid/ready 守卫后删除。
 - **`checks/` 与 `npm test` 未接进任何 CI** —— 仓库里没有可挂的 CI 配置，目前只能手工跑。
 - **一次性测试库 `scpper-v2-gatetest` 已删除**（那是回填演练的现场，结论已写进 README）。
 
@@ -948,7 +1050,7 @@ SELECT ingest.register_page(...);           -- 明天：22003 integer out of ran
 
 ```
 syncer2/prisma/
-  schema.prisma          ← db pull 生成 + 人工修正关系字段名（84 model / 4 schema / 5 enum）
+  schema.prisma          ← db pull 生成 + 人工修正关系字段名（86 model / 4 schema / 5 enum）
   schema.header.prisma   ← 文件头注释块的权威副本（含 7 条降级说明与红线）
   pull.sh                ← 重新introspect 的唯一入口
 ```
@@ -963,7 +1065,7 @@ syncer2/prisma/
   而且 `parse_health_baseline` 有指向 `ingest_run` 的外键 —— Prisma 要求关系两端的 model 都在。
   同理 `ingest` 不可能排除（app 的外键全锚在 `ingest.page` / `ingest."user"`）。
 * client 输出到 `node_modules/.prisma/syncer2-client`，与 v1 client 并存不打架。
-* 实测：`prisma validate` 通过、`prisma generate` 通过、**84 model ↔ 84 张非分区表一对一**，
+* 实测：`prisma validate` 通过、`prisma generate` 通过、**86 model ↔ 86 张非分区表一对一**，
   16 个分区子表被正确排除。
 
 ### 🔴 只作读侧类型来源，不可用于 `prisma migrate`
@@ -1013,41 +1115,34 @@ cd syncer2 && ./prisma/pull.sh --check    # 只 validate/generate/自检（CI �
 
 ### pgroonga
 
-本文件的 datasource **不带** `extensions = [pgroonga]`（v1 的带）：scpper-v2 上扩展建不出来，
-`0005` 已降级为 7 条 pg_trgm GIN 索引，在 schema 里表现为
-`@@index([...(ops: raw("gin_trgm_ops"))], type: Gin)`。
-trgm 只支撑 `ILIKE`，不支撑 `&@~` —— 读侧写 `&@~` 分支会**报错**而不是变慢。
+本文件的 datasource 仍**不带** `extensions = [pgroonga]`（扩展由 DBA 管理，不交给 Prisma
+migrate）。真实 `scpper-v2` 已安装 pgroonga 4.0.6，`0005` 的 7 条 PGroonga 索引均
+valid/ready；原 7 条 pg_trgm GIN 降级索引已删除。不要用 Prisma migrate 反向“修正”
+这组数据库原生索引。
 
 ## 后续 TODO
 
-**需要 DBA / superuser 的（两条，越早做越好）—— 2026-07-27 已探明无本机通道，交接单已就绪**
+**原需 DBA / superuser 的两条已于 2026-07-27 完成；以下保留交接记录**
 
 先说结论：**本机确实没有 superuser 通道**，四条路逐条实测走死（`sudo` 要密码且无 NOPASSWD
 条目、peer 认证 OS 用户不匹配、`pg_hba.conf` 与 `pg_hba_file_rules` 都读不到、
 全库唯一 superuser 是 `postgres` 且无任何 `.env` / `.pgpass` 持有它的凭据）。
 ⇒ 已写 **`docs/dba-handoff.md`**（完整执行步骤 + 验证方法 + 不做的后果 + 回滚）。
 
-1. **五角色**：DBA 只需执行 **`migrations/9001_create_roles.sql.ADMIN`**（整份只有 5 条
-   `CREATE ROLE` + 5 条 `COMMENT`，~50 行）。之后应用侧自己跑
-   `./apply.sh --only 9002_grants.sql` 即补齐授权矩阵，**不需要再重跑 `0006` 第 8 节**
-   （9002 覆盖面更全）。
-   已完成的验证（一次性容器 PG 17.10，跑完销毁）：9001/9002 各幂等重跑一次输出逐字相同；
-   9002 第 10 节强制自检 8 负 + 2 正全通；**Phase 1 gate 的负向断言用真登录账号实测 11 条全中**
-   （`bff_role` 写 `ingest.vote_event` → `ERROR: 42501: permission denied for table vote_event`）。
-   ⇒ 原先记在这里的 T6.6 缺口已有实证，只剩"固化成 TS 测试"（见测试层 #10）。
+1. ✅ **五角色**：DBA 已执行 `migrations/9001_create_roles.sql.ADMIN`，五个角色均为 NOLOGIN；
+   应用侧完整重跑 `apply.sh` 后，9002 第 10 节强制自检 8 负 + 2 正全通，DBA 独立复核的
+   7 条 `has_*_privilege` 断言也全部符合预期。T6.6 已固化为 24 条真断言、0 skip。
    顺带确认：`apply_revision_batch` 的 `set_config('scpper.revision_backfill',…)` 在
    `ingestor_role` 身份下正常（会话级占位 GUC 不需要特权）。
-2. **pgroonga**：DBA 只需 `CREATE EXTENSION IF NOT EXISTS pgroonga;`（**注意 `-d scpper-v2`**）。
-   之后应用侧 `./apply.sh --only 0005_indexes_pgroonga.sql` 即得 7 条 pgroonga 索引。
-   整条路径（含 DROP 7 条 `*_trgm` 的不停机切换）已在同版本容器演练通过，见上「pgroonga」一节。
-   若决定**不装**，BFF **必须**实现 ILIKE 回退分支 —— 实测无扩展时 `&@~` 报
-   `42883: operator does not exist`，读切换当天全文搜索是**报错**而不是变慢。
-   `*_trgm` 的 DROP 时机与判据见 `docs/dba-handoff.md` §3.4（**不要与建索引同一步做**）。
+2. ✅ **pgroonga / vector**：真实 `scpper-v2` 已安装 pgroonga 4.0.6 与 vector 0.8.3。
+   `0005` / `0008` 均已幂等重跑；7 条 PGroonga 索引 valid/ready 后，原 7 条 `*_trgm`
+   已按 `docs/dba-handoff.md` §3.4 删除；`serve.chunk_embedding` 与 HNSW 也已补齐。
 
 **迁移/schema 层**
 
 3. ~~`meta.projection_cursor` 的初始登记清单~~
-   **✅ 已完成（2026-07-27，`migrations/0007_meta_gaps.sql` §3）**：27 个 Tier-2 投影全部登记，
+   **✅ 已完成（2026-07-27，`migrations/0007_meta_gaps.sql` §3 + `0008` §8）**：
+   0007 的 27 个 + 0008 的 5 个 Tier-2 投影共 32 个全部登记，
    `rebuild_from` **由 DDL 直接从 `pg_description` 解析生成，不手抄** —— "逐字一致"因此不是
    靠人眼校对维持的，改了注释重跑 0007 即同步。Tier-1 三表刻意**不**登记（与事实同事务，
    无游标语义）。三道硬门：注释不以 `rebuild_from=` 开头 / 新增 Tier-2 表未声明
@@ -1119,7 +1214,7 @@ trgm 只支撑 `ILIKE`，不支撑 `&@~` —— 读侧写 `&@~` 分支会**报�
 9. ✅ **已完成** —— Prisma multiSchema 映射。**新独立文件** `prisma/schema.prisma`
    （`schemas = ["app","ingest","meta","serve"]`，datasource 指 `SYNCER2_DATABASE_URL`，
    client 输出到 `node_modules/.prisma/syncer2-client`）。`backend/prisma/schema.prisma`
-   未被触碰。84 model ↔ 84 张非分区表一对一，`prisma validate` / `generate` 通过。
+   未被触碰。86 model ↔ 86 张非分区表一对一，`prisma validate` / `generate` 通过。
    详见下节「Prisma 映射」——**含 7 条 Prisma 表达不了的结构与降级说明**。
 
 **测试层**
@@ -1128,8 +1223,8 @@ trgm 只支撑 `ILIKE`，不支撑 `&@~` —— 读侧写 `&@~` 分支会**报�
     做不到，得用 TS 测试或两个 psql 协程）、5,575 条大批 + 属性测试生成器（T5.2）、
     `bff_role` 权限被拒（T6.6，等角色落地）。~~
     **✅ 已完成（2026-07-27）**：`tests/t7-cursor-safety.test.ts`（32）/
-    `tests/t5-vote-batch.test.ts`（49）/ `tests/t6-role-permission.test.ts`（17 通过 + 6 跳过），
-    共 **98 通过 / 0 失败 / 6 跳过**，`npm run test:gates`。见下文「多连接 TS 测试」。
+    `tests/t5-vote-batch.test.ts`（49）/ `tests/t6-role-permission.test.ts`（24），
+    内部 Report 共 **105 通过 / 0 失败 / 0 跳过**，`npm run test:gates`。见下文「多连接 TS 测试」。
 11. ~~把 HTTP 护栏（本地测试服打 503/500/gzip）、`parse.ts` 结构断言、时区回环这三组
     手工验证固化成 test 文件 —— 目前采集层**没有自动化测试**。~~
     **✅ 已完成（2026-07-27）**：`tests/http.test.ts`（25）/ `tests/parse.test.ts`（31）/
@@ -1190,7 +1285,7 @@ trgm 只支撑 `ILIKE`，不支撑 `&@~` —— 读侧写 `&@~` 分支会**报�
       人为置脏后重跑，执行侧状态逐列不变、`seen_count` 从 1 变 2、无重复行）。
 15. ~~sitemap **不能**替代 SiteChanges 做十分钟级新页发现，发现层应交给 ListPages。~~
     **✅ 文档修正已完成（2026-07-27）**：本 README 的架构描述与「sitemap 通道实测账」已按
-    实测重写（TTL≈60 min / 排序键是"最后活动"而非 lastmod / 禁止 lastmod 阈值早停 /
+    实测重写（TTL≈60 min / 排序不保证 lastmod 降序 / 禁止 lastmod 阈值早停 /
     新页最坏 44.5 min vs ListPages 13.5 min / absence 四分类硬排除 / md5 短路 /
     ≥2 轮间隔须 > 1 TTL），并新建修订附录
     **`../docs/data-model-v2-addendum-2026-07-27.md`**（不改受保护 checkout 里的原设计文档，
@@ -1199,9 +1294,9 @@ trgm 只支撑 `ILIKE`，不支撑 `&@~` —— 读侧写 `&@~` 分支会**报�
     —— sitemap 也不做发现层，ListPages 重新承担发现层）、§3 六个 blocker + Phase 0 增补六项、
     §4「唯一常驻源」决策的理由/七条代价/立场、§5 分域权威表与修订后的触发矩阵与请求预算、
     §6 十一条仍然悬空的决策。
-    **剩下的实现工作**（不属于文档修正）：把 ListPages 的两条快通道
-    （`order=updated_at desc` / `order=created_at desc`，各 1 请求 @3 min）真的接进来 —— 这是
-    #14 的前置，也是 blocker B6（"稳定跑通一次完整 Tier1"）的一部分。
+    **✅ 2026-07-28 最终修正**：L0 使用服务端 `updated_at="last 2 hours"`；
+    L1 与 L0 同频，四字段全站扫描投票且用 `revisions` 持续证明 L0 覆盖；
+    L2 full sitemap 每小时只做 absence/第二枚举源；L3 全字段每周兜底。
 16. `SiteChangesModule` 的时效**完全未测**。若最终需要硬 SLA 的秒级发现，它是唯一剩下的候选。
     另：sitemap 的 TTL 是否按文件独立（只测了 `page_1`）也未验 —— 若 `page_2..4` 不同步重生成，
     跨文件对账会短暂看到重复/缺失条目，所以全量 absence 基准**必须在一次 run 内连续抓完 4 个文件**，
@@ -1227,16 +1322,24 @@ trgm 只支撑 `ILIKE`，不支撑 `&@~` —— 读侧写 `&@~` 分支会**报�
 19. **`projection` 域尚未接线。** `checks/0002` 的反向断言只覆盖 `ingest.apply_*`，
     projector 落地后必须在其入口调 `meta.assert_writes_allowed('projection')` 并加进该文件的
     `v_must` 清单 —— 否则 projector 漏接熔断，`checks/0002` **不会**自动发现。
-20. **R10 的自动触发链仍然缺位。** `meta.write_freeze` 是执行体，但"每轮把
-    `ingest_run.parse_fingerprint` 与 `meta.parse_health_baseline` 比对、越界即
-    `freeze_writes('all', …)`"这个判定作业还没有人写（属采集/健康检查侧）。目前只能人工 freeze。
-21. **冻结期的证据补写依赖调用方守约，TS 侧还没实现。** `PGF01` 会回滚整个事务，
+20. ~~**R10 的自动触发链仍然缺位。**~~ **✅ M7 已完成（2026-07-27）**：
+    `src/health/parseHealth.ts` 会把原始指纹和 population-invariant 完整性指标写入
+    `ingest_run`，按相同 `(source,mode,population_type)` 读取前 7 日合格轮次并应用
+    `parse_health_baseline` 阈值；绝对/相对阈值都须 N≥3，越界只冻结生产者实际影响域，
+    `all` 保留给人工或多域相关故障。`finishIngestRun()` 默认接线，Tier1 与论坛在事实写入前先判定，
+    并已用人为 `parse_drop_rate=1` 演练确认事实函数被 `PGF01` 阻断、`meta.page_scan` 仍可写。
+    2026-07-28 首次真实误报后，`avg_votes_per_page` 等五项 population-sensitive 指标已从
+    默认 gate 退役；详见 `docs/incident-2026-07-28-r10-population-sensitive-fingerprint.md`。
+    2026-07-29 第五类误报后完成全矩阵审计、固定小样本 evidence-only、冻结超时库内状态；
+    详见 `docs/parse-health-matrix-2026-07-29.md`。
+21. ~~**冻结期的证据补写依赖调用方守约，TS 侧还没实现。**~~ `PGF01` 会回滚整个事务，
     所以 `meta.note_freeze_skip()` 必须由采集层在**新事务**里调。
-    `store/meta.ts` 的 `recordPageScans` 本身是独立事务（"先落证据再调 `apply_*`"这条路径天然
-    满足），但**没有针对 `PGF01` 的显式 catch 分支与遥测字段**。
-22. **`scan_task` 的 `forum` / `discussion` / `files` 三种 kind 目前没有任何入队者**，
-    `meta.forum_scan_task` 的 86,917 条也**没有消化者**。词表与队列就位是为了让抓取器落地时
-    不用再改 schema，但"有队列、无消费者"本身是下一轮要填的实现空缺。
+    **✅ work queue 已显式捕获 `PGF01` 并补写冻结证据。** 2026-07-28 的 run 202 实证：
+    总闸冻结后 5 条 `meta.page_scan(status='failed')` 与完整冻结原因仍正常落库。
+22. ~~`scan_task` 的 `forum` / `discussion` 与 `meta.forum_scan_task` 没有消费者。~~
+    **✅ M5 已完成（2026-07-27）**：Tier1 已按评论计数/时间变化入 `forum` 任务，
+    `forum-scan` 同时消费页级 `forum` / `discussion` 与 thread/category sitemap 差集，
+    `FOR UPDATE SKIP LOCKED` 认领、成功即删、失败退避。`files` 由 M3 消费。
 23. **`meta.pending_page` 的约 1 万条待解析是冷启动积压，不该由 `resolve-pages` 消化**
     （一页一个整页 GET）。正确出路是 Phase 2 批量回填——v1 库里已有 `wikidot_id`。
     回填做完后这批会被 `resolveSlugs` 自然解析掉，队列收敛到日常量级（实测新页+改名 30–80/天）。
