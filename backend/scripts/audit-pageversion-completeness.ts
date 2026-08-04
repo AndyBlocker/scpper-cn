@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { getPrismaClient, disconnectPrisma } from '../src/utils/db-connection.ts';
 import { Prisma } from '@prisma/client';
+import { REVISION_COUNT_OFFSET } from '../src/utils/revision-count.js';
 
 type Args = { all: boolean };
 function parseArgs(argv: string[] = process.argv.slice(2)): Args {
@@ -60,7 +61,10 @@ async function main() {
         COUNT(*) FILTER (WHERE actual_votes > 0 AND actual_revisions > 0) AS "versionsWithBoth",
         COUNT(*) FILTER (WHERE actual_votes = 0 AND actual_revisions = 0) AS "versionsWithNeither",
         COUNT(*) FILTER (WHERE COALESCE(stored_vote_count, 0) <> actual_votes) AS "versionsWithVoteMismatch",
-        COUNT(*) FILTER (WHERE COALESCE(stored_revision_count, 0) <> actual_revisions) AS "versionsWithRevisionMismatch"
+        COUNT(*) FILTER (
+          WHERE stored_revision_count IS NULL
+             OR stored_revision_count + ${REVISION_COUNT_OFFSET} <> actual_revisions
+        ) AS "versionsWithRevisionMismatch"
       FROM counts;
     `);
 
@@ -105,11 +109,21 @@ async function main() {
         stored_revision_count AS "storedRevisionCount",
         actual_revisions::int AS "actualRevisionCount",
         (actual_votes - COALESCE(stored_vote_count, 0))::int AS "voteDiff",
-        (actual_revisions - COALESCE(stored_revision_count, 0))::int AS "revDiff"
+        (actual_revisions
+          - CASE WHEN stored_revision_count IS NULL THEN 0
+                 ELSE stored_revision_count + ${REVISION_COUNT_OFFSET}
+            END)::int AS "revDiff"
       FROM counts
       WHERE COALESCE(stored_vote_count, 0) <> actual_votes
-         OR COALESCE(stored_revision_count, 0) <> actual_revisions
-      ORDER BY GREATEST(ABS(actual_votes - COALESCE(stored_vote_count, 0)), ABS(actual_revisions - COALESCE(stored_revision_count, 0))) DESC,
+         OR stored_revision_count IS NULL
+         OR stored_revision_count + ${REVISION_COUNT_OFFSET} <> actual_revisions
+      ORDER BY GREATEST(
+                 ABS(actual_votes - COALESCE(stored_vote_count, 0)),
+                 ABS(actual_revisions
+                   - CASE WHEN stored_revision_count IS NULL THEN 0
+                          ELSE stored_revision_count + ${REVISION_COUNT_OFFSET}
+                     END)
+               ) DESC,
                actual_votes DESC
       LIMIT 100;
     `);
@@ -172,5 +186,3 @@ async function main() {
 }
 
 void main();
-
-

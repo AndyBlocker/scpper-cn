@@ -29,6 +29,12 @@ import { PrismaClient } from '../node_modules/.prisma/syncer-client/index.js';
 
 const CROM_ENDPOINT = 'https://apiv2.crom.avn.sh/graphql';
 const BATCH_SIZE = 100;
+/** Wikidot/CROM revisionCount 是零基最大修订号，Revision 行数包含 revision 0。 */
+const REVISION_COUNT_OFFSET = 1;
+
+function revisionListCountFromClaimed(claimedTotal: number): number {
+  return claimedTotal + REVISION_COUNT_OFFSET;
+}
 
 // ── Types ──
 
@@ -605,19 +611,21 @@ function audit(
     totalRevCountSum += counted;
     totalRevRecords += actual;
 
-    if (counted === actual) { revMatch++; continue; }
-    const d = counted - actual;
+    const expected = revisionListCountFromClaimed(counted);
+    if (expected === actual) { revMatch++; continue; }
+    const d = expected - actual;
     if (d > 0) revLess++; else revMore++;
     if (Math.abs(d) >= 5) revIssues.push({ fn, counted, actual, d });
   }
 
   revIssues.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
-  log(`  revisionCount 总和: ${totalRevCountSum}, 实际 Revision 行数: ${totalRevRecords}`);
-  log(`  匹配: ${revMatch}, Revision行数 < revisionCount: ${revLess}, Revision行数 > revisionCount: ${revMore}`);
+  log(`  零基 revisionCount 总和: ${totalRevCountSum}, 实际 Revision 行数: ${totalRevRecords}`);
+  log(`  匹配(claimed+offset): ${revMatch}, Revision行数不足: ${revLess}, Revision行数超出: ${revMore}`);
   if (revIssues.length > 0) {
     log(`  差距 >= 5 的页面 (${revIssues.length}, 前 15):`);
     for (const r of revIssues.slice(0, 15)) {
-      log(`    ${r.fn}: revisionCount=${r.counted} 实际=${r.actual} (差${r.d >= 0 ? '+' : ''}${r.d})`);
+      log(`    ${r.fn}: revisionCount=${r.counted} 期望行数=${revisionListCountFromClaimed(r.counted)} ` +
+          `实际=${r.actual} (期望-实际=${r.d >= 0 ? '+' : ''}${r.d})`);
     }
   }
 

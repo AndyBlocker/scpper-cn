@@ -1,5 +1,6 @@
 // src/core/graphql/AliasQueryBuilder.js
 import { CoreQueries } from './CoreQueries.js';
+import { revisionListCountFromClaimed } from '../../utils/revision-count.js';
 const cq = new CoreQueries();
 const MAX_FIRST = 100;
 
@@ -17,8 +18,8 @@ export function buildAliasQuery(pages, options = {}) {
     variables[varUrl] = page.url || page.wikidotInfo?.url;
 
     // 根据实际数量和限制动态设置first参数，避免浪费
-    // 注意：revisionCount不包含PAGE_CREATED revision，所以实际数量要+1
-    const actualRevisionCount = (page.revisionCount ?? 0) + 1;
+    // revisionCount 不包含 revision 0，按统一 offset 换算真实列表行数。
+    const actualRevisionCount = revisionListCountFromClaimed(page.revisionCount ?? 0);
     const revFirst = Math.min(actualRevisionCount, revisionLimit);
     const voteFirst = Math.min(page.voteCount ?? 0, voteLimit);
 

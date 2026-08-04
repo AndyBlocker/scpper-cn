@@ -6,6 +6,11 @@
 import 'dotenv/config';
 import { Pool } from 'pg';
 
+// Wikidot revisionCount 是从 0 开始的最大修订号，Revision 表行数还包含 revision 0。
+const REVISION_COUNT_OFFSET = 1;
+const revisionListCountFromClaimed = (claimedTotal) =>
+  claimedTotal + REVISION_COUNT_OFFSET;
+
 const wikidotIdArg = process.argv[2];
 const wikidotId = Number(wikidotIdArg ?? '1460068552');
 
@@ -132,9 +137,19 @@ async function main() {
       [version.id]
     );
 
+    const actualRevisionCount = revisionCountRes.rows[0]?.count ?? 0;
+    const expectedRevisionCount =
+      version.revision_count === null
+        ? null
+        : revisionListCountFromClaimed(version.revision_count);
     console.log('  Revisions stored:', {
-      expected: version.revision_count,
-      actual: revisionCountRes.rows[0]?.count ?? 0,
+      claimed: version.revision_count,
+      expectedActual: expectedRevisionCount,
+      actual: actualRevisionCount,
+      matches:
+        expectedRevisionCount === null
+          ? null
+          : actualRevisionCount === expectedRevisionCount,
       latestSamples: revisionPreviewRes.rows.map((row) => ({
         wikidotId: row.wikidot_id,
         type: row.type,

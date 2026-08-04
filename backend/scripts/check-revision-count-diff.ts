@@ -1,4 +1,5 @@
 import { getPrismaClient, disconnectPrisma } from '../src/utils/db-connection.js';
+import { REVISION_COUNT_OFFSET } from '../src/utils/revision-count.js';
 
 async function checkRevisionCountDiff() {
   const prisma = getPrismaClient();
@@ -6,8 +7,8 @@ async function checkRevisionCountDiff() {
   try {
     console.log('=== Revision Count Difference Analysis ===\n');
     
-    // 1. Check pages where stored count = actual - 1
-    console.log('1. Pages where revisionCount = actual count - 1:\n');
+    // 1. Check pages where the documented zero-based offset matches.
+    console.log('1. Pages where revisionCount + offset = actual count:\n');
     
     const pagesWithDiffOne = await prisma.$queryRaw<Array<{
       pageId: number;
@@ -50,13 +51,16 @@ async function checkRevisionCountDiff() {
         min_revision_id as "minRevisionId",
         max_revision_id as "maxRevisionId"
       FROM revision_details
-      WHERE stored_count = actual_count - 1
+      WHERE stored_count + ${REVISION_COUNT_OFFSET} = actual_count
       ORDER BY actual_count DESC
       LIMIT 50;
     `;
     
     if (pagesWithDiffOne.length > 0) {
-      console.log(`Found ${pagesWithDiffOne.length} pages (showing up to 50) where stored = actual - 1:\n`);
+      console.log(
+        `Found ${pagesWithDiffOne.length} pages (showing up to 50) ` +
+        `where stored + offset = actual:\n`,
+      );
       console.table(pagesWithDiffOne.slice(0, 20).map(p => ({
         pageId: p.pageId,
         wikidotId: p.wikidotId,
@@ -96,10 +100,12 @@ async function checkRevisionCountDiff() {
       )
       SELECT COUNT(*) as count
       FROM revision_counts
-      WHERE stored_count = actual_count - 1;
+      WHERE stored_count + ${REVISION_COUNT_OFFSET} = actual_count;
     `;
     
-    console.log(`Total pages where revisionCount = actual - 1: ${totalCount[0]?.count || 0}`);
+    console.log(
+      `Total pages where revisionCount + offset = actual: ${totalCount[0]?.count || 0}`,
+    );
     
     // 3. Check distribution of differences
     console.log('\n3. Distribution of revision count differences:\n');
@@ -111,7 +117,7 @@ async function checkRevisionCountDiff() {
     }>>`
       WITH revision_diffs AS (
         SELECT 
-          pv."revisionCount" - COUNT(r.id) as difference
+          COUNT(r.id) - (pv."revisionCount" + ${REVISION_COUNT_OFFSET}) as difference
         FROM "PageVersion" pv
         LEFT JOIN "Revision" r ON r."pageVersionId" = pv.id
         WHERE pv."validTo" IS NULL
@@ -135,7 +141,7 @@ async function checkRevisionCountDiff() {
       LIMIT 20;
     `;
     
-    console.log('Difference distribution (stored - actual):');
+    console.log('Difference distribution (actual - expected rows):');
     console.table(distribution.map(d => ({
       difference: d.difference,
       count: Number(d.count),
