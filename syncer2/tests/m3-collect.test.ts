@@ -30,7 +30,8 @@ import {
 import { ok } from '../src/collect/result.js';
 import {
   REVISION_PERPAGE,
-  encodeRevisionTypeSet,
+  applyRevisionResult,
+  normalizeRevisionTypeSet,
   parseRevisionList,
   revisionRequestParams,
   scanRevisions,
@@ -178,9 +179,9 @@ describe('revisions：perpage + claimed_total + pager', () => {
     if (parsed.status !== 'ok') return;
     assert.equal(parsed.data.entries.length, 3);
     assert.deepEqual(parsed.data.entries[1]!.types, ['SOURCE_CHANGED', 'TITLE_CHANGED']);
-    assert.equal(
-      encodeRevisionTypeSet(parsed.data.entries[1]!.types),
-      '["SOURCE_CHANGED","TITLE_CHANGED"]',
+    assert.deepEqual(
+      normalizeRevisionTypeSet(parsed.data.entries[1]!.types),
+      ['SOURCE_CHANGED', 'TITLE_CHANGED'],
     );
     assert.deepEqual(parsed.data.entries[1]!.author, {
       kind: 'deleted',
@@ -190,6 +191,40 @@ describe('revisions：perpage + claimed_total + pager', () => {
     });
     assert.deepEqual(parsed.data.entries[2]!.types, ['PAGE_CREATED']);
     assert.equal(parsed.data.entries[0]!.occurredAt, '2026-06-09T18:00:02.000Z');
+  });
+
+  it('应用载荷把单元素/多元素 type 保持为数组，不再二次 JSON 序列化', async () => {
+    let revisionPayload: unknown = null;
+    const dbQuery = async (sql: string, params?: readonly unknown[]) => {
+      if (sql.includes('ingest.ensure_user')) {
+        return { rows: [{ id: 77 }], rowCount: 1 };
+      }
+      if (sql.includes('ingest.apply_revision_batch')) {
+        revisionPayload = params?.[1];
+        return { rows: [{ result: { inserted_with_wid: 3 } }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    };
+    const client = { query: dbQuery, release: () => undefined } as unknown as PoolClient;
+    const pool = {
+      query: dbQuery,
+      connect: async () => client,
+    } as unknown as Pool;
+    const parsed = parseRevisionList(REV_HTML, target());
+    assert.equal(parsed.status, 'ok');
+    if (parsed.status !== 'ok') return;
+
+    await applyRevisionResult(pool, target(), parsed, {
+      observedAt: '2026-08-04T00:00:00.000Z',
+      runId: null,
+    });
+
+    const payload = JSON.parse(String(revisionPayload)) as Array<{ type: unknown }>;
+    assert.deepEqual(payload.map((row) => row.type), [
+      ['SOURCE_CHANGED'],
+      ['SOURCE_CHANGED', 'TITLE_CHANGED'],
+      ['PAGE_CREATED'],
+    ]);
   });
 
   it('回归：claimed=N、列表也=N 必须 partial 并告警', () => {

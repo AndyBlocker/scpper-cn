@@ -32,16 +32,28 @@ describe('work-queue 单轮时间预算', () => {
     );
   });
 
-  it('满额一轮的纯限速等待会超预算——预算存在的理由正是它', () => {
+  /*
+   * 限速从 10s 放宽到 2s 后，预算的角色变了：
+   * 此前满额一轮的纯等待就是 500s，预算是**必然触发**的收敛机制；
+   * 现在满额纯等待仅 100s，预算退化为**病态情况的安全网**
+   * （单个大页 60s 超时 + 分页重试仍可能吃掉数分钟）。
+   * 断言随之改为「正常一轮必须能从容做完」，而不是「预算必然触发」。
+   */
+  it('正常满额一轮必须能在预算内从容做完，不该被预算截断', () => {
     const pureWaitMs = WORK_QUEUE_LIMIT_MAX * WORK_QUEUE_MIN_REQUEST_INTERVAL_MS;
     assert.ok(
-      pureWaitMs > RUN_BUDGET_MS,
-      `满额纯等待 ${pureWaitMs}ms 应超过预算 ${RUN_BUDGET_MS}ms，否则预算永不触发、等于没加`,
+      pureWaitMs < RUN_BUDGET_MS,
+      `满额纯等待 ${pureWaitMs}ms 应小于预算 ${RUN_BUDGET_MS}ms，否则每轮都被截断、积压无法收敛`,
+    );
+    assert.ok(
+      pureWaitMs * 2 < RUN_BUDGET_MS,
+      '还应留出至少一倍余量给实际请求耗时与解析',
     );
   });
 
-  it('预算内至少能做完可观数量的任务，不能小到每轮几乎空转', () => {
-    const minTasks = Math.floor(RUN_BUDGET_MS / WORK_QUEUE_MIN_REQUEST_INTERVAL_MS);
-    assert.ok(minTasks >= 20, `预算内仅能处理 ${minTasks} 个任务，吞吐过低`);
+  it('预算仍必须存在：单个病态页的重试可以吃掉数分钟', () => {
+    // 大页 WhoRated 超时上限 60s，配合重试与分页，几个页面即可逼近硬超时。
+    assert.ok(RUN_BUDGET_MS >= 3 * 60_000, '预算过小会让正常轮次频繁被截断');
+    assert.ok(RUN_BUDGET_MS <= 8 * 60_000, '预算过大则失去在硬超时前收敛的意义');
   });
 });

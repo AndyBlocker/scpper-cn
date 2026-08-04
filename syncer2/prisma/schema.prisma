@@ -646,7 +646,7 @@ model revision {
   page_id                                                                 Int
   wikidot_revision_id                                                     BigInt?                       @unique
   rev_no                                                                  Int?
-  type                                                                    String?
+  type                                                                    String[]
   author_id                                                               Int?
   occurred_at                                                             DateTime                      @db.Timestamptz(6)
   comment                                                                 String?

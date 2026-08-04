@@ -20,14 +20,32 @@ import { backoffFrom } from './queues.js';
 import type { ScanTaskKind } from './meta.js';
 
 export const VOTE_SWEEP_ACTIVITY_DAYS = 90;
-export const VOTE_SWEEP_INTERVAL_DAYS = 7;
+/*
+ * 盲扫周期。角色已经改变：L1 每 15 分钟读一次全站计数器（145 请求）即可发现绝大多数
+ * 投票变化，盲扫只兜底 L1 看不见的「补偿性变化」——一人撤 +1、另一人补 +1，
+ * 票数与评分都不变。这类极罕见，且实测盲扫产出率仅 13%（771 次扫描只有 101 次
+ * 真正产生票事件），把它当主要新鲜度来源是把预算花在确认「没有变化」上。
+ */
+export const VOTE_SWEEP_INTERVAL_DAYS = 30;
 export const NEW_PAGE_WINDOW_DAYS = 7;
 export const NEW_PAGE_INTERVAL_HOURS = 3;
 export const WORK_QUEUE_LIMIT_MAX = 50;
 export const CONSECUTIVE_PAGE_FAILURE_LIMIT = 5;
 
-/** 补账预算 0.10 QPS：所有业务请求（含重试与 revisions 分页）至少间隔 10 秒。 */
-export const WORK_QUEUE_MIN_REQUEST_INTERVAL_MS = 10_000;
+/*
+ * Tier2 请求最小间隔 = 2 秒（0.5 QPS）。
+ *
+ * 原为 10 秒（0.10 QPS），但那个预算下 7 天全量投票重扫在结构上不可能完成：
+ * 34,250 个有票页 ÷ 7 天 = 204 页/小时，而总产能仅 255/小时，队列必然单调增长
+ * （实测最久等待稳定在 170 小时且仍在涨）。
+ *
+ * 更关键的是新鲜度目标：WhoRated 明细若只有 day level，自建 syncer 就失去意义——
+ * CROM 本身就能提供 day level。目标是 10--15 分钟级。
+ *
+ * 实测支撑：回填期曾持续 3,500 请求/小时（约 1 QPS）而站点仅偶发 503。
+ * 取 0.5 QPS 留一倍以上冗余；实际稳态用量约 730 请求/小时（0.20 QPS）。
+ */
+export const WORK_QUEUE_MIN_REQUEST_INTERVAL_MS = 2_000;
 
 /*
  * 单轮时间预算，必须显著小于 systemd 的 TimeoutStartSec=10min。

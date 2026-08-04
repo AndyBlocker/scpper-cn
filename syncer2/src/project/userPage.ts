@@ -48,8 +48,7 @@ export async function projectUserPage(
      page_created AS (
        SELECT r.page_id,
               min(r.occurred_at) FILTER (
-                WHERE r.type IN ('PAGE_CREATED', 'N')
-                   OR position('"PAGE_CREATED"' in COALESCE(r.type, '')) > 0
+                WHERE 'PAGE_CREATED' = ANY(r.type)
               ) AS first_created_revision
          FROM ingest.revision r
         GROUP BY r.page_id

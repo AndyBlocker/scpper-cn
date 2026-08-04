@@ -21,10 +21,12 @@ export const REVISION_SOURCE_PAGE_SCAN_KIND = 'revision_source';
  * TAGS_CHANGED 等非源码修订不重复抓同一全文；其独立标签变更史留待后续 PageDiff 任务。
  */
 const SOURCE_TYPE_SQL = `(
-  r.type IN ('SOURCE_CHANGED','PAGE_CREATED','unknown')
-  OR r.type LIKE 'UNKNOWN:%'
-  OR r.type LIKE '%"SOURCE_CHANGED"%'
-  OR r.type LIKE '%"PAGE_CREATED"%'
+  r.type IS NULL
+  OR r.type && ARRAY['SOURCE_CHANGED','PAGE_CREATED']::text[]
+  OR EXISTS (
+    SELECT 1 FROM unnest(r.type) AS revision_type(value)
+     WHERE starts_with(revision_type.value, 'UNKNOWN:')
+  )
 )`;
 
 export interface RevisionSourceCandidate {
@@ -39,7 +41,7 @@ export interface RevisionSourceCandidate {
   isAnchor: boolean;
   isLatest: boolean;
   occurredAt: string;
-  type: string | null;
+  type: string[] | null;
 }
 
 interface CandidateRow {
@@ -54,7 +56,7 @@ interface CandidateRow {
   is_anchor: boolean;
   is_latest?: boolean;
   occurred_at: Date | string;
-  type: string | null;
+  type: string[] | null;
 }
 
 function candidate(row: CandidateRow): RevisionSourceCandidate {

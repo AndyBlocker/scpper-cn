@@ -746,7 +746,7 @@ BEGIN
   -- ② CROM 行后到 ⇒ 按 (page,rev_no) 认领并回填 wid,不产生第二行
   res := ingest.apply_revision_batch(p_,
            jsonb_build_array(jsonb_build_object('wikidot_revision_id', 55501, 'rev_no', 7,
-                                                'type', 'page_edit')),
+                                                'type', jsonb_build_array('SOURCE_CHANGED'))),
            NULL, now(), 'crom', pg_temp.fxget('run'));
   SELECT count(*)::int INTO v_cnt FROM ingest.revision WHERE page_id = p_ AND rev_no = 7;
   SELECT wikidot_revision_id INTO v_wid FROM ingest.revision WHERE page_id = p_ AND rev_no = 7;
@@ -821,7 +821,7 @@ BEGIN
 END $$;
 
 SELECT pg_temp.expect_error('S4', 'revision:GUC 未开时直接 UPDATE type ⇒ 拒',
-  $$ UPDATE ingest.revision SET type = 'hacked' WHERE wikidot_revision_id = 55501 $$, '25006');
+  $$ UPDATE ingest.revision SET type = ARRAY['TAGS_CHANGED'] WHERE wikidot_revision_id = 55501 $$, '25006');
 SELECT pg_temp.expect_error('S4', 'revision:DELETE ⇒ 拒',
   $$ DELETE FROM ingest.revision WHERE wikidot_revision_id = 55501 $$, '25006');
 SELECT pg_temp.expect_error('S4', 'revision:白名单外的列(comment)即使开了 GUC 也拒',
@@ -829,7 +829,7 @@ SELECT pg_temp.expect_error('S4', 'revision:白名单外的列(comment)即使开
      UPDATE ingest.revision SET comment = 'hacked' WHERE wikidot_revision_id = 55501 $$, '25006');
 SELECT pg_temp.expect_error('S4', 'revision:已有非空 type 被改 ⇒ 拒(跨源冲突进 quarantine)',
   $$ SELECT set_config('scpper.revision_backfill','on',true);
-     UPDATE ingest.revision SET type = 'other' WHERE wikidot_revision_id = 55501 $$, '25006');
+     UPDATE ingest.revision SET type = ARRAY['TAGS_CHANGED'] WHERE wikidot_revision_id = 55501 $$, '25006');
 -- 上面两个 expect_error 在子事务里回滚,GUC 也随之回滚;这里再确认一次
 DO $$ BEGIN
   PERFORM pg_temp.chk('S4★', 'expect_error 子事务回滚后 GUC 未泄漏',

@@ -167,7 +167,7 @@ async function seedFixture(client: PoolClient): Promise<{ minSeq: number; maxSeq
        INSERT INTO ingest.revision
          (page_id, wikidot_revision_id, rev_no, type, occurred_at, observed_at, source)
        VALUES
-         ($1, 969840001, 1, '["SOURCE_CHANGED"]',
+         ($1, 969840001, 1, ARRAY['SOURCE_CHANGED']::text[],
           '2026-01-01T10:00:00Z'::timestamptz,
           '2026-01-01T10:00:00Z'::timestamptz, 'test_projector')
        RETURNING seq

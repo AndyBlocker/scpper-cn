@@ -143,7 +143,7 @@ interface RevisionPayload {
   revisions: Array<{
     wikidot_revision_id: string;
     rev_no: null;
-    type: string;
+    type: string[] | null;
     author_id: number | null;
     occurred_at: string;
     comment: string | null;
@@ -1011,7 +1011,7 @@ function groupRevisionRows(rows: readonly RevisionCursorRow[]): RevisionPayload[
     page.revisions.push({
       wikidot_revision_id: row.wikidot_revision_id,
       rev_no: null,
-      type: row.type,
+      type: row.type === 'unknown' ? null : [row.type],
       author_id: row.author_id,
       occurred_at: row.occurred_at,
       comment: row.comment,
@@ -1240,7 +1240,7 @@ async function finalizeAndVerify(
          (SELECT count(*) FROM ingest.content_blob)::text AS blobs,
          (SELECT count(*) FROM ingest.page_source)::text AS page_sources,
          (SELECT count(*) FROM ingest.revision)::text AS revisions,
-         (SELECT count(*) FROM ingest.revision WHERE type='unknown')::text AS unknown,
+         (SELECT count(*) FROM ingest.revision WHERE type IS NULL)::text AS unknown,
          (SELECT count(*) FROM ingest.revision
            WHERE source=$1 AND rev_no IS NOT NULL)::text AS nonnull_rev_no,
          (SELECT count(*) FROM ingest.content_blob

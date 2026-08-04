@@ -345,9 +345,9 @@ export async function scanRevisions(
   return new Map(pairs);
 }
 
-/** `type text` 暂以规范 JSON 数组保存集合，绝不压成优先级最高的单值。 */
-export function encodeRevisionTypeSet(types: readonly RevisionType[]): string {
-  return JSON.stringify([...new Set(types)].sort((a, b) => typeRank(a) - typeRank(b) || a.localeCompare(b)));
+/** 生成数据库 `text[]` 的规范集合；JSONB 批载荷会保留这个数组形态。 */
+export function normalizeRevisionTypeSet(types: readonly RevisionType[]): RevisionType[] {
+  return [...new Set(types)].sort((a, b) => typeRank(a) - typeRank(b) || a.localeCompare(b));
 }
 
 async function ensureAuthor(db: PoolClient, author: RevisionAuthor | null): Promise<number | null> {
@@ -434,7 +434,7 @@ export async function applyRevisionResult(
       return {
         wikidot_revision_id: entry.wikidotRevisionId,
         rev_no: entry.revNo,
-        type: encodeRevisionTypeSet(entry.types),
+        type: normalizeRevisionTypeSet(entry.types),
         author_id: authorIds.get(key) ?? null,
         occurred_at: entry.occurredAt,
         comment: entry.comment,
