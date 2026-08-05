@@ -38,7 +38,7 @@ const { data: linkedWikidotProfile } = useAsyncData(
   async () => {
     if (!linkedWikidotId.value) return null
     try {
-      return await $bff<{ displayName: string | null; username: string | null }>(
+      return await $bff<{ wikidotId: number; displayName: string | null; username: string | null }>(
         '/users/by-wikidot-id',
         { params: { wikidotId: linkedWikidotId.value } }
       )
@@ -49,11 +49,12 @@ const { data: linkedWikidotProfile } = useAsyncData(
   { server: false, lazy: true }
 )
 
-const linkedWikidotName = computed(() => (
-  linkedWikidotProfile.value?.displayName
-  || linkedWikidotProfile.value?.username
-  || null
-))
+// 换绑瞬间 data 可能仍是上一个 key 的旧值，用响应里的 wikidotId 再校验一次
+const linkedWikidotName = computed(() => {
+  const profile = linkedWikidotProfile.value
+  if (!profile || Number(profile.wikidotId) !== linkedWikidotId.value) return null
+  return profile.displayName || profile.username || null
+})
 
 const links = computed<OverviewLink[]>(() => [
   {
