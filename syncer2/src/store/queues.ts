@@ -340,6 +340,13 @@ export interface SlugReuseIdentityResult {
   lineage_candidate_inserted: boolean;
 }
 
+export interface IdentityMissingDeletionResult {
+  page_id: number;
+  wikidot_id: number;
+  slug: string;
+  deleted_event_seq: number | null;
+}
+
 /**
  * 同 slug 的整页身份与任务身份不一致时，原子完成旧→新生命周期接力。
  * 事实写入全部封装在 SECURITY DEFINER 函数内；采集角色不获得 ingest/serve 表 DML。
@@ -372,6 +379,43 @@ export async function applySlugReuseIdentity(
   if (row === undefined || row === null) {
     throw new Error(
       `apply_slug_reuse_identity 未返回结果（predecessor=${args.predecessorId}, slug=${args.slug}）`,
+    );
+  }
+  return row;
+}
+
+/**
+ * page-bound AMC 已证明旧 pageId 无实体，且同一轮 slug 整页 GET 又返回 404 时的删除入口。
+ * 两个独立、同页、同轮的直接信号由调用方取得；数据库函数再次核对 page/wikidotId/slug。
+ */
+export async function applyIdentityMissingDeletion(
+  pool: Pool,
+  args: {
+    pageId: number;
+    expectedWikidotId: number;
+    slug: string;
+    observedAt: string;
+    runId?: number | null;
+  },
+): Promise<IdentityMissingDeletionResult> {
+  const result = await query<{ result: IdentityMissingDeletionResult }>(
+    pool,
+    'ingest.apply_identity_missing_deletion',
+    `SELECT ingest.apply_identity_missing_deletion(
+       $1::int, $2::int, $3::text, $4::timestamptz, $5::bigint
+     ) AS result`,
+    [
+      args.pageId,
+      args.expectedWikidotId,
+      args.slug,
+      toPgTimestamptz(args.observedAt),
+      args.runId ?? null,
+    ],
+  );
+  const row = result.rows[0]?.result;
+  if (row === undefined || row === null) {
+    throw new Error(
+      `apply_identity_missing_deletion 未返回结果（page=${args.pageId}, slug=${args.slug}）`,
     );
   }
   return row;

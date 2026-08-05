@@ -32,7 +32,7 @@ import {
   type VoteTarget,
 } from '../collect/votes.js';
 import type { HttpClient } from '../http/client.js';
-import { query, toPgTimestamptz } from '../store/db.js';
+import { query } from '../store/db.js';
 import {
   enqueueScanTasks,
   recordPageScan as persistPageScan,
@@ -40,11 +40,11 @@ import {
   type ScanTaskKind,
 } from '../store/meta.js';
 import { sanitizePageScanError } from '../store/pgText.js';
-import { applySlugReuseIdentity } from '../store/queues.js';
+import { type ClaimedWorkTask } from '../store/workQueue.js';
 import {
-  reassignSlugReuseTasks,
-  type ClaimedWorkTask,
-} from '../store/workQueue.js';
+  applyConfirmedSlugReuse,
+  applyObservedPageMeta,
+} from './identityCheck.js';
 
 export interface WorkHandlerContext {
   pool: Pool;
@@ -279,97 +279,31 @@ const metaHandler: WorkHandler = async (task, context) => {
       );
     } else {
       const observedWikidotId = result.data.wikidotId;
-      const reuse = await applySlugReuseIdentity(context.pool, {
-        predecessorId: task.pageId,
+      const reuse = await applyConfirmedSlugReuse(
+        context,
+        task,
         observedWikidotId,
-        slug: task.slug,
         observedAt,
-        runId: context.runId,
-      });
-      const successorId = Number(reuse.successor_id);
-      const resultHash = createHash('sha256')
-        .update(`${task.slug}\n${observedWikidotId}`, 'utf8')
-        .digest();
-      const tasksReassigned = await reassignSlugReuseTasks(
-        context.pool,
-        task.pageId,
-        successorId,
         task.taskId,
       );
-
-      // 旧任务的“响应身份不属于旧页”是 partial 证据；同一个响应对 successor 是 ok 正证据。
-      await recordPageScan(context.pool, context.runId, task.pageId, 'meta', {
-        status: 'partial',
-        claimed: 1,
-        fetched: 1,
-        checksumOk: false,
-        resultHash,
-        error:
-          `slug_reuse_identity_replaced:expected=${task.wikidotId};` +
-          `observed=${observedWikidotId};successor_page_id=${successorId}`,
-      });
-      await recordPageScan(context.pool, context.runId, successorId, 'meta', {
-        status: 'ok',
-        claimed: 1,
-        fetched: 1,
-        checksumOk: true,
-        resultHash,
-        error: null,
-      });
-      await recordPageScan(context.pool, context.runId, successorId, 'revisions', {
-        status: 'partial',
-        claimed: task.revisionClaimedTotal,
-        fetched: null,
-        checksumOk: null,
-        resultHash,
-        error: 'slug_reuse_identity_registered:等待 revisions_full 完整抓取',
-      });
-
-      const applied = await applyObservedPageMeta(
-        context,
-        successorId,
-        task.slug,
-        observedWikidotId,
-        observedAt,
-      );
-      const tasksEnqueued = await enqueueScanTasks(context.pool, [
-        {
-          pageId: successorId,
-          kind: 'new_page_highfreq',
-          reasons: ['slug_reuse_identity_registered'],
-          priority: 100,
-        },
-        {
-          pageId: successorId,
-          kind: 'content',
-          reasons: ['slug_reuse_identity_registered'],
-          priority: 100,
-        },
-        {
-          pageId: successorId,
-          kind: 'revisions_full',
-          reasons: ['slug_reuse_identity_registered'],
-          priority: 100,
-        },
-      ]);
       return {
         status: 'ok',
-        resultHash,
+        resultHash: reuse.resultHash,
         localValue: {
-          ...reuse,
-          tasks_reassigned: tasksReassigned,
-          tasks_enqueued: tasksEnqueued,
-          page_meta: applied,
+          ...reuse.lifecycle,
+          tasks_reassigned: reuse.tasksReassigned,
+          tasks_enqueued: reuse.tasksEnqueued,
+          page_meta: reuse.apply,
         },
         sample: {
           identityReplaced: true,
           expectedWikidotId: task.wikidotId,
           observedWikidotId,
-          successorPageId: successorId,
-          lineageCandidateInserted: reuse.lineage_candidate_inserted,
-          tasksReassigned,
-          tasksEnqueued,
-          apply: applied,
+          successorPageId: reuse.successorPageId,
+          lineageCandidateInserted: reuse.lineageCandidateInserted,
+          tasksReassigned: reuse.tasksReassigned,
+          tasksEnqueued: reuse.tasksEnqueued,
+          apply: reuse.apply,
         },
       };
     }
@@ -404,7 +338,8 @@ const metaHandler: WorkHandler = async (task, context) => {
   let applied: Record<string, unknown> | null = null;
   if (status === 'ok') {
     applied = await applyObservedPageMeta(
-      context,
+      context.pool,
+      context.runId,
       task.pageId,
       task.slug,
       task.wikidotId,
@@ -422,35 +357,6 @@ const metaHandler: WorkHandler = async (task, context) => {
     },
   };
 };
-
-async function applyObservedPageMeta(
-  context: WorkHandlerContext,
-  pageId: number,
-  slug: string,
-  wikidotId: number,
-  observedAt: string,
-): Promise<Record<string, unknown>> {
-  const response = await query<{ result: Record<string, unknown> }>(
-    context.pool,
-    'work.meta:apply_page_meta',
-    `SELECT ingest.apply_page_meta(
-       p_page       => $1::int,
-       p_attrs      => jsonb_build_object('slug', $2::text),
-       p_observed   => $3::timestamptz,
-       p_source     => 'wikidot',
-       p_run        => $4::bigint,
-       p_wikidot_id => $5::int
-     ) AS result`,
-    [
-      pageId,
-      slug,
-      toPgTimestamptz(observedAt),
-      context.runId,
-      wikidotId,
-    ],
-  );
-  return response.rows[0]?.result ?? {};
-}
 
 const discussionHandler: WorkHandler = async (task, context) => {
   const start = await cached(context, 'forum-start', async () => {

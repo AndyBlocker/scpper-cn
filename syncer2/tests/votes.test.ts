@@ -23,6 +23,7 @@ import { HttpClient } from '../src/http/client.js';
 import {
   isShortLivedTaskActive,
   NEW_PAGE_INTERVAL_HOURS,
+  NEW_PAGE_WINDOW_DAYS,
   WORK_QUEUE_LIMIT_MAX,
   type ClaimedVoteTask,
 } from '../src/store/workQueue.js';
@@ -432,6 +433,7 @@ describe('预算与短命页队列', () => {
       false,
     );
     assert.equal(NEW_PAGE_INTERVAL_HOURS, 3);
+    assert.equal(NEW_PAGE_WINDOW_DAYS, 7);
     assert.equal(WORK_QUEUE_LIMIT_MAX, 50);
   });
 
@@ -444,7 +446,7 @@ describe('预算与短命页队列', () => {
     assert.match(source, /DELETE FROM meta\.scan_task st[\s\S]+st\.kind = 'new_page_highfreq'/);
     assert.match(
       source,
-      /st\.kind <> 'new_page_highfreq'[\s\S]+> now\(\) - interval '7 days'/,
+      /st\.kind <> 'new_page_highfreq'[\s\S]+> now\(\) - \(\$[47]::integer \* interval '1 day'\)/,
     );
   });
 });

@@ -41,6 +41,12 @@ const pool = createPool(resolveTestDatabaseUrl(), { max: 2 });
 async function cleanup(): Promise<void> {
   await query(
     pool,
+    'test:m4:cleanup_vote_sweep_state',
+    `DELETE FROM meta.vote_sweep_page_state WHERE page_id BETWEEN $1 AND $2`,
+    [PAGE_BASE, PAGE_BASE + 999],
+  );
+  await query(
+    pool,
     'test:m4:cleanup_tasks',
     `DELETE FROM meta.scan_task WHERE page_id BETWEEN $1 AND $2`,
     [PAGE_BASE, PAGE_BASE + 999],
@@ -298,6 +304,13 @@ describe('M4 work-queue', () => {
         [pageId],
       ),
       0,
+    );
+    assert.equal(
+      await scalar(
+        `SELECT count(*)::int AS n FROM meta.vote_sweep_page_state WHERE page_id = $1`,
+        [pageId],
+      ),
+      1,
     );
 
     const highFrequencyPage = PAGE_BASE + 10;

@@ -24,6 +24,7 @@ import {
   claimWorkTasks,
   CONSECUTIVE_PAGE_FAILURE_LIMIT,
   detectKindStarvation,
+  reapTasksOnNonLivePages,
   RUN_BUDGET_MS,
   WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
   finishWorkTask,
@@ -42,6 +43,16 @@ import {
   type WorkHandlerContext,
   type WorkHandlerOutcome,
 } from '../work/handlers.js';
+import {
+  classifyWorkFailure,
+  reviewIdentityIfDue,
+  workFailureHash,
+  type WorkFailurePolicy,
+} from '../work/failurePolicy.js';
+import {
+  reviewFailedTaskIdentity,
+  type IdentityReviewResult,
+} from '../work/identityCheck.js';
 import {
   evaluateWorkQueueHealth,
   WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS,
@@ -201,7 +212,17 @@ async function main(): Promise<void> {
     const voteSeeded =
       opts.seed && voteKindsSelected
         ? await seedVoteTasks(pool, startedAt)
-        : { highFrequencyRetired: 0, highFrequencyAffected: 0, sweepAffected: 0 };
+        : {
+            highFrequencyRetired: 0,
+            highFrequencyAffected: 0,
+            catchupAffected: 0,
+            sweepAffected: 0,
+            eligiblePages: 0,
+            catchupRemaining: 0,
+            activeLane: 'sweep' as const,
+            hourlyBudget: 0,
+            hourlyBudgetUsed: 0,
+          };
     const conventionSeeded =
       opts.seed && opts.kinds.includes('attributions')
         ? await seedConventionTasks(pool, startedAt)
@@ -221,7 +242,7 @@ async function main(): Promise<void> {
       opts.kinds,
     );
     claimed = [...reviews, ...regular];
-    // Tier2 共用全站日预算；矛盾隔离复查也必须遵守 0.10 QPS，不能只给 drift 任务限速。
+    // Tier2 共用全站出口预算；矛盾隔离复查也必须遵守 0.5 QPS，不能只给 drift 任务限速。
     http.setMinRequestIntervalMs(WORK_QUEUE_MIN_REQUEST_INTERVAL_MS);
     counters.claimed = claimed.length;
     for (const task of claimed) {
@@ -257,8 +278,8 @@ async function main(): Promise<void> {
       /*
        * 时间预算优先于条数预算。
        *
-       * 0.10 QPS 意味着 50 个任务光限速等待就要 500 秒，加上请求与解析必然逼近
-       * systemd 的 TimeoutStartSec=10min。此前队列几乎只有 new_page_highfreq
+       * 时间预算仍要兜住慢响应/重试；即使 0.5 QPS 的纯限速只占约 100 秒，异常轮次
+       * 加上请求与解析仍可能逼近 systemd 的 TimeoutStartSec=10min。此前队列几乎只有 new_page_highfreq
        * （新页小、快）才勉强压得进去；work-queue 公平性修好、votes_full 得以进入之后
        * 立刻超时，每轮被 SIGTERM 杀死、只消耗 5 秒 CPU 就退出，任务认领了却没人做完——
        * 表现为「配额生效了但队列反而越积越多」。
@@ -317,6 +338,76 @@ async function main(): Promise<void> {
         };
       }
 
+      let failurePolicy: WorkFailurePolicy | null = null;
+      let identityReview: IdentityReviewResult | null = null;
+      let terminalFailure = false;
+      if (!outcome.finalized && outcome.status === 'failed') {
+        const failureError = outcomeFailureError(outcome);
+        failurePolicy = classifyWorkFailure(task.kind, failureError);
+        if (failurePolicy.action === 'retry') {
+          // 瞬时/前置条件失败绝不能借稳定 hash 在第 3 次悄悄变成永久矛盾。
+          outcome.resultHash = null;
+        } else {
+          outcome.resultHash = workFailureHash(failurePolicy);
+        }
+        terminalFailure = failurePolicy.action === 'irreconcilable';
+
+        try {
+          identityReview = await reviewIdentityIfDue(task, failurePolicy, () =>
+            reviewFailedTaskIdentity(context, task),
+          );
+        } catch (err) {
+          // 复核自身的瞬时失败不覆盖原始签名；保留原任务，下轮仍会按该签名再次复核。
+          identityReview = {
+            status: 'failed',
+            finalized: false,
+            error: `身份复核执行失败：${String(err)}`,
+          };
+        }
+
+        if (identityReview?.status === 'slug_reused') {
+          outcome = {
+            status: 'ok',
+            resultHash: identityReview.resultHash,
+            finalized: true,
+            localValue: {
+              ...identityReview.lifecycle,
+              page_meta: identityReview.apply,
+            },
+            sample: {
+              failurePolicy,
+              identityReview: identityReview.status,
+              expectedWikidotId: task.wikidotId,
+              observedWikidotId: identityReview.observedWikidotId,
+              successorPageId: identityReview.successorPageId,
+              tasksReassigned: identityReview.tasksReassigned,
+              tasksEnqueued: identityReview.tasksEnqueued,
+              lineageCandidateInserted: identityReview.lineageCandidateInserted,
+            },
+          };
+        } else if (identityReview?.status === 'deleted') {
+          outcome = {
+            status: 'ok',
+            resultHash: null,
+            finalized: true,
+            sample: {
+              failurePolicy,
+              identityReview: identityReview.status,
+              deletionEventSeq: identityReview.eventSeq,
+              tasksRetired: identityReview.tasksRetired,
+            },
+          };
+        } else if (failurePolicy !== null) {
+          outcome.sample = {
+            ...outcome.sample,
+            failurePolicy,
+            identityReview: identityReview?.status ?? null,
+            identityReviewError:
+              identityReview?.status === 'failed' ? identityReview.error : null,
+          };
+        }
+      }
+
       let action = outcome.finalized ? 'handler_finalized' : 'unknown';
       if (!outcome.finalized) {
         const finish = await finishWorkTask(pool, task, {
@@ -326,6 +417,7 @@ async function main(): Promise<void> {
           localValue: outcome.localValue,
           remoteValue: outcome.remoteValue,
           settledPartial: outcome.settledPartial,
+          terminalFailure,
           now: new Date().toISOString(),
         });
         action = finish.action;
@@ -463,6 +555,12 @@ async function main(): Promise<void> {
      * 上一次 votes_full 被饿了 6.8 天，而每轮 50 个配额打满、全部成功、失败率为 0——
      * 常规指标全绿。只报警不改退出码：饥饿是排队公平性问题，本轮执行本身并没有失败。
      */
+    // 先清死任务再测饥饿：已删页上的僵尸任务会让「最久等待」永久失真，
+    // 那正是这个指标刚上线就会遇到的第一类假阳性。
+    const reaped = await reapTasksOnNonLivePages(pool);
+    if (reaped.total > 0) {
+      log.info('清理已非 live 页面上的待办任务', reaped);
+    }
     const starvation = await detectKindStarvation(pool, STARVATION_ALERT_HOURS);
     if (starvation.length > 0) {
       log.error('存在长期未被认领的任务种类（排队饥饿）', { thresholdHours: STARVATION_ALERT_HOURS, starvation });
@@ -474,6 +572,7 @@ async function main(): Promise<void> {
       status,
       health,
       starvation,
+      reapedNonLiveTasks: reaped,
       stoppedByRuntimeBudget,
       runId,
       durationMs,
@@ -593,6 +692,12 @@ function averageSampleNumber(
     : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function outcomeFailureError(outcome: WorkHandlerOutcome): string {
+  const sampleError = outcome.sample?.['error'];
+  if (typeof sampleError === 'string' && sampleError.trim() !== '') return sampleError;
+  return 'handler 返回 failed 但未提供错误细节';
+}
+
 function transportFailureRate(http: HttpClient): number | null {
   const stats = http.healthStats().business;
   return stats.requests === 0
@@ -628,7 +733,7 @@ function parseArgs(): CliOptions {
       `只消费指定 kind，逗号分隔；默认全部：${ALL_WORK_TASK_KINDS.join(',')}`,
     )
     .option('--skip-tz-check', '跳过时区回环自检（仅本地调试）', false)
-    .option('--no-seed', '本轮不补齐 90d sweep / 7d 高频 / 24h 约定页任务')
+    .option('--no-seed', '本轮不补齐投票追平/稳态 sweep、高频或约定页任务')
     .option('--probe-only', '只跑启动自检，不认领任务', false)
     .option('--amc-probe <policy>', 'AMC 探针 require | warn | skip（默认 require）')
     .option('--proxy-check <policy>', '代理健康 require | warn | skip（默认 warn）');

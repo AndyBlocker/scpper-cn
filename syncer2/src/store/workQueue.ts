@@ -6,15 +6,16 @@
  *   - enqueueScanTasks 与周期 seed 等发现侧入口绝不覆盖这些列。
  *
  * 调度预算：
- *   - 普通投票 sweep 仅覆盖 90 天内有活动且距完整快照 ≥7 天的页；
+ *   - 普通投票 sweep 仅覆盖 90 天内有活动的页，并按 page_id 稳定相位铺满 30 天；
  *   - 发布未满 7 天的页保留 new_page_highfreq，3 小时一次；
  *   - M6 全站约定页在成功证据过期 24 小时后补一个审计锚任务。
  */
 
-import type { Pool } from 'pg';
+import { createHash } from 'node:crypto';
+import type { Pool, PoolClient } from 'pg';
 
 import { claimedRevisionCountFromListCount } from '../collect/revisionCount.js';
-import { query, toPgTimestamptz } from './db.js';
+import { query, toPgTimestamptz, withTransaction } from './db.js';
 import { toPgJson } from './pgText.js';
 import { backoffFrom } from './queues.js';
 import type { ScanTaskKind } from './meta.js';
@@ -29,6 +30,8 @@ export const VOTE_SWEEP_ACTIVITY_DAYS = 90;
 export const VOTE_SWEEP_INTERVAL_DAYS = 30;
 export const NEW_PAGE_WINDOW_DAYS = 7;
 export const NEW_PAGE_INTERVAL_HOURS = 3;
+/** 首轮 v2 真实 WhoRated 追平按实测持续吞吐封顶；紧急 L1 变化任务仍以更高优先级插队。 */
+export const VOTE_CATCHUP_RATE_PER_HOUR = 832;
 export const WORK_QUEUE_LIMIT_MAX = 50;
 export const CONSECUTIVE_PAGE_FAILURE_LIMIT = 5;
 
@@ -67,6 +70,89 @@ export const PINNED_KINDS: readonly ScanTaskKind[] = ['confirm_deleted', 'new_pa
 
 /** 置顶 kind 每轮最多占用的配额比例；余下名额回到 priority 正常竞争。 */
 export const PINNED_KIND_SHARE = 0.4;
+
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
+
+function positiveInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${label} 必须是正安全整数，收到 ${String(value)}`);
+  }
+  return value;
+}
+
+/** page_id 的跨进程稳定相位；SQL 使用同一个 md5 前 60 bit 算法。 */
+export function voteSweepPhaseMs(pageId: number, intervalDays = VOTE_SWEEP_INTERVAL_DAYS): number {
+  if (!Number.isSafeInteger(pageId)) {
+    throw new RangeError(`page_id 必须是安全整数，收到 ${String(pageId)}`);
+  }
+  const periodMs = positiveInteger(intervalDays, '盲扫周期天数') * DAY_MS;
+  const hash60 = BigInt(
+    `0x${createHash('md5').update(String(pageId), 'utf8').digest('hex').slice(0, 15)}`,
+  );
+  return Number(hash60 % BigInt(periodMs));
+}
+
+/**
+ * 某页在上次完整快照之后的第一个稳定相位。
+ *
+ * 历史时间戳即使完全相同，next due 也会落在其后的整个周期内；成功抓取后仍以原
+ * last_complete_vote_snapshot_at 推进，不需要伪造或重写历史时间。
+ */
+export function nextVoteSweepDueAt(
+  lastCompleteSnapshot: string | number,
+  pageId: number,
+  intervalDays = VOTE_SWEEP_INTERVAL_DAYS,
+): string {
+  const snapshotMs = typeof lastCompleteSnapshot === 'number'
+    ? lastCompleteSnapshot
+    : Date.parse(lastCompleteSnapshot);
+  if (!Number.isFinite(snapshotMs)) {
+    throw new TypeError(`非法完整快照时间 ${String(lastCompleteSnapshot)}`);
+  }
+  const periodMs = positiveInteger(intervalDays, '盲扫周期天数') * DAY_MS;
+  const phaseMs = voteSweepPhaseMs(pageId, intervalDays);
+  const dueMs = (Math.floor((snapshotMs - phaseMs) / periodMs) + 1) * periodMs + phaseMs;
+  return new Date(dueMs).toISOString();
+}
+
+/** 一个周期内各小时额度之和严格等于 eligiblePages，47/48 之类的小数速率自动抹匀。 */
+export function hourlyVoteSweepQuota(
+  eligiblePages: number,
+  intervalDays = VOTE_SWEEP_INTERVAL_DAYS,
+  now: string | number = Date.now(),
+): number {
+  if (!Number.isSafeInteger(eligiblePages) || eligiblePages < 0) {
+    throw new RangeError(`合格页数必须是非负安全整数，收到 ${String(eligiblePages)}`);
+  }
+  const periodHours = positiveInteger(intervalDays, '盲扫周期天数') * 24;
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
+  if (!Number.isFinite(nowMs)) throw new TypeError(`非法预算时间 ${String(now)}`);
+  const absoluteHour = Math.floor(nowMs / HOUR_MS);
+  const cycleHour = ((absoluteHour % periodHours) + periodHours) % periodHours;
+  return Math.floor((eligiblePages * (cycleHour + 1)) / periodHours)
+    - Math.floor((eligiblePages * cycleHour) / periodHours);
+}
+
+/** 同一小时无论调用几轮，都只能拿到 quota-used；这是生产预算记账与频率回归的共同入口。 */
+export function availableHourlySeedBudget(quota: number, used: number, demand: number): number {
+  for (const [label, value] of [['quota', quota], ['used', used], ['demand', demand]] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError(`${label} 必须是非负安全整数，收到 ${String(value)}`);
+    }
+  }
+  return Math.min(demand, Math.max(0, quota - used));
+}
+
+export type VoteSeedLane = 'catchup' | 'sweep';
+
+/** 追平未完成时不混入稳态盲扫；归零后自动降到 eligible/周期 的稳态车道。 */
+export function activeVoteSeedLane(catchupRemaining: number): VoteSeedLane {
+  if (!Number.isSafeInteger(catchupRemaining) || catchupRemaining < 0) {
+    throw new RangeError(`追平剩余数必须是非负安全整数，收到 ${String(catchupRemaining)}`);
+  }
+  return catchupRemaining > 0 ? 'catchup' : 'sweep';
+}
 
 /** 至少留 1 个名额给置顶 kind，否则小 limit 下会造成反向饥饿。 */
 export function pinnedKindQuota(limit: number): number {
@@ -216,7 +302,26 @@ export interface ClaimedVoteTask {
 export interface SeedVoteTasksResult {
   highFrequencyRetired: number;
   highFrequencyAffected: number;
+  catchupAffected: number;
   sweepAffected: number;
+  eligiblePages: number;
+  catchupRemaining: number;
+  activeLane: VoteSeedLane;
+  hourlyBudget: number;
+  hourlyBudgetUsed: number;
+}
+
+export interface SeedVoteTasksOptions {
+  highFrequencyLimit?: number;
+  /** 测试/人工小批的单次额外上限；生产默认只受墙钟小时预算约束。 */
+  laneLimit?: number;
+  activityDays?: number;
+  sweepIntervalDays?: number;
+  newPageWindowDays?: number;
+  newPageIntervalHours?: number;
+  catchupRatePerHour?: number;
+  /** 测试使用 test:* 隔离账本；生产保持默认 vote。 */
+  budgetKeyPrefix?: string;
 }
 
 export interface SeedConventionTasksResult {
@@ -234,16 +339,17 @@ export async function reassignSlugReuseTasks(
   pool: Pool,
   predecessorId: number,
   successorId: number,
-  currentTaskId: number,
+  /** meta 身份任务成功收尾时排除自身；通用失败复核传 null，把当前失败任务也迁走。 */
+  currentTaskId: number | null,
 ): Promise<number> {
   const result = await query<{ moved: string }>(
     pool,
     'meta.scan_task:reassign_slug_reuse',
     `WITH candidates AS MATERIALIZED (
        SELECT st.id, st.kind, st.reasons, st.priority
-         FROM meta.scan_task st
-        WHERE st.page_id = $1
-          AND st.id <> $3
+        FROM meta.scan_task st
+       WHERE st.page_id = $1
+          AND ($3::bigint IS NULL OR st.id <> $3)
           AND st.kind <> 'confirm_deleted'
      ),
      reassigned AS (
@@ -279,6 +385,39 @@ export async function reassignSlugReuseTasks(
     [predecessorId, successorId, currentTaskId],
   );
   return Number(result.rows[0]?.moved ?? 0);
+}
+
+/** 身份替换/直接删除后，旧 page 上的终态矛盾已失去对象，显式收口而非永久悬挂。 */
+export async function resolveObsoletePageIrreconcilables(
+  pool: Pool,
+  pageId: number,
+  resolvedAt: string,
+): Promise<number> {
+  const result = await query(
+    pool,
+    'meta.irreconcilable:resolve_obsolete_identity',
+    `UPDATE meta.irreconcilable
+        SET resolved_at = $2::timestamptz,
+            last_checked = $2::timestamptz,
+            next_review_at = NULL,
+            locked_by = NULL,
+            locked_at = NULL
+      WHERE page_id = $1
+        AND resolved_at IS NULL`,
+    [pageId, toPgTimestamptz(resolvedAt)],
+  );
+  return result.rowCount ?? 0;
+}
+
+/** 直接身份证据确认删除后，所有旧页任务（含 confirm_deleted）都已完成使命。 */
+export async function retireDeletedPageTasks(pool: Pool, pageId: number): Promise<number> {
+  const result = await query(
+    pool,
+    'meta.scan_task:retire_identity_deleted',
+    `DELETE FROM meta.scan_task WHERE page_id = $1`,
+    [pageId],
+  );
+  return result.rowCount ?? 0;
 }
 
 /**
@@ -339,10 +478,12 @@ export async function claimWorkTasks(
   workerId: string,
   kinds: readonly ScanTaskKind[] = ALL_WORK_TASK_KINDS,
   lockStaleAfterMs = 30 * 60_000,
+  newPageWindowDays = NEW_PAGE_WINDOW_DAYS,
 ): Promise<ClaimedWorkTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0 || kinds.length === 0) return [];
   const pinnedQuota = pinnedKindQuota(limit);
+  const shortLivedDays = positiveInteger(newPageWindowDays, '新页窗口天数');
 
   const result = await query<{
     id: string;
@@ -397,7 +538,7 @@ export async function claimWorkTasks(
           AND (
             st.kind <> 'new_page_highfreq'
             OR COALESCE(pc.first_published_at, p.created_at, st.created_at)
-                 > now() - interval '7 days'
+                 > now() - ($7::integer * interval '1 day')
           )
           AND (st.not_before IS NULL OR st.not_before <= now())
           AND (
@@ -497,7 +638,15 @@ export async function claimWorkTasks(
                (st.kind = 'new_page_highfreq') DESC,
                st.priority DESC,
                st.id`,
-    [workerId, limit, String(lockStaleAfterMs), kinds, PINNED_KINDS, pinnedQuota],
+    [
+      workerId,
+      limit,
+      String(lockStaleAfterMs),
+      kinds,
+      PINNED_KINDS,
+      pinnedQuota,
+      shortLivedDays,
+    ],
   );
 
   return result.rows.map((row) => ({
@@ -668,10 +817,42 @@ export interface FinishWorkTaskArgs {
   resultHash?: Buffer | null;
   localValue?: Record<string, unknown>;
   remoteValue?: Record<string, unknown>;
+  /** 确定性结构/权限拒绝：本次即进入 irreconcilable，不经过指数退避。 */
+  terminalFailure?: boolean;
   now: string;
 }
 
 /** 所有普通 handler 共用的完成状态机：成功删，失败/partial 保留并退避。 */
+/**
+ * 清理已不再 live 的页面上的待办任务。
+ *
+ * 认领查询要求 `pc.status = 'live'`，因此页面被删后其余待办**永远取不到**：
+ * attempts 恒为 0、退避永不推进、stable_count 永不变化——它们对系统完全不可见地存在着，
+ * 却持续污染每一项基于队列的观测。实测因此误判过两次：
+ * 「realtime 任务平均等待 130 小时」实际上主体是已删页僵尸（74 个里 65 个），
+ * 真正在等的只有 9 个；队列深度与最久等待也同样失真。
+ *
+ * `confirm_deleted` 必须保留——它正是用来确认删除本身的，属于 predecessor 生命周期。
+ */
+export async function reapTasksOnNonLivePages(
+  pool: Pool,
+): Promise<{ total: number; byKind: Record<string, number> }> {
+  const res = await query<{ kind: ScanTaskKind }>(
+    pool,
+    'meta.scan_task:reap_non_live',
+    `DELETE FROM meta.scan_task st
+      WHERE st.kind <> 'confirm_deleted'
+        AND NOT EXISTS (
+          SELECT 1 FROM serve.page_current pc
+           WHERE pc.page_id = st.page_id AND pc.status = 'live'
+        )
+      RETURNING st.kind`,
+  );
+  const byKind: Record<string, number> = {};
+  for (const r of res.rows) byKind[r.kind] = (byKind[r.kind] ?? 0) + 1;
+  return { total: res.rows.length, byKind };
+}
+
 export async function finishWorkTask(
   pool: Pool,
   task: ClaimedWorkTask,
@@ -730,7 +911,7 @@ export async function finishWorkTask(
     task.lastResultHash !== null &&
     task.lastResultHash.equals(args.resultHash);
   const stableCount = args.resultHash ? (sameHash ? task.stableCount + 1 : 1) : 0;
-  const converged = stableCount >= 3;
+  const converged = args.terminalFailure === true || stableCount >= 3;
   const notBefore = backoffFrom(
     converged ? stableCount - 2 : task.attempts,
     Date.parse(now),
@@ -987,22 +1168,115 @@ export async function releaseIrreconcilableReviewLocks(
   return result.rowCount ?? 0;
 }
 
+function hourWindowStart(now: string): string {
+  const nowMs = Date.parse(now);
+  return new Date(Math.floor(nowMs / HOUR_MS) * HOUR_MS).toISOString();
+}
+
+interface BudgetedSeedResult {
+  affected: number;
+  used: number;
+}
+
+/** 预算行与候选 INSERT 共用一个事务；并发轮次也只能串行消耗同一小时的余额。 */
+async function seedWithinHourlyBudget(
+  pool: Pool,
+  budgetKey: string,
+  now: string,
+  quota: number,
+  demand: number,
+  seed: (client: PoolClient, allowance: number) => Promise<number>,
+): Promise<BudgetedSeedResult> {
+  const windowStartedAt = hourWindowStart(now);
+  return withTransaction(pool, `vote_seed_budget:${budgetKey}`, async (client) => {
+    await query(
+      client,
+      'meta.vote_seed_budget:ensure',
+      `INSERT INTO meta.vote_seed_budget
+         (budget_key, window_started_at, used, updated_at)
+       VALUES ($1, $2::timestamptz, 0, $3::timestamptz)
+       ON CONFLICT (budget_key) DO NOTHING`,
+      [budgetKey, windowStartedAt, now],
+    );
+    const budget = await query<{ used: number }>(
+      client,
+      'meta.vote_seed_budget:open_window',
+      `UPDATE meta.vote_seed_budget
+          SET used = CASE
+                       WHEN window_started_at = $2::timestamptz THEN used
+                       ELSE 0
+                     END,
+              window_started_at = $2::timestamptz,
+              updated_at = $3::timestamptz
+        WHERE budget_key = $1
+      RETURNING used`,
+      [budgetKey, windowStartedAt, now],
+    );
+    const usedBefore = Number(budget.rows[0]?.used ?? 0);
+    const allowance = availableHourlySeedBudget(quota, usedBefore, demand);
+    const affected = allowance === 0 ? 0 : await seed(client, allowance);
+    if (affected > allowance) {
+      throw new Error(`播种 ${affected} 条超过已核发额度 ${allowance}`);
+    }
+    if (affected > 0) {
+      await query(
+        client,
+        'meta.vote_seed_budget:consume',
+        `UPDATE meta.vote_seed_budget
+            SET used = used + $2::integer,
+                updated_at = $3::timestamptz
+          WHERE budget_key = $1`,
+        [budgetKey, affected, now],
+      );
+    }
+    return { affected, used: usedBefore + affected };
+  });
+}
+
 /**
- * 补齐两类周期任务。ON CONFLICT 只合并 reasons/priority，刻意不碰执行侧退避。
- * `last_complete_vote_snapshot_at` 由 apply_vote_snapshot 在四门全过时推进；
- * 删除后函数不再更新它，因而值自然冻结。
+ * 补齐投票周期任务。
+ *
+ * new_page_highfreq 是实时保护，不占盲扫预算；其余页先走 832/h 的 v2 首轮追平，全部
+ * 有真实完整快照后自动切换到 eligible/周期 的稳态车道。两条车道都按持久墙钟小时
+ * 记账，与 work-queue 一小时跑几轮无关。
  */
 export async function seedVoteTasks(
   pool: Pool,
   now: string,
-  opts: { highFrequencyLimit?: number; sweepLimit?: number } = {},
+  opts: SeedVoteTasksOptions = {},
 ): Promise<SeedVoteTasksResult> {
   const ts = toPgTimestamptz(now);
   const highFrequencyLimit = positiveLimit(opts.highFrequencyLimit, WORK_QUEUE_LIMIT_MAX);
-  const sweepLimit = positiveLimit(opts.sweepLimit, WORK_QUEUE_LIMIT_MAX);
+  const activityDays = positiveInteger(
+    opts.activityDays ?? VOTE_SWEEP_ACTIVITY_DAYS,
+    '盲扫活动窗口天数',
+  );
+  const sweepIntervalDays = positiveInteger(
+    opts.sweepIntervalDays ?? VOTE_SWEEP_INTERVAL_DAYS,
+    '盲扫周期天数',
+  );
+  const newPageWindowDays = positiveInteger(
+    opts.newPageWindowDays ?? NEW_PAGE_WINDOW_DAYS,
+    '新页窗口天数',
+  );
+  const newPageIntervalHours = positiveInteger(
+    opts.newPageIntervalHours ?? NEW_PAGE_INTERVAL_HOURS,
+    '新页重扫间隔小时数',
+  );
+  const catchupRate = positiveInteger(
+    opts.catchupRatePerHour ?? VOTE_CATCHUP_RATE_PER_HOUR,
+    '追平每小时额度',
+  );
+  const laneLimit = opts.laneLimit === undefined
+    ? Number.MAX_SAFE_INTEGER
+    : positiveInteger(opts.laneLimit, '单次车道上限');
+  const budgetPrefix = opts.budgetKeyPrefix ?? 'vote';
+  if (!/^[a-z0-9:_-]+$/i.test(budgetPrefix)) {
+    throw new RangeError(`非法预算键前缀 ${budgetPrefix}`);
+  }
 
-  // 高频队列必须短命：跨过 7 天边界后立即退役，不能让一个持续失败的任务靠退避
-  // 永久保留 new_page_highfreq 身份。2h 以前的锁视为死进程遗留；正常短进程远短于它。
+  // 高频队列必须短命：跨过窗口边界后立即退役，不能让持续失败任务靠退避永久保留。
+  // 2h 以前的锁视为死进程遗留；它是锁回收契约，不是新页窗口配置。
   const retired = await query(
     pool,
     'meta.scan_task:retire_vote_highfreq',
@@ -1012,12 +1286,12 @@ export async function seedVoteTasks(
         AND p.id = pc.page_id
         AND st.kind = 'new_page_highfreq'
         AND COALESCE(pc.first_published_at, p.created_at, st.created_at)
-              <= $1::timestamptz - interval '7 days'
+              <= $1::timestamptz - ($2::integer * interval '1 day')
         AND (
           st.locked_by IS NULL
           OR st.locked_at < $1::timestamptz - interval '2 hours'
         )`,
-    [ts],
+    [ts, newPageWindowDays],
   );
 
   const highFrequency = await query(
@@ -1036,11 +1310,11 @@ export async function seedVoteTasks(
                AND i.resolved_at IS NULL
           )
           AND COALESCE(pc.first_published_at, p.created_at)
-                > $1::timestamptz - interval '7 days'
+                > $1::timestamptz - ($3::integer * interval '1 day')
           AND (
             pc.last_complete_vote_snapshot_at IS NULL
             OR pc.last_complete_vote_snapshot_at
-                 <= $1::timestamptz - interval '3 hours'
+                 <= $1::timestamptz - ($4::integer * interval '1 hour')
           )
           AND ${voteClaimEvidenceExists('pc.page_id')}
         ORDER BY COALESCE(pc.first_published_at, p.created_at) DESC
@@ -1057,24 +1331,27 @@ export async function seedVoteTasks(
                FROM unnest(st.reasons || EXCLUDED.reasons) AS reason
            ),
            priority = GREATEST(st.priority, EXCLUDED.priority)`,
-    [ts, highFrequencyLimit],
+    [ts, highFrequencyLimit, newPageWindowDays, newPageIntervalHours],
   );
 
-  const sweep = await query(
+  const population = await query<{ eligible_pages: string; catchup_remaining: string }>(
     pool,
-    'meta.scan_task:seed_vote_sweep',
+    'meta.scan_task:vote_seed_population',
     `WITH recent_activity AS (
-       SELECT vc.page_id, max(vc.last_voted_at) AS last_vote_at
+       SELECT vc.page_id
          FROM serve.vote_current vc
-        WHERE vc.last_voted_at >= $1::timestamptz - interval '90 days'
+        WHERE vc.last_voted_at
+              >= $1::timestamptz - ($2::integer * interval '1 day')
         GROUP BY vc.page_id
      ),
-     candidates AS (
+     qualified AS (
        SELECT pc.page_id
          FROM recent_activity va
          JOIN serve.page_current pc ON pc.page_id = va.page_id
          JOIN ingest.page p ON p.id = pc.page_id
         WHERE pc.status = 'live'
+          AND COALESCE(pc.first_published_at, p.created_at)
+                <= $1::timestamptz - ($3::integer * interval '1 day')
           AND NOT EXISTS (
             SELECT 1
               FROM meta.irreconcilable i
@@ -1082,35 +1359,170 @@ export async function seedVoteTasks(
                AND i.kind = 'votes_full'
                AND i.resolved_at IS NULL
           )
-          AND COALESCE(pc.first_published_at, p.created_at)
-                <= $1::timestamptz - interval '7 days'
-          AND (
-            pc.last_complete_vote_snapshot_at IS NULL
-            OR pc.last_complete_vote_snapshot_at
-                 <= $1::timestamptz - interval '7 days'
-          )
           AND ${voteClaimEvidenceExists('pc.page_id')}
-        ORDER BY va.last_vote_at DESC
-        LIMIT $2
      )
-     INSERT INTO meta.scan_task AS st
-       (page_id, kind, reasons, priority, not_before)
-     SELECT page_id, 'votes_full',
-            ARRAY['votes_sweep_active_90d'], 10, $1::timestamptz
-       FROM candidates
-     ON CONFLICT (page_id, kind) DO UPDATE
-       SET reasons = ARRAY(
-             SELECT DISTINCT reason
-               FROM unnest(st.reasons || EXCLUDED.reasons) AS reason
-           ),
-           priority = GREATEST(st.priority, EXCLUDED.priority)`,
-    [ts, sweepLimit],
+     SELECT count(*)::text AS eligible_pages,
+            count(*) FILTER (WHERE state.page_id IS NULL)::text AS catchup_remaining
+       FROM qualified q
+       LEFT JOIN meta.vote_sweep_page_state state ON state.page_id = q.page_id`,
+    [ts, activityDays, newPageWindowDays],
   );
+  const eligiblePages = Number(population.rows[0]?.eligible_pages ?? 0);
+  const catchupRemaining = Number(population.rows[0]?.catchup_remaining ?? 0);
+  const activeLane = activeVoteSeedLane(catchupRemaining);
+  const hourlyBudget = activeLane === 'catchup'
+    ? catchupRate
+    : hourlyVoteSweepQuota(eligiblePages, sweepIntervalDays, ts);
+  const demand = Math.min(laneLimit, activeLane === 'catchup' ? catchupRemaining : eligiblePages);
+
+  let catchupAffected = 0;
+  let sweepAffected = 0;
+  let hourlyBudgetUsed = 0;
+  if (activeLane === 'catchup') {
+    const budgeted = await seedWithinHourlyBudget(
+      pool,
+      `${budgetPrefix}:catchup`,
+      ts,
+      hourlyBudget,
+      demand,
+      async (client, allowance) => {
+        const seeded = await query(
+          client,
+          'meta.scan_task:seed_vote_catchup',
+          `WITH recent_activity AS (
+             SELECT vc.page_id, max(vc.last_voted_at) AS last_vote_at
+               FROM serve.vote_current vc
+              WHERE vc.last_voted_at
+                    >= $1::timestamptz - ($2::integer * interval '1 day')
+              GROUP BY vc.page_id
+           ),
+           candidates AS (
+             SELECT pc.page_id
+               FROM recent_activity va
+               JOIN serve.page_current pc ON pc.page_id = va.page_id
+               JOIN ingest.page p ON p.id = pc.page_id
+               LEFT JOIN meta.vote_sweep_page_state state ON state.page_id = pc.page_id
+              WHERE pc.status = 'live'
+                AND state.page_id IS NULL
+                AND COALESCE(pc.first_published_at, p.created_at)
+                      <= $1::timestamptz - ($3::integer * interval '1 day')
+                AND NOT EXISTS (
+                  SELECT 1 FROM meta.scan_task st
+                   WHERE st.page_id = pc.page_id AND st.kind = 'votes_full'
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM meta.irreconcilable i
+                   WHERE i.page_id = pc.page_id
+                     AND i.kind = 'votes_full'
+                     AND i.resolved_at IS NULL
+                )
+                AND ${voteClaimEvidenceExists('pc.page_id')}
+              ORDER BY va.last_vote_at DESC, pc.page_id
+              LIMIT $4
+           )
+           INSERT INTO meta.scan_task
+             (page_id, kind, reasons, priority, not_before)
+           SELECT page_id, 'votes_full', ARRAY['votes_v2_initial_catchup'], 20,
+                  $1::timestamptz
+             FROM candidates
+           ON CONFLICT (page_id, kind) DO NOTHING`,
+          [ts, activityDays, newPageWindowDays, allowance],
+        );
+        return seeded.rowCount ?? 0;
+      },
+    );
+    catchupAffected = budgeted.affected;
+    hourlyBudgetUsed = budgeted.used;
+  } else {
+    const budgeted = await seedWithinHourlyBudget(
+      pool,
+      `${budgetPrefix}:sweep`,
+      ts,
+      hourlyBudget,
+      demand,
+      async (client, allowance) => {
+        const seeded = await query(
+          client,
+          'meta.scan_task:seed_vote_sweep',
+          `WITH recent_activity AS (
+             SELECT vc.page_id, max(vc.last_voted_at) AS last_vote_at
+               FROM serve.vote_current vc
+              WHERE vc.last_voted_at
+                    >= $1::timestamptz - ($2::integer * interval '1 day')
+              GROUP BY vc.page_id
+           ),
+           scheduled AS (
+             SELECT pc.page_id,
+                    to_timestamp((
+                      (
+                        floor((
+                          extract(epoch FROM pc.last_complete_vote_snapshot_at) * 1000
+                          - phase.phase_ms
+                        ) / cfg.period_ms) + 1
+                      ) * cfg.period_ms + phase.phase_ms
+                    ) / 1000.0) AS due_at,
+                    va.last_vote_at
+               FROM recent_activity va
+               JOIN serve.page_current pc ON pc.page_id = va.page_id
+               JOIN ingest.page p ON p.id = pc.page_id
+               JOIN meta.vote_sweep_page_state state ON state.page_id = pc.page_id
+               CROSS JOIN LATERAL (
+                 SELECT ($4::bigint * 86400000::bigint) AS period_ms
+               ) cfg
+               CROSS JOIN LATERAL (
+                 SELECT mod(
+                   ('x' || substr(md5(pc.page_id::text), 1, 15))::bit(60)::bigint,
+                   cfg.period_ms
+                 ) AS phase_ms
+               ) phase
+              WHERE pc.status = 'live'
+                AND pc.last_complete_vote_snapshot_at IS NOT NULL
+                AND COALESCE(pc.first_published_at, p.created_at)
+                      <= $1::timestamptz - ($3::integer * interval '1 day')
+                AND NOT EXISTS (
+                  SELECT 1 FROM meta.scan_task st
+                   WHERE st.page_id = pc.page_id AND st.kind = 'votes_full'
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM meta.irreconcilable i
+                   WHERE i.page_id = pc.page_id
+                     AND i.kind = 'votes_full'
+                     AND i.resolved_at IS NULL
+                )
+                AND ${voteClaimEvidenceExists('pc.page_id')}
+           ),
+           candidates AS (
+             SELECT page_id
+               FROM scheduled
+              WHERE due_at <= $1::timestamptz
+              ORDER BY due_at, last_vote_at DESC, page_id
+              LIMIT $5
+           )
+           INSERT INTO meta.scan_task
+             (page_id, kind, reasons, priority, not_before)
+           SELECT page_id, 'votes_full', ARRAY['votes_sweep_stable_phase'], 10,
+                  $1::timestamptz
+             FROM candidates
+           ON CONFLICT (page_id, kind) DO NOTHING`,
+          [ts, activityDays, newPageWindowDays, sweepIntervalDays, allowance],
+        );
+        return seeded.rowCount ?? 0;
+      },
+    );
+    sweepAffected = budgeted.affected;
+    hourlyBudgetUsed = budgeted.used;
+  }
 
   return {
     highFrequencyRetired: retired.rowCount ?? 0,
     highFrequencyAffected: highFrequency.rowCount ?? 0,
-    sweepAffected: sweep.rowCount ?? 0,
+    catchupAffected,
+    sweepAffected,
+    eligiblePages,
+    catchupRemaining,
+    activeLane,
+    hourlyBudget,
+    hourlyBudgetUsed,
   };
 }
 
@@ -1189,9 +1601,11 @@ export async function claimVoteTasks(
   requestedLimit: number,
   workerId: string,
   lockStaleAfterMs = 30 * 60_000,
+  newPageWindowDays = NEW_PAGE_WINDOW_DAYS,
 ): Promise<ClaimedVoteTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0) return [];
+  const shortLivedDays = positiveInteger(newPageWindowDays, '新页窗口天数');
 
   const res = await query<{
     id: string;
@@ -1222,7 +1636,7 @@ export async function claimVoteTasks(
           AND (
             st.kind <> 'new_page_highfreq'
             OR COALESCE(pc.first_published_at, p.created_at, st.created_at)
-                 > now() - interval '7 days'
+                 > now() - ($4::integer * interval '1 day')
           )
           AND (st.not_before IS NULL OR st.not_before <= now())
           AND (
@@ -1267,7 +1681,7 @@ export async function claimVoteTasks(
       ORDER BY st.priority DESC,
                (st.kind = 'new_page_highfreq') DESC,
                st.id`,
-    [workerId, limit, String(lockStaleAfterMs)],
+    [workerId, limit, String(lockStaleAfterMs), shortLivedDays],
   );
 
   return res.rows.map((row) => ({
@@ -1295,6 +1709,8 @@ export interface FinishVoteTaskArgs {
   resultHash?: Buffer | null;
   localValue?: Record<string, unknown>;
   remoteValue?: Record<string, unknown>;
+  /** 确定性结构/权限拒绝：本次即进入 irreconcilable，不经过指数退避。 */
+  terminalFailure?: boolean;
   now: string;
 }
 
@@ -1322,6 +1738,26 @@ export async function finishVoteTask(
 ): Promise<FinishVoteTaskResult> {
   const now = toPgTimestamptz(args.now);
   if (args.status === 'ok' || args.settledPartial === true) {
+    // 只有真正完整的 v2 WhoRated 才推进追平状态；settled partial 虽可收队，却不冒充完整快照。
+    if (args.status === 'ok') {
+      await query(
+        pool,
+        'meta.vote_sweep_page_state:complete',
+        `INSERT INTO meta.vote_sweep_page_state AS state
+           (page_id, first_v2_complete_at, last_v2_complete_at)
+         VALUES ($1, $2::timestamptz, $2::timestamptz)
+         ON CONFLICT (page_id) DO UPDATE
+           SET first_v2_complete_at = LEAST(
+                 state.first_v2_complete_at,
+                 EXCLUDED.first_v2_complete_at
+               ),
+               last_v2_complete_at = GREATEST(
+                 state.last_v2_complete_at,
+                 EXCLUDED.last_v2_complete_at
+               )`,
+        [task.pageId, now],
+      );
+    }
     await query(
       pool,
       'meta.irreconcilable:votes_resolve',
@@ -1347,7 +1783,7 @@ export async function finishVoteTask(
     task.lastResultHash !== null &&
     task.lastResultHash.equals(args.resultHash);
   const stableCount = args.resultHash ? (sameHash ? task.stableCount + 1 : 1) : 0;
-  const converged = stableCount >= 3;
+  const converged = args.terminalFailure === true || stableCount >= 3;
   const backoffAttempt = converged ? stableCount - 2 : task.attempts;
   const notBefore = backoffFrom(backoffAttempt, Date.parse(now));
 
