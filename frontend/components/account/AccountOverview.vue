@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useNuxtApp, useAsyncData } from 'nuxt/app'
 import UserAvatar from '~/components/UserAvatar.vue'
 import type { AuthUser } from '~/composables/useAuth'
 
@@ -7,6 +8,8 @@ const props = defineProps<{
   user: AuthUser
   showNotificationsPausedNotice?: boolean
 }>()
+
+const { $bff } = useNuxtApp()
 
 interface OverviewLink {
   title: string
@@ -17,14 +20,41 @@ interface OverviewLink {
 }
 
 const displayName = computed(() => props.user.displayName || '未设置昵称')
-const avatarId = computed(() => {
+const linkedWikidotId = computed(() => {
   const id = Number(props.user.linkedWikidotId)
-  return Number.isFinite(id) && id > 0 ? id : '0'
+  return Number.isFinite(id) && id > 0 ? id : null
 })
+const avatarId = computed(() => linkedWikidotId.value ?? '0')
 
 const wikidotStatus = computed(() => (
   props.user.linkedWikidotId ? '已连接' : '未连接'
 ))
+
+// AuthUser 只带 linkedWikidotId，展示用户名需要回查 BFF 的公开用户资料。
+// 不 await：用户名只是徽章的可选补充，查询慢或失败不能挂起整个概览面板
+// key 按 linkedWikidotId 区分：换绑或切换账号后不会复用上一个用户的缓存
+const { data: linkedWikidotProfile } = useAsyncData(
+  () => `account-overview-wikidot-profile-${linkedWikidotId.value ?? 'none'}`,
+  async () => {
+    if (!linkedWikidotId.value) return null
+    try {
+      return await $bff<{ wikidotId: number; displayName: string | null; username: string | null }>(
+        '/users/by-wikidot-id',
+        { params: { wikidotId: linkedWikidotId.value } }
+      )
+    } catch {
+      return null
+    }
+  },
+  { server: false, lazy: true }
+)
+
+// 换绑瞬间 data 可能仍是上一个 key 的旧值，用响应里的 wikidotId 再校验一次
+const linkedWikidotName = computed(() => {
+  const profile = linkedWikidotProfile.value
+  if (!profile || Number(profile.wikidotId) !== linkedWikidotId.value) return null
+  return profile.displayName || profile.username || null
+})
 
 const links = computed<OverviewLink[]>(() => [
   {
@@ -119,14 +149,36 @@ function formatLastLogin(value: string | null): string {
             {{ user.email }}
           </p>
           <div class="mt-3 flex flex-wrap gap-2 text-xs">
-            <span
-              class="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1"
-              :class="user.linkedWikidotId
-                ? 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-200'
-                : 'border-[rgb(var(--panel-border))] bg-[rgb(var(--bg))] text-[rgb(var(--muted))]'"
+            <NuxtLink
+              v-if="linkedWikidotId"
+              :to="`/user/${linkedWikidotId}`"
+              class="inline-flex items-center gap-1.5 rounded-md border border-emerald-300/70 bg-emerald-50 px-2.5 py-1 text-emerald-800 transition hover:border-emerald-400 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-400/60 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:border-emerald-700 dark:hover:bg-emerald-900/50"
+              :aria-label="`查看已绑定的 Wikidot 用户${linkedWikidotName ? ` ${linkedWikidotName} ` : ''}的用户页`"
             >
               <LucideIcon
-                :name="user.linkedWikidotId ? 'CircleCheck' : 'CircleDashed'"
+                name="CircleCheck"
+                class="h-3.5 w-3.5"
+                aria-hidden="true"
+              />
+              Wikidot {{ wikidotStatus }}
+              <span
+                v-if="linkedWikidotName"
+                class="font-semibold"
+              >
+                {{ linkedWikidotName }}
+              </span>
+              <LucideIcon
+                name="ArrowUpRight"
+                class="h-3 w-3"
+                aria-hidden="true"
+              />
+            </NuxtLink>
+            <span
+              v-else
+              class="inline-flex items-center gap-1.5 rounded-md border border-[rgb(var(--panel-border))] bg-[rgb(var(--bg))] px-2.5 py-1 text-[rgb(var(--muted))]"
+            >
+              <LucideIcon
+                name="CircleDashed"
                 class="h-3.5 w-3.5"
                 aria-hidden="true"
               />
