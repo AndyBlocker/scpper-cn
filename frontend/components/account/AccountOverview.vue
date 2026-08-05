@@ -30,8 +30,9 @@ const wikidotStatus = computed(() => (
   props.user.linkedWikidotId ? '已连接' : '未连接'
 ))
 
-// AuthUser 只带 linkedWikidotId，展示用户名需要回查 BFF 的公开用户资料
-const { data: linkedWikidotProfile } = await useAsyncData(
+// AuthUser 只带 linkedWikidotId，展示用户名需要回查 BFF 的公开用户资料。
+// 不 await：用户名只是徽章的可选补充，查询慢或失败不能挂起整个概览面板
+const { data: linkedWikidotProfile } = useAsyncData(
   () => 'account-overview-wikidot-profile',
   async () => {
     if (!linkedWikidotId.value) return null
@@ -44,7 +45,7 @@ const { data: linkedWikidotProfile } = await useAsyncData(
       return null
     }
   },
-  { server: false, watch: [linkedWikidotId] }
+  { server: false, lazy: true, watch: [linkedWikidotId] }
 )
 
 const linkedWikidotName = computed(() => (
