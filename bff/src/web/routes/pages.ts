@@ -488,6 +488,50 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     return resolvePageContextByPageId(pageId);
   }
 
+  /**
+   * Attribution 行只存在于单一 PageVersion 上（同步侧不会为每个版本各存一份），
+   * 而 effectiveVersionId 对已删除页面会整体切到最近一个存活版本。两者一旦不一致，
+   * 归属查询就会命中一个没有 Attribution 行的版本并返回空。
+   *
+   * 生产库里这两种错位同时存在：1642 个已删页面的归属只在墓碑版本上，
+   * 另有 869 个只在存活版本上（正是靠 effectiveVersionId 回退才显示正常）。
+   * 因此任何固定口径都必然错一半，这里改为按"数据实际所在版本"探测：
+   *   1. 当前版本（validTo IS NULL）上有归属 → 用它，它是最新事实
+   *   2. 否则 effectiveVersionId 上有归属 → 用它
+   *   3. 否则该 page 下任意有归属的最新版本 → 兜底，对未来新的错位形态免疫
+   *   4. 全都没有 → 退回 effectiveVersionId，保持原有的空结果语义
+   */
+  async function resolveAttributionVersionId(context: PageContext): Promise<number | null> {
+    const fallback = context.effectiveVersionId ?? context.currentVersionId ?? null;
+
+    // 快路径：全库 48135 个页面里 47234 个归属在当前版本、869 个在 effective 版本，
+    // 两次 Attribution("pageVerId") 索引探测即可判定 99.93% 的情况。
+    const { rows: fastRows } = await readPool.query(
+      `SELECT CASE
+                WHEN EXISTS (SELECT 1 FROM "Attribution" WHERE "pageVerId" = $1::int) THEN $1::int
+                WHEN EXISTS (SELECT 1 FROM "Attribution" WHERE "pageVerId" = $2::int) THEN $2::int
+              END AS id`,
+      [context.currentVersionId, context.effectiveVersionId]
+    );
+    const fast = fastRows[0]?.id;
+    if (fast != null) return Number(fast);
+
+    // 慢路径：两个候选版本都没有归属行（全库仅 32 个页面）。这里不能写成
+    // Attribution JOIN PageVersion —— Attribution 只有 6.8 万行，planner 会对版本数多的
+    // 页面（最多 874 个版本）改走整表扫描，实测 24ms。从 PageVersion 侧驱动更稳。
+    const { rows } = await readPool.query(
+      `SELECT pv.id
+         FROM "PageVersion" pv
+        WHERE pv."pageId" = $1
+          AND EXISTS (SELECT 1 FROM "Attribution" a WHERE a."pageVerId" = pv.id)
+        ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC
+        LIMIT 1`,
+      [context.pageId]
+    );
+    const resolved = rows[0]?.id;
+    return resolved == null ? fallback : Number(resolved);
+  }
+
   function parseBatchWikidotIds(input: string | string[] | undefined) {
     if (!input) return [];
     const rawValues = Array.isArray(input) ? input : [input];
@@ -519,6 +563,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         resolved AS (
           SELECT
             pc."wikidotId",
+            pc."pageId",
+            current_ver.id AS "currentVersionId",
             CASE
               WHEN current_ver.id IS NULL THEN latest_any.id
               WHEN current_ver."isDeleted" THEN COALESCE(latest_live.id, current_ver.id)
@@ -547,6 +593,28 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
             LIMIT 1
           ) latest_any ON TRUE
         ),
+        -- 与 resolveAttributionVersionId() 同一套优先级：当前版本 > effective 版本 >
+        -- 该 page 下任意有归属的最新版本 > effective 版本（无归属时保持空结果语义）。
+        -- 兜底分支写在 CASE 的 ELSE 里而非 LATERAL，是为了让它只对真正需要的行求值。
+        attribution_ver AS (
+          SELECT
+            r."wikidotId",
+            CASE
+              WHEN EXISTS (SELECT 1 FROM "Attribution" a WHERE a."pageVerId" = r."currentVersionId")
+                THEN r."currentVersionId"
+              WHEN EXISTS (SELECT 1 FROM "Attribution" a WHERE a."pageVerId" = r."effectiveVersionId")
+                THEN r."effectiveVersionId"
+              ELSE COALESCE((
+                SELECT pv.id
+                FROM "PageVersion" pv
+                WHERE pv."pageId" = r."pageId"
+                  AND EXISTS (SELECT 1 FROM "Attribution" a WHERE a."pageVerId" = pv.id)
+                ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC
+                LIMIT 1
+              ), r."effectiveVersionId")
+            END AS "attributionVersionId"
+          FROM resolved r
+        ),
         attrs AS (
           SELECT
             r."wikidotId",
@@ -563,8 +631,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
             BOOL_OR(a.type <> 'SUBMITTER') OVER (
               PARTITION BY r."wikidotId", a."pageVerId"
             ) AS has_non_submitter
-          FROM resolved r
-          LEFT JOIN "Attribution" a ON a."pageVerId" = r."effectiveVersionId"
+          FROM attribution_ver r
+          LEFT JOIN "Attribution" a ON a."pageVerId" = r."attributionVersionId"
           LEFT JOIN "User" u ON u.id = a."userId"
         ),
         filtered AS (
@@ -1312,6 +1380,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const { wikidotId } = req.params as Record<string, string>;
       const context = await resolvePageContextByWikidotId(wikidotId);
       if (!context || !context.effectiveVersionId) return res.json([]);
+      const attributionVersionId = await resolveAttributionVersionId(context);
+      if (!attributionVersionId) return res.json([]);
       const sql = `
         WITH attrs AS (
           SELECT 
@@ -1339,7 +1409,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         LEFT JOIN "User" u ON u.id = a."userId"
         ORDER BY COALESCE(u.id::text, a."anonKey"), a.type ASC, a."order" ASC
       `;
-      const { rows } = await readPool.query(sql, [context.effectiveVersionId]);
+      const { rows } = await readPool.query(sql, [attributionVersionId]);
       res.json(rows);
     } catch (err) {
       next(err);
@@ -1760,18 +1830,21 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       if (!context || !context.effectiveVersionId) return res.json([]);
 
       // Step 1: Fetch target page tags + authors
+      // tags 取 effectiveVersionId（内容字段留在存活版本上），authors 取 attributionVersionId
+      // （归属行只存在于单一版本，两者对已删除页面可能不是同一个版本）
+      const attributionVersionId = await resolveAttributionVersionId(context);
       const targetSql = `
         SELECT pv.tags,
                pv.category,
                (
                  SELECT COALESCE(ARRAY_AGG(DISTINCT a."userId") FILTER (WHERE a."userId" IS NOT NULL), ARRAY[]::int[])
                  FROM "Attribution" a
-                 WHERE a."pageVerId" = pv.id
+                 WHERE a."pageVerId" = $2::int
                    AND NOT (
                      a.type = 'SUBMITTER'
                      AND EXISTS (
                        SELECT 1 FROM "Attribution" ax
-                       WHERE ax."pageVerId" = pv.id AND ax.type <> 'SUBMITTER'
+                       WHERE ax."pageVerId" = $2::int AND ax.type <> 'SUBMITTER'
                      )
                    )
                ) AS authors
@@ -1779,7 +1852,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         WHERE pv.id = $1
         LIMIT 1
       `;
-      const targetResult = await readPool.query(targetSql, [context.effectiveVersionId]);
+      const targetResult = await readPool.query(targetSql, [context.effectiveVersionId, attributionVersionId]);
       if (targetResult.rowCount === 0) return res.json([]);
       const target = targetResult.rows[0];
       const targetTags: string[] = Array.isArray(target.tags) ? target.tags : [];
