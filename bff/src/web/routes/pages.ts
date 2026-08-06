@@ -1813,9 +1813,11 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
       const excludedTags = Array.from(new Set([...(excludeCommon ? defaultCommonTags : []), ...extraExcluded]));
 
       // 使用 Redis 缓存（explore > 0 时跳过缓存，因为结果有随机性）
+      // key 里的 v2 是归属版本解析口径的版本号：TTL 长达 7 天，不换 key 的话已删除页面
+      // 会继续吃到旧口径（作者为空）的缓存。改动 authors 解析逻辑时必须同步递增。
       const shouldCache = explore === 0;
       const cacheKey = shouldCache
-        ? `recommendations:${wikidotId}:${limitInt}:${strat}:${tagWeight}:${authorWeight}:${minTagOverlap}:${minAuthorOverlap}:${sameCategoryOnly}:${excludeUserPages}:${diversity}:${weighting}:${excludeCommon}:${mmrLambda}:${excludedTags.sort().join('|')}`
+        ? `recommendations:v2:${wikidotId}:${limitInt}:${strat}:${tagWeight}:${authorWeight}:${minTagOverlap}:${minAuthorOverlap}:${sameCategoryOnly}:${excludeUserPages}:${diversity}:${weighting}:${excludeCommon}:${mmrLambda}:${excludedTags.sort().join('|')}`
         : null;
 
       if (cacheKey) {
