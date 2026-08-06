@@ -199,8 +199,8 @@ async function seedFixture(client: PoolClient): Promise<{ minSeq: number; maxSeq
 }
 
 describe('投影清单与依赖解析', () => {
-  it('十张前端 L2 投影完整且短名/全名归一一致', () => {
-    assert.equal(L2_PROJECTIONS.length, 10);
+  it('十一张前端 L2 投影完整且短名/全名归一一致', () => {
+    assert.equal(L2_PROJECTIONS.length, 11);
     assert.equal(normalizeProjectionName('page_stats'), 'serve.page_stats');
     assert.equal(normalizeProjectionName('serve.page_daily_stats'), 'serve.page_daily_stats');
     assert.equal(normalizeProjectionName('site_stats'), 'serve.site_stats');
@@ -234,7 +234,7 @@ describe('真实数据库契约', () => {
         ORDER BY c.projection`,
       [L2_PROJECTIONS],
     );
-    assert.equal(result.rows.length, 10);
+    assert.equal(result.rows.length, 11);
     assert.ok(result.rows.every((row) => row.same));
     assert.ok(result.rows.every((row) => row.watermark === null || Number(row.watermark) <= Number(row.last_value)));
   });

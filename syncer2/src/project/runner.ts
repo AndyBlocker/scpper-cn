@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import { query, withTransaction } from '../store/db.js';
 import { projectPageDailyStats, projectUserAttrDaily, projectVoteDaily } from './daily.js';
 import { projectPageStats } from './pageStats.js';
+import { projectPageReference } from './pageReference.js';
 import { projectSiteOverviewDaily, projectSiteStats } from './siteOverview.js';
 import { projectUserTagPreference, projectUserVoteInteraction } from './social.js';
 import { asNumber } from './sql.js';
@@ -17,6 +18,7 @@ import { projectUserStats } from './userStats.js';
 
 const APPLY: Readonly<Record<ProjectionName, ProjectionApply>> = {
   'serve.page_stats': projectPageStats,
+  'serve.page_reference': projectPageReference,
   'serve.vote_daily': projectVoteDaily,
   'serve.user_attr_daily': projectUserAttrDaily,
   'serve.user_page': projectUserPage,
@@ -31,6 +33,7 @@ const APPLY: Readonly<Record<ProjectionName, ProjectionApply>> = {
 /** 依赖先后：user_stats 先完成 B2/B4，自洽后站点总览再发布 B1 快照。 */
 export const DEFAULT_PROJECTION_ORDER: readonly ProjectionName[] = [
   'serve.page_stats',
+  'serve.page_reference',
   'serve.vote_daily',
   'serve.user_attr_daily',
   'serve.user_vote_interaction',

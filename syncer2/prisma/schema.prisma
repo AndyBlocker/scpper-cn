@@ -632,6 +632,7 @@ model page_source {
   rev_no       Int?
   blob_sha     Bytes
   observed_at  DateTime     @db.Timestamptz(6)
+  change_seq   BigInt?
   content_blob content_blob @relation(fields: [blob_sha], references: [sha256], onDelete: NoAction, onUpdate: NoAction)
   page         page         @relation(fields: [page_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -1454,19 +1455,30 @@ model page_image {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model page_reference {
-  from_page_id    Int
-  to_page_id      Int?
-  kind            String
-  target_path     String
-  target_fragment String?
-  display_texts   String[] @default([])
-  occurrence      Int      @default(1)
-  computed_at     DateTime @default(now()) @db.Timestamptz(6)
-  target_slug     String
+  from_page_id             Int
+  source_sha               Bytes
+  kind                     String
+  target_scope             String
+  reference_key            Bytes
+  target_key               String
+  target_path              String
+  target_slug              String?
+  target_fragment          String   @default("")
+  raw_target               String
+  raw_text                 String
+  display_texts            String[] @default([])
+  occurrence               Int      @default(1)
+  to_page_id               Int?
+  resolution_status        String
+  candidate_page_ids       Int[]    @default([])
+  live_candidate_page_ids  Int[]    @default([])
+  identity_candidate_count Int      @default(0)
+  live_candidate_count     Int      @default(0)
+  slug_reused              Boolean  @default(false)
+  computed_at              DateTime @default(now()) @db.Timestamptz(6)
 
-  @@id([from_page_id, target_slug, kind])
-  @@index([target_path], map: "pr_path")
-  @@index([to_page_id, kind], map: "pr_to")
+  @@id([from_page_id, kind, reference_key])
+  @@index([source_sha], map: "pr_source_sha")
   @@schema("serve")
 }
 

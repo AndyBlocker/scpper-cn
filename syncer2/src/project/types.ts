@@ -1,12 +1,13 @@
 import type { PoolClient } from 'pg';
 
 /**
- * M8 首批八张 L2 投影 + 前端五项口径补入的两张站点总览投影。
+ * M8 首批八张 L2、两张站点总览，以及 effective page-reference 投影。
  *
  * 值使用完整表名，必须与 meta.projection_cursor.projection 逐字一致。
  */
 export const L2_PROJECTIONS = [
   'serve.page_stats',
+  'serve.page_reference',
   'serve.vote_daily',
   'serve.user_attr_daily',
   'serve.user_page',

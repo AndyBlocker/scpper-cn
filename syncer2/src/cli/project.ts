@@ -168,7 +168,7 @@ function parseArgs(): CliOptions {
   });
   program
     .name('project')
-    .description('M8：安全 fact_seq 水位驱动的八张 L2 投影')
+    .description('安全 fact_seq 水位驱动的 L2 投影（含 effective page-reference）')
     .option(
       '-p, --projection <name>',
       '只运行指定投影，可重复；允许 page_stats 或 serve.page_stats',
