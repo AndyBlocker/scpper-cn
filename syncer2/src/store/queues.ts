@@ -369,7 +369,15 @@ export async function lookupIdentityByWikidotId(
  */
 export async function registerPage(
   pool: PgExecutor,
-  args: { wikidotId: number; slug: string; observedAt: string; source?: string; runId?: number | null },
+  args: {
+    wikidotId: number;
+    slug: string;
+    observedAt: string;
+    source?: string;
+    runId?: number | null;
+    /** ListPages 的站上创建时刻；有证据时让 created life event 直接落 exact。 */
+    createdAt?: string | null;
+  },
 ): Promise<number> {
   const res = await query<{ page_id: number }>(
     pool,
@@ -379,7 +387,8 @@ export async function registerPage(
               p_slug       => $2,
               p_observed   => $3::timestamptz,
               p_source     => $4,
-              p_run        => $5
+              p_run        => $5,
+              p_created_at => $6::timestamptz
             ) AS page_id`,
     [
       args.wikidotId,
@@ -387,6 +396,9 @@ export async function registerPage(
       toPgTimestamptz(args.observedAt),
       args.source ?? 'wikidot',
       args.runId ?? null,
+      args.createdAt === undefined || args.createdAt === null
+        ? null
+        : toPgTimestamptz(args.createdAt),
     ],
   );
   const id = res.rows[0]?.page_id;

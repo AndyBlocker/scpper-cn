@@ -10,6 +10,7 @@ import {
 type PgExecutor = Pool | PoolClient;
 
 const RESTRICTED_REVIEW_MS = 4 * 60 * 60_000;
+const RESTRICTED_SESSION_REVIEW_MS = 5 * 60_000;
 const TERMINAL_REVIEW_MS = 7 * 24 * 60 * 60_000;
 const TRANSIENT_ATTEMPTS = 4;
 
@@ -134,6 +135,26 @@ export function waitingForRestrictedEvidence(
     notBefore: new Date(now + RESTRICTED_REVIEW_MS).toISOString(),
     resolutionSource: 'restricted_listpages_v1_wait',
     resolutionEvidence: { reviewIntervalHours: RESTRICTED_REVIEW_MS / 3_600_000 },
+  };
+}
+
+/** 登录态/稳定出口故障是短暂前置条件，不消耗身份失败次数，也绝不伪装为 0 页。 */
+export function waitingForRestrictedSession(
+  slug: string,
+  error: string,
+  now = Date.now(),
+): PendingResolution {
+  return {
+    slug,
+    status: 'waiting_evidence',
+    error,
+    notBefore: new Date(now + RESTRICTED_SESSION_REVIEW_MS).toISOString(),
+    resolutionSource: 'restricted_session_unavailable',
+    resolutionEvidence: {
+      skipped: true,
+      emptyResult: false,
+      reviewIntervalMinutes: RESTRICTED_SESSION_REVIEW_MS / 60_000,
+    },
   };
 }
 

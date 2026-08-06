@@ -38,6 +38,8 @@ export const NEW_PAGE_INTERVAL_HOURS: number =
 /** 首轮 v2 真实 WhoRated 追平按实测持续吞吐封顶；紧急 L1 变化任务仍以更高优先级插队。 */
 export const VOTE_CATCHUP_RATE_PER_HOUR = 832;
 export const WORK_QUEUE_LIMIT_MAX = 50;
+/** 运维重放时先用未来锁隔离旧版通用 worker；只有 adult-only 消费者可接管。 */
+export const ADULT_STABLE_EGRESS_HOLD = 'adult-stable-egress-hold';
 export const CONSECUTIVE_PAGE_FAILURE_LIMIT = 5;
 
 /*
@@ -484,6 +486,8 @@ export async function claimWorkTasks(
   kinds: readonly ScanTaskKind[] = ALL_WORK_TASK_KINDS,
   lockStaleAfterMs = 30 * 60_000,
   newPageWindowDays = NEW_PAGE_WINDOW_DAYS,
+  slugPrefix: string | null = null,
+  reservedLockOwner: string | null = null,
 ): Promise<ClaimedWorkTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0 || kinds.length === 0) return [];
@@ -522,6 +526,7 @@ export async function claimWorkTasks(
          JOIN serve.page_current pc ON pc.page_id = st.page_id
          JOIN ingest.page p ON p.id = st.page_id
         WHERE st.kind = ANY($4::text[])
+          AND ($8::text IS NULL OR pc.slug LIKE $8 || '%')
           AND (
             pc.status = 'live'
             OR (
@@ -547,7 +552,8 @@ export async function claimWorkTasks(
           )
           AND (st.not_before IS NULL OR st.not_before <= now())
           AND (
-            st.locked_by IS NULL
+            ($9::text IS NOT NULL AND st.locked_by = $9)
+            OR st.locked_by IS NULL
             OR st.locked_at < now() - ($3::bigint || ' milliseconds')::interval
           )
      ),
@@ -635,6 +641,7 @@ export async function claimWorkTasks(
                 ir.source = 'wikidot_listpages'
                 AND ir.stats ->> 'mode' IN ('l0_content', 'l1_votes')
               )
+              OR ir.source = 'wikidot_listpages_adult_bootstrap'
             )
           ORDER BY ps.scanned_at DESC, ps.run_id DESC
           LIMIT 1
@@ -651,6 +658,8 @@ export async function claimWorkTasks(
       PINNED_KINDS,
       pinnedQuota,
       bindSqlTuning('NEW_PAGE_WINDOW_DAYS', shortLivedDays),
+      slugPrefix,
+      reservedLockOwner,
     ],
   );
 
@@ -690,6 +699,7 @@ export async function claimIrreconcilableReviews(
   workerId: string,
   kinds: readonly ScanTaskKind[] = ALL_WORK_TASK_KINDS,
   lockStaleAfterMs = 30 * 60_000,
+  slugPrefix: string | null = null,
 ): Promise<ClaimedWorkTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0 || kinds.length === 0) return [];
@@ -721,6 +731,7 @@ export async function claimIrreconcilableReviews(
           AND i.result_hash IS NOT NULL
           AND i.next_review_at <= now()
           AND i.kind = ANY($4::text[])
+          AND ($5::text IS NULL OR pc.slug LIKE $5 || '%')
           AND pc.status = 'live'
           AND (
             i.kind NOT IN ('votes_full', 'new_page_highfreq')
@@ -780,12 +791,13 @@ export async function claimIrreconcilableReviews(
                 ir.source = 'wikidot_listpages'
                 AND ir.stats ->> 'mode' IN ('l0_content', 'l1_votes')
               )
+              OR ir.source = 'wikidot_listpages_adult_bootstrap'
             )
           ORDER BY ps.scanned_at DESC, ps.run_id DESC
           LIMIT 1
        ) tier1_revision ON true
       ORDER BY i.next_review_at, i.page_id, i.kind`,
-    [workerId, limit, String(lockStaleAfterMs), kinds],
+    [workerId, limit, String(lockStaleAfterMs), kinds, slugPrefix],
   );
 
   return result.rows.map((row) => ({

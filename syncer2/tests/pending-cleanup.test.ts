@@ -168,6 +168,7 @@ test('存量三类已到语义终态，生产合成页已清零', async () => {
     const result = await pool.query<{
       old_states: string;
       restricted_resolved: string;
+      adult_authenticated: string;
       gone_finished: string;
       gone_total: string;
       synthetic_pages: string;
@@ -177,8 +178,15 @@ test('存量三类已到语义终态，生产合成页已清零', async () => {
            AS old_states,
          (SELECT count(*) FROM meta.pending_page
            WHERE status='resolved'
-             AND resolution_source='restricted_listpages_v1_reuse')::text
+             AND resolution_source IN (
+               'restricted_listpages_v1_reuse',
+               'adult_listpages_authenticated_identity'
+             ))::text
            AS restricted_resolved,
+         (SELECT count(*) FROM meta.pending_page
+           WHERE status='resolved'
+             AND resolution_source='adult_listpages_authenticated_identity')::text
+           AS adult_authenticated,
          (SELECT count(*) FROM meta.pending_page
            WHERE status='gone' AND finished_at IS NOT NULL)::text AS gone_finished,
          (SELECT count(*) FROM meta.pending_page WHERE status='gone')::text AS gone_total,
@@ -188,6 +196,7 @@ test('存量三类已到语义终态，生产合成页已清零', async () => {
     const row = result.rows[0]!;
     assert.equal(row.old_states, '0');
     assert.ok(Number(row.restricted_resolved) >= 138);
+    assert.equal(row.adult_authenticated, '133');
     assert.equal(row.gone_finished, row.gone_total);
     assert.equal(row.synthetic_pages, '0');
   } finally {

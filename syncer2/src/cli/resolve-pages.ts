@@ -20,8 +20,9 @@
  *    冷启动该走 Phase 2 批量回填。要强行跑得显式加 --force-cold-start。
  * 3. **失败不丢也不静止。** 404 → 终态 gone；真实身份冲突 → conflict 并按周复查；
  *    传输/解析失败 → retry（1h/4h/24h），耗尽后转 irreconcilable 低频复查。
- *    adult:/wanderers-adult: 的匿名整页 GET 不能作身份证据；改用 ListPages fullname
- *    + v1 服务端强制只读身份源收口，证据未到则 waiting_evidence 定时复查。
+ *    adult:/wanderers-adult: 的匿名整页 GET 不能作身份证据；adult 改用 ListPages
+ *    fullname + 固定 7890 的最小登录身份发现，wanderers-adult 保留 v1 服务端强制
+ *    只读身份源；证据未到则 waiting_evidence 定时复查。
  *
  * CLI 契约与 sitemap-scan 一致：stdout 只有最后一行 JSON 摘要，日志走 stderr，
  * 失败非零退出交调度器。
@@ -37,9 +38,25 @@ import os from 'node:os';
 
 import { loadConfig } from '../config.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import {
+  createRestrictedStableHttp,
+  isRestrictedSlug,
+  loadRestrictedWikidotCredentials,
+  RESTRICTED_STABLE_PROXY_URL,
+  RestrictedIdentitySession,
+  RestrictedSessionUnavailableError,
+} from '../http/restrictedSession.js';
 import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
-import { fetchPageIdentity } from '../page/identity.js';
+import {
+  fetchPageIdentity,
+  findSharedPageIdentityCollisions,
+  type IdentityOutcome,
+} from '../page/identity.js';
+import {
+  scanRestrictedListPages,
+  type RestrictedListPageRecord,
+} from '../collect/restrictedListPages.js';
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
 import { enqueueScanTasks, finishIngestRun, startIngestRun, type ScanTaskRow } from '../store/meta.js';
 import {
@@ -50,6 +67,7 @@ import {
   pendingStatusBreakdown,
   registerPage,
   releasePendingPageClaim,
+  type ClaimedPending,
 } from '../store/queues.js';
 import {
   assertRestrictedV1SessionReadOnly,
@@ -63,7 +81,9 @@ import {
   resolveRestrictedPendingPage,
   type RestrictedV1Identity,
   waitingForRestrictedEvidence,
+  waitingForRestrictedSession,
 } from '../work/pendingPage.js';
+import { applyRestrictedListPage } from '../work/restrictedPage.js';
 
 const log = createLogger('resolve-pages');
 
@@ -76,6 +96,7 @@ interface CliOptions {
   skipTzCheck: boolean;
   forceColdStart: boolean;
   dryRun: boolean;
+  adultBootstrap: boolean;
   amcProbe?: string;
   proxyCheck?: string;
 }
@@ -86,11 +107,14 @@ async function main(): Promise<void> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   const workerId = `${os.hostname()}:${process.pid}`;
+  const runSource = opts.adultBootstrap ? 'wikidot_listpages_adult_bootstrap' : SOURCE;
 
   const http = new HttpClient({
     userAgent: config.userAgent,
     referer: config.referer,
-    proxyUrl: config.proxyUrl,
+    // adult bootstrap 整个进程（包括启动探针）都只允许稳定出口；不能先在 7891
+    // 暴露一次再把登录 session 切到 7890。
+    proxyUrl: opts.adultBootstrap ? RESTRICTED_STABLE_PROXY_URL : config.proxyUrl,
     timeoutMs: config.httpTimeoutMs,
     maxAttempts: config.httpMaxAttempts,
     breaker503: config.breaker503,
@@ -120,6 +144,9 @@ async function main(): Promise<void> {
     gone: 0,
     conflict: 0,
     restrictedResolved: 0,
+    adultListPagesObserved: 0,
+    adultSessionFailed: 0,
+    identityCollisions: 0,
     waitingEvidence: 0,
     failed: 0,
     writeFreezeSkipped: 0,
@@ -145,14 +172,14 @@ async function main(): Promise<void> {
 
     // ── 冷启动闸 ────────────────────────────────────────────────────────────
     const pendingTotal = await countPendingPages(pool);
-    if (pendingTotal > config.pendingColdStart && !opts.forceColdStart) {
+    if (pendingTotal > config.pendingColdStart && !opts.forceColdStart && !opts.adultBootstrap) {
       const msg =
         `pending_page 待解析 ${pendingTotal} 条 > 冷启动阈值 ${config.pendingColdStart}。` +
         `这是**冷启动/大回填**形态，不是日常增量（实测新页+改名合计 30–80/天）。` +
         `一页一个整页 GET 会变成上万次请求，与 field-matrix 的"绝不为全站 36k 页各打一次 GET"直接冲突。` +
         `请走 Phase 2 批量回填；确实要用本 CLI 顶上，加 --force-cold-start。`;
       log.error('冷启动闸拦截', { pendingTotal, threshold: config.pendingColdStart });
-      runId = await startIngestRun(pool, SOURCE, startedAt);
+      runId = await startIngestRun(pool, runSource, startedAt);
       await finishIngestRun(pool, runId, {
         status: 'aborted',
         finishedAt: new Date().toISOString(),
@@ -176,18 +203,58 @@ async function main(): Promise<void> {
       return;
     }
 
-    runId = await startIngestRun(pool, SOURCE, startedAt);
+    runId = await startIngestRun(pool, runSource, startedAt);
 
     // ── 认领 ────────────────────────────────────────────────────────────────
-    const claimed = await claimPendingPages(pool, opts.limit, workerId);
+    const claimed = opts.adultBootstrap
+      ? []
+      : await claimPendingPages(pool, opts.limit, workerId);
     counters.claimed = claimed.length;
     log.info('已认领待解析 slug', { claimed: claimed.length, limit: opts.limit, pendingTotal });
 
-    // ── 受限分类本地收敛 ──────────────────────────────────────────────────
-    // adult:/wanderers-adult: 的匿名整页 GET 只回显 category:_public，继续 GET
-    // 既浪费出站又会制造假 mismatch。先用本轮 ListPages fullname + v1 强制只读身份复核。
-    const restricted = claimed.filter(isRestrictedListPagesPending);
-    const httpClaimed = claimed.filter((row) => !isRestrictedListPagesPending(row));
+    // ── 受限分类收敛 ──────────────────────────────────────────────────────
+    // adult: 用 ListPages 页面证据 + 固定 7890 登录身份；账号不参与 WhoRated。
+    // wanderers-adult: 暂保留既有 v1 服务端强制只读交叉证据，不移除只读约束。
+    const adult = claimed.filter(
+      (row) => row.slug.toLowerCase().startsWith('adult:') && isRestrictedListPagesPending(row),
+    );
+    const restricted = claimed.filter(
+      (row) => !row.slug.toLowerCase().startsWith('adult:') && isRestrictedListPagesPending(row),
+    );
+    const restrictedSlugs = new Set([...adult, ...restricted].map((row) => row.slug));
+    const httpClaimed = claimed.filter((row) => !restrictedSlugs.has(row.slug));
+
+    if (adult.length > 0 || opts.adultBootstrap) {
+      const adultResult = await resolveAdultPendingPages({
+        pool,
+        rows: adult,
+        baseUrl: config.siteBaseUrl,
+        userAgent: config.userAgent,
+        referer: config.referer,
+        timeoutMs: config.httpTimeoutMs,
+        maxAttempts: config.httpMaxAttempts,
+        breaker503: config.breaker503,
+        breakerReset: config.breakerReset,
+        runId,
+        dryRun: opts.dryRun,
+        bootstrapAll: opts.adultBootstrap,
+      });
+      if (opts.adultBootstrap) counters.claimed = adultResult.targeted;
+      counters.resolved += adultResult.resolved;
+      counters.alreadyRegistered += adultResult.alreadyRegistered;
+      counters.restrictedResolved += adultResult.resolved + adultResult.alreadyRegistered;
+      counters.waitingEvidence += adultResult.waitingEvidence;
+      counters.conflict += adultResult.conflict;
+      counters.failed += adultResult.failed;
+      counters.tasksEnqueued += adultResult.tasksEnqueued;
+      counters.adultListPagesObserved += adultResult.listPagesObserved;
+      counters.adultSessionFailed += adultResult.sessionFailed;
+      counters.identityCollisions += adultResult.identityCollisions;
+      for (const sample of adultResult.samples) {
+        if (samples.length < 20) samples.push(sample);
+      }
+    }
+
     if (restricted.length > 0) {
       let candidates = new Map<string, RestrictedV1Identity>();
       if (config.v1DatabaseUrl !== null) {
@@ -261,11 +328,66 @@ async function main(): Promise<void> {
       }
     }
 
-    // ── 逐页解析（并发受限，出口礼貌）──────────────────────────────────────
+    // ── 逐页解析（先完整发现，再统一过共享 pageId 守卫，之后才允许任何写入）─────
+    const httpOutcomes = new Map<string, IdentityOutcome>();
+    await mapLimited(httpClaimed, opts.concurrency, async (row) => {
+      try {
+        httpOutcomes.set(
+          row.slug,
+          await fetchPageIdentity(http, config.siteBaseUrl, row.slug, log),
+        );
+      } catch (err) {
+        if (err instanceof CircuitOpenError) throw err;
+        httpOutcomes.set(row.slug, {
+          kind: 'failed',
+          httpStatus: null,
+          error: `身份发现异常：${String(err)}`,
+        });
+      }
+    });
+    const identityCollisions = findSharedPageIdentityCollisions(
+      [...httpOutcomes].flatMap(([slug, outcome]) =>
+        outcome.kind === 'ok'
+          ? [{ slug, wikidotId: outcome.identity.wikidotId }]
+          : [],
+      ),
+    );
+    const collisionBySlug = new Map<string, (typeof identityCollisions)[number]>();
+    for (const collision of identityCollisions) {
+      log.error('身份冲突守卫触发：多个 slug 共享同一 pageId，冲突组全部拒绝写入', {
+        collision,
+      });
+      for (const slug of collision.slugs) collisionBySlug.set(slug, collision);
+    }
+    counters.identityCollisions += identityCollisions.reduce(
+      (sum, collision) => sum + collision.slugs.length,
+      0,
+    );
+
     await mapLimited(httpClaimed, opts.concurrency, async (row) => {
       const observedAt = new Date().toISOString();
       try {
-        const outcome = await fetchPageIdentity(http, config.siteBaseUrl, row.slug, log);
+        const collision = collisionBySlug.get(row.slug.toLowerCase());
+        if (collision !== undefined) {
+          counters.conflict++;
+          await finishPendingPage(pool, {
+            slug: row.slug,
+            status: 'conflict',
+            wikidotId: collision.wikidotId,
+            error:
+              `身份冲突守卫：pageId=${collision.wikidotId} 同时解析自多个 slug=` +
+              collision.slugs.join(',') + '；拒绝写入',
+            notBefore: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+            resolutionSource: 'shared_page_id_collision',
+            resolutionEvidence: { collision },
+          });
+          return;
+        }
+        const outcome = httpOutcomes.get(row.slug) ?? {
+          kind: 'failed' as const,
+          httpStatus: null,
+          error: '内部错误：身份发现结果缺项',
+        };
 
         if (outcome.kind === 'gone') {
           counters.gone++;
@@ -578,6 +700,352 @@ async function main(): Promise<void> {
   }
 }
 
+interface AdultResolveResult {
+  targeted: number;
+  resolved: number;
+  alreadyRegistered: number;
+  waitingEvidence: number;
+  conflict: number;
+  failed: number;
+  tasksEnqueued: number;
+  listPagesObserved: number;
+  sessionFailed: number;
+  identityCollisions: number;
+  samples: Array<Record<string, unknown>>;
+}
+
+async function resolveAdultPendingPages(args: {
+  pool: Pool;
+  rows: readonly ClaimedPending[];
+  baseUrl: string;
+  userAgent: string;
+  referer: string;
+  timeoutMs: number;
+  maxAttempts: number;
+  breaker503: number;
+  breakerReset: number;
+  runId: number | null;
+  dryRun: boolean;
+  bootstrapAll: boolean;
+}): Promise<AdultResolveResult> {
+  const result: AdultResolveResult = {
+    targeted: 0,
+    resolved: 0,
+    alreadyRegistered: 0,
+    waitingEvidence: 0,
+    conflict: 0,
+    failed: 0,
+    tasksEnqueued: 0,
+    listPagesObserved: 0,
+    sessionFailed: 0,
+    identityCollisions: 0,
+    samples: [],
+  };
+  for (const row of args.rows) {
+    if (!isRestrictedSlug(row.slug) || !row.slug.toLowerCase().startsWith('adult:')) {
+      throw new Error(`adult resolver 收到非 adult slug：${row.slug}`);
+    }
+  }
+
+  const stableHttp = createRestrictedStableHttp({
+    userAgent: args.userAgent,
+    referer: args.referer,
+    timeoutMs: args.timeoutMs,
+    maxAttempts: args.maxAttempts,
+    breaker503: args.breaker503,
+    breakerReset: args.breakerReset,
+    connections: 2,
+    logger: log.child('adult-7890'),
+  });
+  stableHttp.assertHeaders();
+  let session: RestrictedIdentitySession | null = null;
+  try {
+    const listPages = await scanRestrictedListPages(
+      stableHttp,
+      args.baseUrl,
+      'adult',
+      log.child('adult-listpages'),
+    );
+    if (listPages.status === 'failed') {
+      const error = `adult ListPages 权威观测失败，整批跳过且不产生空结果：${listPages.error}`;
+      log.error(error, { claimed: args.rows.length, emptyResult: false });
+      result.failed += args.rows.length;
+      result.waitingEvidence += args.rows.length;
+      if (!args.dryRun) {
+        for (const row of args.rows) {
+          await finishPendingPage(args.pool, waitingForRestrictedSession(row.slug, error));
+        }
+      }
+      return result;
+    }
+    result.listPagesObserved = listPages.rows.length;
+    const targetRows: ClaimedPending[] = args.bootstrapAll
+      ? listPages.rows.map((row) => ({
+          slug: row.fullname,
+          attempts: 0,
+          seenCount: 1,
+          reasons: ['adult_listpages_bootstrap'],
+          discoveredBy: 'adult_listpages_bootstrap',
+          wikidotId: null,
+          observedSlug: null,
+        }))
+      : [...args.rows];
+    result.targeted = targetRows.length;
+    const bySlug = new Map(listPages.rows.map((row) => [row.fullname, row]));
+    const missingEvidence = targetRows.filter((row) => !bySlug.has(row.slug));
+    if (missingEvidence.length > 0) {
+      const error =
+        `adult ListPages 完整轮没有 claimed slug：` +
+        missingEvidence.slice(0, 10).map((row) => row.slug).join(',');
+      log.error(error, { missing: missingEvidence.length, remoteTotal: listPages.remoteTotal });
+      for (const row of missingEvidence) {
+        result.waitingEvidence++;
+        if (!args.dryRun) {
+          await finishPendingPage(
+            args.pool,
+            waitingForRestrictedEvidence(row.slug, Date.now(), error),
+          );
+        }
+      }
+    }
+
+    const readyRows = targetRows.filter((row) => bySlug.has(row.slug));
+    if (readyRows.length === 0) return result;
+    const credentials = loadRestrictedWikidotCredentials();
+    if (credentials === null) {
+      const error =
+        'adult 身份发现缺少 WIKIDOT_USERNAME/WIKIDOT_PASSWORD；整批跳过且不产生空结果';
+      log.error(error, { claimed: readyRows.length, emptyResult: false });
+      result.sessionFailed = readyRows.length;
+      result.waitingEvidence += readyRows.length;
+      if (!args.dryRun) {
+        for (const row of readyRows) {
+          await finishPendingPage(args.pool, waitingForRestrictedSession(row.slug, error));
+        }
+      }
+      return result;
+    }
+
+    session = new RestrictedIdentitySession(
+      stableHttp,
+      credentials,
+      args.baseUrl,
+      log.child('adult-session'),
+    );
+    const identities = new Map<string, IdentityOutcome>();
+    let sessionError: string | null = null;
+    // 同一账号 session 串行发现；避免并发过期时触发多次重登，也避免同 session 多连接突刺。
+    for (const row of readyRows) {
+      try {
+        identities.set(row.slug, await session.fetchIdentity(row.slug));
+      } catch (err) {
+        sessionError =
+          err instanceof RestrictedSessionUnavailableError
+            ? err.message
+            : `受限 session 请求异常：${String(err)}`;
+        break;
+      }
+    }
+    if (sessionError !== null) {
+      const error = `adult session 失效/重登失败，整批跳过且不产生空结果：${sessionError}`;
+      log.error(error, {
+        claimed: readyRows.length,
+        discoveredBeforeFailure: identities.size,
+        emptyResult: false,
+      });
+      result.sessionFailed = readyRows.length;
+      result.waitingEvidence += readyRows.length;
+      if (!args.dryRun) {
+        for (const row of readyRows) {
+          await finishPendingPage(args.pool, waitingForRestrictedSession(row.slug, error));
+        }
+      }
+      return result;
+    }
+
+    // 所有身份先发现完，再做批级共享 pageId 守卫；守卫前没有任何 register/apply。
+    const collisions = findSharedPageIdentityCollisions(
+      [...identities].flatMap(([slug, outcome]) =>
+        outcome.kind === 'ok'
+          ? [{ slug, wikidotId: outcome.identity.wikidotId }]
+          : [],
+      ),
+    );
+    const collisionBySlug = new Map<string, (typeof collisions)[number]>();
+    for (const collision of collisions) {
+      log.error('adult 身份冲突守卫触发：多个 slug 共享同一 pageId，整组拒绝写入', {
+        collision,
+      });
+      for (const slug of collision.slugs) collisionBySlug.set(slug, collision);
+    }
+    result.identityCollisions = collisions.reduce(
+      (sum, collision) => sum + collision.slugs.length,
+      0,
+    );
+
+    for (const pending of readyRows) {
+      const row = bySlug.get(pending.slug) as RestrictedListPageRecord;
+      const collision = collisionBySlug.get(pending.slug.toLowerCase());
+      if (collision !== undefined) {
+        result.conflict++;
+        if (!args.dryRun) {
+          await finishPendingPage(args.pool, {
+            slug: pending.slug,
+            status: 'conflict',
+            wikidotId: collision.wikidotId,
+            error:
+              `身份冲突守卫：pageId=${collision.wikidotId} 同时解析自多个 slug=` +
+              collision.slugs.join(',') + '；拒绝写入',
+            notBefore: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+            resolutionSource: 'shared_page_id_collision',
+            resolutionEvidence: { collision, listpagesFullname: pending.slug },
+          });
+        }
+        continue;
+      }
+      const outcome = identities.get(pending.slug);
+      if (outcome === undefined || outcome.kind !== 'ok') {
+        const error =
+          outcome === undefined
+            ? 'adult 身份发现结果缺项'
+            : `adult 登录身份不是 ok（${outcome.kind}）：` +
+              (outcome.kind === 'mismatch' ? outcome.observedSlug : outcome.error);
+        result.waitingEvidence++;
+        if (!args.dryRun) {
+          await finishPendingPage(args.pool, waitingForRestrictedSession(pending.slug, error));
+        }
+        continue;
+      }
+
+      if (args.dryRun) {
+        result.resolved++;
+        result.samples.push({
+          slug: pending.slug,
+          wikidotId: outcome.identity.wikidotId,
+          rating: row.rating,
+          ratingVotes: row.ratingVotes,
+          createdById: row.createdById,
+          contentBytes: Buffer.byteLength(row.contentHtml),
+          dryRun: true,
+        });
+        continue;
+      }
+
+      const observedAt = new Date().toISOString();
+      try {
+        const existing = await lookupIdentityByWikidotId(
+          args.pool,
+          outcome.identity.wikidotId,
+        );
+        const currentSlug = existing?.currentSlug?.toLowerCase() ?? null;
+        const isAnonymousUnqualifiedAlias =
+          currentSlug !== null && currentSlug === row.name.toLowerCase();
+        if (
+          existing !== null &&
+          currentSlug !== null &&
+          currentSlug !== pending.slug.toLowerCase()
+        ) {
+          // 匿名 sitemap/整页链路会丢 adult:，两个 old: 页面还会进一步重写旧名。
+          // 登录态 pageUnixName 与 ListPages fullname 已双证据一致，且批级守卫证明
+          // 目标集合内 ID 唯一；因此这是 canonical 修正，交 apply_page_meta 做 SCD2。
+          log.info('adult 已有身份修正为登录态 + ListPages canonical fullname', {
+            pageId: existing.pageId,
+            wikidotId: outcome.identity.wikidotId,
+            from: existing.currentSlug,
+            to: pending.slug,
+            exactUnqualifiedAlias: isAnonymousUnqualifiedAlias,
+          });
+        }
+        const pageId =
+          existing?.pageId ??
+          await registerPage(args.pool, {
+            wikidotId: outcome.identity.wikidotId,
+            slug: pending.slug,
+            observedAt,
+            source: 'wikidot_listpages_authenticated_identity',
+            runId: args.runId,
+            createdAt: row.createdAt,
+          });
+        const applied = await applyRestrictedListPage(args.pool, {
+          row,
+          pageId,
+          wikidotId: outcome.identity.wikidotId,
+          observedAt,
+          runId: args.runId,
+        });
+        await finishPendingPage(args.pool, {
+          slug: pending.slug,
+          status: 'resolved',
+          wikidotId: outcome.identity.wikidotId,
+          pageId,
+          categoryId: outcome.identity.categoryId,
+          observedSlug: outcome.identity.pageUnixName,
+          httpStatus: outcome.httpStatus,
+          error: null,
+          resolutionSource: 'adult_listpages_authenticated_identity',
+          resolutionEvidence: {
+            listpagesFullname: row.fullname,
+            listpagesRating: row.rating,
+            listpagesRatingVotes: row.ratingVotes,
+            listpagesCreatedById: row.createdById,
+            listpagesCreatedAt: row.createdAt,
+            contentSha256: applied.content['sha256'] ?? row.contentSha256Hex,
+            authenticatedIdentityOnly: true,
+            votesAnonymous: true,
+            proxyUrl: stableHttp.proxyUrl,
+          },
+        });
+        result.tasksEnqueued += await enqueueScanTasks(args.pool, [
+          {
+            pageId,
+            kind: 'votes_full',
+            reasons: ['adult_identity_registered_listpages_claim'],
+            priority: 200,
+            notBefore: observedAt,
+          },
+          {
+            pageId,
+            kind: 'revisions_full',
+            reasons: ['adult_identity_registered_listpages_claim'],
+            priority: 100,
+            notBefore: observedAt,
+          },
+        ]);
+        if (existing === null) result.resolved++;
+        else result.alreadyRegistered++;
+        if (result.samples.length < 20) {
+          result.samples.push({
+            slug: row.fullname,
+            pageId,
+            wikidotId: outcome.identity.wikidotId,
+            rating: row.rating,
+            ratingVotes: row.ratingVotes,
+            createdById: row.createdById,
+            ownerActorId: applied.ownerActorId,
+            contentBytes: Buffer.byteLength(row.contentHtml),
+            newlyRegistered: existing === null,
+            proxyUrl: stableHttp.proxyUrl,
+          });
+        }
+      } catch (err) {
+        result.failed++;
+        log.warn('adult 单页应用失败；保留 pending 等下轮重试', {
+          slug: pending.slug,
+          error: String(err),
+        });
+        await finishPendingPage(
+          args.pool,
+          pendingFailureResolution(pending.slug, pending.attempts, String(err)),
+        );
+      }
+    }
+    return result;
+  } finally {
+    await session?.logout();
+    await stableHttp.close();
+  }
+}
+
 function pgCode(err: unknown): string | null {
   return typeof err === 'object' &&
     err !== null &&
@@ -622,12 +1090,17 @@ function parseArgs(): CliOptions {
   });
   program
     .name('resolve-pages')
-    .description('消化 meta.pending_page：普通页整页 GET；受限分类用 ListPages + v1 只读身份证据')
+    .description('消化 pending_page：普通页整页 GET；adult 用 ListPages+7890 登录身份；其它受限页用 v1 只读证据')
     .option('--limit <n>', '本轮最多处理多少页（受限分类不发整页 GET）', (v) => Number(v), 50)
     .option('--concurrency <n>', '并发页数（保持个位数，出口礼貌）', (v) => Number(v), 2)
     .option('--skip-tz-check', '跳过时区回环自检（仅限本地调试）', false)
     .option('--force-cold-start', '越过冷启动闸（pending 超阈值时仍然跑）', false)
     .option('--dry-run', '只解析不写库（不 register_page、不回填 pending_page）', false)
+    .option(
+      '--adult-bootstrap',
+      '以 adult ListPages 完整轮为集合，登录发现真实 ID 并补齐全部页面（全进程固定 7890）',
+      false,
+    )
     .option('--amc-probe <policy>', 'AMC 契约探针：require | warn | skip（本通道默认 skip）')
     .option('--proxy-check <policy>', '代理健康探测：require | warn | skip（默认 warn）');
 
@@ -638,6 +1111,7 @@ function parseArgs(): CliOptions {
     skipTzCheck: boolean;
     forceColdStart: boolean;
     dryRun: boolean;
+    adultBootstrap: boolean;
     amcProbe?: string;
     proxyCheck?: string;
   }>();
@@ -650,6 +1124,7 @@ function parseArgs(): CliOptions {
     skipTzCheck: Boolean(raw.skipTzCheck),
     forceColdStart: Boolean(raw.forceColdStart),
     dryRun: Boolean(raw.dryRun),
+    adultBootstrap: Boolean(raw.adultBootstrap),
     ...(raw.amcProbe ? { amcProbe: raw.amcProbe } : {}),
     ...(raw.proxyCheck ? { proxyCheck: raw.proxyCheck } : {}),
   };

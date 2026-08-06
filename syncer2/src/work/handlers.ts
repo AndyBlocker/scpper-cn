@@ -22,6 +22,7 @@ import {
   type ForumDiscussionTarget,
 } from '../collect/forum.js';
 import { scanPageIds } from '../collect/pageid.js';
+import { scanRestrictedListPages } from '../collect/restrictedListPages.js';
 import { failed, partial, type CollectResult } from '../collect/result.js';
 import { applyRevisionResult, scanRevisions, type RevisionBatch } from '../collect/revisions.js';
 import { applyCurrentContent, scanCurrentContents } from '../collect/source.js';
@@ -32,6 +33,7 @@ import {
   type VoteTarget,
 } from '../collect/votes.js';
 import type { HttpClient } from '../http/client.js';
+import { isRestrictedSlug, RESTRICTED_STABLE_PROXY_URL } from '../http/restrictedSession.js';
 import { query } from '../store/db.js';
 import {
   enqueueScanTasks,
@@ -45,10 +47,13 @@ import {
   applyConfirmedSlugReuse,
   applyObservedPageMeta,
 } from './identityCheck.js';
+import { applyRestrictedListPage } from './restrictedPage.js';
 
 export interface WorkHandlerContext {
   pool: Pool;
   http: HttpClient;
+  /** adult:/wanderers-adult: 的所有页级出站固定走 7890；缺失时 fail closed。 */
+  restrictedHttp?: HttpClient;
   baseUrl: string;
   runId: number | null;
   workerId: string;
@@ -105,7 +110,7 @@ const voteHandler: WorkHandler = async (task, context) => {
   }
 
   const results = await collectVoteSnapshots(
-    context.http,
+    httpForWorkTask(context, task),
     context.baseUrl,
     [target],
     1,
@@ -164,8 +169,63 @@ const voteHandler: WorkHandler = async (task, context) => {
 };
 
 const contentHandler: WorkHandler = async (task, context) => {
+  if (isRestrictedSlug(task.slug)) {
+    const category = task.slug.slice(0, task.slug.indexOf(':')).toLowerCase();
+    const taskHttp = httpForWorkTask(context, task);
+    const scan = await cached(context, `restricted-listpages:${category}`, () =>
+      scanRestrictedListPages(taskHttp, context.baseUrl, category),
+    );
+    if (scan.status === 'failed') {
+      const error = `受限 ListPages 内容观测失败；不解释为空正文：${scan.error}`;
+      await recordPageScan(context.pool, context.runId, task.pageId, 'content', {
+        status: 'failed',
+        claimed: 1,
+        fetched: null,
+        checksumOk: false,
+        resultHash: null,
+        error,
+      });
+      return { status: 'failed', resultHash: null, sample: { error, emptyResult: false } };
+    }
+    const row = scan.rows.find((candidate) => candidate.fullname === task.slug);
+    if (row === undefined) {
+      const error = `受限 ListPages 完整轮缺少 ${task.slug}；不推断空正文/删除`;
+      await recordPageScan(context.pool, context.runId, task.pageId, 'content', {
+        status: 'failed',
+        claimed: 1,
+        fetched: null,
+        checksumOk: false,
+        resultHash: null,
+        error,
+      });
+      return { status: 'failed', resultHash: null, sample: { error, emptyResult: false } };
+    }
+    const applied = await applyRestrictedListPage(context.pool, {
+      row,
+      pageId: task.pageId,
+      wikidotId: task.wikidotId,
+      observedAt: new Date().toISOString(),
+      runId: context.runId,
+    });
+    return {
+      status: 'ok',
+      resultHash: Buffer.from(row.contentSha256Hex, 'hex'),
+      localValue: { ...applied },
+      remoteValue: {
+        rating: row.rating,
+        rating_votes: row.ratingVotes,
+        revisions: row.revisions,
+      },
+      sample: {
+        contentBytes: Buffer.byteLength(row.contentHtml),
+        textChars: row.textContent.length,
+        ownerActorId: applied.ownerActorId,
+        proxyUrl: taskHttp.proxyUrl,
+      },
+    };
+  }
   const target = { pageId: task.pageId, wikidotId: task.wikidotId, slug: task.slug };
-  const results = await scanCurrentContents(context.http, context.baseUrl, [target], 1);
+  const results = await scanCurrentContents(httpForWorkTask(context, task), context.baseUrl, [target], 1);
   const result =
     results.get(task.pageId) ??
     failed<never>('内部错误：当前内容结果 Map 缺项');
@@ -202,7 +262,7 @@ const revisionsHandler: WorkHandler = async (task, context) => {
     wikidotId: task.wikidotId,
     claimedTotal: task.revisionClaimedTotal,
   };
-  const results = await scanRevisions(context.http, context.baseUrl, [target], 1);
+  const results = await scanRevisions(httpForWorkTask(context, task), context.baseUrl, [target], 1);
   const result =
     results.get(task.pageId) ??
     failed<RevisionBatch>('内部错误：修订结果 Map 缺项');
@@ -243,7 +303,7 @@ const revisionsHandler: WorkHandler = async (task, context) => {
 
 const filesHandler: WorkHandler = async (task, context) => {
   const target = { pageId: task.pageId, wikidotId: task.wikidotId };
-  const results = await scanFiles(context.http, context.baseUrl, [target], 1);
+  const results = await scanFiles(httpForWorkTask(context, task), context.baseUrl, [target], 1);
   const result =
     results.get(task.pageId) ??
     failed<never>('内部错误：附件结果 Map 缺项');
@@ -259,7 +319,25 @@ const filesHandler: WorkHandler = async (task, context) => {
 };
 
 const metaHandler: WorkHandler = async (task, context) => {
-  const results = await scanPageIds(context.http, context.baseUrl, [task.slug], 1);
+  if (isRestrictedSlug(task.slug)) {
+    if (!task.reasons.some((reason) => reason.includes('identity'))) {
+      // 普通元数据刷新仍以 ListPages 为权威；复用受限 content 路径会同时刷新
+      // title/tags/owner/createdAt/claims/rendered content，且不碰匿名 URL pageId。
+      return contentHandler(task, context);
+    }
+    const error =
+      '受限分类 meta 身份不得走匿名 URL；身份只允许由 ListPages + 固定 7890 登录发现链路更新';
+    await recordPageScan(context.pool, context.runId, task.pageId, 'meta', {
+      status: 'failed',
+      claimed: 1,
+      fetched: null,
+      checksumOk: false,
+      resultHash: null,
+      error,
+    });
+    return { status: 'failed', resultHash: null, sample: { error, skippedEmptyResult: true } };
+  }
+  const results = await scanPageIds(httpForWorkTask(context, task), context.baseUrl, [task.slug], 1);
   const observedAt = new Date().toISOString();
   const regressionIdentityCheck = task.reasons.includes('revision_regression_identity_check');
   let result = results.get(task.slug);
@@ -359,8 +437,9 @@ const metaHandler: WorkHandler = async (task, context) => {
 };
 
 const discussionHandler: WorkHandler = async (task, context) => {
-  const start = await cached(context, 'forum-start', async () => {
-    const result = await scanForumStart(context.http, context.baseUrl);
+  const taskHttp = httpForWorkTask(context, task);
+  const start = await cached(context, `forum-start:${taskHttp.proxyUrl ?? 'direct'}`, async () => {
+    const result = await scanForumStart(taskHttp, context.baseUrl);
     if (result.status === 'ok') {
       await applyForumBatch(
         context.pool,
@@ -385,7 +464,7 @@ const discussionHandler: WorkHandler = async (task, context) => {
     start.status === 'failed'
       ? failed(`ForumStartModule 前置失败：${start.error}`)
       : (
-          await scanPageDiscussions(context.http, context.baseUrl, [target], 1)
+          await scanPageDiscussions(httpForWorkTask(context, task), context.baseUrl, [target], 1)
         ).get(task.pageId) ?? failed('内部错误：页面讨论结果 Map 缺项');
   const applied = await applyForumDiscussion(
     context.pool,
@@ -430,7 +509,10 @@ interface ConventionRefresh {
 }
 
 const attributionsHandler: WorkHandler = async (task, context) => {
-  const refresh = await cached(context, 'conventions', () => refreshConventions(context));
+  const taskHttp = httpForWorkTask(context, task);
+  const refresh = await cached(context, `conventions:${taskHttp.proxyUrl ?? 'direct'}`, () =>
+    refreshConventions({ ...context, http: taskHttp }),
+  );
   await recordPageScan(context.pool, context.runId, task.pageId, 'attributions', {
     status: refresh.status,
     claimed: null,
@@ -458,7 +540,7 @@ const deletionHandler: WorkHandler = async (task, context) => {
   };
   const result = await processDeletionTask(
     context.pool,
-    context.http,
+    httpForWorkTask(context, task),
     context.baseUrl,
     deletionTask,
     context.runId,
@@ -478,6 +560,20 @@ const deletionHandler: WorkHandler = async (task, context) => {
     },
   };
 };
+
+export function httpForWorkTask(
+  context: Pick<WorkHandlerContext, 'http' | 'restrictedHttp'>,
+  task: Pick<ClaimedWorkTask, 'slug'>,
+): HttpClient {
+  if (!isRestrictedSlug(task.slug)) return context.http;
+  const restricted = context.restrictedHttp;
+  if (restricted === undefined || restricted.proxyUrl !== RESTRICTED_STABLE_PROXY_URL) {
+    throw new Error(
+      `受限分类任务 ${task.slug} 缺少固定 ${RESTRICTED_STABLE_PROXY_URL} 客户端；拒绝回落通用出口`,
+    );
+  }
+  return restricted;
+}
 
 export const WORK_HANDLER_REGISTRY = {
   confirm_deleted: deletionHandler,

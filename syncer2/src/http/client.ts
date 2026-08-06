@@ -168,6 +168,8 @@ export interface HttpClientOptions {
   breakerReset?: number;
   /** dispatcher 连接池大小。 */
   connections?: number;
+  /** 可选 TLS 上限；仅给已实测需要固定协商版本的专用出口使用。 */
+  tlsMaxVersion?: 'TLSv1.2' | 'TLSv1.3';
   /** 相邻 HTTP 尝试的最小启动间隔；用于有明确 QPS 预算的补账任务。 */
   minRequestIntervalMs?: number;
   logger?: Logger;
@@ -307,6 +309,7 @@ export class HttpClient {
   readonly #onTelemetry: ((t: RequestTelemetry) => void) | undefined;
   readonly #telemetry: RequestTelemetry[] = [];
   readonly proxyUrl: string | null;
+  readonly tlsMaxVersion: 'TLSv1.2' | 'TLSv1.3' | null;
   readonly #egress: EgressAttributor | null;
   readonly #adaptiveEgress: AdaptiveEgressGate | null;
 
@@ -350,6 +353,7 @@ export class HttpClient {
     this.#onTelemetry = opts.onTelemetry;
     this.#adaptiveEgress = opts.adaptiveEgress ?? null;
     this.proxyUrl = opts.proxyUrl && opts.proxyUrl.trim() !== '' ? opts.proxyUrl.trim() : null;
+    this.tlsMaxVersion = opts.tlsMaxVersion ?? null;
 
     this.#baseHeaders = {
       'user-agent': opts.userAgent,
@@ -371,8 +375,19 @@ export class HttpClient {
     };
     // per-client dispatcher。刻意不调 setGlobalDispatcher —— 见文件头 §2。
     this.#dispatcher = this.proxyUrl
-      ? new ProxyAgent({ uri: this.proxyUrl, ...agentOptions })
-      : new Agent(agentOptions);
+      ? new ProxyAgent({
+          uri: this.proxyUrl,
+          ...agentOptions,
+          ...(this.tlsMaxVersion === null
+            ? {}
+            : { requestTls: { maxVersion: this.tlsMaxVersion } }),
+        })
+      : new Agent({
+          ...agentOptions,
+          ...(this.tlsMaxVersion === null
+            ? {}
+            : { connect: { maxVersion: this.tlsMaxVersion } }),
+        });
 
     // 出口归因：探针必须绑在同一个 dispatcher 上（同一个代理池），否则量的是别人的出口。
     this.#egress = opts.egress
@@ -393,6 +408,7 @@ export class HttpClient {
       breaker503: this.#breaker503,
       breakerReset: this.#breakerReset,
       minRequestIntervalMs: this.#minRequestIntervalMs,
+      tlsMaxVersion: this.tlsMaxVersion,
       adaptiveEgress: this.#adaptiveEgress === null ? 'disabled' : 'shared_postgres',
     });
   }

@@ -16,6 +16,11 @@ import { Command } from 'commander';
 import { loadConfig } from '../config.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import {
+  createRestrictedStableHttp,
+  RESTRICTED_STABLE_PROXY_URL,
+  RESTRICTED_TLS_MAX_VERSION,
+} from '../http/restrictedSession.js';
 import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun, type ScanTaskKind } from '../store/meta.js';
@@ -23,6 +28,7 @@ import {
   ALL_WORK_TASK_KINDS,
   claimIrreconcilableReviews,
   claimWorkTasks,
+  ADULT_STABLE_EGRESS_HOLD,
   CONSECUTIVE_PAGE_FAILURE_LIMIT,
   detectKindStarvation,
   reapTasksOnNonLivePages,
@@ -39,6 +45,7 @@ import {
 import {
   REGISTERED_WORK_KINDS,
   WORK_HANDLER_REGISTRY,
+  httpForWorkTask,
   pageScanKindForTask,
   recordUnhandledFailure,
   type WorkHandlerContext,
@@ -74,6 +81,7 @@ interface CliOptions {
   skipTzCheck: boolean;
   seed: boolean;
   probeOnly: boolean;
+  adultOnly: boolean;
   amcProbe?: string;
   proxyCheck?: string;
 }
@@ -102,18 +110,21 @@ interface Counters {
 async function main(): Promise<void> {
   const opts = parseArgs();
   const config = loadConfig();
+  const runSource = opts.adultOnly ? 'wikidot_tier2_adult_stable' : SOURCE;
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
   const workerId = `${os.hostname()}:${process.pid}:work`;
   const http = new HttpClient({
     userAgent: config.userAgent,
     referer: config.referer,
-    proxyUrl: config.proxyUrl,
+    // 定向 adult 消费连启动探针也固定到 7890；不允许进程先从轮换池露出一次。
+    proxyUrl: opts.adultOnly ? RESTRICTED_STABLE_PROXY_URL : config.proxyUrl,
     timeoutMs: config.httpTimeoutMs,
     maxAttempts: Math.max(3, config.httpMaxAttempts),
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
+    ...(opts.adultOnly ? { tlsMaxVersion: RESTRICTED_TLS_MAX_VERSION } : {}),
     minRequestIntervalMs: WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'work-queue'),
@@ -126,6 +137,21 @@ async function main(): Promise<void> {
     },
   });
   http.assertHeaders();
+  // adult-only 时复用主客户端：它已经是 7890/TLS1.2，且带完整遥测、出口归因与
+  // PostgreSQL 自适应预算。普通混合 worker 才需要单独的受限客户端隔离 7891。
+  const restrictedHttp = opts.adultOnly
+    ? http
+    : createRestrictedStableHttp({
+        userAgent: config.userAgent,
+        referer: config.referer,
+        timeoutMs: config.httpTimeoutMs,
+        maxAttempts: Math.max(3, config.httpMaxAttempts),
+        breaker503: Math.max(5, config.breaker503),
+        breakerReset: Math.max(5, config.breakerReset),
+        connections: Math.max(1, opts.concurrency),
+        logger: log.child('restricted-7890'),
+      });
+  restrictedHttp.assertHeaders();
 
   const pool = createPool(config.databaseUrl, { max: Math.max(4, opts.concurrency) });
   let runId: number | null = null;
@@ -167,7 +193,7 @@ async function main(): Promise<void> {
     });
 
     if (opts.probeOnly) {
-      runId = await startIngestRun(pool, `${SOURCE}:probe`, startedAt);
+      runId = await startIngestRun(pool, `${runSource}:probe`, startedAt);
       await finishIngestRun(pool, runId, {
         status: startupProbe.ok ? 'ok' : 'failed',
         finishedAt: new Date().toISOString(),
@@ -207,7 +233,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    runId = await startIngestRun(pool, SOURCE, startedAt);
+    runId = await startIngestRun(pool, runSource, startedAt);
     const voteKindsSelected = opts.kinds.some(
       (kind) => kind === 'votes_full' || kind === 'new_page_highfreq',
     );
@@ -236,16 +262,23 @@ async function main(): Promise<void> {
       opts.limit,
       workerId,
       opts.kinds,
+      undefined,
+      opts.adultOnly ? 'adult:' : null,
     );
     const regular = await claimWorkTasks(
       pool,
       opts.limit - reviews.length,
       workerId,
       opts.kinds,
+      undefined,
+      undefined,
+      opts.adultOnly ? 'adult:' : null,
+      opts.adultOnly ? ADULT_STABLE_EGRESS_HOLD : null,
     );
     claimed = [...reviews, ...regular];
     // Tier2 共用全站出口预算；矛盾隔离复查也必须遵守 0.5 QPS，不能只给 drift 任务限速。
     http.setMinRequestIntervalMs(WORK_QUEUE_MIN_REQUEST_INTERVAL_MS);
+    restrictedHttp.setMinRequestIntervalMs(WORK_QUEUE_MIN_REQUEST_INTERVAL_MS);
     counters.claimed = claimed.length;
     for (const task of claimed) {
       const byKind = ensureKindCounters(counters, task.kind);
@@ -266,6 +299,7 @@ async function main(): Promise<void> {
     const context: WorkHandlerContext = {
       pool,
       http,
+      restrictedHttp,
       baseUrl: config.siteBaseUrl,
       runId,
       workerId,
@@ -356,7 +390,10 @@ async function main(): Promise<void> {
 
         try {
           identityReview = await reviewIdentityIfDue(task, failurePolicy, () =>
-            reviewFailedTaskIdentity(context, task),
+            reviewFailedTaskIdentity(
+              { ...context, http: httpForWorkTask(context, task) },
+              task,
+            ),
           );
         } catch (err) {
           // 复核自身的瞬时失败不覆盖原始签名；保留原任务，下轮仍会按该签名再次复核。
@@ -559,11 +596,15 @@ async function main(): Promise<void> {
      */
     // 先清死任务再测饥饿：已删页上的僵尸任务会让「最久等待」永久失真，
     // 那正是这个指标刚上线就会遇到的第一类假阳性。
-    const reaped = await reapTasksOnNonLivePages(pool);
+    const reaped = opts.adultOnly
+      ? { total: 0, byKind: {} as Record<string, number> }
+      : await reapTasksOnNonLivePages(pool);
     if (reaped.total > 0) {
       log.info('清理已非 live 页面上的待办任务', reaped);
     }
-    const starvation = await detectKindStarvation(pool, STARVATION_ALERT_HOURS);
+    const starvation = opts.adultOnly
+      ? []
+      : await detectKindStarvation(pool, STARVATION_ALERT_HOURS);
     if (starvation.length > 0) {
       log.error('存在长期未被认领的任务种类（排队饥饿）', { thresholdHours: STARVATION_ALERT_HOURS, starvation });
     }
@@ -631,7 +672,9 @@ async function main(): Promise<void> {
     });
     process.exitCode = 1;
   } finally {
-    await http.close();
+    await (restrictedHttp === http
+      ? http.close()
+      : Promise.all([http.close(), restrictedHttp.close()]).then(() => undefined));
     await pool.end().catch(() => undefined);
   }
 }
@@ -737,6 +780,7 @@ function parseArgs(): CliOptions {
     .option('--skip-tz-check', '跳过时区回环自检（仅本地调试）', false)
     .option('--no-seed', '本轮不补齐投票追平/稳态 sweep、高频或约定页任务')
     .option('--probe-only', '只跑启动自检，不认领任务', false)
+    .option('--adult-only', '只认领 adult: 页面任务，且整个进程（含探针）固定 7890', false)
     .option('--amc-probe <policy>', 'AMC 探针 require | warn | skip（默认 require）')
     .option('--proxy-check <policy>', '代理健康 require | warn | skip（默认 warn）');
   program.parse(process.argv);
@@ -748,6 +792,7 @@ function parseArgs(): CliOptions {
     skipTzCheck: boolean;
     seed: boolean;
     probeOnly: boolean;
+    adultOnly: boolean;
     amcProbe?: string;
     proxyCheck?: string;
   }>();
@@ -783,6 +828,7 @@ function parseArgs(): CliOptions {
     skipTzCheck: Boolean(raw.skipTzCheck),
     seed: raw.seed !== false,
     probeOnly: Boolean(raw.probeOnly),
+    adultOnly: Boolean(raw.adultOnly),
     ...(raw.amcProbe ? { amcProbe: raw.amcProbe } : {}),
     ...(raw.proxyCheck ? { proxyCheck: raw.proxyCheck } : {}),
   };

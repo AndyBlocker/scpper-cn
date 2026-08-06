@@ -7,7 +7,11 @@
  */
 
 import type { HttpClient } from '../http/client.js';
-import { slugToUrl } from '../page/identity.js';
+import {
+  findSharedPageIdentityCollisions,
+  slugToUrl,
+} from '../page/identity.js';
+import { createLogger } from '../util/log.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
 import {
   assertUniqueKeys,
@@ -58,5 +62,28 @@ export async function scanPageIds(
       return [slug, failed<PageIdSnapshot>(`pageId GET 失败：${String(err)}`)] as const;
     }
   });
-  return new Map(pairs);
+  const results = new Map(pairs);
+  const collisions = findSharedPageIdentityCollisions(
+    pairs.flatMap(([slug, result]) =>
+      result.status === 'ok' ? [{ slug, wikidotId: result.data.wikidotId }] : [],
+    ),
+  );
+  if (collisions.length > 0) {
+    createLogger('pageid').error(
+      '身份冲突守卫触发：多个 slug 共享同一 pageId，冲突组全部拒绝',
+      { collisions },
+    );
+    for (const collision of collisions) {
+      for (const slug of collision.slugs) {
+        results.set(
+          slug,
+          failed<PageIdSnapshot>(
+            `身份冲突守卫：pageId=${collision.wikidotId} 同时解析自多个 slug=` +
+              collision.slugs.join(',') + '；拒绝写入',
+          ),
+        );
+      }
+    }
+  }
+  return results;
 }

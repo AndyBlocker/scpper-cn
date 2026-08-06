@@ -45,6 +45,60 @@ export type IdentityOutcome =
   /** 其它失败：403 / 5xx / 传输错 / 解析不出 pageId。走指数退避。 */
   | { kind: 'failed'; httpStatus: number | null; error: string };
 
+export interface PageIdentityBinding {
+  slug: string;
+  wikidotId: number;
+}
+
+export interface SharedPageIdentityCollision {
+  wikidotId: number;
+  slugs: string[];
+}
+
+/**
+ * 批级通用身份守卫：同一轮里多个不同 fullname 指向同一 wikidot pageId 时，
+ * 返回全部冲突组。调用方必须在任何 register/apply 之前调用并拒绝整组。
+ */
+export function findSharedPageIdentityCollisions(
+  bindings: readonly PageIdentityBinding[],
+): SharedPageIdentityCollision[] {
+  const byId = new Map<number, Set<string>>();
+  for (const binding of bindings) {
+    const slugs = byId.get(binding.wikidotId) ?? new Set<string>();
+    slugs.add(binding.slug.toLowerCase());
+    byId.set(binding.wikidotId, slugs);
+  }
+  return [...byId]
+    .filter(([, slugs]) => slugs.size > 1)
+    .map(([wikidotId, slugs]) => ({ wikidotId, slugs: [...slugs].sort() }))
+    .sort((a, b) => a.wikidotId - b.wikidotId);
+}
+
+export class SharedPageIdentityError extends Error {
+  override readonly name = 'SharedPageIdentityError';
+
+  constructor(readonly collisions: readonly SharedPageIdentityCollision[]) {
+    super(
+      '多个不同 slug 解析到同一 pageId，拒绝写入：' +
+        collisions
+          .map((collision) => `${collision.wikidotId}<=${collision.slugs.join(',')}`)
+          .join('；'),
+    );
+  }
+}
+
+export function assertNoSharedPageIdentities(
+  bindings: readonly PageIdentityBinding[],
+  log: Logger = createLogger('identity-collision-guard'),
+): void {
+  const collisions = findSharedPageIdentityCollisions(bindings);
+  if (collisions.length === 0) return;
+  log.error('身份冲突守卫触发：多个 slug 共享同一 pageId，整组拒绝写入', {
+    collisions,
+  });
+  throw new SharedPageIdentityError(collisions);
+}
+
 const INFO_RE = (key: string): RegExp =>
   new RegExp(`WIKIREQUEST\\.info\\.${key}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([0-9]+))`);
 
