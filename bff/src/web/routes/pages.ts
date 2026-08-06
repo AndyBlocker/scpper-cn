@@ -489,17 +489,28 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
   }
 
   /**
-   * Attribution 行只存在于单一 PageVersion 上（同步侧不会为每个版本各存一份），
-   * 而 effectiveVersionId 对已删除页面会整体切到最近一个存活版本。两者一旦不一致，
-   * 归属查询就会命中一个没有 Attribution 行的版本并返回空。
+   * 解析"该从哪个 PageVersion 上读取归属"。
    *
-   * 生产库里这两种错位同时存在：1642 个已删页面的归属只在墓碑版本上，
-   * 另有 869 个只在存活版本上（正是靠 effectiveVersionId 回退才显示正常）。
-   * 因此任何固定口径都必然错一半，这里改为按"数据实际所在版本"探测：
+   * Attribution 挂在 pageVerId 上，但每个版本是否持有归属并不统一：全库 4355 个页面的
+   * 归属分布在多个版本上（最多的 pageId=34470 有 185 个版本各存一份），另一些页面则只有
+   * 单一版本持有。而 effectiveVersionId 对已删除页面会整体切到最近一个存活版本，用于还原
+   * rating/source/tags 这些版本内嵌字段。两者一旦不一致，归属查询就会命中一个没有
+   * Attribution 行的版本并返回空。
+   *
+   * 生产库里两种错位同时存在，所以任何固定口径都必然错一半：
+   *   - 1642 个已删页面的归属只在墓碑版本上 → 用 effectiveVersionId 查会返回空
+   *   -  869 个已删页面的归属只在存活版本上 → 正是靠 effectiveVersionId 回退才正确
+   *
+   * 改为按"数据实际所在版本"探测：
    *   1. 当前版本（validTo IS NULL）上有归属 → 用它，它是最新事实
    *   2. 否则 effectiveVersionId 上有归属 → 用它
    *   3. 否则该 page 下任意有归属的最新版本 → 兜底，对未来新的错位形态免疫
    *   4. 全都没有 → 退回 effectiveVersionId，保持原有的空结果语义
+   *
+   * 优先级 1 高于 2 是有意的：两者都持有归属时应当信当前版本。这个分支在今天的回退人群里
+   * 不可达（两边都有的页面数为 0），但那只是该人群恰好干净二分的巧合，不是结构性约束 ——
+   * 既然 per-version 归属已是常态，它随时可能出现。相应的测试见
+   * tests/pages-attribution-version-resolution.test.ts。
    */
   async function resolveAttributionVersionId(context: PageContext): Promise<number | null> {
     const fallback = context.effectiveVersionId ?? context.currentVersionId ?? null;
