@@ -82,5 +82,12 @@ module.exports = {
       '',
       '55 * * * *',
     ),
+    shortJob(
+      'syncer2-oldest-pending',
+      'src/cli/oldest-pending.ts',
+      '',
+      '1-59/5 * * * *',
+      30000,
+    ),
   ],
 };

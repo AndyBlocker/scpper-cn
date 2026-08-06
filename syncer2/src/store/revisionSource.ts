@@ -16,6 +16,20 @@ export const REVISION_SOURCE_POPULATION = 'revision_source_full';
 export const REVISION_SOURCE_MODE = 'revision_source_backfill';
 export const REVISION_SOURCE_PAGE_SCAN_KIND = 'revision_source';
 
+export type RevisionSourceFailureDisposition = 'deterministic' | 'transient';
+
+/**
+ * 只有稳定的目标级拒绝（no_permission / revision_error / 解析契约错误）才有资格在三次后
+ * 进入 irreconcilable。5xx、传输重置与全局断路器是链路状态，把它们终结为“不可调和”
+ * 会把一次出口故障永久伪装成 100% 完成。
+ */
+export function classifyRevisionSourceFailure(error: string): RevisionSourceFailureDisposition {
+  return /(TransportError|CircuitOpenError)/i.test(error)
+    || /(?:HTTP|status)[^0-9]*5[0-9]{2}/i.test(error)
+    ? 'transient'
+    : 'deterministic';
+}
+
 /**
  * 目标口径与已确认的 347,686 基线一致：存活页中会改变/创建源码的修订。
  * TAGS_CHANGED 等非源码修订不重复抓同一全文；其独立标签变更史留待后续 PageDiff 任务。
@@ -472,7 +486,12 @@ export async function finishRevisionSourceJob(
         responseBytes: number | null;
         blobInserted: boolean;
       }
-    | { status: 'failed'; error: string; resultHashHex?: string },
+    | {
+        status: 'failed';
+        error: string;
+        disposition?: RevisionSourceFailureDisposition;
+        resultHashHex?: string;
+      },
 ): Promise<'done' | 'retry' | 'irreconcilable'> {
   return withTransaction(pool, `revision_source:finish:${candidateRow.revisionSeq}`, async (db) => {
     if (outcome.status === 'done') {
@@ -498,40 +517,45 @@ export async function finishRevisionSourceJob(
       return 'done';
     }
 
-    const failed = await query<{ consecutive_failures: number }>(
+    const disposition = outcome.disposition ?? classifyRevisionSourceFailure(outcome.error);
+    const failed = await query<{ consecutive_failures: number; status: string }>(
       db,
       'revision_source:job_failed',
       `UPDATE meta.revision_source_backfill_job
-          SET consecutive_failures = consecutive_failures + 1,
-              status = CASE WHEN consecutive_failures + 1 >= 3
-                            THEN 'irreconcilable' ELSE 'retry' END,
+          SET consecutive_failures = CASE WHEN $4::boolean THEN 0
+                                          ELSE consecutive_failures + 1 END,
+              status = CASE
+                         WHEN $4::boolean THEN 'retry'
+                         WHEN consecutive_failures + 1 >= 3 THEN 'irreconcilable'
+                         ELSE 'retry'
+                       END,
               not_before = now() + make_interval(
                 mins => LEAST(1440, 5 * (1 << LEAST(8, consecutive_failures)))
               ),
               locked_by = NULL, locked_at = NULL,
               last_error = left($3, 4000), updated_at = now()
         WHERE revision_seq = $1 AND status = 'processing' AND locked_by = $2
-        RETURNING consecutive_failures`,
-      [candidateRow.revisionSeq, workerId, outcome.error],
+        RETURNING consecutive_failures, status`,
+      [candidateRow.revisionSeq, workerId, outcome.error, disposition === 'transient'],
     );
     const count = failed.rows[0]?.consecutive_failures;
     if (count === undefined) throw new Error('job failed 丢失锁所有权');
-    if (Number(count) < 3) return 'retry';
+    if (failed.rows[0]?.status === 'retry') return 'retry';
 
     await query(
       db,
       'revision_source:irreconcilable',
       `INSERT INTO meta.irreconcilable(
-         page_id, kind, local_value, remote_value, result_hash,
+         page_id, kind, instance_id, local_value, remote_value, result_hash,
          first_seen, last_checked, checks, next_review_at
        )
        VALUES (
-         $1, $2,
+         $1, 'revision_source', $2,
          jsonb_build_object('revision_seq',$3::bigint),
          jsonb_build_object('error',$4::text,'wikidot_revision_id',$5::bigint),
          $6::bytea, now(), now(), 3, now() + interval '7 days'
        )
-       ON CONFLICT (page_id, kind) DO UPDATE
+       ON CONFLICT (page_id, kind, instance_id) DO UPDATE
          SET remote_value = EXCLUDED.remote_value,
              result_hash = EXCLUDED.result_hash,
              last_checked = now(),
@@ -540,7 +564,7 @@ export async function finishRevisionSourceJob(
              resolved_at = NULL`,
       [
         candidateRow.pageId,
-        `revision_source:${candidateRow.revisionSeq}`,
+        candidateRow.revisionSeq,
         candidateRow.revisionSeq,
         outcome.error,
         candidateRow.wikidotRevisionId,

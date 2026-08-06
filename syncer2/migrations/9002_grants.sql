@@ -280,11 +280,16 @@ BEGIN
     meta.ingest_gate, meta.vote_quarantine, meta.revoke_candidate,
     meta.irreconcilable, meta.backfill_progress,
     meta.vote_sweep_page_state, meta.vote_seed_budget,
-    meta.egress_control, meta.egress_request_bucket, meta.egress_alert
+    meta.egress_control, meta.egress_request_bucket, meta.egress_alert,
+    meta.pending_collection_sample, meta.pending_collection_alert
   TO ingestor_role;
 
   -- 熔断比对是只读的：基线由 projector/运维 job 维护，采集器只读它来决定是否冻结写入。
-  GRANT SELECT ON meta.parse_health_baseline TO ingestor_role;
+  GRANT SELECT ON
+    meta.parse_health_baseline,
+    meta.pending_collection_audit_registry,
+    meta.pending_collection_current
+  TO ingestor_role;
   -- 但越界留痕要写回（last_breach_*/breach_count），列级授权
   GRANT UPDATE (last_breach_at, last_breach_value, last_breach_run, breach_count)
     ON meta.parse_health_baseline TO ingestor_role;

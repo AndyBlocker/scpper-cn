@@ -7,6 +7,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "check:sql-tuning": "node --import tsx/esm src/cli/check-sql-tuning.ts",
     "build": "tsc",
     "test": "node --import tsx/esm --test --test-concurrency=1 'tests/**/*.test.ts'",
     "test:offline": "node --import tsx/esm --test tests/http.test.ts tests/parse.test.ts",
@@ -31,6 +32,7 @@
     "work:queue:probe": "node --import tsx/esm src/cli/work-queue.ts --probe-only",
     "votes:replay": "node --import tsx/esm src/cli/vote-replay.ts",
     "meta:page-scan-maintain": "node --import tsx/esm src/cli/page-scan-maintenance.ts",
+    "meta:oldest-pending": "node --import tsx/esm src/cli/oldest-pending.ts",
     "schedule:l0": "node --import tsx/esm src/cli/incremental-scan.ts --layer l0 --concurrency 3 --amc-probe skip --proxy-check warn",
     "schedule:l1": "node --import tsx/esm src/cli/incremental-scan.ts --layer l1 --concurrency 5 --amc-probe skip --proxy-check warn",
     "schedule:l2": "node --import tsx/esm src/cli/sitemap-scan.ts --mode full --page-scan all --concurrency 4 --proxy-check warn",
@@ -42,6 +44,7 @@
     "schedule:revision-source-backfill": "node --import tsx/esm src/cli/revision-source-backfill.ts --limit 300 --seed-limit 5000 --delay-ms 250 --max-runtime-sec 270 --minimum-free-gb 100 --amc-probe require --proxy-check warn",
     "schedule:reconcile": "node --import tsx/esm src/cli/reconcile.ts --mode all --triangle-pages 10 --concurrency 2 --amc-probe require --proxy-check warn",
     "schedule:page-scan-maintenance": "node --import tsx/esm src/cli/page-scan-maintenance.ts",
+    "schedule:oldest-pending": "node --import tsx/esm src/cli/oldest-pending.ts",
     "schedule:project": "node --import tsx/esm src/cli/project.ts --exclude-deleted-pages",
     "images:backfill": "node --import tsx/esm src/cli/image-backfill.ts",
     "images:sample-refresh": "node --import tsx/esm src/cli/image-sample-refresh.ts",

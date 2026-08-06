@@ -61,6 +61,20 @@ test('systemd 分层调度全部是有限超时的 oneshot + timer', async () =>
   }
 });
 
+test('oldest-pending 是零出站的五分钟短任务', async () => {
+  const timer = await readFile(
+    new URL('../deploy/systemd/syncer2-oldest-pending.timer', import.meta.url),
+    'utf8',
+  );
+  const cli = await readFile(
+    new URL('../src/cli/oldest-pending.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(timer, /^OnCalendar=\*-\*-\* \*:01\/5:00 Asia\/Shanghai$/m);
+  assert.match(timer, /^Unit=syncer2-job@oldest-pending\.service$/m);
+  assert.doesNotMatch(cli, /HttpClient|wikidot|qq/i);
+});
+
 test('调度脚本钉住共享 IP 预算与时区护栏', async () => {
   const pkg = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),

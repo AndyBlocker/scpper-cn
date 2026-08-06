@@ -40,7 +40,18 @@ describe('vote sweep 稳定相位', () => {
       source.indexOf('export async function seedConventionTasks'),
     );
     assert.match(seedSection, /\$4::bigint \* 86400000::bigint/);
-    assert.match(seedSection, /\[ts, activityDays, newPageWindowDays, sweepIntervalDays, allowance\]/);
+    assert.match(
+      seedSection,
+      /bindSqlTuning\('VOTE_SWEEP_ACTIVITY_DAYS', activityDays\)/,
+    );
+    assert.match(
+      seedSection,
+      /bindSqlTuning\('NEW_PAGE_WINDOW_DAYS', newPageWindowDays\)/,
+    );
+    assert.match(
+      seedSection,
+      /bindSqlTuning\('VOTE_SWEEP_INTERVAL_DAYS', sweepIntervalDays\)/,
+    );
     assert.doesNotMatch(seedSection, /interval '(?:90 days|7 days|3 hours)'/);
     assert.equal(VOTE_SWEEP_ACTIVITY_DAYS, 90);
     assert.equal(NEW_PAGE_WINDOW_DAYS, 7);

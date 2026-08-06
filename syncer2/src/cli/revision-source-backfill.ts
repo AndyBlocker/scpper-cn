@@ -36,6 +36,7 @@ import {
   applyStoredRevisionSource,
   activeRevisionSourceWriteFreezes,
   assertPilotPassed,
+  classifyRevisionSourceFailure,
   claimRevisionSourceJobs,
   finishRevisionSourceJob,
   loadPilotCandidates,
@@ -703,6 +704,7 @@ async function main(): Promise<void> {
           const action = await finishRevisionSourceJob(pool, row, workerId, {
             status: 'failed',
             error,
+            disposition: classifyRevisionSourceFailure(error),
             resultHashHex: createHash('sha256').update(error).digest('hex'),
           });
           activeRevisionSeq = null;

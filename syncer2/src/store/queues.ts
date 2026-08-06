@@ -829,7 +829,7 @@ export async function finishDiscussionTask(
                  $6::timestamptz, $6::timestamptz, 1,
                  $6::timestamptz + interval '7 days',
                  NULL, NULL, NULL)
-         ON CONFLICT (page_id, kind) DO UPDATE
+         ON CONFLICT (page_id, kind, instance_id) DO UPDATE
            SET local_value = EXCLUDED.local_value,
                remote_value = EXCLUDED.remote_value,
                result_hash = EXCLUDED.result_hash,

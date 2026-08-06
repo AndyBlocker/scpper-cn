@@ -15,21 +15,26 @@ import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 
 import { claimedRevisionCountFromListCount } from '../collect/revisionCount.js';
+import { bindSqlTuning, SQL_TUNING_CONSTANTS } from '../health/sqlTuning.js';
 import { query, toPgTimestamptz, withTransaction } from './db.js';
 import { toPgJson } from './pgText.js';
 import { backoffFrom } from './queues.js';
 import type { ScanTaskKind } from './meta.js';
 
-export const VOTE_SWEEP_ACTIVITY_DAYS = 90;
+export const VOTE_SWEEP_ACTIVITY_DAYS: number =
+  SQL_TUNING_CONSTANTS.VOTE_SWEEP_ACTIVITY_DAYS.defaultValue;
 /*
  * 盲扫周期。角色已经改变：L1 每 15 分钟读一次全站计数器（145 请求）即可发现绝大多数
  * 投票变化，盲扫只兜底 L1 看不见的「补偿性变化」——一人撤 +1、另一人补 +1，
  * 票数与评分都不变。这类极罕见，且实测盲扫产出率仅 13%（771 次扫描只有 101 次
  * 真正产生票事件），把它当主要新鲜度来源是把预算花在确认「没有变化」上。
  */
-export const VOTE_SWEEP_INTERVAL_DAYS = 30;
-export const NEW_PAGE_WINDOW_DAYS = 7;
-export const NEW_PAGE_INTERVAL_HOURS = 3;
+export const VOTE_SWEEP_INTERVAL_DAYS: number =
+  SQL_TUNING_CONSTANTS.VOTE_SWEEP_INTERVAL_DAYS.defaultValue;
+export const NEW_PAGE_WINDOW_DAYS: number =
+  SQL_TUNING_CONSTANTS.NEW_PAGE_WINDOW_DAYS.defaultValue;
+export const NEW_PAGE_INTERVAL_HOURS: number =
+  SQL_TUNING_CONSTANTS.NEW_PAGE_INTERVAL_HOURS.defaultValue;
 /** 首轮 v2 真实 WhoRated 追平按实测持续吞吐封顶；紧急 L1 变化任务仍以更高优先级插队。 */
 export const VOTE_CATCHUP_RATE_PER_HOUR = 832;
 export const WORK_QUEUE_LIMIT_MAX = 50;
@@ -645,7 +650,7 @@ export async function claimWorkTasks(
       kinds,
       PINNED_KINDS,
       pinnedQuota,
-      shortLivedDays,
+      bindSqlTuning('NEW_PAGE_WINDOW_DAYS', shortLivedDays),
     ],
   );
 
@@ -929,7 +934,7 @@ export async function finishWorkTask(
                  $6::timestamptz, $6::timestamptz, 1,
                  $6::timestamptz + interval '7 days',
                  NULL, NULL, NULL)
-         ON CONFLICT (page_id, kind) DO UPDATE
+         ON CONFLICT (page_id, kind, instance_id) DO UPDATE
            SET local_value = EXCLUDED.local_value,
                remote_value = EXCLUDED.remote_value,
                result_hash = EXCLUDED.result_hash,
@@ -1291,7 +1296,7 @@ export async function seedVoteTasks(
           st.locked_by IS NULL
           OR st.locked_at < $1::timestamptz - interval '2 hours'
         )`,
-    [ts, newPageWindowDays],
+    [ts, bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays)],
   );
 
   const highFrequency = await query(
@@ -1331,7 +1336,12 @@ export async function seedVoteTasks(
                FROM unnest(st.reasons || EXCLUDED.reasons) AS reason
            ),
            priority = GREATEST(st.priority, EXCLUDED.priority)`,
-    [ts, highFrequencyLimit, newPageWindowDays, newPageIntervalHours],
+    [
+      ts,
+      highFrequencyLimit,
+      bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
+      bindSqlTuning('NEW_PAGE_INTERVAL_HOURS', newPageIntervalHours),
+    ],
   );
 
   const population = await query<{ eligible_pages: string; catchup_remaining: string }>(
@@ -1365,7 +1375,11 @@ export async function seedVoteTasks(
             count(*) FILTER (WHERE state.page_id IS NULL)::text AS catchup_remaining
        FROM qualified q
        LEFT JOIN meta.vote_sweep_page_state state ON state.page_id = q.page_id`,
-    [ts, activityDays, newPageWindowDays],
+    [
+      ts,
+      bindSqlTuning('VOTE_SWEEP_ACTIVITY_DAYS', activityDays),
+      bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
+    ],
   );
   const eligiblePages = Number(population.rows[0]?.eligible_pages ?? 0);
   const catchupRemaining = Number(population.rows[0]?.catchup_remaining ?? 0);
@@ -1426,7 +1440,12 @@ export async function seedVoteTasks(
                   $1::timestamptz
              FROM candidates
            ON CONFLICT (page_id, kind) DO NOTHING`,
-          [ts, activityDays, newPageWindowDays, allowance],
+          [
+            ts,
+            bindSqlTuning('VOTE_SWEEP_ACTIVITY_DAYS', activityDays),
+            bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
+            allowance,
+          ],
         );
         return seeded.rowCount ?? 0;
       },
@@ -1504,7 +1523,13 @@ export async function seedVoteTasks(
                   $1::timestamptz
              FROM candidates
            ON CONFLICT (page_id, kind) DO NOTHING`,
-          [ts, activityDays, newPageWindowDays, sweepIntervalDays, allowance],
+          [
+            ts,
+            bindSqlTuning('VOTE_SWEEP_ACTIVITY_DAYS', activityDays),
+            bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
+            bindSqlTuning('VOTE_SWEEP_INTERVAL_DAYS', sweepIntervalDays),
+            allowance,
+          ],
         );
         return seeded.rowCount ?? 0;
       },
@@ -1681,7 +1706,12 @@ export async function claimVoteTasks(
       ORDER BY st.priority DESC,
                (st.kind = 'new_page_highfreq') DESC,
                st.id`,
-    [workerId, limit, String(lockStaleAfterMs), shortLivedDays],
+    [
+      workerId,
+      limit,
+      String(lockStaleAfterMs),
+      bindSqlTuning('NEW_PAGE_WINDOW_DAYS', shortLivedDays),
+    ],
   );
 
   return res.rows.map((row) => ({
@@ -1800,7 +1830,7 @@ export async function finishVoteTask(
                  $6::timestamptz, $6::timestamptz, 1,
                  $6::timestamptz + interval '7 days',
                  NULL, NULL, NULL)
-         ON CONFLICT (page_id, kind) DO UPDATE
+         ON CONFLICT (page_id, kind, instance_id) DO UPDATE
            SET local_value = EXCLUDED.local_value,
                remote_value = EXCLUDED.remote_value,
                result_hash = EXCLUDED.result_hash,

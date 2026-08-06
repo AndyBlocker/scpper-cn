@@ -293,6 +293,7 @@ L1、相邻 L1 间隔超过 `1.75 × frequencyMinutes`，或比较窗口任一�
 |---|---|---|
 | 每 1 分钟（上轮退出后） | `schedule:work-queue` | 每轮最多 50；消费分层信号并补周期任务 |
 | 每 5 分钟 | `schedule:resolve-pages` | 解析 L0/L1 新发现 slug；不加 `--force-cold-start` |
+| 每 5 分钟 | `schedule:oldest-pending` | 纯数据库采样全部待处理集合，持久化极值、趋势与告警 episode |
 | 每日 | `schedule:forum-discovery` / `schedule:forum-consume` | 论坛差集与成员刷新 |
 | 每日 | `schedule:reconcile` | M10 三角 + CROM 金丝雀；v1 只读 |
 | 每小时 | `schedule:page-scan-maintenance` | 固化 run 聚合与保留策略 |
@@ -518,6 +519,7 @@ timer 重复启动。`work-queue` 使用 `OnUnitInactiveSec=1min`，只在上一
 | `syncer2-l3.timer` | 每周日 `04:55` | 45 min | 全字段 Tier1 兜底 |
 | `syncer2-work-queue.timer` | 上轮退出后 1 min | 10 min | 每轮最多 50 个深扫任务 |
 | `syncer2-resolve-pages.timer` | 每 5 min | 5 min | 解析新发现 slug |
+| `syncer2-oldest-pending.timer` | 每 5 min（`:01/:06/...`） | 2 min | 零出站采样最老待处理项、趋势与告警证据 |
 | `syncer2-forum-discovery.timer` / `syncer2-forum-consume.timer` | 每日 `05:23/05:43` | 10/30 min | 论坛差集与成员刷新 |
 | `syncer2-reconcile.timer` | 每日 `06:13` | 20 min | M10 三角与 CROM 金丝雀；v1 只读 |
 | `syncer2-page-scan-maintenance.timer` | 每小时 `:55` | 5 min | 聚合、保留与 VACUUM |
@@ -557,12 +559,14 @@ systemctl --user daemon-reload
 systemctl --user enable --now \
   syncer2-l0.timer syncer2-l1.timer syncer2-l2.timer syncer2-l3.timer \
   syncer2-work-queue.timer syncer2-resolve-pages.timer \
+  syncer2-oldest-pending.timer \
   syncer2-forum-discovery.timer syncer2-forum-consume.timer \
   syncer2-reconcile.timer syncer2-page-scan-maintenance.timer
 
 systemctl --user disable --now \
   syncer2-l0.timer syncer2-l1.timer syncer2-l2.timer syncer2-l3.timer \
   syncer2-work-queue.timer syncer2-resolve-pages.timer \
+  syncer2-oldest-pending.timer \
   syncer2-forum-discovery.timer syncer2-forum-consume.timer \
   syncer2-reconcile.timer syncer2-page-scan-maintenance.timer
 
@@ -627,7 +631,7 @@ L1 首次看到或尚未解析身份的 slug 只建立远端修订基线，不�
 pm2 start ecosystem.work-queue.config.cjs --only \
   syncer2-work-queue,syncer2-l0,syncer2-l1,syncer2-l2,syncer2-l3,\
 syncer2-resolve-pages,syncer2-forum-discovery,syncer2-forum-consume,\
-syncer2-reconcile,syncer2-page-scan-maintenance
+syncer2-reconcile,syncer2-page-scan-maintenance,syncer2-oldest-pending
 pm2 ls
 ```
 
