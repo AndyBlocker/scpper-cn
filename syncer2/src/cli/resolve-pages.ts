@@ -35,6 +35,7 @@ import os from 'node:os';
 
 import { loadConfig } from '../config.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { fetchPageIdentity } from '../page/identity.js';
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
@@ -82,6 +83,7 @@ async function main(): Promise<void> {
     breakerReset: config.breakerReset,
     connections: Math.max(2, opts.concurrency),
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'resolve-pages'),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,

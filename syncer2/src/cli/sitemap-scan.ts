@@ -30,6 +30,7 @@ import path from 'node:path';
 
 import { loadConfig, type Syncer2Config } from '../config.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import {
   amcProbePolicyFor,
   assertEgressContract,
@@ -127,6 +128,7 @@ async function main(): Promise<void> {
     breakerReset: config.breakerReset,
     connections: Math.max(2, opts.concurrency ?? config.httpConcurrency),
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, `sitemap:${opts.mode}`),
     // 出口归因（TODO #12）：每 N 个请求探一次出口 IP + mihomo 节点归因。
     // **不是**每请求都探 —— 成本纪律见 http/egress.ts 文件头。
     egress: {

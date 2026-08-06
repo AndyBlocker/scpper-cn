@@ -29,6 +29,7 @@ import {
   CircuitOpenError,
   HttpClient,
 } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import {
@@ -486,6 +487,7 @@ async function main(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: 1,
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'revision-source'),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,

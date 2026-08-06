@@ -13,6 +13,7 @@ import {
 } from '../collect/votes.js';
 import { loadConfig } from '../config.js';
 import { HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import { chunk, mapWithConcurrency } from '../util/concurrency.js';
@@ -163,6 +164,7 @@ async function main(): Promise<void> {
     breakerReset: config.breakerReset,
     connections: opts.concurrency,
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'vote-multiplicity'),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,

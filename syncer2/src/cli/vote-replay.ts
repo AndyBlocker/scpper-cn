@@ -21,6 +21,7 @@ import {
 import { loadConfig } from '../config.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import { chunk, mapWithConcurrency } from '../util/concurrency.js';
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: opts.concurrency,
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'vote-replay'),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,

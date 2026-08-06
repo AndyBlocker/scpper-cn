@@ -12,6 +12,7 @@ import { Pool } from 'pg';
 
 import { loadConfig, loadEnv } from '../config.js';
 import { HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { scanCurrentContents } from '../collect/source.js';
 import { normalizeV1Url } from './s1-model.js';
 import {
@@ -640,6 +641,7 @@ async function loadHtmlOverrides(
     breaker503: config.breaker503,
     breakerReset: config.breakerReset,
     connections: opts.httpConcurrency,
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'backfill:s2'),
   });
   http.assertHeaders();
   try {

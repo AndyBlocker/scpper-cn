@@ -16,6 +16,7 @@ import { Command } from 'commander';
 import { loadConfig } from '../config.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun, type ScanTaskKind } from '../store/meta.js';
 import {
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
     connections: Math.max(1, opts.concurrency),
     minRequestIntervalMs: WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'work-queue'),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,

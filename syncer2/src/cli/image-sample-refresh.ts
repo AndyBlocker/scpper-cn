@@ -12,6 +12,7 @@ import { extractPageImages, imageCandidateToJson } from '../content/extractImage
 import { extractSearchText } from '../content/extractText.js';
 import { loadConfig } from '../config.js';
 import { HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { extractPageIdentity, slugToUrl } from '../page/identity.js';
 import { assertTimezoneRoundTrip, createPool, query, toPgTimestamptz } from '../store/db.js';
 import { toPgJson } from '../store/pgText.js';
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: opts.concurrency,
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'image-sample'),
   });
   const counters = {
     requested: opts.sample,

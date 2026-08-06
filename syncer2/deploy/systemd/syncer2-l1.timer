@@ -1,10 +1,13 @@
 [Unit]
-Description=syncer2 L1 minimal full-site scan every 30 minutes
+Description=syncer2 L1 minimal full-site scan every 5 minutes
 
 [Timer]
-# 沿用全站扫描的 :07/:37 错峰；vote 与 revision 声明在同一轮、同一频率发现。
-OnCalendar=*-*-* *:07,37:00 Asia/Shanghai
-AccuracySec=1min
+# L1 是投票变化的唯一廉价全站检测通道。:04/5 避开 L0(:02/:32)、
+# resolve/revision-source(:00/:05) 与 sitemap(:27) 的固定启动分钟；work-queue
+# 是 OnUnitInactive 滚动启动，无法静态完全错开，由全站共享 permit 削平叠加突发。
+OnCalendar=*-*-* *:04/5:00 Asia/Shanghai
+# 不允许 systemd 把 :04 合并到 resolve/revision-source 的 :05 窗口。
+AccuracySec=1s
 Persistent=false
 Unit=syncer2-job@l1.service
 

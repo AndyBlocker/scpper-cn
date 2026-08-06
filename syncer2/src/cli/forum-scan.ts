@@ -37,6 +37,7 @@ import {
   type EgressGateReport,
 } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { evaluateParseHealth } from '../health/parseHealth.js';
 import { fetchCategorySitemap } from '../sitemap/fetch.js';
 import { normalizeSitemapEntries } from '../sitemap/normalize.js';
@@ -102,6 +103,7 @@ async function main(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'forum'),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,

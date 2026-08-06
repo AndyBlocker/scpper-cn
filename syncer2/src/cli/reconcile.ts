@@ -16,6 +16,7 @@ import { loadConfig } from '../config.js';
 import { scanListPages } from '../collect/listpages.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import { compareCromCanary, fetchAllCromPages, fetchV2CanaryPages } from '../reconcile/crom.js';
@@ -152,6 +153,7 @@ async function main(): Promise<void> {
         breakerReset: Math.max(config.breakerReset, 5),
         connections: opts.concurrency,
         logger: log.child('wikidot-http'),
+        adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'reconcile:wikidot'),
         egress: {
           probeUrl: config.exitIpProbeUrl,
           everyNRequests: config.exitIpProbeEvery,

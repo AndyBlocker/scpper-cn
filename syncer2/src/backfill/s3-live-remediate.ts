@@ -29,6 +29,7 @@ import {
 } from '../collect/votes.js';
 import { amcProbePolicyFor, assertEgressContract } from '../http/amc.js';
 import { HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { normalizeV1Url } from './s1-model.js';
 import { createLogger } from '../util/log.js';
 
@@ -378,6 +379,7 @@ async function run(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: opts.concurrency,
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'backfill:s3-live'),
   });
   http.assertHeaders();
   try {

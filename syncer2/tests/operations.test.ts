@@ -39,7 +39,8 @@ test('systemd 分层调度全部是有限超时的 oneshot + timer', async () =>
   assert.match(workTimer, /^OnUnitInactiveSec=1min$/m);
   assert.match(workTimer, /^Unit=syncer2-job@work-queue\.service$/m);
   assert.match(layerTimers[0]!, /^OnCalendar=\*-\*-\* \*:02,32:00 Asia\/Shanghai$/m);
-  assert.match(layerTimers[1]!, /^OnCalendar=\*-\*-\* \*:07,37:00 Asia\/Shanghai$/m);
+  assert.match(layerTimers[1]!, /^OnCalendar=\*-\*-\* \*:04\/5:00 Asia\/Shanghai$/m);
+  assert.match(layerTimers[1]!, /^AccuracySec=1s$/m);
   assert.match(layerTimers[2]!, /^OnCalendar=\*-\*-\* \*:27:00 Asia\/Shanghai$/m);
   assert.match(layerTimers[3]!, /^OnCalendar=Sun \*-\*-\* 04:55:00 Asia\/Shanghai$/m);
   assert.match(timeoutDropIns[0]!, /^TimeoutStartSec=5min$/m);
@@ -78,6 +79,48 @@ test('调度脚本钉住共享 IP 预算与时区护栏', async () => {
       assert.doesNotMatch(command, /--skip-tz-check/, name);
     }
   }
+});
+
+test('全部 Wikidot 生产出站入口接入同一个 PostgreSQL 自适应控制器', async () => {
+  const files = [
+    'cli/incremental-scan.ts',
+    'cli/sitemap-scan.ts',
+    'cli/tier1-scan.ts',
+    'cli/work-queue.ts',
+    'cli/forum-scan.ts',
+    'cli/resolve-pages.ts',
+    'cli/vote-replay.ts',
+    'cli/vote-multiplicity-converge.ts',
+    'cli/revision-source-backfill.ts',
+    'cli/image-sample-refresh.ts',
+    'backfill/s2.ts',
+    'backfill/s3-live-remediate.ts',
+  ];
+  for (const file of files) {
+    const source = await readFile(new URL(`../src/${file}`, import.meta.url), 'utf8');
+    assert.match(source, /adaptiveEgress:\s*new PostgresAdaptiveEgressGate\(/, file);
+  }
+
+  const incremental = await readFile(
+    new URL('../src/cli/incremental-scan.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(incremental, /L1_VOTE_CHANGE_PRIORITY\s*=\s*200/);
+  assert.match(
+    incremental,
+    /reasons: \['l1_rating_or_rating_votes_changed'\],[\s\S]{0,80}priority: L1_VOTE_CHANGE_PRIORITY/,
+  );
+
+  const reconcile = await readFile(
+    new URL('../src/cli/reconcile.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    reconcile,
+    /wikidotHttp = new HttpClient\([\s\S]*?adaptiveEgress:\s*new PostgresAdaptiveEgressGate\(/,
+  );
+  const cromBlock = reconcile.match(/cromHttp = new HttpClient\(([\s\S]*?)\n\s*}\);/)?.[1] ?? '';
+  assert.doesNotMatch(cromBlock, /adaptiveEgress/, 'CROM 是另一站点，不应污染 Wikidot 预算');
 });
 
 test('page_scan 保留策略先聚合，保留真实失败与最近两轮枚举', async () => {

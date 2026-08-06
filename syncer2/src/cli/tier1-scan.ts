@@ -34,6 +34,7 @@ import {
 } from '../collect/parent.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { evaluateParseHealth } from '../health/parseHealth.js';
 import { assertTimezoneRoundTrip, createPool, query, toPgTimestamptz } from '../store/db.js';
 import { toPgJson } from '../store/pgText.js';
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: opts.concurrency,
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'tier1'),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,

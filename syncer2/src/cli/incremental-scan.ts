@@ -27,6 +27,7 @@ import {
 import { loadConfig } from '../config.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
+import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
 import {
   observeL1ProjectionDrift,
@@ -70,6 +71,9 @@ const MODE = {
   l0: 'l0_content',
   l1: 'l1_votes',
 } as const;
+// L1 是新投票进入明细抓取的唯一廉价通道；实时变化必须排在历史回填债务之前。
+// catch-up/sweep 仍分别使用 20/10，不会因本常量扩大回填流量。
+export const L1_VOTE_CHANGE_PRIORITY = 200;
 
 interface CliOptions {
   layer: IncrementalListPagesLayer;
@@ -116,6 +120,7 @@ async function main(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: opts.concurrency,
     logger: log.child('http'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, opts.layer),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,
@@ -575,7 +580,7 @@ async function persistL1(
         pageId,
         kind: 'votes_full',
         reasons: ['l1_rating_or_rating_votes_changed'],
-        priority: 35,
+        priority: L1_VOTE_CHANGE_PRIORITY,
       });
     }
   }
@@ -923,6 +928,7 @@ function compactHttp(http: HttpClient): Record<string, unknown> {
     decodedBytes: stats.decodedBytes,
     statusBuckets: stats.statusBuckets,
     breakerOpen: stats.breakerOpen,
+    adaptiveEgress: stats.adaptiveEgress,
   };
 }
 

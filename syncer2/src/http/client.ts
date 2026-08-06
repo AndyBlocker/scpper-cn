@@ -39,6 +39,14 @@ import {
   type EgressAttributorOptions,
   type ExitIpStats,
 } from './egress.js';
+import {
+  AdaptiveEgressUnavailableError,
+  isAdaptivePressureFailure,
+  type AdaptiveAttemptOutcome,
+  type AdaptiveEgressGate,
+  type AdaptiveEgressPermit,
+  type AdaptiveEgressRuntimeStats,
+} from './adaptiveEgress.js';
 
 // ─── 错误类型 ────────────────────────────────────────────────────────────────
 
@@ -115,6 +123,8 @@ export interface HttpClientStats {
   consecutiveResets: number;
   breakerOpen: boolean;
   breakerReason: string | null;
+  /** 全站共享反馈控制器；生产 Wikidot 通道必须非 null。 */
+  adaptiveEgress: AdaptiveEgressRuntimeStats | null;
 }
 
 export interface HttpHealthScopeStats {
@@ -169,6 +179,8 @@ export interface HttpClientOptions {
    * 探针必须走**同一个代理池**才有意义。
    */
   egress?: Omit<EgressAttributorOptions, 'dispatcher' | 'logger' | 'proxyInboundPort'>;
+  /** L0/L1/Tier2/sitemap 等跨进程共享的站点级反馈控制器。 */
+  adaptiveEgress?: AdaptiveEgressGate;
 }
 
 export interface HttpRequestOptions {
@@ -296,6 +308,7 @@ export class HttpClient {
   readonly #telemetry: RequestTelemetry[] = [];
   readonly proxyUrl: string | null;
   readonly #egress: EgressAttributor | null;
+  readonly #adaptiveEgress: AdaptiveEgressGate | null;
 
   #consecutive503 = 0;
   #consecutiveResets = 0;
@@ -315,6 +328,7 @@ export class HttpClient {
     consecutiveResets: 0,
     breakerOpen: false,
     breakerReason: null,
+    adaptiveEgress: null,
   };
   #health: HttpHealthStats = {
     business: emptyHealthScope(),
@@ -334,6 +348,7 @@ export class HttpClient {
       Math.floor(opts.minRequestIntervalMs ?? 0),
     );
     this.#onTelemetry = opts.onTelemetry;
+    this.#adaptiveEgress = opts.adaptiveEgress ?? null;
     this.proxyUrl = opts.proxyUrl && opts.proxyUrl.trim() !== '' ? opts.proxyUrl.trim() : null;
 
     this.#baseHeaders = {
@@ -378,6 +393,7 @@ export class HttpClient {
       breaker503: this.#breaker503,
       breakerReset: this.#breakerReset,
       minRequestIntervalMs: this.#minRequestIntervalMs,
+      adaptiveEgress: this.#adaptiveEgress === null ? 'disabled' : 'shared_postgres',
     });
   }
 
@@ -421,6 +437,7 @@ export class HttpClient {
       consecutiveResets: this.#consecutiveResets,
       breakerOpen: this.breakerOpen,
       breakerReason: this.#breakerReason,
+      adaptiveEgress: this.#adaptiveEgress?.stats() ?? null,
     };
   }
 
@@ -465,7 +482,10 @@ export class HttpClient {
   }
 
   async close(): Promise<void> {
-    await this.#dispatcher.close().catch(() => undefined);
+    await Promise.all([
+      this.#dispatcher.close().catch(() => undefined),
+      this.#adaptiveEgress?.close().catch(() => undefined),
+    ]);
   }
 
   async get(url: string, mode: string, extra?: Partial<HttpRequestOptions>): Promise<HttpResponse> {
@@ -502,10 +522,14 @@ export class HttpClient {
         if (this.#breakerReason !== null) {
           throw new CircuitOpenError(this.#breakerReason);
         }
+        // 本地任务节流之后，再向跨进程控制器预留真实出站 attempt。控制库不可用时
+        // fail closed：宁可本轮退出，也不能悄悄绕过用户要求的安全前提。
+        const adaptivePermit = await this.#adaptiveEgress?.beforeAttempt();
         attempts++;
         this.#stats.attempts++;
 
         let attemptOutcome: Disposition | null = null;
+        let adaptiveOutcomeRecorded = false;
         try {
           const res = await request(url, {
             method,
@@ -525,6 +549,12 @@ export class HttpClient {
           this.#bucket(String(lastStatus));
 
           attemptOutcome = classifyStatus(lastStatus);
+          await this.#recordAdaptiveOutcome(adaptivePermit, {
+            ok: !isAdaptivePressureFailure(lastStatus),
+            status: lastStatus,
+            errorKind: attemptOutcome?.reason ?? null,
+          });
+          adaptiveOutcomeRecorded = true;
           if (attemptOutcome === null) {
             // 成功：连续计数器归零。断路器只对**连续**失败开火。
             this.#consecutive503 = 0;
@@ -561,7 +591,11 @@ export class HttpClient {
           const snippet = errorBodySnippet(raw, resHeaders['content-encoding'] ?? null);
           lastError = new HttpStatusError(lastStatus, url, snippet);
         } catch (err) {
-          if (err instanceof CircuitOpenError || err instanceof HeaderContractError) throw err;
+          if (
+            err instanceof CircuitOpenError
+            || err instanceof HeaderContractError
+            || err instanceof AdaptiveEgressUnavailableError
+          ) throw err;
           if (err instanceof HttpStatusError) throw err; // 不该发生，保险
           const kind = classifyTransport(err);
           lastStatus = null;
@@ -572,6 +606,14 @@ export class HttpClient {
             kind === 'reset'
               ? { kind: 'breaker-reset', reason: 'transport_reset' }
               : { kind: 'retry', reason: `transport_${kind}` };
+          if (!adaptiveOutcomeRecorded) {
+            await this.#recordAdaptiveOutcome(adaptivePermit, {
+              ok: false,
+              status: null,
+              errorKind: `transport_${kind}`,
+            });
+            adaptiveOutcomeRecorded = true;
+          }
         }
 
         // #handleDisposition 可能因熔断阈值达成而抛 CircuitOpenError（由外层 catch 记账）
@@ -605,9 +647,19 @@ export class HttpClient {
       });
       // 失败路径**必采**：mihomo 节点归因 + 一次 IP 补探（受 maxProbes 封顶）。
       // 「某几个节点坏了」这个问题只有在失败的那一刻采样才答得上来。
-      await this.#egress?.afterRequest(false);
+      if (!(err instanceof AdaptiveEgressUnavailableError)) {
+        await this.#egress?.afterRequest(false);
+      }
       throw err;
     }
+  }
+
+  async #recordAdaptiveOutcome(
+    permit: AdaptiveEgressPermit | undefined,
+    outcome: AdaptiveAttemptOutcome,
+  ): Promise<void> {
+    if (permit === undefined || this.#adaptiveEgress === null) return;
+    await this.#adaptiveEgress.afterAttempt(permit, outcome);
   }
 
   async #paceRequestAttempt(): Promise<void> {
