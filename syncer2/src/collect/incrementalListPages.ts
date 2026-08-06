@@ -13,6 +13,10 @@ import {
   HttpStatusError,
   type HttpClient,
 } from '../http/client.js';
+import {
+  LISTPAGES_SPORADIC_FAILED_BATCHES,
+  LISTPAGES_SPORADIC_FAILED_BATCH_RATIO,
+} from './listpages.js';
 import { decodeXmlEntities } from '../sitemap/parse.js';
 import { createLogger, type Logger } from '../util/log.js';
 
@@ -319,11 +323,41 @@ function finalizeRun(
   const partialReasons: string[] = [];
   const ordered = [...batches.entries()].sort(([a], [b]) => a - b);
   const batchesFailed = ordered.filter(([, batch]) => batch.status === 'failed').length;
+  /*
+   * 零星批失败判 partial 而非 failed——与全站扫描路径（listpages.ts）同一判据。
+   *
+   * partial 本就不持久化、不推进增量状态、不入队、不喂缺失推断，所以改判在数据上零风险，
+   * 只影响告警语义。此前任何一批失败即整轮 failed：站点侧偶发 http_503 就产生一次
+   * 必然自愈的告警，L1 提频到 5 分钟后命中概率还翻了三倍。
+   *
+   * 教训：同一判据此前只加在全站路径上，7 个测试用例全部针对那条路径的常量，
+   * **没有一个验证 L1 的真实调用链**——于是测试全绿而生产照挂。
+   * 验证了逻辑，没验证逻辑被用到。
+   */
+  const sporadicBatchFailure =
+    batchesFailed > 0
+    && batchesFailed <= LISTPAGES_SPORADIC_FAILED_BATCHES
+    && (expectedBatches === null
+      ? false
+      : batchesFailed / expectedBatches <= LISTPAGES_SPORADIC_FAILED_BATCH_RATIO);
+
   if (expectedBatches === null) hardReasons.push('首批没有可信 pager');
   if (expectedBatches !== null && batches.size !== expectedBatches) {
-    hardReasons.push(`实际批数 ${batches.size} != pager ${expectedBatches}`);
+    // 批数对不上若纯粹由零星失败批造成，则与失败批同级处理，不再重复升级为 hard。
+    const missing = expectedBatches - batches.size;
+    if (sporadicBatchFailure && missing > 0 && missing <= batchesFailed) {
+      partialReasons.push(`实际批数 ${batches.size} != pager ${expectedBatches}（零星失败批所致）`);
+    } else {
+      hardReasons.push(`实际批数 ${batches.size} != pager ${expectedBatches}`);
+    }
   }
-  if (batchesFailed > 0) hardReasons.push(`${batchesFailed} 批失败`);
+  if (batchesFailed > 0) {
+    if (sporadicBatchFailure) {
+      partialReasons.push(`${batchesFailed} 批零星失败（下轮重扫）`);
+    } else {
+      hardReasons.push(`${batchesFailed} 批失败`);
+    }
+  }
 
   for (const [batchNo, batch] of ordered) {
     if (batch.status !== 'ok' || expectedBatches === null) continue;

@@ -18,8 +18,10 @@
  * 2. **冷启动闸。** pending 超过阈值（默认 2000）时**拒绝自动跑**：空库有 3.6 万条待解析，
  *    一页一个 GET = 3.6 万请求，而 field-matrix 的结论是"绝不为全站 36k 页各打一次 GET"。
  *    冷启动该走 Phase 2 批量回填。要强行跑得显式加 --force-cold-start。
- * 3. **失败不丢。** 404 → status='gone'（不是错误，是竞态）；200 但 pageUnixName 不匹配
- *    → status='mismatch' 且**不注册**；其它失败 → 保留在队列里 + 指数退避（1h/4h/24h/7d）。
+ * 3. **失败不丢也不静止。** 404 → 终态 gone；真实身份冲突 → conflict 并按周复查；
+ *    传输/解析失败 → retry（1h/4h/24h），耗尽后转 irreconcilable 低频复查。
+ *    adult:/wanderers-adult: 的匿名整页 GET 不能作身份证据；改用 ListPages fullname
+ *    + v1 服务端强制只读身份源收口，证据未到则 waiting_evidence 定时复查。
  *
  * CLI 契约与 sitemap-scan 一致：stdout 只有最后一行 JSON 摘要，日志走 stderr，
  * 失败非零退出交调度器。
@@ -41,7 +43,6 @@ import { fetchPageIdentity } from '../page/identity.js';
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
 import { enqueueScanTasks, finishIngestRun, startIngestRun, type ScanTaskRow } from '../store/meta.js';
 import {
-  backoffFrom,
   claimPendingPages,
   countPendingPages,
   finishPendingPage,
@@ -50,6 +51,19 @@ import {
   registerPage,
   releasePendingPageClaim,
 } from '../store/queues.js';
+import {
+  assertRestrictedV1SessionReadOnly,
+  createRestrictedV1Client,
+  loadRestrictedV1Identities,
+} from '../store/v1RestrictedIdentity.js';
+import {
+  identityConflictResolution,
+  isRestrictedListPagesPending,
+  pendingFailureResolution,
+  resolveRestrictedPendingPage,
+  type RestrictedV1Identity,
+  waitingForRestrictedEvidence,
+} from '../work/pendingPage.js';
 
 const log = createLogger('resolve-pages');
 
@@ -104,7 +118,9 @@ async function main(): Promise<void> {
     /** wikidot_id 已存在但当前 slug 不同 = **改名**，交 apply_page_meta 处理。 */
     renamed: 0,
     gone: 0,
-    mismatch: 0,
+    conflict: 0,
+    restrictedResolved: 0,
+    waitingEvidence: 0,
     failed: 0,
     writeFreezeSkipped: 0,
     tasksEnqueued: 0,
@@ -167,8 +183,86 @@ async function main(): Promise<void> {
     counters.claimed = claimed.length;
     log.info('已认领待解析 slug', { claimed: claimed.length, limit: opts.limit, pendingTotal });
 
+    // ── 受限分类本地收敛 ──────────────────────────────────────────────────
+    // adult:/wanderers-adult: 的匿名整页 GET 只回显 category:_public，继续 GET
+    // 既浪费出站又会制造假 mismatch。先用本轮 ListPages fullname + v1 强制只读身份复核。
+    const restricted = claimed.filter(isRestrictedListPagesPending);
+    const httpClaimed = claimed.filter((row) => !isRestrictedListPagesPending(row));
+    if (restricted.length > 0) {
+      let candidates = new Map<string, RestrictedV1Identity>();
+      if (config.v1DatabaseUrl !== null) {
+        const v1 = createRestrictedV1Client(config.v1DatabaseUrl);
+        try {
+          await v1.connect();
+          await assertRestrictedV1SessionReadOnly(v1);
+          candidates = await loadRestrictedV1Identities(v1, restricted.map((row) => row.slug));
+        } finally {
+          await v1.end().catch(() => undefined);
+        }
+      }
+      for (const row of restricted) {
+        const candidate = candidates.get(row.slug);
+        if (candidate === undefined) {
+          counters.waitingEvidence++;
+          if (!opts.dryRun) {
+            await finishPendingPage(
+              pool,
+              waitingForRestrictedEvidence(
+                row.slug,
+                Date.now(),
+                config.v1DatabaseUrl === null
+                  ? '受限分类不能用匿名整页 GET；SYNCER2_V1_DATABASE_URL 未配置，等待只读身份源'
+                  : 'v1 暂无唯一 live URL/wikidotId，等待下一次只读复核',
+              ),
+            );
+          }
+          continue;
+        }
+        if (opts.dryRun) {
+          counters.restrictedResolved++;
+          samples.push({ slug: row.slug, restrictedFallback: true, dryRun: true });
+          continue;
+        }
+        try {
+          const settled = await resolveRestrictedPendingPage(
+            pool,
+            row,
+            candidate,
+            new Date().toISOString(),
+            runId,
+          );
+          counters.restrictedResolved++;
+          if (settled.newlyRegistered) counters.resolved++;
+          else counters.alreadyRegistered++;
+          if (samples.length < 20) {
+            samples.push({
+              slug: row.slug,
+              wikidotId: candidate.wikidotId,
+              pageId: settled.pageId,
+              restrictedFallback: true,
+              source: settled.source,
+            });
+          }
+        } catch (err) {
+          counters.conflict++;
+          await finishPendingPage(pool, {
+            slug: row.slug,
+            status: 'conflict',
+            error: String(err),
+            notBefore: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+            resolutionSource: 'restricted_identity_conflict',
+            resolutionEvidence: {
+              v1PageId: candidate.v1PageId,
+              v1WikidotId: candidate.wikidotId,
+              v1ReadOnly: true,
+            },
+          });
+        }
+      }
+    }
+
     // ── 逐页解析（并发受限，出口礼貌）──────────────────────────────────────
-    await mapLimited(claimed, opts.concurrency, async (row) => {
+    await mapLimited(httpClaimed, opts.concurrency, async (row) => {
       const observedAt = new Date().toISOString();
       try {
         const outcome = await fetchPageIdentity(http, config.siteBaseUrl, row.slug, log);
@@ -180,33 +274,35 @@ async function main(): Promise<void> {
             status: 'gone',
             httpStatus: outcome.httpStatus,
             error: outcome.error,
+            resolutionSource: 'wikidot_http_404',
+            resolutionEvidence: { attempts: row.attempts },
           });
           return;
         }
         if (outcome.kind === 'mismatch') {
-          counters.mismatch++;
-          await finishPendingPage(pool, {
-            slug: row.slug,
-            status: 'mismatch',
-            wikidotId: outcome.identity.wikidotId,
-            categoryId: outcome.identity.categoryId,
-            observedSlug: outcome.observedSlug,
-            httpStatus: outcome.httpStatus,
-            error: `pageUnixName=${outcome.observedSlug} ≠ 请求 slug=${row.slug}，拒绝注册`,
-            // 别名/重定向不会自己消失，退避到最长一档，避免每轮都白打一次 GET
-            notBefore: backoffFrom(4),
-          });
+          counters.conflict++;
+          await finishPendingPage(
+            pool,
+            identityConflictResolution(
+              row,
+              outcome.observedSlug,
+              outcome.identity.wikidotId,
+              outcome.httpStatus,
+            ),
+          );
           return;
         }
         if (outcome.kind === 'failed') {
           counters.failed++;
-          await finishPendingPage(pool, {
-            slug: row.slug,
-            status: 'failed',
-            httpStatus: outcome.httpStatus,
-            error: outcome.error,
-            notBefore: backoffFrom(row.attempts),
-          });
+          await finishPendingPage(
+            pool,
+            pendingFailureResolution(
+              row.slug,
+              row.attempts,
+              outcome.error,
+              outcome.httpStatus,
+            ),
+          );
           return;
         }
 
@@ -251,6 +347,8 @@ async function main(): Promise<void> {
             observedSlug: outcome.identity.pageUnixName,
             httpStatus: outcome.httpStatus,
             error: null,
+            resolutionSource: 'wikidot_page_identity',
+            resolutionEvidence: { identityDisposition: 'registered' },
           });
         } else if (existing.currentSlug !== null && existing.currentSlug !== row.slug) {
           // (b) **改名**：wikidot_id 已在库里，但当前 slug 是另一个。
@@ -278,6 +376,8 @@ async function main(): Promise<void> {
               `改名：wikidot_id=${outcome.identity.wikidotId} 当前 slug=${existing.currentSlug}，` +
               `本轮在 sitemap 见到 ${row.slug}。slug 的 SCD2 变更归 apply_page_meta，` +
               `已下 scan_task(kind='meta')。`,
+            resolutionSource: 'wikidot_identity_rename_queued',
+            resolutionEvidence: { previousSlug: existing.currentSlug },
           });
           log.warn('检测到改名，已交给 apply_page_meta 路径', {
             slug: row.slug,
@@ -297,6 +397,8 @@ async function main(): Promise<void> {
             observedSlug: outcome.identity.pageUnixName,
             httpStatus: outcome.httpStatus,
             error: null,
+            resolutionSource: 'wikidot_page_identity',
+            resolutionEvidence: { identityDisposition: 'reused' },
           });
         }
 
@@ -356,12 +458,10 @@ async function main(): Promise<void> {
         }
         counters.failed++;
         log.warn('单页解析异常（不影响其它页）', { slug: row.slug, error: String(err) });
-        await finishPendingPage(pool, {
-          slug: row.slug,
-          status: 'failed',
-          error: String(err),
-          notBefore: backoffFrom(row.attempts),
-        }).catch(() => undefined);
+        await finishPendingPage(
+          pool,
+          pendingFailureResolution(row.slug, row.attempts, String(err)),
+        ).catch(() => undefined);
       }
     });
 
@@ -373,7 +473,9 @@ async function main(): Promise<void> {
       counters.resolved === 0 &&
       counters.alreadyRegistered === 0 &&
       counters.renamed === 0 &&
-      counters.gone === 0;
+      counters.gone === 0 &&
+      counters.waitingEvidence === 0 &&
+      counters.conflict === 0;
     const status = hardFailure ? 'failed' : 'ok';
 
     await finishIngestRun(pool, runId, {
@@ -520,8 +622,8 @@ function parseArgs(): CliOptions {
   });
   program
     .name('resolve-pages')
-    .description('消化 meta.pending_page：整页 GET 取 WIKIREQUEST.info.pageId → ingest.register_page')
-    .option('--limit <n>', '本轮最多解析多少页（每页 1 次整页 GET）', (v) => Number(v), 50)
+    .description('消化 meta.pending_page：普通页整页 GET；受限分类用 ListPages + v1 只读身份证据')
+    .option('--limit <n>', '本轮最多处理多少页（受限分类不发整页 GET）', (v) => Number(v), 50)
     .option('--concurrency <n>', '并发页数（保持个位数，出口礼貌）', (v) => Number(v), 2)
     .option('--skip-tz-check', '跳过时区回环自检（仅限本地调试）', false)
     .option('--force-cold-start', '越过冷启动闸（pending 超阈值时仍然跑）', false)

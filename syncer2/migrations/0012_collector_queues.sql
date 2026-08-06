@@ -70,23 +70,25 @@ END $$;
 -- =====================================================================================
 -- 生命周期：sitemap（或 ListPages）看到一个 slug，而 ingest.page_slug_history /
 --   serve.page_current 都解析不出 page_id ⇒ 这是「真·新页」（或改名后的新 slug）。
---   消化者（syncer2 的 resolve-pages CLI）：整页 GET → 解析 WIKIREQUEST.info.pageId
---   → ingest.register_page(wikidot_id, slug) → status='resolved' 并回填 page_id。
+--   消化者（syncer2 的 resolve-pages CLI）：普通页整页 GET 解析 pageId；
+--   受限分类用 ListPages fullname + v1 强制只读身份源复核。两路最终都回填
+--   page_id 和结构化证据，证据未到则定时复查而不静默挂起。
 --
 -- 为什么必须持久化（而不是像现在这样只留在 meta.ingest_run.stats.sampleUnresolvedSlugs 里）：
 --   stats 是**截断的采样**（前 200 条），且 sitemap 快照一旦推进，同一个 slug 下一轮
 --   就不再是 "new" 了 —— 于是「本轮没消化完」的部分会永久消失。这正是"发现了但没消化"
 --   这类静默丢失的典型形状，必须有一张自己的表来兜。
 --
--- status 词表（5 项，全部来自实测过的真实响应形状）：
---   'pending'  待解析
---   'resolved' 已 register_page，page_id 已回填
+-- 当前状态机：
+--   'pending'          新入队，立即可认领
+--   'retry'            短退避后重试
+--   'waiting_evidence' 受限分类等待只读身份证据
+--   'conflict'         直接身份证据冲突，低频复查
+--   'irreconcilable'   短重试耗尽，低频复查
+--   'resolved'         身份已正当解析，page_id 已回填（终态）
 --   'gone'     整页 GET 返回 404（实测非存在页确实是 404 而非 200 空页）——
---              页面在 sitemap 生成（TTL≈60min）与我们抓取之间被删了。不是错误。
---   'mismatch' HTTP 200 但 WIKIREQUEST.info.pageUnixName ≠ 请求的 slug
---              （重定向/别名）。**刻意不注册**：注册就等于把 A 的 slug 绑到 B 的
---              wikidot_id 上，与 v1「删除+新建=改名」误判同型。留痕待人看。
---   'failed'   其它失败（403 / 5xx / 传输错 / 解析不出 pageId），走指数退避重试。
+--              页面在 sitemap 生成（TTL≈60min）与我们抓取之间被删了（终态）。
+--   'mismatch'/'failed' 仅用于从旧二进制滚动迁移；0042 会规范化，新代码不再写入。
 CREATE TABLE IF NOT EXISTS meta.pending_page (
   slug          text PRIMARY KEY,          -- wikidot fullname 口径（含 category 前缀，小写）
   first_seen_at timestamptz NOT NULL DEFAULT now(),
@@ -107,14 +109,29 @@ CREATE TABLE IF NOT EXISTS meta.pending_page (
   wikidot_id    int,                       -- WIKIREQUEST.info.pageId
   page_id       int,                       -- register_page 返回值
   category_id   int,                       -- WIKIREQUEST.info.categoryId(整页 GET 白送)
-  observed_slug text,                      -- WIKIREQUEST.info.pageUnixName(mismatch 时的实际值)
+  observed_slug text,                      -- WIKIREQUEST.info.pageUnixName（冲突证据）
   http_status   int,
   last_error    text,
   resolved_at   timestamptz,
+  state_changed_at timestamptz NOT NULL DEFAULT now(),
+  finished_at   timestamptz,
+  resolution_source text,
+  resolution_evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
 
   CONSTRAINT pending_page_status_ck
-    CHECK (status IN ('pending','resolved','gone','mismatch','failed'))
+    CHECK (status IN (
+      'pending','retry','waiting_evidence','resolved','gone','conflict','irreconcilable',
+      'mismatch','failed'
+    ))
 );
+
+-- 后续状态机列提前在 0012 补齐：apply.sh 会重跑全序列，0040 的 view 在 0042 前创建，
+-- 因而不能等到 0042 才让旧实例看到这些列。
+ALTER TABLE meta.pending_page
+  ADD COLUMN IF NOT EXISTS state_changed_at timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS finished_at timestamptz,
+  ADD COLUMN IF NOT EXISTS resolution_source text,
+  ADD COLUMN IF NOT EXISTS resolution_evidence jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 -- 认领索引：与 meta.scan_task.st_claim 同形（FOR UPDATE SKIP LOCKED 认领）
 CREATE INDEX IF NOT EXISTS pp_claim
@@ -126,13 +143,13 @@ CREATE INDEX IF NOT EXISTS pp_locked ON meta.pending_page(locked_at) WHERE locke
 COMMENT ON TABLE meta.pending_page IS
   '真·新页的身份解析队列（设计 §5.8「失败进 pending 队列而非静默跳过」的物理载体）。'
   'sitemap/ListPages 见到的 slug 若在 ingest.page_slug_history 与 serve.page_current 都解析不到 '
-  'page_id，就落这里；消化者整页 GET 取 WIKIREQUEST.info.pageId 后调 ingest.register_page。'
+  'page_id，就落这里；普通页用整页 GET，受限分类用 ListPages + v1 强制只读身份源。'
   '刻意不复用 meta.scan_task：那张表 page_id NOT NULL，而本队列的定义就是「page_id 尚不存在」，'
   '伪造 page_id 入队等于在队列里放假身份。';
 COMMENT ON COLUMN meta.pending_page.status IS
-  '''pending''待解析 / ''resolved''已注册 / ''gone''整页 GET 得 404（sitemap TTL≈60min 期间被删，不是错误）'
-  ' / ''mismatch''200 但 pageUnixName≠请求 slug（重定向或别名，刻意不注册，留痕待人看）'
-  ' / ''failed''其它失败（走 not_before 指数退避）。';
+  '''pending''立即待处理 / ''retry''短退避 / ''waiting_evidence''等待身份证据 / '
+  '''conflict''身份冲突低频复查 / ''irreconcilable''重试耗尽低频复查 / '
+  '''resolved''与 ''gone''为终态。''mismatch''/''failed''仅用于滚动部署兼容。';
 COMMENT ON COLUMN meta.pending_page.seen_count IS
   '这个 slug 被发现层重复报告过几次。发现侧 UPSERT 只 +1 并刷 last_seen_at，'
   '绝不重置 attempts/not_before/status —— 否则一个持续出现在 sitemap 里的坏 slug 会每轮清零退避，变成死循环重试。';

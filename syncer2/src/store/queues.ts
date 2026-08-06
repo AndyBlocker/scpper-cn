@@ -13,7 +13,7 @@
  * 的死循环 —— 这正是 v1 DirtyPage 整表重建冲掉退避状态的同型病根（synthesis §5.4）。
  */
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { query, toPgTimestamptz } from './db.js';
 import { toPgJson } from './pgText.js';
 import { chunk } from '../util/concurrency.js';
@@ -22,6 +22,8 @@ import { createLogger } from '../util/log.js';
 const log = createLogger('queues');
 
 const UNDEFINED_TABLE = '42P01';
+
+type PgExecutor = Pool | PoolClient;
 
 function isMissingRelation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === UNDEFINED_TABLE;
@@ -40,7 +42,7 @@ export interface PendingUpsertResult {
   available: boolean;
   /** 受影响行数（新插 + 刷新）。PG 的 ON CONFLICT DO UPDATE 无法区分两者，故只报总数。 */
   affected: number;
-  /** 表中当前 status='pending' 的总数（冷启动闸的输入）。 */
+  /** 表中当前 pending/retry 的总数（冷启动闸的输入）。 */
   pendingTotal: number;
 }
 
@@ -81,7 +83,33 @@ export async function upsertPendingPages(
             SET last_seen_at = GREATEST(pp.last_seen_at, EXCLUDED.last_seen_at),
                 seen_count   = pp.seen_count + 1,
                 reasons      = ARRAY(SELECT DISTINCT e FROM unnest(pp.reasons || EXCLUDED.reasons) AS e),
-                priority     = GREATEST(pp.priority, EXCLUDED.priority)`,
+                priority     = GREATEST(pp.priority, EXCLUDED.priority),
+                -- gone 只是“当时 404”。终结后又被完整发现层看见，代表同 slug 新实体或恢复，
+                -- 必须重新进身份解析；resolved 则已有 page_id，不在这里擅自重开。
+                status       = CASE
+                  WHEN pp.status = 'gone'
+                   AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                    THEN 'pending'
+                  ELSE pp.status
+                END,
+                state_changed_at = CASE
+                  WHEN pp.status = 'gone'
+                   AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                    THEN EXCLUDED.last_seen_at
+                  ELSE pp.state_changed_at
+                END,
+                finished_at = CASE
+                  WHEN pp.status = 'gone'
+                   AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                    THEN NULL
+                  ELSE pp.finished_at
+                END,
+                not_before = CASE
+                  WHEN pp.status = 'gone'
+                   AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                    THEN NULL
+                  ELSE pp.not_before
+                END`,
         values,
       );
       affected += res.rowCount ?? 0;
@@ -101,7 +129,9 @@ export async function countPendingPages(pool: Pool): Promise<number> {
     const res = await query<{ n: string }>(
       pool,
       'meta.pending_page:count',
-      `SELECT count(*)::text AS n FROM meta.pending_page WHERE status = 'pending'`,
+      `SELECT count(*)::text AS n
+         FROM meta.pending_page
+        WHERE status IN ('pending','retry')`,
     );
     return Number(res.rows[0]?.n ?? '0');
   } catch (err) {
@@ -129,6 +159,9 @@ export interface ClaimedPending {
   attempts: number;
   seenCount: number;
   reasons: string[];
+  discoveredBy: string;
+  wikidotId: number | null;
+  observedSlug: string | null;
 }
 
 /**
@@ -137,19 +170,30 @@ export interface ClaimedPending {
  * 上一轮被 SIGKILL 的进程会留下 locked_by，由 `lockStaleAfterMs` 回收）。
  */
 export async function claimPendingPages(
-  pool: Pool,
+  pool: PgExecutor,
   limit: number,
   workerId: string,
   lockStaleAfterMs = 15 * 60_000,
 ): Promise<ClaimedPending[]> {
   if (limit <= 0) return [];
   try {
-    const res = await query<{ slug: string; attempts: number; seen_count: number; reasons: string[] }>(
+    const res = await query<{
+      slug: string;
+      attempts: number;
+      seen_count: number;
+      reasons: string[];
+      discovered_by: string;
+      wikidot_id: number | null;
+      observed_slug: string | null;
+    }>(
       pool,
       'meta.pending_page:claim',
       `WITH picked AS (
          SELECT slug FROM meta.pending_page
-          WHERE status = 'pending'
+          WHERE status IN (
+                  'pending','retry','waiting_evidence','conflict','irreconcilable',
+                  'failed','mismatch'
+                )
             AND (not_before IS NULL OR not_before <= now())
             AND (locked_by IS NULL OR locked_at < now() - ($3::bigint || ' milliseconds')::interval)
           ORDER BY priority DESC, not_before NULLS FIRST, first_seen_at
@@ -160,7 +204,8 @@ export async function claimPendingPages(
           SET locked_by = $1, locked_at = now(), attempts = pp.attempts + 1
          FROM picked
         WHERE pp.slug = picked.slug
-        RETURNING pp.slug, pp.attempts, pp.seen_count, pp.reasons`,
+        RETURNING pp.slug, pp.attempts, pp.seen_count, pp.reasons,
+                  pp.discovered_by, pp.wikidot_id, pp.observed_slug`,
       [workerId, limit, String(lockStaleAfterMs)],
     );
     return res.rows.map((r) => ({
@@ -168,6 +213,9 @@ export async function claimPendingPages(
       attempts: r.attempts,
       seenCount: r.seen_count,
       reasons: r.reasons ?? [],
+      discoveredBy: r.discovered_by,
+      wikidotId: r.wikidot_id === null ? null : Number(r.wikidot_id),
+      observedSlug: r.observed_slug,
     }));
   } catch (err) {
     if (isMissingRelation(err)) {
@@ -180,19 +228,28 @@ export async function claimPendingPages(
 
 export interface PendingResolution {
   slug: string;
-  status: 'resolved' | 'gone' | 'mismatch' | 'failed';
+  status:
+    | 'pending'
+    | 'retry'
+    | 'waiting_evidence'
+    | 'resolved'
+    | 'gone'
+    | 'conflict'
+    | 'irreconcilable';
   wikidotId?: number | null;
   pageId?: number | null;
   categoryId?: number | null;
   observedSlug?: string | null;
   httpStatus?: number | null;
   error?: string | null;
-  /** failed 时的下次可尝试时刻（指数退避）。 */
+  /** retry / waiting_evidence / conflict / irreconcilable 的下次复查时刻。 */
   notBefore?: string | null;
+  resolutionSource?: string | null;
+  resolutionEvidence?: Record<string, unknown> | null;
 }
 
-/** 回写单条解析结果。释放锁；`failed` 保留在队列里并带上退避。 */
-export async function finishPendingPage(pool: Pool, r: PendingResolution): Promise<void> {
+/** 回写单条解析结果。所有非终态都必须带下一次调度时刻，终态统一写 finished_at。 */
+export async function finishPendingPage(pool: PgExecutor, r: PendingResolution): Promise<void> {
   try {
     await query(
       pool,
@@ -207,6 +264,10 @@ export async function finishPendingPage(pool: Pool, r: PendingResolution): Promi
               last_error = $8,
               not_before = $9::timestamptz,
               resolved_at = CASE WHEN $2 = 'resolved' THEN now() ELSE resolved_at END,
+              finished_at = CASE WHEN $2 IN ('resolved','gone') THEN now() ELSE NULL END,
+              state_changed_at = now(),
+              resolution_source = $10,
+              resolution_evidence = COALESCE($11::jsonb, '{}'::jsonb),
               locked_by = NULL,
               locked_at = NULL
         WHERE slug = $1`,
@@ -220,6 +281,10 @@ export async function finishPendingPage(pool: Pool, r: PendingResolution): Promi
         r.httpStatus ?? null,
         r.error ?? null,
         r.notBefore === undefined || r.notBefore === null ? null : toPgTimestamptz(r.notBefore),
+        r.resolutionSource ?? null,
+        r.resolutionEvidence === undefined || r.resolutionEvidence === null
+          ? null
+          : toPgJson(r.resolutionEvidence, 'pending_page.resolution_evidence'),
       ],
     );
   } catch (err) {
@@ -230,7 +295,7 @@ export async function finishPendingPage(pool: Pool, r: PendingResolution): Promi
 
 /** 我方写冻结/进程停止不算目标失败：释放认领并退回本轮白烧的 attempt。 */
 export async function releasePendingPageClaim(
-  pool: Pool,
+  pool: PgExecutor,
   slug: string,
   workerId: string,
 ): Promise<void> {
@@ -242,7 +307,8 @@ export async function releasePendingPageClaim(
             locked_at = NULL,
             attempts = GREATEST(0, attempts - 1),
             not_before = now()
-      WHERE slug = $1 AND locked_by = $2 AND status = 'pending'`,
+      WHERE slug = $1 AND locked_by = $2
+        AND status IN ('pending','retry','waiting_evidence','conflict','irreconcilable','failed','mismatch')`,
     [slug, workerId],
   );
 }
@@ -279,7 +345,7 @@ export interface ExistingIdentity {
  * 所以这里先查一次（本地 SQL，零 wikidot 成本），改名走单独的分支。
  */
 export async function lookupIdentityByWikidotId(
-  pool: Pool,
+  pool: PgExecutor,
   wikidotId: number,
 ): Promise<ExistingIdentity | null> {
   const res = await query<{ page_id: number; current_slug: string | null }>(
@@ -302,7 +368,7 @@ export async function lookupIdentityByWikidotId(
  * 用具名参数：签名有 7 个参数且中间有默认值，位置传参一改签名就会静默错位。
  */
 export async function registerPage(
-  pool: Pool,
+  pool: PgExecutor,
   args: { wikidotId: number; slug: string; observedAt: string; source?: string; runId?: number | null },
 ): Promise<number> {
   const res = await query<{ page_id: number }>(

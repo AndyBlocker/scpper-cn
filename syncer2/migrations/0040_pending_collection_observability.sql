@@ -157,7 +157,8 @@ UPDATE meta.pending_collection_audit_registry r
     ('meta','ingest_run', ARRAY['ingest_run'], 'status=running'),
     ('meta','irreconcilable', ARRAY['irreconcilable'], 'resolved_at IS NULL，按固定 kind'),
     ('meta','observation_queue', ARRAY['observation_queue'], 'pending/failed'),
-    ('meta','pending_page', ARRAY['pending_page'], 'pending/failed/mismatch 身份'),
+    ('meta','pending_page', ARRAY['pending_page'],
+      'pending/retry，以及已到 not_before 却未复查的 waiting/conflict/irreconcilable 身份'),
     ('meta','projection_cursor', ARRAY['projection_cursor'], '事实高水位之后的游标缺口'),
     ('meta','revision_source_backfill_job', ARRAY['revision_source_backfill','revision_source_backfill_processing'], 'pending/retry/processing'),
     ('meta','revoke_candidate', ARRAY['revoke_candidate'], 'pending/held'),
@@ -301,14 +302,23 @@ pending_page AS (
   SELECT 'pending_page:' || status AS collection,
          'pending_page'::text AS family,
          count(*)::bigint AS pending_count,
-         min(first_seen_at) AS oldest_item_at,
-         (array_agg(slug ORDER BY first_seen_at, slug))[1] AS oldest_item_key,
+         min(CASE
+           WHEN status IN ('pending','retry') THEN state_changed_at
+           ELSE not_before
+         END) AS oldest_item_at,
+         (array_agg(slug ORDER BY
+           CASE WHEN status IN ('pending','retry') THEN state_changed_at ELSE not_before END,
+           slug))[1] AS oldest_item_key,
          false AS catchup,
-         jsonb_build_object('max_attempts', max(attempts), 'due', count(*) FILTER (
-           WHERE not_before IS NULL OR not_before <= now()
-         )) AS evidence
+         jsonb_build_object(
+           'max_attempts', max(attempts),
+           'due', count(*) FILTER (WHERE not_before IS NULL OR not_before <= now()),
+           'scheduled_review', status IN ('waiting_evidence','conflict','irreconcilable')
+         ) AS evidence
     FROM meta.pending_page
-   WHERE status IN ('pending','failed','mismatch')
+   WHERE status IN ('pending','retry')
+      OR (status IN ('waiting_evidence','conflict','irreconcilable','failed','mismatch')
+          AND (not_before IS NULL OR not_before <= now()))
    GROUP BY status
 ),
 forum_task AS (

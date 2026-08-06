@@ -75,6 +75,27 @@ test('oldest-pending 是零出站的五分钟短任务', async () => {
   assert.doesNotMatch(cli, /HttpClient|wikidot|qq/i);
 });
 
+test('pending_page 消费者每五分钟调度，且状态机认领所有到期复查态', async () => {
+  const [timer, timeout, queues, resolver] = await Promise.all([
+    readFile(new URL('../deploy/systemd/syncer2-resolve-pages.timer', import.meta.url), 'utf8'),
+    readFile(
+      new URL('../deploy/systemd/syncer2-job@resolve-pages.service.d/timeout.conf', import.meta.url),
+      'utf8',
+    ),
+    readFile(new URL('../src/store/queues.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/cli/resolve-pages.ts', import.meta.url), 'utf8'),
+  ]);
+  assert.match(timer, /^OnCalendar=\*-\*-\* \*:0\/5:00 Asia\/Shanghai$/m);
+  assert.match(timer, /^Unit=syncer2-job@resolve-pages\.service$/m);
+  assert.match(timeout, /^TimeoutStartSec=5min$/m);
+  for (const status of ['retry', 'waiting_evidence', 'conflict', 'irreconcilable']) {
+    assert.match(queues, new RegExp(`'${status}'`));
+  }
+  assert.match(queues, /not_before IS NULL OR not_before <= now\(\)/);
+  assert.match(resolver, /loadRestrictedV1Identities/);
+  assert.match(resolver, /pendingFailureResolution/);
+});
+
 test('调度脚本钉住共享 IP 预算与时区护栏', async () => {
   const pkg = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),

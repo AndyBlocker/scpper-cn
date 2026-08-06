@@ -95,6 +95,41 @@ export interface SqlError {
   message: string;
 }
 
+export class SyntheticTestWriteError extends Error {
+  override readonly name = 'SyntheticTestWriteError';
+}
+
+const SYNTHETIC_PAGE_FEATURE = /^(?:test|synthetic)-(?:image-)?page-[0-9]{10,}$/i;
+const SYNTHETIC_USER_FEATURE = /^(?:test|synthetic)-(?:image-)?(?:user|actor)-[0-9]{10,}$/i;
+
+/**
+ * 客户端第一道门：只审查明确写向 serve/ingest 的语句及其绑定值。
+ * `test-log-*` 等真实站点 slug 不命中；数据库 0042 触发器是不可绕过的第二道门。
+ */
+export function assertNoSyntheticServeIngestWrite(
+  sql: string,
+  params: readonly unknown[] | undefined,
+): void {
+  if (!/\b(?:insert\s+into|update)\s+(?:serve|ingest)\b/i.test(sql)
+      && !/\bingest\.(?:register_page|ensure_user)\s*\(/i.test(sql)) {
+    return;
+  }
+  const strings = (params ?? []).flatMap((value) => {
+    if (typeof value === 'string') return [value];
+    if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+    return [];
+  });
+  const inlineTokens = sql.match(/[a-z0-9:_-]+/gi) ?? [];
+  const offending = [...strings, ...inlineTokens].find(
+    (value) => SYNTHETIC_PAGE_FEATURE.test(value) || SYNTHETIC_USER_FEATURE.test(value),
+  );
+  if (offending !== undefined) {
+    throw new SyntheticTestWriteError(
+      `拒绝测试把合成身份写入 serve/ingest：${offending}。请使用事务回滚固件或纯解析测试。`,
+    );
+  }
+}
+
 /** 一个独占连接 = 一个可以停在事务中间的会话。 */
 export class Sess {
   readonly name: string;
@@ -128,6 +163,7 @@ export class Sess {
     params?: readonly unknown[],
   ): Promise<R[]> {
     assertNoRawDates(params, `${this.name}/${label}`);
+    assertNoSyntheticServeIngestWrite(sql, params);
     const res = await this.client.query<R>(sql, params as unknown[] | undefined);
     return res.rows;
   }

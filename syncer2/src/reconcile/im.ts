@@ -479,12 +479,20 @@ async function loadQueues(pool: Pool): Promise<QueueHealth[]> {
      UNION ALL
      SELECT 'pending_page',
             count(*) FILTER (
-              WHERE status = 'pending' AND locked_by IS NULL
+              WHERE status IN ('pending','retry','waiting_evidence','conflict','irreconcilable','failed','mismatch')
+                AND locked_by IS NULL
                 AND COALESCE(not_before, now()) <= now()
             )::text,
-            count(*) FILTER (WHERE status = 'pending')::text,
-            COALESCE(extract(epoch FROM now() - min(first_seen_at) FILTER (
-              WHERE status = 'pending' AND locked_by IS NULL
+            count(*) FILTER (
+              WHERE status IN ('pending','retry')
+                 OR (status IN ('waiting_evidence','conflict','irreconcilable','failed','mismatch')
+                     AND COALESCE(not_before, now()) <= now())
+            )::text,
+            COALESCE(extract(epoch FROM now() - min(
+              CASE WHEN status IN ('pending','retry') THEN state_changed_at ELSE not_before END
+            ) FILTER (
+              WHERE status IN ('pending','retry','waiting_evidence','conflict','irreconcilable','failed','mismatch')
+                AND locked_by IS NULL
                 AND COALESCE(not_before, now()) <= now()
             )), 0)::text,
             count(*) FILTER (

@@ -22,6 +22,8 @@ export function loadEnv(): void {
 
 export interface Syncer2Config {
   databaseUrl: string;
+  /** 只供受限分类身份交叉验证；连接串自身必须带服务端只读 options。 */
+  v1DatabaseUrl: string | null;
   siteBaseUrl: string;
   proxyUrl: string | null;
   userAgent: string;
@@ -143,6 +145,7 @@ export function loadConfig(opts: { requireDatabase?: boolean } = {}): Syncer2Con
 
   return {
     databaseUrl: requireDatabase ? str('SYNCER2_DATABASE_URL') : (process.env.SYNCER2_DATABASE_URL ?? ''),
+    v1DatabaseUrl: process.env.SYNCER2_V1_DATABASE_URL?.trim() || null,
     siteBaseUrl,
     proxyUrl: proxyRaw && proxyRaw.trim() !== '' ? proxyRaw.trim() : null,
     // 没有默认值可以兜底成空串 —— 空 UA 实测 100% 503，宁可拒绝启动。
