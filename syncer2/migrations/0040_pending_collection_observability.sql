@@ -384,9 +384,11 @@ vote_catchup AS (
   SELECT 'serve.page_current:vote_snapshot_catchup'::text AS collection,
          'serve_vote_snapshot_catchup'::text AS family,
          count(*)::bigint AS pending_count,
-         min(COALESCE(pc.first_published_at, p.created_at)) AS oldest_item_at,
-         (array_agg(pc.page_id::text ORDER BY
-           COALESCE(pc.first_published_at, p.created_at), pc.page_id))[1] AS oldest_item_key,
+         -- 年龄基准必须是「v2 何时开始知道这个页面」，不是它在 wiki 上何时发布。
+         -- 用 first_published_at 会让 2013 年的老页报出 13.5 万小时（13.5 年）的等待，
+         -- 而 forum:start 实际 9 天前刚快照过——这类读数会在系统建立信任前就毁掉信任。
+         min(p.created_at) AS oldest_item_at,
+         (array_agg(pc.page_id::text ORDER BY p.created_at, pc.page_id))[1] AS oldest_item_key,
          true AS catchup,
          jsonb_build_object(
            'never_complete', count(*) FILTER (
@@ -418,9 +420,10 @@ l1_stale AS (
   SELECT 'incremental_page_state:l1_stale'::text AS collection,
          'incremental_page_state_l1'::text AS family,
          count(*)::bigint AS pending_count,
-         min(COALESCE(ips.last_l1_seen_at, pc.first_published_at, p.created_at)) AS oldest_item_at,
+         -- 同上：never_seen_l1 的回退基准是 v2 登记时间，不是 wiki 发布时间。
+         min(COALESCE(ips.last_l1_seen_at, p.created_at)) AS oldest_item_at,
          (array_agg(pc.page_id::text ORDER BY
-           COALESCE(ips.last_l1_seen_at, pc.first_published_at, p.created_at), pc.page_id))[1]
+           COALESCE(ips.last_l1_seen_at, p.created_at), pc.page_id))[1]
            AS oldest_item_key,
          (count(*) >= 100)::boolean AS catchup,
          jsonb_build_object(
