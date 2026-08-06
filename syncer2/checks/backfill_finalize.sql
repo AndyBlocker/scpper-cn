@@ -817,7 +817,7 @@ SELECT 'A6.3', '两条身份序列的域是 integer（0100 §3 收窄的回归�
 --      表名清单**逐名相等**。这条断言不是给本脚本兜底（本脚本走动态发现，不会漏），
 --      而是让「0004 的注释过期了」这件事显形 —— 否则别人照抄那段注释就会漏表。
 INSERT INTO gate_result(code, title, ok, actual, detail)
-SELECT 'A6.4', 'app identity 表集合 = 0004_app.sql 注释里的硬编码 13 张清单',
+SELECT 'A6.4', 'app identity 表集合 = 0004_app.sql 注释里的硬编码 14 张清单',
        d.only_live = 0 AND d.only_doc = 0,
        format('动态发现 %s 张；仅存在于库中 %s 张，仅存在于注释清单中 %s 张',
               d.live_cnt, d.only_live, d.only_doc),
@@ -834,7 +834,7 @@ SELECT 'A6.4', 'app identity 表集合 = 0004_app.sql 注释里的硬编码 13 �
       SELECT unnest(ARRAY['user_collection','user_collection_item','user_follow',
                           'user_metric_preference','page_metric_watch','page_metric_alert',
                           'user_activity_alert','forum_interaction_alert','page_view_event',
-                          'user_pixel_event','tracking_debug_event','tag_definition',
+                          'user_pixel_event','user_page_view','tracking_debug_event','tag_definition',
                           'tag_guide_sync']) AS t
     )
     SELECT (SELECT count(*) FROM live)                                     AS live_cnt,

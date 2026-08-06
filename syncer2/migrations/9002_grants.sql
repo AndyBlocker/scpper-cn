@@ -189,8 +189,8 @@ ELSE
   GRANT SELECT, INSERT ON app.page_view_event, app.user_pixel_event, app.tracking_debug_event
     TO bff_role;
 
-  -- 3.9 标签域：BFF 只读（写入者是 projector 的同步 job）
-  GRANT SELECT ON app.tag_definition, app.tag_guide_sync TO bff_role;
+  -- 3.9 标签域与读取图谱：BFF 只读（写入者是 projector 的同步 job）
+  GRANT SELECT ON app.tag_definition, app.tag_guide_sync, app.user_page_view TO bff_role;
 END IF;
 END $$;
 
@@ -335,10 +335,10 @@ ELSE
 
   GRANT USAGE ON ALL SEQUENCES IN SCHEMA serve TO projector_role;
 
-  -- app：告警实例三表由分析 job INSERT；标签同步 job 全权
+  -- app：告警实例、标签同步与读取图谱由分析 job 写
   GRANT SELECT, INSERT, UPDATE, DELETE ON
     app.page_metric_alert, app.user_activity_alert, app.forum_interaction_alert,
-    app.tag_definition, app.tag_guide_sync
+    app.tag_definition, app.tag_guide_sync, app.user_page_view
   TO projector_role;
   -- 订阅/关注/收藏是告警的输入，只读
   GRANT SELECT ON

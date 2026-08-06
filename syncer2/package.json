@@ -33,6 +33,7 @@
     "votes:replay": "node --import tsx/esm src/cli/vote-replay.ts",
     "meta:page-scan-maintain": "node --import tsx/esm src/cli/page-scan-maintenance.ts",
     "meta:oldest-pending": "node --import tsx/esm src/cli/oldest-pending.ts",
+    "view:migrate": "node --import tsx/esm src/cli/view-migrate.ts",
     "schedule:l0": "node --import tsx/esm src/cli/incremental-scan.ts --layer l0 --concurrency 3 --amc-probe skip --proxy-check warn",
     "schedule:l1": "node --import tsx/esm src/cli/incremental-scan.ts --layer l1 --concurrency 5 --amc-probe skip --proxy-check warn",
     "schedule:l2": "node --import tsx/esm src/cli/sitemap-scan.ts --mode full --page-scan all --concurrency 4 --proxy-check warn",
