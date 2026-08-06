@@ -103,9 +103,13 @@ describe('/pages/:wikidotId/attributions —— 已删除页面的归属版本�
     expect(res.body).toEqual([rowFor(TOMBSTONE_VER)]);
   });
 
-  test('两个候选版本都没有归属时退回全版本扫描', async () => {
-    const ORPHAN_VER = 340000;
-    const scanned: string[] = [];
+  // 刻意不去扫描更早的历史版本：AttributionService.importAttributions 在上游返回空列表时
+  // 会 deleteMany 掉该版本的归属行，所以"两个候选版本都没有归属"可能是权威的
+  // "这页确实没有作者"，而不是"行放错了地方"。扫历史版本会把两者混为一谈、复活已被主动
+  // 移除的作者。这条用例把"不扫历史版本"这个决定钉住。
+  test('两个候选版本都没有归属时返回空，不去翻更早的历史版本', async () => {
+    const ORPHAN_VER = 340000; // 某个更早的版本上还留着归属行
+    const extraQueries: string[] = [];
 
     const queryMock = jest.fn(async (sql: string, params?: any[]) => {
       const text = String(sql);
@@ -121,13 +125,14 @@ describe('/pages/:wikidotId/attributions —— 已删除页面的归属版本�
       if (text.includes('WHEN EXISTS') && text.includes('"pageVerId" = $1::int')) {
         return { rows: [{ id: null }] };
       }
-      // 慢路径：从 PageVersion 侧驱动，找该 page 下任意有归属的最新版本
-      if (text.includes('FROM "PageVersion" pv') && text.includes('EXISTS (SELECT 1 FROM "Attribution"')) {
-        scanned.push(text);
-        return { rows: [{ id: ORPHAN_VER }] };
-      }
       if (text.includes('WITH attrs AS') && text.includes('FROM "Attribution" a')) {
+        // 只有 ORPHAN_VER 上还有归属；被查到就说明翻了历史版本
         return { rows: args[0] === ORPHAN_VER ? [ATTRIBUTION_ROW] : [] };
+      }
+      // 任何为了找归属而扫 PageVersion 的查询都不该出现
+      if (text.includes('FROM "PageVersion" pv') && text.includes('EXISTS (SELECT 1 FROM "Attribution"')) {
+        extraQueries.push(text);
+        return { rows: [{ id: ORPHAN_VER }] };
       }
       return { rows: [] };
     });
@@ -138,10 +143,7 @@ describe('/pages/:wikidotId/attributions —— 已删除页面的归属版本�
 
     const res = await request(app).get('/pages/1467208209/attributions').expect(200);
 
-    expect(scanned).toHaveLength(1);
-    // 慢路径必须从 PageVersion 侧驱动：Attribution 表只有 6.8 万行，反过来写会让
-    // planner 对版本数多的页面（最多 874 个版本）改走整表扫描。
-    expect(scanned[0]).toContain('FROM "PageVersion" pv');
-    expect(res.body).toEqual([ATTRIBUTION_ROW]);
+    expect(extraQueries).toHaveLength(0);
+    expect(res.body).toEqual([]);
   });
 });

@@ -501,46 +501,37 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
    *   - 1642 个已删页面的归属只在墓碑版本上 → 用 effectiveVersionId 查会返回空
    *   -  869 个已删页面的归属只在存活版本上 → 正是靠 effectiveVersionId 回退才正确
    *
-   * 改为按"数据实际所在版本"探测：
+   * 改为按"数据实际所在版本"探测，只在这两个候选之间选：
    *   1. 当前版本（validTo IS NULL）上有归属 → 用它，它是最新事实
    *   2. 否则 effectiveVersionId 上有归属 → 用它
-   *   3. 否则该 page 下任意有归属的最新版本 → 兜底，对未来新的错位形态免疫
-   *   4. 全都没有 → 退回 effectiveVersionId，保持原有的空结果语义
+   *   3. 两个都没有 → 退回 effectiveVersionId，保持原有的空结果语义
    *
    * 优先级 1 高于 2 是有意的：两者都持有归属时应当信当前版本。这个分支在今天的回退人群里
    * 不可达（两边都有的页面数为 0），但那只是该人群恰好干净二分的巧合，不是结构性约束 ——
    * 既然 per-version 归属已是常态，它随时可能出现。相应的测试见
    * tests/pages-attribution-version-resolution.test.ts。
+   *
+   * 刻意**不**加"退而求其次扫描该 page 下任意有归属的历史版本"这一层：
+   * AttributionService.importAttributions（backend/src/core/store/AttributionService.ts:171-177）
+   * 在上游返回空归属列表时会 deleteMany 掉该版本的行，所以"当前版本没有归属"是一个权威语义
+   * （上游说这页没作者），而不一定是"行放错了地方"。历史版本扫描会把这两种情况混为一谈，
+   * 复活已被主动移除的作者 —— 那是用户看不出来的数据错误，比一个诚实的空列表更糟。
+   * 实测该分支在全库 48135 个页面上 100% 空转（32 个页面会走到，全部返回空），
+   * 删掉它是零行为差异。
    */
   async function resolveAttributionVersionId(context: PageContext): Promise<number | null> {
-    const fallback = context.effectiveVersionId ?? context.currentVersionId ?? null;
-
-    // 快路径：全库 48135 个页面里 47234 个归属在当前版本、869 个在 effective 版本，
-    // 两次 Attribution("pageVerId") 索引探测即可判定 99.93% 的情况。
-    const { rows: fastRows } = await readPool.query(
+    // 全库 48135 个页面里 47234 个归属在当前版本、869 个在 effective 版本，
+    // 两次 Attribution("pageVerId") 索引探测即可判定。
+    const { rows } = await readPool.query(
       `SELECT CASE
                 WHEN EXISTS (SELECT 1 FROM "Attribution" WHERE "pageVerId" = $1::int) THEN $1::int
                 WHEN EXISTS (SELECT 1 FROM "Attribution" WHERE "pageVerId" = $2::int) THEN $2::int
               END AS id`,
       [context.currentVersionId, context.effectiveVersionId]
     );
-    const fast = fastRows[0]?.id;
-    if (fast != null) return Number(fast);
-
-    // 慢路径：两个候选版本都没有归属行（全库仅 32 个页面）。这里不能写成
-    // Attribution JOIN PageVersion —— Attribution 只有 6.8 万行，planner 会对版本数多的
-    // 页面（最多 874 个版本）改走整表扫描，实测 24ms。从 PageVersion 侧驱动更稳。
-    const { rows } = await readPool.query(
-      `SELECT pv.id
-         FROM "PageVersion" pv
-        WHERE pv."pageId" = $1
-          AND EXISTS (SELECT 1 FROM "Attribution" a WHERE a."pageVerId" = pv.id)
-        ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC
-        LIMIT 1`,
-      [context.pageId]
-    );
     const resolved = rows[0]?.id;
-    return resolved == null ? fallback : Number(resolved);
+    if (resolved != null) return Number(resolved);
+    return context.effectiveVersionId ?? context.currentVersionId ?? null;
   }
 
   function parseBatchWikidotIds(input: string | string[] | undefined) {
@@ -574,7 +565,6 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
         resolved AS (
           SELECT
             pc."wikidotId",
-            pc."pageId",
             current_ver.id AS "currentVersionId",
             CASE
               WHEN current_ver.id IS NULL THEN latest_any.id
@@ -604,9 +594,8 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
             LIMIT 1
           ) latest_any ON TRUE
         ),
-        -- 与 resolveAttributionVersionId() 同一套优先级：当前版本 > effective 版本 >
-        -- 该 page 下任意有归属的最新版本 > effective 版本（无归属时保持空结果语义）。
-        -- 兜底分支写在 CASE 的 ELSE 里而非 LATERAL，是为了让它只对真正需要的行求值。
+        -- 与 resolveAttributionVersionId() 同一套优先级：
+        -- 当前版本 > effective 版本 > effective 版本（无归属时保持空结果语义）
         attribution_ver AS (
           SELECT
             r."wikidotId",
@@ -615,14 +604,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
                 THEN r."currentVersionId"
               WHEN EXISTS (SELECT 1 FROM "Attribution" a WHERE a."pageVerId" = r."effectiveVersionId")
                 THEN r."effectiveVersionId"
-              ELSE COALESCE((
-                SELECT pv.id
-                FROM "PageVersion" pv
-                WHERE pv."pageId" = r."pageId"
-                  AND EXISTS (SELECT 1 FROM "Attribution" a WHERE a."pageVerId" = pv.id)
-                ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC
-                LIMIT 1
-              ), r."effectiveVersionId")
+              ELSE r."effectiveVersionId"
             END AS "attributionVersionId"
           FROM resolved r
         ),
