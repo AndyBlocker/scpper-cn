@@ -192,6 +192,10 @@ export interface HttpRequestOptions {
   body?: string;
   timeoutMs?: number;
   maxAttempts?: number;
+  /** 默认 0；由 HttpClient 逐跳记 attempt，普通 Wikidot 采集仍严格拒绝 3xx。 */
+  maxRedirections?: number;
+  /** same-host 防止共享 Wikidot gate 跟到站外；无 gate 的图片外站 client 可显式 any。 */
+  redirectPolicy?: 'same-host' | 'any';
 }
 
 export interface HttpResponse {
@@ -201,6 +205,17 @@ export interface HttpResponse {
   body: Buffer;
   text(): string;
   telemetry: RequestTelemetry;
+}
+
+function safeRedirectUrl(currentUrl: string, location: string): string | null {
+  try {
+    const next = new URL(location, currentUrl);
+    if (!['http:', 'https:'].includes(next.protocol)) return null;
+    if (next.username !== '' || next.password !== '') return null;
+    return next.toString();
+  } catch {
+    return null;
+  }
 }
 
 // ─── 头契约校验 ──────────────────────────────────────────────────────────────
@@ -312,6 +327,10 @@ export class HttpClient {
   readonly tlsMaxVersion: 'TLSv1.2' | 'TLSv1.3' | null;
   readonly #egress: EgressAttributor | null;
   readonly #adaptiveEgress: AdaptiveEgressGate | null;
+  #adaptiveOutcomeBatch: Array<{
+    permit: AdaptiveEgressPermit;
+    outcome: AdaptiveAttemptOutcome;
+  }> | null = null;
 
   #consecutive503 = 0;
   #consecutiveResets = 0;
@@ -498,6 +517,9 @@ export class HttpClient {
   }
 
   async close(): Promise<void> {
+    if (this.#adaptiveOutcomeBatch !== null) {
+      await this.finishAdaptiveOutcomeClassification(null).catch(() => undefined);
+    }
     await Promise.all([
       this.#dispatcher.close().catch(() => undefined),
       this.#adaptiveEgress?.close().catch(() => undefined),
@@ -506,6 +528,50 @@ export class HttpClient {
 
   async get(url: string, mode: string, extra?: Partial<HttpRequestOptions>): Promise<HttpResponse> {
     return this.request(url, { mode, method: 'GET', ...extra });
+  }
+
+  /**
+   * work-queue 在任务级既有失败分类完成前暂存 gate outcome。任务是串行执行的，因此
+   * 同一 HttpClient 同时只允许一个 batch；其它通道仍逐 attempt 立即反馈。
+   */
+  beginAdaptiveOutcomeClassification(): void {
+    if (this.#adaptiveOutcomeBatch !== null) {
+      throw new Error('自适应出口 outcome 分类 batch 不允许嵌套');
+    }
+    this.#adaptiveOutcomeBatch = [];
+  }
+
+  /**
+   * deterministicFailureClass 必须直接来自既有 WorkFailurePolicy；传 null 表示按 HTTP
+   * 原始压力信号结算。只有原本的压力 attempt 会被改记为确定性失败，成功响应不变。
+   */
+  async finishAdaptiveOutcomeClassification(
+    deterministicFailureClass: string | null,
+  ): Promise<void> {
+    const pending = this.#adaptiveOutcomeBatch;
+    if (pending === null) throw new Error('没有待结算的自适应出口 outcome 分类 batch');
+    if (
+      deterministicFailureClass !== null
+      && deterministicFailureClass.trim() === ''
+    ) {
+      throw new Error('deterministicFailureClass 不允许空字符串');
+    }
+    this.#adaptiveOutcomeBatch = null;
+    for (const item of pending) {
+      // 当前既有分类中，只有 page-bound AMC 的“空体 HTTP 500”会在 HTTP 层被误认
+      // 为站点压力。不要把同一任务此前真实的 transport/429/其它 5xx 一并洗掉。
+      const matchesDeterministicPressureShape =
+        deterministicFailureClass?.endsWith(':page_bound_amc_http_500_empty') === true
+        && item.outcome.status === 500;
+      const outcome = matchesDeterministicPressureShape && !item.outcome.ok
+        ? {
+            ...item.outcome,
+            ok: true,
+            deterministicFailureClass,
+          }
+        : item.outcome;
+      await this.#adaptiveEgress?.afterAttempt(item.permit, outcome);
+    }
   }
 
   /**
@@ -531,6 +597,8 @@ export class HttpClient {
     let lastError: unknown;
     let lastStatus: number | null = null;
     let lastWireBytes = 0;
+    let requestUrl = url;
+    let redirectsRemaining = Math.max(0, Math.min(5, opts.maxRedirections ?? 0));
 
     try {
       while (attempts < maxAttempts) {
@@ -547,16 +615,15 @@ export class HttpClient {
         let attemptOutcome: Disposition | null = null;
         let adaptiveOutcomeRecorded = false;
         try {
-          const res = await request(url, {
+          const res = await request(requestUrl, {
             method,
             headers,
             body: opts.body,
             dispatcher: this.#dispatcher,
             headersTimeout: timeoutMs,
             bodyTimeout: timeoutMs,
-            // 刻意不跟随重定向：sitemap 的 URL 是站点自己在索引里给的，
-            // 一旦出现 3xx 说明枚举面变了（换域名 / 加了拦截跳转），这是要人看的信号，
-            // 不是要静默跟过去的。3xx 在 classifyStatus 里归入 fatal。
+            // 默认不跟随重定向：sitemap/AMC 一旦出现 3xx 是要人看的枚举面变化。
+            // 图片路径的重定向由本循环逐跳处理，确保每个真实出站都单独经过 gate/记账。
           });
           lastStatus = res.statusCode;
           const raw = Buffer.from(await res.body.arrayBuffer());
@@ -571,6 +638,23 @@ export class HttpClient {
             errorKind: attemptOutcome?.reason ?? null,
           });
           adaptiveOutcomeRecorded = true;
+          const location = resHeaders['location'];
+          if (
+            lastStatus >= 300 && lastStatus < 400
+            && location !== undefined
+            && redirectsRemaining > 0
+            && attempts < maxAttempts
+          ) {
+            const nextUrl = safeRedirectUrl(requestUrl, location);
+            const sameHost = nextUrl !== null
+              && new URL(nextUrl).hostname.toLowerCase() === new URL(requestUrl).hostname.toLowerCase();
+            if (nextUrl !== null && (opts.redirectPolicy === 'any' || sameHost)) {
+              redirectsRemaining--;
+              retryReasons.push(`redirect_${lastStatus}`);
+              requestUrl = nextUrl;
+              continue;
+            }
+          }
           if (attemptOutcome === null) {
             // 成功：连续计数器归零。断路器只对**连续**失败开火。
             this.#consecutive503 = 0;
@@ -605,7 +689,7 @@ export class HttpClient {
           // gzip 头的 mtime/xfl/os 字段天然含 0x00，随后进入 HttpStatusError.message，
           // 最终让 meta.record_page_scan(error text) 自身报 22021。
           const snippet = errorBodySnippet(raw, resHeaders['content-encoding'] ?? null);
-          lastError = new HttpStatusError(lastStatus, url, snippet);
+          lastError = new HttpStatusError(lastStatus, requestUrl, snippet);
         } catch (err) {
           if (
             err instanceof CircuitOpenError
@@ -616,7 +700,7 @@ export class HttpClient {
           const kind = classifyTransport(err);
           lastStatus = null;
           lastWireBytes = 0;
-          lastError = new TransportError(kind, url, err);
+          lastError = new TransportError(kind, requestUrl, err);
           this.#bucket('transport');
           attemptOutcome =
             kind === 'reset'
@@ -633,7 +717,7 @@ export class HttpClient {
         }
 
         // #handleDisposition 可能因熔断阈值达成而抛 CircuitOpenError（由外层 catch 记账）
-        this.#handleDisposition(attemptOutcome, url, retryReasons, attempts);
+        this.#handleDisposition(attemptOutcome, requestUrl, retryReasons, attempts);
 
         const retryable = attemptOutcome.kind === 'retry' || attemptOutcome.kind === 'breaker-reset';
         if (retryable && attempts < maxAttempts) {
@@ -675,6 +759,10 @@ export class HttpClient {
     outcome: AdaptiveAttemptOutcome,
   ): Promise<void> {
     if (permit === undefined || this.#adaptiveEgress === null) return;
+    if (this.#adaptiveOutcomeBatch !== null) {
+      this.#adaptiveOutcomeBatch.push({ permit, outcome });
+      return;
+    }
     await this.#adaptiveEgress.afterAttempt(permit, outcome);
   }
 

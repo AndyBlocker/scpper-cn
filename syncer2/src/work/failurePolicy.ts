@@ -20,6 +20,20 @@ export interface WorkFailurePolicy {
   rationale: string;
 }
 
+/**
+ * 出口护栏复用本分类的唯一桥接点：不在 gate 内复制错误词表。
+ * 只有 identity_absent 的空体 HTTP 500 在 HTTP 层曾像压力失败，需要在分类后改账。
+ * structural/no_permission 通常来自成功 HTTP 响应后的解析/状态判定，本来就没进入压力
+ * 分子；不应顺带抹掉同任务中已恢复的真实 transport/5xx。transient 仍是站点/链路压力。
+ */
+export function deterministicEgressFailureClass(
+  policy: WorkFailurePolicy,
+): string | null {
+  return policy.family === 'identity_absent'
+    ? `work:${policy.family}:${policy.signature}`
+    : null;
+}
+
 const PAGE_BOUND_KINDS = new Set<ScanTaskKind>([
   'votes_full',
   'new_page_highfreq',

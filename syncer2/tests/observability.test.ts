@@ -5,6 +5,7 @@ import { after, before, describe, it, test } from 'node:test';
 
 import {
   evaluatePendingCollection,
+  pendingPolicyFor,
   type PendingCollection,
   type PendingPoint,
 } from '../src/observability/oldestPending.js';
@@ -81,6 +82,34 @@ describe('oldest-pending 趋势判定', () => {
     );
     assert.equal(decision.severity, 'ok');
     assert.equal(decision.decision, 'catchup_progressing');
+  });
+
+  it('论坛 catchup 看下降趋势、steady 看年龄，二者告警策略不混用', () => {
+    const catchup = pendingPolicyFor(
+      'forum_scan_task:catchup:thread',
+      'forum_scan_task_catchup',
+    );
+    const steady = pendingPolicyFor(
+      'forum_scan_task:steady:thread',
+      'forum_scan_task_steady',
+    );
+    assert.ok(catchup.warnAfterSeconds > steady.warnAfterSeconds);
+    const decision = evaluatePendingCollection(
+      current(
+        'forum_scan_task:catchup:thread',
+        '2026-08-07T10:30:00.000Z',
+        '2026-07-28T00:00:00.000Z',
+        87_000,
+        'thread-1',
+        true,
+      ),
+      [
+        point('2026-08-07T10:00:00.000Z', '2026-07-28T00:00:00.000Z', 88_000, 'thread-1', true),
+        point('2026-08-07T10:15:00.000Z', '2026-07-28T00:00:00.000Z', 87_500, 'thread-1', true),
+      ],
+    );
+    assert.equal(decision.decision, 'catchup_progressing');
+    assert.equal(decision.severity, 'ok');
   });
 
   it('集合仅 1 项但长期不动也立即告警，不要求深度或失败率分母', () => {

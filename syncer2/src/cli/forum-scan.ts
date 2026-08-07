@@ -17,19 +17,22 @@ import {
   applyForumBatch,
   applyForumCategorySnapshot,
   applyForumDiscussion,
+  applyForumDiscussionLink,
   forumBatchResultHash,
   scanForumCategories,
   scanForumStart,
   scanForumThreads,
+  scanPageDiscussionLinks,
   scanPageDiscussions,
   type ForumBatch,
   type ForumCategorySnapshot,
+  type ForumCommentsPage,
   type ForumDiscussionSnapshot,
   type ForumDiscussionTarget,
   type ForumStartSnapshot,
   type ForumThreadSnapshot,
 } from '../collect/forum.js';
-import { failed, type CollectResult } from '../collect/result.js';
+import { failed, ok, type CollectResult } from '../collect/result.js';
 import {
   amcProbePolicyFor,
   assertEgressContract,
@@ -46,8 +49,10 @@ import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import {
   claimDiscussionTasks,
   claimForumTargets,
+  enqueueForumTargets,
   finishDiscussionTask,
   finishForumTarget,
+  forumConsumeQuotas,
   releaseDiscussionTaskLocks,
   releaseForumTargetLocks,
   type ClaimedDiscussionTask,
@@ -62,6 +67,7 @@ const TARGET_LIMIT_MAX = 50;
 interface CliOptions {
   limit: number;
   concurrency: number;
+  maxRuntimeSec: number;
   skipTzCheck: boolean;
   probeOnly: boolean;
   pageId: number | null;
@@ -85,6 +91,7 @@ interface Counters {
   irreconcilable: number;
   consecutiveFailuresPeak: number;
   stoppedByFailureLimit: boolean;
+  stoppedByRuntimeBudget: boolean;
 }
 
 async function main(): Promise<void> {
@@ -92,6 +99,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
+  const deadlineMs = startedMs + opts.maxRuntimeSec * 1_000;
   const workerId = `${os.hostname()}:${process.pid}:forum`;
   const http = new HttpClient({
     userAgent: config.userAgent,
@@ -102,6 +110,8 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
+    // 当前实测约 2.26 attempts/thread；本地上限约 500 attempts/h，剩余空间留给 L1。
+    minRequestIntervalMs: 7_200,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'forum'),
     egress: {
@@ -134,6 +144,7 @@ async function main(): Promise<void> {
     irreconcilable: 0,
     consecutiveFailuresPeak: 0,
     stoppedByFailureLimit: false,
+    stoppedByRuntimeBudget: false,
   };
   const samples: Array<Record<string, unknown>> = [];
   let startupProbe: EgressGateReport | null = null;
@@ -186,11 +197,14 @@ async function main(): Promise<void> {
       return;
     }
 
-    // 页级变更是 Tier1 的新鲜事件，优先于 8.6 万条冷启动 thread 差集。
+    // 标准轮按 kind 预留 60% 页级关联/评论、40% thread/category；任一侧空闲再回填，
+    // 既优先建立 28k 页关联，也不让稳态 thread 更新被冷启动饿死。
+    const standardClaim = opts.pageId === null && opts.threadId === null && opts.categoryId === null;
+    const quotas = forumConsumeQuotas(opts.limit);
     if (opts.threadId === null && opts.categoryId === null) {
       discussionTasks = await claimDiscussionTasks(
         pool,
-        opts.limit,
+        standardClaim ? quotas.discussion : opts.limit,
         workerId,
         opts.pageId,
       );
@@ -198,10 +212,24 @@ async function main(): Promise<void> {
     if (opts.pageId === null) {
       forumTasks = await claimForumTargets(
         pool,
-        opts.limit - discussionTasks.length,
+        standardClaim ? quotas.forum : opts.limit - discussionTasks.length,
         workerId,
         { threadId: opts.threadId, categoryId: opts.categoryId },
       );
+    }
+    if (standardClaim && discussionTasks.length + forumTasks.length < opts.limit) {
+      discussionTasks.push(...await claimDiscussionTasks(
+        pool,
+        opts.limit - discussionTasks.length - forumTasks.length,
+        workerId,
+      ));
+    }
+    if (standardClaim && discussionTasks.length + forumTasks.length < opts.limit) {
+      forumTasks.push(...await claimForumTargets(
+        pool,
+        opts.limit - discussionTasks.length - forumTasks.length,
+        workerId,
+      ));
     }
     counters.discussionClaimed = discussionTasks.length;
     counters.forumClaimed = forumTasks.length;
@@ -238,16 +266,22 @@ async function main(): Promise<void> {
       return;
     }
 
-    const start = await scanForumStart(http, config.siteBaseUrl);
+    const linkOnlyTasks = discussionTasks.filter((task) => task.expectedThreadId === null);
+    const deepDiscussionTasks = discussionTasks.filter((task) => task.expectedThreadId !== null);
+    const needsForumStart = forumTasks.length > 0 || deepDiscussionTasks.length > 0;
+    const start: CollectResult<ForumStartSnapshot> = needsForumStart
+      ? await scanForumStart(http, config.siteBaseUrl)
+      : ok({ categories: [] });
     const stagedCategories = new Map<number, CollectResult<ForumCategorySnapshot>>();
     const stagedThreads = new Map<number, CollectResult<ForumThreadSnapshot>>();
     const stagedDiscussions = new Map<number, CollectResult<ForumDiscussionSnapshot>>();
+    const stagedLinks = new Map<number, CollectResult<ForumCommentsPage>>();
     let sitemapCategoryIds: Set<number> | null = null;
     let categoryCoverageError: string | null = null;
     let consecutiveFailures = start.status === 'failed' ? 1 : 0;
     if (start.status === 'failed') {
       counters.consecutiveFailuresPeak = 1;
-      for (const task of discussionTasks) {
+      for (const task of deepDiscussionTasks) {
         stagedDiscussions.set(
           task.taskId,
           failed(`ForumStartModule 前置抓取失败：${start.error}`),
@@ -268,7 +302,32 @@ async function main(): Promise<void> {
       }
     }
 
-    if (start.status !== 'failed') {
+    // 关联冷启动不依赖 ForumStart/分类父表；一个局部模块失败不能再拒绝 28k 页整体收敛。
+    linkGroups: for (let offset = 0; offset < linkOnlyTasks.length; offset += opts.concurrency) {
+      if (Date.now() >= deadlineMs) {
+        counters.stoppedByRuntimeBudget = true;
+        break;
+      }
+      const group = linkOnlyTasks.slice(offset, offset + opts.concurrency);
+      const results = await scanPageDiscussionLinks(
+        http,
+        config.siteBaseUrl,
+        group.map(toDiscussionTarget),
+        opts.concurrency,
+      );
+      for (const task of group) {
+        const result = results.get(task.pageId) ??
+          failed<ForumCommentsPage>('内部错误：页面讨论串关联结果 Map 缺项');
+        stagedLinks.set(task.taskId, result);
+        consecutiveFailures = updateFailureStreak(result, consecutiveFailures, counters);
+        if (http.breakerOpen || consecutiveFailures >= FAILURE_LIMIT) {
+          counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
+          break linkGroups;
+        }
+      }
+    }
+
+    if (start.status !== 'failed' && !http.breakerOpen && !counters.stoppedByFailureLimit) {
       const categoryTasks = forumTasks.filter((task) => task.kind === 'category');
       const threadTasks = forumTasks.filter((task) => task.kind === 'thread');
       if (categoryTasks.length > 0) {
@@ -314,8 +373,12 @@ async function main(): Promise<void> {
           );
         }
       }
-      scanGroups: for (let offset = 0; offset < discussionTasks.length; offset += opts.concurrency) {
-        const group = discussionTasks.slice(offset, offset + opts.concurrency);
+      scanGroups: for (let offset = 0; offset < deepDiscussionTasks.length; offset += opts.concurrency) {
+        if (Date.now() >= deadlineMs) {
+          counters.stoppedByRuntimeBudget = true;
+          break;
+        }
+        const group = deepDiscussionTasks.slice(offset, offset + opts.concurrency);
         const results = await scanPageDiscussions(
           http,
           config.siteBaseUrl,
@@ -337,6 +400,10 @@ async function main(): Promise<void> {
 
       if (!http.breakerOpen && !counters.stoppedByFailureLimit) {
         for (let offset = 0; offset < threadTasks.length; offset += opts.concurrency) {
+          if (Date.now() >= deadlineMs) {
+            counters.stoppedByRuntimeBudget = true;
+            break;
+          }
           const group = threadTasks.slice(offset, offset + opts.concurrency);
           const results = await scanForumThreads(
             http,
@@ -512,7 +579,64 @@ async function main(): Promise<void> {
       });
     }
 
-    for (const task of discussionTasks) {
+    for (const task of linkOnlyTasks) {
+      const result = stagedLinks.get(task.taskId);
+      if (result === undefined) continue;
+      let status = result.status;
+      let error = result.status === 'ok' ? null : result.error;
+      let resultHash: Buffer | null = null;
+      let threadId: number | null = result.status === 'ok' ? result.data.threadId : null;
+      let knownThreadLinked = false;
+      try {
+        const applied = await applyForumDiscussionLink(
+          pool,
+          toDiscussionTarget(task),
+          result,
+          new Date().toISOString(),
+          runId,
+        );
+        if (applied !== null) {
+          resultHash = applied.resultHash;
+          threadId = applied.threadId;
+          knownThreadLinked = applied.knownThreadLinked;
+          await enqueueForumTargets(pool, [{
+            kind: 'thread',
+            targetId: applied.threadId,
+            reasons: ['forum_page_link_discovered'],
+            priority: 100,
+            lane: 'steady',
+          }], new Date().toISOString());
+        }
+      } catch (err) {
+        status = 'failed';
+        error = String(err);
+        if (pgCode(err) === 'PGF01') {
+          await noteFreezeSkip(pool, runId, task, error);
+        }
+      }
+      const finish = await finishDiscussionTask(pool, task, {
+        workerId,
+        status,
+        resultHash,
+        localValue: { thread_id: threadId, known_thread_linked: knownThreadLinked },
+        remoteValue: { expected_thread_id: task.expectedThreadId },
+        now: new Date().toISOString(),
+      });
+      finishedDiscussion.add(task.taskId);
+      countFinished(counters, status, finish.action);
+      pushSample(samples, {
+        kind: 'discussion_link',
+        lane: task.lane,
+        pageId: task.pageId,
+        status,
+        threadId,
+        knownThreadLinked,
+        action: finish.action,
+        error,
+      });
+    }
+
+    for (const task of deepDiscussionTasks) {
       const result = stagedDiscussions.get(task.taskId);
       if (result === undefined) continue;
       let status = result.status;
@@ -636,8 +760,8 @@ async function main(): Promise<void> {
     const unfinishedDiscussion = discussionTasks
       .filter((task) => !finishedDiscussion.has(task.taskId))
       .map((task) => task.taskId);
-    await releaseForumTargetLocks(pool, unfinishedForum, workerId).catch(() => undefined);
-    await releaseDiscussionTaskLocks(pool, unfinishedDiscussion, workerId).catch(() => undefined);
+    await releaseForumTargetLocks(pool, unfinishedForum, workerId, true).catch(() => undefined);
+    await releaseDiscussionTaskLocks(pool, unfinishedDiscussion, workerId, true).catch(() => undefined);
     await finishIngestRun(pool, runId, {
       status: breaker ? 'aborted' : 'failed',
       finishedAt: new Date().toISOString(),
@@ -841,6 +965,7 @@ function parseArgs(): CliOptions {
     .description('匿名消费页级论坛任务与 thread/category sitemap 差集（单次最多 50 个）')
     .option('--limit <n>', '本轮最多消费目标数（硬上限 50）', Number, 20)
     .option('--concurrency <n>', '并发数（1-5）', Number, 4)
+    .option('--max-runtime-sec <n>', '单轮墙钟预算（30-540 秒）', Number, 420)
     .option('--page-id <id>', '只认领指定 v2 page_id 的 forum/discussion 任务', Number)
     .option('--thread-id <id>', '只认领指定 sitemap thread_id 任务', Number)
     .option('--category-id <id>', '只认领指定 sitemap category_id 任务', Number)
@@ -852,6 +977,7 @@ function parseArgs(): CliOptions {
   const raw = program.opts<{
     limit: number;
     concurrency: number;
+    maxRuntimeSec: number;
     pageId?: number;
     threadId?: number;
     categoryId?: number;
@@ -877,9 +1003,14 @@ function parseArgs(): CliOptions {
     Number.isFinite(raw.concurrency) && raw.concurrency > 0
       ? Math.min(5, Math.floor(raw.concurrency))
       : 4;
+  const maxRuntimeSec =
+    Number.isFinite(raw.maxRuntimeSec) && raw.maxRuntimeSec > 0
+      ? Math.min(540, Math.max(30, Math.floor(raw.maxRuntimeSec)))
+      : 420;
   return {
     limit,
     concurrency,
+    maxRuntimeSec,
     skipTzCheck: Boolean(raw.skipTzCheck),
     probeOnly: Boolean(raw.probeOnly),
     pageId: raw.pageId ?? null,

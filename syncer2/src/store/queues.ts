@@ -508,6 +508,7 @@ export interface ForumEnqueueRow {
   targetId: number;
   reasons: string[];
   priority?: number;
+  lane?: 'catchup' | 'steady';
 }
 
 /** 取库内已知的 thread / category id（差集的本地一侧）。 */
@@ -556,26 +557,32 @@ export async function enqueueForumTargets(
     for (const part of chunk(rows, 500)) {
       const values: unknown[] = [];
       const tuples: string[] = [];
-      const tsIndex = part.length * 4 + 1;
+      const tsIndex = part.length * 5 + 1;
       part.forEach((r, i) => {
-        const b = i * 4;
+        const b = i * 5;
         tuples.push(
-          `($${b + 1}, $${b + 2}, $${b + 3}::text[], $${b + 4}, $${tsIndex}::timestamptz, $${tsIndex}::timestamptz)`,
+          `($${b + 1}, $${b + 2}, $${b + 3}::text[], $${b + 4}, $${b + 5}, ` +
+            `$${tsIndex}::timestamptz, $${tsIndex}::timestamptz)`,
         );
-        values.push(r.kind, r.targetId, r.reasons, r.priority ?? 0);
+        values.push(r.kind, r.targetId, r.reasons, r.priority ?? 0, r.lane ?? 'catchup');
       });
       values.push(ts);
       const res = await query(
         pool,
         'meta.forum_scan_task:enqueue',
         `INSERT INTO meta.forum_scan_task AS fst
-           (kind, target_id, reasons, priority, first_seen_at, last_seen_at)
+           (kind, target_id, reasons, priority, lane, first_seen_at, last_seen_at)
          VALUES ${tuples.join(', ')}
          ON CONFLICT (kind, target_id) DO UPDATE
             SET last_seen_at = GREATEST(fst.last_seen_at, EXCLUDED.last_seen_at),
                 seen_count   = fst.seen_count + 1,
                 reasons      = ARRAY(SELECT DISTINCT e FROM unnest(fst.reasons || EXCLUDED.reasons) AS e),
-                priority     = GREATEST(fst.priority, EXCLUDED.priority)`,
+                priority     = GREATEST(fst.priority, EXCLUDED.priority),
+                lane         = CASE
+                                 WHEN fst.lane = 'steady' OR EXCLUDED.lane = 'steady'
+                                   THEN 'steady'
+                                 ELSE 'catchup'
+                               END`,
         values,
       );
       affected += res.rowCount ?? 0;
@@ -592,12 +599,13 @@ export async function enqueueForumTargets(
 
 export async function forumQueueBreakdown(pool: Pool): Promise<Record<string, number>> {
   try {
-    const res = await query<{ kind: string; n: string }>(
+    const res = await query<{ kind: string; lane: string; n: string }>(
       pool,
       'meta.forum_scan_task:breakdown',
-      `SELECT kind, count(*)::text AS n FROM meta.forum_scan_task GROUP BY kind ORDER BY kind`,
+      `SELECT kind, lane, count(*)::text AS n
+         FROM meta.forum_scan_task GROUP BY lane, kind ORDER BY lane, kind`,
     );
-    return Object.fromEntries(res.rows.map((r) => [r.kind, Number(r.n)]));
+    return Object.fromEntries(res.rows.map((r) => [`${r.lane}:${r.kind}`, Number(r.n)]));
   } catch (err) {
     if (isMissingRelation(err)) return {};
     throw err;
@@ -614,6 +622,7 @@ export interface ClaimedForumTarget {
   stableCount: number;
   lastResultHash: Buffer | null;
   reasons: string[];
+  lane: 'catchup' | 'steady';
 }
 
 export interface ForumTargetFilter {
@@ -644,11 +653,17 @@ export async function claimForumTargets(
     stable_count: number;
     last_result_hash: Buffer | null;
     reasons: string[];
+    lane: 'catchup' | 'steady';
   }>(
     pool,
     'meta.forum_scan_task:claim',
-    `WITH picked AS (
-       SELECT fst.id
+    `WITH candidates AS MATERIALIZED (
+       SELECT fst.id, fst.lane,
+              row_number() OVER (
+                PARTITION BY fst.lane
+                ORDER BY (fst.kind = 'category') DESC, fst.priority DESC,
+                         fst.not_before NULLS FIRST, fst.id
+              ) AS lane_rank
          FROM meta.forum_scan_task fst
         WHERE (fst.not_before IS NULL OR fst.not_before <= now())
           AND (
@@ -657,12 +672,31 @@ export async function claimForumTargets(
           )
           AND ($4::bigint IS NULL OR (fst.kind = 'thread' AND fst.target_id = $4))
           AND ($5::bigint IS NULL OR (fst.kind = 'category' AND fst.target_id = $5))
-        ORDER BY (fst.kind = 'category') DESC,
-                 fst.priority DESC,
-                 fst.not_before NULLS FIRST,
-                 fst.id
+     ), reserved AS (
+       SELECT c.id
+         FROM candidates c
+        WHERE c.lane_rank <= CASE c.lane
+          WHEN 'steady' THEN GREATEST(1, ceil($2 * 0.4)::int)
+          ELSE GREATEST(0, floor($2 * 0.6)::int)
+        END
+     ), chosen AS (
+       SELECT id FROM reserved
+       UNION ALL
+       SELECT c.id
+         FROM candidates c
+        WHERE NOT EXISTS (SELECT 1 FROM reserved r WHERE r.id = c.id)
+        ORDER BY id
         LIMIT $2
-        FOR UPDATE SKIP LOCKED
+     ), picked AS (
+       SELECT fst.id
+         FROM meta.forum_scan_task fst
+         JOIN chosen c ON c.id = fst.id
+        WHERE (
+          fst.locked_by IS NULL
+          OR fst.locked_at < now() - ($3::bigint || ' milliseconds')::interval
+        )
+        ORDER BY (fst.lane = 'steady') DESC, fst.priority DESC, fst.id
+        FOR UPDATE OF fst SKIP LOCKED
      )
      UPDATE meta.forum_scan_task fst
         SET locked_by = $1,
@@ -671,7 +705,7 @@ export async function claimForumTargets(
        FROM picked
       WHERE fst.id = picked.id
       RETURNING fst.id::text, fst.kind, fst.target_id::text, fst.attempts,
-                fst.stable_count, fst.last_result_hash, fst.reasons`,
+                fst.stable_count, fst.last_result_hash, fst.reasons, fst.lane`,
     [
       workerId,
       limit,
@@ -688,6 +722,7 @@ export async function claimForumTargets(
     stableCount: Number(row.stable_count),
     lastResultHash: row.last_result_hash,
     reasons: row.reasons,
+    lane: row.lane,
   }));
 }
 
@@ -745,11 +780,12 @@ export async function finishForumTarget(
   return { action: 'retried', stableCount, notBefore };
 }
 
-/** 进程异常/熔断时释放 forum_scan_task 锁，但保留 attempts。 */
+/** 正常时间预算释放归还 claim attempt；异常/熔断才保留 attempt 并延后。 */
 export async function releaseForumTargetLocks(
   pool: Pool,
   taskIds: readonly number[],
   workerId: string,
+  deferAfterCrash = false,
 ): Promise<number> {
   if (taskIds.length === 0) return 0;
   const result = await query(
@@ -758,9 +794,13 @@ export async function releaseForumTargetLocks(
     `UPDATE meta.forum_scan_task
         SET locked_by = NULL,
             locked_at = NULL,
-            not_before = COALESCE(not_before, now() + interval '1 hour')
+            attempts = CASE WHEN $3::boolean THEN attempts ELSE GREATEST(0, attempts - 1) END,
+            not_before = CASE WHEN $3::boolean
+              THEN COALESCE(not_before, now() + interval '1 hour')
+              ELSE not_before
+            END
       WHERE id = ANY($1::bigint[]) AND locked_by = $2`,
-    [taskIds, workerId],
+    [taskIds, workerId, deferAfterCrash],
   );
   return result.rowCount ?? 0;
 }
@@ -777,6 +817,55 @@ export interface ClaimedDiscussionTask {
   stableCount: number;
   lastResultHash: Buffer | null;
   reasons: string[];
+  lane: 'catchup' | 'steady';
+}
+
+/** 页↔thread 关联追平优先，但保留 40% 给 thread 正文/稳态更新，避免 28k 冷启动饿死增量。 */
+export function forumConsumeQuotas(limit: number): { discussion: number; forum: number } {
+  const bounded = Math.max(0, Math.floor(limit));
+  const discussion = Math.ceil(bounded * 0.6);
+  return { discussion, forum: bounded - discussion };
+}
+
+/**
+ * 全站讨论串关联冷启动。只播种 live + 有评论声明 + 尚无 thread id 的页面；
+ * ON CONFLICT 保留执行侧 attempts/not_before/lock，仅合并发现原因。
+ */
+export async function seedForumDiscussionLinkTasks(
+  pool: Pool,
+  limit: number | null = null,
+): Promise<number> {
+  const result = await query(
+    pool,
+    'meta.scan_task:seed_forum_links',
+    `WITH candidates AS (
+       SELECT pc.page_id
+         FROM serve.page_current pc
+        WHERE pc.status = 'live'
+          AND pc.comment_count > 0
+          AND pc.discussion_thread_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM meta.scan_task st
+             WHERE st.page_id = pc.page_id AND st.kind IN ('forum', 'discussion')
+          )
+        ORDER BY pc.page_id
+        LIMIT COALESCE($1::int, 2147483647)
+     )
+     INSERT INTO meta.scan_task AS st(page_id, kind, reasons, priority, not_before)
+     SELECT c.page_id, 'discussion', ARRAY['forum_link_initial_catchup'], 90, NULL
+       FROM candidates c
+     ON CONFLICT (page_id, kind) DO UPDATE
+        SET reasons = ARRAY(
+              SELECT DISTINCT e FROM unnest(st.reasons || EXCLUDED.reasons) AS e
+            ),
+            priority = GREATEST(st.priority, EXCLUDED.priority),
+            not_before = LEAST(
+              COALESCE(st.not_before, EXCLUDED.not_before),
+              COALESCE(EXCLUDED.not_before, st.not_before)
+            )`,
+    [limit],
+  );
+  return result.rowCount ?? 0;
 }
 
 /** 认领 Tier1 评论变化产生的页级论坛任务。 */
@@ -801,11 +890,18 @@ export async function claimDiscussionTasks(
     stable_count: number;
     last_result_hash: Buffer | null;
     reasons: string[];
+    lane: 'catchup' | 'steady';
   }>(
     pool,
     'meta.scan_task:claim_discussion',
-    `WITH picked AS (
-       SELECT st.id
+    `WITH candidates AS MATERIALIZED (
+       SELECT st.id,
+              CASE WHEN 'forum_link_initial_catchup' = ANY(st.reasons)
+                   THEN 'catchup' ELSE 'steady' END AS lane,
+              row_number() OVER (
+                PARTITION BY ('forum_link_initial_catchup' = ANY(st.reasons))
+                ORDER BY st.priority DESC, st.not_before NULLS FIRST, st.id
+              ) AS lane_rank
          FROM meta.scan_task st
          JOIN serve.page_current pc ON pc.page_id = st.page_id
         WHERE st.kind IN ('forum', 'discussion')
@@ -816,8 +912,30 @@ export async function claimDiscussionTasks(
             st.locked_by IS NULL
             OR st.locked_at < now() - ($3::bigint || ' milliseconds')::interval
           )
-        ORDER BY st.priority DESC, st.not_before NULLS FIRST, st.id
-        LIMIT $2
+     ), reserved AS (
+       SELECT c.id
+         FROM candidates c
+        WHERE $4::int IS NOT NULL
+           OR c.lane_rank <= CASE c.lane
+                WHEN 'catchup' THEN GREATEST(1, ceil($2 * 0.6)::int)
+                ELSE GREATEST(1, floor($2 * 0.4)::int)
+              END
+     ), chosen AS (
+       SELECT id FROM reserved
+       UNION ALL
+       SELECT c.id FROM candidates c
+        WHERE NOT EXISTS (SELECT 1 FROM reserved r WHERE r.id = c.id)
+       ORDER BY id
+       LIMIT $2
+     ), picked AS (
+       SELECT st.id
+         FROM meta.scan_task st
+         JOIN chosen c ON c.id = st.id
+        WHERE (
+          st.locked_by IS NULL
+          OR st.locked_at < now() - ($3::bigint || ' milliseconds')::interval
+        )
+        ORDER BY st.priority DESC, st.id
         FOR UPDATE OF st SKIP LOCKED
      )
      UPDATE meta.scan_task st
@@ -829,7 +947,9 @@ export async function claimDiscussionTasks(
         AND pc.page_id = st.page_id
       RETURNING st.id::text, st.page_id, pc.wikidot_id, pc.slug, st.kind,
                 pc.comment_count, pc.discussion_thread_id::text,
-                st.attempts, st.stable_count, st.last_result_hash, st.reasons`,
+                st.attempts, st.stable_count, st.last_result_hash, st.reasons,
+                CASE WHEN 'forum_link_initial_catchup' = ANY(st.reasons)
+                     THEN 'catchup' ELSE 'steady' END AS lane`,
     [workerId, limit, String(lockStaleAfterMs), pageId],
   );
   return result.rows.map((row) => ({
@@ -845,6 +965,7 @@ export async function claimDiscussionTasks(
     stableCount: Number(row.stable_count),
     lastResultHash: row.last_result_hash,
     reasons: row.reasons,
+    lane: row.lane,
   }));
 }
 
@@ -966,6 +1087,7 @@ export async function releaseDiscussionTaskLocks(
   pool: Pool,
   taskIds: readonly number[],
   workerId: string,
+  deferAfterCrash = false,
 ): Promise<number> {
   if (taskIds.length === 0) return 0;
   const result = await query(
@@ -974,9 +1096,13 @@ export async function releaseDiscussionTaskLocks(
     `UPDATE meta.scan_task
         SET locked_by = NULL,
             locked_at = NULL,
-            not_before = COALESCE(not_before, now() + interval '1 hour')
+            attempts = CASE WHEN $3::boolean THEN attempts ELSE GREATEST(0, attempts - 1) END,
+            not_before = CASE WHEN $3::boolean
+              THEN COALESCE(not_before, now() + interval '1 hour')
+              ELSE not_before
+            END
       WHERE id = ANY($1::bigint[]) AND locked_by = $2`,
-    [taskIds, workerId],
+    [taskIds, workerId, deferAfterCrash],
   );
   return result.rowCount ?? 0;
 }

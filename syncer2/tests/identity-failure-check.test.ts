@@ -9,6 +9,7 @@ import {
 } from '../src/store/workQueue.js';
 import {
   classifyWorkFailure,
+  deterministicEgressFailureClass,
   identityReviewDue,
   reviewIdentityIfDue,
   workFailureHash,
@@ -52,6 +53,7 @@ describe('通用失败签名与身份复核', () => {
     ]) {
       const policy = classifyWorkFailure('votes_full', error);
       assert.equal(policy.family, 'identity_absent');
+      assert.match(deterministicEgressFailureClass(policy) ?? '', /^work:identity_absent:/);
       assert.equal(policy.identityReviewThreshold, 1);
       assert.equal(identityReviewDue(baseTask, policy), true);
     }
@@ -65,6 +67,7 @@ describe('通用失败签名与身份复核', () => {
       const policy = classifyWorkFailure('votes_full', error);
       const reviewed = await reviewIdentityIfDue(baseTask, policy, async () => ++reviews);
       assert.equal(policy.action, 'retry');
+      assert.equal(deterministicEgressFailureClass(policy), null);
       assert.equal(reviewed, null);
       assert.equal(reviews, 0);
     }
@@ -83,6 +86,11 @@ describe('通用失败签名与身份复核', () => {
       '附件响应中没有 table.page-files；解析结构已变化',
     );
     assert.equal(structural.family, 'structural');
+    assert.equal(
+      deterministicEgressFailureClass(structural),
+      null,
+      '结构拒绝来自成功 HTTP 后判定，本就不在压力分子，不能抹掉同任务的瞬时链路失败',
+    );
     assert.equal(structural.action, 'irreconcilable');
     assert.equal(structural.identityReviewThreshold, null);
 

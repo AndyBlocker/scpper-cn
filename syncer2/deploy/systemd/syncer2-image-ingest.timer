@@ -1,0 +1,12 @@
+[Unit]
+Description=syncer2 image asset ingest queue consumer
+
+[Timer]
+OnBootSec=4min
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Persistent=false
+Unit=syncer2-job@image-ingest.service
+
+[Install]
+WantedBy=timers.target

@@ -6,13 +6,15 @@
  * meta.egress_control 的同一把事务 advisory lock 预留 permit，并把结果汇入同一个
  * 100-request 反馈窗口。
  *
- * 设计标定来自 2026-08-02 实测：0.6% 仍安全，下一小时已跳到 22.6%，之后减半请求量
- * 仍有 78.5% 失败，约 460/h 才恢复。因此：
- *   * 2% 连续两个窗口才退让：远高于 0.6% 安全点，同时过滤单窗口噪声；
- *   * 5% 单窗口立即退让：不等待它继续跳到 22%；
- *   * 退让逐档、恢复需“最低冷却结束后再连续 6 个 <=1% 窗口”，且一次只升一档；
- *   * 持续不健康会把 recover_not_before 从最后一次坏窗口继续后推；
- *   * 滚动 60 分钟 >3,200 attempt 无条件进入 0.125 QPS cooldown。
+ * 设计标定来自两组实测：2026-08-02 的安全水位 <1%、危险区 22.6%（随后 78.5%），
+ * 以及 2026-08-07 剔除既有分类确认的确定性失败后约 0.76% 的常态压力噪声。因此：
+ *   * 5% 连续两个窗口才退让，10% 单窗口立即退让，仍早于 22.6% 拒绝区；
+ *   * 恢复需连续 6 个 <=3% 窗口并满足最低保持期，健康窗可在保持期内累计；
+ *   * identity_absent 等既有分类可把伪装成 5xx 的确定性失败改记审计；
+ *     no_permission / structural 等业务结果本来就不进站点压力分子；
+ *   * 滚动 60 分钟 >3,500 attempt 无条件进入 0.125 QPS cooldown；该值仍低于
+ *     实测最低安全水位 3,663/h；
+ *   * 全站档位保持共享；通道只分账，不允许因共享 IP/站点而各自解除全局保护。
  */
 
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
@@ -42,13 +44,13 @@ export interface AdaptiveEgressPolicy {
 
 export const ADAPTIVE_EGRESS_POLICY: AdaptiveEgressPolicy = Object.freeze({
   windowRequests: 100,
-  elevatedFailureRate: 0.02,
-  severeFailureRate: 0.05,
-  healthyFailureRate: 0.01,
+  elevatedFailureRate: 0.05,
+  severeFailureRate: 0.1,
+  healthyFailureRate: 0.03,
   elevatedWindowsToBackoff: 2,
   healthyWindowsToRecover: 6,
   rollingBudgetMinutes: 60,
-  rollingBudgetRequests: 3_200,
+  rollingBudgetRequests: 3_500,
   tiers: Object.freeze([
     { level: 0, name: 'normal', minIntervalMs: 333, minimumHoldMs: 0 },
     { level: 1, name: 'cautious', minIntervalMs: 667, minimumHoldMs: 30 * 60_000 },
@@ -69,7 +71,10 @@ export interface FailureWindowState {
 
 export interface CompletedFailureWindow {
   requests: number;
+  /** 只有站点容量/传输信号进入此分子。 */
   failures: number;
+  /** 既有业务分类确认的确定性失败；保留在总请求分母与审计中。 */
+  deterministicFailures?: number;
   completedAtMs: number;
 }
 
@@ -112,6 +117,15 @@ export function evaluateFailureWindow(
   if (window.failures < 0 || window.failures > window.requests) {
     throw new RangeError(`非法 failures=${window.failures}/${window.requests}`);
   }
+  const deterministicFailures = window.deterministicFailures ?? 0;
+  if (
+    deterministicFailures < 0
+    || window.failures + deterministicFailures > window.requests
+  ) {
+    throw new RangeError(
+      `非法 deterministicFailures=${deterministicFailures}/${window.requests}`,
+    );
+  }
 
   const rate = window.failures / window.requests;
   const severe = rate >= policy.severeFailureRate;
@@ -139,7 +153,7 @@ export function evaluateFailureWindow(
     };
   }
 
-  // 已在最慢档时仍失败，或普通退让档出现任一 >1% 的不健康窗口：从“最后一次坏窗口”
+  // 已在最慢档时仍失败，或普通退让档出现任一 >3% 的不健康窗口：从“最后一次坏窗口”
   // 重新开始最低冷却。这样踩线后的持续失败不会周期性试探升档。
   if (input.level > 0 && rate > policy.healthyFailureRate) {
     const holdMs = tier(policy, input.level).minimumHoldMs;
@@ -166,20 +180,15 @@ export function evaluateFailureWindow(
     };
   }
 
-  // 冷却期内的好窗口不提前攒恢复积分；必须先耐心等完，再连续健康 6 窗口。
-  if (
-    input.recoverNotBeforeMs !== null
-    && window.completedAtMs < input.recoverNotBeforeMs
-  ) {
-    return {
-      state: { ...input, elevatedWindows, healthyWindows: 0 },
-      transition: null,
-      failureRate: rate,
-    };
-  }
-
-  const healthyWindows = input.healthyWindows + 1;
-  if (healthyWindows < policy.healthyWindowsToRecover) {
+  // 好窗口从降档后即可累计，但恢复必须同时满足“连续 6 窗”和最低保持期。
+  // 这保留恢复慢于降档的迟滞，同时不再把保持期内的健康证据全部丢弃。
+  const healthyWindows = Math.min(
+    input.healthyWindows + 1,
+    policy.healthyWindowsToRecover,
+  );
+  const holdComplete = input.recoverNotBeforeMs === null
+    || window.completedAtMs >= input.recoverNotBeforeMs;
+  if (healthyWindows < policy.healthyWindowsToRecover || !holdComplete) {
     return {
       state: { ...input, elevatedWindows, healthyWindows },
       transition: null,
@@ -212,7 +221,7 @@ export function evaluateFailureWindow(
   };
 }
 
-/** 纯预算护栏：超过而不是等于 3,200，立即强制最慢档并持久告警。 */
+/** 纯预算护栏：超过而不是等于 3,500，立即强制最慢档并持久告警。 */
 export function evaluateRollingBudget(
   input: FailureWindowState,
   rollingHourRequests: number,
@@ -266,16 +275,96 @@ export interface AdaptiveEgressSnapshot {
   changedAt: string;
   recoverNotBefore: string | null;
   currentWindowRequests: number;
+  /** 站点压力分子：transport / 429 / 5xx，已排除确定性业务失败。 */
   currentWindowFailures: number;
+  currentWindowDeterministicFailures: number;
   elevatedWindows: number;
   healthyWindows: number;
   healthyWindowsRequired: number;
   lastWindowFailureRate: number | null;
+  lastWindowDeterministicFailureRate: number | null;
   lastWindowCompletedAt: string | null;
   rollingHourRequests: number;
   budgetLimit: number;
   budgetBreached: boolean;
+  l1LastStartedAt: string | null;
+  l1SloDegradedSince: string | null;
+  l1SloExpectedRecoveryAt: string | null;
+  l1SloLastGapSeconds: number | null;
+  l1SloOverdue: boolean;
   updatedAt: string;
+}
+
+export interface AdaptiveSelfProtectionDecision {
+  status: 'normal' | 'downshift_expected' | 'downshift_overdue';
+  active: boolean;
+  overdue: boolean;
+  exitCode: 0 | 1;
+  level: AdaptiveEgressLevel;
+  levelName: AdaptiveEgressTier['name'];
+  reason: string;
+  recoverNotBefore: string | null;
+  expectedRecoveryAt: string | null;
+}
+
+/**
+ * 把“护栏正在按设计限速”与“恢复状态机失效”分开。预计时间覆盖当前档及逐档恢复所需
+ * 的健康窗口；recover_not_before 被后续坏窗口延长时，截止时间同步后移。
+ */
+export function evaluateAdaptiveSelfProtection(
+  snapshot: AdaptiveEgressSnapshot,
+  nowMs: number,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): AdaptiveSelfProtectionDecision {
+  if (!Number.isFinite(nowMs)) throw new RangeError(`非法 self-protection now=${nowMs}`);
+  if (snapshot.level === 0) {
+    return {
+      status: 'normal', active: false, overdue: false, exitCode: 0,
+      level: snapshot.level, levelName: snapshot.levelName, reason: snapshot.reason,
+      recoverNotBefore: snapshot.recoverNotBefore, expectedRecoveryAt: null,
+    };
+  }
+  const changedAtMs = Date.parse(snapshot.changedAt);
+  const holdUntilMs = snapshot.recoverNotBefore === null
+    ? changedAtMs
+    : Date.parse(snapshot.recoverNotBefore);
+  if (!Number.isFinite(changedAtMs) || !Number.isFinite(holdUntilMs)) {
+    throw new RangeError('自适应出口快照含非法 changedAt/recoverNotBefore');
+  }
+  const currentTier = tier(policy, snapshot.level);
+  const currentHealthyEvidenceMs =
+    policy.windowRequests * policy.healthyWindowsToRecover * currentTier.minIntervalMs;
+  let lowerTierRecoveryMs = 0;
+  for (let level = snapshot.level - 1; level > 0; level--) {
+    const selected = tier(policy, level as AdaptiveEgressLevel);
+    lowerTierRecoveryMs += Math.max(
+      selected.minimumHoldMs,
+      policy.windowRequests * policy.healthyWindowsToRecover * selected.minIntervalMs,
+    );
+  }
+  const currentEvidenceStartedAtMs = Math.max(
+    changedAtMs,
+    holdUntilMs - currentTier.minimumHoldMs,
+  );
+  const expectedRecoveryAtMs = Math.max(
+    changedAtMs + expectedFullRecoveryDurationMs(snapshot.level, policy),
+    Math.max(
+      holdUntilMs,
+      currentEvidenceStartedAtMs + currentHealthyEvidenceMs,
+    ) + lowerTierRecoveryMs,
+  );
+  const overdue = nowMs > expectedRecoveryAtMs;
+  return {
+    status: overdue ? 'downshift_overdue' : 'downshift_expected',
+    active: true,
+    overdue,
+    exitCode: overdue ? 1 : 0,
+    level: snapshot.level,
+    levelName: snapshot.levelName,
+    reason: snapshot.reason,
+    recoverNotBefore: snapshot.recoverNotBefore,
+    expectedRecoveryAt: toPgTimestamptz(expectedRecoveryAtMs),
+  };
 }
 
 export interface AdaptiveEgressPermit {
@@ -289,6 +378,11 @@ export interface AdaptiveAttemptOutcome {
   ok: boolean;
   status: number | null;
   errorKind: string | null;
+  /**
+   * 只能由既有业务失败分类填写。非 null 表示该 attempt 虽在 HTTP 层像压力失败，
+   * 但已确认重试不会改变且不代表站点拒绝；它会单独留账而不进入压力分子。
+   */
+  deterministicFailureClass?: string | null;
 }
 
 /**
@@ -330,13 +424,20 @@ interface ControlRow extends QueryResultRow {
   next_permit_at: string;
   current_window_requests: number;
   current_window_failures: number;
+  current_window_deterministic_failures: number;
   elevated_windows: number;
   healthy_windows: number;
   last_window_failure_rate: number | null;
+  last_window_deterministic_failure_rate: number | null;
   last_window_completed_at: string | null;
   rolling_hour_requests: number;
   budget_limit: number;
   budget_breached: boolean;
+  l1_last_started_at: string | null;
+  l1_slo_degraded_since: string | null;
+  l1_slo_expected_recovery_at: string | null;
+  l1_slo_last_gap_seconds: number | null;
+  l1_slo_overdue: boolean;
   last_pruned_at: string;
   updated_at: string;
 }
@@ -392,7 +493,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
         const rolling = await rollingRequestCount(db, this.#policy.rollingBudgetMinutes);
         const budget = evaluateRollingBudget(rowToWindowState(row), rolling, clock.nowMs, this.#policy);
         if (budget.transition !== null) {
-          await insertAlert(db, budget.transition, rolling);
+          await insertAlert(db, budget.transition, rolling, this.#policy);
         }
 
         const current = tier(this.#policy, budget.state.level);
@@ -411,11 +512,17 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
           );
         }
 
-        row = await updateControl(db, row, budget.state, {
-          rollingHourRequests: rolling,
-          nextPermitAt: toPgTimestamptz(nextMs),
-          lastPrunedAt: shouldPrune ? toPgTimestamptz(clock.nowMs) : row.last_pruned_at,
-        });
+        row = await updateControl(
+          db,
+          row,
+          budget.state,
+          {
+            rollingHourRequests: rolling,
+            nextPermitAt: toPgTimestamptz(nextMs),
+            lastPrunedAt: shouldPrune ? toPgTimestamptz(clock.nowMs) : row.last_pruned_at,
+          },
+          this.#policy,
+        );
         return {
           permit: {
             bucketStart,
@@ -454,15 +561,25 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
       const result = await withTransaction(this.#pool, 'adaptive-egress:outcome', async (db) => {
         await lockControl(db);
         const clock = await databaseClock(db);
-        if (!outcome.ok) {
+        const deterministicFailure = outcome.deterministicFailureClass != null;
+        const pressureFailure = !outcome.ok && !deterministicFailure;
+        if (pressureFailure || deterministicFailure) {
           const updated = await query(
             db,
             'adaptive-egress:bucket-failure',
             `UPDATE meta.egress_request_bucket
-                SET failures = failures + 1, updated_at = clock_timestamp()
+                SET failures = failures + $4::int,
+                    deterministic_failures = deterministic_failures + $5::int,
+                    updated_at = clock_timestamp()
               WHERE site_key = $1 AND bucket_start = $2::timestamptz AND channel = $3
-                AND failures < requests`,
-            [SITE_KEY, permit.bucketStart, permit.channel],
+                AND failures + deterministic_failures < requests`,
+            [
+              SITE_KEY,
+              permit.bucketStart,
+              permit.channel,
+              pressureFailure ? 1 : 0,
+              deterministicFailure ? 1 : 0,
+            ],
           );
           if (updated.rowCount !== 1) {
             throw new Error(`找不到 permit 对应的请求桶 ${permit.bucketStart}/${permit.channel}`);
@@ -471,39 +588,58 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
 
         let row = await loadControl(db);
         const requests = row.current_window_requests + 1;
-        const failures = row.current_window_failures + (outcome.ok ? 0 : 1);
+        const failures = row.current_window_failures + (pressureFailure ? 1 : 0);
+        const deterministicFailures = row.current_window_deterministic_failures
+          + (deterministicFailure ? 1 : 0);
         let state = rowToWindowState(row);
         let transition: AdaptiveEgressTransition | null = null;
         let lastRate = row.last_window_failure_rate;
+        let lastDeterministicRate = row.last_window_deterministic_failure_rate;
         let lastCompletedAt = row.last_window_completed_at;
         let nextRequests = requests;
         let nextFailures = failures;
+        let nextDeterministicFailures = deterministicFailures;
 
         if (requests === this.#policy.windowRequests) {
           const decision = evaluateFailureWindow(
             state,
-            { requests, failures, completedAtMs: clock.nowMs },
+            {
+              requests,
+              failures,
+              deterministicFailures,
+              completedAtMs: clock.nowMs,
+            },
             this.#policy,
           );
           state = decision.state;
           transition = decision.transition;
           lastRate = decision.failureRate;
+          lastDeterministicRate = deterministicFailures / requests;
           lastCompletedAt = toPgTimestamptz(clock.nowMs);
           nextRequests = 0;
           nextFailures = 0;
+          nextDeterministicFailures = 0;
           if (transition !== null) {
-            await insertAlert(db, transition, row.rolling_hour_requests);
+            await insertAlert(db, transition, row.rolling_hour_requests, this.#policy);
           }
         } else if (requests > this.#policy.windowRequests) {
           throw new Error(`反馈窗口计数越界 ${requests}/${this.#policy.windowRequests}`);
         }
 
-        row = await updateControl(db, row, state, {
-          currentWindowRequests: nextRequests,
-          currentWindowFailures: nextFailures,
-          lastWindowFailureRate: lastRate,
-          lastWindowCompletedAt: lastCompletedAt,
-        });
+        row = await updateControl(
+          db,
+          row,
+          state,
+          {
+            currentWindowRequests: nextRequests,
+            currentWindowFailures: nextFailures,
+            currentWindowDeterministicFailures: nextDeterministicFailures,
+            lastWindowFailureRate: lastRate,
+            lastWindowDeterministicFailureRate: lastDeterministicRate,
+            lastWindowCompletedAt: lastCompletedAt,
+          },
+          this.#policy,
+        );
         return {
           snapshot: rowToSnapshot(row, this.#policy),
           transition,
@@ -552,15 +688,285 @@ export async function readAdaptiveEgressState(
     `SELECT site_key, level, reason,
             changed_at::text, recover_not_before::text, next_permit_at::text,
             current_window_requests, current_window_failures,
+            current_window_deterministic_failures,
             elevated_windows, healthy_windows, last_window_failure_rate,
+            last_window_deterministic_failure_rate,
             last_window_completed_at::text, rolling_hour_requests,
-            budget_limit, budget_breached, last_pruned_at::text, updated_at::text
+            budget_limit, budget_breached,
+            l1_last_started_at::text, l1_slo_degraded_since::text,
+            l1_slo_expected_recovery_at::text, l1_slo_last_gap_seconds,
+            l1_slo_overdue, last_pruned_at::text, updated_at::text
        FROM meta.egress_control WHERE site_key = $1`,
     [SITE_KEY],
   );
   const row = result.rows[0];
   if (!row) throw new Error(`meta.egress_control 缺少 ${SITE_KEY} 单例`);
   return rowToSnapshot(row, policy);
+}
+
+export const L1_FRESHNESS_SLO_TARGET_MS = 5 * 60_000;
+export const L1_FRESHNESS_SLO_GRACE_MS = 60_000;
+
+export type L1FreshnessSloStatus =
+  | 'insufficient_history'
+  | 'met'
+  | 'degraded_expected'
+  | 'degraded_overdue'
+  | 'degraded_unattributed';
+
+export interface L1FreshnessSloDecision {
+  status: L1FreshnessSloStatus;
+  exitCode: 0 | 1;
+  gapMs: number | null;
+  degradedSinceMs: number | null;
+  expectedRecoveryAtMs: number | null;
+  overdue: boolean;
+}
+
+export interface L1FreshnessSloInput {
+  previousStartedAtMs: number | null;
+  currentStartedAtMs: number;
+  level: AdaptiveEgressLevel;
+  levelChangedAtMs: number;
+  existingDegradedSinceMs?: number | null;
+  existingExpectedRecoveryAtMs?: number | null;
+}
+
+/**
+ * L1 轮次频率是用户 SLO，不以请求成功率代替。降档导致的预期内退化只发信号且 exit 0；
+ * 超过按当前档位逐档恢复所需的窗口才 exit 1。没有活动降档却丢 SLO 不享受宽限。
+ */
+export function evaluateL1FreshnessSlo(
+  input: L1FreshnessSloInput,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): L1FreshnessSloDecision {
+  if (!Number.isFinite(input.currentStartedAtMs) || !Number.isFinite(input.levelChangedAtMs)) {
+    throw new RangeError('L1 SLO 时间必须是有限毫秒值');
+  }
+  if (input.previousStartedAtMs === null) {
+    return {
+      status: 'insufficient_history',
+      exitCode: 0,
+      gapMs: null,
+      degradedSinceMs: null,
+      expectedRecoveryAtMs: null,
+      overdue: false,
+    };
+  }
+
+  const gapMs = input.currentStartedAtMs - input.previousStartedAtMs;
+  if (!Number.isFinite(gapMs) || gapMs < 0) {
+    throw new RangeError(`L1 SLO 轮次时间倒退 ${gapMs}ms`);
+  }
+  if (gapMs <= L1_FRESHNESS_SLO_TARGET_MS + L1_FRESHNESS_SLO_GRACE_MS) {
+    return {
+      status: 'met',
+      exitCode: 0,
+      gapMs,
+      degradedSinceMs: null,
+      expectedRecoveryAtMs: null,
+      overdue: false,
+    };
+  }
+
+  const degradedSinceMs = input.existingDegradedSinceMs ?? input.currentStartedAtMs;
+  if (input.level === 0) {
+    return {
+      status: 'degraded_unattributed',
+      exitCode: 1,
+      gapMs,
+      degradedSinceMs,
+      expectedRecoveryAtMs: null,
+      overdue: true,
+    };
+  }
+
+  const expectedRecoveryAtMs = input.existingExpectedRecoveryAtMs
+    ?? input.levelChangedAtMs + expectedFullRecoveryDurationMs(input.level, policy);
+  const overdue = input.currentStartedAtMs > expectedRecoveryAtMs;
+  return {
+    status: overdue ? 'degraded_overdue' : 'degraded_expected',
+    exitCode: overdue ? 1 : 0,
+    gapMs,
+    degradedSinceMs,
+    expectedRecoveryAtMs,
+    overdue,
+  };
+}
+
+export interface L1FreshnessSloSignal {
+  status: L1FreshnessSloStatus;
+  exitCode: 0 | 1;
+  targetMinutes: 5;
+  graceMinutes: 1;
+  previousStartedAt: string | null;
+  currentStartedAt: string;
+  gapSeconds: number | null;
+  egressLevel: AdaptiveEgressLevel;
+  egressLevelName: AdaptiveEgressTier['name'];
+  recoverNotBefore: string | null;
+  expectedRecoveryAt: string | null;
+  degradedSince: string | null;
+  overdue: boolean;
+}
+
+/** 在 L1 run 启动后调用一次：更新 SLO 水位，并把首次退化/首次超期写入持久告警。 */
+export async function observeL1FreshnessSlo(
+  db: Pool,
+  currentStartedAt: string,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): Promise<L1FreshnessSloSignal> {
+  const currentStartedAtMs = Date.parse(currentStartedAt);
+  if (!Number.isFinite(currentStartedAtMs)) {
+    throw new RangeError(`非法 L1 startedAt ${currentStartedAt}`);
+  }
+
+  return withTransaction(db, 'adaptive-egress:l1-slo', async (tx) => {
+    await lockControl(tx);
+    const row = await loadControl(tx);
+    const previousStartedAtMs = row.l1_last_started_at === null
+      ? null
+      : Date.parse(row.l1_last_started_at);
+    const decision = evaluateL1FreshnessSlo(
+      {
+        previousStartedAtMs,
+        currentStartedAtMs,
+        level: asLevel(row.level),
+        levelChangedAtMs: Date.parse(row.changed_at),
+        existingDegradedSinceMs: row.l1_slo_degraded_since === null
+          ? null
+          : Date.parse(row.l1_slo_degraded_since),
+        existingExpectedRecoveryAtMs: row.l1_slo_expected_recovery_at === null
+          ? null
+          : Date.parse(row.l1_slo_expected_recovery_at),
+      },
+      policy,
+    );
+    const startingDegradation = decision.degradedSinceMs !== null
+      && row.l1_slo_degraded_since === null;
+    const newlyOverdue = decision.overdue && !row.l1_slo_overdue;
+
+    await query(
+      tx,
+      'adaptive-egress:update-l1-slo',
+      `UPDATE meta.egress_control
+          SET l1_last_started_at = $2::timestamptz,
+              l1_slo_degraded_since = $3::timestamptz,
+              l1_slo_expected_recovery_at = $4::timestamptz,
+              l1_slo_last_gap_seconds = $5,
+              l1_slo_overdue = $6,
+              updated_at = clock_timestamp()
+        WHERE site_key = $1`,
+      [
+        SITE_KEY,
+        currentStartedAt,
+        decision.degradedSinceMs === null ? null : toPgTimestamptz(decision.degradedSinceMs),
+        decision.expectedRecoveryAtMs === null
+          ? null
+          : toPgTimestamptz(decision.expectedRecoveryAtMs),
+        decision.gapMs === null ? null : Math.round(decision.gapMs / 1_000),
+        decision.overdue,
+      ],
+    );
+
+    if (startingDegradation) {
+      await insertL1SloAlert(tx, 'slo_degradation', row, decision, currentStartedAtMs);
+    }
+    if (newlyOverdue) {
+      await insertL1SloAlert(
+        tx,
+        'slo_degradation_overdue',
+        row,
+        decision,
+        currentStartedAtMs,
+      );
+    }
+
+    const level = asLevel(row.level);
+    return {
+      status: decision.status,
+      exitCode: decision.exitCode,
+      targetMinutes: 5,
+      graceMinutes: 1,
+      previousStartedAt: previousStartedAtMs === null
+        ? null
+        : toPgTimestamptz(previousStartedAtMs),
+      currentStartedAt: toPgTimestamptz(currentStartedAtMs),
+      gapSeconds: decision.gapMs === null ? null : Math.round(decision.gapMs / 1_000),
+      egressLevel: level,
+      egressLevelName: tier(policy, level).name,
+      recoverNotBefore: isoOrNull(row.recover_not_before),
+      expectedRecoveryAt: decision.expectedRecoveryAtMs === null
+        ? null
+        : toPgTimestamptz(decision.expectedRecoveryAtMs),
+      degradedSince: decision.degradedSinceMs === null
+        ? null
+        : toPgTimestamptz(decision.degradedSinceMs),
+      overdue: decision.overdue,
+    };
+  });
+}
+
+function expectedFullRecoveryDurationMs(
+  level: AdaptiveEgressLevel,
+  policy: AdaptiveEgressPolicy,
+): number {
+  let durationMs = 0;
+  for (let candidate = level; candidate > 0; candidate--) {
+    const selected = tier(policy, candidate as AdaptiveEgressLevel);
+    const healthyEvidenceMs = policy.windowRequests
+      * policy.healthyWindowsToRecover
+      * selected.minIntervalMs;
+    durationMs += Math.max(selected.minimumHoldMs, healthyEvidenceMs);
+  }
+  return durationMs;
+}
+
+async function insertL1SloAlert(
+  db: PoolClient,
+  kind: 'slo_degradation' | 'slo_degradation_overdue',
+  row: ControlRow,
+  decision: L1FreshnessSloDecision,
+  currentStartedAtMs: number,
+): Promise<void> {
+  const gapSeconds = decision.gapMs === null ? null : Math.round(decision.gapMs / 1_000);
+  const reason = decision.status === 'degraded_unattributed'
+    ? `l1_round_gap_${gapSeconds}s_without_active_egress_downshift`
+    : `l1_round_gap_${gapSeconds}s_while_egress_level_${row.level}`;
+  await query(
+    db,
+    `adaptive-egress:${kind}`,
+    `INSERT INTO meta.egress_alert(
+       site_key, kind, from_level, to_level, reason,
+       rolling_hour_requests, failure_rate, details
+     ) VALUES ($1, $2, $3, $3, $4, $5, NULL,
+       jsonb_build_object(
+         'slo_target_minutes', 5,
+         'slo_grace_minutes', 1,
+         'previous_l1_started_at', $6::timestamptz,
+         'current_l1_started_at', $7::timestamptz,
+         'gap_seconds', $8::int,
+         'recover_not_before', $9::timestamptz,
+         'expected_recovery_at', $10::timestamptz,
+         'status', $11::text,
+         'no_qq_delivery', true
+       ))`,
+    [
+      SITE_KEY,
+      kind,
+      row.level,
+      reason,
+      row.rolling_hour_requests,
+      row.l1_last_started_at,
+      toPgTimestamptz(currentStartedAtMs),
+      gapSeconds,
+      row.recover_not_before,
+      decision.expectedRecoveryAtMs === null
+        ? null
+        : toPgTimestamptz(decision.expectedRecoveryAtMs),
+      decision.status,
+    ],
+  );
 }
 
 function downshiftState(
@@ -618,9 +1024,14 @@ async function loadControl(db: PoolClient): Promise<ControlRow> {
     `SELECT site_key, level, reason,
             changed_at::text, recover_not_before::text, next_permit_at::text,
             current_window_requests, current_window_failures,
+            current_window_deterministic_failures,
             elevated_windows, healthy_windows, last_window_failure_rate,
+            last_window_deterministic_failure_rate,
             last_window_completed_at::text, rolling_hour_requests,
-            budget_limit, budget_breached, last_pruned_at::text, updated_at::text
+            budget_limit, budget_breached,
+            l1_last_started_at::text, l1_slo_degraded_since::text,
+            l1_slo_expected_recovery_at::text, l1_slo_last_gap_seconds,
+            l1_slo_overdue, last_pruned_at::text, updated_at::text
        FROM meta.egress_control
       WHERE site_key = $1
       FOR UPDATE`,
@@ -653,7 +1064,9 @@ interface ControlUpdate {
   lastPrunedAt?: string;
   currentWindowRequests?: number;
   currentWindowFailures?: number;
+  currentWindowDeterministicFailures?: number;
   lastWindowFailureRate?: number | null;
+  lastWindowDeterministicFailureRate?: number | null;
   lastWindowCompletedAt?: string | null;
 }
 
@@ -662,6 +1075,7 @@ async function updateControl(
   old: ControlRow,
   state: FailureWindowState,
   update: ControlUpdate,
+  policy: AdaptiveEgressPolicy,
 ): Promise<ControlRow> {
   const result = await query<ControlRow>(
     db,
@@ -674,22 +1088,29 @@ async function updateControl(
             next_permit_at = $6::timestamptz,
             current_window_requests = $7,
             current_window_failures = $8,
-            elevated_windows = $9,
-            healthy_windows = $10,
-            last_window_failure_rate = $11,
-            last_window_completed_at = $12::timestamptz,
-            rolling_hour_requests = $13,
-            budget_limit = $14,
-            budget_breached = $15,
-            last_pruned_at = $16::timestamptz,
+            current_window_deterministic_failures = $9,
+            elevated_windows = $10,
+            healthy_windows = $11,
+            last_window_failure_rate = $12,
+            last_window_deterministic_failure_rate = $13,
+            last_window_completed_at = $14::timestamptz,
+            rolling_hour_requests = $15,
+            budget_limit = $16,
+            budget_breached = $17,
+            last_pruned_at = $18::timestamptz,
             updated_at = clock_timestamp()
       WHERE site_key = $1
       RETURNING site_key, level, reason,
                 changed_at::text, recover_not_before::text, next_permit_at::text,
                 current_window_requests, current_window_failures,
+                current_window_deterministic_failures,
                 elevated_windows, healthy_windows, last_window_failure_rate,
+                last_window_deterministic_failure_rate,
                 last_window_completed_at::text, rolling_hour_requests,
-                budget_limit, budget_breached, last_pruned_at::text, updated_at::text`,
+                budget_limit, budget_breached,
+                l1_last_started_at::text, l1_slo_degraded_since::text,
+                l1_slo_expected_recovery_at::text, l1_slo_last_gap_seconds,
+                l1_slo_overdue, last_pruned_at::text, updated_at::text`,
     [
       SITE_KEY,
       state.level,
@@ -699,16 +1120,21 @@ async function updateControl(
       update.nextPermitAt ?? old.next_permit_at,
       update.currentWindowRequests ?? old.current_window_requests,
       update.currentWindowFailures ?? old.current_window_failures,
+      update.currentWindowDeterministicFailures
+        ?? old.current_window_deterministic_failures,
       state.elevatedWindows,
       state.healthyWindows,
       update.lastWindowFailureRate === undefined
         ? old.last_window_failure_rate
         : update.lastWindowFailureRate,
+      update.lastWindowDeterministicFailureRate === undefined
+        ? old.last_window_deterministic_failure_rate
+        : update.lastWindowDeterministicFailureRate,
       update.lastWindowCompletedAt === undefined
         ? old.last_window_completed_at
         : update.lastWindowCompletedAt,
       update.rollingHourRequests ?? old.rolling_hour_requests,
-      ADAPTIVE_EGRESS_POLICY.rollingBudgetRequests,
+      policy.rollingBudgetRequests,
       state.budgetBreached,
       update.lastPrunedAt ?? old.last_pruned_at,
     ],
@@ -722,6 +1148,7 @@ async function insertAlert(
   db: PoolClient,
   transition: AdaptiveEgressTransition,
   rollingHourRequests: number,
+  policy: AdaptiveEgressPolicy,
 ): Promise<void> {
   await query(
     db,
@@ -743,8 +1170,8 @@ async function insertAlert(
       transition.reason,
       transition.rollingHourRequests ?? rollingHourRequests,
       transition.failureRate,
-      ADAPTIVE_EGRESS_POLICY.windowRequests,
-      ADAPTIVE_EGRESS_POLICY.healthyWindowsToRecover,
+      policy.windowRequests,
+      policy.healthyWindowsToRecover,
     ],
   );
 }
@@ -779,10 +1206,12 @@ function rowToSnapshot(
       row.recover_not_before === null ? null : new Date(row.recover_not_before).toISOString(),
     currentWindowRequests: row.current_window_requests,
     currentWindowFailures: row.current_window_failures,
+    currentWindowDeterministicFailures: row.current_window_deterministic_failures,
     elevatedWindows: row.elevated_windows,
     healthyWindows: row.healthy_windows,
     healthyWindowsRequired: policy.healthyWindowsToRecover,
     lastWindowFailureRate: row.last_window_failure_rate,
+    lastWindowDeterministicFailureRate: row.last_window_deterministic_failure_rate,
     lastWindowCompletedAt:
       row.last_window_completed_at === null
         ? null
@@ -790,8 +1219,17 @@ function rowToSnapshot(
     rollingHourRequests: row.rolling_hour_requests,
     budgetLimit: row.budget_limit,
     budgetBreached: row.budget_breached,
+    l1LastStartedAt: isoOrNull(row.l1_last_started_at),
+    l1SloDegradedSince: isoOrNull(row.l1_slo_degraded_since),
+    l1SloExpectedRecoveryAt: isoOrNull(row.l1_slo_expected_recovery_at),
+    l1SloLastGapSeconds: row.l1_slo_last_gap_seconds,
+    l1SloOverdue: row.l1_slo_overdue,
     updatedAt: new Date(row.updated_at).toISOString(),
   };
+}
+
+function isoOrNull(value: string | null): string | null {
+  return value === null ? null : new Date(value).toISOString();
 }
 
 function asLevel(value: number): AdaptiveEgressLevel {

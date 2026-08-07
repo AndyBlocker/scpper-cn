@@ -218,7 +218,7 @@ export async function observeL1ProjectionDrift(
     aligned.map((row) => row.pageId),
     current,
     observedAt,
-  );
+  ) + await resolveNonLiveDriftStates(pool, observedAt);
   const gateSummary: Omit<L1DriftFloodGate<ScanTaskRow>, 'selected'> = {
     triggered: gate.triggered,
     limitPages: gate.limitPages,
@@ -462,6 +462,30 @@ async function resolveMissingDriftStates(
     }
   }
   return resolved;
+}
+
+/**
+ * 已删/身份替换页不会进入 aligned，旧实现因此永远无法命中 resolveMissingDriftStates，
+ * 17 个 revisions_full critical 就这样悬挂 209h。生命周期终止本身就是明确收敛证据。
+ */
+export async function resolveNonLiveDriftStates(
+  pool: Pool,
+  observedAt: string,
+): Promise<number> {
+  const result = await query(
+    pool,
+    'drift:resolve_non_live_state',
+    `UPDATE meta.incremental_drift_state ds
+        SET consecutive_observations = 0,
+            resolved_at = $1::timestamptz
+      WHERE ds.resolved_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM serve.page_current pc
+           WHERE pc.page_id = ds.page_id AND pc.status = 'live'
+        )`,
+    [toPgTimestamptz(observedAt)],
+  );
+  return result.rowCount ?? 0;
 }
 
 function driftKey(pageId: number, kind: L1DriftTaskKind): string {

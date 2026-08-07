@@ -89,8 +89,17 @@ export function pendingPolicyFor(collection: string, family: string): PendingPol
   if (family === 'pending_page') {
     return policy(30 * 60, 2 * HOUR, '身份解析每 5 分钟；30 分钟已错过多轮');
   }
-  if (family === 'forum_scan_task') {
-    return policy(2 * DAY, 7 * DAY, '论坛发现/消费每日一轮；两天无头部推进才异常');
+  if (family === 'forum_scan_task_catchup') {
+    return policy(2 * HOUR, 6 * HOUR, '论坛冷追平只看下降趋势；停滞两小时提示、六小时严重');
+  }
+  if (family === 'forum_scan_task_steady') {
+    return policy(30 * 60, 2 * HOUR, '论坛增量每 5 分钟发现、每分钟消费；按最老年龄告警');
+  }
+  if (family === 'forum_link_catchup') {
+    return policy(2 * HOUR, 6 * HOUR, '讨论串关联冷启动只看队列下降趋势；停滞才告警');
+  }
+  if (family === 'forum_discussion_steady') {
+    return policy(30 * 60, 2 * HOUR, '页面评论变化走稳态页级任务；按最老年龄告警');
   }
   if (family === 'observation_queue') {
     return policy(30 * 60, 2 * HOUR, '双写观测队列应由短进程持续消费');

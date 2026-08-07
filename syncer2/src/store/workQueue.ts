@@ -284,6 +284,8 @@ export interface ClaimedWorkTask {
   tier1RunId: number | null;
   /** Wikidot/ListPages 的零基 %%revisions%% 声明值，不是本地真实修订行数。 */
   revisionClaimedTotal: number;
+  /** 与 revisionClaimedTotal 同一份 L1 快照，handler 用它排除抓取期间水位前进竞态。 */
+  revisionTier1RunId?: number | null;
   commentCount: number;
   expectedThreadId: number | null;
   irreconcilableChecks?: number;
@@ -510,6 +512,7 @@ export async function claimWorkTasks(
     claimed_rating: number | null;
     tier1_run_id: string | null;
     revision_claimed_total: number | null;
+    revision_tier1_run_id: string | null;
     actual_revision_count: number;
     comment_count: number;
     discussion_thread_id: string | null;
@@ -615,37 +618,18 @@ export async function claimWorkTasks(
             tier1.claimed_total,
             tier1.claimed_rating,
             tier1.run_id::text AS tier1_run_id,
-            tier1_revision.claimed_total AS revision_claimed_total,
+            ips.last_l1_revision AS revision_claimed_total,
+            ips.last_l1_run_id::text AS revision_tier1_run_id,
             pc.revision_count AS actual_revision_count,
             pc.comment_count,
             pc.discussion_thread_id::text
        FROM claimed st
        JOIN serve.page_current pc ON pc.page_id = st.page_id
+       LEFT JOIN meta.incremental_page_state ips
+         ON ips.page_id = st.page_id AND ips.slug = pc.slug
        LEFT JOIN LATERAL (
          ${voteClaimEvidence('st.page_id')}
        ) tier1 ON true
-       LEFT JOIN LATERAL (
-         SELECT ps.claimed_total
-           FROM meta.page_scan ps
-           JOIN meta.ingest_run ir ON ir.id = ps.run_id
-          WHERE ps.page_id = st.page_id
-            AND ps.kind = 'revisions'
-            AND ps.claimed_total IS NOT NULL
-            AND ir.status = 'ok'
-            AND (
-              (
-                ir.source = 'wikidot'
-                AND ir.stats ->> 'mode' IN ('tier1', 'tier1_range')
-              )
-              OR (
-                ir.source = 'wikidot_listpages'
-                AND ir.stats ->> 'mode' IN ('l0_content', 'l1_votes')
-              )
-              OR ir.source = 'wikidot_listpages_adult_bootstrap'
-            )
-          ORDER BY ps.scanned_at DESC, ps.run_id DESC
-          LIMIT 1
-       ) tier1_revision ON true
       ORDER BY (st.kind = 'confirm_deleted') DESC,
                (st.kind = 'new_page_highfreq') DESC,
                st.priority DESC,
@@ -683,6 +667,8 @@ export async function claimWorkTasks(
       row.revision_claimed_total === null
         ? claimedRevisionCountFromListCount(Number(row.actual_revision_count))
         : Number(row.revision_claimed_total),
+    revisionTier1RunId:
+      row.revision_tier1_run_id === null ? null : Number(row.revision_tier1_run_id),
     commentCount: Number(row.comment_count),
     expectedThreadId:
       row.discussion_thread_id === null ? null : Number(row.discussion_thread_id),
@@ -717,6 +703,7 @@ export async function claimIrreconcilableReviews(
     claimed_rating: number | null;
     tier1_run_id: string | null;
     revision_claimed_total: number | null;
+    revision_tier1_run_id: string | null;
     actual_revision_count: number;
     comment_count: number;
     discussion_thread_id: string | null;
@@ -765,37 +752,18 @@ export async function claimIrreconcilableReviews(
             tier1.claimed_total,
             tier1.claimed_rating,
             tier1.run_id::text AS tier1_run_id,
-            tier1_revision.claimed_total AS revision_claimed_total,
+            ips.last_l1_revision AS revision_claimed_total,
+            ips.last_l1_run_id::text AS revision_tier1_run_id,
             pc.revision_count AS actual_revision_count,
             pc.comment_count,
             pc.discussion_thread_id::text
        FROM claimed i
        JOIN serve.page_current pc ON pc.page_id = i.page_id
+       LEFT JOIN meta.incremental_page_state ips
+         ON ips.page_id = i.page_id AND ips.slug = pc.slug
        LEFT JOIN LATERAL (
          ${voteClaimEvidence('i.page_id')}
        ) tier1 ON true
-       LEFT JOIN LATERAL (
-         SELECT ps.claimed_total
-           FROM meta.page_scan ps
-           JOIN meta.ingest_run ir ON ir.id = ps.run_id
-          WHERE ps.page_id = i.page_id
-            AND ps.kind = 'revisions'
-            AND ps.claimed_total IS NOT NULL
-            AND ir.status = 'ok'
-            AND (
-              (
-                ir.source = 'wikidot'
-                AND ir.stats ->> 'mode' IN ('tier1', 'tier1_range')
-              )
-              OR (
-                ir.source = 'wikidot_listpages'
-                AND ir.stats ->> 'mode' IN ('l0_content', 'l1_votes')
-              )
-              OR ir.source = 'wikidot_listpages_adult_bootstrap'
-            )
-          ORDER BY ps.scanned_at DESC, ps.run_id DESC
-          LIMIT 1
-       ) tier1_revision ON true
       ORDER BY i.next_review_at, i.page_id, i.kind`,
     [workerId, limit, String(lockStaleAfterMs), kinds, slugPrefix],
   );
@@ -820,6 +788,8 @@ export async function claimIrreconcilableReviews(
       row.revision_claimed_total === null
         ? claimedRevisionCountFromListCount(Number(row.actual_revision_count))
         : Number(row.revision_claimed_total),
+    revisionTier1RunId:
+      row.revision_tier1_run_id === null ? null : Number(row.revision_tier1_run_id),
     commentCount: Number(row.comment_count),
     expectedThreadId:
       row.discussion_thread_id === null ? null : Number(row.discussion_thread_id),

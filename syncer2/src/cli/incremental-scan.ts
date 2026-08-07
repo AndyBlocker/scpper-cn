@@ -27,7 +27,11 @@ import {
 import { loadConfig } from '../config.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
-import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
+import {
+  observeL1FreshnessSlo,
+  PostgresAdaptiveEgressGate,
+  type L1FreshnessSloSignal,
+} from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
 import {
   observeL1ProjectionDrift,
@@ -134,6 +138,7 @@ async function main(): Promise<void> {
   let pool: Pool | null = null;
   let runId: number | null = null;
   let startupProbe: unknown = null;
+  let egressSlo: L1FreshnessSloSignal | null = null;
   try {
     if (!opts.dryRun) {
       pool = createPool(config.databaseUrl, { max: Math.max(4, opts.concurrency) });
@@ -143,6 +148,9 @@ async function main(): Promise<void> {
         await assertTimezoneRoundTrip(pool);
       }
       runId = await startIngestRun(pool, SOURCE, startedAt);
+      if (opts.layer === 'l1') {
+        egressSlo = await observeL1FreshnessSlo(pool, startedAt);
+      }
     } else {
       log.warn('--dry-run：不连库、不写状态/任务/覆盖指标');
     }
@@ -231,6 +239,7 @@ async function main(): Promise<void> {
       persistence,
       l1EnumerationSnapshot,
       http: http.stats(),
+      egressSlo,
       startupProbe,
       durationMs,
       dryRun: opts.dryRun,
@@ -258,8 +267,9 @@ async function main(): Promise<void> {
             stats,
           });
 
+    const exitCode = runStatus === 'failed' ? 1 : (egressSlo?.exitCode ?? 0);
     emitSummary({
-      ok: runStatus !== 'failed',
+      ok: exitCode === 0,
       status: runStatus,
       layer: opts.layer.toUpperCase(),
       mode,
@@ -272,9 +282,10 @@ async function main(): Promise<void> {
       persistence,
       l1EnumerationSnapshot,
       parseHealth,
+      egressSlo,
       http: compactHttp(http),
     });
-    process.exitCode = runStatus === 'failed' ? 1 : 0;
+    process.exitCode = exitCode;
   } catch (err) {
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
     const durationMs = Date.now() - t0;
@@ -301,6 +312,7 @@ async function main(): Promise<void> {
           error: String(err),
           breaker,
           http: http.stats(),
+          egressSlo,
           httpHealth: http.healthStats(),
           startupProbe,
           durationMs,
@@ -318,6 +330,7 @@ async function main(): Promise<void> {
       runId,
       durationMs,
       error: String(err),
+      egressSlo,
       http: compactHttp(http),
     });
     process.exitCode = 1;

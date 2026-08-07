@@ -75,6 +75,30 @@ test('oldest-pending 是零出站的五分钟短任务', async () => {
   assert.doesNotMatch(cli, /HttpClient|wikidot|qq/i);
 });
 
+test('论坛增量/消费与图片 worker 均有有限短任务调度', async () => {
+  const [forumDiscovery, forumConsume, forumAudit, imageTimer, imageTimeout, pkgRaw] =
+    await Promise.all([
+      readFile(new URL('../deploy/systemd/syncer2-forum-discovery.timer', import.meta.url), 'utf8'),
+      readFile(new URL('../deploy/systemd/syncer2-forum-consume.timer', import.meta.url), 'utf8'),
+      readFile(new URL('../deploy/systemd/syncer2-forum-audit.timer', import.meta.url), 'utf8'),
+      readFile(new URL('../deploy/systemd/syncer2-image-ingest.timer', import.meta.url), 'utf8'),
+      readFile(
+        new URL('../deploy/systemd/syncer2-job@image-ingest.service.d/timeout.conf', import.meta.url),
+        'utf8',
+      ),
+      readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    ]);
+  const pkg = JSON.parse(pkgRaw) as { scripts: Record<string, string> };
+  assert.match(forumDiscovery, /^OnUnitInactiveSec=5min$/m);
+  assert.match(forumConsume, /^OnUnitInactiveSec=1min$/m);
+  assert.match(forumAudit, /^OnCalendar=.*05:23:00 Asia\/Shanghai$/m);
+  assert.match(imageTimer, /^OnUnitInactiveSec=1min$/m);
+  assert.match(imageTimeout, /^TimeoutStartSec=10min$/m);
+  assert.match(pkg.scripts['schedule:forum-discovery'] ?? '', /forum-incremental/);
+  assert.match(pkg.scripts['schedule:forum-audit'] ?? '', /sitemap-scan.*threads/);
+  assert.match(pkg.scripts['schedule:image-ingest'] ?? '', /image-ingest/);
+});
+
 test('pending_page 消费者每五分钟调度，且状态机认领所有到期复查态', async () => {
   const [timer, timeout, queues, resolver] = await Promise.all([
     readFile(new URL('../deploy/systemd/syncer2-resolve-pages.timer', import.meta.url), 'utf8'),
@@ -123,11 +147,13 @@ test('全部 Wikidot 生产出站入口接入同一个 PostgreSQL 自适应控�
     'cli/tier1-scan.ts',
     'cli/work-queue.ts',
     'cli/forum-scan.ts',
+    'cli/forum-incremental.ts',
     'cli/resolve-pages.ts',
     'cli/vote-replay.ts',
     'cli/vote-multiplicity-converge.ts',
     'cli/revision-source-backfill.ts',
     'cli/image-sample-refresh.ts',
+    'cli/image-ingest.ts',
     'backfill/s2.ts',
     'backfill/s3-live-remediate.ts',
   ];

@@ -1,9 +1,10 @@
 [Unit]
-Description=syncer2 forum sitemap discovery daily
+Description=syncer2 forum category-signal incremental discovery every 5 minutes
 
 [Timer]
-OnCalendar=*-*-* 05:23:00 Asia/Shanghai
-AccuracySec=2min
+OnBootSec=2min
+OnUnitInactiveSec=5min
+AccuracySec=15s
 Persistent=false
 Unit=syncer2-job@forum-discovery.service
 

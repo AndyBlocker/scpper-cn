@@ -305,9 +305,37 @@ const revisionsHandler: WorkHandler = async (task, context) => {
     claimedTotal: task.revisionClaimedTotal,
   };
   const results = await scanRevisions(httpForWorkTask(context, task), context.baseUrl, [target], 1);
-  const result =
+  let result =
     results.get(task.pageId) ??
     failed<RevisionBatch>('内部错误：修订结果 Map 缺项');
+  let superseded = false;
+  if (result.status !== 'failed' && task.revisionTier1RunId !== undefined) {
+    const latest = await query<{
+      last_l1_run_id: string | null;
+      last_l1_revision: number | null;
+    }>(
+      context.pool,
+      'work.revisions:latest_l1_claim',
+      `SELECT ips.last_l1_run_id::text, ips.last_l1_revision
+         FROM meta.incremental_page_state ips
+        WHERE ips.page_id = $1 AND ips.slug = $2`,
+      [task.pageId, task.slug],
+    );
+    const current = latest.rows[0];
+    superseded = current !== undefined && (
+      (current.last_l1_run_id === null ? null : Number(current.last_l1_run_id))
+        !== (task.revisionTier1RunId ?? null)
+      || Number(current.last_l1_revision) !== task.revisionClaimedTotal
+    );
+    if (superseded) {
+      result = partial(
+        result.data,
+        `抓取期间 L1 修订声明已前进；旧 claim(run=${String(task.revisionTier1RunId)}, ` +
+          `revision=${task.revisionClaimedTotal}) 不形成稳定矛盾，下轮用新水位重试`,
+        result.diagnostics,
+      );
+    }
+  }
   const applied = await applyRevisionResult(context.pool, target, result, {
     observedAt: new Date().toISOString(),
     runId: context.runId,
@@ -326,11 +354,35 @@ const revisionsHandler: WorkHandler = async (task, context) => {
     }]);
   }
   const resultHash =
-    result.status === 'failed'
+    result.status === 'failed' || superseded
       ? null
       : hashJson(result.data.entries);
+  const expectedCount = task.revisionClaimedTotal + 1;
+  const applyQuarantined = Number(applied?.['quarantined'] ?? 0);
+  const appliedRevisionCount = Number(applied?.['revision_count'] ?? Number.NaN);
+  const applyPartial =
+    result.status === 'ok' &&
+    applied !== null &&
+    (
+      applied['scan_status'] === 'partial'
+      || applyQuarantined > 0
+      || appliedRevisionCount !== expectedCount
+    );
+  if (applyPartial) {
+    await recordPageScan(context.pool, context.runId, task.pageId, 'revisions', {
+      status: 'partial',
+      claimed: task.revisionClaimedTotal,
+      fetched: result.diagnostics.fetchedTotal,
+      checksumOk: null,
+      resultHash,
+      error:
+        `修订事实未收敛：quarantined=${applyQuarantined}, ` +
+        `local_revision_count=${appliedRevisionCount}, expected=${expectedCount}`,
+    });
+  }
+  const outcomeStatus = applyPartial ? 'partial' : result.status;
   return {
-    status: result.status,
+    status: outcomeStatus,
     resultHash,
     localValue: applied ?? {},
     remoteValue: { claimed_total: task.revisionClaimedTotal },
@@ -338,7 +390,11 @@ const revisionsHandler: WorkHandler = async (task, context) => {
       claimedTotal: task.revisionClaimedTotal,
       fetchedTotal: result.diagnostics.fetchedTotal,
       apply: applied,
-      error: result.status === 'ok' ? null : result.error,
+      supersededL1Claim: superseded,
+      error:
+        applyPartial
+          ? `修订事实冲突/隔离，等待 stable_count 收敛到 irreconcilable`
+          : result.status === 'ok' ? null : result.error,
     },
   };
 };

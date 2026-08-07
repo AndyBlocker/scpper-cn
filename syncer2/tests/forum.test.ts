@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import {
   applyForumBatch,
   applyForumCategorySnapshot,
+  applyForumDiscussionLink,
   parseForumCategoryPage,
   parseForumComments,
   parseForumPostsPage,
@@ -24,7 +25,13 @@ import {
   scanPageDiscussions,
 } from '../src/collect/forum.js';
 import { applyInferredForumLinks } from '../src/collect/forumLinks.js';
+import {
+  discoverChangedForumThreads,
+  type ForumCategoryIncrementalState,
+} from '../src/collect/forumIncremental.js';
+import { ok } from '../src/collect/result.js';
 import { HttpClient } from '../src/http/client.js';
+import { forumConsumeQuotas, seedForumDiscussionLinkTasks } from '../src/store/queues.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +71,128 @@ test('M5 ForumStart 负向：合法空结果与 WAF/残缺分类行不混淆', (
     </tr></table></div>`);
   assert.equal(broken.status, 'failed');
   assert.match(broken.error, /分类行解析失败/);
+});
+
+test('论坛增量：全局信号仅变化少数分类时，只分页这些分类并只深扫计数变化 thread', async () => {
+  const categories = [
+    {
+      id: 1, title: '未变化', description: null, threadCount: 10, postCount: 20,
+      lastPostAt: '2026-08-07T01:00:00.000Z', lastThreadId: 11, lastPostId: 21,
+    },
+    {
+      id: 2, title: '有新回复', description: null, threadCount: 10, postCount: 21,
+      lastPostAt: '2026-08-07T01:05:00.000Z', lastThreadId: 22, lastPostId: 32,
+    },
+  ];
+  const state = (categoryId: number, postCount: number, lastPostAt: string): ForumCategoryIncrementalState => ({
+    categoryId,
+    sweptThreadCount: 10,
+    sweptPostCount: postCount,
+    sweptLastPostAt: lastPostAt,
+    sweptLastThreadId: categoryId === 1 ? 11 : 22,
+    sweptLastPostId: categoryId === 1 ? 21 : 31,
+    sweptAt: '2026-08-07T01:00:10.000Z',
+  });
+  const states = new Map([
+    [1, state(1, 20, '2026-08-07T01:00:00.000Z')],
+    [2, state(2, 20, '2026-08-07T01:00:00.000Z')],
+  ]);
+  const calls: Array<[number, number]> = [];
+  const results = await discoverChangedForumThreads(
+    categories,
+    states,
+    new Map([[22, 4], [23, 3]]),
+    async (categoryId, pageNo) => {
+      calls.push([categoryId, pageNo]);
+      return ok({
+        categoryId,
+        categoryTitle: '有新回复',
+        categoryDescription: null,
+        claimedThreadCount: 10,
+        claimedPostCount: 21,
+        pager: { pageNo: 1, totalPages: 1 },
+        threads: [
+          {
+            id: 22, categoryId, title: 'changed', description: null, createdBy: null,
+            createdAt: '2026-08-01T00:00:00.000Z', postCount: 5,
+            lastPostAt: '2026-08-07T01:05:00.000Z', sticky: false, isDeleted: false,
+          },
+          {
+            id: 23, categoryId, title: 'same', description: null, createdBy: null,
+            createdAt: '2026-08-01T00:00:00.000Z', postCount: 3,
+            lastPostAt: '2026-08-07T00:59:00.000Z', sticky: false, isDeleted: false,
+          },
+        ],
+      });
+    },
+  );
+  assert.deepEqual(calls, [[2, 1]], '不得为未变化分类发 category 请求');
+  assert.equal(results.length, 1);
+  assert.deepEqual(results[0]?.changedThreadIds, [22], '不得深扫 post_count 未变化 thread');
+});
+
+test('讨论串关联冷启动：28,389 个缺口可整批播种，link-only 正确连接已有论坛帖', async () => {
+  assert.deepEqual(
+    forumConsumeQuotas(50),
+    { discussion: 30, forum: 20 },
+    '追平期仍须给 thread/稳态深扫保留 kind 配额',
+  );
+  let seedSql = '';
+  const seedPool = {
+    query: async (sql: string) => {
+      seedSql = sql;
+      return { rows: [], rowCount: 28_389 };
+    },
+  } as unknown as Pool;
+  assert.equal(await seedForumDiscussionLinkTasks(seedPool), 28_389);
+  assert.match(seedSql, /comment_count > 0/);
+  assert.match(seedSql, /discussion_thread_id IS NULL/);
+  assert.match(seedSql, /forum_link_initial_catchup/);
+
+  const statements: string[] = [];
+  const client = {
+    query: async (sql: string) => {
+      statements.push(sql);
+      if (/^(?:BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [], rowCount: null };
+      if (sql.includes('ingest.apply_page_meta')) return { rows: [{ apply_page_meta: {} }], rowCount: 1 };
+      if (sql.includes("page_id_source = 'inferred'") && sql.includes('id <> $2')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("page_id_source = 'verified'") && sql.includes('RETURNING id::text')) {
+        return { rows: [{ id: '991' }], rowCount: 1 };
+      }
+      if (sql.includes('SELECT page_id, page_id_source')) {
+        return { rows: [{ page_id: 31549, page_id_source: 'verified' }], rowCount: 1 };
+      }
+      throw new Error(`unexpected transaction SQL: ${sql}`);
+    },
+    release: () => undefined,
+  };
+  const pool = {
+    connect: async () => client,
+    query: async (sql: string) => {
+      statements.push(sql);
+      if (sql.includes('meta.record_page_scan')) return { rows: [], rowCount: 1 };
+      throw new Error(`unexpected pool SQL: ${sql}`);
+    },
+  } as unknown as Pool;
+  const applied = await applyForumDiscussionLink(
+    pool,
+    { pageId: 31549, wikidotId: 1452770417, slug: 'x', claimedTotal: 3 },
+    ok({
+      pageId: 31549,
+      wikidotId: 1452770417,
+      threadId: 991,
+      pager: { pageNo: 1, totalPages: 2 },
+      posts: [],
+    }),
+    '2026-08-07T00:00:00.000Z',
+    1,
+  );
+  assert.equal(applied?.threadId, 991);
+  assert.equal(applied?.knownThreadLinked, true);
+  assert.ok(statements.some((sql) => /page_id_source = 'verified'/.test(sql)));
+  assert.ok(statements.some((sql) => sql.includes('meta.record_page_scan')));
 });
 
 test('M5 Category fixture：只解析指定单页，不提供全分类遍历', () => {

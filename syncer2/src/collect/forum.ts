@@ -58,6 +58,10 @@ export interface ForumCategoryRecord {
   description: string | null;
   threadCount: number;
   postCount: number;
+  /** ForumStart td.last：廉价分类活动信号；空分类为 null。 */
+  lastPostAt?: string | null;
+  lastThreadId?: number | null;
+  lastPostId?: number | null;
 }
 
 export interface ForumThreadRecord {
@@ -68,6 +72,10 @@ export interface ForumThreadRecord {
   createdBy: ForumAuthor | null;
   createdAt: string;
   postCount: number;
+  /** 分类列表 td.last；1 帖新主题没有 td.last 时回退 createdAt。 */
+  lastPostAt?: string | null;
+  lastPostId?: number | null;
+  sticky?: boolean;
   /** 只接受上游明确证据；解析到的存活主题恒为 false。 */
   isDeleted: boolean;
 }
@@ -211,6 +219,18 @@ function isoFromOdate($node: Q, label: string): string {
   return new Date(epoch * 1_000).toISOString();
 }
 
+function optionalIsoFromOdate($node: Q, label: string): string | null {
+  return $node.length === 0 ? null : isoFromOdate($node, label);
+}
+
+function parseLastPostLink($node: Q): { threadId: number | null; postId: number | null } {
+  const href = $node.find('a[href*="/forum/t-"]').last().attr('href') ?? '';
+  return {
+    threadId: positiveInt(/\/forum\/t-(\d+)/i.exec(href)?.[1]),
+    postId: positiveInt(/#post-(\d+)/i.exec(href)?.[1]),
+  };
+}
+
 function parseForumAuthor($node: Q): ForumAuthor | null {
   if ($node.length === 0) return null;
   const classes = new Set(($node.attr('class') ?? '').split(/\s+/).filter(Boolean));
@@ -351,12 +371,20 @@ export function parseForumStart(body: string): CollectResult<ForumStartSnapshot>
       const id = positiveInt(/\/forum\/c-(\d+)/i.exec($link.attr('href') ?? '')?.[1]);
       const title = normalizeText($link.text());
       if (id === null || title === '') throw new Error('category id/title 缺失');
+      const $last = $row.find('td.last').first();
+      const lastLink = parseLastPostLink($last);
       categories.push({
         id,
         title,
         description: optionalText($name.find('div.description').first().text()),
         threadCount: nonNegativeInt($row.find('td.threads').first().text(), `category ${id} thread_count`),
         postCount: nonNegativeInt($row.find('td.posts').first().text(), `category ${id} post_count`),
+        lastPostAt: optionalIsoFromOdate(
+          $last.find('span.odate').first(),
+          `category ${id} last_post_at`,
+        ),
+        lastThreadId: lastLink.threadId,
+        lastPostId: lastLink.postId,
       });
     } catch (err) {
       errors.push(String(err));
@@ -413,6 +441,12 @@ function parseThreadRow($: CheerioAPI, $row: Q, categoryId: number): ForumThread
   const $started = $row.find('td.started').first();
   const createdAt = isoFromOdate($started.find('span.odate').first(), `thread ${id} created_at`);
   const postCount = nonNegativeInt($row.find('td.posts').first().text(), `thread ${id} post_count`);
+  const $last = $row.find('td.last').first();
+  const lastLink = parseLastPostLink($last);
+  const lastPostAt = optionalIsoFromOdate(
+    $last.find('span.odate').first(),
+    `thread ${id} last_post_at`,
+  ) ?? createdAt;
   return {
     id,
     categoryId,
@@ -421,6 +455,12 @@ function parseThreadRow($: CheerioAPI, $row: Q, categoryId: number): ForumThread
     createdBy: parseForumAuthor($started.find('span.printuser').first()),
     createdAt,
     postCount,
+    lastPostAt,
+    lastPostId: lastLink.postId,
+    sticky:
+      $row.hasClass('sticky')
+      || $row.find('.sticky').length > 0
+      || /^\s*置顶\s*[:：]/.test(normalizeText($row.find('td.name div.title').first().text())),
     isDeleted: false,
   };
 }
@@ -1131,6 +1171,47 @@ export async function scanPageDiscussions(
   return new Map(pairs);
 }
 
+/**
+ * 讨论串关联冷启动只需要 CommentsList 的 thread id，不应顺手深扫整个 thread。
+ * 这条路径每页恰好一个 AMC 请求；正文随后由 forum_scan_task 的独立车道消费。
+ */
+export async function scanPageDiscussionLinks(
+  http: HttpClient,
+  baseUrl: string,
+  targets: readonly ForumDiscussionTarget[],
+  concurrency = 4,
+): Promise<Map<number, CollectResult<ForumCommentsPage>>> {
+  assertUniqueKeys(targets, (target) => target.pageId);
+  const pairs = await mapWithConcurrency(targets, concurrency, async (target) => {
+    try {
+      const response = await amcRequest(http, baseUrl, {
+        moduleName: COMMENTS_MODULE,
+        params: { pageId: target.wikidotId },
+        mode: 'forum:comments-link',
+        maxAttempts: 3,
+      });
+      if (response.status !== 'ok') {
+        return [
+          target.pageId,
+          failed<ForumCommentsPage>(
+            `${COMMENTS_MODULE} status=${response.status}（message=${response.message ?? '-'}）`,
+          ),
+        ] as const;
+      }
+      if (response.body === null) {
+        return [target.pageId, failed<ForumCommentsPage>(`${COMMENTS_MODULE} body 缺失`)] as const;
+      }
+      return [target.pageId, parseForumComments(response.body, target)] as const;
+    } catch (err) {
+      return [
+        target.pageId,
+        failed<ForumCommentsPage>(`页面讨论串关联抓取失败：${String(err)}`),
+      ] as const;
+    }
+  });
+  return new Map(pairs);
+}
+
 function firstDuplicate(values: readonly number[]): number | null {
   const seen = new Set<number>();
   for (const value of values) {
@@ -1408,6 +1489,127 @@ export interface ApplyDiscussionResult {
   pageMeta: Record<string, unknown>;
   forum: Record<string, unknown>;
   resultHash: Buffer;
+}
+
+export interface ApplyDiscussionLinkResult {
+  threadId: number;
+  knownThreadLinked: boolean;
+  resultHash: Buffer;
+}
+
+/**
+ * 只建立 page_current ↔ forum_thread 的权威关联；不把 CommentsList 第一页冒充完整帖子快照。
+ * 已有 v1 回填 thread/post 时，事务提交后页面评论查询立即可连通；未知 thread 由队列补正文。
+ */
+export async function applyForumDiscussionLink(
+  pool: Pool,
+  target: ForumDiscussionTarget,
+  result: CollectResult<ForumCommentsPage>,
+  observedAt: string,
+  runId: number | null,
+): Promise<ApplyDiscussionLinkResult | null> {
+  const resultHash =
+    result.status === 'failed'
+      ? null
+      : createHash('sha256')
+          .update(`forum-link:${target.pageId}:${result.data.threadId}`, 'utf8')
+          .digest();
+  if (result.status !== 'ok') {
+    await recordPageScan(pool, {
+      runId,
+      pageId: target.pageId,
+      kind: target.scanKind ?? 'discussion',
+      status: 'failed',
+      claimedTotal: null,
+      fetchedTotal: null,
+      resultHash,
+      error: result.error,
+    });
+    return null;
+  }
+
+  const applied = await withTransaction(pool, `forum:discussion-link:${target.pageId}`, async (db) => {
+    await query(
+      db,
+      'forum:apply_page_meta_discussion_link',
+      `SELECT ingest.apply_page_meta(
+         p_page       => $1,
+         p_attrs      => $2::jsonb,
+         p_observed   => $3::timestamptz,
+         p_source     => 'wikidot',
+         p_run        => $4,
+         p_wikidot_id => $5
+       )`,
+      [
+        target.pageId,
+        toPgJson({ discussion_thread_id: result.data.threadId }, `forum.link:${target.pageId}`),
+        toPgTimestamptz(observedAt),
+        runId,
+        target.wikidotId,
+      ],
+    );
+    await query(
+      db,
+      'forum:clear_superseded_inferred_link_only',
+      `UPDATE ingest.forum_thread
+          SET page_id = NULL,
+              page_id_source = NULL
+        WHERE page_id = $1
+          AND page_id_source = 'inferred'
+          AND id <> $2`,
+      [target.pageId, result.data.threadId],
+    );
+    const linked = await query<{ id: string }>(
+      db,
+      'forum:attach_known_thread_link_only',
+      `UPDATE ingest.forum_thread
+          SET page_id = $1,
+              page_id_source = 'verified'
+        WHERE id = $2
+          AND (
+            page_id IS NULL
+            OR page_id = $1
+            OR page_id_source = 'inferred'
+          )
+        RETURNING id::text`,
+      [target.pageId, result.data.threadId],
+    );
+    const targetState = await query<{ page_id: number | null; page_id_source: string | null }>(
+      db,
+      'forum:check_known_thread_link_only',
+      `SELECT page_id, page_id_source FROM ingest.forum_thread WHERE id = $1`,
+      [result.data.threadId],
+    );
+    const existing = targetState.rows[0];
+    if (
+      linked.rows.length === 0 &&
+      existing !== undefined &&
+      (existing.page_id !== target.pageId || existing.page_id_source !== 'verified')
+    ) {
+      throw new Error(
+        `thread ${result.data.threadId} 已 verified 关联 page=${String(existing.page_id)}，` +
+          `拒绝劫持到 page=${target.pageId}`,
+      );
+    }
+    return linked.rows.length > 0 || existing !== undefined;
+  });
+
+  await recordPageScan(pool, {
+    runId,
+    pageId: target.pageId,
+    kind: target.scanKind ?? 'discussion',
+    status: 'ok',
+    claimedTotal: null,
+    fetchedTotal: null,
+    resultHash,
+    error: `link_only: thread=${result.data.threadId}; first_page_posts=${result.data.posts.length}; ` +
+      '未声明帖子集合完整性',
+  });
+  return {
+    threadId: result.data.threadId,
+    knownThreadLinked: applied,
+    resultHash: resultHash!,
+  };
 }
 
 /**

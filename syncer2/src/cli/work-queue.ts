@@ -23,7 +23,11 @@ import {
   RESTRICTED_TLS_MAX_VERSION,
   RestrictedIdentitySession,
 } from '../http/restrictedSession.js';
-import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
+import {
+  evaluateAdaptiveSelfProtection,
+  PostgresAdaptiveEgressGate,
+  readAdaptiveEgressState,
+} from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun, type ScanTaskKind } from '../store/meta.js';
 import {
@@ -55,6 +59,7 @@ import {
 } from '../work/handlers.js';
 import {
   classifyWorkFailure,
+  deterministicEgressFailureClass,
   reviewIdentityIfDue,
   workFailureHash,
   type WorkFailurePolicy,
@@ -64,6 +69,7 @@ import {
   type IdentityReviewResult,
 } from '../work/identityCheck.js';
 import {
+  applyAdaptiveSelfProtectionToWorkQueueHealth,
   evaluateWorkQueueHealth,
   WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS,
 } from '../work/runHealth.js';
@@ -359,12 +365,17 @@ async function main(): Promise<void> {
         });
         break;
       }
+      const taskHttp = httpForWorkTask(context, task);
+      taskHttp.beginAdaptiveOutcomeClassification();
+      let adaptiveOutcomesSettled = false;
       let outcome: WorkHandlerOutcome;
       try {
         outcome = await WORK_HANDLER_REGISTRY[task.kind](task, context);
       } catch (err) {
         const error = String(err);
         if (pgCode(err) === 'PGF01') {
+          await taskHttp.finishAdaptiveOutcomeClassification(null);
+          adaptiveOutcomesSettled = true;
           await noteFreezeSkip(context, task, error);
           if (task.queueSource === 'irreconcilable') {
             await releaseIrreconcilableReviewLocks(pool, [task], workerId);
@@ -419,6 +430,14 @@ async function main(): Promise<void> {
           outcome.resultHash = workFailureHash(failurePolicy);
         }
         terminalFailure = failurePolicy.action === 'irreconcilable';
+
+        // 分类一旦完成就先结算原任务的 HTTP outcomes，再做额外的身份复核请求。
+        // 这样空体 500 复用 identity_absent 判据被排除，而复核自身的真实链路故障
+        // 仍作为新的站点压力正常记账。
+        await taskHttp.finishAdaptiveOutcomeClassification(
+          deterministicEgressFailureClass(failurePolicy),
+        );
+        adaptiveOutcomesSettled = true;
 
         try {
           identityReview = await reviewIdentityIfDue(task, failurePolicy, () =>
@@ -477,6 +496,9 @@ async function main(): Promise<void> {
               identityReview?.status === 'failed' ? identityReview.error : null,
           };
         }
+      }
+      if (!adaptiveOutcomesSettled) {
+        await taskHttp.finishAdaptiveOutcomeClassification(null);
       }
 
       let action = outcome.finalized ? 'handler_finalized' : 'unknown';
@@ -572,7 +594,7 @@ async function main(): Promise<void> {
       ),
       releaseIrreconcilableReviewLocks(pool, unfinishedTasks, workerId),
     ]);
-    const health = evaluateWorkQueueHealth({
+    const baseHealth = evaluateWorkQueueHealth({
       claimed: counters.claimed,
       processed: counters.processed,
       partial: counters.partial,
@@ -582,6 +604,9 @@ async function main(): Promise<void> {
       breakerOpen: http.breakerOpen,
       stoppedByFailureLimit: counters.stoppedByFailureLimit,
     });
+    const egressState = await readAdaptiveEgressState(pool);
+    const selfProtection = evaluateAdaptiveSelfProtection(egressState, Date.now());
+    const health = applyAdaptiveSelfProtectionToWorkQueueHealth(baseHealth, selfProtection);
     const status = health.status;
     const durationMs = Date.now() - startedMs;
     await finishIngestRun(pool, runId, {
@@ -614,6 +639,7 @@ async function main(): Promise<void> {
         seeded,
         ...counters,
         health,
+        selfProtection,
         healthExclusions: {
           write_freeze: counters.writeFreezeSkipped,
         },
@@ -651,6 +677,7 @@ async function main(): Promise<void> {
       ok: health.exitCode === 0,
       status,
       health,
+      selfProtection,
       starvation,
       reapedNonLiveTasks: reaped,
       stoppedByRuntimeBudget,

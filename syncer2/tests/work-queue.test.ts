@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import { parseWhoRatedPage } from '../src/collect/votes.js';
+import { evaluateAdaptiveSelfProtection, type AdaptiveEgressSnapshot } from '../src/http/adaptiveEgress.js';
 import { createPool, query } from '../src/store/db.js';
 import { enqueueScanTasks } from '../src/store/meta.js';
 import {
@@ -28,6 +29,7 @@ import {
   WORK_HANDLER_REGISTRY,
 } from '../src/work/handlers.js';
 import {
+  applyAdaptiveSelfProtectionToWorkQueueHealth,
   evaluateWorkQueueHealth,
   WORK_QUEUE_FAILURE_RATE_THRESHOLD,
   WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS,
@@ -274,6 +276,47 @@ describe('M4 work-queue', () => {
     assert.equal(repeated.status, 'failed');
     assert.equal(repeated.exitCode, 1);
     assert.ok(repeated.reasons.includes('repeated_cross_run_failure'));
+  });
+
+  it('自适应降档窗口内 exit 0 并给恢复时间；超过预计恢复窗口才 exit 1', () => {
+    const base = evaluateWorkQueueHealth({
+      claimed: 5, processed: 0, partial: 0, failed: 0,
+      writeFreezeSkipped: 0, repeatedFailures: 0,
+      breakerOpen: false, stoppedByFailureLimit: false,
+    });
+    const snapshot: AdaptiveEgressSnapshot = {
+      siteKey: 'wikidot', level: 3, levelName: 'cooldown', minRequestIntervalMs: 8_000,
+      reason: 'rolling_60m_requests_3208_gt_3200',
+      changedAt: '2026-08-07T00:00:00.000Z',
+      recoverNotBefore: '2026-08-07T01:00:00.000Z',
+      currentWindowRequests: 0, currentWindowFailures: 0,
+      currentWindowDeterministicFailures: 0, elevatedWindows: 0, healthyWindows: 0,
+      healthyWindowsRequired: 6, lastWindowFailureRate: 0,
+      lastWindowDeterministicFailureRate: 0, lastWindowCompletedAt: null,
+      rollingHourRequests: 444, budgetLimit: 3_200, budgetBreached: false,
+      l1LastStartedAt: null, l1SloDegradedSince: null, l1SloExpectedRecoveryAt: null,
+      l1SloLastGapSeconds: null, l1SloOverdue: false,
+      updatedAt: '2026-08-07T00:00:00.000Z',
+    };
+    const expected = evaluateAdaptiveSelfProtection(
+      snapshot,
+      Date.parse('2026-08-07T01:10:00.000Z'),
+    );
+    const protectedHealth = applyAdaptiveSelfProtectionToWorkQueueHealth(base, expected);
+    assert.equal(expected.status, 'downshift_expected');
+    assert.equal(protectedHealth.exitCode, 0);
+    assert.equal(protectedHealth.selfProtection.levelName, 'cooldown');
+    assert.match(protectedHealth.selfProtection.reason, /3208_gt_3200/);
+    assert.ok(protectedHealth.selfProtection.expectedRecoveryAt);
+
+    const overdue = evaluateAdaptiveSelfProtection(
+      snapshot,
+      Date.parse('2026-08-07T05:00:00.000Z'),
+    );
+    const failed = applyAdaptiveSelfProtectionToWorkQueueHealth(base, overdue);
+    assert.equal(overdue.status, 'downshift_overdue');
+    assert.equal(failed.exitCode, 1);
+    assert.ok(failed.reasons.includes('adaptive_downshift_recovery_overdue'));
   });
 
   it('11 种 scan_task kind 全部注册 handler，没有认领后跳过的空洞', () => {

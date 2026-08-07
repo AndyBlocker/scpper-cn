@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import type { Pool } from 'pg';
 
 import {
   advanceDriftObservation,
@@ -7,6 +8,7 @@ import {
   classifyL1ProjectionDrift,
   irreconcilableRemoteEvidenceChanged,
 } from '../src/collect/l1Drift.js';
+import { resolveNonLiveDriftStates } from '../src/store/drift.js';
 
 describe('L1 projection drift reconciliation', () => {
   it('静态差额在 L1 本轮无变化时仍于第二次连续观测入队', () => {
@@ -102,5 +104,26 @@ describe('L1 projection drift reconciliation', () => {
       ),
       [],
     );
+  });
+
+  it('已删/非 live 页的旧 drift 有明确收敛路径', async () => {
+    let sql = '';
+    let params: unknown[] | undefined;
+    const pool = {
+      query: async (statement: string, values?: unknown[]) => {
+        sql = statement;
+        params = values;
+        return { rows: [], rowCount: 17 };
+      },
+    } as unknown as Pool;
+    const resolved = await resolveNonLiveDriftStates(
+      pool,
+      '2026-08-07T12:00:00.000Z',
+    );
+    assert.equal(resolved, 17);
+    assert.match(sql, /NOT EXISTS/);
+    assert.match(sql, /pc\.status = 'live'/);
+    assert.match(sql, /consecutive_observations = 0/);
+    assert.deepEqual(params, ['2026-08-07T12:00:00.000Z']);
   });
 });
