@@ -237,7 +237,8 @@ test('A4 inferred 回填 SQL 明确保护 verified 与无来源既有真值', as
 });
 
 test('M5 Thread fixture：作者、编辑时间与嵌套 parent_post_id', () => {
-  const parsed = parseForumThread(fixture('forum-thread.reconstructed.html'), 991);
+  const html = fixture('forum-thread.reconstructed.html');
+  const parsed = parseForumThread(html, 991);
   assert.equal(parsed.status, 'ok');
   assert.equal(parsed.data.thread.categoryId, 882982);
   assert.equal(parsed.data.thread.createdBy?.kind, 'wikidot');
@@ -246,6 +247,44 @@ test('M5 Thread fixture：作者、编辑时间与嵌套 parent_post_id', () => 
   assert.equal(parsed.data.posts[1]?.parentPostId, 7001);
   assert.equal(parsed.data.posts[1]?.author?.kind, 'guest');
   assert.equal(parsed.data.posts[1]?.editedAt, '2023-11-14T22:16:40.000Z');
+
+  const newerThanHeader = parseForumThread(html.replace('文章数: 2', '文章数: 1'), 991);
+  assert.equal(newerThanHeader.status, 'ok');
+  assert.equal(
+    newerThanHeader.status === 'ok' ? newerThanHeader.data.thread.postCount : null,
+    2,
+    '完整实际帖子是 header 的正向超集时，以实际计数更新 thread 当前态',
+  );
+
+  const missingFromPage = parseForumThread(html.replace('文章数: 2', '文章数: 3'), 991);
+  assert.equal(missingFromPage.status, 'partial');
+  assert.match(
+    missingFromPage.status === 'partial' ? missingFromPage.error : '',
+    /单页主题解析 2 帖 < thread 自报 3/,
+  );
+
+  const userTemplateLiteral = parseForumComments(
+    `<script>WIKIDOT.forumThreadId = 991;</script>${html.replace(
+      '第一段 <strong>正文</strong>',
+      '把%%name%%换成%%title%%能达到更好的显示效果',
+    )}`,
+    { pageId: 25, wikidotId: 1452770417, claimedTotal: 2 },
+  );
+  assert.equal(userTemplateLiteral.status, 'ok', '用户评论里的 Wikidot 模板语法不是结构残留');
+  assert.match(
+    userTemplateLiteral.status === 'ok' ? userTemplateLiteral.data.posts[0]!.textPlain : '',
+    /%%name%%换成%%title%%/,
+  );
+
+  const structuralTemplateResidue = parseForumComments(
+    `<script>WIKIDOT.forumThreadId = 991;</script><div>%%selector%%</div>${html}`,
+    { pageId: 25, wikidotId: 1452770417, claimedTotal: 2 },
+  );
+  assert.equal(structuralTemplateResidue.status, 'failed');
+  assert.match(
+    structuralTemplateResidue.status === 'failed' ? structuralTemplateResidue.error : '',
+    /未替换的 %%selector%%/,
+  );
 });
 
 test('M5 Thread/Posts 负向：空白只有独立 claimed_total=0 才是合法空帖', () => {
@@ -428,6 +467,32 @@ test('M5 五个 AMC 模块（含真实评论 CommentsList）全部匿名，且�
         '必须保存实际评论正文，不能把“显示评论”的折叠 UI 当帖子',
       );
     }
+
+    const newerThanClaim = await scanPageDiscussions(
+      client,
+      baseUrl,
+      [{ pageId: 26, wikidotId: 1452770417, claimedTotal: 2 }],
+      2,
+    );
+    assert.equal(
+      newerThanClaim.get(26)?.status,
+      'ok',
+      '完整 thread 是 Tier1 声明的正向超集时应接受，避免新增评论造成永久 partial',
+    );
+
+    const missingFromThread = await scanPageDiscussions(
+      client,
+      baseUrl,
+      [{ pageId: 27, wikidotId: 1452770417, claimedTotal: 4 }],
+      2,
+    );
+    assert.equal(missingFromThread.get(27)?.status, 'partial');
+    assert.match(
+      missingFromThread.get(27)?.status === 'partial'
+        ? missingFromThread.get(27)!.error
+        : '',
+      /完整 thread 3 帖 < Tier1 claimed_total 4/,
+    );
 
     assert.deepEqual(
       new Set(requests.map((request) => request.moduleName)),

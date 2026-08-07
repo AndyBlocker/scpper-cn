@@ -116,6 +116,42 @@ describe('共享 pageId 通用守卫', () => {
 });
 
 describe('登录 session 降级与 7890 出口', () => {
+  it('并发 adult 源码首次使用只建立一个登录 session', async () => {
+    let loginRequests = 0;
+    let sourceRequests = 0;
+    const fake = {
+      proxyUrl: RESTRICTED_STABLE_PROXY_URL,
+      request: async (url: string) => {
+        if (url.includes('LoginPopupScreen')) {
+          loginRequests++;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return response('', { 'set-cookie': 'WIKIDOT_SESSION_ID=shared-session; Path=/' });
+        }
+        sourceRequests++;
+        return response(JSON.stringify({
+          status: 'ok',
+          body: '<div class="page-source">concurrent</div>',
+        }));
+      },
+      get: async () => response(''),
+    } as unknown as RestrictedIdentityHttp;
+    const session = new RestrictedIdentitySession(
+      fake,
+      { username: 'fixture', password: 'fixture', source: 'test' },
+      'https://scp-wiki-cn.wikidot.com',
+      { info: () => undefined, warn: () => undefined } as unknown as Logger,
+    );
+    const results = await Promise.all([
+      session.fetchCurrentSource('adult:a', 1),
+      session.fetchCurrentSource('adult:b', 2),
+      session.fetchCurrentSource('adult:c', 3),
+      session.fetchCurrentSource('adult:d', 4),
+    ]);
+    assert.equal(loginRequests, 1);
+    assert.equal(sourceRequests, 4);
+    assert.deepEqual(results.map((result) => result.status), ['ok', 'ok', 'ok', 'ok']);
+  });
+
   it('adult ViewSource 携带 7890 登录态取到源码；no_permission 只重登一次', async () => {
     let loginRequests = 0;
     let sourceRequests = 0;

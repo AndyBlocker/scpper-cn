@@ -1,7 +1,9 @@
 # ADULT2：源码、讨论与修订内容构建报告
 
 日期：2026-08-07（Asia/Shanghai）  
-工作树：`feat__syncer2-foundation`，未 commit、未 push
+工作树：`feat__syncer2-foundation`。任务开始时 HEAD=`7a394bf`；执行期间外部流程于
+12:21 将当时工作树连同另一项署名修复提交为 `2277dee`。本任务没有执行 commit/push，
+也没有 reset/amend 外部提交；此后的收尾改动保持未提交，远端未推进。
 
 ## 结论
 
@@ -48,6 +50,18 @@ bootstrap 只投递投票/修订任务，从未投递 `discussion`，所以 133 
 4. 只有完整翻页且计数校验成功才允许把本地缺席帖写 `is_deleted=true`；partial/failed
    永不由缺席推断删除。
 
+计数校验按快照时间单向处理：完整 thread 的实际帖子数少于 Tier1/thread 自报仍为
+`partial`；实际更多是声明之后新增的完整超集，允许落库并用实际数更新当前态。活库最终
+有 4 页在任务声明后各新增 1 帖：8→9、21→22、121→122、125→126；全部按完整超集写入，
+最终 thread/page 当前计数均闭合且 `soft_deleted=0`。没有出现实际少于声明的页，缺帖方向
+的断言也没有放宽。
+
+`adult:nirvana-and-the-hysterectomy` 还暴露了一个真实解析边界：某条用户评论把
+`%%name%%`、`%%title%%` 当普通文字讨论，旧的全页残留检查把它误判为结构模板未展开。
+现在先从 DOM 移除 `div.post` 再检查结构区；结构里的 `%%selector%%` 仍拒绝，帖子正文
+里的字面 selector 则保留。该页修复后用匿名 CommentsList/Thread 链路重放成功，thread
+`13994856` 共 73 帖，`soft_deleted=0`。
+
 回归用真实结构 fixture 断言解析到 thread `991` 和三条实际评论正文，并遍历全部 AMC
 请求确认没有 Authorization、用户名/密码或 `WIKIDOT_SESSION_ID`。
 
@@ -55,7 +69,7 @@ bootstrap 只投递投票/修订任务，从未投递 `discussion`，所以 133 
 
 不是“主站也调用了折叠模块”的全站代码错误；主站增量触发同样使用 CommentsList。
 但存在全站性**冷启动覆盖缺口**：首轮 ListPages 为避免 3.6 万页请求洪峰只建快照，
-`forum` 任务只在后续 comments/commented_at 变化时触发。因此当前非 adult 活页 36,268，
+`forum` 任务只在后续 comments/commented_at 变化时触发。因此终审时非 adult 活页 36,273，
 其中 28,635 页 `comment_count>0`；只有 246 页有 CommentsList 验证的
 `discussion_thread_id`，28,389 页缺验证 id。v1 标题回填已为其中 27,559 页建立
 `page_id_source=inferred` 的 thread 链接，仍有 830 个有评论页面没有任何活 thread 链接。
@@ -70,9 +84,18 @@ wikitext、图片和来源证据；ListPages HTML 继续放在 `rendered_content
 session 复用 20 分钟；`no_permission`、HTTP 302/401/403 或非 JSON 登录页只触发一次强制
 重登。重登后仍失败会抛 `RestrictedSessionUnavailableError`，任务记录
 `emptyResult=false` 并按 prerequisite/retry 退避，既不写空源码，也不触发任何删除推断。
-没有凭证时同样显式失败。普通 AMC 默认仍只有 token7 cookie，登录 cookie 不扩散到其它模块。
+没有凭证时同样显式失败。并发 content 任务对首次登录/重登做 session 单飞，四个任务只
+建立一个 session，不会互相覆盖。普通 AMC 默认仍只有 token7 cookie，登录 cookie 不扩散
+到其它模块。
 
-活库最终收敛数据将在本报告末次核验后填写：`[SOURCE_FINAL]`。
+adult-only worker 的整个 7890 客户端参加 PostgreSQL 全站 adaptive gate；混合 worker 的
+专用 7890 客户端也接入同一控制器。固定出口不能成为绕过容量预算的理由。
+定向 worker 达到单轮预算时，未执行任务会原子归还 `adult-stable-egress-hold`（同时归还
+claim 增加的 attempts），不会在受限 session 注销等待期间短暂暴露给通用 worker。
+
+活库最终收敛：133/133 页都有 `wikidot_authenticated` 当前源码观测，共 133 行，
+`run_id` 缺失 0、空源码 0，源码大小 304–136,443 bytes；133/133 的观测 blob 与
+`serve.page_current.source_sha` 精确一致。旧的 102 页覆盖没有被算入这个数字。
 
 ### 历史版本源码
 
@@ -92,8 +115,10 @@ session 复用 20 分钟；`no_permission`、HTTP 302/401/403 或非 JSON 登录
 - 类型元素直方图：`SOURCE_CHANGED 1,471`、`FILES_CHANGED 773`、
   `TAGS_CHANGED 442`、`PAGE_CREATED 133`、`PAGE_RENAMED 130`、
   `TITLE_CHANGED 75`、`META_CHANGED 26`。单条修订可有多个类型，所以元素总数可大于行数。
-- 作者：2,870 条为 240 个 Wikidot actor；96 条为 9 个 deleted actor。两类 actor 都保留
-  正整数 Wikidot id，没有按显示名伪造身份。
+- 作者：2,966 条全部关联 249 个正整数 Wikidot 身份，缺作者 0、非正 ID 0；最终用户快照中
+  98 条/10 个 actor 显示 `(account deleted)`，其余为 2,868 条/239 个 actor。删除显示状态
+  可被身份刷新更新（本轮终审由 96/9 变成 98/10），revision 的作者 ID 没有随显示名漂移，
+  也没有按显示名伪造身份。
 - 来源构成是 `wikidot=764`、`v1_backfill=2,202`；v2 直抓会按自然键补齐 v1 行的类型/ID，
   append-only 事实没有为“全 v2 来源”而复制。样本 `adult:man-in-a-bottle-0` 逐行与实时
   RevisionList 对比，类型集合、作者、UTC 时间和 comment 均为 0 差异。
@@ -103,24 +128,37 @@ session 复用 20 分钟；`no_permission`、HTTP 302/401/403 或非 JSON 登录
 
 ## 活库最终结果
 
-`[DISCUSSION_FINAL]`
+adult 讨论最终 133/133 都有 CommentsList 实抓并标为 `verified` 的 thread id，thread
+反向 `page_id` 错配 0；当前态共 4,205 条活帖，`text_plain` 与 `text_html` 非空均为
+4,205/4,205，thread 自报与 page 当前计数差异均为 0，软删 0。133 页最新讨论扫描全部
+`ok`；`content/discussion` 遗留任务 0、未解决 irreconcilable 0、专用 hold 0。
 
-`[SOURCE_COUNTS_FINAL]`
+全库 `page_source` 来源分布：`legacy_unattributed` 78,692 行/47,920 页、`v1_backfill`
+104 行/102 页、`wikidot_anonymous` 56 行/56 页、`wikidot_authenticated` 133 行/133 页。
+两类 v2 直抓共 189 行且 `run_id` 缺失 0；adult 范围正好是旧 v1 104 行/102 页与本轮
+登录直抓 133 行/133 页，两者不会再混为一个“已有源码”覆盖数。
 
 ## 回归
 
-- 讨论：断言 CommentsList 解析正确 thread id 和实际评论正文；五个 forum 模块全部匿名。
+- 讨论：断言 CommentsList 解析正确 thread id 和实际评论正文；五个 forum 模块全部匿名；
+  评论正文内字面 `%%name%%` 可通过，而评论区外的模板残留仍拒绝。
+- 讨论快照竞争：实际超集可推进并更新 thread 计数；实际少于声明仍必须 partial。
 - 源码：断言登录 ViewSource 成功；`no_permission` 只重登一次；再次失败显式
   `emptyResult=false`，failure policy 为 retry。
 - 出口：session 构造、work task 路由和受限源码扫描均拒绝 7891，只接受 7890/TLS 1.2。
+- 并发：四个同时开始的 adult 源码请求只执行一次 Login2Action；混合 worker 的专用
+  7890 HttpClient 也接全站共享 adaptive gate。
+- 队列隔离：adult 未执行任务直接释放回专用 hold；普通任务仍释放为 NULL。
 - 来源：迁移词表、`run_id`、新写函数与 v1 backfill 显式来源均有回归。
 - `npx tsc --noEmit`：通过。
-- `npm test`：423/423 通过（基线 420 + 新增 3）；活库慢用例原断言未修改。
+- `npm test`：431/431 通过（76 suites，0 failed）；活库慢用例原断言未修改。
 - `git diff --check`：通过。
 
 ## 阻塞与边界
 
-`[BLOCKER_FINAL]`
+本轮目标无阻塞：adult 当前源码、讨论和修订内容审计全部闭合。逐版本历史源码的登录采集
+和非 adult 约 2.84 万页 thread id 冷启动验证是已量化的后续容量任务，不是本轮残留失败；
+不能把它们塞进五分钟 L1 或绕开全站 adaptive gate。
 
 没有使用 7891 采集 adult 源码/讨论，没有移除 v1 数据库服务端只读约束；没有修改
 `/home/andyblocker/qqbot`，也没有发送 QQ 消息。

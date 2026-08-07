@@ -1140,19 +1140,24 @@ export async function releaseWorkTaskLocks(
   pool: Pool,
   taskIds: readonly number[],
   workerId: string,
+  releaseToOwner: string | null = null,
 ): Promise<number> {
   if (taskIds.length === 0) return 0;
   const result = await query(
     pool,
     'meta.scan_task:release_work_locks',
     `UPDATE meta.scan_task
-        SET locked_by = NULL,
-            locked_at = NULL,
+        SET locked_by = $3::text,
+            -- adult 定向重放用未来锁隔离通用 worker；定向 worker 通过 reservedLockOwner
+            -- 仍可立即认领。普通释放保持 NULL/NULL。
+            locked_at = CASE WHEN $3::text IS NULL
+                             THEN NULL
+                             ELSE clock_timestamp() + interval '4 hours' END,
             -- 本轮根本没执行到的任务不应被当成失败退避，也不应白烧一次 attempts。
             -- 只有 finishWorkTask 看见真实 partial/failed 后才有权推进退避。
             attempts = GREATEST(0, attempts - 1)
       WHERE id = ANY($1::bigint[]) AND locked_by = $2`,
-    [taskIds, workerId],
+    [taskIds, workerId, releaseToOwner],
   );
   return result.rowCount ?? 0;
 }

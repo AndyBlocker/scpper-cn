@@ -19,7 +19,7 @@ import {
   type IdentityOutcome,
 } from '../page/identity.js';
 import { createLogger, type Logger } from '../util/log.js';
-import { HttpClient, HttpStatusError } from './client.js';
+import { HttpClient, HttpStatusError, type HttpClientOptions } from './client.js';
 
 export const RESTRICTED_STABLE_PROXY_URL = 'http://127.0.0.1:7890';
 export const RESTRICTED_TLS_MAX_VERSION = 'TLSv1.2' as const;
@@ -74,16 +74,9 @@ export function loadRestrictedWikidotCredentials(
   return null;
 }
 
-export function createRestrictedStableHttp(options: {
-  userAgent: string;
-  referer: string;
-  timeoutMs: number;
-  maxAttempts: number;
-  breaker503: number;
-  breakerReset: number;
-  connections?: number;
-  logger?: Logger;
-}): HttpClient {
+export function createRestrictedStableHttp(
+  options: Omit<HttpClientOptions, 'proxyUrl' | 'tlsMaxVersion'>,
+): HttpClient {
   return new HttpClient({
     ...options,
     proxyUrl: RESTRICTED_STABLE_PROXY_URL,
@@ -97,6 +90,7 @@ export function createRestrictedStableHttp(options: {
 export class RestrictedIdentitySession {
   #sessionId: string | null = null;
   #loggedInAt = 0;
+  #sessionSetup: Promise<void> | null = null;
 
   constructor(
     readonly http: RestrictedIdentityHttp,
@@ -221,6 +215,22 @@ export class RestrictedIdentitySession {
     ) {
       return;
     }
+    // work-queue 可并发处理多个 adult content。首次登录或 session 失效时只允许一个
+    // Login2Action 在飞；其它任务等待同一结果，避免四个 session 互相覆盖/遗留。
+    if (this.#sessionSetup !== null) {
+      await this.#sessionSetup;
+      return;
+    }
+    const setup = this.#establishSession(force);
+    this.#sessionSetup = setup;
+    try {
+      await setup;
+    } finally {
+      if (this.#sessionSetup === setup) this.#sessionSetup = null;
+    }
+  }
+
+  async #establishSession(force: boolean): Promise<void> {
     this.#sessionId = null;
     const token = randomBytes(8).toString('hex');
     let response;

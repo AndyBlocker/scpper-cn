@@ -13,6 +13,7 @@ import { parseWhoRatedPage } from '../src/collect/votes.js';
 import { createPool, query } from '../src/store/db.js';
 import { enqueueScanTasks } from '../src/store/meta.js';
 import {
+  ADULT_STABLE_EGRESS_HOLD,
   ALL_WORK_TASK_KINDS,
   CONSECUTIVE_PAGE_FAILURE_LIMIT,
   finishWorkTask,
@@ -648,6 +649,32 @@ describe('M4 work-queue', () => {
       not_before: null,
       locked_by: null,
     });
+  });
+
+  it('adult 未执行任务释放回专用 hold，不暴露给通用 worker', async () => {
+    const pageId = PAGE_BASE + 33;
+    await insertLockedTask(pageId, { attempts: 3 });
+    const id = await taskId(pageId);
+    assert.equal(
+      await releaseWorkTaskLocks(pool, [id], WORKER, ADULT_STABLE_EGRESS_HOLD),
+      1,
+    );
+    const state = await query<{
+      attempts: number;
+      locked_by: string | null;
+      locked_at: Date | null;
+      now: Date;
+    }>(
+      pool,
+      'test:m4:released_to_adult_hold',
+      `SELECT attempts, locked_by, locked_at, clock_timestamp() AS now
+         FROM meta.scan_task
+        WHERE id=$1`,
+      [id],
+    );
+    assert.equal(state.rows[0]!.attempts, 2);
+    assert.equal(state.rows[0]!.locked_by, ADULT_STABLE_EGRESS_HOLD);
+    assert.ok(state.rows[0]!.locked_at! > state.rows[0]!.now);
   });
 });
 

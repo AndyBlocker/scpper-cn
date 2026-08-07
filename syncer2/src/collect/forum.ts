@@ -313,7 +313,16 @@ function parsePager($: CheerioAPI, expectedPage: number): ForumPager {
 }
 
 function rejectBrokenBody(body: string, moduleName: string): string | null {
-  if (SELECTOR_RESIDUE_RE.test(body)) {
+  if (!SELECTOR_RESIDUE_RE.test(body)) return null;
+
+  // 评论正文是用户输入，合法地会讨论 Wikidot 模板语法（活库已有
+  // “把%%name%%换成%%title%%”）。这些 post 随后仍会由 parsePost 严格校验
+  // id/long/head/info/content；这里只在移除完整 post 后检查模块结构区，避免把
+  // 用户原文误报成服务端模板未展开。
+  const $ = loadFragment(body);
+  $('div.post').remove();
+  const structuralBody = $.root().html() ?? '';
+  if (SELECTOR_RESIDUE_RE.test(structuralBody)) {
     return `${moduleName} body 含未替换的 %%selector%% 字面量`;
   }
   return null;
@@ -662,14 +671,19 @@ export function parseForumThread(
       totalPages: pager.totalPages,
       pagesFetched: 1,
     };
-    if (pager.totalPages === 1 && parsed.posts.length !== thread.postCount) {
+    if (pager.totalPages === 1 && parsed.posts.length < thread.postCount) {
       return partial(
         snapshot,
-        `单页主题解析 ${parsed.posts.length} 帖 ≠ thread 自报 ${thread.postCount}`,
+        `单页主题解析 ${parsed.posts.length} 帖 < thread 自报 ${thread.postCount}`,
         diagnostics(thread.postCount, parsed.posts.length),
       );
     }
-    return ok(snapshot, diagnostics(thread.postCount, parsed.posts.length));
+    return ok(
+      parsed.posts.length > thread.postCount
+        ? { ...snapshot, thread: { ...thread, postCount: parsed.posts.length } }
+        : snapshot,
+      diagnostics(thread.postCount, parsed.posts.length),
+    );
   } catch (err) {
     return failed(`ForumViewThreadModule 结构解析失败：${String(err)}`);
   }
@@ -975,14 +989,22 @@ async function scanOneForumThread(
     if (duplicateError !== null) {
       return failed(duplicateError, diagnostics(first.data.thread.postCount, posts.length));
     }
-    if (posts.length !== first.data.thread.postCount) {
+    if (posts.length < first.data.thread.postCount) {
       return partial(
         assembled,
-        `完整翻页解析 ${posts.length} 帖 ≠ thread 自报 ${first.data.thread.postCount}`,
+        `完整翻页解析 ${posts.length} 帖 < thread 自报 ${first.data.thread.postCount}`,
         diagnostics(first.data.thread.postCount, posts.length),
       );
     }
-    return ok(assembled, diagnostics(first.data.thread.postCount, posts.length));
+    return ok(
+      posts.length > first.data.thread.postCount
+        ? {
+            ...assembled,
+            thread: { ...first.data.thread, postCount: posts.length },
+          }
+        : assembled,
+      diagnostics(first.data.thread.postCount, posts.length),
+    );
   } catch (err) {
     return failed(`${THREAD_MODULE} 请求失败：${String(err)}`);
   }
@@ -1082,12 +1104,15 @@ export async function scanPageDiscussions(
           ),
         ] as const;
       }
-      if (target.claimedTotal !== null && thread.data.posts.length !== target.claimedTotal) {
+      // Tier1 与完整 thread 不是同一时刻的快照。实际帖子更多只可能是声明之后的
+      // 正向新增，是完整超集，安全落库后以实际值更新 comment_count；实际更少则可能
+      // 是漏页/瞬时缺席，仍必须 partial，绝不据此触发软删。
+      if (target.claimedTotal !== null && thread.data.posts.length < target.claimedTotal) {
         return [
           target.pageId,
           partial(
             snapshot,
-            `完整 thread ${thread.data.posts.length} 帖 ≠ Tier1 claimed_total ${target.claimedTotal}`,
+            `完整 thread ${thread.data.posts.length} 帖 < Tier1 claimed_total ${target.claimedTotal}`,
             diagnostics(target.claimedTotal, thread.data.posts.length),
           ),
         ] as const;

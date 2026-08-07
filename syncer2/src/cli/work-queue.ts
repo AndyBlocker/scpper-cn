@@ -151,7 +151,21 @@ async function main(): Promise<void> {
         breaker503: Math.max(5, config.breaker503),
         breakerReset: Math.max(5, config.breakerReset),
         connections: Math.max(1, opts.concurrency),
+        minRequestIntervalMs: WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
         logger: log.child('restricted-7890'),
+        // 混合 worker 的 adult 专用 7890 客户端也必须参加全站共享门禁；固定出口
+        // 不是绕过容量预算的理由。
+        adaptiveEgress: new PostgresAdaptiveEgressGate(
+          config.databaseUrl,
+          'work-queue:restricted-7890',
+        ),
+        egress: {
+          probeUrl: config.exitIpProbeUrl,
+          everyNRequests: config.exitIpProbeEvery,
+          maxProbes: config.exitIpProbeMax,
+          mihomoApi: config.mihomoApi,
+          hostFilter: new URL(config.siteBaseUrl).host,
+        },
       });
   restrictedHttp.assertHeaders();
   const restrictedCredentials = loadRestrictedWikidotCredentials();
@@ -355,7 +369,12 @@ async function main(): Promise<void> {
           if (task.queueSource === 'irreconcilable') {
             await releaseIrreconcilableReviewLocks(pool, [task], workerId);
           } else {
-            await releaseWorkTaskLocks(pool, [task.taskId], workerId);
+            await releaseWorkTaskLocks(
+              pool,
+              [task.taskId],
+              workerId,
+              opts.adultOnly ? ADULT_STABLE_EGRESS_HOLD : null,
+            );
           }
           finished.add(taskKey(task));
           counters.writeFreezeSkipped++;
@@ -545,7 +564,12 @@ async function main(): Promise<void> {
       .filter((task) => task.queueSource !== 'irreconcilable')
       .map((task) => task.taskId);
     await Promise.all([
-      releaseWorkTaskLocks(pool, unfinished, workerId),
+      releaseWorkTaskLocks(
+        pool,
+        unfinished,
+        workerId,
+        opts.adultOnly ? ADULT_STABLE_EGRESS_HOLD : null,
+      ),
       releaseIrreconcilableReviewLocks(pool, unfinishedTasks, workerId),
     ]);
     const health = evaluateWorkQueueHealth({
@@ -649,7 +673,12 @@ async function main(): Promise<void> {
       .filter((task) => task.queueSource !== 'irreconcilable')
       .map((task) => task.taskId);
     await Promise.all([
-      releaseWorkTaskLocks(pool, unfinished, workerId),
+      releaseWorkTaskLocks(
+        pool,
+        unfinished,
+        workerId,
+        opts.adultOnly ? ADULT_STABLE_EGRESS_HOLD : null,
+      ),
       releaseIrreconcilableReviewLocks(pool, unfinishedTasks, workerId),
     ]).catch(() => undefined);
     await finishIngestRun(pool, runId, {

@@ -58,6 +58,9 @@ UPDATE ingest.page_source ps
   FROM serve.page_current pc
  WHERE pc.page_id = ps.page_id
    AND pc.slug LIKE 'adult:%'
+   -- 实测 adult 遗留源码最晚 2026-07-21，受限身份建页在 2026-08-06；限制历史
+   -- 窗口保证迁移文件重跑时不会把未来的 unattributed 行误标成 v1。
+   AND ps.observed_at < '2026-08-01T00:00:00Z'::timestamptz
    AND ps.observation_source = 'legacy_unattributed';
 
 -- NULL rev_no 是“当前源码观测”，同一字节可分别被 v1 与 v2 真实观测；来源不能再被
