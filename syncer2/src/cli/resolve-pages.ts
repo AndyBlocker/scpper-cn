@@ -1010,6 +1010,20 @@ async function resolveAdultPendingPages(args: {
             priority: 100,
             notBefore: observedAt,
           },
+          {
+            pageId,
+            kind: 'content',
+            reasons: ['adult_authenticated_viewsource_required'],
+            priority: 150,
+            notBefore: observedAt,
+          },
+          {
+            pageId,
+            kind: 'discussion',
+            reasons: ['adult_comments_list_thread_discovery'],
+            priority: 120,
+            notBefore: observedAt,
+          },
         ]);
         if (existing === null) result.resolved++;
         else result.alreadyRegistered++;

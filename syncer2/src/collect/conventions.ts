@@ -750,12 +750,40 @@ export async function collectAttributions(
   }
 
   const data: AttributionCollection = { entries, rejectedRows, sourceHashes, warnings };
+
+  /*
+   * 零星坏行跳过即可，不该让整表长期挂起。
+   *
+   * 事故：全站署名表 3,262 行里有 2 行社区手工录入时少填了列
+   * （scp-cn-4022 缺「类型/时间」、pedialpha-super-crush-personnels 缺「时间」）。
+   * 原实现一旦出现拒绝行就整体判 partial，理由是「禁止全量 removal」——
+   * 但 applyNewAttributionEntriesBySlug **只处理新增、从不删除**，
+   * 那个担心在当前实现下不会发生。代价却是任务每 24 小时重来一次、
+   * 永远 partial，全站新增署名 212 小时未更新。
+   *
+   * 与「一个矛盾身份劫持整页 3,245 票」同型：局部脏数据阻断全局处理。
+   * 改为按比例判定：零星坏行照常处理并留证，比例过高才是解析器真的坏了。
+   */
+  const totalRows = entries.length + rejectedRows.length;
+  const rejectedRatio = totalRows > 0 ? rejectedRows.length / totalRows : 0;
+  const systemicRejection =
+    rejectedRows.length > ATTRIBUTION_REJECT_ABSOLUTE_LIMIT
+    || rejectedRatio > ATTRIBUTION_REJECT_RATIO_LIMIT;
+
+  if (rejectedRows.length > 0) {
+    warnings.push(
+      `署名源跳过 ${rejectedRows.length}/${totalRows} 条格式不完整的行`
+        + `（占比 ${(rejectedRatio * 100).toFixed(3)}%）；已处理其余新增。`,
+    );
+  }
+
   return {
     sources,
-    result: isPartial
+    result: isPartial && systemicRejection
       ? partial(
           data,
-          `署名源存在 ${rejectedRows.length} 条拒绝行；只能处理明确新增，禁止全量 removal。`,
+          `署名源拒绝行过多：${rejectedRows.length}/${totalRows}`
+            + `（占比 ${(rejectedRatio * 100).toFixed(3)}%），疑似解析器失效而非个别录入错误。`,
           diagnostics(null, entries.length, warnings),
         )
       : ok(data, diagnostics(null, entries.length, warnings)),
@@ -763,6 +791,12 @@ export async function collectAttributions(
 }
 
 /** 先抓一张普通站点页的顶栏，再按动态发现结果强制重抓每张系列 source。 */
+/** 零星坏行的绝对上限：社区手工维护的表出现个位数录入错误属常态。 */
+export const ATTRIBUTION_REJECT_ABSOLUTE_LIMIT = 20;
+
+/** 拒绝行占比上限：超过即说明是解析器失效，而不是个别录入错误。 */
+export const ATTRIBUTION_REJECT_RATIO_LIMIT = 0.01;
+
 export async function collectAlternateTitles(
   http: HttpClient,
   baseUrl: string,

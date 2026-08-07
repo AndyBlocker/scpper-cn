@@ -862,8 +862,10 @@ async function writePageSourceBatch(
          SELECT * FROM jsonb_to_recordset($1::jsonb)
            AS x(page_id int,rev_no int,source_sha_hex text,observed_at timestamptz)
        )
-       INSERT INTO ingest.page_source(page_id,rev_no,blob_sha,observed_at)
-       SELECT page_id,rev_no,decode(source_sha_hex,'hex'),observed_at FROM b
+       INSERT INTO ingest.page_source(
+         page_id,rev_no,blob_sha,observed_at,observation_source
+       )
+       SELECT page_id,rev_no,decode(source_sha_hex,'hex'),observed_at,'v1_backfill' FROM b
        ON CONFLICT DO NOTHING`,
       [payload],
     );
@@ -927,8 +929,10 @@ async function insertOverridePageSources(
          SELECT * FROM jsonb_to_recordset($1::jsonb)
            AS x(page_id int,rev_no int,source_sha_hex text,observed_at timestamptz)
        )
-       INSERT INTO ingest.page_source(page_id,rev_no,blob_sha,observed_at)
-       SELECT page_id,NULL,decode(source_sha_hex,'hex'),observed_at FROM b
+       INSERT INTO ingest.page_source(
+         page_id,rev_no,blob_sha,observed_at,observation_source
+       )
+       SELECT page_id,NULL,decode(source_sha_hex,'hex'),observed_at,'v1_backfill' FROM b
        ON CONFLICT DO NOTHING`,
       [JSON.stringify(rows)],
     );

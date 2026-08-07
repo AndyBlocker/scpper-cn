@@ -34,6 +34,14 @@ export interface RestrictedListPageRecord extends ListPageRecord {
   textExtraction: ExtractResult;
 }
 
+export interface RestrictedRenderedContent {
+  slug: string;
+  contentHtml: string;
+  contentSha256Hex: string;
+  textContent: string;
+  textExtraction: ExtractResult;
+}
+
 export type RestrictedListPagesOutcome =
   | {
       status: 'ok';
@@ -276,6 +284,60 @@ async function fetchContent(
     return parseSingleContentResponse(response.body, row.fullname);
   } catch (err) {
     return { status: 'failed', error: `${row.fullname} 正文 ListPages 请求失败：${String(err)}` };
+  }
+}
+
+/**
+ * 日常 content 任务只刷新目标页的 ListPages %%content%%。完整 133 页枚举属于身份/bootstrap
+ * 协议，不应被每个短进程的首个源码任务重复执行。
+ */
+export async function scanRestrictedListPageContent(
+  http: HttpClient,
+  baseUrl: string,
+  slug: string,
+): Promise<
+  | { status: 'ok'; data: RestrictedRenderedContent }
+  | { status: 'failed'; error: string }
+> {
+  const separator = slug.indexOf(':');
+  if (separator <= 0 || separator === slug.length - 1) {
+    return { status: 'failed', error: `受限正文 slug 非法：${slug}` };
+  }
+  const category = slug.slice(0, separator).toLowerCase();
+  const name = slug.slice(separator + 1);
+  try {
+    const request = buildRestrictedContentRequest(category, name);
+    const response = await amcRequest(http, baseUrl, {
+      ...request,
+      mode: `listpages:restricted-content:${slug}`,
+      maxAttempts: 3,
+    });
+    if (response.status !== 'ok' || response.body === null) {
+      return {
+        status: 'failed',
+        error: `${slug} 正文 ListPages status=${response.status}；不解释为空正文`,
+      };
+    }
+    const parsed = parseSingleContentResponse(response.body, slug);
+    if (parsed.status === 'failed') return parsed;
+    const extraction = extractSearchText(
+      `<div id="page-content">${parsed.contentHtml}</div>`,
+    );
+    if (extraction.status === 'failed') {
+      return { status: 'failed', error: `${slug} 的 %%content%% 结构不可用：${extraction.error}` };
+    }
+    return {
+      status: 'ok',
+      data: {
+        slug,
+        contentHtml: parsed.contentHtml,
+        contentSha256Hex: createHash('sha256').update(parsed.contentHtml, 'utf8').digest('hex'),
+        textContent: extraction.data.text,
+        textExtraction: extraction.data,
+      },
+    };
+  } catch (err) {
+    return { status: 'failed', error: `${slug} 正文 ListPages 请求失败：${String(err)}` };
   }
 }
 

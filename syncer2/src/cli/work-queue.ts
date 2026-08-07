@@ -18,8 +18,10 @@ import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../ht
 import { CircuitOpenError, HttpClient } from '../http/client.js';
 import {
   createRestrictedStableHttp,
+  loadRestrictedWikidotCredentials,
   RESTRICTED_STABLE_PROXY_URL,
   RESTRICTED_TLS_MAX_VERSION,
+  RestrictedIdentitySession,
 } from '../http/restrictedSession.js';
 import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
@@ -152,6 +154,16 @@ async function main(): Promise<void> {
         logger: log.child('restricted-7890'),
       });
   restrictedHttp.assertHeaders();
+  const restrictedCredentials = loadRestrictedWikidotCredentials();
+  const restrictedSession =
+    restrictedCredentials === null
+      ? undefined
+      : new RestrictedIdentitySession(
+          restrictedHttp,
+          restrictedCredentials,
+          config.siteBaseUrl,
+          log.child('restricted-session'),
+        );
 
   const pool = createPool(config.databaseUrl, { max: Math.max(4, opts.concurrency) });
   let runId: number | null = null;
@@ -300,6 +312,7 @@ async function main(): Promise<void> {
       pool,
       http,
       restrictedHttp,
+      restrictedSession,
       baseUrl: config.siteBaseUrl,
       runId,
       workerId,
@@ -672,6 +685,7 @@ async function main(): Promise<void> {
     });
     process.exitCode = 1;
   } finally {
+    await restrictedSession?.logout().catch(() => undefined);
     await (restrictedHttp === http
       ? http.close()
       : Promise.all([http.close(), restrictedHttp.close()]).then(() => undefined));

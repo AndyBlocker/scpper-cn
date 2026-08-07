@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { scanPageIds } from '../src/collect/pageid.js';
+import { parseSourceBody } from '../src/collect/source.js';
 import {
   buildRestrictedContentRequest,
   buildRestrictedListPagesRequest,
@@ -31,6 +32,7 @@ import {
   assertNoSharedPageIdentities,
 } from '../src/page/identity.js';
 import { httpForWorkTask, type WorkHandlerContext } from '../src/work/handlers.js';
+import { classifyWorkFailure } from '../src/work/failurePolicy.js';
 import { waitingForRestrictedSession } from '../src/work/pendingPage.js';
 import type { Logger } from '../src/util/log.js';
 
@@ -114,6 +116,86 @@ describe('共享 pageId 通用守卫', () => {
 });
 
 describe('登录 session 降级与 7890 出口', () => {
+  it('adult ViewSource 携带 7890 登录态取到源码；no_permission 只重登一次', async () => {
+    let loginRequests = 0;
+    let sourceRequests = 0;
+    const sourceCookies: string[] = [];
+    const fake = {
+      proxyUrl: RESTRICTED_STABLE_PROXY_URL,
+      request: async (url: string, options?: { headers?: Record<string, string> }) => {
+        if (url.includes('LoginPopupScreen')) {
+          loginRequests++;
+          return response('', { 'set-cookie': `WIKIDOT_SESSION_ID=session-${loginRequests}; Path=/` });
+        }
+        sourceRequests++;
+        sourceCookies.push(options?.headers?.cookie ?? '');
+        return response(JSON.stringify(
+          sourceRequests === 1
+            ? { status: 'no_permission', message: 'Permission denied' }
+            : { status: 'ok', body: '<div class="page-source">[[module ListPages]]</div>' },
+        ));
+      },
+      get: async () => response(''),
+    } as unknown as RestrictedIdentityHttp;
+    const session = new RestrictedIdentitySession(
+      fake,
+      { username: 'fixture', password: 'fixture', source: 'test' },
+      'https://scp-wiki-cn.wikidot.com',
+      { info: () => undefined, warn: () => undefined } as unknown as Logger,
+    );
+    const source = await session.fetchCurrentSource('adult:fixture', 1448285468);
+    assert.equal(source.status, 'ok');
+    assert.equal(loginRequests, 2);
+    assert.equal(sourceRequests, 2);
+    assert.match(sourceCookies[0]!, /WIKIDOT_SESSION_ID=session-1/);
+    assert.match(sourceCookies[1]!, /WIKIDOT_SESSION_ID=session-2/);
+    const parsed = parseSourceBody(source.body!, { pageId: 1, wikidotId: 1448285468 });
+    assert.equal(parsed.status, 'ok');
+    if (parsed.status === 'ok') assert.equal(parsed.data.source, '[[module ListPages]]');
+  });
+
+  it('adult ViewSource 重登后仍 no_permission 时显式降级，绝不形成空源码', async () => {
+    let loginRequests = 0;
+    let sourceRequests = 0;
+    const fake = {
+      proxyUrl: RESTRICTED_STABLE_PROXY_URL,
+      request: async (url: string) => {
+        if (url.includes('LoginPopupScreen')) {
+          loginRequests++;
+          return response('', { 'set-cookie': `WIKIDOT_SESSION_ID=session-${loginRequests}; Path=/` });
+        }
+        sourceRequests++;
+        return response(JSON.stringify({ status: 'no_permission', message: 'Permission denied' }));
+      },
+      get: async () => response(''),
+    } as unknown as RestrictedIdentityHttp;
+    const session = new RestrictedIdentitySession(
+      fake,
+      { username: 'fixture', password: 'fixture', source: 'test' },
+      'https://scp-wiki-cn.wikidot.com',
+      { info: () => undefined, warn: () => undefined } as unknown as Logger,
+    );
+    await assert.rejects(
+      session.fetchCurrentSource('adult:fixture', 1448285468),
+      /emptyResult=false/,
+    );
+    assert.equal(loginRequests, 2);
+    assert.equal(sourceRequests, 2);
+    assert.deepEqual(
+      classifyWorkFailure(
+        'content',
+        'RestrictedSessionUnavailableError: 受限源码失败；emptyResult=false',
+      ),
+      {
+        family: 'prerequisite',
+        signature: 'restricted_session_unavailable',
+        action: 'retry',
+        identityReviewThreshold: null,
+        rationale: '前置 L1/本地证据可由后续完整轮补齐，不是页面身份结论',
+      },
+    );
+  });
+
   it('session 失效会重登一次，仍失败则抛显式前置条件错误而非空结果', async () => {
     let loginRequests = 0;
     let identityRequests = 0;
@@ -197,6 +279,21 @@ describe('登录 session 降级与 7890 出口', () => {
     assert.equal(actual.proxyUrl, RESTRICTED_STABLE_PROXY_URL);
     assert.equal(actual.tlsMaxVersion, RESTRICTED_TLS_MAX_VERSION);
     void actual.close();
+  });
+});
+
+describe('page_source 来源追溯', () => {
+  it('迁移区分 v1 遗留、匿名 v2 与登录 v2，并要求 run id', () => {
+    const migration = fs.readFileSync(
+      path.join(path.dirname(FIXTURES), '..', 'migrations', '0206_page_source_provenance.sql'),
+      'utf8',
+    );
+    assert.match(migration, /observation_source text NOT NULL/);
+    assert.match(migration, /'v1_backfill'/);
+    assert.match(migration, /'wikidot_anonymous'/);
+    assert.match(migration, /'wikidot_authenticated'/);
+    assert.match(migration, /ADD COLUMN IF NOT EXISTS run_id bigint/);
+    assert.match(migration, /apply_current_page_source/);
   });
 });
 

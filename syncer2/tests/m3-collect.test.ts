@@ -95,15 +95,19 @@ describe('source：合法空源码与解析失败可区分', () => {
   it('回归：源码/正文含 NUL 与孤立代理项时，应用路径清洗后写入并在 page_scan 留痕', async () => {
     const captured: {
       scanError?: unknown;
-      attrs?: unknown;
+      source?: unknown;
+      text?: unknown;
+      observationSource?: unknown;
     } = {};
     const dbQuery = async (sql: string, params?: readonly unknown[]) => {
       if (sql.includes('meta.record_page_scan')) {
         captured.scanError = params?.[10];
         return { rows: [], rowCount: 1 };
       }
-      if (sql.includes('ingest.apply_page_meta')) {
-        captured.attrs = params?.[1];
+      if (sql.includes('ingest.apply_current_page_source')) {
+        captured.source = params?.[1];
+        captured.text = params?.[2];
+        captured.observationSource = params?.[4];
         return { rows: [{ result: { source_sha: 'f'.repeat(64) } }], rowCount: 1 };
       }
       if (sql.includes('ingest.apply_page_images')) {
@@ -146,10 +150,10 @@ describe('source：合法空源码与解析失败可区分', () => {
     assert.match(String(captured.scanError), /content_text_sanitized/);
     assert.match(String(captured.scanError), /source_nul=1/);
     assert.match(String(captured.scanError), /text_lone_surrogate=1/);
-    const attrs = JSON.parse(String(captured.attrs)) as Record<string, string>;
-    assert.equal(attrs['source_wikitext'], '源码�尾�');
-    assert.equal(attrs['text_content'], '正文�尾�');
-    assert.doesNotMatch(String(captured.attrs), /\u0000/);
+    assert.equal(captured.source, '源码�尾�');
+    assert.equal(captured.text, '正文�尾�');
+    assert.equal(captured.observationSource, 'wikidot_anonymous');
+    assert.doesNotMatch(String(captured.source), /\u0000/);
     assert.ok(applied?.['text_sanitization']);
   });
 });

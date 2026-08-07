@@ -340,7 +340,7 @@ test('M5 完整 thread 才生成缺席帖软删 tombstone，并仍走 apply_foru
   ]);
 });
 
-test('M5 五个 AMC 模块全部匿名，且失败 thread 在结果 Map 中不消失', async () => {
+test('M5 五个 AMC 模块（含真实评论 CommentsList）全部匿名，且失败 thread 不消失', async () => {
   const startHtml = fixture('forum-start.reconstructed.html');
   const categoryHtml = fixture('forum-category.reconstructed.html');
   const threadHtml = fixture('forum-thread.reconstructed.html');
@@ -417,7 +417,17 @@ test('M5 五个 AMC 模块全部匿名，且失败 thread 在结果 Map 中不�
       [{ pageId: 25, wikidotId: 1452770417, claimedTotal: 3 }],
       2,
     );
-    assert.equal(discussions.get(25)?.status, 'ok');
+    const discussion = discussions.get(25);
+    assert.equal(discussion?.status, 'ok');
+    if (discussion?.status === 'ok') {
+      assert.equal(discussion.data.threadId, 991, '必须从 CommentsList 解析真实 thread id');
+      assert.equal(discussion.data.posts.length, 3);
+      assert.deepEqual(
+        discussion.data.posts.map((post) => post.textPlain),
+        ['第一段 正文', '嵌套回复', '最后一帖'],
+        '必须保存实际评论正文，不能把“显示评论”的折叠 UI 当帖子',
+      );
+    }
 
     assert.deepEqual(
       new Set(requests.map((request) => request.moduleName)),
@@ -433,6 +443,7 @@ test('M5 五个 AMC 模块全部匿名，且失败 thread 在结果 Map 中不�
       assert.ok(request.headers['user-agent']?.trim());
       assert.ok(request.headers.referer?.trim());
       assert.equal(request.headers.authorization, undefined);
+      assert.doesNotMatch(request.headers.cookie ?? '', /WIKIDOT_SESSION_ID/);
       assert.match(request.headers.cookie ?? '', /^wikidot_token7=[0-9a-f]{16}$/);
       assert.ok(request.form.get('wikidot_token7'));
       assert.equal(request.form.get('username'), null);

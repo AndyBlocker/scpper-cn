@@ -22,10 +22,14 @@ import {
   type ForumDiscussionTarget,
 } from '../collect/forum.js';
 import { scanPageIds } from '../collect/pageid.js';
-import { scanRestrictedListPages } from '../collect/restrictedListPages.js';
+import { scanRestrictedListPageContent } from '../collect/restrictedListPages.js';
 import { failed, partial, type CollectResult } from '../collect/result.js';
 import { applyRevisionResult, scanRevisions, type RevisionBatch } from '../collect/revisions.js';
-import { applyCurrentContent, scanCurrentContents } from '../collect/source.js';
+import {
+  applyCurrentContent,
+  scanCurrentContents,
+  scanRestrictedCurrentContents,
+} from '../collect/source.js';
 import {
   applyCollectedVoteSnapshot,
   collectVoteSnapshots,
@@ -33,7 +37,11 @@ import {
   type VoteTarget,
 } from '../collect/votes.js';
 import type { HttpClient } from '../http/client.js';
-import { isRestrictedSlug, RESTRICTED_STABLE_PROXY_URL } from '../http/restrictedSession.js';
+import {
+  isRestrictedSlug,
+  RESTRICTED_STABLE_PROXY_URL,
+  type RestrictedSourceSession,
+} from '../http/restrictedSession.js';
 import { query } from '../store/db.js';
 import {
   enqueueScanTasks,
@@ -47,13 +55,15 @@ import {
   applyConfirmedSlugReuse,
   applyObservedPageMeta,
 } from './identityCheck.js';
-import { applyRestrictedListPage } from './restrictedPage.js';
+import { applyRestrictedRenderedContent } from './restrictedPage.js';
 
 export interface WorkHandlerContext {
   pool: Pool;
   http: HttpClient;
   /** adult:/wanderers-adult: 的所有页级出站固定走 7890；缺失时 fail closed。 */
   restrictedHttp?: HttpClient;
+  /** 只允许受限 content handler 取 ViewSource；讨论/投票/修订不得调用。 */
+  restrictedSession?: RestrictedSourceSession;
   baseUrl: string;
   runId: number | null;
   workerId: string;
@@ -170,13 +180,14 @@ const voteHandler: WorkHandler = async (task, context) => {
 
 const contentHandler: WorkHandler = async (task, context) => {
   if (isRestrictedSlug(task.slug)) {
-    const category = task.slug.slice(0, task.slug.indexOf(':')).toLowerCase();
     const taskHttp = httpForWorkTask(context, task);
-    const scan = await cached(context, `restricted-listpages:${category}`, () =>
-      scanRestrictedListPages(taskHttp, context.baseUrl, category),
+    const rendered = await scanRestrictedListPageContent(
+      taskHttp,
+      context.baseUrl,
+      task.slug,
     );
-    if (scan.status === 'failed') {
-      const error = `受限 ListPages 内容观测失败；不解释为空正文：${scan.error}`;
+    if (rendered.status === 'failed') {
+      const error = `受限 ListPages 单页正文观测失败；不解释为空正文：${rendered.error}`;
       await recordPageScan(context.pool, context.runId, task.pageId, 'content', {
         status: 'failed',
         claimed: 1,
@@ -187,9 +198,9 @@ const contentHandler: WorkHandler = async (task, context) => {
       });
       return { status: 'failed', resultHash: null, sample: { error, emptyResult: false } };
     }
-    const row = scan.rows.find((candidate) => candidate.fullname === task.slug);
-    if (row === undefined) {
-      const error = `受限 ListPages 完整轮缺少 ${task.slug}；不推断空正文/删除`;
+    if (context.restrictedSession === undefined) {
+      const error =
+        `受限源码登录 session 不可用；跳过 ${task.slug} ViewSource，emptyResult=false`;
       await recordPageScan(context.pool, context.runId, task.pageId, 'content', {
         status: 'failed',
         claimed: 1,
@@ -200,26 +211,57 @@ const contentHandler: WorkHandler = async (task, context) => {
       });
       return { status: 'failed', resultHash: null, sample: { error, emptyResult: false } };
     }
-    const applied = await applyRestrictedListPage(context.pool, {
-      row,
+    const target = {
       pageId: task.pageId,
       wikidotId: task.wikidotId,
-      observedAt: new Date().toISOString(),
+      slug: task.slug,
+      rendered: rendered.data,
+    };
+    const sources = await scanRestrictedCurrentContents(
+      context.restrictedSession,
+      context.baseUrl,
+      [target],
+      1,
+    );
+    const sourceResult =
+      sources.get(task.pageId) ?? failed<never>('内部错误：受限源码结果 Map 缺项');
+    const observedAt = new Date().toISOString();
+    if (sourceResult.status !== 'ok') {
+      await applyCurrentContent(context.pool, target, sourceResult, {
+        observedAt,
+        runId: context.runId,
+        observationSource: 'wikidot_authenticated',
+      });
+      return {
+        status: 'failed',
+        resultHash: null,
+        sample: { error: sourceResult.error, emptyResult: false, proxyUrl: taskHttp.proxyUrl },
+      };
+    }
+    const renderedApplied = await applyRestrictedRenderedContent(context.pool, {
+      contentHtml: rendered.data.contentHtml,
+      textContent: rendered.data.textContent,
+      pageId: task.pageId,
+      wikidotId: task.wikidotId,
+      observedAt,
       runId: context.runId,
+    });
+    const sourceApplied = await applyCurrentContent(context.pool, target, sourceResult, {
+      observedAt,
+      runId: context.runId,
+      observationSource: 'wikidot_authenticated',
     });
     return {
       status: 'ok',
-      resultHash: Buffer.from(row.contentSha256Hex, 'hex'),
-      localValue: { ...applied },
-      remoteValue: {
-        rating: row.rating,
-        rating_votes: row.ratingVotes,
-        revisions: row.revisions,
-      },
+      resultHash: Buffer.from(sourceResult.data.sha256Hex, 'hex'),
+      localValue: { rendered: renderedApplied, source: sourceApplied },
       sample: {
-        contentBytes: Buffer.byteLength(row.contentHtml),
-        textChars: row.textContent.length,
-        ownerActorId: applied.ownerActorId,
+        sourceChars: sourceResult.data.source.length,
+        sourceSha: sourceResult.data.sha256Hex,
+        contentBytes: Buffer.byteLength(rendered.data.contentHtml),
+        textChars: rendered.data.textContent.length,
+        images: sourceResult.data.images.length,
+        observationSource: 'wikidot_authenticated',
         proxyUrl: taskHttp.proxyUrl,
       },
     };
@@ -232,7 +274,7 @@ const contentHandler: WorkHandler = async (task, context) => {
   const applied = await applyCurrentContent(context.pool, target, result, {
     observedAt: new Date().toISOString(),
     runId: context.runId,
-    source: 'wikidot',
+    observationSource: 'wikidot_anonymous',
   });
   const resultHash =
     result.status === 'ok' &&

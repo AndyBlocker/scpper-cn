@@ -1,8 +1,8 @@
 /**
  * 当前源码与历史修订全文采集。
  *
- * 当前态写入走现成 `ingest.apply_page_meta()`：它内部调用
- * `put_content_blob()` 并落 `page_source`，同时把渲染正文写入
+ * 当前态写入走来源可追溯的 `ingest.apply_current_page_source()`：它内部调用
+ * `put_content_blob()` 并落 `page_source(observation_source, run_id)`，同时把渲染正文写入
  * `serve.page_current.search_text`。历史修订由独立低优先队列逐个 revision_id 调用
  * PageSourceModule；这里仍只负责显式目标列表，不自行展开全站。
  */
@@ -11,6 +11,10 @@ import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import { amcRequest } from '../http/amc.js';
 import type { HttpClient } from '../http/client.js';
+import {
+  RESTRICTED_STABLE_PROXY_URL,
+  type RestrictedSourceSession,
+} from '../http/restrictedSession.js';
 import { extractPageIdentity, slugToUrl } from '../page/identity.js';
 import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { recordPageScan } from '../store/meta.js';
@@ -39,6 +43,7 @@ import {
   type CollectResult,
   type PageCollectTarget,
 } from './result.js';
+import type { RestrictedRenderedContent } from './restrictedListPages.js';
 
 export interface SourceSnapshot {
   pageId: number;
@@ -56,6 +61,11 @@ export interface CurrentContentSnapshot extends SourceSnapshot {
   textContent: string;
   textExtraction: ExtractResult;
   images: ExtractedImageCandidate[];
+}
+
+export interface RestrictedCurrentContentTarget extends PageCollectTarget {
+  slug: string;
+  rendered: RestrictedRenderedContent;
 }
 
 export interface RevisionSourceTarget extends PageCollectTarget {
@@ -262,6 +272,80 @@ export async function scanCurrentContents(
 }
 
 /**
+ * 受限页当前源码：只有 ViewSource 带登录 session；ListPages 渲染正文仍来自匿名结果。
+ * session 自身与这里的第二道断言共同保证不会回落 7891。
+ */
+export async function scanRestrictedCurrentContents(
+  session: RestrictedSourceSession,
+  baseUrl: string,
+  targets: readonly RestrictedCurrentContentTarget[],
+  concurrency = 1,
+): Promise<Map<number, CollectResult<CurrentContentSnapshot>>> {
+  if (session.http.proxyUrl !== RESTRICTED_STABLE_PROXY_URL) {
+    throw new Error(
+      `受限源码只允许 ${RESTRICTED_STABLE_PROXY_URL}，收到 ${String(session.http.proxyUrl)}`,
+    );
+  }
+  assertUniqueKeys(targets, (target) => target.pageId);
+  const pairs = await mapWithConcurrency(targets, concurrency, async (target) => {
+    try {
+      const response = await session.fetchCurrentSource(target.slug, target.wikidotId);
+      if (response.status !== 'ok') {
+        return [
+          target.pageId,
+          failed<CurrentContentSnapshot>(
+            `authenticated ViewSourceModule status=${response.status}` +
+              `（message=${response.message ?? '-'}）；emptyResult=false`,
+          ),
+        ] as const;
+      }
+      if (response.body === null) {
+        return [
+          target.pageId,
+          failed<CurrentContentSnapshot>(
+            'authenticated ViewSourceModule status=ok 但 body 缺失；emptyResult=false',
+          ),
+        ] as const;
+      }
+      const parsed = parseSourceBody(response.body.replace(/&nbsp;/gi, ' '), target);
+      if (parsed.status !== 'ok') {
+        return [
+          target.pageId,
+          failed<CurrentContentSnapshot>(`${parsed.error}；emptyResult=false`, parsed.diagnostics),
+        ] as const;
+      }
+      const pageUrl = slugToUrl(baseUrl, target.slug);
+      const renderedHtml = `<div id="page-content">${target.rendered.contentHtml}</div>`;
+      return [
+        target.pageId,
+        ok({
+          ...parsed.data,
+          responseBytes: Buffer.byteLength(response.body, 'utf8'),
+          responseSha256Hex: createHash('sha256').update(response.body, 'utf8').digest('hex'),
+          slug: target.slug,
+          textContent: target.rendered.textContent,
+          textExtraction: target.rendered.textExtraction,
+          images: extractPageImages({
+            html: renderedHtml,
+            source: parsed.data.source,
+            pageUrl,
+            slug: target.slug,
+          }),
+        }),
+      ] as const;
+    } catch (err) {
+      return [
+        target.pageId,
+        failed<CurrentContentSnapshot>(
+          `authenticated ViewSourceModule 请求失败：${String(err)}；emptyResult=false`,
+        ),
+      ] as const;
+    }
+  });
+  return new Map(pairs);
+}
+
+/**
  * 抓取一个或多个显式历史 revision 源码。全量枚举、退避、live 守卫与限速均由
  * revision-source-backfill 的独立低优先队列承担；本函数不接受页面后自动展开版本。
  */
@@ -301,7 +385,7 @@ export interface ApplyCurrentContentOptions {
   observedAt: string;
   runId: number | null;
   revNo?: number | null;
-  source?: string;
+  observationSource?: 'wikidot_anonymous' | 'wikidot_authenticated';
 }
 
 /**
@@ -338,26 +422,23 @@ export async function applyCurrentContent(
   );
 
   if (result.status !== 'ok') return null;
-  const attrs: Record<string, unknown> = {
-    source_wikitext: stored!.source,
-    text_content: stored!.textContent,
-  };
-  if (opts.revNo !== undefined && opts.revNo !== null) attrs.rev_no = opts.revNo;
-
   return withTransaction(pool, `m3.content:${target.pageId}`, async (db) => {
     const applied = await query<{ result: Record<string, unknown> }>(
       db,
-      'm3.content:apply_page_meta',
-      `SELECT ingest.apply_page_meta(
-         $1::int, $2::jsonb, $3::timestamptz, $4::text, $5::bigint, $6::int
+      'm3.content:apply_current_page_source',
+      `SELECT ingest.apply_current_page_source(
+         $1::int, $2::text, $3::text, $4::timestamptz,
+         $5::text, $6::bigint, $7::int, $8::int
        ) AS result`,
       [
         target.pageId,
-        toPgJson(attrs, `m3.content.attrs:${target.pageId}`),
+        stored!.source,
+        stored!.textContent,
         observed,
-        opts.source ?? 'wikidot',
+        opts.observationSource ?? 'wikidot_anonymous',
         opts.runId,
         target.wikidotId,
+        opts.revNo ?? null,
       ],
     );
     const imageApplied = await query<{ result: Record<string, unknown> }>(

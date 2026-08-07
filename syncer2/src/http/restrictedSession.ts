@@ -1,8 +1,9 @@
 /**
  * 受限分类身份发现的最小登录 session。
  *
- * 账号只用于 GET /<slug>/norender/true/noredirect/true 取得真实 pageId；投票、修订与
- * ListPages 全部仍走匿名请求。出口硬编码为本机 7890，禁止从通用 7891 配置继承。
+ * 账号只用于 GET /<slug>/norender/true/noredirect/true 取得真实 pageId，以及匿名明确
+ * no_permission 的 ViewSourceModule。投票、修订、ListPages、页面讨论全部仍走匿名请求。
+ * 出口硬编码为本机 7890，禁止从通用 7891 配置继承。
  */
 
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ import { randomBytes } from 'node:crypto';
 import * as dotenv from 'dotenv';
 
 import { PROJECT_ROOT } from '../config.js';
+import { AmcContractError, amcRequest, type AmcResponse } from './amc.js';
 import {
   extractPageIdentity,
   slugToUrl,
@@ -37,6 +39,11 @@ export interface RestrictedIdentityHttp {
   readonly proxyUrl: string | null;
   request: HttpClient['request'];
   get: HttpClient['get'];
+}
+
+export interface RestrictedSourceSession {
+  readonly http: RestrictedIdentityHttp;
+  fetchCurrentSource(slug: string, wikidotId: number): Promise<AmcResponse>;
 }
 
 export function loadRestrictedWikidotCredentials(
@@ -125,6 +132,57 @@ export class RestrictedIdentitySession {
       }
     }
     return outcome;
+  }
+
+  /**
+   * adult 当前源码的唯一登录入口。no_permission 视为 session 失效候选：强制重登一次；
+   * 重登后仍拒绝则显式失败，不把响应解释为空源码。
+   */
+  async fetchCurrentSource(slug: string, wikidotId: number): Promise<AmcResponse> {
+    if (!isRestrictedSlug(slug)) {
+      throw new RangeError(`受限源码 session 拒绝普通 slug：${slug}`);
+    }
+    if (!Number.isSafeInteger(wikidotId) || wikidotId <= 0) {
+      throw new RangeError(`受限源码 wikidotId 非法：${wikidotId}`);
+    }
+    await this.#ensureSession(false);
+    let response: AmcResponse;
+    let expiryReason: string | null = null;
+    try {
+      response = await this.#fetchAuthenticatedSource(wikidotId);
+      if (response.status === 'no_permission') expiryReason = 'no_permission';
+    } catch (err) {
+      if (!isExpiredSourceSessionError(err)) {
+        throw new RestrictedSessionUnavailableError(
+          `受限源码 AMC 请求失败：${String(err)}；emptyResult=false`,
+        );
+      }
+      expiryReason = describeSourceSessionError(err);
+      response = { status: 'session_expired', body: null, message: null, currentTimestamp: null, raw: '' };
+    }
+    if (expiryReason !== null) {
+      this.logger.warn('受限源码登录态失效候选，强制重登并重试一次', {
+        slug,
+        wikidotId,
+        reason: expiryReason,
+      });
+      await this.#ensureSession(true);
+      try {
+        response = await this.#fetchAuthenticatedSource(wikidotId);
+      } catch (err) {
+        this.#sessionId = null;
+        throw new RestrictedSessionUnavailableError(
+          `重登后 ViewSourceModule 请求 ${slug} 仍失败：${String(err)}；emptyResult=false`,
+        );
+      }
+      if (response.status === 'no_permission') {
+        this.#sessionId = null;
+        throw new RestrictedSessionUnavailableError(
+          `重登后 ViewSourceModule 仍对 ${slug} 返回 no_permission；emptyResult=false`,
+        );
+      }
+    }
+    return response;
   }
 
   async logout(): Promise<void> {
@@ -246,6 +304,20 @@ export class RestrictedIdentitySession {
       throw err;
     }
   }
+
+  async #fetchAuthenticatedSource(wikidotId: number): Promise<AmcResponse> {
+    const sessionId = this.#sessionId;
+    if (sessionId === null) {
+      throw new RestrictedSessionUnavailableError('内部错误：未登录就请求受限源码');
+    }
+    return amcRequest(this.http as HttpClient, this.baseUrl, {
+      moduleName: 'viewsource/ViewSourceModule',
+      params: { page_id: wikidotId },
+      mode: 'restricted:authenticated-source',
+      maxAttempts: 3,
+      wikidotSessionId: sessionId,
+    });
+  }
 }
 
 export function isRestrictedSlug(slug: string): boolean {
@@ -272,4 +344,15 @@ function describeOutcome(outcome: IdentityOutcome): string {
   }
   if (outcome.kind === 'ok') return `ok:${outcome.identity.wikidotId}`;
   return `${outcome.kind}:${outcome.error}`;
+}
+
+function isExpiredSourceSessionError(error: unknown): boolean {
+  return (error instanceof HttpStatusError && [302, 401, 403].includes(error.status)) ||
+    error instanceof AmcContractError;
+}
+
+function describeSourceSessionError(error: unknown): string {
+  if (error instanceof HttpStatusError) return `HTTP ${error.status}`;
+  if (error instanceof AmcContractError) return 'non_json_login_or_contract_page';
+  return String(error);
 }

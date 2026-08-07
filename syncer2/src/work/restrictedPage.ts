@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 import type { RestrictedListPageRecord } from '../collect/restrictedListPages.js';
 import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
@@ -12,6 +12,44 @@ export interface RestrictedPageApplyResult {
   metadata: Record<string, unknown>;
   content: Record<string, unknown>;
   attribution: Record<string, unknown> | null;
+}
+
+export async function applyRestrictedRenderedContent(
+  db: Pool | PoolClient,
+  args: {
+    contentHtml: string;
+    textContent: string;
+    pageId: number;
+    wikidotId: number;
+    observedAt: string;
+    runId: number | null;
+  },
+): Promise<Record<string, unknown>> {
+  const html = sanitizePgText(args.contentHtml, {
+    context: `restricted.content_html:${args.pageId}`,
+  }).value;
+  const text = sanitizePgText(args.textContent, {
+    context: `restricted.text_content:${args.pageId}`,
+  }).value;
+  const sha = createHash('sha256').update(html, 'utf8').digest();
+  const content = await query<{ result: Record<string, unknown> }>(
+    db,
+    'restricted:apply_rendered_content',
+    `SELECT ingest.apply_listpages_rendered_content(
+       $1::int, $2::bytea, $3::text, $4::text,
+       $5::timestamptz, $6::bigint, $7::int
+     ) AS result`,
+    [
+      args.pageId,
+      sha,
+      html,
+      text,
+      toPgTimestamptz(args.observedAt),
+      args.runId,
+      args.wikidotId,
+    ],
+  );
+  return content.rows[0]?.result ?? {};
 }
 
 /** ListPages 的页面级权威观测原子落库；rating/revision 只写 claim，不越权改聚合列。 */
@@ -95,30 +133,14 @@ export async function applyRestrictedListPage(
       [args.pageId, toPgTimestamptz(args.observedAt), args.runId, args.wikidotId],
     );
 
-    const html = sanitizePgText(args.row.contentHtml, {
-      context: `restricted.content_html:${args.pageId}`,
-    }).value;
-    const text = sanitizePgText(args.row.textContent, {
-      context: `restricted.text_content:${args.pageId}`,
-    }).value;
-    const sha = createHash('sha256').update(html, 'utf8').digest();
-    const content = await query<{ result: Record<string, unknown> }>(
-      db,
-      'restricted:apply_rendered_content',
-      `SELECT ingest.apply_listpages_rendered_content(
-         $1::int, $2::bytea, $3::text, $4::text,
-         $5::timestamptz, $6::bigint, $7::int
-       ) AS result`,
-      [
-        args.pageId,
-        sha,
-        html,
-        text,
-        toPgTimestamptz(args.observedAt),
-        args.runId,
-        args.wikidotId,
-      ],
-    );
+    const content = await applyRestrictedRenderedContent(db, {
+      contentHtml: args.row.contentHtml,
+      textContent: args.row.textContent,
+      pageId: args.pageId,
+      wikidotId: args.wikidotId,
+      observedAt: args.observedAt,
+      runId: args.runId,
+    });
 
     let attribution: Record<string, unknown> | null = null;
     if (ownerActorId !== null) {
@@ -171,7 +193,7 @@ export async function applyRestrictedListPage(
       wikidotId: args.wikidotId,
       ownerActorId,
       metadata: metadata.rows[0]?.result ?? {},
-      content: content.rows[0]?.result ?? {},
+      content,
       attribution,
     };
   });

@@ -113,6 +113,11 @@ export interface AmcRequestOptions {
   timeoutMs?: number;
   /** 单次调用的 HTTP 尝试次数。探针自己在外层做退避，所以默认 1。 */
   maxAttempts?: number;
+  /**
+   * 仅供受限分类专用 session 注入。普通 AMC 调用不设置，因而只发送 token7，
+   * 不会意外把登录态带到论坛/投票/修订等匿名链路。
+   */
+  wikidotSessionId?: string;
 }
 
 /**
@@ -139,7 +144,10 @@ export async function amcRequest(
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      cookie: `wikidot_token7=${token}`,
+      cookie:
+        opts.wikidotSessionId === undefined
+          ? `wikidot_token7=${token}`
+          : `WIKIDOT_SESSION_ID=${opts.wikidotSessionId}; wikidot_token7=${token}`,
     },
     body: form.toString(),
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),

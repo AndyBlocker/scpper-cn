@@ -148,7 +148,8 @@ function isDirectMissingIdentity(error: string): boolean {
 }
 
 function isPrerequisiteFailure(error: string): boolean {
-  return /缺少成功 l1|claimed_total 非法|claimed_rating|tier1.*证据/.test(error);
+  return /缺少成功 l1|claimed_total 非法|claimed_rating|tier1.*证据/.test(error)
+    || /restrictedsessionunavailable|受限源码.*emptyresult=false|登录 session 不可用/.test(error);
 }
 
 function transientSignature(error: string): string {
@@ -170,6 +171,9 @@ function directIdentitySignature(error: string): string {
 
 function prerequisiteSignature(error: string): string {
   if (/缺少成功 l1|tier1.*证据/.test(error)) return 'missing_l1_claim';
+  if (/restrictedsessionunavailable|受限源码.*emptyresult=false|登录 session 不可用/.test(error)) {
+    return 'restricted_session_unavailable';
+  }
   return 'invalid_remote_claim';
 }
 
