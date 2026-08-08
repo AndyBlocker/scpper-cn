@@ -69,9 +69,9 @@ import {
   type IdentityReviewResult,
 } from '../work/identityCheck.js';
 import {
-  applyAdaptiveSelfProtectionToWorkQueueHealth,
-  evaluateWorkQueueHealth,
-  WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS,
+  applyAdaptiveSelfProtectionToRunHealth,
+  evaluateRunHealth,
+  RUN_REPEATED_FAILURE_ATTEMPTS,
 } from '../work/runHealth.js';
 
 const log = createLogger('work-queue');
@@ -541,7 +541,7 @@ async function main(): Promise<void> {
       }
 
       if (outcome.status === 'failed') {
-        if (task.attempts >= WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS) {
+        if (!terminal && task.attempts >= RUN_REPEATED_FAILURE_ATTEMPTS) {
           counters.repeatedFailures++;
         }
         if (!terminal) consecutiveFailures++;
@@ -594,19 +594,20 @@ async function main(): Promise<void> {
       ),
       releaseIrreconcilableReviewLocks(pool, unfinishedTasks, workerId),
     ]);
-    const baseHealth = evaluateWorkQueueHealth({
+    const baseHealth = evaluateRunHealth({
       claimed: counters.claimed,
       processed: counters.processed,
       partial: counters.partial,
-      failed: counters.failed,
-      writeFreezeSkipped: counters.writeFreezeSkipped,
+      failed: counters.failed + counters.irreconcilable,
+      deterministicFailures: counters.irreconcilable,
+      deferred: counters.writeFreezeSkipped + unfinishedTasks.length,
       repeatedFailures: counters.repeatedFailures,
       breakerOpen: http.breakerOpen,
       stoppedByFailureLimit: counters.stoppedByFailureLimit,
     });
     const egressState = await readAdaptiveEgressState(pool);
     const selfProtection = evaluateAdaptiveSelfProtection(egressState, Date.now());
-    const health = applyAdaptiveSelfProtectionToWorkQueueHealth(baseHealth, selfProtection);
+    const health = applyAdaptiveSelfProtectionToRunHealth(baseHealth, selfProtection);
     const status = health.status;
     const durationMs = Date.now() - startedMs;
     await finishIngestRun(pool, runId, {

@@ -20,6 +20,11 @@ export interface WorkFailurePolicy {
   rationale: string;
 }
 
+/** run health 的唯一确定性判据；不得在各 CLI 复制 family/action 词表。 */
+export function isDeterministicWorkFailure(policy: WorkFailurePolicy): boolean {
+  return policy.action !== 'retry';
+}
+
 /**
  * 出口护栏复用本分类的唯一桥接点：不在 gate 内复制错误词表。
  * 只有 identity_absent 的空体 HTTP 500 在 HTTP 层曾像压力失败，需要在分类后改账。
@@ -163,7 +168,10 @@ function isDirectMissingIdentity(error: string): boolean {
 
 function isPrerequisiteFailure(error: string): boolean {
   return /缺少成功 l1|claimed_total 非法|claimed_rating|tier1.*证据/.test(error)
-    || /restrictedsessionunavailable|受限源码.*emptyresult=false|登录 session 不可用/.test(error);
+    || /restrictedsessionunavailable|受限源码.*emptyresult=false|登录 session 不可用/.test(error)
+    // ForumStart/父表是整轮共享前置。它失败时每个子任务看到的同一句错误不是
+    // “50 个对象同时结构损坏”，必须保留为可重试的系统性失败并进入 run 比例。
+    || /forumstartmodule 前置抓取失败|分类父表未成功应用/.test(error);
 }
 
 function transientSignature(error: string): string {

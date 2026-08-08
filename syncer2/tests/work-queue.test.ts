@@ -29,10 +29,10 @@ import {
   WORK_HANDLER_REGISTRY,
 } from '../src/work/handlers.js';
 import {
-  applyAdaptiveSelfProtectionToWorkQueueHealth,
-  evaluateWorkQueueHealth,
-  WORK_QUEUE_FAILURE_RATE_THRESHOLD,
-  WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS,
+  applyAdaptiveSelfProtectionToRunHealth,
+  evaluateRunHealth,
+  RUN_FAILURE_RATE_THRESHOLD,
+  RUN_REPEATED_FAILURE_ATTEMPTS,
 } from '../src/work/runHealth.js';
 import { resolveTestDatabaseUrl } from './helpers/pg.js';
 
@@ -191,7 +191,7 @@ describe('M4 work-queue', () => {
       cliSource,
       /process\.exitCode = health\.exitCode/,
     );
-    assert.match(cliSource, /evaluateWorkQueueHealth/);
+    assert.match(cliSource, /evaluateRunHealth/);
     assert.match(cliSource, /consecutiveFailures >= CONSECUTIVE_PAGE_FAILURE_LIMIT/);
     assert.match(cliSource, /const terminal = action === 'irreconcilable'/);
     assert.match(
@@ -217,10 +217,10 @@ describe('M4 work-queue', () => {
   });
 
   it('页级失败按比例与跨轮连续性升级，孤立失败不拖垮整轮', () => {
-    assert.equal(WORK_QUEUE_FAILURE_RATE_THRESHOLD, 0.25);
-    assert.equal(WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS, 3);
+    assert.equal(RUN_FAILURE_RATE_THRESHOLD, 0.25);
+    assert.equal(RUN_REPEATED_FAILURE_ATTEMPTS, 3);
 
-    const isolated = evaluateWorkQueueHealth({
+    const isolated = evaluateRunHealth({
       claimed: 9,
       processed: 9,
       partial: 2,
@@ -235,7 +235,7 @@ describe('M4 work-queue', () => {
       { status: 'partial', exitCode: 0 },
     );
 
-    const highRate = evaluateWorkQueueHealth({
+    const highRate = evaluateRunHealth({
       claimed: 8,
       processed: 8,
       partial: 0,
@@ -249,7 +249,7 @@ describe('M4 work-queue', () => {
     assert.equal(highRate.exitCode, 1);
     assert.ok(highRate.reasons.includes('high_failure_rate'));
 
-    const zeroProgress = evaluateWorkQueueHealth({
+    const zeroProgress = evaluateRunHealth({
       claimed: 5,
       processed: 0,
       partial: 0,
@@ -263,7 +263,7 @@ describe('M4 work-queue', () => {
     assert.equal(zeroProgress.exitCode, 1);
     assert.ok(zeroProgress.reasons.includes('zero_progress'));
 
-    const repeated = evaluateWorkQueueHealth({
+    const repeated = evaluateRunHealth({
       claimed: 9,
       processed: 9,
       partial: 0,
@@ -279,7 +279,7 @@ describe('M4 work-queue', () => {
   });
 
   it('自适应降档窗口内 exit 0 并给恢复时间；超过预计恢复窗口才 exit 1', () => {
-    const base = evaluateWorkQueueHealth({
+    const base = evaluateRunHealth({
       claimed: 5, processed: 0, partial: 0, failed: 0,
       writeFreezeSkipped: 0, repeatedFailures: 0,
       breakerOpen: false, stoppedByFailureLimit: false,
@@ -302,7 +302,7 @@ describe('M4 work-queue', () => {
       snapshot,
       Date.parse('2026-08-07T01:10:00.000Z'),
     );
-    const protectedHealth = applyAdaptiveSelfProtectionToWorkQueueHealth(base, expected);
+    const protectedHealth = applyAdaptiveSelfProtectionToRunHealth(base, expected);
     assert.equal(expected.status, 'downshift_expected');
     assert.equal(protectedHealth.exitCode, 0);
     assert.equal(protectedHealth.selfProtection.levelName, 'cooldown');
@@ -313,7 +313,7 @@ describe('M4 work-queue', () => {
       snapshot,
       Date.parse('2026-08-07T05:00:00.000Z'),
     );
-    const failed = applyAdaptiveSelfProtectionToWorkQueueHealth(base, overdue);
+    const failed = applyAdaptiveSelfProtectionToRunHealth(base, overdue);
     assert.equal(overdue.status, 'downshift_overdue');
     assert.equal(failed.exitCode, 1);
     assert.ok(failed.reasons.includes('adaptive_downshift_recovery_overdue'));

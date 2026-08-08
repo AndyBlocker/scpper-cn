@@ -17,6 +17,7 @@ import {
   type ImageWorkerOptions,
 } from '../image/worker.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 
 const log = createLogger('image-ingest');
 
@@ -102,9 +103,18 @@ async function main(): Promise<void> {
       `SELECT status, count(*)::text AS n
          FROM meta.image_ingest_job GROUP BY status ORDER BY status`,
     );
+    const health = evaluateRunHealth({
+      claimed: counters.claimed,
+      processed: counters.completed + counters.retry + counters.failed,
+      partial: 0,
+      // retry 是本轮真实的可重试失败；只因它已重新入队，不能从整轮失败率消失。
+      failed: counters.retry + counters.failed,
+      breakerOpen: wikidot.breakerOpen || external.breakerOpen,
+    });
     emitSummary({
-      ok: true,
-      status: counters.retry > 0 || counters.failed > 0 ? 'partial' : 'ok',
+      ok: health.exitCode === 0,
+      status: health.status,
+      health,
       durationMs: Date.now() - startedMs,
       runtimeBudgetReached: Date.now() >= deadlineMs,
       ...counters,
@@ -116,6 +126,7 @@ async function main(): Promise<void> {
       externalHealth: external.healthStats(),
       externalFailuresAffectWikidotHealth: false,
     });
+    process.exitCode = health.exitCode;
   } catch (error) {
     await query(
       pool,

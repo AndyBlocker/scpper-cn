@@ -30,6 +30,11 @@ import {
   forumQueueBreakdown,
   seedForumDiscussionLinkTasks,
 } from '../store/queues.js';
+import {
+  classifyWorkFailure,
+  isDeterministicWorkFailure,
+} from '../work/failurePolicy.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 
 const log = createLogger('forum-incremental');
 const SOURCE = 'wikidot_forum';
@@ -128,8 +133,21 @@ async function main(): Promise<void> {
     // 只插入尚无页级任务的缺口；首轮 28k，此后通常为 0，不会每 5 分钟重写整队列。
     const linkTasksSeeded = await seedForumDiscussionLinkTasks(pool);
     const queue = await forumQueueBreakdown(pool);
-    const partial = discoveries.filter((result) => result.status !== 'ok');
-    const status = partial.length === 0 ? 'ok' : 'partial';
+    const failedResults = discoveries.filter((result) => result.status === 'failed');
+    const deterministicFailures = failedResults.filter((result) =>
+      isDeterministicWorkFailure(
+        classifyWorkFailure('forum', result.error ?? '未提供论坛增量失败原因'),
+      )
+    ).length;
+    const health = evaluateRunHealth({
+      claimed: discoveries.length,
+      processed: discoveries.length,
+      partial: discoveries.filter((result) => result.status === 'partial').length,
+      failed: failedResults.length,
+      deterministicFailures,
+      breakerOpen: http.breakerOpen,
+    });
+    const status = health.status;
     const durationMs = Date.now() - startedMs;
     const stats = {
       mode: 'forum_incremental',
@@ -143,6 +161,7 @@ async function main(): Promise<void> {
       durationMs,
       http: http.stats(),
       httpHealth: http.healthStats(),
+      health,
     };
     await finishIngestRun(pool, runId, {
       status,
@@ -151,7 +170,7 @@ async function main(): Promise<void> {
       remoteTotal: start.data.categories.length,
       remoteTotalSource: 'unknown',
       batchesTotal: http.stats().requests,
-      batchesFailed: partial.length,
+      batchesFailed: health.retryableFailures,
       transportFailureRate: transportFailureRate(http),
       exitIpStats: {},
       parseFingerprint: {
@@ -160,7 +179,8 @@ async function main(): Promise<void> {
       },
       stats,
     });
-    emitSummary({ ok: true, status, runId, ...stats });
+    emitSummary({ ok: health.exitCode === 0, status, runId, ...stats });
+    process.exitCode = health.exitCode;
   } catch (error) {
     await finishIngestRun(pool, runId, {
       status: 'failed',

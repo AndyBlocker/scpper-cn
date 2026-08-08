@@ -217,21 +217,14 @@ test('run partial/inconclusive 与真 failed 分账，不制造调度失败', as
   assert.match(backfill, /statusSemanticsBackfill/);
   assert.match(backfill, /COALESCE\(NULLIF\(stats->>'failed', ''\)::int, 0\) = 0/);
   assert.match(backfill, /跨批 fullname 重复 \[0-9\]\+/);
-  assert.match(workQueue, /evaluateWorkQueueHealth/);
-  assert.match(forum, /counters\.partial > 0[\s\S]{0,80}\? 'partial'/);
   assert.match(reconcile, /report\.status === 'partial'[\s\S]{0,80}\? 'partial'/);
   assert.match(reconcile, /report\.status === 'inconclusive'[\s\S]{0,80}\? 'partial'/);
-  assert.match(reconcile, /ok: !isReconcileFailure\(finalReport\.status\)/);
   // 退出码只留给工具级故障与「未解释占比显著恶化」；发现分歧本身走报表，不占用单元失败信号位。
   // 行为断言见 tests/reconcile-exit-semantics.test.ts，这里只钉住调用点没有被绕过。
-  assert.match(reconcile, /toolFailed \|\| regressed \? 1 : 0/);
   assert.match(reconcile, /isReconcileToolFailure\(finalReport\.status\)/);
   assert.match(reconcile, /unexplainedRatioRegressed\(/);
-  assert.match(workQueue, /ok: health\.exitCode === 0/);
-  for (const source of [tier1, sitemap, forum]) {
-    assert.match(
-      source,
-      /(?:status|logicalStatus|outcome\.status|finalReport\.status) === 'ok' \|\| [\s\S]{0,40}=== 'partial'/,
-    );
+  for (const source of [workQueue, tier1, sitemap, forum, reconcile]) {
+    assert.match(source, /evaluateRunHealth\(/);
+    assert.match(source, /process\.exitCode = health\.exitCode/);
   }
 });

@@ -45,7 +45,7 @@ import { evaluateParseHealth } from '../health/parseHealth.js';
 import { fetchCategorySitemap } from '../sitemap/fetch.js';
 import { normalizeSitemapEntries } from '../sitemap/normalize.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
-import { finishIngestRun, startIngestRun } from '../store/meta.js';
+import { finishIngestRun, startIngestRun, type ScanTaskKind } from '../store/meta.js';
 import {
   claimDiscussionTasks,
   claimForumTargets,
@@ -58,6 +58,15 @@ import {
   type ClaimedDiscussionTask,
   type ClaimedForumTarget,
 } from '../store/queues.js';
+import {
+  classifyWorkFailure,
+  workFailureHash,
+  type WorkFailurePolicy,
+} from '../work/failurePolicy.js';
+import {
+  evaluateRunHealth,
+  RUN_REPEATED_FAILURE_ATTEMPTS,
+} from '../work/runHealth.js';
 
 const log = createLogger('forum-scan');
 const SOURCE = 'wikidot_forum';
@@ -89,6 +98,7 @@ interface Counters {
   threadsApplied: number;
   postsApplied: number;
   irreconcilable: number;
+  repeatedFailures: number;
   consecutiveFailuresPeak: number;
   stoppedByFailureLimit: boolean;
   stoppedByRuntimeBudget: boolean;
@@ -142,6 +152,7 @@ async function main(): Promise<void> {
     threadsApplied: 0,
     postsApplied: 0,
     irreconcilable: 0,
+    repeatedFailures: 0,
     consecutiveFailuresPeak: 0,
     stoppedByFailureLimit: false,
     stoppedByRuntimeBudget: false,
@@ -319,7 +330,12 @@ async function main(): Promise<void> {
         const result = results.get(task.pageId) ??
           failed<ForumCommentsPage>('内部错误：页面讨论串关联结果 Map 缺项');
         stagedLinks.set(task.taskId, result);
-        consecutiveFailures = updateFailureStreak(result, consecutiveFailures, counters);
+        consecutiveFailures = updateFailureStreak(
+          result,
+          task.kind,
+          consecutiveFailures,
+          counters,
+        );
         if (http.breakerOpen || consecutiveFailures >= FAILURE_LIMIT) {
           counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
           break linkGroups;
@@ -390,7 +406,12 @@ async function main(): Promise<void> {
             results.get(task.pageId) ??
             failed<ForumDiscussionSnapshot>('内部错误：页面讨论结果 Map 缺项');
           stagedDiscussions.set(task.taskId, result);
-          consecutiveFailures = updateFailureStreak(result, consecutiveFailures, counters);
+          consecutiveFailures = updateFailureStreak(
+            result,
+            task.kind,
+            consecutiveFailures,
+            counters,
+          );
           if (http.breakerOpen || consecutiveFailures >= FAILURE_LIMIT) {
             counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
             break scanGroups;
@@ -416,7 +437,12 @@ async function main(): Promise<void> {
               results.get(task.targetId) ??
               failed<ForumThreadSnapshot>('内部错误：主题结果 Map 缺项');
             stagedThreads.set(task.taskId, result);
-            consecutiveFailures = updateFailureStreak(result, consecutiveFailures, counters);
+            consecutiveFailures = updateFailureStreak(
+              result,
+              'forum',
+              consecutiveFailures,
+              counters,
+            );
             if (http.breakerOpen || consecutiveFailures >= FAILURE_LIMIT) {
               counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
               break;
@@ -477,7 +503,7 @@ async function main(): Promise<void> {
       let status: 'ok' | 'partial' | 'failed' = result.status;
       let error = result.status === 'ok' ? null : result.error;
       let applyResult: Record<string, unknown> | null = null;
-      const resultHash =
+      let resultHash =
         result.status === 'failed'
           ? null
           : forumBatchResultHash({
@@ -510,14 +536,20 @@ async function main(): Promise<void> {
         status = 'failed';
         error = categoryApplyError ?? '分类父表未成功应用';
       }
+      const failurePolicy = classifyFinishedFailure('forum', status, error);
+      if (failurePolicy?.action === 'irreconcilable') {
+        resultHash = workFailureHash(failurePolicy);
+      }
       const finish = await finishForumTarget(pool, task, {
         workerId,
         status,
         resultHash,
+        terminalFailure: terminalForumFailure(failurePolicy, error),
         now: new Date().toISOString(),
       });
       finishedForum.add(task.taskId);
       countFinished(counters, status, finish.action === 'retried' ? null : finish.action);
+      countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: 'category',
         targetId: task.targetId,
@@ -527,6 +559,7 @@ async function main(): Promise<void> {
         pagesFetched: result.status === 'failed' ? null : result.data.pagesFetched,
         totalPages: result.status === 'failed' ? null : result.data.totalPages,
         action: finish.action,
+        failurePolicy,
         apply: applyResult,
         error,
       });
@@ -559,14 +592,27 @@ async function main(): Promise<void> {
         status = 'failed';
         error = categoryApplyError ?? '分类父表未成功应用';
       }
+      const deletedThread =
+        result.status !== 'failed' && result.data.thread.isDeleted;
+      const failurePolicy = classifyFinishedFailure('forum', status, error);
+      if (failurePolicy?.action === 'irreconcilable') {
+        resultHash = workFailureHash(failurePolicy);
+      }
       const finish = await finishForumTarget(pool, task, {
         workerId,
         status,
         resultHash,
+        terminalFailure: deletedThread
+          ? {
+              family: 'identity_absent',
+              reason: error ?? `讨论串 ${task.targetId} 已删除`,
+            }
+          : terminalForumFailure(failurePolicy, error),
         now: new Date().toISOString(),
       });
       finishedForum.add(task.taskId);
-      countFinished(counters, status, null);
+      countFinished(counters, status, finish.action);
+      countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: 'thread',
         targetId: task.targetId,
@@ -574,6 +620,7 @@ async function main(): Promise<void> {
         posts: result.status === 'failed' ? null : result.data.posts.length,
         categoryId: result.status === 'failed' ? null : result.data.thread.categoryId,
         action: finish.action,
+        failurePolicy,
         apply: applyResult,
         error,
       });
@@ -614,16 +661,22 @@ async function main(): Promise<void> {
           await noteFreezeSkip(pool, runId, task, error);
         }
       }
+      const failurePolicy = classifyFinishedFailure(task.kind, status, error);
+      if (failurePolicy?.action === 'irreconcilable') {
+        resultHash = workFailureHash(failurePolicy);
+      }
       const finish = await finishDiscussionTask(pool, task, {
         workerId,
         status,
         resultHash,
+        terminalFailure: failurePolicy?.action === 'irreconcilable',
         localValue: { thread_id: threadId, known_thread_linked: knownThreadLinked },
         remoteValue: { expected_thread_id: task.expectedThreadId },
         now: new Date().toISOString(),
       });
       finishedDiscussion.add(task.taskId);
       countFinished(counters, status, finish.action);
+      countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: 'discussion_link',
         lane: task.lane,
@@ -632,6 +685,7 @@ async function main(): Promise<void> {
         threadId,
         knownThreadLinked,
         action: finish.action,
+        failurePolicy,
         error,
       });
     }
@@ -667,10 +721,17 @@ async function main(): Promise<void> {
           await noteFreezeSkip(pool, runId, task, error);
         }
       }
+      const deletedThread =
+        result.status !== 'failed' && result.data.thread.isDeleted;
+      const failurePolicy = classifyFinishedFailure(task.kind, status, error);
+      if (failurePolicy?.action === 'irreconcilable') {
+        resultHash = workFailureHash(failurePolicy);
+      }
       const finish = await finishDiscussionTask(pool, task, {
         workerId,
         status,
         resultHash,
+        terminalFailure: deletedThread || failurePolicy?.action === 'irreconcilable',
         localValue: applyResult ?? {},
         remoteValue: {
           claimed_total: task.claimedTotal,
@@ -681,6 +742,7 @@ async function main(): Promise<void> {
       });
       finishedDiscussion.add(task.taskId);
       countFinished(counters, status, finish.action);
+      countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: task.kind,
         pageId: task.pageId,
@@ -690,6 +752,7 @@ async function main(): Promise<void> {
         threadId: result.status === 'failed' ? null : result.data.threadId,
         posts: result.status === 'failed' ? null : result.data.posts.length,
         action: finish.action,
+        failurePolicy,
         apply: applyResult,
         error,
       });
@@ -704,17 +767,19 @@ async function main(): Promise<void> {
     await releaseForumTargetLocks(pool, unprocessedForum, workerId);
     await releaseDiscussionTaskLocks(pool, unprocessedDiscussion, workerId);
 
-    const stopped = http.breakerOpen || counters.stoppedByFailureLimit;
-    const status =
-      stopped
-        ? http.breakerOpen
-          ? 'aborted'
-          : 'failed'
-        : counters.failed > 0
-          ? 'failed'
-          : counters.partial > 0
-            ? 'partial'
-            : 'ok';
+    const unprocessedReleased = unprocessedForum.length + unprocessedDiscussion.length;
+    const health = evaluateRunHealth({
+      claimed: counters.claimed,
+      processed: counters.processed,
+      partial: counters.partial,
+      failed: counters.failed + counters.irreconcilable,
+      deterministicFailures: counters.irreconcilable,
+      deferred: unprocessedReleased,
+      repeatedFailures: counters.repeatedFailures,
+      breakerOpen: http.breakerOpen,
+      stoppedByFailureLimit: counters.stoppedByFailureLimit,
+    });
+    const status = health.status;
     const durationMs = Date.now() - startedMs;
     await finishIngestRun(pool, runId, {
       status,
@@ -731,7 +796,11 @@ async function main(): Promise<void> {
         mode: 'forum',
         durationMs,
         ...counters,
-        unprocessedReleased: unprocessedForum.length + unprocessedDiscussion.length,
+        unprocessedReleased,
+        health,
+        healthExclusions: {
+          deterministic_failures: counters.irreconcilable,
+        },
         startupProbe,
         parseHealth,
         http: http.stats(),
@@ -740,18 +809,19 @@ async function main(): Promise<void> {
       },
     });
     emitSummary({
-      ok: status === 'ok' || status === 'partial',
+      ok: health.exitCode === 0,
       status,
+      health,
       runId,
       durationMs,
       ...counters,
-      unprocessedReleased: unprocessedForum.length + unprocessedDiscussion.length,
+      unprocessedReleased,
       parseHealth,
       http: http.stats(),
       httpHealth: http.healthStats(),
       samples,
     });
-    process.exitCode = status === 'ok' || status === 'partial' ? 0 : 1;
+    process.exitCode = health.exitCode;
   } catch (err) {
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
     const unfinishedForum = forumTasks
@@ -826,10 +896,13 @@ function toForumBatch(
 
 function updateFailureStreak<T>(
   result: CollectResult<T>,
+  kind: ScanTaskKind,
   current: number,
   counters: Counters,
 ): number {
-  const next = result.status === 'failed' ? current + 1 : 0;
+  const retryable = result.status === 'failed' &&
+    classifyWorkFailure(kind, result.error).action === 'retry';
+  const next = retryable ? current + 1 : 0;
   counters.consecutiveFailuresPeak = Math.max(counters.consecutiveFailuresPeak, next);
   return next;
 }
@@ -840,9 +913,52 @@ function countFinished(
   action: string | null,
 ): void {
   counters.processed++;
-  if (status === 'ok') counters.succeeded++;
-  else counters[status]++;
-  if (action === 'irreconcilable') counters.irreconcilable++;
+  if (action === 'irreconcilable') {
+    counters.irreconcilable++;
+  } else if (status === 'ok') {
+    counters.succeeded++;
+  } else {
+    counters[status]++;
+  }
+}
+
+function countRepeatedFailure(
+  counters: Counters,
+  attempts: number,
+  status: 'ok' | 'partial' | 'failed',
+  action: string,
+): void {
+  if (
+    status === 'failed' &&
+    action === 'retried' &&
+    attempts >= RUN_REPEATED_FAILURE_ATTEMPTS
+  ) {
+    counters.repeatedFailures++;
+  }
+}
+
+function classifyFinishedFailure(
+  kind: ScanTaskKind,
+  status: 'ok' | 'partial' | 'failed',
+  error: string | null,
+): WorkFailurePolicy | null {
+  return status === 'failed'
+    ? classifyWorkFailure(kind, error ?? '未提供失败原因')
+    : null;
+}
+
+function terminalForumFailure(
+  policy: WorkFailurePolicy | null,
+  error: string | null,
+): { family: 'identity_absent' | 'structural'; reason: string } | null {
+  if (policy?.action !== 'irreconcilable') return null;
+  if (policy.family !== 'identity_absent' && policy.family !== 'structural') {
+    throw new Error(`不可终结的 forum failure family：${policy.family}`);
+  }
+  return {
+    family: policy.family,
+    reason: error ?? policy.signature,
+  };
 }
 
 function addApplyCounts(counters: Counters, result: Record<string, unknown>): void {

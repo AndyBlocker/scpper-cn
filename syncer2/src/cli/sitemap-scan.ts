@@ -51,6 +51,7 @@ import {
 } from '../collect/deletion.js';
 import type { SitemapEntry } from '../sitemap/parse.js';
 import { normalizeSitemapEntries } from '../sitemap/normalize.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
 import {
   enqueueScanTasks,
@@ -181,6 +182,17 @@ async function main(): Promise<void> {
     if (pool) runId = await startIngestRun(pool, source, startedAt);
 
     const outcome = await runMode(opts, config, http, pool, runId, startedAt);
+    const health = evaluateRunHealth({
+      claimed: outcome.batchesTotal,
+      processed: outcome.batchesTotal,
+      partial: outcome.status === 'partial' ? Math.max(1, outcome.batchesFailed) : 0,
+      failed: outcome.batchesFailed,
+      breakerOpen: http.breakerOpen,
+      fatalReasons:
+        outcome.status === 'failed' || outcome.status === 'aborted'
+          ? [`mode_outcome_${outcome.status}`]
+          : [],
+    });
 
     const durationMs = Date.now() - t0;
     const stats = {
@@ -198,11 +210,12 @@ async function main(): Promise<void> {
       // （站点换皮/改分类时能定位时点），以及代理泄漏判据。
       startupProbe: probeReport,
       dryRun: opts.dryRun,
+      health,
     };
     let parseHealth = null;
     if (pool) {
       parseHealth = await finishIngestRun(pool, runId, {
-        status: outcome.status,
+        status: health.status,
         finishedAt: new Date().toISOString(),
         pagesEnumerated: outcome.pagesEnumerated,
         remoteTotal: outcome.remoteTotal,
@@ -217,17 +230,18 @@ async function main(): Promise<void> {
       });
     }
     let deletionInference: DeletionInferenceReport | null = null;
-    if (pool && runId !== null && opts.mode === 'full' && outcome.status === 'ok') {
+    if (pool && runId !== null && opts.mode === 'full' && health.status === 'ok') {
       // 必须等 ingest_run.status='ok' 落库后再做删除推断；模块内部还会要求
       // ListPages 独立完整轮 + 紧邻上一组双源缺席，首轮绝不下任务。
       deletionInference = await inferDeletionCandidates(pool, runId);
     }
 
     emitSummary({
-      ok: outcome.status === 'ok' || outcome.status === 'partial',
+      ok: health.exitCode === 0,
       mode: opts.mode,
       runId,
-      status: outcome.status,
+      status: health.status,
+      health,
       durationMs,
       ...outcome.summary,
       parseHealth,
@@ -235,7 +249,7 @@ async function main(): Promise<void> {
       http: compactHttpStats(http),
       egress: compactEgress(http),
     });
-    process.exitCode = outcome.status === 'ok' || outcome.status === 'partial' ? 0 : 1;
+    process.exitCode = health.exitCode;
   } catch (err) {
     const durationMs = Date.now() - t0;
     const breaker = err instanceof CircuitOpenError;

@@ -17,6 +17,7 @@ import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import { chunk, mapWithConcurrency } from '../util/concurrency.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 import { createLogger, emitSummary, redirectConsoleToStderr } from '../util/log.js';
 
 redirectConsoleToStderr();
@@ -223,7 +224,14 @@ async function main(): Promise<void> {
       if (http.breakerOpen) throw new Error(`HTTP breaker: ${http.breakerReason ?? 'unknown'}`);
     }
     const after = await metrics(pool);
-    const status = counters.failed > 0 ? 'partial' : 'ok';
+    const health = evaluateRunHealth({
+      claimed: targets.length,
+      processed: counters.processed,
+      partial: counters.partial,
+      failed: counters.failed,
+      breakerOpen: http.breakerOpen,
+    });
+    const status = health.status;
     await finishIngestRun(pool,runId,{
       status,
       finishedAt:new Date().toISOString(),
@@ -233,18 +241,19 @@ async function main(): Promise<void> {
       batchesTotal:targets.length,
       batchesFailed:counters.failed,
       evaluateParseHealth:false,
-      stats:{mode:'vote_multiplicity_converge',before,after,counters,http:http.stats()},
+      stats:{mode:'vote_multiplicity_converge',before,after,counters,health,http:http.stats()},
     });
     emitSummary({
-      ok:true,status,runId,
+      ok:health.exitCode === 0,status,runId,
       targetPages:targets.length,
       cohorts:{
         absOne:targets.filter((row)=>row.cohortAbsOne).length,
         conflicts:targets.filter((row)=>row.cohortConflict).length,
         sameRows:targets.filter((row)=>row.cohortSameRows).length,
       },
-      counters,before,after,http:http.stats(),httpHealth:http.healthStats(),
+      counters,health,before,after,http:http.stats(),httpHealth:http.healthStats(),
     });
+    process.exitCode = health.exitCode;
   } finally {
     http.close();
     await pool.end();

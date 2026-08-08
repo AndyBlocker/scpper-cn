@@ -83,6 +83,7 @@ import {
   waitingForRestrictedEvidence,
   waitingForRestrictedSession,
 } from '../work/pendingPage.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 import { applyRestrictedListPage } from '../work/restrictedPage.js';
 
 const log = createLogger('resolve-pages');
@@ -589,16 +590,18 @@ async function main(): Promise<void> {
 
     const byStatus = await pendingStatusBreakdown(pool);
     const durationMs = Date.now() - t0;
-    // 判定：认领了却一条都没成功（且不是"全是 gone"）= 本轮失败，交调度器重启
-    const hardFailure =
-      counters.claimed - counters.writeFreezeSkipped > 0 &&
-      counters.resolved === 0 &&
-      counters.alreadyRegistered === 0 &&
-      counters.renamed === 0 &&
-      counters.gone === 0 &&
-      counters.waitingEvidence === 0 &&
-      counters.conflict === 0;
-    const status = hardFailure ? 'failed' : 'ok';
+    const processed =
+      counters.resolved + counters.alreadyRegistered + counters.renamed +
+      counters.gone + counters.waitingEvidence + counters.conflict + counters.failed;
+    const health = evaluateRunHealth({
+      claimed: counters.claimed - counters.writeFreezeSkipped,
+      processed,
+      partial: counters.gone + counters.waitingEvidence + counters.conflict,
+      failed: counters.failed,
+      deferred: counters.writeFreezeSkipped,
+      breakerOpen: http.breakerOpen,
+    });
+    const status = health.status;
 
     await finishIngestRun(pool, runId, {
       status,
@@ -639,13 +642,15 @@ async function main(): Promise<void> {
         http: http.stats(),
         httpHealth: http.healthStats(),
         startupProbe: probeReport,
+        health,
         samples,
       },
     });
 
     emitSummary({
-      ok: status === 'ok',
+      ok: health.exitCode === 0,
       status,
+      health,
       runId,
       durationMs,
       ...counters,
@@ -661,7 +666,7 @@ async function main(): Promise<void> {
         nodes: Object.keys(http.exitIpStats()?.byNode ?? {}),
       },
     });
-    process.exitCode = status === 'ok' ? 0 : 1;
+    process.exitCode = health.exitCode;
   } catch (err) {
     const breaker = err instanceof CircuitOpenError;
     const durationMs = Date.now() - t0;

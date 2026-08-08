@@ -973,35 +973,14 @@ async function scanOneForumThread(
       maxAttempts: 3,
     });
     /*
-     * 讨论串已在站上删除，是**确定性结论**而非故障：重试一万次也不会变。
-     * 此前一律判 failed，于是每轮 forum-consume 都被同一个已删串打成非零退出
-     * （实测连续复发）。
-     *
-     * 这是同一模式的第五次：slug 复用杀整轮、矛盾身份劫持整页 3,245 票、
-     * 1/146 批失败杀整轮 L1、2/3262 坏行阻断全站署名 212 小时，现在是已删讨论串。
-     * 保守判断都没错，错在**没有终态出口**——确定性的「对象不存在」
-     * 应当走删除/终结路径，而不是进入无限退避。
+     * 讨论串已在站上删除，是对象级确定性失败：不能伪装成成功或不完整快照，
+     * 但重试一万次也不会改变。consumer 会复用 classifyWorkFailure 把它立即终结；
+     * 统一 run health 再把该终态从失败率分子排除，所以不会劫持整轮退出码。
      */
     if (isThreadGoneStatus(response.status)) {
-      return partial(
-        {
-          thread: {
-            id: threadId,
-            categoryId: 0,
-            title: '',
-            description: null,
-            createdBy: null,
-            createdAt: new Date(0).toISOString(),
-            postCount: 0,
-            // 只接受上游明确证据——AMC 明说该串已删，这正是那种证据。
-            isDeleted: true,
-          },
-          posts: [],
-          totalPages: 0,
-          pagesFetched: 0,
-        },
-        `讨论串 ${threadId} 已在站上删除（status=${response.status}）；`
-          + `按终态处理，不重试、不解释成空主题`,
+      return failed(
+        `${THREAD_MODULE} status=${response.status}：讨论串 ${threadId} 已在站上删除；`
+          + '按确定性终态处理，不重试、不解释成空主题',
       );
     }
     if (response.status !== 'ok') {

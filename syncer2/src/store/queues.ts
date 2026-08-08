@@ -603,7 +603,9 @@ export async function forumQueueBreakdown(pool: Pool): Promise<Record<string, nu
       pool,
       'meta.forum_scan_task:breakdown',
       `SELECT kind, lane, count(*)::text AS n
-         FROM meta.forum_scan_task GROUP BY lane, kind ORDER BY lane, kind`,
+         FROM meta.forum_scan_task
+        WHERE terminal_at IS NULL
+        GROUP BY lane, kind ORDER BY lane, kind`,
     );
     return Object.fromEntries(res.rows.map((r) => [`${r.lane}:${r.kind}`, Number(r.n)]));
   } catch (err) {
@@ -664,8 +666,9 @@ export async function claimForumTargets(
                 ORDER BY (fst.kind = 'category') DESC, fst.priority DESC,
                          fst.not_before NULLS FIRST, fst.id
               ) AS lane_rank
-         FROM meta.forum_scan_task fst
+        FROM meta.forum_scan_task fst
         WHERE (fst.not_before IS NULL OR fst.not_before <= now())
+          AND fst.terminal_at IS NULL
           AND (
             fst.locked_by IS NULL
             OR fst.locked_at < now() - ($3::bigint || ' milliseconds')::interval
@@ -695,6 +698,7 @@ export async function claimForumTargets(
           fst.locked_by IS NULL
           OR fst.locked_at < now() - ($3::bigint || ' milliseconds')::interval
         )
+          AND fst.terminal_at IS NULL
         ORDER BY (fst.lane = 'steady') DESC, fst.priority DESC, fst.id
         FOR UPDATE OF fst SKIP LOCKED
      )
@@ -730,11 +734,15 @@ export interface FinishForumTargetArgs {
   workerId: string;
   status: 'ok' | 'partial' | 'failed';
   resultHash?: Buffer | null;
+  terminalFailure?: {
+    family: 'identity_absent' | 'structural';
+    reason: string;
+  } | null;
   now: string;
 }
 
 export interface FinishForumTargetResult {
-  action: 'deleted' | 'retried';
+  action: 'deleted' | 'retried' | 'irreconcilable';
   stableCount: number;
   notBefore: string | null;
 }
@@ -753,6 +761,34 @@ export async function finishForumTarget(
       [task.taskId, args.workerId],
     );
     return { action: 'deleted', stableCount: 0, notBefore: null };
+  }
+
+  if (args.terminalFailure !== undefined && args.terminalFailure !== null) {
+    const reason = args.terminalFailure.reason.trim();
+    if (reason === '') throw new TypeError('forum target terminal reason 不能为空');
+    await query(
+      pool,
+      'meta.forum_scan_task:finish_terminal',
+      `UPDATE meta.forum_scan_task
+          SET terminal_at = $3::timestamptz,
+              terminal_family = $4,
+              terminal_reason = $5,
+              last_result_hash = COALESCE($6, last_result_hash),
+              stable_count = GREATEST(stable_count, 1),
+              not_before = NULL,
+              locked_by = NULL,
+              locked_at = NULL
+        WHERE id = $1 AND locked_by = $2`,
+      [
+        task.taskId,
+        args.workerId,
+        toPgTimestamptz(args.now),
+        args.terminalFailure.family,
+        reason,
+        args.resultHash ?? null,
+      ],
+    );
+    return { action: 'irreconcilable', stableCount: Math.max(task.stableCount, 1), notBefore: null };
   }
 
   const sameHash =
@@ -973,6 +1009,7 @@ export interface FinishDiscussionTaskArgs {
   workerId: string;
   status: 'ok' | 'partial' | 'failed';
   resultHash?: Buffer | null;
+  terminalFailure?: boolean;
   localValue?: Record<string, unknown>;
   remoteValue?: Record<string, unknown>;
   now: string;
@@ -1010,7 +1047,7 @@ export async function finishDiscussionTask(
     task.lastResultHash !== null &&
     task.lastResultHash.equals(args.resultHash);
   const stableCount = args.resultHash ? (sameHash ? task.stableCount + 1 : 1) : 0;
-  const converged = stableCount >= 3;
+  const converged = args.terminalFailure === true || stableCount >= 3;
   const notBefore = backoffFrom(
     converged ? stableCount - 2 : task.attempts,
     Date.parse(now),

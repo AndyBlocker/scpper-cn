@@ -45,6 +45,7 @@ import {
   isReconcileToolFailure,
   unexplainedRatioRegressed,
 } from '../reconcile/types.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 
 /**
  * 未解释占比相对上一轮的容差（绝对百分点）。
@@ -280,12 +281,23 @@ async function main(): Promise<void> {
         counts: finalReport.counts,
       });
     }
+    const health = evaluateRunHealth({
+      claimed: 1,
+      processed: 1,
+      partial: isReconcileFailure(finalReport.status) && !toolFailed ? 1 : 0,
+      failed: 0,
+      fatalReasons: [
+        ...(toolFailed ? ['reconcile_tool_failure'] : []),
+        ...(regressed ? ['unexplained_ratio_regressed'] : []),
+      ],
+    });
     if (opts.qqSummary) {
       emitSummary(await imSummaryOrFallback(v2Pool, qq, reportId));
     } else {
       emitSummary({
-        ok: !isReconcileFailure(finalReport.status),
+        ok: health.exitCode === 0,
         status: finalReport.status,
+        health,
         reportId,
         runId,
         counts: finalReport.counts,
@@ -295,7 +307,7 @@ async function main(): Promise<void> {
         qqSummary: qq,
       });
     }
-    process.exitCode = toolFailed || regressed ? 1 : 0;
+    process.exitCode = health.exitCode;
   } catch (err) {
     const aborted =
       err instanceof CircuitOpenError ||

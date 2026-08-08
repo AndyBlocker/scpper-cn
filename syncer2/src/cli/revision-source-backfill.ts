@@ -32,6 +32,7 @@ import {
 import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 import {
   applyStoredRevisionSource,
   activeRevisionSourceWriteFreezes,
@@ -722,8 +723,15 @@ async function main(): Promise<void> {
     await flushEvidence(pool, runId, evidence);
     diskFreeEnd = await availableDiskBytes();
     endStorage = await loadRevisionSourceStorageStats(pool);
-    const partial =
-      counters.failed > 0 || counters.writeFreezeSkipped > 0 || diskStopped;
+    const health = evaluateRunHealth({
+      claimed: counters.processed + counters.writeFreezeSkipped,
+      processed: counters.processed,
+      partial: 0,
+      failed: counters.failed,
+      deterministicFailures: counters.irreconcilable,
+      deferred: counters.writeFreezeSkipped + Number(diskStopped),
+      breakerOpen: http.breakerOpen,
+    });
     const parseDropRate =
       counters.processed === 0 ? null : counters.failed / counters.processed;
     const elapsedSec = (Date.now() - startedMs) / 1_000;
@@ -767,21 +775,18 @@ async function main(): Promise<void> {
       timeBudgetReached: Date.now() - startedMs >= opts.maxRuntimeSec * 1_000,
       healthExclusions: {
         write_freeze: counters.writeFreezeSkipped,
+        deterministic_failures: counters.irreconcilable,
       },
+      health,
     };
     const parseHealth = await finishIngestRun(pool, runId, {
-      status:
-        counters.writeFreezeSkipped > 0 && counters.processed === 0
-          ? 'aborted'
-          : partial
-            ? 'partial'
-            : 'ok',
+      status: health.status,
       finishedAt: new Date().toISOString(),
       pagesEnumerated: counters.processed,
       remoteTotal: opts.pilot ? PILOT_COUNT : eligible || null,
       remoteTotalSource: 'unknown',
       batchesTotal: http.healthStats().business.requests,
-      batchesFailed: counters.failed,
+      batchesFailed: health.retryableFailures,
       transportFailureRate: businessTransportFailureRate(http),
       exitIpStats: http.exitIpStats() as unknown as Record<string, unknown>,
       parseFingerprint: {
@@ -804,13 +809,9 @@ async function main(): Promise<void> {
       stats,
     });
     emitSummary({
-      ok: true,
-      status:
-        counters.writeFreezeSkipped > 0 && counters.processed === 0
-          ? 'aborted'
-          : partial
-            ? 'partial'
-            : 'ok',
+      ok: health.exitCode === 0,
+      status: health.status,
+      health,
       runId,
       ...counters,
       version: REVISION_SOURCE_VERSION,
@@ -827,6 +828,7 @@ async function main(): Promise<void> {
       parseHealth,
       http: http.stats(),
     });
+    process.exitCode = health.exitCode;
   } catch (err) {
     const error = String(err);
     counters.failed++;

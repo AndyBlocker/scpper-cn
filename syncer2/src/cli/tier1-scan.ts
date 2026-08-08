@@ -50,6 +50,7 @@ import {
 } from '../store/meta.js';
 import { upsertPendingPages } from '../store/queues.js';
 import { chunk } from '../util/concurrency.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 
 const log = createLogger('tier1-scan');
 const SOURCE = 'wikidot';
@@ -216,16 +217,19 @@ async function main(): Promise<void> {
       );
     }
 
-    const logicalStatus: 'ok' | 'partial' | 'failed' =
-      !persistence.ok ? 'failed' : scan.status;
-    const dbStatus =
-      logicalStatus === 'ok'
-        ? 'ok'
-        : logicalStatus === 'partial'
-          ? 'partial'
-          : http.breakerOpen
-            ? 'aborted'
-            : 'failed';
+    const health = evaluateRunHealth({
+      claimed: Math.max(scan.remoteTotal ?? scan.pagesEnumerated, scan.requestedBatches),
+      processed: Math.max(scan.pagesEnumerated, scan.requestedBatches),
+      partial: scan.status === 'partial' ? Math.max(1, scan.batchesFailed) : 0,
+      failed: scan.batchesFailed + persistence.errors.length,
+      breakerOpen: http.breakerOpen,
+      fatalReasons: [
+        ...(scan.status === 'failed' ? ['scan_validation_failed'] : []),
+        ...(!persistence.ok ? ['persistence_failed'] : []),
+      ],
+    });
+    const logicalStatus = health.status;
+    const dbStatus = health.status;
     const durationMs = Date.now() - t0;
     const stats = {
       mode: runMode,
@@ -241,6 +245,7 @@ async function main(): Promise<void> {
       snapshotAdvanced,
       startupProbe: probeReport,
       parseHealth: earlyHealth,
+      health,
       http: http.stats(),
       httpHealth: http.healthStats(),
       durationMs,
@@ -270,8 +275,9 @@ async function main(): Promise<void> {
     }
 
     emitSummary({
-      ok: logicalStatus === 'ok' || logicalStatus === 'partial',
+      ok: health.exitCode === 0,
       status: logicalStatus,
+      health,
       runId,
       durationMs,
       pagesEnumerated: scan.pagesEnumerated,
@@ -287,7 +293,7 @@ async function main(): Promise<void> {
       http: compactHttp(http),
       egress: compactEgress(http),
     });
-    process.exitCode = logicalStatus === 'ok' || logicalStatus === 'partial' ? 0 : 1;
+    process.exitCode = health.exitCode;
   } catch (err) {
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
     const durationMs = Date.now() - t0;

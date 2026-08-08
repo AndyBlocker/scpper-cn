@@ -25,6 +25,7 @@ import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import { chunk, mapWithConcurrency } from '../util/concurrency.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 
 const log = createLogger('vote-replay');
 const SOURCE = 'wikidot_tier2';
@@ -190,12 +191,15 @@ async function main(): Promise<void> {
     }
 
     const eventBreakdown = await loadEventBreakdown(pool, runId!);
-    const status =
-      counters.failedPages > 0
-        ? 'failed'
-        : counters.partialPages > 0 || counters.writeFreezeSkipped > 0
-          ? 'partial'
-          : 'ok';
+    const health = evaluateRunHealth({
+      claimed: targets.length - counters.writeFreezeSkipped,
+      processed: counters.processed,
+      partial: counters.partialPages,
+      failed: counters.failedPages,
+      deferred: counters.writeFreezeSkipped,
+      breakerOpen: http.breakerOpen,
+    });
+    const status = health.status;
     const finishedAt = new Date().toISOString();
     const parseHealth = await finishIngestRun(pool, runId, {
       status,
@@ -204,7 +208,7 @@ async function main(): Promise<void> {
       remoteTotal: targets.length,
       remoteTotalSource: 'listpages_total',
       batchesTotal: counters.processed,
-      batchesFailed: counters.failedPages,
+      batchesFailed: health.retryableFailures,
       transportFailureRate: transportFailureRate(http),
       exitIpStats: http.exitIpStats() as unknown as Record<string, unknown>,
       parseFingerprint: {
@@ -237,11 +241,13 @@ async function main(): Promise<void> {
         startupProbe,
         http: http.stats(),
         httpHealth: http.healthStats(),
+        health,
       },
     });
     emitSummary({
-      ok: status === 'ok' || status === 'partial',
+      ok: health.exitCode === 0,
       status,
+      health,
       runId,
       tier1Run: opts.tier1Run,
       scope: {
@@ -258,7 +264,7 @@ async function main(): Promise<void> {
       httpHealth: http.healthStats(),
       parseHealth,
     });
-    process.exitCode = status === 'ok' || status === 'partial' ? 0 : 1;
+    process.exitCode = health.exitCode;
   } catch (err) {
     const error = String(err);
     await finishIngestRun(pool, runId, {

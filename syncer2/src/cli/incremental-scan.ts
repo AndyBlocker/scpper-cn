@@ -64,6 +64,7 @@ import {
   advanceDailyL1EnumerationSnapshot,
   l1EnumerationSnapshotPath,
 } from '../store/l1EnumerationSnapshot.js';
+import { evaluateRunHealth } from '../work/runHealth.js';
 
 const log = createLogger('incremental-scan');
 const SOURCE = 'wikidot_listpages';
@@ -174,10 +175,6 @@ async function main(): Promise<void> {
             concurrency: opts.concurrency,
             logger: log.child('l1'),
           });
-    if (scan.status === 'failed') {
-      throw new Error(`ListPages ${opts.layer.toUpperCase()} 不完整：${scan.validation.reasons.join('；')}`);
-    }
-
     let l1EnumerationSnapshot: Record<string, unknown> | null = null;
     if (opts.layer === 'l1') {
       const baseSnapshotFile = l1EnumerationSnapshotPath(config.stateDir);
@@ -196,7 +193,7 @@ async function main(): Promise<void> {
     }
 
     let persistence: PersistResult;
-    if (scan.status === 'partial') {
+    if (scan.status !== 'ok') {
       // 多页 ListPages 没有事务快照；分页期间的单条移动会产生重复/空洞。
       // 整轮证据落为 partial，但不推进增量状态、不入队、不计算覆盖率。
       persistence = skippedPersistence(
@@ -226,8 +223,19 @@ async function main(): Promise<void> {
     }
 
     const durationMs = Date.now() - t0;
-    const runStatus =
-      scan.status === 'ok' && persistence.systemicPageFailure ? 'failed' : scan.status;
+    const health = evaluateRunHealth({
+      claimed: scan.expectedBatches ?? scan.requestedBatches,
+      processed: scan.requestedBatches,
+      partial: scan.status === 'partial' ? Math.max(1, scan.batchesFailed) : 0,
+      failed: scan.batchesFailed,
+      breakerOpen: http.breakerOpen,
+      fatalReasons: [
+        ...(scan.status === 'failed' ? ['scan_validation_failed'] : []),
+        ...(persistence.systemicPageFailure ? ['systemic_page_failure'] : []),
+        ...(egressSlo?.exitCode === 1 ? ['adaptive_downshift_recovery_overdue'] : []),
+      ],
+    });
+    const runStatus = health.status;
     const stats = {
       mode,
       layer: opts.layer.toUpperCase(),
@@ -244,6 +252,7 @@ async function main(): Promise<void> {
       durationMs,
       dryRun: opts.dryRun,
       httpHealth: http.healthStats(),
+      health,
     };
     const parseHealth =
       pool === null
@@ -267,7 +276,7 @@ async function main(): Promise<void> {
             stats,
           });
 
-    const exitCode = runStatus === 'failed' ? 1 : (egressSlo?.exitCode ?? 0);
+    const exitCode = health.exitCode;
     emitSummary({
       ok: exitCode === 0,
       status: runStatus,
@@ -280,6 +289,7 @@ async function main(): Promise<void> {
       expectedBatches: scan.expectedBatches,
       requestedBatches: scan.requestedBatches,
       persistence,
+      health,
       l1EnumerationSnapshot,
       parseHealth,
       egressSlo,
