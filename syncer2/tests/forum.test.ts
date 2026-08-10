@@ -452,6 +452,7 @@ test('M5 Comments fixture：实站 WIKIDOT.forumThreadId 形态与合法零评�
 
 test('M5 完整 thread 才生成缺席帖软删 tombstone，并仍走 apply_forum_batch', async () => {
   let postPayload: Array<Record<string, unknown>> = [];
+  const completenessPayloads: number[][] = [];
   const client = {
     query: async (sql: string, params?: unknown[]) => {
       if (/^(?:BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [], rowCount: null };
@@ -460,6 +461,7 @@ test('M5 完整 thread 才生成缺席帖软删 tombstone，并仍走 apply_foru
       }
       if (sql.includes('ingest.apply_forum_batch')) {
         postPayload = JSON.parse(String(params?.[2])) as Array<Record<string, unknown>>;
+        completenessPayloads.push(JSON.parse(String(params?.[5])) as number[]);
         return {
           rows: [{ result: { categories: 0, threads: 1, posts: 2 } }],
           rowCount: 1,
@@ -470,6 +472,27 @@ test('M5 完整 thread 才生成缺席帖软删 tombstone，并仍走 apply_foru
     release: () => undefined,
   };
   const pool = { connect: async () => client } as unknown as Pool;
+  const targeted = await applyForumBatch(
+    pool,
+    {
+      categories: [],
+      threads: [{
+        id: 991,
+        categoryId: 882982,
+        title: '测试主题',
+        description: null,
+        createdBy: null,
+        createdAt: '2023-11-14T22:13:20.000Z',
+        postCount: 1,
+        isDeleted: false,
+      }],
+      posts: [],
+    },
+    '2026-07-27T12:34:55.789Z',
+    null,
+  );
+  assert.equal(targeted['soft_deleted'], 0);
+
   const result = await applyForumBatch(
     pool,
     {
@@ -502,6 +525,11 @@ test('M5 完整 thread 才生成缺席帖软删 tombstone，并仍走 apply_foru
     { completeThreadIds: [991] },
   );
   assert.equal(result['soft_deleted'], 1);
+  assert.deepEqual(
+    completenessPayloads,
+    [[], [991]],
+    '定向批必须显式传空完整集；只有完整翻页 thread 才进入 absence 授权声明',
+  );
   assert.deepEqual(postPayload.map((post) => [post.id, post.is_deleted]), [
     [7001, false],
     [7002, true],

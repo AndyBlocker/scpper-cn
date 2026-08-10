@@ -49,6 +49,7 @@ import {
   shouldAlertRevisionCoverage,
   upsertL0States,
   upsertL1States,
+  upsertRevisionRegressionIdentityStates,
   type RevisionCoverageMetric,
 } from '../store/incremental.js';
 import {
@@ -420,6 +421,24 @@ async function persistL0(
     })),
     observedAt,
   );
+  const regressionIdentityStates = regressionHealth.systemic
+    ? 0
+    : await upsertRevisionRegressionIdentityStates(
+        pool,
+        runId,
+        regressionTargets.map(({ slug, pageId }) => {
+          const row = rows.find((candidate) => candidate.fullname === slug)!;
+          return {
+            layer: 'L0' as const,
+            pageId,
+            slug,
+            previousRevision: states.get(slug)!.lastL0Revision!,
+            observedRevision: row.revisions,
+            observedUpdatedAt: row.updatedAt,
+          };
+        }),
+        observedAt,
+      );
   const tasksEnqueued = await enqueueScanTasks(pool, mergeTasks(tasks));
   const pageScansWritten = await insertPageScans(
     pool,
@@ -521,6 +540,7 @@ async function persistL0(
       changed: diff.changed.length,
       revisionChanged: diff.changed.filter((row) => row.revisionChanged).length,
       revisionRegressions: diff.revisionRegressions.length,
+      revisionRegressionIdentityStates: regressionIdentityStates,
       revisionRegressionSystemic: regressionHealth.systemic,
       updatedAtWithoutRevision: anomalyCount,
       unchanged: diff.unchanged,
@@ -640,6 +660,25 @@ async function persistL1(
     })),
     observedAt,
   );
+  const regressionIdentityStates = regressionHealth.systemic
+    ? 0
+    : await upsertRevisionRegressionIdentityStates(
+        pool,
+        runId,
+        regressionTargets.map(({ slug, pageId }) => {
+          const row = rows.find((candidate) => candidate.fullname === slug)!;
+          return {
+            layer: 'L1' as const,
+            pageId,
+            slug,
+            previousRevision: states.get(slug)!.lastL1Revision!,
+            observedRevision: row.revisions,
+            observedRating: row.rating,
+            observedRatingVotes: row.ratingVotes,
+          };
+        }),
+        observedAt,
+      );
   const tasksEnqueued = await enqueueScanTasks(pool, mergeTasks(tasks));
   const voteChanged = new Set(diff.voteChanges.map((row) => row.current.fullname));
   const revisionChanged = new Set(diff.revisionChanges.map((row) => row.current.fullname));
@@ -839,6 +878,7 @@ async function persistL1(
       revisionChanges: diff.revisionChanges.length,
       revisionMisses: diff.revisionMisses.length,
       revisionRegressions: diff.revisionRegressions.length,
+      revisionRegressionIdentityStates: regressionIdentityStates,
       revisionRegressionSystemic: regressionHealth.systemic,
       projectionDriftPages: driftReconciliation.summary.discoveredPages,
       projectionDriftVoteMismatches: driftReconciliation.summary.voteMismatches,

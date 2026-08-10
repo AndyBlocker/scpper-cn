@@ -4,9 +4,15 @@ import { after, before, describe, it } from 'node:test';
 import { HttpStatusError, type HttpClient } from '../src/http/client.js';
 import { createPool, query } from '../src/store/db.js';
 import {
+  acceptSameIdentityRevisionRegression,
+  upsertRevisionRegressionIdentityStates,
+} from '../src/store/incremental.js';
+import {
+  claimWorkTasks,
   finishWorkTask,
   type ClaimedWorkTask,
 } from '../src/store/workQueue.js';
+import { enqueueScanTasks } from '../src/store/meta.js';
 import {
   classifyWorkFailure,
   deterministicEgressFailureClass,
@@ -244,6 +250,138 @@ describe('通用失败签名与身份复核', () => {
       [pageId],
     );
     assert.deepEqual(row, { status: 'live', tasks: 1, lineage: 0 });
+  });
+
+  it('同一身份的修订号 3→1 可 CAS 接受并终结 pending，不再每轮重建身份任务', async () => {
+    const slug = 'ts2test:revision-regression-same-identity';
+    const wikidotId = PAGE_WID_LO + 9_925;
+    const pageId = await register(wikidotId, slug);
+    const run = await one<{ id: string }>(
+      `INSERT INTO meta.ingest_run(source,status,started_at)
+       VALUES ('test_syncer2','ok',$1::timestamptz)
+       RETURNING id::text`,
+      [OBSERVED_ISO],
+    );
+    await query(
+      pool,
+      'test:seed_revision_regression_state',
+      `INSERT INTO meta.incremental_page_state(
+         slug, page_id, last_l1_revision, last_l1_rating, last_l1_rating_votes,
+         last_l1_seen_at, last_l1_run_id
+       ) VALUES ($1,$2,3,0,0,$3::timestamptz,$4::bigint)
+       ON CONFLICT (slug) DO UPDATE
+         SET page_id=EXCLUDED.page_id,
+             last_l1_revision=EXCLUDED.last_l1_revision,
+             last_l1_rating=EXCLUDED.last_l1_rating,
+             last_l1_rating_votes=EXCLUDED.last_l1_rating_votes,
+             last_l1_seen_at=EXCLUDED.last_l1_seen_at,
+             last_l1_run_id=EXCLUDED.last_l1_run_id`,
+      [slug, pageId, OBSERVED_ISO, Number(run.id)],
+    );
+    await query(
+      pool,
+      'test:seed_obsolete_meta_irreconcilable',
+      `INSERT INTO meta.irreconcilable(page_id,kind,local_value,remote_value)
+       VALUES ($1,'meta','{}','{}')`,
+      [pageId],
+    );
+    await upsertRevisionRegressionIdentityStates(
+      pool,
+      Number(run.id),
+      [{
+        layer: 'L1',
+        pageId,
+        slug,
+        previousRevision: 3,
+        observedRevision: 1,
+        observedRating: 0,
+        observedRatingVotes: 0,
+      }],
+      OBSERVED_ISO,
+    );
+    assert.equal(await enqueueScanTasks(pool, [{
+      pageId,
+      kind: 'meta',
+      reasons: ['revision_regression_identity_check', 'l1_revision_regression'],
+      priority: 100,
+    }]), 1);
+    const [identityTask] = await claimWorkTasks(
+      pool,
+      1,
+      WORKER,
+      ['meta'],
+      30 * 60_000,
+      7,
+      slug,
+    );
+    assert.notEqual(identityTask, undefined, '新倒退证据必须穿过旧 meta 终态的入队与认领门禁');
+    assert.equal(
+      Number((await one<{ n: string }>(
+        `SELECT count(*)::text AS n FROM meta.irreconcilable
+          WHERE page_id=$1 AND kind='meta' AND resolved_at IS NULL`,
+        [pageId],
+      )).n),
+      1,
+      'ListPages 证据不能提前关闭任意 meta 终态；须等真实身份 GET 成功',
+    );
+
+    const accepted = await acceptSameIdentityRevisionRegression(pool, {
+      pageId,
+      slug,
+      wikidotId,
+      observedAt: OBSERVED_ISO,
+    });
+    assert.deepEqual(accepted.layers, [{
+      layer: 'L1',
+      previousRevision: 3,
+      observedRevision: 1,
+    }]);
+    assert.equal(accepted.accepted, 1);
+    await finishWorkTask(pool, identityTask!, {
+      workerId: WORKER,
+      status: 'ok',
+      now: OBSERVED_ISO,
+    });
+
+    const state = await one<{
+      last_l1_revision: number;
+      status: string;
+      pending: number;
+    }>(
+      `SELECT ips.last_l1_revision, r.status,
+              (SELECT count(*)::int
+                 FROM meta.revision_regression_identity_state pending
+                WHERE pending.page_id=$1 AND pending.status='pending') AS pending
+         FROM meta.incremental_page_state ips
+         JOIN meta.revision_regression_identity_state r
+           ON r.page_id=ips.page_id AND r.layer='L1'
+        WHERE ips.page_id=$1`,
+      [pageId],
+    );
+    assert.deepEqual(state, {
+      last_l1_revision: 1,
+      status: 'accepted_same_identity',
+      pending: 0,
+    });
+    assert.equal(
+      Number((await one<{ n: string }>(
+        `SELECT count(*)::text AS n FROM meta.irreconcilable
+          WHERE page_id=$1 AND kind='meta' AND resolved_at IS NULL`,
+        [pageId],
+      )).n),
+      0,
+      '真实身份 GET 成功完成任务后才关闭旧 meta 终态',
+    );
+    assert.equal(
+      (await acceptSameIdentityRevisionRegression(pool, {
+        pageId,
+        slug,
+        wikidotId,
+        observedAt: OBSERVED_ISO,
+      })).accepted,
+      0,
+      '已收敛状态不得重复接受或无限 pending',
+    );
   });
 
   it('确定性解析结构拒绝首次即进入 irreconcilable，不计算退避时间', async () => {

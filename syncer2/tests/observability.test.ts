@@ -4,6 +4,7 @@ import path from 'node:path';
 import { after, before, describe, it, test } from 'node:test';
 
 import {
+  evaluatePipelineSuccess,
   evaluatePendingCollection,
   pendingPolicyFor,
   type PendingCollection,
@@ -14,6 +15,7 @@ import {
   loadTypeScriptSources,
 } from '../src/health/sqlTuningCheck.js';
 import { classifyRevisionSourceFailure } from '../src/store/revisionSource.js';
+import { createRun } from './helpers/fixture.js';
 import { openSess, PROJECT_ROOT, type Sess } from './helpers/pg.js';
 
 function current(
@@ -47,6 +49,31 @@ function point(
 }
 
 describe('oldest-pending 趋势判定', () => {
+  it('分链路 100 次扫描 0 成功立即 critical；0 次任务明确不报警', () => {
+    assert.deepEqual(evaluatePipelineSuccess({ scans: 100, successes: 0 }), {
+      severity: 'critical',
+      decision: 'rolling_zero_success',
+      successRate: 0,
+    });
+    assert.deepEqual(evaluatePipelineSuccess({ scans: 0, successes: 0 }), {
+      severity: 'ok',
+      decision: 'no_tasks',
+      successRate: null,
+    });
+
+    const decision = evaluatePendingCollection({
+      collection: 'page_scan_success:forum',
+      family: 'page_scan_zero_success',
+      observedAt: '2026-08-11T05:00:00.000Z',
+      pendingCount: 100,
+      oldestItemAt: '2026-08-11T04:30:00.000Z',
+      oldestItemKey: 'forum',
+      catchup: false,
+      evidence: { scans: 100, successes: 0, critical_min_scans: 10 },
+    }, []);
+    assert.equal(decision.severity, 'critical');
+    assert.equal(decision.decision, 'rolling_zero_success');
+  });
   it('某集合最老项持续变老时告警，并保留首次越线样本作为恶化起点', () => {
     const oldest = '2026-08-05T00:00:00.000Z';
     const history = [
@@ -170,6 +197,76 @@ test('revision_source 只把确定性目标错误终结；5xx/链路错误可恢
   assert.equal(classifyRevisionSourceFailure('HttpStatusError: HTTP 503'), 'transient');
   assert.equal(classifyRevisionSourceFailure('TransportError: ECONNRESET'), 'transient');
   assert.equal(classifyRevisionSourceFailure('CircuitOpenError: egress circuit open'), 'transient');
+});
+
+test('0053 活库视图把 100/0 暴露为 pending critical 候选，0 次任务保持 no_tasks', async () => {
+  const db = await openSess('pipeline-kind-health');
+  await db.begin();
+  try {
+    const runId = await createRun(db);
+    await db.q(
+      'isolate-window',
+      `DELETE FROM meta.page_scan
+        WHERE kind IN ('files','attributions')
+          AND scanned_at >= now() - interval '1 hour'`,
+    );
+    await db.q(
+      'seed-zero-success',
+      `INSERT INTO meta.page_scan(run_id,page_id,kind,status,error,scanned_at)
+       SELECT $1, 989500000 + g, 'files', 'failed', 'fix2 zero success', now()
+         FROM generate_series(1,100) g`,
+      [runId],
+    );
+    const rows = await db.q<{
+      kind: string;
+      scan_count: string;
+      success_count: string;
+      severity: string;
+      decision: string;
+    }>(
+      'health-view',
+      `SELECT kind, scan_count::text, success_count::text, severity, decision
+         FROM meta.page_scan_kind_health
+        WHERE kind IN ('files','attributions')
+        ORDER BY kind`,
+    );
+    assert.deepEqual(rows, [
+      {
+        kind: 'attributions',
+        scan_count: '0',
+        success_count: '0',
+        severity: 'ok',
+        decision: 'no_tasks',
+      },
+      {
+        kind: 'files',
+        scan_count: '100',
+        success_count: '0',
+        severity: 'critical',
+        decision: 'rolling_zero_success',
+      },
+    ]);
+    assert.equal(
+      await db.num(
+        'pending-current',
+        `SELECT count(*) FROM meta.pending_collection_current
+          WHERE collection='page_scan_success:files'
+            AND family='page_scan_zero_success'`,
+      ),
+      1,
+    );
+    assert.equal(
+      await db.num(
+        'no-task-not-pending',
+        `SELECT count(*) FROM meta.pending_collection_current
+          WHERE collection='page_scan_success:attributions'`,
+      ),
+      0,
+    );
+  } finally {
+    await db.rollback().catch(() => undefined);
+    await db.end();
+  }
 });
 
 interface IrreconcilableState {

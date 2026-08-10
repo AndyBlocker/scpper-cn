@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 
 import { fetchPageIdentity } from '../page/identity.js';
 import { query, toPgTimestamptz } from '../store/db.js';
+import { resolveRevisionRegressionIdentityStates } from '../store/incremental.js';
 import { enqueueScanTasks, recordPageScan } from '../store/meta.js';
 import {
   applyIdentityMissingDeletion,
@@ -90,6 +91,13 @@ export async function reviewFailedTaskIdentity(
     });
     const tasksRetired = await retireDeletedPageTasks(context.pool, task.pageId);
     await resolveObsoletePageIrreconcilables(context.pool, task.pageId, observedAt);
+    await resolveRevisionRegressionIdentityStates(
+      context.pool,
+      task.pageId,
+      'deleted',
+      observedAt,
+      'identity_missing_confirmed_http_404',
+    );
     await recordIdentityScan(context.pool, context.runId, task.pageId, {
       status: 'ok',
       resultHash: identityHash(task.slug, task.wikidotId),
@@ -139,6 +147,13 @@ export async function applyConfirmedSlugReuse(
     currentTaskIdToExclude,
   );
   await resolveObsoletePageIrreconcilables(context.pool, task.pageId, observedAt);
+  await resolveRevisionRegressionIdentityStates(
+    context.pool,
+    task.pageId,
+    'slug_reused',
+    observedAt,
+    `wikidot_id_changed:${task.wikidotId}->${observedWikidotId}`,
+  );
 
   await recordIdentityScan(context.pool, context.runId, task.pageId, {
     status: 'partial',

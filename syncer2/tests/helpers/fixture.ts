@@ -123,6 +123,8 @@ export interface CleanupCounts {
 export async function cleanupAll(sess: Sess): Promise<CleanupCounts> {
   const pagesSub = `(SELECT id FROM ingest.page WHERE wikidot_id BETWEEN ${PAGE_WID_LO} AND ${PAGE_WID_HI})`;
   const steps: Array<[string, string]> = [
+    ['meta.revision_regression_identity_state',
+      `DELETE FROM meta.revision_regression_identity_state WHERE page_id IN ${pagesSub}`],
     ['meta.vote_sweep_page_state', `DELETE FROM meta.vote_sweep_page_state WHERE page_id IN ${pagesSub}`],
     ['meta.vote_seed_budget', `DELETE FROM meta.vote_seed_budget WHERE budget_key LIKE 'test:%'`],
     ['meta.revoke_candidate', `DELETE FROM meta.revoke_candidate WHERE page_id IN ${pagesSub}`],

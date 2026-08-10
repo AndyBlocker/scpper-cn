@@ -1394,7 +1394,8 @@ async function applyForumBatchInTransaction(
        p_posts      => $3::jsonb,
        p_observed   => $4::timestamptz,
        p_source     => 'wikidot',
-       p_run        => $5
+       p_run        => $5,
+       p_complete_thread_ids => $6::jsonb
      ) AS result`,
     [
       toPgJson(categories, 'forum.categories'),
@@ -1402,6 +1403,7 @@ async function applyForumBatchInTransaction(
       toPgJson(posts, 'forum.posts'),
       toPgTimestamptz(observedAt),
       runId,
+      toPgJson(completeThreadIds, 'forum.complete_thread_ids'),
     ],
   );
   return {
@@ -1743,22 +1745,5 @@ export async function applyForumDiscussion(
       resultHash: hash!,
     };
   });
-  if (scanKind === 'forum') {
-    // apply_forum_batch 因没有完整性入参，会保守地把同一行覆盖成 partial。
-    // 本入口已经完整翻页并核过 claimed_total，事务成功后恢复为真正的 ok 证据。
-    await recordPageScan(
-      pool,
-      {
-        runId,
-        pageId: target.pageId,
-        kind: 'forum',
-        status: 'ok',
-        claimedTotal: target.claimedTotal,
-        fetchedTotal: result.diagnostics.fetchedTotal,
-        resultHash: hash,
-        error: sanitationMarker,
-      },
-    );
-  }
   return applied;
 }

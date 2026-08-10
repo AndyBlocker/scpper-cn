@@ -537,12 +537,18 @@ export async function claimWorkTasks(
               AND 'revision_regression_identity_check' = ANY(st.reasons)
             )
           )
-          AND NOT EXISTS (
-            SELECT 1
-              FROM meta.irreconcilable i
-             WHERE i.page_id = st.page_id
-               AND i.kind = st.kind
-               AND i.resolved_at IS NULL
+          AND (
+            (
+              st.kind = 'meta'
+              AND 'revision_regression_identity_check' = ANY(st.reasons)
+            )
+            OR NOT EXISTS (
+              SELECT 1
+                FROM meta.irreconcilable i
+               WHERE i.page_id = st.page_id
+                 AND i.kind = st.kind
+                 AND i.resolved_at IS NULL
+            )
           )
           AND (
             st.kind NOT IN ('votes_full', 'new_page_highfreq')

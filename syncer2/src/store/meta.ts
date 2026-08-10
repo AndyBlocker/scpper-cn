@@ -567,12 +567,18 @@ export async function enqueueScanTasks(
          SELECT input.page_id, input.kind, input.reasons, input.priority, input.not_before
            FROM (VALUES ${tuples.join(', ')})
                 AS input(page_id, kind, reasons, priority, not_before)
-          WHERE NOT EXISTS (
-            SELECT 1
-              FROM meta.irreconcilable i
-             WHERE i.page_id = input.page_id
-               AND i.kind = input.kind
-               AND i.resolved_at IS NULL
+          WHERE (
+            (
+              input.kind = 'meta'
+              AND 'revision_regression_identity_check' = ANY(input.reasons)
+            )
+            OR NOT EXISTS (
+              SELECT 1
+                FROM meta.irreconcilable i
+               WHERE i.page_id = input.page_id
+                 AND i.kind = input.kind
+                 AND i.resolved_at IS NULL
+            )
           )
          ON CONFLICT (page_id, kind) DO UPDATE
             SET reasons = ARRAY(SELECT DISTINCT e FROM unnest(st.reasons || EXCLUDED.reasons) AS e),

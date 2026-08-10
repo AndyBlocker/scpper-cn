@@ -43,6 +43,7 @@ import {
   type RestrictedSourceSession,
 } from '../http/restrictedSession.js';
 import { query } from '../store/db.js';
+import { acceptSameIdentityRevisionRegression } from '../store/incremental.js';
 import {
   enqueueScanTasks,
   recordPageScan as persistPageScan,
@@ -438,6 +439,9 @@ const metaHandler: WorkHandler = async (task, context) => {
   const results = await scanPageIds(httpForWorkTask(context, task), context.baseUrl, [task.slug], 1);
   const observedAt = new Date().toISOString();
   const regressionIdentityCheck = task.reasons.includes('revision_regression_identity_check');
+  let revisionRegressionResolution: Awaited<
+    ReturnType<typeof acceptSameIdentityRevisionRegression>
+  > | null = null;
   let result = results.get(task.slug);
   if (result === undefined) {
     result = failed('内部错误：pageId 结果 Map 缺项');
@@ -489,12 +493,32 @@ const metaHandler: WorkHandler = async (task, context) => {
     decideRevisionRegressionIdentity(task.wikidotId, result.data.wikidotId) ===
       'same_identity_anomaly'
   ) {
-    result = partial(
-      result.data,
-      `revision_count 倒退且 wikidotId 相同：page_id=${task.pageId};` +
-        `wikidot_id=${task.wikidotId};slug=${task.slug}`,
-      result.diagnostics,
+    // 同一身份下管理员删除历史修订是合法单页形态。先确保完整修订任务存在，再在
+    // identity/page/state 三行锁内 CAS 接受较低水位；没有显式 pending 证据时仍保守 partial。
+    await enqueueScanTasks(context.pool, [{
+      pageId: task.pageId,
+      kind: 'revisions_full',
+      reasons: ['same_identity_revision_regression_confirmed'],
+      priority: 100,
+      notBefore: observedAt,
+    }]);
+    revisionRegressionResolution = await acceptSameIdentityRevisionRegression(
+      context.pool,
+      {
+        pageId: task.pageId,
+        slug: task.slug,
+        wikidotId: task.wikidotId,
+        observedAt,
+      },
     );
+    if (revisionRegressionResolution.accepted === 0) {
+      result = partial(
+        result.data,
+        `revision_count 倒退且 wikidotId 相同，但缺少可 CAS 的 pending 证据：` +
+          `page_id=${task.pageId};wikidot_id=${task.wikidotId};slug=${task.slug}`,
+        result.diagnostics,
+      );
+    }
   }
   const status = result.status;
   const resultHash =
@@ -509,7 +533,15 @@ const metaHandler: WorkHandler = async (task, context) => {
     fetched: status === 'failed' ? 0 : 1,
     checksumOk: status === 'ok',
     resultHash,
-    error: status === 'ok' ? null : result.error,
+    error: status === 'ok'
+      ? revisionRegressionResolution === null
+        ? null
+        : `revision_regression_same_identity_accepted:` +
+          revisionRegressionResolution.layers
+            .map((layer) =>
+              `${layer.layer}:${layer.previousRevision}->${layer.observedRevision}`)
+            .join(',')
+      : result.error,
   });
   let applied: Record<string, unknown> | null = null;
   if (status === 'ok') {
@@ -525,9 +557,15 @@ const metaHandler: WorkHandler = async (task, context) => {
   return {
     status,
     resultHash,
-    localValue: applied ?? {},
+    localValue: {
+      ...(applied ?? {}),
+      ...(revisionRegressionResolution === null
+        ? {}
+        : { revision_regression_resolution: revisionRegressionResolution }),
+    },
     sample: {
       observedWikidotId: status === 'failed' ? null : result.data.wikidotId,
+      revisionRegressionResolution,
       apply: applied,
       error: status === 'ok' ? null : result.error,
     },
