@@ -97,6 +97,11 @@ test('论坛增量/消费与图片 worker 均有有限短任务调度', async ()
   assert.match(pkg.scripts['schedule:forum-discovery'] ?? '', /forum-incremental/);
   assert.match(pkg.scripts['schedule:forum-audit'] ?? '', /sitemap-scan.*threads/);
   assert.match(pkg.scripts['schedule:image-ingest'] ?? '', /image-ingest/);
+  assert.match(
+    pkg.scripts['schedule:image-ingest'] ?? '',
+    /--asset-root \/home\/andyblocker\/scpper-cn\/\.data\/page-images/,
+    '调度必须钉住共享持久目录，不能回落到可清理的 worktree',
+  );
 });
 
 test('pending_page 消费者每五分钟调度，且状态机认领所有到期复查态', async () => {

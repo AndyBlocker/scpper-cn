@@ -4,7 +4,8 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Pool } from 'pg';
 
@@ -189,18 +190,12 @@ export async function processImageJob(
     return failJob(pool, job, egressClass,
       new ImageValidationError('图片 URL 非法', 'invalid_url', true), options);
   }
-  if (!imageHostAllowed(job.displayUrl, options.allowedHosts, options.blockedHosts)) {
-    return failJob(pool, job, egressClass,
-      new ImageValidationError(`图片 host 不在 allowlist: ${safeHost(job.displayUrl)}`, 'blocked_host', true),
-      options);
-  }
-
   // 同一 normalized URL 常被多页引用；首个引用已解析后直接复用资产，不再重复下载。
   // 数据库异常不伪装成图片失败：这里及最终提交都在 HTTP catch 之外，交 CLI 非零退出。
-  const known = await query<{ asset_sha: Buffer }>(
+  const known = await query<{ asset_sha: Buffer; storage_path: string | null }>(
     pool,
     'image:known_asset_for_url',
-    `SELECT pi.asset_sha
+    `SELECT pi.asset_sha, asset.storage_path
        FROM serve.page_image pi
        JOIN serve.image_asset asset ON asset.hash_sha256 = pi.asset_sha
       WHERE pi.normalized_url = $1
@@ -210,16 +205,72 @@ export async function processImageJob(
       LIMIT 1`,
     [job.normalizedUrl],
   );
-  const knownHash = known.rows[0]?.asset_sha;
-  if (knownHash !== undefined) {
-    await resolveImageReference(pool, job, egressClass, knownHash, true);
-    return {
-      status: 'completed',
-      egressClass,
-      failureClass: null,
-      bytes: 0,
-      hashHex: knownHash.toString('hex'),
-    };
+  const knownAsset = known.rows[0];
+  if (knownAsset !== undefined && knownAsset.storage_path !== null) {
+    const verified = await verifyStoredAsset(
+      options.assetRoot,
+      knownAsset.storage_path,
+      knownAsset.asset_sha.toString('hex'),
+    ).catch((error) => failJob(pool, job, egressClass, normalizeFailure(error), options));
+    if (typeof verified !== 'string') return verified;
+    if (verified === 'verified') {
+      const knownHash = knownAsset.asset_sha;
+      await resolveImageReference(pool, job, egressClass, knownHash, 'normalized_url');
+      return {
+        status: 'completed',
+        egressClass,
+        failureClass: null,
+        bytes: 0,
+        hashHex: knownHash.toString('hex'),
+      };
+    }
+  }
+
+  // 0055 导入的 v1 canonicalUrl/PageVersionImage 别名可以有多个 SHA。只有唯一候选且
+  // 共享目录内文件当场重算 SHA 通过，才允许免下载建立引用；歧义与缺文件都不猜。
+  const imported = await query<{ asset_sha: Buffer; storage_path: string }>(
+    pool,
+    'image:imported_asset_for_url',
+    `WITH candidates AS (
+       SELECT DISTINCT alias.asset_sha, asset.storage_path
+         FROM serve.image_asset_url_alias alias
+         JOIN serve.image_asset asset ON asset.hash_sha256 = alias.asset_sha
+        WHERE alias.normalized_url = $1
+          AND asset.status = 'ready'
+          AND asset.storage_path IS NOT NULL
+     )
+     SELECT (array_agg(asset_sha))[1] AS asset_sha,
+            (array_agg(storage_path))[1] AS storage_path
+       FROM candidates
+     HAVING count(*) = 1`,
+    [job.normalizedUrl],
+  );
+  const importedAsset = imported.rows[0];
+  if (importedAsset !== undefined) {
+    const hashHex = importedAsset.asset_sha.toString('hex');
+    const verified = await verifyStoredAsset(
+      options.assetRoot,
+      importedAsset.storage_path,
+      hashHex,
+    ).catch((error) => failJob(pool, job, egressClass, normalizeFailure(error), options));
+    if (typeof verified !== 'string') return verified;
+    if (verified === 'verified') {
+      await resolveImageReference(pool, job, egressClass, importedAsset.asset_sha, 'v1_alias');
+      return {
+        status: 'completed',
+        egressClass,
+        failureClass: null,
+        bytes: 0,
+        hashHex,
+      };
+    }
+  }
+
+  // host allow/block 是出站边界，不应阻止已经过 SHA 校验的本地内容复用。
+  if (!imageHostAllowed(job.displayUrl, options.allowedHosts, options.blockedHosts)) {
+    return failJob(pool, job, egressClass,
+      new ImageValidationError(`图片 host 不在 allowlist: ${safeHost(job.displayUrl)}`, 'blocked_host', true),
+      options);
   }
 
   let response: HttpResponse;
@@ -262,7 +313,7 @@ export async function processImageJob(
   );
   const relativePath = existing.rows[0]?.storage_path ?? assetRelativePath(hashHex, extension);
   try {
-    await storeAssetBuffer(options.assetRoot, relativePath, response.body);
+    await storeAssetBuffer(options.assetRoot, relativePath, response.body, hashHex);
   } catch (error) {
     return failJob(pool, job, egressClass, normalizeFailure(error), options);
   }
@@ -404,7 +455,7 @@ async function storeImageSuccess(
         host,
       ],
     );
-    await resolveImageReferenceTx(db, job, egressClass, hash, false, host);
+    await resolveImageReferenceTx(db, job, egressClass, hash, null, host);
   });
 }
 
@@ -413,7 +464,7 @@ async function resolveImageReference(
   job: ClaimedImageJob,
   egressClass: ImageEgressClass,
   hash: Buffer,
-  reusedByUrl: boolean,
+  reuseSource: 'normalized_url' | 'v1_alias',
 ): Promise<void> {
   await withTransaction(pool, `image:reuse:${job.id}`, async (db) => {
     await resolveImageReferenceTx(
@@ -421,7 +472,7 @@ async function resolveImageReference(
       job,
       egressClass,
       hash,
-      reusedByUrl,
+      reuseSource,
       safeHost(job.displayUrl),
     );
   });
@@ -432,7 +483,7 @@ async function resolveImageReferenceTx(
   job: ClaimedImageJob,
   egressClass: ImageEgressClass,
   hash: Buffer,
-  reusedByUrl: boolean,
+  reuseSource: 'normalized_url' | 'v1_alias' | null,
   host: string,
 ): Promise<void> {
   await query(
@@ -451,7 +502,13 @@ async function resolveImageReferenceTx(
       job.normalizedUrl,
       hash,
       toPgJson(
-        { egress_class: egressClass, source_host: host, reused_by_normalized_url: reusedByUrl },
+        {
+          egress_class: egressClass,
+          source_host: host,
+          reused_by_normalized_url: reuseSource === 'normalized_url',
+          reused_by_v1_alias: reuseSource === 'v1_alias',
+          reuse_sha_verified: reuseSource !== null,
+        },
         `image.resolve:${job.id}`,
       ),
     ],
@@ -517,27 +574,43 @@ function assetRelativePath(hashHex: string, extension: string): string {
   return path.join(hashHex.slice(0, 2), hashHex.slice(2, 4), hashHex.slice(4, 6), `${hashHex}.${extension}`);
 }
 
-async function storeAssetBuffer(root: string, relativePath: string, buffer: Buffer): Promise<void> {
+export async function storeAssetBuffer(
+  root: string,
+  relativePath: string,
+  buffer: Buffer,
+  expectedHashHex = createHash('sha256').update(buffer).digest('hex'),
+): Promise<void> {
   const finalPath = path.resolve(root, relativePath);
   const resolvedRoot = path.resolve(root);
   if (!finalPath.startsWith(`${resolvedRoot}${path.sep}`)) {
     throw new ImageValidationError('资产路径逃逸 asset root', 'storage', true);
   }
-  try {
-    await stat(finalPath);
-    return;
-  } catch {
-    // 不存在才写；其它 I/O 错误会在后续 mkdir/write 暴露并分类。
-  }
+  const existing = await verifyStoredAsset(root, relativePath, expectedHashHex);
+  if (existing === 'verified') return;
   await mkdir(path.dirname(finalPath), { recursive: true });
   const tempPath = `${finalPath}.tmp-${randomUUID()}`;
+  let tempHandle: Awaited<ReturnType<typeof open>> | null = null;
   try {
-    await writeFile(tempPath, buffer, { flag: 'wx' });
+    tempHandle = await open(tempPath, 'wx', 0o664);
+    await tempHandle.writeFile(buffer);
+    await tempHandle.sync();
+    await tempHandle.close();
+    tempHandle = null;
+
+    // 缩小 stat→rename 的覆盖窗口；若另一个 v1/v2 worker 已发布同 SHA，验证后复用。
+    const raced = await verifyStoredAsset(root, relativePath, expectedHashHex);
+    if (raced === 'verified') {
+      await unlink(tempPath);
+      return;
+    }
     await rename(tempPath, finalPath);
+    await fsyncDirectory(path.dirname(finalPath));
   } catch (error) {
-    // 并发写相同 hash 时，赢家已经落盘也算成功。
+    await tempHandle?.close().catch(() => undefined);
+    // 并发写相同 hash 时，赢家已经原子落盘且内容匹配才算成功。
     try {
-      await stat(finalPath);
+      const raced = await verifyStoredAsset(root, relativePath, expectedHashHex);
+      if (raced !== 'verified') throw error;
       await unlink(tempPath).catch(() => undefined);
       return;
     } catch {
@@ -548,6 +621,55 @@ async function storeAssetBuffer(root: string, relativePath: string, buffer: Buff
         false,
       );
     }
+  }
+}
+
+export async function verifyStoredAsset(
+  root: string,
+  relativePath: string,
+  expectedHashHex: string,
+): Promise<'verified' | 'missing'> {
+  if (!/^[0-9a-f]{64}$/i.test(expectedHashHex)) {
+    throw new ImageValidationError(`非法资产 SHA256: ${expectedHashHex}`, 'storage', true);
+  }
+  const finalPath = path.resolve(root, relativePath);
+  const resolvedRoot = path.resolve(root);
+  if (!finalPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new ImageValidationError('资产路径逃逸 asset root', 'storage', true);
+  }
+  try {
+    const item = await stat(finalPath);
+    if (!item.isFile()) {
+      throw new ImageValidationError(`资产路径不是普通文件: ${relativePath}`, 'storage', true);
+    }
+    const actualHash = createHash('sha256');
+    for await (const part of createReadStream(finalPath)) actualHash.update(part as Buffer);
+    const actualHex = actualHash.digest('hex');
+    if (actualHex !== expectedHashHex.toLowerCase()) {
+      throw new ImageValidationError(
+        `共享资产 SHA 不匹配: path=${relativePath}, expected=${expectedHashHex}, actual=${actualHex}`,
+        'storage',
+        true,
+      );
+    }
+    return 'verified';
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing';
+    if (error instanceof ImageValidationError) throw error;
+    throw new ImageValidationError(
+      `共享资产校验失败: ${error instanceof Error ? error.message : String(error)}`,
+      'storage',
+      false,
+    );
+  }
+}
+
+async function fsyncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

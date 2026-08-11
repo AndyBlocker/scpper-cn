@@ -314,6 +314,45 @@ test('0054 活库视图分账 claim_only；全真失败仍 critical，0 次任�
   }
 });
 
+test('0055 图片分链路健康与 pending 审计登记已在活库生效', async () => {
+  const db = await openSess('image-egress-health');
+  try {
+    const health = await db.q<{ egress_class: string }>(
+      'image-health-classes',
+      `SELECT egress_class FROM meta.image_ingest_egress_health ORDER BY egress_class`,
+    );
+    assert.deepEqual(health.map((row) => row.egress_class), ['external', 'wikidot_site']);
+    const registry = await db.q<{
+      relation_name: string;
+      classification: string;
+      collection_families: string[];
+    }>(
+      'image-pending-registry',
+      `SELECT relation_name, classification, collection_families
+         FROM meta.pending_collection_audit_registry
+        WHERE (schema_name, relation_name) IN (
+          ('serve','image_asset_url_alias'),
+          ('meta','forum_incremental_category_state')
+        )
+        ORDER BY relation_name`,
+    );
+    assert.deepEqual(registry, [
+      {
+        relation_name: 'forum_incremental_category_state',
+        classification: 'covered',
+        collection_families: ['forum_incremental_category_state'],
+      },
+      {
+        relation_name: 'image_asset_url_alias',
+        classification: 'not_pending',
+        collection_families: [],
+      },
+    ]);
+  } finally {
+    await db.end();
+  }
+});
+
 interface IrreconcilableState {
   rows: string;
   revision_source_rows: string;

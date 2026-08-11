@@ -154,6 +154,9 @@ export function pendingPolicyFor(collection: string, family: string): PendingPol
   if (family === 'forum_scan_task_steady') {
     return policy(30 * 60, 2 * HOUR, '论坛增量每 5 分钟发现、每分钟消费；按最老年龄告警');
   }
+  if (family === 'forum_incremental_category_state') {
+    return policy(30 * 60, 2 * HOUR, '分类信号每 5 分钟发现；半小时未 sweep 已连续漏过多轮');
+  }
   if (family === 'forum_link_catchup') {
     return policy(2 * HOUR, 6 * HOUR, '讨论串关联冷启动只看队列下降趋势；停滞才告警');
   }
@@ -245,7 +248,10 @@ export function evaluatePendingCollection(
     };
   }
 
-  if (current.family === 'page_scan_zero_success') {
+  if (
+    current.family === 'page_scan_zero_success' ||
+    current.family === 'image_ingest_zero_success'
+  ) {
     const scans = Number(current.evidence['scans'] ?? current.pendingCount);
     const intermediates = Number(current.evidence['intermediates'] ?? 0);
     const successes = Number(current.evidence['successes'] ?? 0);

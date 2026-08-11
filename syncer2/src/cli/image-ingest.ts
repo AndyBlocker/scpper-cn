@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Command } from 'commander';
 
-import { loadConfig, PROJECT_ROOT } from '../config.js';
+import { loadConfig } from '../config.js';
 import { HttpClient } from '../http/client.js';
 import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
 import {
@@ -16,6 +16,12 @@ import {
   processImageJob,
   type ImageWorkerOptions,
 } from '../image/worker.js';
+import {
+  emptyImageRouteCounters,
+  evaluateImagePipelineHealth,
+  recordImageRouteResult,
+} from '../image/health.js';
+import { SHARED_IMAGE_ASSET_ROOT } from '../image/config.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
 
@@ -84,6 +90,10 @@ async function main(): Promise<void> {
     external: 0,
     bytes: 0,
   };
+  const routes = {
+    wikidot_site: emptyImageRouteCounters(),
+    external: emptyImageRouteCounters(),
+  };
 
   try {
     if (!cli.skipTzCheck) await assertTimezoneRoundTrip(pool);
@@ -92,6 +102,7 @@ async function main(): Promise<void> {
       if (job === null) break;
       counters.claimed++;
       const result = await processImageJob(pool, job, { wikidot, external }, options);
+      recordImageRouteResult(routes, result);
       counters[result.status]++;
       if (result.egressClass === 'wikidot_site') counters.wikidotSite++;
       else counters.external++;
@@ -103,11 +114,15 @@ async function main(): Promise<void> {
       `SELECT status, count(*)::text AS n
          FROM meta.image_ingest_job GROUP BY status ORDER BY status`,
     );
+    const pipelineHealth = evaluateImagePipelineHealth(routes, {
+      wikidotSite: wikidot.breakerOpen,
+      external: external.breakerOpen,
+    });
+    // 调度入口仍直接接统一判据；pipelineHealth 另外给出严格分账的两条链路判据。
     const health = evaluateRunHealth({
       claimed: counters.claimed,
       processed: counters.completed + counters.retry + counters.failed,
       partial: 0,
-      // retry 是本轮真实的可重试失败；只因它已重新入队，不能从整轮失败率消失。
       failed: counters.retry + counters.failed,
       breakerOpen: wikidot.breakerOpen || external.breakerOpen,
     });
@@ -115,6 +130,8 @@ async function main(): Promise<void> {
       ok: health.exitCode === 0,
       status: health.status,
       health,
+      pipelineHealth,
+      routeCounters: routes,
       durationMs: Date.now() - startedMs,
       runtimeBudgetReached: Date.now() >= deadlineMs,
       ...counters,
@@ -179,7 +196,7 @@ function parseArgs(): {
     skipTzCheck: boolean;
   }>();
   const configuredRoot = raw.assetRoot ?? process.env.SYNCER2_IMAGE_ASSET_ROOT ??
-    path.join(PROJECT_ROOT, 'data', 'image-assets');
+    SHARED_IMAGE_ASSET_ROOT;
   return {
     limit: Math.min(2_000, Math.max(1, Math.floor(raw.limit))),
     maxRuntimeSec: Math.min(540, Math.max(30, Math.floor(raw.maxRuntimeSec))),
