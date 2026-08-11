@@ -6,6 +6,11 @@ import {
 import { exec } from './sql.js';
 import type { ProjectionApplyResult, ProjectionWindow } from './types.js';
 
+export const USER_STATS_PROJECTION_LOCKS = [
+  'serve.user_attr_daily',
+  'serve.user_stats',
+] as const;
+
 /**
  * user_stats 同时依赖全局排名与没有 fact_seq 的 forum_post 当前态，因此每轮完整刷新。
  * 刷新在单事务内完成，BFF 不会看到“删了一半”的中间态。
@@ -17,6 +22,20 @@ export async function projectUserStats(
   client: PoolClient,
   window: ProjectionWindow,
 ): Promise<ProjectionApplyResult> {
+  /*
+   * runner 会在读游标前先拿同一组锁；这里再守一次 apply 入口，使测试、回填或将来的
+   * 直接调用也不可能在刷新 user_stats 与 B2/B4 断言之间夹入曲线提交。
+   * 调用契约与所有 ProjectionApply 相同：client 必须位于显式事务内。
+   */
+  for (const lockedProjection of USER_STATS_PROJECTION_LOCKS) {
+    await exec(
+      client,
+      'project.user_stats:advisory_lock',
+      `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 72391231))`,
+      [lockedProjection],
+    );
+  }
+
   if (window.rebuild) {
     await exec(client, 'project.user_stats:truncate', `TRUNCATE TABLE serve.user_stats`);
   } else {

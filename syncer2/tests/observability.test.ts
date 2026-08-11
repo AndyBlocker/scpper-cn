@@ -60,6 +60,15 @@ describe('oldest-pending 趋势判定', () => {
       decision: 'no_tasks',
       successRate: null,
     });
+    assert.deepEqual(
+      evaluatePipelineSuccess({ scans: 100, intermediates: 100, successes: 0 }),
+      {
+        severity: 'ok',
+        decision: 'intermediate_only',
+        successRate: null,
+      },
+      '全是 claim_only 时这次没有测到成功或失败，不能判 critical',
+    );
 
     const decision = evaluatePendingCollection({
       collection: 'page_scan_success:forum',
@@ -199,7 +208,7 @@ test('revision_source 只把确定性目标错误终结；5xx/链路错误可恢
   assert.equal(classifyRevisionSourceFailure('CircuitOpenError: egress circuit open'), 'transient');
 });
 
-test('0053 活库视图把 100/0 暴露为 pending critical 候选，0 次任务保持 no_tasks', async () => {
+test('0054 活库视图分账 claim_only；全真失败仍 critical，0 次任务仍 no_tasks', async () => {
   const db = await openSess('pipeline-kind-health');
   await db.begin();
   try {
@@ -207,7 +216,7 @@ test('0053 活库视图把 100/0 暴露为 pending critical 候选，0 次任务
     await db.q(
       'isolate-window',
       `DELETE FROM meta.page_scan
-        WHERE kind IN ('files','attributions')
+        WHERE kind IN ('files','attributions','revisions')
           AND scanned_at >= now() - interval '1 hour'`,
     );
     await db.q(
@@ -217,33 +226,61 @@ test('0053 活库视图把 100/0 暴露为 pending critical 候选，0 次任务
          FROM generate_series(1,100) g`,
       [runId],
     );
+    await db.q(
+      'seed-intermediate-only',
+      `INSERT INTO meta.page_scan(run_id,page_id,kind,status,error,scanned_at)
+       SELECT $1, 989600000 + g, 'revisions', 'partial',
+              'l1_claim_only:修订覆盖交叉核对', now()
+         FROM generate_series(1,100) g`,
+      [runId],
+    );
     const rows = await db.q<{
       kind: string;
       scan_count: string;
+      intermediate_count: string;
+      evaluated_count: string;
       success_count: string;
+      success_rate: number | null;
       severity: string;
       decision: string;
     }>(
       'health-view',
-      `SELECT kind, scan_count::text, success_count::text, severity, decision
+      `SELECT kind, scan_count::text, intermediate_count::text, evaluated_count::text,
+              success_count::text, success_rate::float8 AS success_rate, severity, decision
          FROM meta.page_scan_kind_health
-        WHERE kind IN ('files','attributions')
+        WHERE kind IN ('files','attributions','revisions')
         ORDER BY kind`,
     );
     assert.deepEqual(rows, [
       {
         kind: 'attributions',
         scan_count: '0',
+        intermediate_count: '0',
+        evaluated_count: '0',
         success_count: '0',
+        success_rate: null,
         severity: 'ok',
         decision: 'no_tasks',
       },
       {
         kind: 'files',
         scan_count: '100',
+        intermediate_count: '0',
+        evaluated_count: '100',
         success_count: '0',
+        success_rate: 0,
         severity: 'critical',
         decision: 'rolling_zero_success',
+      },
+      {
+        kind: 'revisions',
+        scan_count: '100',
+        intermediate_count: '100',
+        evaluated_count: '0',
+        success_count: '0',
+        success_rate: null,
+        severity: 'ok',
+        decision: 'intermediate_only',
       },
     ]);
     assert.equal(
@@ -260,6 +297,14 @@ test('0053 活库视图把 100/0 暴露为 pending critical 候选，0 次任务
         'no-task-not-pending',
         `SELECT count(*) FROM meta.pending_collection_current
           WHERE collection='page_scan_success:attributions'`,
+      ),
+      0,
+    );
+    assert.equal(
+      await db.num(
+        'intermediate-not-pending',
+        `SELECT count(*) FROM meta.pending_collection_current
+          WHERE collection='page_scan_success:revisions'`,
       ),
       0,
     );

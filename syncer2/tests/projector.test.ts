@@ -25,7 +25,9 @@ import { projectPageStats } from '../src/project/pageStats.js';
 import {
   assertProjectionWritesAllowed,
   expandProjectionDependencies,
+  projectionTransactionLocks,
 } from '../src/project/runner.js';
+import { assertWindowDeletedAuthorRatingConsistency } from '../src/project/consistency.js';
 import {
   projectUserTagPreference,
   projectUserVoteInteraction,
@@ -213,6 +215,16 @@ describe('投影清单与依赖解析', () => {
       'serve.user_attr_daily',
       'serve.user_page',
       'serve.user_stats',
+    ]);
+  });
+
+  it('user_stats 同时持有 B4 曲线与自身写锁，其余 projector 只持有自身锁', () => {
+    assert.deepEqual(projectionTransactionLocks('serve.user_stats'), [
+      'serve.user_attr_daily',
+      'serve.user_stats',
+    ]);
+    assert.deepEqual(projectionTransactionLocks('serve.user_attr_daily'), [
+      'serve.user_attr_daily',
     ]);
   });
 });
@@ -693,6 +705,49 @@ describe('逐日与当前态折叠', () => {
       });
       assert.ok(
         statsResult.notes?.some((note) => note.includes('曲线末值全部等于 total_rating')),
+      );
+    });
+  });
+
+  it('真实 B2/B4 不一致仍会失败，不把不变量降级为 inconclusive', async () => {
+    await rollbackFixture(async (client) => {
+      const seq = await seedFixture(client);
+      const deleted = await query<{ seq: string }>(
+        client,
+        'test.projector:true_mismatch_delete',
+        `INSERT INTO ingest.page_life_event
+           (page_id, kind, occurred_at, occurred_precision, observed_at, source)
+         VALUES (
+           $1, 'deleted',
+           '2026-01-03T00:00:00Z'::timestamptz,
+           'exact',
+           '2026-01-03T00:00:00Z'::timestamptz,
+           'test_projector_true_mismatch'
+         )
+         RETURNING seq::text`,
+        [PAGE_ID],
+      );
+      const w = window(seq.minSeq, Number(deleted.rows[0]!.seq), false);
+      await projectUserAttrDaily(client, w);
+      await query(
+        client,
+        'test.projector:inject_true_mismatch',
+        `INSERT INTO serve.user_stats(user_id, total_rating)
+         SELECT $1, cum_rating + 1
+           FROM serve.user_attr_daily
+          WHERE user_id=$1
+          ORDER BY day DESC
+          LIMIT 1`,
+        [AUTHOR_ID],
+      );
+      await assert.rejects(
+        assertWindowDeletedAuthorRatingConsistency(
+          client,
+          Number(deleted.rows[0]!.seq),
+          Number(deleted.rows[0]!.seq),
+          1,
+        ),
+        /B2\/B4 本轮删除自洽性失败.*曲线末值不等于 user_stats\.total_rating/,
       );
     });
   });

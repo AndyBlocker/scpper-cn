@@ -14,7 +14,7 @@ import {
   type ProjectionRunResult,
 } from './types.js';
 import { projectUserPage } from './userPage.js';
-import { projectUserStats } from './userStats.js';
+import { projectUserStats, USER_STATS_PROJECTION_LOCKS } from './userStats.js';
 
 const APPLY: Readonly<Record<ProjectionName, ProjectionApply>> = {
   'serve.page_stats': projectPageStats,
@@ -63,6 +63,18 @@ interface AdvanceRow {
 function alwaysRefresh(projection: ProjectionName): boolean {
   return projection === 'serve.user_page'
     || projection === 'serve.user_stats';
+}
+
+/**
+ * user_stats 刷新和 B2/B4 断言期间同时钉住曲线与统计写锁。
+ * 顺序固定为依赖表在前，避免两个 user_stats projector 反序拿锁形成死锁。
+ */
+export function projectionTransactionLocks(
+  projection: ProjectionName,
+): ProjectionName[] {
+  return projection === 'serve.user_stats'
+    ? [...USER_STATS_PROJECTION_LOCKS]
+    : [projection];
 }
 
 /**
@@ -155,13 +167,19 @@ export async function runProjection(
 
   function runProjectionInTransaction(): Promise<ProjectionRunResult> {
   return withTransaction(pool, `project:${projection}`, async (client) => {
-    // 每张投影一把事务级锁。锁先于游标读取，两个 projector 不可能折叠同一窗口。
-    await query(
-      client,
-      'project:advisory_lock',
-      `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 72391231))`,
-      [projection],
-    );
+    /*
+     * 常规投影只拿自己的事务级锁。user_stats 还要先拿 user_attr_daily 的同一把锁：
+     * 其全量刷新与后续 B2/B4 断言是两条 SQL，READ COMMITTED 下本来会各取一个快照；
+     * 同时持有两张投影的写锁后，断言这条单 SQL 的语句快照内不会夹进曲线提交。
+     */
+    for (const lockedProjection of projectionTransactionLocks(projection)) {
+      await query(
+        client,
+        'project:advisory_lock',
+        `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 72391231))`,
+        [lockedProjection],
+      );
+    }
 
     // 必须在任何 TRUNCATE/DELETE/UPSERT 与 cursor=0 之前检查总闸/投影域闸。
     await query(

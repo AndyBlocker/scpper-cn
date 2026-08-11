@@ -44,23 +44,34 @@ export interface PendingDecision {
 
 export interface PipelineSuccessDecision {
   severity: 'ok' | 'critical';
-  decision: 'no_tasks' | 'below_sample_threshold' | 'has_success' | 'rolling_zero_success';
+  decision:
+    | 'no_tasks'
+    | 'intermediate_only'
+    | 'below_sample_threshold'
+    | 'has_success'
+    | 'rolling_zero_success';
   successRate: number | null;
 }
 
-/** 有任务但整窗零成功才报警；没有该 kind 任务是显式正常态。 */
+/** 只用可判定扫描评价成功率；claim_only 中间态既不冒充成功，也不冒充失败。 */
 export function evaluatePipelineSuccess(args: {
   scans: number;
   successes: number;
+  intermediates?: number;
   criticalMinScans?: number;
 }): PipelineSuccessDecision {
   const criticalMinScans = args.criticalMinScans ?? PIPELINE_SUCCESS_CRITICAL_MIN_SCANS;
+  const intermediates = args.intermediates ?? 0;
   if (!Number.isInteger(args.scans) || args.scans < 0) {
     throw new RangeError(`scans 必须是非负整数，收到 ${args.scans}`);
   }
-  if (!Number.isInteger(args.successes) || args.successes < 0 || args.successes > args.scans) {
+  if (!Number.isInteger(intermediates) || intermediates < 0 || intermediates > args.scans) {
+    throw new RangeError(`intermediates 必须是 0..scans 的整数，收到 ${intermediates}`);
+  }
+  const evaluated = args.scans - intermediates;
+  if (!Number.isInteger(args.successes) || args.successes < 0 || args.successes > evaluated) {
     throw new RangeError(
-      `successes 必须是 0..scans 的整数，收到 ${args.successes}/${args.scans}`,
+      `successes 必须是 0..evaluated 的整数，收到 ${args.successes}/${evaluated}`,
     );
   }
   if (!Number.isInteger(criticalMinScans) || criticalMinScans < 1) {
@@ -69,11 +80,14 @@ export function evaluatePipelineSuccess(args: {
   if (args.scans === 0) {
     return { severity: 'ok', decision: 'no_tasks', successRate: null };
   }
-  const successRate = args.successes / args.scans;
+  if (evaluated === 0) {
+    return { severity: 'ok', decision: 'intermediate_only', successRate: null };
+  }
+  const successRate = args.successes / evaluated;
   if (args.successes > 0) {
     return { severity: 'ok', decision: 'has_success', successRate };
   }
-  if (args.scans < criticalMinScans) {
+  if (evaluated < criticalMinScans) {
     return { severity: 'ok', decision: 'below_sample_threshold', successRate };
   }
   return { severity: 'critical', decision: 'rolling_zero_success', successRate };
@@ -96,7 +110,7 @@ function policy(
 /** 阈值按集合的生产周期/退避契约设定，不使用会掩盖小集合的统一全站阈值。 */
 export function pendingPolicyFor(collection: string, family: string): PendingPolicy {
   if (family === 'page_scan_zero_success') {
-    return policy(1, 1, '最近 1h 同 kind 扫描至少 10 次且成功数为 0，立即 critical');
+    return policy(1, 1, '最近 1h 同 kind 可判定扫描至少 10 次且成功数为 0，立即 critical');
   }
   if (family === 'revision_regression_identity') {
     return policy(30 * 60, 2 * HOUR, '身份复核每分钟消费；30 分钟未收敛已跨多轮');
@@ -233,6 +247,7 @@ export function evaluatePendingCollection(
 
   if (current.family === 'page_scan_zero_success') {
     const scans = Number(current.evidence['scans'] ?? current.pendingCount);
+    const intermediates = Number(current.evidence['intermediates'] ?? 0);
     const successes = Number(current.evidence['successes'] ?? 0);
     const minimum = Number(
       current.evidence['critical_min_scans'] ?? PIPELINE_SUCCESS_CRITICAL_MIN_SCANS,
@@ -240,6 +255,7 @@ export function evaluatePendingCollection(
     const pipeline = evaluatePipelineSuccess({
       scans,
       successes,
+      intermediates,
       criticalMinScans: minimum,
     });
     const ageSeconds = Math.max(

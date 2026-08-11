@@ -3,6 +3,8 @@
 
 SELECT kind AS 链路,
        scan_count AS 一小时扫描,
+       intermediate_count AS 中间态,
+       evaluated_count AS 可判定,
        success_count AS 成功,
        partial_count AS 部分,
        failed_count AS 失败,
@@ -44,7 +46,7 @@ BEGIN
   IF EXISTS (
     SELECT 1
       FROM meta.page_scan_kind_health h
-     WHERE h.scan_count >= h.critical_min_scans
+     WHERE h.evaluated_count >= h.critical_min_scans
        AND h.success_count = 0
        AND NOT EXISTS (
          SELECT 1 FROM meta.pending_collection_current p

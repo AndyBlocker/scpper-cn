@@ -53,9 +53,11 @@ const PROBE_ISO = new Date(PROBE_EPOCH_MS).toISOString();
 const HOUR_MS = 3_600_000;
 
 let pool: Pool;
+let databaseUrl: string;
 
 before(() => {
   const config = loadConfig({ requireDatabase: true });
+  databaseUrl = config.databaseUrl;
   // ★ 硬关卡：只允许打到 scpper-v2。主库 scpper-cn 是只读生产库，测试连都不许连。
   const dbName = new URL(config.databaseUrl).pathname.replace(/^\//, '');
   assert.equal(
@@ -312,6 +314,85 @@ describe('负对照：v1 MainDbBridge 的裸 Date 写法确实错 8 小时', () 
 // ─── 事务与连接池的基本契约 ─────────────────────────────────────────────────
 
 describe('withTransaction：失败必须回滚（发现层"宁可重算，绝不半写"的基础）', () => {
+  it('断言事务持有两张投影锁时并发发布会等待，稳定态真不一致仍可见', async () => {
+    const writer = createPool(databaseUrl, { max: 1 });
+    const curveTable = 'meta._test_b2b4_snapshot_curve';
+    const statsTable = 'meta._test_b2b4_snapshot_stats';
+    const mismatchSql = `
+      SELECT count(*)::int AS mismatched
+        FROM ${curveTable} curve
+        JOIN ${statsTable} stats USING (user_id)
+       WHERE curve.cum_rating <> stats.total_rating`;
+    try {
+      await writer.query(`DROP TABLE IF EXISTS ${curveTable}, ${statsTable}`);
+      await writer.query(
+        `CREATE UNLOGGED TABLE ${curveTable} (
+           user_id int PRIMARY KEY,
+           cum_rating int NOT NULL
+         )`,
+      );
+      await writer.query(
+        `CREATE UNLOGGED TABLE ${statsTable} (
+           user_id int PRIMARY KEY,
+           total_rating int NOT NULL
+         )`,
+      );
+      await writer.query(
+        `INSERT INTO ${curveTable} VALUES (37715, 1351);
+         INSERT INTO ${statsTable} VALUES (37715, 1351)`,
+      );
+
+      let competing: Promise<void> | undefined;
+      await withTransaction(pool, 'test:b2b4-pair-lock', async (reader) => {
+        await reader.query(
+          `SELECT pg_advisory_xact_lock(hashtextextended('serve.user_attr_daily', 72391231))`,
+        );
+        await reader.query(
+          `SELECT pg_advisory_xact_lock(hashtextextended('serve.user_stats', 72391231))`,
+        );
+        const before = await reader.query<{ mismatched: number }>(mismatchSql);
+        assert.equal(before.rows[0]?.mismatched, 0);
+
+        // 模拟另一轮 projector 先发布曲线、再发布统计；两轮都遵守生产 advisory lock。
+        competing = (async () => {
+          await writer.query(
+            `BEGIN;
+             SELECT pg_advisory_xact_lock(
+               hashtextextended('serve.user_attr_daily', 72391231)
+             );
+             UPDATE ${curveTable} SET cum_rating=1352 WHERE user_id=37715;
+             COMMIT`,
+          );
+          await writer.query(
+            `BEGIN;
+             SELECT pg_advisory_xact_lock(
+               hashtextextended('serve.user_attr_daily', 72391231)
+             );
+             SELECT pg_advisory_xact_lock(hashtextextended('serve.user_stats', 72391231));
+             UPDATE ${statsTable} SET total_rating=1352 WHERE user_id=37715;
+             COMMIT`,
+          );
+        })();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const during = await reader.query<{ mismatched: number }>(mismatchSql);
+        assert.equal(during.rows[0]?.mismatched, 0, '并发发布必须等断言事务释放成对锁');
+      });
+      await competing;
+
+      const published = await writer.query<{ mismatched: number }>(mismatchSql);
+      assert.equal(published.rows[0]?.mismatched, 0, '等待后两张表均可正常发布');
+
+      await writer.query(
+        `UPDATE ${statsTable} SET total_rating=1353 WHERE user_id=37715`,
+      );
+      const realMismatch = await writer.query<{ mismatched: number }>(mismatchSql);
+      assert.equal(realMismatch.rows[0]?.mismatched, 1, '稳定态真实不一致必须检出');
+    } finally {
+      await writer.query(`DROP TABLE IF EXISTS ${curveTable}, ${statsTable}`).catch(() => undefined);
+      await writer.end().catch(() => undefined);
+    }
+  });
+
   it('抛异常 → ROLLBACK，已插入的行不可见；成功 → COMMIT 可见', async () => {
     // max:1 的池 → 全程同一个会话，TEMP 表在多次事务间可见
     await withTransaction(pool, 'test:setup', async (c) => {
