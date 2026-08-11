@@ -361,6 +361,25 @@ test('状态对齐：未解释 voter checksum 差异明确失败', () => {
   assert.equal(report.unexplainedPages, 1);
 });
 
+test('状态对齐：只有完整源多重集与 L1 双门闭合才解释 v1 票态差异', () => {
+  const left = parityState(1, { voteChecksum: 'v1-current' });
+  const right = parityState(1, {
+    voteChecksum: 'verified-source-multiset',
+    verifiedMultisetSnapshot: true,
+  });
+  const report = compareStateAlignment(
+    new Map([[1, left]]),
+    new Map([[1, right]]),
+    Date.parse('2026-07-27T12:00:00.000Z'),
+    3_600_000,
+    new Map(),
+  );
+  assert.equal(report.status, 'ok');
+  assert.equal(report.pagesWithDifferences, 1);
+  assert.equal(report.unexplainedPages, 0);
+  assert.equal(report.explanationCategoryPages.v2_verified_multiset_snapshot, 1);
+});
+
 test('状态对齐：仅 v1 crom:* 派生标签有确定判据，原始差异仍留在归因计数', () => {
   const left = parityState(1, { tags: ['scp', 'crom:series'] });
   const right = parityState(1, { tags: ['scp'] });
@@ -385,38 +404,102 @@ test('白名单轨：普通指标仍只允许稳定不增长', () => {
   const growing = compareWhitelistMetrics({ a: 6 }, { a: 5 });
   assert.equal(growing.status, 'failed');
   assert.deepEqual(growing.growth, { a: 1 });
+
+  const newDeletedMember = compareWhitelistMetrics(
+    { deleted_page_vote_pairs: 118 },
+    { deleted_page_vote_pairs: 0 },
+  );
+  assert.equal(newDeletedMember.status, 'ok');
+  assert.deepEqual(newDeletedMember.growth, { deleted_page_vote_pairs: 118 });
+
+  const warmingButOtherMetricBroken = compareWhitelistMetrics(
+    { v1_latestvote_fold_delta: 100, imprecise_vote_events: 6 },
+    { v1_latestvote_fold_delta: 90, imprecise_vote_events: 5 },
+  );
+  assert.equal(warmingButOtherMetricBroken.status, 'failed');
+  assert.equal(warmingButOtherMetricBroken.counts.differences, 1);
+  assert.match(warmingButOtherMetricBroken.alerts.join('\n'), /imprecise_vote_events 增长/);
 });
 
-test('v1_latestvote_fold_delta：自然日增长不告警，异常倍数仍告警', () => {
+test('v1_latestvote_fold_delta：低投票日改用七日窗不误报，折叠逻辑突增仍告警', () => {
   const input = {
-    baselineObservedAt: '2026-08-03T06:13:00.000+08:00',
-    observedAt: '2026-08-04T06:13:00.000+08:00',
-    newVoteRows: 1_488,
+    baselineObservedAt: '2026-08-05T06:13:00.000+08:00',
+    baselineFoldDelta: 4_755_696,
+    observedAt: '2026-08-12T06:13:00.000+08:00',
+    windowVoteRows: 8_948,
   };
+  // 旧单日判据会把 8/11 的真实增长误报；新判据不再读取这个单日分母。
+  assert.ok(28_021 > 1_069 * 25);
   const natural = compareWhitelistMetrics(
-    { v1_latestvote_fold_delta: 4_738_745 },
-    { v1_latestvote_fold_delta: 4_715_990 },
+    { v1_latestvote_fold_delta: 4_894_675 },
+    { v1_latestvote_fold_delta: 4_866_654 },
     input,
   );
   assert.equal(natural.status, 'ok');
-  assert.equal(natural.v1LatestVoteFoldDaily.foldGrowth, 22_755);
-  assert.equal(natural.v1LatestVoteFoldDaily.allowedGrowth, 37_200);
-  assert.equal(natural.v1LatestVoteFoldDaily.exceeded, false);
+  assert.equal(natural.v1LatestVoteFoldWindow.foldGrowth, 138_979);
+  assert.equal(natural.v1LatestVoteFoldWindow.allowedGrowth, 223_700);
+  assert.equal(natural.v1LatestVoteFoldWindow.exceeded, false);
   assert.deepEqual(natural.alerts, []);
 
   const abnormal = compareWhitelistMetrics(
-    { v1_latestvote_fold_delta: 4_755_991 },
-    { v1_latestvote_fold_delta: 4_715_990 },
+    { v1_latestvote_fold_delta: 4_979_397 },
+    { v1_latestvote_fold_delta: 4_866_654 },
     input,
   );
   assert.equal(abnormal.status, 'failed');
-  assert.equal(abnormal.v1LatestVoteFoldDaily.exceeded, true);
-  assert.match(abnormal.alerts.join('\n'), /日增量 \+40001 >.*1488 × 25/);
+  assert.equal(abnormal.v1LatestVoteFoldWindow.exceeded, true);
+  assert.match(abnormal.alerts.join('\n'), /滚动 7 日增长 \+223701 >.*8948 × 25/);
 });
 
-test('冻结 checksum：口径升级只重建基线；同版本变化仍是真告警', () => {
+test('冻结 checksum：新删页只进入下轮基线，既有已删页内容变化仍告警', () => {
+  const newMember = compareFrozenChecksum(
+    {
+      count: 3,
+      checksum: 'all-with-new-page',
+      protectedCount: 2,
+      protectedChecksum: 'old-members',
+      newMemberVoteCount: 1,
+      membershipCutoff: '2026-08-11T22:13:00.000Z',
+      version: 2,
+      algorithm: 'test',
+    },
+    'old-members',
+    2,
+    2,
+  );
+  assert.equal(newMember.status, 'ok');
+  assert.equal(newMember.changed, false);
+  assert.equal(newMember.deletedVoteCount, 3);
+  assert.equal(newMember.protectedDeletedVoteCount, 2);
+  assert.equal(newMember.newMemberVoteCount, 1);
+  assert.deepEqual(newMember.alerts, []);
+
+  const changedOldMember = compareFrozenChecksum(
+    {
+      count: 3,
+      checksum: 'all-after-old-member-change',
+      protectedCount: 2,
+      protectedChecksum: 'changed-old-members',
+      newMemberVoteCount: 1,
+      membershipCutoff: '2026-08-11T22:13:00.000Z',
+      version: 2,
+      algorithm: 'test',
+    },
+    'old-members',
+    2,
+    2,
+  );
+  assert.equal(changedOldMember.status, 'failed');
+  assert.equal(changedOldMember.changed, true);
+  assert.match(changedOldMember.alerts.join('\n'), /2\/old-members.*2\/changed-old-members/);
+});
+
+test('冻结 checksum：口径升级只重建基线；既有成员消失仍是真告警', () => {
   const rebuilt = compareFrozenChecksum(
-    { count: 2, checksum: 'b', version: 2 },
+    {
+      count: 2, checksum: 'b', protectedCount: 2, protectedChecksum: 'b',
+      newMemberVoteCount: 0, membershipCutoff: null, version: 2, algorithm: 'test',
+    },
     'a',
     2,
     1,
@@ -428,7 +511,10 @@ test('冻结 checksum：口径升级只重建基线；同版本变化仍是真�
   assert.match(rebuilt.alerts.join('\n'), /口径升级.*基线重建.*非数据变化告警/);
 
   const frozen = compareFrozenChecksum(
-    { count: 2, checksum: 'b', version: 2 },
+    {
+      count: 2, checksum: 'b', protectedCount: 2, protectedChecksum: 'b',
+      newMemberVoteCount: 0, membershipCutoff: null, version: 2, algorithm: 'test',
+    },
     'a',
     2,
     2,
@@ -438,7 +524,10 @@ test('冻结 checksum：口径升级只重建基线；同版本变化仍是真�
   assert.equal(frozen.baselineRebuilt, false);
 
   const shrunkToZero = compareFrozenChecksum(
-    { count: 0, checksum: 'empty', version: 2 },
+    {
+      count: 0, checksum: 'empty', protectedCount: 0, protectedChecksum: 'empty',
+      newMemberVoteCount: 0, membershipCutoff: null, version: 2, algorithm: 'test',
+    },
     'old',
     1,
     2,
@@ -780,6 +869,7 @@ function parityState(
     comparableVoteChecksum: 'same',
     anonymousVoterCount: 0,
     anonymousVoteRating: 0,
+    verifiedMultisetSnapshot: false,
     ...overrides,
   };
 }

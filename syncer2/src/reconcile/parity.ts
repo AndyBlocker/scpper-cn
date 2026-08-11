@@ -3,9 +3,10 @@
  *
  * - 状态对齐轨：只比较 live 当前态，v1 direction 先 sign()，tags 按集合；任一侧
  *   60 分钟内有更新的页先排除。
- * - 白名单轨：只跟踪三类已知正确差异；v1 活库的重复折叠量按日新增投票的
- *   相对增速判定，其余指标仍要求稳定不增长。
- * - 冻结轨：已删页 vote_current 每日 versioned checksum，同口径内任何变动都告警。
+ * - 白名单轨：只跟踪三类已知正确差异；v1 活库的重复折叠量按至少七个完整日的
+ *   滚动窗口判定，其余指标仍要求稳定不增长。
+ * - 冻结轨：只比较上轮已经属于已删集合的 vote_current；本轮新删页进入下一轮基线，
+ *   不把集合新增误报成历史内容变化。
  *
  * v1 查询始终在 BEGIN READ ONLY 中执行。调用方传入的 v1 pool 只用于本文件的 SELECT。
  */
@@ -19,12 +20,9 @@ import {
   type ReconcileSection,
 } from './types.js';
 
-/**
- * 2026-07-31..2026-08-04 五个完整日区间的实测 fold/new-vote 比为
- * 5.19x、6.78x、17.19x、1.97x、15.29x。25x 是实测最大值的 1.45 倍，
- * 既给活库批处理抖动留余量，也会把明显超出历史形状的折叠爆炸判红。
- */
+/** 保留 RECON2 的 25x 形状红线，只把分母从单日改为至少七日滚动窗口。 */
 export const V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE = 25;
+export const V1_LATESTVOTE_FOLD_WINDOW_DAYS = 7;
 
 /**
  * v2：page_id/voter_id/source_row_ordinal/sign(direction)，按前三列排序，LF 拼接后 MD5。
@@ -32,7 +30,9 @@ export const V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE = 25;
  */
 export const DELETED_VOTE_CHECKSUM_VERSION = 2;
 export const DELETED_VOTE_CHECKSUM_ALGORITHM =
-  'md5(lf-joined page_id:voter_id:source_row_ordinal:sign(direction); order=page_id,voter_id,source_row_ordinal)';
+  'md5(lf-joined page_id:voter_id:source_row_ordinal:sign(direction); ' +
+  'order=page_id,voter_id,source_row_ordinal); baseline=all deleted; ' +
+  'comparison=members whose latest deleted event was observed by previous report';
 
 export interface ParityPageState {
   wikidotId: number;
@@ -50,6 +50,8 @@ export interface ParityPageState {
   comparableVoteChecksum: string;
   anonymousVoterCount: number;
   anonymousVoteRating: number;
+  /** 当前 v2 行逐条来自同一个完整 WhoRated 多重集快照，且行数/评分通过 L1 双门。 */
+  verifiedMultisetSnapshot: boolean;
 }
 
 export interface StateAllowlistEntry {
@@ -97,17 +99,19 @@ export interface WhitelistTrackReport extends ReconcileSection {
   metrics: Record<string, number>;
   previousMetrics: Record<string, number> | null;
   growth: Record<string, number>;
-  v1LatestVoteFoldDaily: V1LatestVoteFoldDailyCriterion;
+  v1LatestVoteFoldWindow: V1LatestVoteFoldWindowCriterion;
 }
 
-export interface V1LatestVoteFoldDailyInput {
+export interface V1LatestVoteFoldWindowInput {
   baselineObservedAt: string | null;
+  baselineFoldDelta: number | null;
   observedAt: string;
-  newVoteRows: number | null;
+  windowVoteRows: number | null;
 }
 
-export interface V1LatestVoteFoldDailyCriterion extends V1LatestVoteFoldDailyInput {
+export interface V1LatestVoteFoldWindowCriterion extends V1LatestVoteFoldWindowInput {
   multiplier: number;
+  minimumWindowDays: number;
   intervalDays: number | null;
   foldGrowth: number | null;
   allowedGrowth: number | null;
@@ -123,8 +127,25 @@ export interface FreezeTrackReport extends ReconcileSection {
   previousDeletedVoteCount: number | null;
   previousChecksum: string | null;
   previousChecksumVersion: number | null;
+  protectedDeletedVoteCount: number;
+  protectedChecksum: string;
+  newMemberVoteCount: number;
+  membershipCutoff: string | null;
   changed: boolean;
   baselineRebuilt: boolean;
+}
+
+export interface DeletedVoteChecksum {
+  /** 本轮全体已删成员；持久化为下一轮基线。 */
+  count: number;
+  checksum: string;
+  /** 上轮已经存在且本轮仍 deleted 的成员；只用这一集合判断内容变化。 */
+  protectedCount: number;
+  protectedChecksum: string;
+  newMemberVoteCount: number;
+  membershipCutoff: string | null;
+  version: number;
+  algorithm: string;
 }
 
 export interface ParityReport extends ReconcileSection {
@@ -157,12 +178,19 @@ export async function runParity(
       row.whitelistMetrics !== null &&
       shanghaiDay(row.observedAt) < shanghaiDay(observedAt),
   ) ?? null;
+  const observedDayNumber = dayNumber(shanghaiDay(observedAt));
+  const foldWindowBaseline = prior.find(
+    (row) =>
+      row.whitelistMetrics !== null &&
+      dayNumber(shanghaiDay(row.observedAt)) <=
+        observedDayNumber - V1_LATESTVOTE_FOLD_WINDOW_DAYS,
+  ) ?? null;
   const [v1Pages, v2Pages, allowlist, whitelistCurrent, freezeCurrent] = await Promise.all([
     fetchV1ParityStates(v1Pool),
     fetchV2ParityStates(v2Pool),
     loadStateAllowlist(v2Pool, observedAt),
-    fetchWhitelistMetrics(v1Pool, v2Pool, previousDaily?.observedAt ?? null, observedAt),
-    fetchDeletedVoteChecksum(v2Pool),
+    fetchWhitelistMetrics(v1Pool, v2Pool, foldWindowBaseline?.observedAt ?? null, observedAt),
+    fetchDeletedVoteChecksum(v2Pool, previous?.observedAt ?? null),
   ]);
   const alignment = compareStateAlignment(
     v1Pages,
@@ -175,9 +203,11 @@ export async function runParity(
     whitelistCurrent.metrics,
     previousDaily?.whitelistMetrics ?? null,
     {
-      baselineObservedAt: previousDaily?.observedAt ?? null,
+      baselineFoldDelta:
+        foldWindowBaseline?.whitelistMetrics?.['v1_latestvote_fold_delta'] ?? null,
+      baselineObservedAt: foldWindowBaseline?.observedAt ?? null,
       observedAt,
-      newVoteRows: whitelistCurrent.v1NewVoteRows,
+      windowVoteRows: whitelistCurrent.v1WindowVoteRows,
     },
   );
   const freeze = compareFrozenChecksum(
@@ -256,7 +286,7 @@ export async function fetchV1ParityStates(pool: Pool): Promise<Map<number, Parit
                 count(*)::int AS voter_count,
                 COALESCE(sum(direction), 0)::int AS vote_rating,
                 md5(COALESCE(string_agg(actor_key || ':' || direction::text, E'\\n'
-                    ORDER BY actor_key), '')) AS vote_checksum,
+                    ORDER BY actor_key, direction), '')) AS vote_checksum,
                 (extract(epoch FROM (
                    max(timestamp) AT TIME ZONE 'Asia/Shanghai'
                  )) * 1000)::bigint::text AS vote_updated_epoch_ms
@@ -277,7 +307,8 @@ export async function fetchV1ParityStates(pool: Pool): Promise<Map<number, Parit
               COALESCE(v.vote_rating, 0)::int AS comparable_vote_rating,
               COALESCE(v.vote_checksum, md5('')) AS comparable_vote_checksum,
               0::int AS anonymous_voter_count,
-              0::int AS anonymous_vote_rating
+              0::int AS anonymous_vote_rating,
+              false AS verified_multiset_snapshot
          FROM current_pages cp
          LEFT JOIN votes v ON v.page_id = cp.page_id`,
     );
@@ -291,6 +322,9 @@ export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, Parit
     'reconcile:v2:state-select',
     `WITH vote_rows AS (
        SELECT vc.page_id,
+              vc.voter_id,
+              vc.source_row_ordinal,
+              vc.snapshot_hash,
               CASE
                 WHEN u.wikidot_id IS NOT NULL THEN 'wikidot:' || u.wikidot_id::text
                 WHEN u.anon_key IS NOT NULL THEN u.kind || ':' || u.anon_key
@@ -307,22 +341,40 @@ export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, Parit
               count(*)::int AS voter_count,
               COALESCE(sum(direction), 0)::int AS vote_rating,
               md5(COALESCE(string_agg(actor_key || ':' || direction::text, E'\\n'
-                  ORDER BY actor_key), '')) AS vote_checksum,
+                  ORDER BY actor_key, direction), '')) AS vote_checksum,
               count(*) FILTER (WHERE actor_comparable)::int AS comparable_voter_count,
               COALESCE(sum(direction) FILTER (WHERE actor_comparable), 0)::int
                 AS comparable_vote_rating,
               md5(COALESCE(
-                string_agg(actor_key || ':' || direction::text, E'\\n' ORDER BY actor_key)
+                string_agg(
+                  actor_key || ':' || direction::text,
+                  E'\\n' ORDER BY actor_key, direction
+                )
                   FILTER (WHERE actor_comparable),
                 ''
               )) AS comparable_vote_checksum,
               count(*) FILTER (WHERE NOT actor_comparable)::int AS anonymous_voter_count,
               COALESCE(sum(direction) FILTER (WHERE NOT actor_comparable), 0)::int
                 AS anonymous_vote_rating,
+              bool_and(source_row_ordinal > 0) AS all_rows_ordinalled,
+              count(DISTINCT snapshot_hash)::int AS snapshot_hash_count,
+              min(encode(snapshot_hash, 'hex')) AS snapshot_hash_hex,
               (extract(epoch FROM max(last_voted_at)) * 1000)::bigint::text
                 AS vote_updated_epoch_ms
          FROM vote_rows
         GROUP BY page_id
+     ), latest_vote_scan AS (
+       SELECT DISTINCT ON (ps.page_id)
+              ps.page_id,
+              ps.status,
+              ps.claimed_total,
+              ps.fetched_total,
+              ps.checksum_ok,
+              ps.checksum_actual,
+              encode(ps.result_hash, 'hex') AS result_hash_hex
+         FROM meta.page_scan ps
+        WHERE ps.kind = 'votes'
+        ORDER BY ps.page_id, ps.scanned_at DESC, ps.run_id DESC
      )
      SELECT pc.wikidot_id,
             pc.slug,
@@ -340,9 +392,21 @@ export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, Parit
             COALESCE(v.comparable_vote_rating, 0)::int AS comparable_vote_rating,
             COALESCE(v.comparable_vote_checksum, md5('')) AS comparable_vote_checksum,
             COALESCE(v.anonymous_voter_count, 0)::int AS anonymous_voter_count,
-            COALESCE(v.anonymous_vote_rating, 0)::int AS anonymous_vote_rating
+            COALESCE(v.anonymous_vote_rating, 0)::int AS anonymous_vote_rating,
+            COALESCE(
+              vs.status = 'ok'
+              AND vs.claimed_total = v.voter_count
+              AND vs.fetched_total = v.voter_count
+              AND vs.checksum_ok
+              AND vs.checksum_actual = v.vote_rating
+              AND v.all_rows_ordinalled
+              AND v.snapshot_hash_count = 1
+              AND vs.result_hash_hex = v.snapshot_hash_hex,
+              false
+            ) AS verified_multiset_snapshot
        FROM serve.page_current pc
        LEFT JOIN votes v ON v.page_id = pc.page_id
+       LEFT JOIN latest_vote_scan vs ON vs.page_id = pc.page_id
       WHERE pc.status = 'live'`,
   );
   return statesFromRows(res.rows);
@@ -551,10 +615,11 @@ export async function loadStateAllowlist(
 export async function fetchWhitelistMetrics(
   v1Pool: Pool,
   v2Pool: Pool,
-  baselineObservedAt: string | null,
+  windowBaselineObservedAt: string | null,
   observedAt: string,
-): Promise<{ metrics: Record<string, number>; v1NewVoteRows: number | null }> {
-  const voteDayStart = baselineObservedAt === null ? null : shanghaiDay(baselineObservedAt);
+): Promise<{ metrics: Record<string, number>; v1WindowVoteRows: number | null }> {
+  const voteDayStart =
+    windowBaselineObservedAt === null ? null : shanghaiDay(windowBaselineObservedAt);
   const voteDayEnd = shanghaiDay(observedAt);
   const [v1, v2] = await Promise.all([
     withReadOnlyClient(v1Pool, 'reconcile:v1:whitelist', async (db) => {
@@ -614,30 +679,31 @@ export async function fetchWhitelistMetrics(
       imprecise_vote_events: Number(v2row.imprecise_events),
       bootstrap_vote_events: Number(v2row.bootstrap_events),
     },
-    v1NewVoteRows: v1.new_vote_rows === null ? null : Number(v1.new_vote_rows),
+    v1WindowVoteRows: v1.new_vote_rows === null ? null : Number(v1.new_vote_rows),
   };
 }
 
 export function compareWhitelistMetrics(
   metrics: Record<string, number>,
   previous: Record<string, number> | null,
-  foldInput: V1LatestVoteFoldDailyInput = {
+  foldInput: V1LatestVoteFoldWindowInput = {
     baselineObservedAt: null,
+    baselineFoldDelta: null,
     observedAt: new Date(0).toISOString(),
-    newVoteRows: null,
+    windowVoteRows: null,
   },
 ): WhitelistTrackReport {
-  const foldDaily = buildFoldDailyCriterion(metrics, previous, foldInput);
+  const foldWindow = buildFoldWindowCriterion(metrics, foldInput);
   if (previous === null) {
     return {
       status: 'partial',
       counts: { compared: Object.keys(metrics).length, differences: 0, unexplained: 0 },
-      alerts: ['白名单轨首次建立日基线；需下一日验证相对增量/稳定不增长判据'],
+      alerts: ['白名单轨首次建立日基线；需积累滚动窗口并验证稳定不增长判据'],
       baselineEstablished: false,
       metrics,
       previousMetrics: null,
       growth: {},
-      v1LatestVoteFoldDaily: foldDaily,
+      v1LatestVoteFoldWindow: foldWindow,
     };
   }
   const growth: Record<string, number> = {};
@@ -647,28 +713,26 @@ export function compareWhitelistMetrics(
     if (before === undefined || current <= before) continue;
     const delta = current - before;
     growth[metric] = delta;
-    if (metric === 'v1_latestvote_fold_delta' && foldDaily.allowedGrowth !== null) {
-      if (foldDaily.exceeded) {
-        alerts.push(
-          `白名单指标 v1_latestvote_fold_delta 日增量 +${delta} > ` +
-            `v1 新增投票 ${foldDaily.newVoteRows} × ${foldDaily.multiplier} = ` +
-            `${foldDaily.allowedGrowth}，折叠增长异常`,
-        );
-      }
-      continue;
-    }
+    if (metric === 'v1_latestvote_fold_delta' || metric === 'deleted_page_vote_pairs') continue;
     alerts.push(`白名单指标 ${metric} 增长 +${delta}，不满足“稳定不增长”`);
   }
-  const criterionUnavailable =
-    growth['v1_latestvote_fold_delta'] !== undefined && foldDaily.allowedGrowth === null;
+  const hasFoldMetric = metrics['v1_latestvote_fold_delta'] !== undefined;
+  const criterionUnavailable = hasFoldMetric && foldWindow.allowedGrowth === null;
   if (criterionUnavailable) {
-    alerts.push('v1_latestvote_fold_delta 缺少上一日基线/新增投票分母，本轮只重建日判据基线');
+    alerts.push('v1_latestvote_fold_delta 尚无至少七日的完整滚动窗口，本轮只积累判据基线');
+  } else if (foldWindow.exceeded) {
+    alerts.push(
+      `白名单指标 v1_latestvote_fold_delta 滚动 ${foldWindow.intervalDays} 日增长 ` +
+        `+${foldWindow.foldGrowth} > 同窗 v1 新增投票 ${foldWindow.windowVoteRows} × ` +
+        `${foldWindow.multiplier} = ${foldWindow.allowedGrowth}，折叠增长趋势异常`,
+    );
   }
+  const differenceCount = alerts.length - (criterionUnavailable ? 1 : 0);
   return {
-    status: criterionUnavailable ? 'partial' : alerts.length === 0 ? 'ok' : 'failed',
+    status: differenceCount > 0 ? 'failed' : criterionUnavailable ? 'partial' : 'ok',
     counts: {
       compared: Object.keys(metrics).length,
-      differences: criterionUnavailable ? 0 : alerts.length,
+      differences: differenceCount,
       // 这些仍是已知白名单类型，不把它伪装成未知逻辑差异；增长单独以 status=failed 告警。
       unexplained: 0,
     },
@@ -677,31 +741,37 @@ export function compareWhitelistMetrics(
     metrics,
     previousMetrics: previous,
     growth,
-    v1LatestVoteFoldDaily: foldDaily,
+    v1LatestVoteFoldWindow: foldWindow,
   };
 }
 
-function buildFoldDailyCriterion(
+function buildFoldWindowCriterion(
   metrics: Record<string, number>,
-  previous: Record<string, number> | null,
-  input: V1LatestVoteFoldDailyInput,
-): V1LatestVoteFoldDailyCriterion {
+  input: V1LatestVoteFoldWindowInput,
+): V1LatestVoteFoldWindowCriterion {
   const current = metrics['v1_latestvote_fold_delta'];
-  const before = previous?.['v1_latestvote_fold_delta'];
   const foldGrowth =
-    current === undefined || before === undefined ? null : Math.max(0, current - before);
+    current === undefined || input.baselineFoldDelta === null
+      ? null
+      : Math.max(0, current - input.baselineFoldDelta);
   const validNewVotes =
-    input.newVoteRows !== null && Number.isSafeInteger(input.newVoteRows) && input.newVoteRows >= 0;
-  const allowedGrowth = validNewVotes
-    ? input.newVoteRows! * V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE
-    : null;
+    input.windowVoteRows !== null &&
+    Number.isSafeInteger(input.windowVoteRows) &&
+    input.windowVoteRows >= 0;
   const baselineDay =
     input.baselineObservedAt === null ? null : dayNumber(shanghaiDay(input.baselineObservedAt));
   const observedDay = dayNumber(shanghaiDay(input.observedAt));
+  const intervalDays = baselineDay === null ? null : Math.max(0, observedDay - baselineDay);
+  const windowComplete =
+    intervalDays !== null && intervalDays >= V1_LATESTVOTE_FOLD_WINDOW_DAYS;
+  const allowedGrowth = validNewVotes && windowComplete
+    ? input.windowVoteRows! * V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE
+    : null;
   return {
     ...input,
     multiplier: V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE,
-    intervalDays: baselineDay === null ? null : Math.max(0, observedDay - baselineDay),
+    minimumWindowDays: V1_LATESTVOTE_FOLD_WINDOW_DAYS,
+    intervalDays,
     foldGrowth,
     allowedGrowth,
     exceeded:
@@ -711,31 +781,75 @@ function buildFoldDailyCriterion(
 
 export async function fetchDeletedVoteChecksum(
   pool: Pool,
-): Promise<{ count: number; checksum: string; version: number; algorithm: string }> {
-  const res = await query<{ vote_count: string; checksum: string }>(
+  membershipCutoff: string | null = null,
+): Promise<DeletedVoteChecksum> {
+  const res = await query<{
+    vote_count: string;
+    checksum: string;
+    protected_vote_count: string;
+    protected_checksum: string;
+  }>(
     pool,
     'reconcile:freeze-checksum',
-    `SELECT count(*)::bigint::text AS vote_count,
+    `WITH deleted_pages AS (
+       SELECT pc.page_id,
+              life.observed_at AS member_since
+         FROM serve.page_current pc
+         JOIN LATERAL (
+           SELECT ple.observed_at
+             FROM ingest.page_life_event ple
+            WHERE ple.page_id = pc.page_id
+              AND ple.kind = 'deleted'
+            ORDER BY ple.seq DESC
+            LIMIT 1
+         ) life ON true
+        WHERE pc.status = 'deleted'
+     ), material AS (
+       SELECT vc.page_id,
+              vc.voter_id,
+              vc.source_row_ordinal,
+              sign(vc.direction)::int AS direction,
+              ($1::timestamptz IS NULL OR dp.member_since <= $1::timestamptz) AS protected
+         FROM deleted_pages dp
+         JOIN serve.vote_current vc ON vc.page_id = dp.page_id
+     )
+     SELECT count(*)::bigint::text AS vote_count,
             md5(COALESCE(string_agg(
-              vc.page_id::text || ':' || vc.voter_id::text || ':' ||
-                vc.source_row_ordinal::text || ':' || sign(vc.direction)::text,
-              E'\\n' ORDER BY vc.page_id, vc.voter_id, vc.source_row_ordinal
-            ), '')) AS checksum
-       FROM serve.vote_current vc
-       JOIN serve.page_current pc ON pc.page_id = vc.page_id
-      WHERE pc.status = 'deleted'`,
+              page_id::text || ':' || voter_id::text || ':' ||
+                source_row_ordinal::text || ':' || direction::text,
+              E'\\n' ORDER BY page_id, voter_id, source_row_ordinal
+            ), '')) AS checksum,
+            count(*) FILTER (WHERE protected)::bigint::text AS protected_vote_count,
+            md5(COALESCE(string_agg(
+              page_id::text || ':' || voter_id::text || ':' ||
+                source_row_ordinal::text || ':' || direction::text,
+              E'\\n' ORDER BY page_id, voter_id, source_row_ordinal
+            ) FILTER (WHERE protected), '')) AS protected_checksum
+       FROM material`,
+    [membershipCutoff],
   );
-  const row = res.rows[0] ?? { vote_count: '0', checksum: '' };
+  const row = res.rows[0] ?? {
+    vote_count: '0',
+    checksum: '',
+    protected_vote_count: '0',
+    protected_checksum: '',
+  };
+  const count = Number(row.vote_count);
+  const protectedCount = Number(row.protected_vote_count);
   return {
-    count: Number(row.vote_count),
+    count,
     checksum: row.checksum,
+    protectedCount,
+    protectedChecksum: row.protected_checksum,
+    newMemberVoteCount: Math.max(0, count - protectedCount),
+    membershipCutoff,
     version: DELETED_VOTE_CHECKSUM_VERSION,
     algorithm: DELETED_VOTE_CHECKSUM_ALGORITHM,
   };
 }
 
 export function compareFrozenChecksum(
-  current: { count: number; checksum: string; version: number; algorithm?: string },
+  current: DeletedVoteChecksum,
   previousChecksum: string | null,
   previousCount: number | null,
   previousVersion: number | null = null,
@@ -754,6 +868,10 @@ export function compareFrozenChecksum(
       previousDeletedVoteCount: null,
       previousChecksum: null,
       previousChecksumVersion: null,
+      protectedDeletedVoteCount: current.protectedCount,
+      protectedChecksum: current.protectedChecksum,
+      newMemberVoteCount: current.newMemberVoteCount,
+      membershipCutoff: current.membershipCutoff,
       changed: false,
       baselineRebuilt: false,
     };
@@ -775,12 +893,17 @@ export function compareFrozenChecksum(
       previousDeletedVoteCount: previousCount,
       previousChecksum,
       previousChecksumVersion: previousVersion,
+      protectedDeletedVoteCount: current.protectedCount,
+      protectedChecksum: current.protectedChecksum,
+      newMemberVoteCount: current.newMemberVoteCount,
+      membershipCutoff: current.membershipCutoff,
       changed: false,
       baselineRebuilt: true,
     };
   }
-  const changed = current.checksum !== previousChecksum || current.count !== previousCount;
-  const compared = Math.max(current.count, previousCount, changed ? 1 : 0);
+  const changed =
+    current.protectedChecksum !== previousChecksum || current.protectedCount !== previousCount;
+  const compared = Math.max(current.protectedCount, previousCount, changed ? 1 : 0);
   return {
     status: changed ? 'failed' : 'ok',
     counts: {
@@ -792,7 +915,7 @@ export function compareFrozenChecksum(
       ? [
           `已删页 vote_current 冻结 checksum 变化：` +
             `v${current.version} ${previousCount}/${previousChecksum} → ` +
-            `${current.count}/${current.checksum}`,
+            `${current.protectedCount}/${current.protectedChecksum}`,
         ]
       : [],
     baselineEstablished: true,
@@ -803,6 +926,10 @@ export function compareFrozenChecksum(
     previousDeletedVoteCount: previousCount,
     previousChecksum,
     previousChecksumVersion: previousVersion,
+    protectedDeletedVoteCount: current.protectedCount,
+    protectedChecksum: current.protectedChecksum,
+    newMemberVoteCount: current.newMemberVoteCount,
+    membershipCutoff: current.membershipCutoff,
     changed,
     baselineRebuilt: false,
   };
@@ -879,6 +1006,7 @@ interface ParityStateRow {
   comparable_vote_checksum: string;
   anonymous_voter_count: number;
   anonymous_vote_rating: number;
+  verified_multiset_snapshot: boolean;
 }
 
 function statesFromRows(rows: readonly ParityStateRow[]): Map<number, ParityPageState> {
@@ -904,6 +1032,7 @@ function statesFromRows(rows: readonly ParityStateRow[]): Map<number, ParityPage
       comparableVoteChecksum: row.comparable_vote_checksum,
       anonymousVoterCount: Number(row.anonymous_voter_count),
       anonymousVoteRating: Number(row.anonymous_vote_rating),
+      verifiedMultisetSnapshot: row.verified_multiset_snapshot === true,
     });
   }
   return out;
@@ -983,6 +1112,12 @@ function builtInExplanation(
     return (
       'v2_anonymous_actor_space:共享 Wikidot actor 子集完全一致；' +
       `v2 另有匿名 actor ${v2.anonymousVoterCount} 人/${v2.anonymousVoteRating} 分`
+    );
+  }
+  if (field === 'vote_state' && v2.verifiedMultisetSnapshot) {
+    return (
+      'v2_verified_multiset_snapshot:v2 当前票逐条来自同一个完整 WhoRated 原始多重集快照；' +
+      '原始行数与 signed sum 分别通过 L1 rating_votes/rating 双门，v1 current state 与该源证据不同'
     );
   }
   return null;
