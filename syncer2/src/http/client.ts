@@ -33,6 +33,7 @@ import { Agent, ProxyAgent, request, type Dispatcher } from 'undici';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { performance } from 'node:perf_hooks';
 import { createLogger, type Logger } from '../util/log.js';
+import { isRuntimeBudgetExceededError } from '../util/runtimeBudget.js';
 import {
   EgressAttributor,
   proxyInboundPortFromUrl,
@@ -183,6 +184,8 @@ export interface HttpClientOptions {
   egress?: Omit<EgressAttributorOptions, 'dispatcher' | 'logger' | 'proxyInboundPort'>;
   /** L0/L1/Tier2/sitemap 等跨进程共享的站点级反馈控制器。 */
   adaptiveEgress?: AdaptiveEgressGate;
+  /** 每个真实 attempt（含 retry/redirect）预留前的协作式停止边界。 */
+  requestBoundary?: () => void;
 }
 
 export interface HttpRequestOptions {
@@ -330,6 +333,7 @@ export class HttpClient {
   readonly tlsMaxVersion: 'TLSv1.2' | 'TLSv1.3' | null;
   readonly #egress: EgressAttributor | null;
   readonly #adaptiveEgress: AdaptiveEgressGate | null;
+  readonly #requestBoundary: (() => void) | null;
   #adaptiveOutcomeBatch: Array<{
     permit: AdaptiveEgressPermit;
     outcome: AdaptiveAttemptOutcome;
@@ -374,6 +378,7 @@ export class HttpClient {
     );
     this.#onTelemetry = opts.onTelemetry;
     this.#adaptiveEgress = opts.adaptiveEgress ?? null;
+    this.#requestBoundary = opts.requestBoundary ?? null;
     this.proxyUrl = opts.proxyUrl && opts.proxyUrl.trim() !== '' ? opts.proxyUrl.trim() : null;
     this.tlsMaxVersion = opts.tlsMaxVersion ?? null;
 
@@ -610,13 +615,18 @@ export class HttpClient {
 
     try {
       while (attempts < maxAttempts) {
+        this.#assertRequestBoundary();
         await this.#paceRequestAttempt();
+        this.#assertRequestBoundary();
         if (this.#breakerReason !== null) {
           throw new CircuitOpenError(this.#breakerReason);
         }
         // 本地任务节流之后，再向跨进程控制器预留真实出站 attempt。控制库不可用时
         // fail closed：宁可本轮退出，也不能悄悄绕过用户要求的安全前提。
-        const adaptivePermit = await this.#adaptiveEgress?.beforeAttempt(requestUrl);
+        const adaptivePermit = await this.#adaptiveEgress?.beforeAttempt(
+          requestUrl,
+          () => this.#assertRequestBoundary(),
+        );
         attempts++;
         this.#stats.attempts++;
 
@@ -740,23 +750,29 @@ export class HttpClient {
 
       throw lastError ?? new Error(`request failed without error: ${url}`);
     } catch (err) {
-      this.#finish({
-        mode: opts.mode,
-        method,
-        url,
-        status: lastStatus,
-        attempts,
-        durationMs: performance.now() - startedAt,
-        wireBytes: lastWireBytes,
-        decodedBytes: 0,
-        contentEncoding: null,
-        ok: false,
-        error: describeError(err),
-        retryReasons,
-      });
+      // 首次 attempt 尚未预留就命中软截止：它不是一次 HTTP 请求，不写遥测/分母。
+      if (!(attempts === 0 && isRuntimeBudgetExceededError(err))) {
+        this.#finish({
+          mode: opts.mode,
+          method,
+          url,
+          status: lastStatus,
+          attempts,
+          durationMs: performance.now() - startedAt,
+          wireBytes: lastWireBytes,
+          decodedBytes: 0,
+          contentEncoding: null,
+          ok: false,
+          error: describeError(err),
+          retryReasons,
+        });
+      }
       // 失败路径**必采**：mihomo 节点归因 + 一次 IP 补探（受 maxProbes 封顶）。
       // 「某几个节点坏了」这个问题只有在失败的那一刻采样才答得上来。
-      if (!(err instanceof AdaptiveEgressUnavailableError)) {
+      if (
+        !(err instanceof AdaptiveEgressUnavailableError)
+        && !isRuntimeBudgetExceededError(err)
+      ) {
         await this.#egress?.afterRequest(false);
       }
       throw err;
@@ -773,6 +789,10 @@ export class HttpClient {
       return;
     }
     await this.#adaptiveEgress.afterAttempt(permit, outcome);
+  }
+
+  #assertRequestBoundary(): void {
+    this.#requestBoundary?.();
   }
 
   async #paceRequestAttempt(): Promise<void> {

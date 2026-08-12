@@ -12,10 +12,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { ADAPTIVE_EGRESS_POLICY } from '../src/http/adaptiveEgress.js';
+import { channelQuotaMinIntervalMs, wikidotEgressChannelQuota } from '../src/http/egressCapacity.js';
 import {
   RUN_BUDGET_MS,
   WORK_QUEUE_LIMIT_MAX,
-  WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
 } from '../src/store/workQueue.js';
 
 /** 与 deploy/systemd 的 syncer2-job@work-queue.service.d 保持一致。 */
@@ -35,8 +35,9 @@ describe('work-queue 单轮时间预算', () => {
   });
 
   it('正常档的共享门 pace 可在预算内完成满额一轮', () => {
-    const normalTier = ADAPTIVE_EGRESS_POLICY.tiers[0]!;
-    const pureWaitMs = WORK_QUEUE_LIMIT_MAX * normalTier.minIntervalMs;
+    const pureWaitMs = WORK_QUEUE_LIMIT_MAX * channelQuotaMinIntervalMs(
+      wikidotEgressChannelQuota('work-queue').requestsPerHour,
+    );
     assert.ok(
       pureWaitMs < RUN_BUDGET_MS,
       `L0 满额纯门等待 ${pureWaitMs}ms 应小于预算 ${RUN_BUDGET_MS}ms`,
@@ -44,11 +45,11 @@ describe('work-queue 单轮时间预算', () => {
   });
 
   it('work-queue 没有第二层独立节流，唯一 pace 权威是共享自适应门', async () => {
-    assert.equal(WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS, 0);
     const cli = await readFile(new URL('../src/cli/work-queue.ts', import.meta.url), 'utf8');
     assert.match(cli, /authority:\s*'shared_postgres_adaptive_egress'/);
     assert.doesNotMatch(cli, /setMinRequestIntervalMs\(/);
     assert.doesNotMatch(cli, /WORK_QUEUE_MIN_REQUEST_INTERVAL_MS/);
+    assert.doesNotMatch(cli, /minRequestIntervalMs\s*:/);
     assert.deepEqual(
       ADAPTIVE_EGRESS_POLICY.tiers.map((tier) => tier.minIntervalMs),
       [333, 667, 2_000, 8_000],

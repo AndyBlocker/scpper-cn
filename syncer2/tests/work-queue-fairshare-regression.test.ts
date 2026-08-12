@@ -327,6 +327,45 @@ describe('work-queue kind fair-share SQL', () => {
     );
     assert.deepEqual(advanced.rows[0], { advanced: true, ok_scan: true });
 
+    const beforeConflict = await query<{ scanned_at: string }>(
+      pool,
+      'test:spinloop:before_conflict_scan',
+      `SELECT scanned_at::text
+         FROM meta.page_scan
+        WHERE run_id = $1 AND page_id = $2 AND kind = 'votes'`,
+      [runId, pageId],
+    );
+    await query(pool, 'test:spinloop:clock_tick', `SELECT pg_sleep(0.01)`);
+    await query(
+      pool,
+      'test:spinloop:record_conflict_scan',
+      `SELECT meta.record_page_scan(
+         $1, $2, 'votes', 'ok', 0, 0, true, 0, 0, NULL, NULL
+       )`,
+      [runId, pageId],
+    );
+    const afterConflict = await query<{
+      rows: number;
+      scanned_at: string;
+      clock_at: string;
+      advanced: boolean;
+    }>(
+      pool,
+      'test:spinloop:conflict_advanced',
+      `SELECT count(*)::int AS rows,
+              max(ps.scanned_at)::text AS scanned_at,
+              max(pc.last_complete_vote_snapshot_at)::text AS clock_at,
+              max(ps.scanned_at) > $3::timestamptz AS advanced
+         FROM meta.page_scan ps
+         JOIN serve.page_current pc ON pc.page_id = ps.page_id
+        WHERE ps.run_id = $1 AND ps.page_id = $2 AND ps.kind = 'votes'`,
+      [runId, pageId, beforeConflict.rows[0]!.scanned_at],
+    );
+    assert.equal(afterConflict.rows[0]!.rows, 1, '同一 run/page/kind 必须走 ON CONFLICT');
+    assert.equal(afterConflict.rows[0]!.advanced, true);
+    assert.equal(afterConflict.rows[0]!.clock_at, afterConflict.rows[0]!.scanned_at,
+      'ON CONFLICT 更新 votes/ok 后时钟必须精确跟上 scanned_at');
+
     const voteTask = claimed[0] as ClaimedVoteTask;
     assert.equal((await finishVoteTask(pool, voteTask, {
       workerId: worker,
@@ -344,15 +383,36 @@ describe('work-queue kind fair-share SQL', () => {
       0,
     );
 
-    // 故意破坏派生快照字段，证明播种/认领仍由独立 page_scan 成功证据兜住。
+    // 模拟投影/重建 UPSERT 不携带派生时钟；数据库保护必须把它夹回最新成功证据。
     await query(
       pool,
-      'test:spinloop:simulate_clock_regression',
-      `UPDATE serve.page_current
-          SET last_complete_vote_snapshot_at = NULL
-        WHERE page_id = $1`,
+      'test:spinloop:simulate_projection_rebuild',
+      `INSERT INTO serve.page_current(page_id, wikidot_id, slug, status, last_complete_vote_snapshot_at)
+       SELECT page_id, wikidot_id, slug, 'live', NULL
+         FROM serve.page_current
+        WHERE page_id = $1
+       ON CONFLICT (page_id) DO UPDATE
+         SET slug = EXCLUDED.slug,
+             status = EXCLUDED.status,
+             last_complete_vote_snapshot_at = EXCLUDED.last_complete_vote_snapshot_at,
+             updated_at = clock_timestamp()`,
       [pageId],
     );
+    const rebuilt = await query<{ preserved: boolean }>(
+      pool,
+      'test:spinloop:projection_clock_preserved',
+      `SELECT pc.last_complete_vote_snapshot_at = max_scan.scanned_at AS preserved
+         FROM serve.page_current pc
+         CROSS JOIN LATERAL (
+           SELECT max(ps.scanned_at) AS scanned_at
+             FROM meta.page_scan ps
+            WHERE ps.page_id = pc.page_id AND ps.kind = 'votes' AND ps.status = 'ok'
+         ) max_scan
+        WHERE pc.page_id = $1`,
+      [pageId],
+    );
+    assert.equal(rebuilt.rows[0]!.preserved, true,
+      'page_current 重建 UPSERT 不得覆盖 votes/ok 时钟');
     await seedVoteTasks(pool, new Date(Date.now() + 60 * 60_000).toISOString(), {
       highFrequencyLimit: 1,
       highFrequencyPageIds: [pageId],

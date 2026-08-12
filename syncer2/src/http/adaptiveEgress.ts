@@ -20,13 +20,21 @@
  *     budget/window，比例因子恰为 budget/rolling；rolling 回落即解除，无固定冷却；
  *   * 当前 5,400/h = 已启用链路稳态 4,657/h +15% 余量后向上取整；容量计划有
  *     独立检查，新增链路必须先登记预算；
- *   * pressure 档位与预算 pace 都是全站共享；通道只分账。
+ *   * pressure 档位与预算 pace 都是全站共享；0061 起通道还各自拥有门内硬配额，
+ *     CLI 只声明 channel，不得再叠第二层静默 pace。
  */
 
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import { createPool, query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { createLogger, type Logger } from '../util/log.js';
-import { WIKIDOT_EGRESS_REQUIRED_BUDGET_REQUESTS_PER_HOUR } from './egressCapacity.js';
+import { isRuntimeBudgetExceededError } from '../util/runtimeBudget.js';
+import {
+  WIKIDOT_EGRESS_REQUIRED_BUDGET_REQUESTS_PER_HOUR,
+  WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL,
+  channelQuotaMinIntervalMs,
+  wikidotEgressChannelQuota,
+  type WikidotEgressChannelGroup,
+} from './egressCapacity.js';
 
 export type AdaptiveEgressLevel = 0 | 1 | 2 | 3;
 
@@ -798,15 +806,23 @@ export function isAdaptivePressureFailure(status: number | null): boolean {
 
 export interface AdaptiveEgressRuntimeStats {
   channel: string;
+  channelPolicy?: AdaptiveEgressChannelRuntimePolicy;
   permits: number;
   totalDelayMs: number;
   transitionsObserved: number;
   state: AdaptiveEgressSnapshot | null;
 }
 
+export interface AdaptiveEgressChannelRuntimePolicy {
+  group: WikidotEgressChannelGroup;
+  quotaRequestsPerHour: number;
+  minRequestIntervalMs: number;
+  priority: number;
+}
+
 export interface AdaptiveEgressGate {
   /** url 供按 origin/host 分账的 gate 使用；Wikidot 单例 gate 会忽略它。 */
-  beforeAttempt(url?: string): Promise<AdaptiveEgressPermit>;
+  beforeAttempt(url?: string, assertRequestBoundary?: () => void): Promise<AdaptiveEgressPermit>;
   afterAttempt(permit: AdaptiveEgressPermit, outcome: AdaptiveAttemptOutcome): Promise<void>;
   stats(): AdaptiveEgressRuntimeStats;
   close(): Promise<void>;
@@ -863,6 +879,14 @@ interface ControlRow extends QueryResultRow {
   updated_at: string;
 }
 
+interface ChannelControlRow extends QueryResultRow {
+  site_key: string;
+  channel_group: WikidotEgressChannelGroup;
+  quota_requests_per_hour: number;
+  next_permit_at: string;
+  priority: number;
+}
+
 const SITE_KEY = 'wikidot';
 const CONTROL_LOCK_ID = 2_026_080_5;
 
@@ -871,6 +895,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
   readonly #channel: string;
   readonly #log: Logger;
   readonly #policy: AdaptiveEgressPolicy;
+  readonly #channelPolicy: AdaptiveEgressChannelRuntimePolicy;
   #latest: AdaptiveEgressSnapshot | null = null;
   #permits = 0;
   #totalDelayMs = 0;
@@ -889,98 +914,145 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
     this.#channel = channel;
     this.#log = opts.logger ?? createLogger(`adaptive-egress:${channel}`);
     this.#policy = opts.policy ?? ADAPTIVE_EGRESS_POLICY;
+    if (WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL !== this.#policy.rollingBudgetRequests) {
+      throw new Error(
+        `出口通道配额 ${WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL}/h `
+        + `不等于全站预算 ${this.#policy.rollingBudgetRequests}/h`,
+      );
+    }
+    const channelQuota = wikidotEgressChannelQuota(channel);
+    this.#channelPolicy = {
+      group: channelQuota.group,
+      quotaRequestsPerHour: channelQuota.requestsPerHour,
+      minRequestIntervalMs: channelQuotaMinIntervalMs(channelQuota.requestsPerHour),
+      priority: channelQuota.priority,
+    };
   }
 
-  async beforeAttempt(): Promise<AdaptiveEgressPermit> {
+  async beforeAttempt(
+    _url?: string,
+    assertRequestBoundary: () => void = () => undefined,
+  ): Promise<AdaptiveEgressPermit> {
     try {
-      const reservation = await withTransaction(this.#pool, 'adaptive-egress:permit', async (db) => {
-        await lockControl(db);
-        const clock = await databaseClock(db);
-        const bucketStart = new Date(Math.floor(clock.nowMs / 60_000) * 60_000).toISOString();
+      for (;;) {
+        // 任何 gate wait 之后都重新检查软截止时间；只有通过此边界才会在库内记 attempt。
+        assertRequestBoundary();
+        const reservation = await withTransaction(
+          this.#pool,
+          'adaptive-egress:permit',
+          async (db) => {
+            await lockControl(db);
+            const clock = await databaseClock(db);
+            let row = await loadControl(db);
+            const channel = await loadChannelControl(db, this.#channelPolicy);
+            const globalNextMs = Date.parse(row.next_permit_at);
+            const channelNextMs = Date.parse(channel.next_permit_at);
+            if (!Number.isFinite(globalNextMs) || !Number.isFinite(channelNextMs)) {
+              throw new Error('出口控制器 next_permit_at 非法');
+            }
+            const waitMs = Math.max(0, globalNextMs, channelNextMs) - clock.nowMs;
+            if (waitMs > 0) {
+              return {
+                kind: 'wait' as const,
+                waitMs,
+                snapshot: rowToSnapshot(row, this.#policy),
+              };
+            }
 
-        await query(
-          db,
-          'adaptive-egress:bucket-request',
-          `INSERT INTO meta.egress_request_bucket(
-             site_key, bucket_start, channel, requests, failures,
-             connection_failures, updated_at
-           ) VALUES ($1, $2::timestamptz, $3, 1, 0, 0, clock_timestamp())
-           ON CONFLICT (site_key, bucket_start, channel) DO UPDATE
-             SET requests = meta.egress_request_bucket.requests + 1,
-                 updated_at = clock_timestamp()`,
-          [SITE_KEY, bucketStart, this.#channel],
-        );
+            const bucketStart = new Date(
+              Math.floor(clock.nowMs / 60_000) * 60_000,
+            ).toISOString();
+            await query(
+              db,
+              'adaptive-egress:bucket-request',
+              `INSERT INTO meta.egress_request_bucket(
+                 site_key, bucket_start, channel, requests, failures,
+                 connection_failures, updated_at
+               ) VALUES ($1, $2::timestamptz, $3, 1, 0, 0, clock_timestamp())
+               ON CONFLICT (site_key, bucket_start, channel) DO UPDATE
+                 SET requests = meta.egress_request_bucket.requests + 1,
+                     updated_at = clock_timestamp()`,
+              [SITE_KEY, bucketStart, this.#channel],
+            );
 
-        let row = await loadControl(db);
-        const rolling = await rollingRequestCount(db, this.#policy.rollingBudgetMinutes);
-        const pressureState = rowToWindowState(row);
-        const budget = evaluateProportionalBudget(
-          rowToBudgetState(row),
-          rolling,
-          clock.nowMs,
-          this.#policy,
-        );
-        if (budget.transition !== null) {
-          await insertAlert(db, budget.transition, rolling, this.#policy);
-        }
+            const rolling = await rollingRequestCount(db, this.#policy.rollingBudgetMinutes);
+            const pressureState = rowToWindowState(row);
+            const budget = evaluateProportionalBudget(
+              rowToBudgetState(row),
+              rolling,
+              clock.nowMs,
+              this.#policy,
+            );
+            if (budget.transition !== null) {
+              await insertAlert(db, budget.transition, rolling, this.#policy);
+            }
 
-        const minRequestIntervalMs = Math.max(
-          tier(this.#policy, pressureState.level).minIntervalMs,
-          budget.state.minRequestIntervalMs,
-        );
-        const nextPermitMs = Date.parse(row.next_permit_at);
-        const grantMs = Math.max(clock.nowMs, nextPermitMs);
-        const nextMs = grantMs + minRequestIntervalMs;
-        const shouldPrune = clock.nowMs - Date.parse(row.last_pruned_at) >= 60 * 60_000;
-        if (shouldPrune) {
-          await query(
-            db,
-            'adaptive-egress:prune-buckets',
-            `DELETE FROM meta.egress_request_bucket
-              WHERE site_key = $1
-                AND bucket_start < clock_timestamp() - interval '48 hours'`,
-            [SITE_KEY],
-          );
-        }
+            const globalMinIntervalMs = Math.max(
+              tier(this.#policy, pressureState.level).minIntervalMs,
+              budget.state.minRequestIntervalMs,
+            );
+            const shouldPrune = clock.nowMs - Date.parse(row.last_pruned_at) >= 60 * 60_000;
+            if (shouldPrune) {
+              await query(
+                db,
+                'adaptive-egress:prune-buckets',
+                `DELETE FROM meta.egress_request_bucket
+                  WHERE site_key = $1
+                    AND bucket_start < clock_timestamp() - interval '48 hours'`,
+                [SITE_KEY],
+              );
+            }
 
-        row = await updateControl(
-          db,
-          row,
-          pressureState,
-          budget.state,
-          {
-            rollingHourRequests: rolling,
-            nextPermitAt: toPgTimestamptz(nextMs),
-            lastPrunedAt: shouldPrune ? toPgTimestamptz(clock.nowMs) : row.last_pruned_at,
+            row = await updateControl(
+              db,
+              row,
+              pressureState,
+              budget.state,
+              {
+                rollingHourRequests: rolling,
+                nextPermitAt: toPgTimestamptz(clock.nowMs + globalMinIntervalMs),
+                lastPrunedAt: shouldPrune ? toPgTimestamptz(clock.nowMs) : row.last_pruned_at,
+              },
+              this.#policy,
+            );
+            await updateChannelControl(
+              db,
+              this.#channelPolicy,
+              clock.nowMs + this.#channelPolicy.minRequestIntervalMs,
+            );
+            return {
+              kind: 'permit' as const,
+              permit: {
+                bucketStart,
+                channel: this.#channel,
+                grantAt: toPgTimestamptz(clock.nowMs),
+              },
+              snapshot: rowToSnapshot(row, this.#policy),
+              transition: budget.transition,
+            };
           },
-          this.#policy,
         );
-        return {
-          permit: {
-            bucketStart,
-            channel: this.#channel,
-            grantAt: toPgTimestamptz(grantMs),
-          },
-          waitMs: Math.max(0, grantMs - clock.nowMs),
-          snapshot: rowToSnapshot(row, this.#policy),
-          transition: budget.transition,
-        };
-      });
 
-      this.#latest = reservation.snapshot;
-      this.#permits++;
-      this.#totalDelayMs += reservation.waitMs;
-      if (reservation.transition !== null) {
-        this.#transitionsObserved++;
-        this.#log.warn('滚动小时预算状态变化，已按比例调整共享 pace（持久告警已落库）', {
-          transition: reservation.transition,
-          state: reservation.snapshot,
-        });
+        this.#latest = reservation.snapshot;
+        if (reservation.kind === 'wait') {
+          this.#totalDelayMs += reservation.waitMs;
+          await sleep(reservation.waitMs);
+          continue;
+        }
+        this.#permits++;
+        if (reservation.transition !== null) {
+          this.#transitionsObserved++;
+          this.#log.warn('滚动小时预算状态变化，已按比例调整共享 pace（持久告警已落库）', {
+            transition: reservation.transition,
+            state: reservation.snapshot,
+          });
+        }
+        return reservation.permit;
       }
-      if (reservation.waitMs > 0) await sleep(reservation.waitMs);
-      return reservation.permit;
     } catch (err) {
-      if (err instanceof AdaptiveEgressUnavailableError) throw err;
+      if (err instanceof AdaptiveEgressUnavailableError || isRuntimeBudgetExceededError(err)) {
+        throw err;
+      }
       throw new AdaptiveEgressUnavailableError('beforeAttempt', err);
     }
   }
@@ -1153,6 +1225,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
   stats(): AdaptiveEgressRuntimeStats {
     return {
       channel: this.#channel,
+      channelPolicy: this.#channelPolicy,
       permits: this.#permits,
       totalDelayMs: this.#totalDelayMs,
       transitionsObserved: this.#transitionsObserved,
@@ -1546,6 +1619,65 @@ async function loadControl(db: PoolClient): Promise<ControlRow> {
   const row = result.rows[0];
   if (!row) throw new Error(`meta.egress_control 缺少 ${SITE_KEY} 单例（0037 未迁移）`);
   return row;
+}
+
+async function loadChannelControl(
+  db: PoolClient,
+  expected: AdaptiveEgressChannelRuntimePolicy,
+): Promise<ChannelControlRow> {
+  const result = await query<ChannelControlRow>(
+    db,
+    'adaptive-egress:load-channel-control',
+    `SELECT site_key, channel_group, quota_requests_per_hour,
+            next_permit_at::text, priority
+       FROM meta.egress_channel_control
+      WHERE site_key = $1 AND channel_group = $2
+      FOR UPDATE`,
+    [SITE_KEY, expected.group],
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new Error(`meta.egress_channel_control 缺少 ${SITE_KEY}/${expected.group}（0061 未迁移）`);
+  }
+  if (
+    row.quota_requests_per_hour !== expected.quotaRequestsPerHour
+    || row.priority !== expected.priority
+  ) {
+    throw new Error(
+      `出口通道策略代码/数据库漂移 ${expected.group}: `
+      + `db=${row.quota_requests_per_hour}/h,p${row.priority} `
+      + `code=${expected.quotaRequestsPerHour}/h,p${expected.priority}`,
+    );
+  }
+  return row;
+}
+
+async function updateChannelControl(
+  db: PoolClient,
+  expected: AdaptiveEgressChannelRuntimePolicy,
+  nextPermitAtMs: number,
+): Promise<void> {
+  const result = await query(
+    db,
+    'adaptive-egress:update-channel-control',
+    `UPDATE meta.egress_channel_control
+        SET next_permit_at = $3::timestamptz,
+            updated_at = clock_timestamp()
+      WHERE site_key = $1
+        AND channel_group = $2
+        AND quota_requests_per_hour = $4
+        AND priority = $5`,
+    [
+      SITE_KEY,
+      expected.group,
+      toPgTimestamptz(nextPermitAtMs),
+      expected.quotaRequestsPerHour,
+      expected.priority,
+    ],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error(`更新出口通道策略失败 ${SITE_KEY}/${expected.group}`);
+  }
 }
 
 async function rollingRequestCount(db: PoolClient, minutes: number): Promise<number> {

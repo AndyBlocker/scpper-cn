@@ -69,6 +69,7 @@ import {
 } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -125,10 +126,9 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
-    // 当前实测约 2.26 attempts/thread；本地上限约 500 attempts/h，剩余空间留给 L1。
-    minRequestIntervalMs: 7_200,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'forum'),
+    requestBoundary: () => budget.assertRequestBoundary(),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,
@@ -375,6 +375,7 @@ async function main(): Promise<void> {
             });
           }
         } catch (err) {
+          if (isRuntimeBudgetExceededError(err)) throw err;
           categoryCoverageError = `category sitemap 抓取失败：${String(err)}`;
           log.warn('无法证明分类在 sitemap 中；本轮所有分类只保存正面观测，不判删除', {
             error: categoryCoverageError,
@@ -832,12 +833,59 @@ async function main(): Promise<void> {
     process.exitCode = health.exitCode;
   } catch (err) {
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
+    const runtimeBudgetReached = isRuntimeBudgetExceededError(err);
     const unfinishedForum = forumTasks
       .filter((task) => !finishedForum.has(task.taskId))
       .map((task) => task.taskId);
     const unfinishedDiscussion = discussionTasks
       .filter((task) => !finishedDiscussion.has(task.taskId))
       .map((task) => task.taskId);
+    if (runtimeBudgetReached) {
+      counters.stoppedByRuntimeBudget = true;
+      await releaseForumTargetLocks(pool, unfinishedForum, workerId).catch(() => undefined);
+      await releaseDiscussionTaskLocks(pool, unfinishedDiscussion, workerId).catch(() => undefined);
+      const unfinishedReleased = unfinishedForum.length + unfinishedDiscussion.length;
+      const health = evaluateRunHealth({
+        claimed: counters.claimed,
+        processed: counters.processed,
+        partial: counters.partial,
+        failed: counters.failed + counters.irreconcilable,
+        deterministicFailures: counters.irreconcilable,
+        deferred: unfinishedReleased,
+      });
+      await finishIngestRun(pool, runId, {
+        status: health.status,
+        finishedAt: new Date().toISOString(),
+        pagesEnumerated: counters.processed,
+        remoteTotal: null,
+        remoteTotalSource: 'unknown',
+        batchesTotal: http.stats().requests,
+        batchesFailed: counters.failed,
+        transportFailureRate: transportFailureRate(http),
+        exitIpStats: exitIpStats(http),
+        parseFingerprint: {},
+        stats: {
+          mode: 'forum',
+          ...counters,
+          unfinishedReleased,
+          health,
+          http: http.stats(),
+          httpHealth: http.healthStats(),
+          ...budget.summary(),
+        },
+      }).catch(() => undefined);
+      emitSummary({
+        ok: health.exitCode === 0,
+        status: health.status,
+        runId,
+        ...counters,
+        unfinishedReleased,
+        health,
+        ...budget.summary(),
+      });
+      process.exitCode = health.exitCode;
+      return;
+    }
     await releaseForumTargetLocks(pool, unfinishedForum, workerId, true).catch(() => undefined);
     await releaseDiscussionTaskLocks(pool, unfinishedDiscussion, workerId, true).catch(() => undefined);
     await finishIngestRun(pool, runId, {

@@ -380,7 +380,7 @@ describe('M4 work-queue', () => {
         readFile(new URL('../src/store/queues.ts', import.meta.url), 'utf8'),
         readFile(new URL('../src/collect/forum.ts', import.meta.url), 'utf8'),
         readFile(
-          new URL('../migrations/0059_vote_snapshot_success_clock.sql', import.meta.url),
+          new URL('../migrations/0060_vote_snapshot_clock_invariant.sql', import.meta.url),
           'utf8',
         ),
       ]);

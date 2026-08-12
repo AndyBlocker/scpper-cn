@@ -40,7 +40,6 @@ import {
   irreconcilableReviewQuota,
   reapTasksOnNonLivePages,
   RUN_BUDGET_MS,
-  WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
   finishWorkTask,
   releaseIrreconcilableReviewLocks,
   releaseWorkTaskLocks,
@@ -141,7 +140,6 @@ async function main(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
     ...(opts.adultOnly ? { tlsMaxVersion: RESTRICTED_TLS_MAX_VERSION } : {}),
-    minRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'work-queue'),
     egress: {
@@ -165,7 +163,6 @@ async function main(): Promise<void> {
         breaker503: Math.max(5, config.breaker503),
         breakerReset: Math.max(5, config.breakerReset),
         connections: Math.max(1, opts.concurrency),
-        minRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
         logger: log.child('restricted-7890'),
         // 混合 worker 的 adult 专用 7890 客户端也必须参加全站共享门禁；固定出口
         // 不是绕过容量预算的理由。
@@ -358,7 +355,7 @@ async function main(): Promise<void> {
       },
       throttleAuthority: {
         authority: 'shared_postgres_adaptive_egress',
-        localMinRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
+        channelPolicy: http.stats().adaptiveEgress?.channelPolicy ?? null,
         adaptive: http.stats().adaptiveEgress?.state ?? null,
       },
     });

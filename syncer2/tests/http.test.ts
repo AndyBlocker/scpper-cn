@@ -31,6 +31,10 @@ import {
   decodeBody,
   type HttpClientOptions,
 } from '../src/http/client.js';
+import {
+  RuntimeBudget,
+  RuntimeBudgetExceededError,
+} from '../src/util/runtimeBudget.js';
 
 // ─── 本地测试服 ──────────────────────────────────────────────────────────────
 
@@ -289,6 +293,33 @@ describe('请求启动节流：补账客户端遵守最小尝试间隔', () => {
         elapsed >= minIntervalMs - 5,
         `期望至少 ${minIntervalMs - 5}ms，实际 ${elapsed.toFixed(1)}ms`,
       );
+    } finally {
+      await c.close();
+    }
+  });
+});
+
+describe('请求边界 runtime budget', () => {
+  it('单个逻辑任务跨过剩余预算时，redirect/retry 的下一次真实出站被截断', async () => {
+    server.reset();
+    const budget = new RuntimeBudget(
+      1,
+      () => server.hitsOf('/302') === 0 ? 0 : 1_001,
+    );
+    const c = mk({ requestBoundary: () => budget.assertRequestBoundary() });
+    try {
+      await assert.rejects(
+        c.get(`${server.base}/302`, 'budget:redirect', {
+          maxAttempts: 3,
+          maxRedirections: 1,
+          redirectPolicy: 'same-host',
+        }),
+        RuntimeBudgetExceededError,
+      );
+      assert.equal(server.hitsOf('/302'), 1, '首个 attempt 已在预算内启动');
+      assert.equal(server.hitsOf('/ok'), 0, '跨预算后的 redirect attempt 不能触网');
+      assert.equal(c.stats().attempts, 1);
+      assert.equal(budget.stoppedByRuntimeBudget, true);
     } finally {
       await c.close();
     }

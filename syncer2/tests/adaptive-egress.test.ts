@@ -22,7 +22,11 @@ import {
 } from '../src/http/adaptiveEgress.js';
 import {
   assertEgressBudgetCapacity,
+  channelQuotaMinIntervalMs,
   checkEgressBudgetCapacity,
+  WIKIDOT_EGRESS_CHANNEL_QUOTAS,
+  WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL,
+  wikidotEgressChannelQuota,
 } from '../src/http/egressCapacity.js';
 import { evaluateEgressAccountingReconciliation } from '../src/observability/egressAccounting.js';
 import { HttpClient } from '../src/http/client.js';
@@ -68,6 +72,32 @@ test('生产 pressure 合同固定为 5%/10%/3%，容量预算由链路计划推
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakToBackoff, 5);
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakWindowMs, 120_000);
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionBackoffMinIntervalMs, 300_000);
+});
+
+test('五组通道配额由门统一决策，L1 预留不被 forum/work/image 借用', () => {
+  assert.equal(WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL, 5_400);
+  assert.deepEqual(
+    Object.fromEntries(WIKIDOT_EGRESS_CHANNEL_QUOTAS.map((item) => [item.group, item.requestsPerHour])),
+    { l1: 2_100, forum: 900, 'work-queue': 1_300, image: 300, background: 800 },
+  );
+  assert.equal(wikidotEgressChannelQuota('l1').group, 'l1');
+  assert.equal(wikidotEgressChannelQuota('forum').group, 'forum');
+  assert.equal(wikidotEgressChannelQuota('work-queue:restricted-7890').group, 'work-queue');
+  assert.equal(wikidotEgressChannelQuota('image-sample').group, 'image');
+  assert.equal(wikidotEgressChannelQuota('revision-source').group, 'background');
+  assert.equal(wikidotEgressChannelQuota('resolve-pages').group, 'background');
+});
+
+test('forum 提速后的正常档仍给 L1 五分钟轮次留下确定性门等待余量', () => {
+  const l1 = wikidotEgressChannelQuota('l1');
+  const l1IntervalMs = channelQuotaMinIntervalMs(l1.requestsPerHour);
+  const l1AttemptsPerRound = 145;
+  const gateSpanMs = (l1AttemptsPerRound - 1) * l1IntervalMs;
+  assert.equal(l1IntervalMs, 1_715);
+  assert.ok(gateSpanMs < 5 * 60_000);
+  assert.ok(5 * 60_000 - gateSpanMs > 50_000, 'L1 正常档门等待应保留超过 50s 余量');
+  assert.equal(wikidotEgressChannelQuota('forum').requestsPerHour, 900);
+  assert.notEqual(wikidotEgressChannelQuota('forum').group, l1.group);
 });
 
 function connectionFailures(
