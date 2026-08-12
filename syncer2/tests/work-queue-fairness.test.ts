@@ -11,8 +11,18 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import {
+  ALL_WORK_TASK_KINDS,
+  effectiveTaskPriority,
+  fairShareGuaranteedQuota,
+  FAIR_SHARE_GUARANTEED_SHARE,
+  irreconcilableReviewQuota,
+  kindClaimWaitUpperBoundMs,
+  KIND_SERVICE_MIN_PER_ROUND,
   PINNED_KIND_SHARE,
+  PRIORITY_AGING_INTERVAL_MS,
+  WORK_QUEUE_ROUND_UPPER_BOUND_MS,
   WORK_QUEUE_LIMIT_MAX,
   pinnedKindQuota,
 } from '../src/store/workQueue.js';
@@ -54,5 +64,68 @@ describe('置顶 kind 配额', () => {
     assert.throws(() => pinnedKindQuota(-1), RangeError);
     assert.throws(() => pinnedKindQuota(1.5), RangeError);
     assert.throws(() => pinnedKindQuota(Number.NaN), RangeError);
+  });
+});
+
+describe('kind 公平服务下限', () => {
+  it('生产 limit=50 足以每轮先给全部 11 kind 各1个 FIFO 名额', () => {
+    const quota = fairShareGuaranteedQuota(WORK_QUEUE_LIMIT_MAX, ALL_WORK_TASK_KINDS.length);
+    assert.equal(ALL_WORK_TASK_KINDS.length, 11);
+    assert.equal(KIND_SERVICE_MIN_PER_ROUND, 1);
+    assert.equal(quota, 25);
+    assert.ok(quota >= ALL_WORK_TASK_KINDS.length);
+    assert.equal(FAIR_SHARE_GUARANTEED_SHARE, 0.5);
+  });
+
+  it('等待上界只用每轮1个保底即可从代码推导', () => {
+    assert.equal(WORK_QUEUE_ROUND_UPPER_BOUND_MS, 425_000);
+    assert.equal(kindClaimWaitUpperBoundMs(0), 425_000);
+    assert.equal(kindClaimWaitUpperBoundMs(9), 4_250_000);
+    assert.ok(
+      fairShareGuaranteedQuota(50, 11) >= 11,
+      '最老到期任务必须在一轮内被认领',
+    );
+  });
+
+  it('老化让低优先老任务追上持续到来的高优先新任务', () => {
+    const now = Date.parse('2026-08-13T00:00:00.000Z');
+    const freshHigh = effectiveTaskPriority(100, now, now);
+    const oldLow = effectiveTaskPriority(
+      20,
+      now - 81 * PRIORITY_AGING_INTERVAL_MS,
+      now,
+    );
+    assert.equal(freshHigh, 100);
+    assert.equal(oldLow, 101);
+    assert.ok(oldLow > freshHigh);
+  });
+
+  it('终态复查有封顶，不会在常规认领之前吃光整轮', () => {
+    assert.equal(irreconcilableReviewQuota(50, 11), 10);
+    assert.equal(irreconcilableReviewQuota(11, 11), 0);
+    assert.equal(irreconcilableReviewQuota(10, 2), 2);
+  });
+
+  it('生产 SQL 先做 kind FIFO 保底/饥饿纠偏，再用老化优先级填剩余名额', async () => {
+    const source = await readFile(new URL('../src/store/workQueue.ts', import.meta.url), 'utf8');
+    const claim = source.slice(
+      source.indexOf('export async function claimWorkTasks'),
+      source.indexOf('export async function claimIrreconcilableReviews'),
+    );
+    assert.match(claim, /PARTITION BY st\.kind[\s\S]*ORDER BY st\.created_at, st\.id/);
+    assert.match(claim, /e\.fifo_rank = 1 OR e\.kind = ANY\(\$10::text\[\]\)/);
+    assert.match(claim, /st\.priority::bigint \+ floor/);
+    assert.match(claim, /ORDER BY picked\.schedule_ord/);
+    assert.match(claim, /\(e\.kind = 'confirm_deleted'\) DESC/);
+    assert.match(claim, /\(e\.kind = 'new_page_highfreq'\) DESC/);
+    const cli = await readFile(new URL('../src/cli/work-queue.ts', import.meta.url), 'utf8');
+    assert.match(cli, /limit < selected\.length/);
+    assert.match(cli, /无法保证每 kind 每轮至少 1 个名额/);
+  });
+
+  it('非法输入不能静默破坏上界', () => {
+    assert.throws(() => fairShareGuaranteedQuota(-1, 1), RangeError);
+    assert.throws(() => fairShareGuaranteedQuota(50, -1), RangeError);
+    assert.throws(() => kindClaimWaitUpperBoundMs(-1), RangeError);
   });
 });

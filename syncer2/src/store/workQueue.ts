@@ -42,20 +42,13 @@ export const WORK_QUEUE_LIMIT_MAX = 50;
 export const ADULT_STABLE_EGRESS_HOLD = 'adult-stable-egress-hold';
 export const CONSECUTIVE_PAGE_FAILURE_LIMIT = 5;
 
-/*
- * Tier2 请求最小间隔 = 2 秒（0.5 QPS）。
+/**
+ * work-queue 不再叠加进程内固定 pace。每个真实 attempt 的唯一权威是
+ * PostgresAdaptiveEgressGate：它同时看全站 pressure 档位与滚动小时总量。
  *
- * 原为 10 秒（0.10 QPS），但那个预算下 7 天全量投票重扫在结构上不可能完成：
- * 34,250 个有票页 ÷ 7 天 = 204 页/小时，而总产能仅 255/小时，队列必然单调增长
- * （实测最久等待稳定在 170 小时且仍在涨）。
- *
- * 更关键的是新鲜度目标：WhoRated 明细若只有 day level，自建 syncer 就失去意义——
- * CROM 本身就能提供 day level。目标是 10--15 分钟级。
- *
- * 实测支撑：回填期曾持续 3,500 请求/小时（约 1 QPS）而站点仅偶发 503。
- * 取 0.5 QPS 留一倍以上冗余；实际稳态用量约 730 请求/小时（0.20 QPS）。
+ * 保留这个显式 0 而不是魔法省略，为了让回归能直接断言「没有第二层独立节流」。
  */
-export const WORK_QUEUE_MIN_REQUEST_INTERVAL_MS = 2_000;
+export const WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS = 0;
 
 /*
  * 单轮时间预算，必须显著小于 systemd 的 TimeoutStartSec=10min。
@@ -67,6 +60,13 @@ export const WORK_QUEUE_MIN_REQUEST_INTERVAL_MS = 2_000;
  */
 export const RUN_BUDGET_MS = 6 * 60_000;
 
+/** systemd timer 在上一轮结束 1min 后启动，AccuracySec=5s。 */
+export const WORK_QUEUE_RESTART_DELAY_MS = 60_000;
+export const WORK_QUEUE_TIMER_ACCURACY_MS = 5_000;
+/** 无故障、调度器按时运行时，相邻两轮开始的可推导上界。 */
+export const WORK_QUEUE_ROUND_UPPER_BOUND_MS =
+  RUN_BUDGET_MS + WORK_QUEUE_RESTART_DELAY_MS + WORK_QUEUE_TIMER_ACCURACY_MS;
+
 /**
  * 排序里被硬性置顶的 kind。置顶本身没错——确认删除与新页高频复查都需要及时性——
  * 错在置顶没有上限：`new_page_highfreq` 是自我补充的（新页 7 天内反复重排），
@@ -77,6 +77,15 @@ export const PINNED_KINDS: readonly ScanTaskKind[] = ['confirm_deleted', 'new_pa
 
 /** 置顶 kind 每轮最多占用的配额比例；余下名额回到 priority 正常竞争。 */
 export const PINNED_KIND_SHARE = 0.4;
+
+/** 每轮先给所有活跃 kind 的队首各1个名额；剩余才进入优先级竞争。 */
+export const KIND_SERVICE_MIN_PER_ROUND = 1;
+/** 饥饿 kind 用 FIFO 轮转占用的纠偏车道上限；至少一半仍依优先级。 */
+export const FAIR_SHARE_GUARANTEED_SHARE = 0.5;
+/** 等待每跨过 30min，有效优先级 +1；新高优先仍快，老任务会逐步追上。 */
+export const PRIORITY_AGING_INTERVAL_MS = 30 * 60_000;
+/** 终态复查不得先于常规 scan_task 吃光整轮。 */
+export const IRRECONCILABLE_REVIEW_SHARE = 0.2;
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -168,6 +177,64 @@ export function pinnedKindQuota(limit: number): number {
   }
   if (limit === 0) return 0;
   return Math.max(1, Math.floor(limit * PINNED_KIND_SHARE));
+}
+
+/**
+ * FIFO 保底/饥饿纠偏车道的总上限。
+ *
+ * 只要 limit >= 活跃 kind 数，这个车道先放进每个 kind 的队首；饥饿 kind
+ * 的后续行按 fifo_rank 轮转填到本上限。其他名额保留给置顶/有效优先级。
+ */
+export function fairShareGuaranteedQuota(limit: number, selectedKindCount: number): number {
+  if (!Number.isSafeInteger(limit) || limit < 0) {
+    throw new RangeError(`认领上限必须是非负安全整数，收到 ${String(limit)}`);
+  }
+  if (!Number.isSafeInteger(selectedKindCount) || selectedKindCount < 0) {
+    throw new RangeError(`kind 数必须是非负安全整数，收到 ${String(selectedKindCount)}`);
+  }
+  if (limit === 0 || selectedKindCount === 0) return 0;
+  const baseline = Math.min(limit, selectedKindCount * KIND_SERVICE_MIN_PER_ROUND);
+  return Math.min(
+    limit,
+    Math.max(baseline, Math.floor(limit * FAIR_SHARE_GUARANTEED_SHARE)),
+  );
+}
+
+/** 为常规 scan_task 留足每 kind 一个名额后，终态复查所能占的最大名额。 */
+export function irreconcilableReviewQuota(limit: number, selectedKindCount: number): number {
+  const regularFloor = Math.min(limit, selectedKindCount * KIND_SERVICE_MIN_PER_ROUND);
+  return Math.min(
+    Math.max(0, limit - regularFloor),
+    Math.floor(limit * IRRECONCILABLE_REVIEW_SHARE),
+  );
+}
+
+/**
+ * 某个已到期任务前面有 eligibleAhead 个同 kind 任务时的认领上界。
+ * 上界只用每轮 1 个 FIFO 保底，不把饥饿纠偏和优先级车道的额外吞吐算进去。
+ */
+export function kindClaimWaitUpperBoundMs(eligibleAhead: number): number {
+  if (!Number.isSafeInteger(eligibleAhead) || eligibleAhead < 0) {
+    throw new RangeError(`同 kind 队前任务数必须是非负安全整数，收到 ${String(eligibleAhead)}`);
+  }
+  return (eligibleAhead + 1) * WORK_QUEUE_ROUND_UPPER_BOUND_MS;
+}
+
+/** SQL 认领排序的纯函数对照，便于对老化转折点做精确回归。 */
+export function effectiveTaskPriority(
+  priority: number,
+  createdAt: string | number,
+  now: string | number = Date.now(),
+): number {
+  if (!Number.isSafeInteger(priority)) {
+    throw new RangeError(`优先级必须是安全整数，收到 ${String(priority)}`);
+  }
+  const createdMs = typeof createdAt === 'number' ? createdAt : Date.parse(createdAt);
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
+  if (!Number.isFinite(createdMs) || !Number.isFinite(nowMs)) {
+    throw new TypeError(`非法老化时间 createdAt=${String(createdAt)} now=${String(now)}`);
+  }
+  return priority + Math.floor(Math.max(0, nowMs - createdMs) / PRIORITY_AGING_INTERVAL_MS);
 }
 
 export type VoteTaskKind = 'votes_full' | 'new_page_highfreq';
@@ -312,6 +379,10 @@ export interface SeedVoteTasksResult {
   highFrequencyRetired: number;
   highFrequencyAffected: number;
   catchupAffected: number;
+  /** 尚无 v2 完整快照、但 votes_full 已在队列中的页数。 */
+  catchupQueued: number;
+  /** 尚无 v2 完整快照且尚未入队，本轮可真正新建的页数。 */
+  catchupSeedable: number;
   sweepAffected: number;
   eligiblePages: number;
   catchupRemaining: number;
@@ -490,10 +561,12 @@ export async function claimWorkTasks(
   newPageWindowDays = NEW_PAGE_WINDOW_DAYS,
   slugPrefix: string | null = null,
   reservedLockOwner: string | null = null,
+  starvedKinds: readonly ScanTaskKind[] = [],
 ): Promise<ClaimedWorkTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0 || kinds.length === 0) return [];
   const pinnedQuota = pinnedKindQuota(limit);
+  const guaranteedQuota = fairShareGuaranteedQuota(limit, kinds.length);
   const shortLivedDays = positiveInteger(newPageWindowDays, '新页窗口天数');
 
   const result = await query<{
@@ -520,11 +593,17 @@ export async function claimWorkTasks(
     pool,
     'meta.scan_task:claim_all_work',
     `WITH eligible AS (
-       SELECT st.id, st.kind, st.priority, st.not_before,
+       SELECT st.id, st.kind, st.priority, st.not_before, st.created_at,
+              (
+                st.priority::bigint + floor(
+                  GREATEST(0, extract(epoch FROM now() - st.created_at))
+                  / $12::numeric
+                )::bigint
+              ) AS effective_priority,
               row_number() OVER (
                 PARTITION BY st.kind
-                ORDER BY st.priority DESC, st.not_before NULLS FIRST, st.id
-              ) AS rn_in_kind
+                ORDER BY st.created_at, st.id
+              ) AS fifo_rank
          FROM meta.scan_task st
          JOIN serve.page_current pc ON pc.page_id = st.page_id
          JOIN ingest.page p ON p.id = st.page_id
@@ -567,37 +646,100 @@ export async function claimWorkTasks(
           )
      ),
      /*
-      * 置顶 kind 的每轮配额。
-      *
-      * 事故：new_page_highfreq 被无条件排在所有 kind 之前，而它是**自我补充**的
-      * （新页 7 天内高频复查，处理完删除、随即重新入队）。于是每轮 50 个配额被它
-      * 与 content 吃光，votes_full 拿到 0 个 —— 524 个投票任务里 495 个从未被尝试，
-      * 最久排队 6.8 天，表现为「v2 评分莫名落后 wikidot 两天」。
-      * 队列深度、吞吐、失败率全部正常，只有「最久等待」能看见它。
-      *
-      * 置顶 + 自我补充 = 低优先 kind 无限饥饿，且不会自愈、只随时间加剧。
-      * 因此置顶只保留「同等条件下优先」，必须配额封顶；余下名额回到 priority 竞争。
+      * 层次一：每个活跃 kind 的最老到期任务先拿 1 个 FIFO 保底。
+      * 检测器已报饥饿的 kind 可继续提供第 2/3/... 个候选，按 fifo_rank
+      * 轮转填满纠偏车道。因此高优先 kind 每轮重新播种也抢不走别的 kind
+      * 的队首名额；而饥饿报警会实际扩大该 kind 的认领数，不只是日志。
       */
-     capped AS (
-       SELECT id,
+     guaranteed_candidates AS (
+       SELECT e.*,
               row_number() OVER (
-                ORDER BY (kind = 'confirm_deleted') DESC,
-                         (kind = 'new_page_highfreq') DESC,
-                         priority DESC,
-                         not_before NULLS FIRST,
-                         id
-              ) AS ord
-         FROM eligible
-        WHERE rn_in_kind <= CASE
-                WHEN kind = ANY($5::text[]) THEN $6::int
-                ELSE 2147483647
-              END
+                ORDER BY CASE WHEN e.fifo_rank = 1 THEN 0 ELSE 1 END,
+                         e.fifo_rank,
+                         (e.kind = 'confirm_deleted') DESC,
+                         (e.kind = 'new_page_highfreq') DESC,
+                         e.effective_priority DESC,
+                         e.created_at,
+                         e.id
+              ) AS fair_ord
+         FROM eligible e
+        WHERE (e.fifo_rank = 1 OR e.kind = ANY($10::text[]))
+          AND (
+            e.kind <> ALL($5::text[])
+            OR e.fifo_rank <= $6::int
+          )
+     ),
+     guaranteed AS MATERIALIZED (
+       SELECT id, kind, fair_ord
+         FROM guaranteed_candidates
+        ORDER BY fair_ord
+        LIMIT $11
+     ),
+     guaranteed_counts AS (
+       SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE kind = 'confirm_deleted')::int AS confirm_deleted,
+              count(*) FILTER (WHERE kind = 'new_page_highfreq')::int AS new_page_highfreq
+         FROM guaranteed
+     ),
+     /*
+      * 层次二：剩余名额保留原有置顶语义，但置顶 kind 仍受每轮封顶。
+      * 非置顶任务按 priority + wait/30min 的有效优先级竞争；这使持续到来
+      * 的新高优先任务仍然更快，但不能永久压住已等待的低优先任务。
+      */
+     priority_candidates AS (
+       SELECT e.*,
+              row_number() OVER (
+                PARTITION BY e.kind
+                ORDER BY e.effective_priority DESC, e.created_at, e.id
+              ) AS priority_rank_after_guarantee
+         FROM eligible e
+         LEFT JOIN guaranteed g ON g.id = e.id
+        WHERE g.id IS NULL
+     ),
+     priority_eligible AS (
+       SELECT p.*
+         FROM priority_candidates p
+         CROSS JOIN guaranteed_counts gc
+        WHERE p.kind NOT IN ('confirm_deleted', 'new_page_highfreq')
+           OR (
+             p.kind = 'confirm_deleted'
+             AND p.priority_rank_after_guarantee <= GREATEST(0, $6::int - gc.confirm_deleted)
+           )
+           OR (
+             p.kind = 'new_page_highfreq'
+             AND p.priority_rank_after_guarantee <= GREATEST(0, $6::int - gc.new_page_highfreq)
+           )
+     ),
+     priority_ordered AS (
+       SELECT p.id,
+              row_number() OVER (
+                ORDER BY (p.kind = 'confirm_deleted') DESC,
+                         (p.kind = 'new_page_highfreq') DESC,
+                         p.effective_priority DESC,
+                         p.created_at,
+                         p.id
+              ) AS priority_ord
+         FROM priority_eligible p
+     ),
+     priority_picked AS MATERIALIZED (
+       SELECT id, priority_ord
+         FROM priority_ordered
+        ORDER BY priority_ord
+        LIMIT GREATEST(0, $2::int - (SELECT total FROM guaranteed_counts))
+     ),
+     scheduled AS (
+       SELECT g.id, g.fair_ord::bigint AS schedule_ord
+         FROM guaranteed g
+       UNION ALL
+       SELECT p.id,
+              ((SELECT total FROM guaranteed_counts) + p.priority_ord)::bigint AS schedule_ord
+         FROM priority_picked p
      ),
      picked AS (
-       SELECT st.id
-         FROM capped c
-         JOIN meta.scan_task st ON st.id = c.id
-        ORDER BY c.ord
+       SELECT st.id, scheduled.schedule_ord
+         FROM scheduled
+         JOIN meta.scan_task st ON st.id = scheduled.id
+        ORDER BY scheduled.schedule_ord
         LIMIT $2
         FOR UPDATE OF st SKIP LOCKED
      ),
@@ -628,18 +770,17 @@ export async function claimWorkTasks(
             ips.last_l1_run_id::text AS revision_tier1_run_id,
             pc.revision_count AS actual_revision_count,
             pc.comment_count,
-            pc.discussion_thread_id::text
+            pc.discussion_thread_id::text,
+            picked.schedule_ord
        FROM claimed st
+       JOIN picked ON picked.id = st.id
        JOIN serve.page_current pc ON pc.page_id = st.page_id
        LEFT JOIN meta.incremental_page_state ips
          ON ips.page_id = st.page_id AND ips.slug = pc.slug
        LEFT JOIN LATERAL (
          ${voteClaimEvidence('st.page_id')}
        ) tier1 ON true
-      ORDER BY (st.kind = 'confirm_deleted') DESC,
-               (st.kind = 'new_page_highfreq') DESC,
-               st.priority DESC,
-               st.id`,
+      ORDER BY picked.schedule_ord`,
     [
       workerId,
       limit,
@@ -650,6 +791,9 @@ export async function claimWorkTasks(
       bindSqlTuning('NEW_PAGE_WINDOW_DAYS', shortLivedDays),
       slugPrefix,
       reservedLockOwner,
+      starvedKinds,
+      guaranteedQuota,
+      Math.floor(PRIORITY_AGING_INTERVAL_MS / 1_000),
     ],
   );
 
@@ -1337,7 +1481,12 @@ export async function seedVoteTasks(
     ],
   );
 
-  const population = await query<{ eligible_pages: string; catchup_remaining: string }>(
+  const population = await query<{
+    eligible_pages: string;
+    catchup_remaining: string;
+    catchup_queued: string;
+    catchup_seedable: string;
+  }>(
     pool,
     'meta.scan_task:vote_seed_population',
     `WITH recent_activity AS (
@@ -1365,9 +1514,17 @@ export async function seedVoteTasks(
           AND ${voteClaimEvidenceExists('pc.page_id')}
      )
      SELECT count(*)::text AS eligible_pages,
-            count(*) FILTER (WHERE state.page_id IS NULL)::text AS catchup_remaining
+            count(*) FILTER (WHERE state.page_id IS NULL)::text AS catchup_remaining,
+            count(*) FILTER (
+              WHERE state.page_id IS NULL AND task.page_id IS NOT NULL
+            )::text AS catchup_queued,
+            count(*) FILTER (
+              WHERE state.page_id IS NULL AND task.page_id IS NULL
+            )::text AS catchup_seedable
        FROM qualified q
-       LEFT JOIN meta.vote_sweep_page_state state ON state.page_id = q.page_id`,
+       LEFT JOIN meta.vote_sweep_page_state state ON state.page_id = q.page_id
+       LEFT JOIN meta.scan_task task
+         ON task.page_id = q.page_id AND task.kind = 'votes_full'`,
     [
       ts,
       bindSqlTuning('VOTE_SWEEP_ACTIVITY_DAYS', activityDays),
@@ -1376,11 +1533,13 @@ export async function seedVoteTasks(
   );
   const eligiblePages = Number(population.rows[0]?.eligible_pages ?? 0);
   const catchupRemaining = Number(population.rows[0]?.catchup_remaining ?? 0);
+  const catchupQueued = Number(population.rows[0]?.catchup_queued ?? 0);
+  const catchupSeedable = Number(population.rows[0]?.catchup_seedable ?? 0);
   const activeLane = activeVoteSeedLane(catchupRemaining);
   const hourlyBudget = activeLane === 'catchup'
     ? catchupRate
     : hourlyVoteSweepQuota(eligiblePages, sweepIntervalDays, ts);
-  const demand = Math.min(laneLimit, activeLane === 'catchup' ? catchupRemaining : eligiblePages);
+  const demand = Math.min(laneLimit, activeLane === 'catchup' ? catchupSeedable : eligiblePages);
 
   let catchupAffected = 0;
   let sweepAffected = 0;
@@ -1535,6 +1694,8 @@ export async function seedVoteTasks(
     highFrequencyRetired: retired.rowCount ?? 0,
     highFrequencyAffected: highFrequency.rowCount ?? 0,
     catchupAffected,
+    catchupQueued,
+    catchupSeedable,
     sweepAffected,
     eligiblePages,
     catchupRemaining,

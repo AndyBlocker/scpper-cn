@@ -117,6 +117,13 @@ describe('vote sweep 墙钟预算与车道切换', () => {
     assert.match(source, /votes_v2_initial_catchup/);
     assert.match(source, /votes_sweep_stable_phase/);
     assert.match(source, /activeLane === 'catchup'[\s\S]*catchupRate[\s\S]*hourlyVoteSweepQuota/);
+    assert.match(source, /AS catchup_queued/);
+    assert.match(source, /AS catchup_seedable/);
+    assert.match(
+      source,
+      /activeLane === 'catchup' \? catchupSeedable : eligiblePages/,
+      '已在队列的追平页不应被误当成本轮可新建需求',
+    );
 
     const migration = await readFile(
       new URL('../migrations/0035_vote_sweep_scheduler.sql', import.meta.url),

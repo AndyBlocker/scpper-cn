@@ -37,9 +37,10 @@ import {
   ADULT_STABLE_EGRESS_HOLD,
   CONSECUTIVE_PAGE_FAILURE_LIMIT,
   detectKindStarvation,
+  irreconcilableReviewQuota,
   reapTasksOnNonLivePages,
   RUN_BUDGET_MS,
-  WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
+  WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
   finishWorkTask,
   releaseIrreconcilableReviewLocks,
   releaseWorkTaskLocks,
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
     ...(opts.adultOnly ? { tlsMaxVersion: RESTRICTED_TLS_MAX_VERSION } : {}),
-    minRequestIntervalMs: WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
+    minRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'work-queue'),
     egress: {
@@ -164,7 +165,7 @@ async function main(): Promise<void> {
         breaker503: Math.max(5, config.breaker503),
         breakerReset: Math.max(5, config.breakerReset),
         connections: Math.max(1, opts.concurrency),
-        minRequestIntervalMs: WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
+        minRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
         logger: log.child('restricted-7890'),
         // 混合 worker 的 adult 专用 7890 客户端也必须参加全站共享门禁；固定出口
         // 不是绕过容量预算的理由。
@@ -283,6 +284,8 @@ async function main(): Promise<void> {
             highFrequencyRetired: 0,
             highFrequencyAffected: 0,
             catchupAffected: 0,
+            catchupQueued: 0,
+            catchupSeedable: 0,
             sweepAffected: 0,
             eligiblePages: 0,
             catchupRemaining: 0,
@@ -296,9 +299,22 @@ async function main(): Promise<void> {
         : { conventionAffected: 0 };
     const seeded = { ...voteSeeded, ...conventionSeeded };
 
+    // 先清理非 live 僵尸任务，再把检测结果直接交给本轮认领器。
+    // 饥饿不再是事后日志：命中的 kind 会在 FIFO 纠偏车道获得额外名额。
+    const reaped = opts.adultOnly
+      ? { total: 0, byKind: {} as Record<string, number> }
+      : await reapTasksOnNonLivePages(pool);
+    if (reaped.total > 0) {
+      log.info('清理已非 live 页面上的待办任务', reaped);
+    }
+    const starvationBeforeClaim = opts.adultOnly
+      ? []
+      : await detectKindStarvation(pool, STARVATION_ALERT_HOURS);
+    const starvedKinds = starvationBeforeClaim.map((item) => item.kind);
+    const reviewLimit = irreconcilableReviewQuota(opts.limit, opts.kinds.length);
     const reviews = await claimIrreconcilableReviews(
       pool,
-      opts.limit,
+      reviewLimit,
       workerId,
       opts.kinds,
       undefined,
@@ -313,11 +329,10 @@ async function main(): Promise<void> {
       undefined,
       opts.adultOnly ? 'adult:' : null,
       opts.adultOnly ? ADULT_STABLE_EGRESS_HOLD : null,
+      starvedKinds,
     );
-    claimed = [...reviews, ...regular];
-    // Tier2 共用全站出口预算；矛盾隔离复查也必须遵守 0.5 QPS，不能只给 drift 任务限速。
-    http.setMinRequestIntervalMs(WORK_QUEUE_MIN_REQUEST_INTERVAL_MS);
-    restrictedHttp.setMinRequestIntervalMs(WORK_QUEUE_MIN_REQUEST_INTERVAL_MS);
+    // 常规公平车道先执行，避免长耗时终态复查在墙钟预算前吃掉 kind 保底。
+    claimed = [...regular, ...reviews];
     counters.claimed = claimed.length;
     for (const task of claimed) {
       const byKind = ensureKindCounters(counters, task.kind);
@@ -332,7 +347,20 @@ async function main(): Promise<void> {
       ),
       seeded,
       weeklyReviewsClaimed: reviews.length,
-      minRequestIntervalMs: WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
+      starvationCorrection: {
+        detectedKinds: starvedKinds,
+        claimedByKind: Object.fromEntries(
+          starvedKinds.map((kind) => [
+            kind,
+            regular.filter((task) => task.kind === kind).length,
+          ]),
+        ),
+      },
+      throttleAuthority: {
+        authority: 'shared_postgres_adaptive_egress',
+        localMinRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
+        adaptive: http.stats().adaptiveEgress?.state ?? null,
+      },
     });
 
     const context: WorkHandlerContext = {
@@ -354,7 +382,7 @@ async function main(): Promise<void> {
       /*
        * 时间预算优先于条数预算。
        *
-       * 时间预算仍要兜住慢响应/重试；即使 0.5 QPS 的纯限速只占约 100 秒，异常轮次
+       * 时间预算仍要兜住慢响应/重试；正常档的共享门本身不会吃掉本预算，异常轮次
        * 加上请求与解析仍可能逼近 systemd 的 TimeoutStartSec=10min。此前队列几乎只有 new_page_highfreq
        * （新页小、快）才勉强压得进去；work-queue 公平性修好、votes_full 得以进入之后
        * 立刻超时，每轮被 SIGTERM 杀死、只消耗 5 秒 CPU 就退出，任务认领了却没人做完——
@@ -664,24 +692,16 @@ async function main(): Promise<void> {
       },
     });
 
-    /*
-     * 饥饿检测独立于 health：health 衡量「本轮做得怎么样」，饥饿问的是「谁一直没被做」。
-     * 上一次 votes_full 被饿了 6.8 天，而每轮 50 个配额打满、全部成功、失败率为 0——
-     * 常规指标全绿。只报警不改退出码：饥饿是排队公平性问题，本轮执行本身并没有失败。
-     */
-    // 先清死任务再测饥饿：已删页上的僵尸任务会让「最久等待」永久失真，
-    // 那正是这个指标刚上线就会遇到的第一类假阳性。
-    const reaped = opts.adultOnly
-      ? { total: 0, byKind: {} as Record<string, number> }
-      : await reapTasksOnNonLivePages(pool);
-    if (reaped.total > 0) {
-      log.info('清理已非 live 页面上的待办任务', reaped);
-    }
+    // 轮后再测一次留作运维证据；真正的纠偏动作已由轮前结果触发。
     const starvation = opts.adultOnly
       ? []
       : await detectKindStarvation(pool, STARVATION_ALERT_HOURS);
     if (starvation.length > 0) {
-      log.error('存在长期未被认领的任务种类（排队饥饿）', { thresholdHours: STARVATION_ALERT_HOURS, starvation });
+      log.error('存在超过纠偏阈值的任务种类（已为本轮触发 FIFO 保留名额）', {
+        thresholdHours: STARVATION_ALERT_HOURS,
+        starvationBeforeClaim,
+        starvationAfterRun: starvation,
+      });
     }
 
     emitSummary({
@@ -691,6 +711,13 @@ async function main(): Promise<void> {
       health,
       selfProtection,
       starvation,
+      starvationCorrection: {
+        thresholdHours: STARVATION_ALERT_HOURS,
+        detected: starvationBeforeClaim,
+        claimedByKind: Object.fromEntries(
+          starvedKinds.map((kind) => [kind, counters.byKind[kind]?.claimed ?? 0]),
+        ),
+      },
       reapedNonLiveTasks: reaped,
       runId,
       durationMs,
@@ -905,6 +932,12 @@ function parseArgs(): CliOptions {
     WORK_QUEUE_LIMIT_MAX,
     Number.isFinite(raw.limit) && raw.limit > 0 ? Math.floor(raw.limit) : 50,
   );
+  if (!raw.probeOnly && limit < selected.length) {
+    throw new Error(
+      `--limit=${limit} 小于所选 kind 数 ${selected.length}，无法保证每 kind 每轮至少 1 个名额；`
+      + '请提高 --limit 或缩小 --kinds',
+    );
+  }
   const concurrency =
     Number.isFinite(raw.concurrency) && raw.concurrency > 0
       ? Math.min(5, Math.floor(raw.concurrency))

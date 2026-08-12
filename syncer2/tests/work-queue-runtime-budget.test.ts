@@ -10,10 +10,12 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { readFile } from 'node:fs/promises';
+import { ADAPTIVE_EGRESS_POLICY } from '../src/http/adaptiveEgress.js';
 import {
   RUN_BUDGET_MS,
   WORK_QUEUE_LIMIT_MAX,
-  WORK_QUEUE_MIN_REQUEST_INTERVAL_MS,
+  WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
 } from '../src/store/workQueue.js';
 
 /** 与 deploy/systemd 的 syncer2-job@work-queue.service.d 保持一致。 */
@@ -32,22 +34,24 @@ describe('work-queue 单轮时间预算', () => {
     );
   });
 
-  /*
-   * 限速从 10s 放宽到 2s 后，预算的角色变了：
-   * 此前满额一轮的纯等待就是 500s，预算是**必然触发**的收敛机制；
-   * 现在满额纯等待仅 100s，预算退化为**病态情况的安全网**
-   * （单个大页 60s 超时 + 分页重试仍可能吃掉数分钟）。
-   * 断言随之改为「正常一轮必须能从容做完」，而不是「预算必然触发」。
-   */
-  it('正常满额一轮必须能在预算内从容做完，不该被预算截断', () => {
-    const pureWaitMs = WORK_QUEUE_LIMIT_MAX * WORK_QUEUE_MIN_REQUEST_INTERVAL_MS;
+  it('正常档的共享门 pace 可在预算内完成满额一轮', () => {
+    const normalTier = ADAPTIVE_EGRESS_POLICY.tiers[0]!;
+    const pureWaitMs = WORK_QUEUE_LIMIT_MAX * normalTier.minIntervalMs;
     assert.ok(
       pureWaitMs < RUN_BUDGET_MS,
-      `满额纯等待 ${pureWaitMs}ms 应小于预算 ${RUN_BUDGET_MS}ms，否则每轮都被截断、积压无法收敛`,
+      `L0 满额纯门等待 ${pureWaitMs}ms 应小于预算 ${RUN_BUDGET_MS}ms`,
     );
-    assert.ok(
-      pureWaitMs * 2 < RUN_BUDGET_MS,
-      '还应留出至少一倍余量给实际请求耗时与解析',
+  });
+
+  it('work-queue 没有第二层独立节流，唯一 pace 权威是共享自适应门', async () => {
+    assert.equal(WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS, 0);
+    const cli = await readFile(new URL('../src/cli/work-queue.ts', import.meta.url), 'utf8');
+    assert.match(cli, /authority:\s*'shared_postgres_adaptive_egress'/);
+    assert.doesNotMatch(cli, /setMinRequestIntervalMs\(/);
+    assert.doesNotMatch(cli, /WORK_QUEUE_MIN_REQUEST_INTERVAL_MS/);
+    assert.deepEqual(
+      ADAPTIVE_EGRESS_POLICY.tiers.map((tier) => tier.minIntervalMs),
+      [333, 667, 2_000, 8_000],
     );
   });
 
