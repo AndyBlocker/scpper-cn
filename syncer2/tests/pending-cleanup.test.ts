@@ -13,6 +13,10 @@ import {
   waitingForRestrictedEvidence,
 } from '../src/work/pendingPage.js';
 import {
+  claimPendingPages,
+  releasePendingPageClaims,
+} from '../src/store/queues.js';
+import {
   assertNoSyntheticServeIngestWrite,
   resolveTestDatabaseUrl,
   SyntheticTestWriteError,
@@ -124,6 +128,29 @@ describe('pending 收敛与生产写入门（事务回滚）', () => {
       resolution_source: 'restricted_listpages_v1_reuse',
       finished: true,
     });
+  });
+
+  it('runtime budget 留下的未完成 pending claim 立即释放并归还 attempt', async () => {
+    const slug = 'budget-release-pending-fixture';
+    const worker = 'test:runtime-budget-release';
+    await client.query(
+      `INSERT INTO meta.pending_page(slug,reasons,discovered_by,status,attempts,priority)
+       VALUES ($1,ARRAY['runtime_budget_test'],'test','pending',2,2147483647)`,
+      [slug],
+    );
+    const claimed = await claimPendingPages(client, 1, worker);
+    assert.equal(claimed[0]?.slug, slug);
+    assert.equal(claimed[0]?.attempts, 3);
+    assert.equal(await releasePendingPageClaims(client, [slug], worker), 1);
+    const state = await client.query<{
+      attempts: number;
+      locked_by: string | null;
+      locked_at: Date | null;
+    }>(
+      `SELECT attempts,locked_by,locked_at FROM meta.pending_page WHERE slug=$1`,
+      [slug],
+    );
+    assert.deepEqual(state.rows[0], { attempts: 2, locked_by: null, locked_at: null });
   });
 
   it('数据库门拒绝合成页/用户，真实 test-* 页仍可带修订存在', async () => {

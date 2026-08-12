@@ -73,6 +73,11 @@ import {
   evaluateRunHealth,
   RUN_REPEATED_FAILURE_ATTEMPTS,
 } from '../work/runHealth.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('work-queue');
 
@@ -92,6 +97,7 @@ interface CliOptions {
   adultOnly: boolean;
   amcProbe?: string;
   proxyCheck?: string;
+  maxRuntimeSec: number;
 }
 
 interface Counters {
@@ -121,6 +127,7 @@ async function main(): Promise<void> {
   const runSource = opts.adultOnly ? 'wikidot_tier2_adult_stable' : SOURCE;
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const workerId = `${os.hostname()}:${process.pid}:work`;
   const http = new HttpClient({
     userAgent: config.userAgent,
@@ -356,10 +363,10 @@ async function main(): Promise<void> {
        * 被信号杀死时无法优雅收尾：未完成任务只能等锁陈旧回收，本轮进度全部作废。
        * 因此必须在硬超时之前自己停下来，把已完成的部分正常结账。
        */
-      if (Date.now() - startedMs >= RUN_BUDGET_MS) {
+      if (budget.checkpoint()) {
         stoppedByRuntimeBudget = true;
         log.info('达到单轮时间预算，提前收尾（剩余任务下轮继续）', {
-          budgetSec: RUN_BUDGET_MS / 1000,
+          budgetSec: opts.maxRuntimeSec,
           processed: counters.processed,
           remaining: claimed.length - counters.processed,
         });
@@ -563,7 +570,10 @@ async function main(): Promise<void> {
       }
     }
 
-    const stopped = http.breakerOpen || counters.stoppedByFailureLimit;
+    if (budget.checkpoint()) stoppedByRuntimeBudget = true;
+
+    const stopped =
+      http.breakerOpen || counters.stoppedByFailureLimit || stoppedByRuntimeBudget;
     const voteTasksProcessed = claimed.some(
       (task) =>
         processed.has(taskKey(task)) &&
@@ -650,6 +660,7 @@ async function main(): Promise<void> {
         samples,
         revokePromotion,
         httpHealth: http.healthStats(),
+        ...budget.summary(),
       },
     });
 
@@ -681,7 +692,6 @@ async function main(): Promise<void> {
       selfProtection,
       starvation,
       reapedNonLiveTasks: reaped,
-      stoppedByRuntimeBudget,
       runId,
       durationMs,
       registeredKinds: REGISTERED_WORK_KINDS,
@@ -692,6 +702,7 @@ async function main(): Promise<void> {
       httpHealth: http.healthStats(),
       samples,
       revokePromotion,
+      ...budget.summary(),
     });
     process.exitCode = health.exitCode;
   } catch (err) {
@@ -854,6 +865,11 @@ function parseArgs(): CliOptions {
     .option('--adult-only', '只认领 adult: 页面任务，且整个进程（含探针）固定 7890', false)
     .option('--amc-probe <policy>', 'AMC 探针 require | warn | skip（默认 require）')
     .option('--proxy-check <policy>', '代理健康 require | warn | skip（默认 warn）');
+  addRuntimeBudgetOption(program, {
+    defaultSec: RUN_BUDGET_MS / 1_000,
+    minSec: 1,
+    maxSec: 3_600,
+  });
   program.parse(process.argv);
 
   const raw = program.opts<{
@@ -866,6 +882,7 @@ function parseArgs(): CliOptions {
     adultOnly: boolean;
     amcProbe?: string;
     proxyCheck?: string;
+    maxRuntimeSec: number;
   }>();
   const selected = raw.kinds === undefined
     ? [...ALL_WORK_TASK_KINDS]
@@ -900,6 +917,7 @@ function parseArgs(): CliOptions {
     seed: raw.seed !== false,
     probeOnly: Boolean(raw.probeOnly),
     adultOnly: Boolean(raw.adultOnly),
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
     ...(raw.amcProbe ? { amcProbe: raw.amcProbe } : {}),
     ...(raw.proxyCheck ? { proxyCheck: raw.proxyCheck } : {}),
   };

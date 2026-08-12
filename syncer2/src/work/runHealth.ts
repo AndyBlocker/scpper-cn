@@ -63,7 +63,8 @@ export function evaluateRunHealth(input: RunHealthInput): RunHealthDecision {
   const failureRate = input.processed === 0
     ? null
     : retryableFailures / input.processed;
-  const zeroProgress = input.claimed > 0 && input.processed === 0;
+  // 全部 claim 因协作式时间预算/写冻结而主动释放时是正常 partial，不是零进展故障。
+  const zeroProgress = input.claimed > deferred && input.processed === 0;
   /*
    * 阈值可按链路覆盖：站外图床（wdfiles 等）实测瞬时失败率稳定在 25% 上下，
    * 用主站的标准衡量它等于把「A 站健康线」当成「所有出站的健康线」。

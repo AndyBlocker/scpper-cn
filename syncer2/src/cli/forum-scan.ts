@@ -67,6 +67,11 @@ import {
   evaluateRunHealth,
   RUN_REPEATED_FAILURE_ATTEMPTS,
 } from '../work/runHealth.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('forum-scan');
 const SOURCE = 'wikidot_forum';
@@ -109,7 +114,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
-  const deadlineMs = startedMs + opts.maxRuntimeSec * 1_000;
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const workerId = `${os.hostname()}:${process.pid}:forum`;
   const http = new HttpClient({
     userAgent: config.userAgent,
@@ -315,7 +320,7 @@ async function main(): Promise<void> {
 
     // 关联冷启动不依赖 ForumStart/分类父表；一个局部模块失败不能再拒绝 28k 页整体收敛。
     linkGroups: for (let offset = 0; offset < linkOnlyTasks.length; offset += opts.concurrency) {
-      if (Date.now() >= deadlineMs) {
+      if (budget.checkpoint()) {
         counters.stoppedByRuntimeBudget = true;
         break;
       }
@@ -390,7 +395,7 @@ async function main(): Promise<void> {
         }
       }
       scanGroups: for (let offset = 0; offset < deepDiscussionTasks.length; offset += opts.concurrency) {
-        if (Date.now() >= deadlineMs) {
+        if (budget.checkpoint()) {
           counters.stoppedByRuntimeBudget = true;
           break;
         }
@@ -421,7 +426,7 @@ async function main(): Promise<void> {
 
       if (!http.breakerOpen && !counters.stoppedByFailureLimit) {
         for (let offset = 0; offset < threadTasks.length; offset += opts.concurrency) {
-          if (Date.now() >= deadlineMs) {
+          if (budget.checkpoint()) {
             counters.stoppedByRuntimeBudget = true;
             break;
           }
@@ -768,6 +773,7 @@ async function main(): Promise<void> {
     await releaseDiscussionTaskLocks(pool, unprocessedDiscussion, workerId);
 
     const unprocessedReleased = unprocessedForum.length + unprocessedDiscussion.length;
+    if (budget.checkpoint()) counters.stoppedByRuntimeBudget = true;
     const health = evaluateRunHealth({
       claimed: counters.claimed,
       processed: counters.processed,
@@ -806,6 +812,7 @@ async function main(): Promise<void> {
         http: http.stats(),
         httpHealth: http.healthStats(),
         samples,
+        ...budget.summary(),
       },
     });
     emitSummary({
@@ -820,6 +827,7 @@ async function main(): Promise<void> {
       http: http.stats(),
       httpHealth: http.healthStats(),
       samples,
+      ...budget.summary(),
     });
     process.exitCode = health.exitCode;
   } catch (err) {
@@ -1081,7 +1089,6 @@ function parseArgs(): CliOptions {
     .description('匿名消费页级论坛任务与 thread/category sitemap 差集（单次最多 50 个）')
     .option('--limit <n>', '本轮最多消费目标数（硬上限 50）', Number, 20)
     .option('--concurrency <n>', '并发数（1-5）', Number, 4)
-    .option('--max-runtime-sec <n>', '单轮墙钟预算（30-540 秒）', Number, 420)
     .option('--page-id <id>', '只认领指定 v2 page_id 的 forum/discussion 任务', Number)
     .option('--thread-id <id>', '只认领指定 sitemap thread_id 任务', Number)
     .option('--category-id <id>', '只认领指定 sitemap category_id 任务', Number)
@@ -1089,6 +1096,7 @@ function parseArgs(): CliOptions {
     .option('--probe-only', '只跑启动自检，不认领任务', false)
     .option('--amc-probe <policy>', 'AMC 探针 require | warn | skip（默认 require）')
     .option('--proxy-check <policy>', '代理健康 require | warn | skip（默认 warn）');
+  addRuntimeBudgetOption(program, { defaultSec: 420, minSec: 1, maxSec: 3_600 });
   program.parse(process.argv);
   const raw = program.opts<{
     limit: number;
@@ -1119,10 +1127,10 @@ function parseArgs(): CliOptions {
     Number.isFinite(raw.concurrency) && raw.concurrency > 0
       ? Math.min(5, Math.floor(raw.concurrency))
       : 4;
-  const maxRuntimeSec =
-    Number.isFinite(raw.maxRuntimeSec) && raw.maxRuntimeSec > 0
-      ? Math.min(540, Math.max(30, Math.floor(raw.maxRuntimeSec)))
-      : 420;
+  const maxRuntimeSec = parseRuntimeBudgetSec(raw.maxRuntimeSec, {
+    minSec: 1,
+    maxSec: 3_600,
+  });
   return {
     limit,
     concurrency,

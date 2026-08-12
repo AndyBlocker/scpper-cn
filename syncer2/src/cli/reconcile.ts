@@ -53,6 +53,11 @@ import {
   evaluateRunHealth,
   type RunHealthDecision,
 } from '../work/runHealth.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 /**
  * 未解释占比相对上一轮的容差（绝对百分点）。
@@ -78,6 +83,7 @@ interface CliOptions {
   amcProbe?: string;
   proxyCheck?: string;
   v1DatabaseUrl?: string;
+  maxRuntimeSec: number;
 }
 
 async function main(): Promise<void> {
@@ -86,6 +92,7 @@ async function main(): Promise<void> {
   assertDatabaseName(config.databaseUrl, ['scpper-v2'], 'v2 写入库');
   const observedAt = new Date().toISOString();
   const lagWindowSeconds = opts.lagMinutes * 60;
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const v2Pool = createPool(config.databaseUrl, { max: 4 });
   let v1Pool: Pool | null = null;
   let wikidotHttp: HttpClient | null = null;
@@ -104,7 +111,7 @@ async function main(): Promise<void> {
     let crom: ReturnType<typeof compareCromCanary> | undefined;
     let triangle: ReturnType<typeof assembleTriangleReport> | undefined;
 
-    if (opts.mode === 'all' || opts.mode === 'parity') {
+    if ((opts.mode === 'all' || opts.mode === 'parity') && !budget.checkpoint()) {
       const v1Url = opts.v1DatabaseUrl ?? process.env['SYNCER2_V1_DATABASE_URL'];
       if (!v1Url) {
         throw new Error(
@@ -123,7 +130,7 @@ async function main(): Promise<void> {
       );
     }
 
-    if (opts.mode === 'all' || opts.mode === 'crom') {
+    if ((opts.mode === 'all' || opts.mode === 'crom') && !budget.checkpoint()) {
       cromHttp = new HttpClient({
         userAgent: config.userAgent,
         referer: config.referer,
@@ -140,6 +147,7 @@ async function main(): Promise<void> {
         batchSize: opts.cromBatchSize,
         ...(opts.cromMaxPages === undefined ? {} : { maxPages: opts.cromMaxPages }),
         requestDelayMs: opts.cromRequestDelayMs,
+        shouldStop: () => budget.checkpoint(),
       });
       const v2Pages = await fetchV2CanaryPages(v2Pool);
       crom = compareCromCanary(
@@ -150,7 +158,7 @@ async function main(): Promise<void> {
       );
     }
 
-    if (opts.mode === 'all' || opts.mode === 'triangle') {
+    if ((opts.mode === 'all' || opts.mode === 'triangle') && !budget.checkpoint()) {
       wikidotHttp = new HttpClient({
         userAgent: config.userAgent,
         referer: config.referer,
@@ -264,6 +272,14 @@ async function main(): Promise<void> {
         ...(cromHttp ? { crom: compactHttp(cromHttp) } : {}),
       },
     });
+    budget.checkpoint();
+    if (budget.stoppedByRuntimeBudget && finalReport.status === 'failed') {
+      finalReport = {
+        ...finalReport,
+        status: 'inconclusive',
+        alerts: [...finalReport.alerts, '达到单轮时间预算；已完成子轨正常结账，剩余子轨下轮继续'],
+      };
+    }
     const qq = buildQqSummary(finalReport);
     // 基线必须在写入本轮之前读，否则读到的就是自己。
     const baseline = await readPreviousUnexplainedBaseline(v2Pool);
@@ -293,6 +309,7 @@ async function main(): Promise<void> {
       processed: 1,
       partial: isReconcileFailure(finalReport.status) && !toolFailed ? 1 : 0,
       failed: 0,
+      deferred: budget.stoppedByRuntimeBudget ? 1 : 0,
       fatalReasons: [
         ...(toolFailed ? ['reconcile_tool_failure'] : []),
         ...(regressed ? ['unexplained_ratio_regressed'] : []),
@@ -312,6 +329,7 @@ async function main(): Promise<void> {
         unexplainedBaseline: baseline,
         unexplainedRegressed: regressed,
         qqSummary: qq,
+        ...budget.summary(),
       });
     }
     process.exitCode = health.exitCode;
@@ -590,6 +608,7 @@ function parseArgs(): CliOptions {
     .option('--amc-probe <policy>', 'require | warn | skip（triangle 默认 require）')
     .option('--proxy-check <policy>', 'require | warn | skip（默认 warn）')
     .option('--v1-database-url <url>', 'v1 scpper-cn 连接串；仅 BEGIN READ ONLY SELECT');
+  addRuntimeBudgetOption(program, { defaultSec: 720, minSec: 1, maxSec: 7_200 });
   program.parse(process.argv);
   const raw = program.opts<Record<string, unknown>>();
   const mode = raw['mode'];
@@ -625,6 +644,10 @@ function parseArgs(): CliOptions {
     cromBatchSize,
     cromRequestDelayMs,
     concurrency,
+    maxRuntimeSec: parseRuntimeBudgetSec(Number(raw['maxRuntimeSec']), {
+      minSec: 1,
+      maxSec: 7_200,
+    }),
     ...(liveListpagesBatches === undefined ? {} : { liveListpagesBatches }),
     ...(cromMaxPages === undefined ? {} : { cromMaxPages }),
     ...(typeof raw['amcProbe'] === 'string' ? { amcProbe: raw['amcProbe'] } : {}),

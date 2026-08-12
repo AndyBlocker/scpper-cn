@@ -380,6 +380,7 @@ export async function runProjections(
   pool: Pool,
   requested: readonly ProjectionName[] = L2_PROJECTIONS,
   options: ProjectOptions = {},
+  control: { shouldStop?: () => boolean } = {},
 ): Promise<ProjectionRunResult[]> {
   const plan = expandProjectionDependencies(requested);
   const results: ProjectionRunResult[] = [];
@@ -403,6 +404,7 @@ export async function runProjections(
   }
   // 顺序执行是依赖契约，不做 Promise.all：user_stats 必须在 user_page 提交后运行。
   for (const projection of plan) {
+    if (control.shouldStop?.() === true) break;
     results.push(await runProjection(pool, projection, effective));
   }
   return results;

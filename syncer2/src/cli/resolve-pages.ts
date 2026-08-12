@@ -67,6 +67,7 @@ import {
   pendingStatusBreakdown,
   registerPage,
   releasePendingPageClaim,
+  releasePendingPageClaims,
   type ClaimedPending,
 } from '../store/queues.js';
 import {
@@ -85,6 +86,11 @@ import {
 } from '../work/pendingPage.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
 import { applyRestrictedListPage } from '../work/restrictedPage.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('resolve-pages');
 
@@ -100,6 +106,7 @@ interface CliOptions {
   adultBootstrap: boolean;
   amcProbe?: string;
   proxyCheck?: string;
+  maxRuntimeSec: number;
 }
 
 async function main(): Promise<void> {
@@ -107,6 +114,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const workerId = `${os.hostname()}:${process.pid}`;
   const runSource = opts.adultBootstrap ? 'wikidot_listpages_adult_bootstrap' : SOURCE;
 
@@ -135,6 +143,7 @@ async function main(): Promise<void> {
 
   const pool = createPool(config.databaseUrl);
   let runId: number | null = null;
+  let claimed: ClaimedPending[] = [];
   const counters = {
     claimed: 0,
     resolved: 0,
@@ -207,7 +216,7 @@ async function main(): Promise<void> {
     runId = await startIngestRun(pool, runSource, startedAt);
 
     // ── 认领 ────────────────────────────────────────────────────────────────
-    const claimed = opts.adultBootstrap
+    claimed = opts.adultBootstrap
       ? []
       : await claimPendingPages(pool, opts.limit, workerId);
     counters.claimed = claimed.length;
@@ -225,7 +234,7 @@ async function main(): Promise<void> {
     const restrictedSlugs = new Set([...adult, ...restricted].map((row) => row.slug));
     const httpClaimed = claimed.filter((row) => !restrictedSlugs.has(row.slug));
 
-    if (adult.length > 0 || opts.adultBootstrap) {
+    if ((adult.length > 0 || opts.adultBootstrap) && !budget.checkpoint()) {
       const adultResult = await resolveAdultPendingPages({
         pool,
         rows: adult,
@@ -239,6 +248,7 @@ async function main(): Promise<void> {
         runId,
         dryRun: opts.dryRun,
         bootstrapAll: opts.adultBootstrap,
+        shouldStop: () => budget.checkpoint(),
       });
       if (opts.adultBootstrap) counters.claimed = adultResult.targeted;
       counters.resolved += adultResult.resolved;
@@ -269,6 +279,7 @@ async function main(): Promise<void> {
         }
       }
       for (const row of restricted) {
+        if (budget.checkpoint()) break;
         const candidate = candidates.get(row.slug);
         if (candidate === undefined) {
           counters.waitingEvidence++;
@@ -345,7 +356,7 @@ async function main(): Promise<void> {
           error: `身份发现异常：${String(err)}`,
         });
       }
-    });
+    }, () => budget.checkpoint());
     const identityCollisions = findSharedPageIdentityCollisions(
       [...httpOutcomes].flatMap(([slug, outcome]) =>
         outcome.kind === 'ok'
@@ -365,7 +376,8 @@ async function main(): Promise<void> {
       0,
     );
 
-    await mapLimited(httpClaimed, opts.concurrency, async (row) => {
+    const discoveredHttpRows = httpClaimed.filter((row) => httpOutcomes.has(row.slug));
+    await mapLimited(discoveredHttpRows, opts.concurrency, async (row) => {
       const observedAt = new Date().toISOString();
       try {
         const collision = collisionBySlug.get(row.slug.toLowerCase());
@@ -586,19 +598,32 @@ async function main(): Promise<void> {
           pendingFailureResolution(row.slug, row.attempts, String(err)),
         ).catch(() => undefined);
       }
-    });
+    }, () => budget.checkpoint());
+
+    budget.checkpoint();
 
     const byStatus = await pendingStatusBreakdown(pool);
     const durationMs = Date.now() - t0;
     const processed =
       counters.resolved + counters.alreadyRegistered + counters.renamed +
       counters.gone + counters.waitingEvidence + counters.conflict + counters.failed;
+    const unprocessedReleased = await releasePendingPageClaims(
+      pool,
+      claimed.map((row) => row.slug),
+      workerId,
+    );
+    const runtimeDeferred = budget.stoppedByRuntimeBudget
+      ? Math.max(
+          unprocessedReleased,
+          counters.claimed - counters.writeFreezeSkipped - processed,
+        )
+      : 0;
     const health = evaluateRunHealth({
       claimed: counters.claimed - counters.writeFreezeSkipped,
       processed,
       partial: counters.gone + counters.waitingEvidence + counters.conflict,
       failed: counters.failed,
-      deferred: counters.writeFreezeSkipped,
+      deferred: counters.writeFreezeSkipped + runtimeDeferred,
       breakerOpen: http.breakerOpen,
     });
     const status = health.status;
@@ -644,6 +669,9 @@ async function main(): Promise<void> {
         startupProbe: probeReport,
         health,
         samples,
+        unprocessedReleased,
+        runtimeDeferred,
+        ...budget.summary(),
       },
     });
 
@@ -665,12 +693,20 @@ async function main(): Promise<void> {
         exitIps: Object.keys(http.exitIpStats()?.byIp ?? {}),
         nodes: Object.keys(http.exitIpStats()?.byNode ?? {}),
       },
+      unprocessedReleased,
+      runtimeDeferred,
+      ...budget.summary(),
     });
     process.exitCode = health.exitCode;
   } catch (err) {
     const breaker = err instanceof CircuitOpenError;
     const durationMs = Date.now() - t0;
     log.error('本轮失败', { error: String(err), breaker });
+    const unfinishedReleased = await releasePendingPageClaims(
+      pool,
+      claimed.map((row) => row.slug),
+      workerId,
+    ).catch(() => 0);
     await finishIngestRun(pool, runId, {
       status: breaker ? 'aborted' : 'failed',
       finishedAt: new Date().toISOString(),
@@ -687,6 +723,7 @@ async function main(): Promise<void> {
         durationMs,
         http: http.stats(),
         httpHealth: http.healthStats(),
+        unfinishedReleased,
       },
     }).catch((e) => log.error('收尾写 ingest_run 也失败了', { error: String(e) }));
     emitSummary({
@@ -697,6 +734,7 @@ async function main(): Promise<void> {
       error: String(err),
       breaker,
       ...counters,
+      unfinishedReleased,
     });
     process.exitCode = 1;
   } finally {
@@ -732,6 +770,7 @@ async function resolveAdultPendingPages(args: {
   runId: number | null;
   dryRun: boolean;
   bootstrapAll: boolean;
+  shouldStop?: () => boolean;
 }): Promise<AdultResolveResult> {
   const result: AdultResolveResult = {
     targeted: 0,
@@ -765,6 +804,7 @@ async function resolveAdultPendingPages(args: {
   stableHttp.assertHeaders();
   let session: RestrictedIdentitySession | null = null;
   try {
+    if (args.shouldStop?.() === true) return result;
     const listPages = await scanRestrictedListPages(
       stableHttp,
       args.baseUrl,
@@ -889,6 +929,7 @@ async function resolveAdultPendingPages(args: {
     );
 
     for (const pending of readyRows) {
+      if (args.shouldStop?.() === true) break;
       const row = bySlug.get(pending.slug) as RestrictedListPageRecord;
       const collision = collisionBySlug.get(pending.slug.toLowerCase());
       if (collision !== undefined) {
@@ -1082,11 +1123,13 @@ async function mapLimited<T>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<void>,
+  shouldStop?: () => boolean,
 ): Promise<void> {
   const effective = Math.max(1, Math.min(limit, items.length || 1));
   let cursor = 0;
   const workers = Array.from({ length: effective }, async () => {
     for (;;) {
+      if (shouldStop?.() === true) return;
       const i = cursor++;
       if (i >= items.length) return;
       await fn(items[i] as T);
@@ -1122,6 +1165,7 @@ function parseArgs(): CliOptions {
     )
     .option('--amc-probe <policy>', 'AMC 契约探针：require | warn | skip（本通道默认 skip）')
     .option('--proxy-check <policy>', '代理健康探测：require | warn | skip（默认 warn）');
+  addRuntimeBudgetOption(program, { defaultSec: 120, minSec: 1, maxSec: 3_600 });
 
   program.parse(process.argv);
   const raw = program.opts<{
@@ -1133,6 +1177,7 @@ function parseArgs(): CliOptions {
     adultBootstrap: boolean;
     amcProbe?: string;
     proxyCheck?: string;
+    maxRuntimeSec: number;
   }>();
 
   const limit = Number.isFinite(raw.limit) && raw.limit > 0 ? Math.floor(raw.limit) : 50;
@@ -1144,6 +1189,7 @@ function parseArgs(): CliOptions {
     forceColdStart: Boolean(raw.forceColdStart),
     dryRun: Boolean(raw.dryRun),
     adultBootstrap: Boolean(raw.adultBootstrap),
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
     ...(raw.amcProbe ? { amcProbe: raw.amcProbe } : {}),
     ...(raw.proxyCheck ? { proxyCheck: raw.proxyCheck } : {}),
   };

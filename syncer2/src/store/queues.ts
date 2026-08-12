@@ -313,6 +313,28 @@ export async function releasePendingPageClaim(
   );
 }
 
+/** 批量释放本 worker 尚未完成的 pending claim；已完成行因 locked_by=NULL 自动跳过。 */
+export async function releasePendingPageClaims(
+  pool: PgExecutor,
+  slugs: readonly string[],
+  workerId: string,
+): Promise<number> {
+  if (slugs.length === 0) return 0;
+  const released = await query(
+    pool,
+    'meta.pending_page:release_claims',
+    `UPDATE meta.pending_page
+        SET locked_by = NULL,
+            locked_at = NULL,
+            attempts = GREATEST(0, attempts - 1),
+            not_before = now()
+      WHERE slug = ANY($1::text[]) AND locked_by = $2
+        AND status IN ('pending','retry','waiting_evidence','conflict','irreconcilable','failed','mismatch')`,
+    [[...new Set(slugs)], workerId],
+  );
+  return released.rowCount ?? 0;
+}
+
 /**
  * 指数退避：1h → 4h → 24h → 7d（与 meta.scan_task 的退避阶梯同口径）。
  * 上限 7 天而不是无限增长：私有页/永久坏 slug 应该**低频保留**而不是被丢掉，

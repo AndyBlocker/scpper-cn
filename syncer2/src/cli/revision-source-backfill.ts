@@ -68,6 +68,11 @@ import {
   type RevisionSourceStorageStats,
   type StoredRevisionSource,
 } from '../store/revisionSource.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('revision-source-backfill');
 const SOURCE = 'wikidot_tier2';
@@ -442,25 +447,32 @@ function parseArgs(): CliOptions {
     .option('--limit <n>', '长跑本轮最多处理的修订数', Number, 100)
     .option('--seed-limit <n>', '本轮最多补入的 job 元数据数', Number, 5_000)
     .option('--delay-ms <n>', '逻辑 HTTP 请求最小间隔；250ms=最多4 req/s', Number, 250)
-    .option('--max-runtime-sec <n>', '长跑时间预算；调度默认4分钟以避开下一轮 L0', Number, 240)
     .option('--minimum-free-gb <n>', '根文件系统余量低于此值立即停手', Number, 100)
     .option('--skip-tz-check', '仅本地诊断：跳过数据库时区回环')
     .option('--amc-probe <policy>', 'require | warn | skip')
-    .option('--proxy-check <policy>', 'require | warn | skip')
-    .parse();
+    .option('--proxy-check <policy>', 'require | warn | skip');
+  addRuntimeBudgetOption(program, {
+    defaultSec: 240,
+    minSec: 1,
+    maxSec: 3_600,
+    description: '长跑时间预算；调度默认需避开下一轮 L0',
+  });
+  program.parse();
   const raw = program.opts<CliOptions>();
   for (const [name, value, min, max] of [
     ['limit', raw.limit, 1, 20_000],
     ['seed-limit', raw.seedLimit, 1, 500_000],
     ['delay-ms', raw.delayMs, 250, 60_000],
-    ['max-runtime-sec', raw.maxRuntimeSec, 30, 3_600],
     ['minimum-free-gb', raw.minimumFreeGb, 100, 10_000],
   ] as const) {
     if (!Number.isSafeInteger(value) || value < min || value > max) {
       throw new RangeError(`--${name} 必须是 ${min}..${max} 整数，收到 ${value}`);
     }
   }
-  return raw;
+  return {
+    ...raw,
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
+  };
 }
 
 function storageDelta(
@@ -483,6 +495,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const observedAt = new Date().toISOString();
   const startedMs = Date.now();
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const workerId = `${os.hostname()}:${process.pid}:revision-source`;
   const pool = createPool(config.databaseUrl, { max: 4 });
   const http = new HttpClient({
@@ -637,7 +650,7 @@ async function main(): Promise<void> {
 
       while (
         counters.processed < opts.limit &&
-        Date.now() - startedMs < opts.maxRuntimeSec * 1_000 &&
+        !budget.checkpoint() &&
         !stopping &&
         !http.breakerOpen
       ) {
@@ -785,7 +798,8 @@ async function main(): Promise<void> {
       httpHealth: http.healthStats(),
       startupProbe,
       stoppedBySignal: stopping,
-      timeBudgetReached: Date.now() - startedMs >= opts.maxRuntimeSec * 1_000,
+      timeBudgetReached: budget.checkpoint(),
+      ...budget.summary(),
       healthExclusions: {
         write_freeze: counters.writeFreezeSkipped,
         deterministic_failures: counters.irreconcilable,
@@ -840,6 +854,7 @@ async function main(): Promise<void> {
           : storageDelta(startStorage, endStorage),
       parseHealth,
       http: http.stats(),
+      ...budget.summary(),
     });
     process.exitCode = health.exitCode;
   } catch (err) {

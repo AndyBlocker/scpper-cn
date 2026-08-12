@@ -19,6 +19,12 @@ import {
   runProjections,
   selectStalledBusy,
 } from '../project/runner.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+  type RuntimeBudgetSummary,
+} from '../util/runtimeBudget.js';
 
 /*
  * busy 升级为失败的滞后阈值。取 30 分钟：projector timer 每 5 分钟一轮，
@@ -42,6 +48,7 @@ interface CliOptions {
   watch: boolean;
   intervalMs: number;
   staleMs: number;
+  maxRuntimeSec: number;
 }
 
 interface IterationResult {
@@ -52,19 +59,26 @@ interface IterationResult {
   rebuild: boolean;
   includeDeletedPages: boolean;
   projections: ProjectionRunResult[];
+  deferredProjections: ProjectionName[];
+  status: 'ok' | 'partial';
+  runtimeBudget: RuntimeBudgetSummary;
 }
 
 async function runIteration(
   pool: Pool,
   options: CliOptions,
   includeDeletedPages: boolean,
+  budget: RuntimeBudget,
 ): Promise<IterationResult> {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   const results = await runProjections(pool, options.projections, {
     rebuild: options.rebuild,
     includeDeletedPages,
+  }, {
+    shouldStop: () => budget.checkpoint(),
   });
+  budget.checkpoint();
   for (const result of results) {
     if (result.lagBeforeSeconds > 60) {
       log.warn('projection lag 超过 60 秒', {
@@ -86,6 +100,8 @@ async function runIteration(
    */
   const busy = results.filter((result) => result.status === 'busy');
   const stalled = selectStalledBusy(results, BUSY_STALL_LAG_SEC);
+  const completed = new Set(results.map((result) => result.projection));
+  const deferredProjections = options.projections.filter((name) => !completed.has(name));
   if (busy.length > 0) {
     log.warn('本轮有投影因摄入侧持锁未推进（下轮自愈）', {
       busy: busy.map((r) => r.projection),
@@ -100,11 +116,15 @@ async function runIteration(
     rebuild: options.rebuild,
     includeDeletedPages,
     projections: results,
+    deferredProjections,
+    status: budget.stoppedByRuntimeBudget ? 'partial' : 'ok',
+    runtimeBudget: budget.summary(),
   };
 }
 
 async function main(): Promise<void> {
   const options = parseArgs();
+  const budget = new RuntimeBudget(options.maxRuntimeSec);
   const config = loadConfig();
   const includeDeletedPages =
     options.includeDeletedPages ?? config.projectIncludeDeletedPages;
@@ -118,8 +138,11 @@ async function main(): Promise<void> {
     }
 
     if (!options.watch) {
-      final = await runIteration(pool, options, includeDeletedPages);
-      emitSummary(final);
+      final = await runIteration(pool, options, includeDeletedPages, budget);
+      emitSummary({
+        ...final,
+        ...final.runtimeBudget,
+      });
       if (!final.ok) process.exitCode = 1;
       return;
     }
@@ -127,7 +150,7 @@ async function main(): Promise<void> {
     let lastSuccessAt = Date.now();
     for (;;) {
       try {
-        const iteration = await runIteration(pool, options, includeDeletedPages);
+        const iteration = await runIteration(pool, options, includeDeletedPages, budget);
         final = iteration;
         if (iteration.ok) lastSuccessAt = Date.now();
         log.info('projector heartbeat', {
@@ -139,6 +162,10 @@ async function main(): Promise<void> {
             advancedTo: item.advancedTo,
           })),
         });
+        if (budget.stoppedByRuntimeBudget) {
+          emitSummary({ ...iteration, ...iteration.runtimeBudget });
+          return;
+        }
       } catch (err) {
         log.error('projector 一轮失败', { error: String(err) });
       }
@@ -182,6 +209,7 @@ function parseArgs(): CliOptions {
     .option('--watch', '常驻运行并启用无成功心跳自杀', false)
     .option('--interval-seconds <n>', 'watch 轮询秒数，默认 30', Number, 30)
     .option('--stale-minutes <n>', 'watch 无成功心跳自杀分钟数，默认 10', Number, 10);
+  addRuntimeBudgetOption(program, { defaultSec: 120, minSec: 1, maxSec: 3_600 });
   program.parse(process.argv);
   const raw = program.opts<{
     projection: string[];
@@ -192,6 +220,7 @@ function parseArgs(): CliOptions {
     watch: boolean;
     intervalSeconds: number;
     staleMinutes: number;
+    maxRuntimeSec: number;
   }>();
 
   if (raw.includeDeletedPages && raw.excludeDeletedPages) {
@@ -223,6 +252,7 @@ function parseArgs(): CliOptions {
     watch: raw.watch,
     intervalMs: Math.round(raw.intervalSeconds * 1_000),
     staleMs: Math.round(raw.staleMinutes * 60_000),
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
   };
 }
 

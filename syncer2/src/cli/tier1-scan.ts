@@ -51,6 +51,11 @@ import {
 import { upsertPendingPages } from '../store/queues.js';
 import { chunk } from '../util/concurrency.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('tier1-scan');
 const SOURCE = 'wikidot';
@@ -66,12 +71,14 @@ interface CliOptions {
   seedVotes: number;
   amcProbe?: string;
   proxyCheck?: string;
+  maxRuntimeSec: number;
 }
 
 interface PersistTier1Options {
   rangeMode: boolean;
   seedDeep: number;
   seedVotes: number;
+  shouldStop?: () => boolean;
 }
 
 interface PersistenceResult {
@@ -97,6 +104,7 @@ interface PersistenceResult {
   taskSignals: Record<string, number>;
   slugResolution: string;
   errors: Array<Record<string, unknown>>;
+  runtimeDeferred: number;
 }
 
 async function main(): Promise<void> {
@@ -104,6 +112,7 @@ async function main(): Promise<void> {
   const config = loadConfig({ requireDatabase: !opts.dryRun });
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const runMode = opts.range === undefined ? 'tier1' : 'tier1_range';
   const populationType =
     opts.maxBatches !== undefined || opts.range !== undefined
@@ -163,15 +172,17 @@ async function main(): Promise<void> {
             concurrency: opts.concurrency,
             ...(opts.maxBatches === undefined ? {} : { maxBatches: opts.maxBatches }),
             logger: log.child('collect'),
+            shouldStop: () => budget.checkpoint(),
           })
         : await scanListPagesRange(http, config.siteBaseUrl, {
             ...opts.range,
             logger: log.child('collect'),
           });
+    budget.checkpoint();
     // R10 必须在本轮 apply_page_meta/ensure_user 之前判定；否则“检测到了改版”
     // 仍会先把这一轮脏观测写进 append-only 事实，再到收尾时才冻结。
     const earlyHealth =
-      pool && runId !== null
+      pool && runId !== null && !budget.stoppedByRuntimeBudget
         ? await evaluateParseHealth(pool, {
             runId,
             source: SOURCE,
@@ -197,17 +208,21 @@ async function main(): Promise<void> {
     const previous = readListPagesSnapshot(snapshotFile);
     const diff = diffListPages(scan.rows, previous);
     const persistence = pool
-      ? await persistTier1(pool, runId, scan, diff, startedAt, {
+      ? budget.stoppedByRuntimeBudget
+        ? runtimeBudgetPersistence(scan, diff)
+        : await persistTier1(pool, runId, scan, diff, startedAt, {
           rangeMode: opts.range !== undefined,
           seedDeep: opts.seedDeep,
           seedVotes: opts.seedVotes,
-        })
+          shouldStop: () => budget.checkpoint(),
+          })
       : dryPersistence(scan, diff);
 
     // 只有完整扫描 + 全部必要写入成功才推进快照。失败只会导致下轮重复报告，不会丢信号。
     const snapshotAdvanced =
       scan.status === 'ok' &&
       persistence.ok &&
+      !budget.stoppedByRuntimeBudget &&
       scan.remoteTotal !== null &&
       (opts.dryRun || runId !== null);
     if (snapshotAdvanced) {
@@ -220,11 +235,21 @@ async function main(): Promise<void> {
     const health = evaluateRunHealth({
       claimed: Math.max(scan.remoteTotal ?? scan.pagesEnumerated, scan.requestedBatches),
       processed: Math.max(scan.pagesEnumerated, scan.requestedBatches),
-      partial: scan.status === 'partial' ? Math.max(1, scan.batchesFailed) : 0,
+      partial:
+        budget.stoppedByRuntimeBudget || scan.status === 'partial'
+          ? Math.max(1, scan.batchesFailed)
+          : 0,
       failed: scan.batchesFailed + persistence.errors.length,
+      deferred:
+        persistence.runtimeDeferred +
+        (budget.stoppedByRuntimeBudget && scan.status !== 'ok'
+          ? Math.max(1, (scan.expectedBatches ?? scan.requestedBatches + 1) - scan.requestedBatches)
+          : 0),
       breakerOpen: http.breakerOpen,
       fatalReasons: [
-        ...(scan.status === 'failed' ? ['scan_validation_failed'] : []),
+        ...(scan.status === 'failed' && !budget.stoppedByRuntimeBudget
+          ? ['scan_validation_failed']
+          : []),
         ...(!persistence.ok ? ['persistence_failed'] : []),
       ],
     });
@@ -251,6 +276,7 @@ async function main(): Promise<void> {
       durationMs,
       dryRun: opts.dryRun,
       sampleLimited: opts.maxBatches !== undefined || opts.range !== undefined,
+      ...budget.summary(),
     };
 
     if (pool) {
@@ -270,6 +296,7 @@ async function main(): Promise<void> {
           transport_failure_rate: transportFailureRate(http),
         },
         populationType,
+        evaluateParseHealth: !budget.stoppedByRuntimeBudget,
         stats,
       });
     }
@@ -292,6 +319,7 @@ async function main(): Promise<void> {
       snapshotAdvanced,
       http: compactHttp(http),
       egress: compactEgress(http),
+      ...budget.summary(),
     });
     process.exitCode = health.exitCode;
   } catch (err) {
@@ -385,6 +413,7 @@ async function persistTier1(
     taskSignals: {},
     slugResolution: 'unavailable',
     errors: [],
+    runtimeDeferred: 0,
   };
 
   const fullnames = scan.rows.map((row) => row.fullname);
@@ -481,6 +510,11 @@ async function persistTier1(
   ]);
   result.pageScansWritten = await insertPageScans(pool, runId, pageScans, observedAt);
 
+  if (options.shouldStop?.() === true) {
+    result.runtimeDeferred = scan.rows.length;
+    return result;
+  }
+
   if (scan.status !== 'ok') {
     // partial/failed 只允许单调 upsert；pending_page 与 page_scan 都属于 meta 管道状态。
     return result;
@@ -535,10 +569,13 @@ async function persistTier1(
       unixName: row.createdByUnix ?? prev?.unixName ?? null,
     });
   }
+  let creatorsAttempted = 0;
   const creatorErrors = await runSettled([...creators.values()], 4, async (creator) => {
+    creatorsAttempted++;
     await ensureCreator(pool, creator);
-  });
-  result.creatorsEnsured = creators.size - creatorErrors.length;
+  }, options.shouldStop);
+  result.runtimeDeferred += creators.size - creatorsAttempted;
+  result.creatorsEnsured = creatorsAttempted - creatorErrors.length;
   result.creatorsFailed = creatorErrors.length;
   result.errors.push(...creatorErrors);
   if (creatorErrors.length > 0) {
@@ -546,9 +583,15 @@ async function persistTier1(
     // 身份铸造未完成时不继续写页面属性；下一轮仍会重试，快照不会推进。
     return result;
   }
+  if (options.shouldStop?.() === true) {
+    result.runtimeDeferred += resolvedRows.length;
+    return result;
+  }
 
   let freezeSeen = false;
+  let applyAttempted = 0;
   const applyErrors = await runSettled(resolvedRows, 4, async ({ row, pageId }) => {
+    applyAttempted++;
     if (freezeSeen) throw new Error('write_freeze 已触发，本轮剩余 apply_page_meta 跳过');
     try {
       await applyPageMeta(pool, {
@@ -563,14 +606,16 @@ async function persistTier1(
       if (pgCode(err) === 'PGF01') freezeSeen = true;
       throw err;
     }
-  });
-  result.metadataApplied = resolvedRows.length - applyErrors.length;
+  }, options.shouldStop);
+  result.runtimeDeferred += resolvedRows.length - applyAttempted;
+  result.metadataApplied = applyAttempted - applyErrors.length;
   result.metadataFailed = applyErrors.length;
   result.errors.push(...applyErrors);
   if (applyErrors.length > 0) {
     result.ok = false;
     return result;
   }
+  if (options.shouldStop?.() === true) return result;
 
   const taskRows = buildTasks(diff, resolvedRows);
   if (options.rangeMode && options.seedDeep > 0) {
@@ -749,11 +794,13 @@ async function runSettled<T>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<void>,
+  shouldStop?: () => boolean,
 ): Promise<Array<Record<string, unknown>>> {
   const errors: Array<Record<string, unknown>> = [];
   let cursor = 0;
   const workers = Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, async () => {
     for (;;) {
+      if (shouldStop?.() === true) return;
       const index = cursor++;
       if (index >= items.length) return;
       try {
@@ -803,6 +850,18 @@ function dryPersistence(scan: ListPagesRunResult, diff: ListPagesDiff): Persiste
     taskSignals: {},
     slugResolution: 'dry-run',
     errors: [],
+    runtimeDeferred: 0,
+  };
+}
+
+function runtimeBudgetPersistence(
+  scan: ListPagesRunResult,
+  diff: ListPagesDiff,
+): PersistenceResult {
+  return {
+    ...dryPersistence(scan, diff),
+    slugResolution: 'runtime-budget-deferred',
+    runtimeDeferred: Math.max(1, scan.rows.length),
   };
 }
 
@@ -921,6 +980,7 @@ function parseArgs(): CliOptions {
     )
     .option('--amc-probe <policy>', 'AMC 契约探针：require | warn | skip（默认 require）')
     .option('--proxy-check <policy>', '代理健康探测：require | warn | skip（默认 warn）');
+  addRuntimeBudgetOption(program, { defaultSec: 1_500, minSec: 1, maxSec: 7_200 });
   program.parse(process.argv);
 
   const raw = program.opts<{
@@ -933,6 +993,7 @@ function parseArgs(): CliOptions {
     seedVotes: number;
     amcProbe?: string;
     proxyCheck?: string;
+    maxRuntimeSec: number;
   }>();
   if (!Number.isInteger(raw.concurrency) || raw.concurrency < 1 || raw.concurrency > 5) {
     throw new Error(`--concurrency 必须是 1..5 的整数，收到 ${raw.concurrency}`);
@@ -996,6 +1057,7 @@ function parseArgs(): CliOptions {
     concurrency: raw.concurrency,
     seedDeep: raw.seedDeep,
     seedVotes: raw.seedVotes,
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 7_200 }),
     ...(raw.maxBatches === undefined ? {} : { maxBatches: raw.maxBatches }),
     ...(range === undefined ? {} : { range }),
     ...(raw.amcProbe ? { amcProbe: raw.amcProbe } : {}),

@@ -35,6 +35,11 @@ import {
   isDeterministicWorkFailure,
 } from '../work/failurePolicy.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('forum-incremental');
 const SOURCE = 'wikidot_forum';
@@ -50,7 +55,7 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
-  const deadlineMs = startedMs + options.maxRuntimeSec * 1_000;
+  const budget = new RuntimeBudget(options.maxRuntimeSec);
   const pool = createPool(config.databaseUrl, { max: 4 });
   const http = new HttpClient({
     userAgent: config.userAgent,
@@ -93,7 +98,7 @@ async function main(): Promise<void> {
       categoryId: number,
       pageNo: number,
     ): Promise<CollectResult<ForumCategoryPage>> => {
-      if (Date.now() >= deadlineMs || pageRequests >= options.maxPages) {
+      if (budget.checkpoint() || pageRequests >= options.maxPages) {
         return failed<ForumCategoryPage>(
           `论坛增量达到 ${options.maxRuntimeSec}s/${options.maxPages} 页单轮预算`,
         );
@@ -134,7 +139,15 @@ async function main(): Promise<void> {
     const linkTasksSeeded = await seedForumDiscussionLinkTasks(pool);
     const queue = await forumQueueBreakdown(pool);
     const failedResults = discoveries.filter((result) => result.status === 'failed');
-    const deterministicFailures = failedResults.filter((result) =>
+    budget.checkpoint();
+    const runtimeBudgetFailures = budget.stoppedByRuntimeBudget
+      ? failedResults.filter((result) => result.error?.includes('单轮预算'))
+      : [];
+    const runtimeBudgetFailureSet = new Set(runtimeBudgetFailures);
+    const countedFailedResults = failedResults.filter(
+      (result) => !runtimeBudgetFailureSet.has(result),
+    );
+    const deterministicFailures = countedFailedResults.filter((result) =>
       isDeterministicWorkFailure(
         classifyWorkFailure('forum', result.error ?? '未提供论坛增量失败原因'),
       )
@@ -143,8 +156,9 @@ async function main(): Promise<void> {
       claimed: discoveries.length,
       processed: discoveries.length,
       partial: discoveries.filter((result) => result.status === 'partial').length,
-      failed: failedResults.length,
+      failed: countedFailedResults.length,
       deterministicFailures,
+      deferred: runtimeBudgetFailures.length,
       breakerOpen: http.breakerOpen,
     });
     const status = health.status;
@@ -162,6 +176,7 @@ async function main(): Promise<void> {
       http: http.stats(),
       httpHealth: http.healthStats(),
       health,
+      ...budget.summary(),
     };
     await finishIngestRun(pool, runId, {
       status,
@@ -213,13 +228,13 @@ function parseArgs(): CliOptions {
   program
     .name('forum-incremental')
     .option('--max-pages <n>', '单轮分类页总预算', Number, 40)
-    .option('--max-runtime-sec <n>', '单轮墙钟预算', Number, 420)
-    .option('--skip-tz-check', '仅本地调试', false)
-    .parse(process.argv);
+    .option('--skip-tz-check', '仅本地调试', false);
+  addRuntimeBudgetOption(program, { defaultSec: 420, minSec: 1, maxSec: 3_600 });
+  program.parse(process.argv);
   const raw = program.opts<{ maxPages: number; maxRuntimeSec: number; skipTzCheck: boolean }>();
   return {
     maxPages: Math.min(200, Math.max(1, Math.floor(raw.maxPages))),
-    maxRuntimeSec: Math.min(540, Math.max(30, Math.floor(raw.maxRuntimeSec))),
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
     skipTzCheck: Boolean(raw.skipTzCheck),
   };
 }

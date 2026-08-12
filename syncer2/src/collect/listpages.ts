@@ -169,6 +169,8 @@ export interface ScanListPagesOptions {
   maxBatches?: number;
   perPage?: number;
   logger?: Logger;
+  /** true 时不再启动新批次；已在飞的批次完成后由调用方按 partial 收尾。 */
+  shouldStop?: () => boolean;
 }
 
 export interface ScanListPagesRangeOptions {
@@ -554,6 +556,9 @@ export async function scanListPages(
   const concurrency = Math.max(1, Math.min(opts.concurrency ?? 5, 5));
   const batches = new Map<number, ListPagesBatchOutcome>();
 
+  if (opts.shouldStop?.() === true) {
+    return finalizeListPagesRun(batches, null, 0, perPage);
+  }
   const first = await fetchListPagesBatch(http, baseUrl, 1, perPage, log);
   batches.set(1, first);
   const firstData = outcomeData(first);
@@ -570,7 +575,7 @@ export async function scanListPages(
   await mapLimited(targets, concurrency, async (batchNo) => {
     const outcome = await fetchListPagesBatch(http, baseUrl, batchNo, perPage, log);
     batches.set(batchNo, outcome);
-  });
+  }, opts.shouldStop);
 
   for (let batchNo = requestedBatches + 1; batchNo <= expectedBatches; batchNo++) {
     batches.set(batchNo, {
@@ -580,7 +585,12 @@ export async function scanListPages(
     });
   }
 
-  return finalizeListPagesRun(batches, expectedBatches, requestedBatches, perPage);
+  return finalizeListPagesRun(
+    batches,
+    expectedBatches,
+    Math.min(requestedBatches, batches.size),
+    perPage,
+  );
 }
 
 /**
@@ -1430,10 +1440,12 @@ async function mapLimited<T>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<void>,
+  shouldStop?: () => boolean,
 ): Promise<void> {
   let cursor = 0;
   const workers = Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, async () => {
     for (;;) {
+      if (shouldStop?.() === true) return;
       const i = cursor++;
       if (i >= items.length) return;
       await fn(items[i] as T);

@@ -60,6 +60,8 @@ export interface CromFetchOptions {
   maxPages?: number;
   /** CROM 有请求频率限制；生产全量轮由 CLI 显式传入节流间隔。 */
   requestDelayMs?: number;
+  /** 协作式墙钟预算；命中后把已完成批次作为 inconclusive 留证。 */
+  shouldStop?: () => boolean;
 }
 
 const CROM_QUERY = `
@@ -189,6 +191,16 @@ export async function fetchAllCromPages(
   let intentionallyLimited = false;
 
   for (let batchNo = 1; batchNo <= MAX_CURSOR_BATCHES; batchNo++) {
+    if (opts.shouldStop?.() === true) {
+      return {
+        status: 'inconclusive',
+        pages,
+        batches,
+        isFull: false,
+        intentionallyLimited: true,
+        error: '达到单轮时间预算，CROM 游标未走完',
+      };
+    }
     try {
       if (batchNo > 1 && requestDelayMs > 0) {
         await delay(requestDelayMs);

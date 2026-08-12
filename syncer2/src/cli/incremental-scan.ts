@@ -70,6 +70,11 @@ import {
   applyAdaptiveSelfProtectionToRunHealth,
   evaluateRunHealth,
 } from '../work/runHealth.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('incremental-scan');
 const SOURCE = 'wikidot_listpages';
@@ -93,6 +98,7 @@ interface CliOptions {
   windowHours?: number;
   amcProbe?: string;
   proxyCheck?: string;
+  maxRuntimeSec: number;
 }
 
 interface PersistResult {
@@ -118,6 +124,7 @@ async function main(): Promise<void> {
   const windowHours = opts.windowHours ?? config.l0WindowHours;
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const mode = MODE[opts.layer];
   const populationType = POPULATION[opts.layer];
   const http = new HttpClient({
@@ -175,11 +182,14 @@ async function main(): Promise<void> {
             concurrency: opts.concurrency,
             windowHours,
             logger: log.child('l0'),
+            shouldStop: () => budget.checkpoint(),
           })
         : await scanIncrementalListPages(http, config.siteBaseUrl, 'l1', {
             concurrency: opts.concurrency,
             logger: log.child('l1'),
+            shouldStop: () => budget.checkpoint(),
           });
+    budget.checkpoint();
     let l1EnumerationSnapshot: Record<string, unknown> | null = null;
     if (opts.layer === 'l1') {
       const baseSnapshotFile = l1EnumerationSnapshotPath(config.stateDir);
@@ -198,7 +208,13 @@ async function main(): Promise<void> {
     }
 
     let persistence: PersistResult;
-    if (scan.status !== 'ok') {
+    if (budget.stoppedByRuntimeBudget) {
+      persistence = skippedPersistence(
+        scan.rows.length,
+        opts.layer,
+        `达到 ${opts.maxRuntimeSec}s 单轮时间预算；不推进状态，下一轮完整重扫`,
+      );
+    } else if (scan.status !== 'ok') {
       // 多页 ListPages 没有事务快照；分页期间的单条移动会产生重复/空洞。
       // 整轮证据落为 partial，但不推进增量状态、不入队、不计算覆盖率。
       persistence = skippedPersistence(
@@ -226,16 +242,25 @@ async function main(): Promise<void> {
         config.minEnumeratedRatio,
       );
     }
+    budget.checkpoint();
 
     const durationMs = Date.now() - t0;
     const baseHealth = evaluateRunHealth({
       claimed: scan.expectedBatches ?? scan.requestedBatches,
       processed: scan.requestedBatches,
-      partial: scan.status === 'partial' ? Math.max(1, scan.batchesFailed) : 0,
-      failed: scan.batchesFailed,
+      partial:
+        budget.stoppedByRuntimeBudget || scan.status === 'partial'
+          ? Math.max(1, scan.batchesFailed)
+          : 0,
+      failed: budget.stoppedByRuntimeBudget ? 0 : scan.batchesFailed,
+      deferred: budget.stoppedByRuntimeBudget
+        ? Math.max(1, (scan.expectedBatches ?? scan.requestedBatches + 1) - scan.requestedBatches)
+        : 0,
       breakerOpen: http.breakerOpen,
       fatalReasons: [
-        ...(scan.status === 'failed' ? ['scan_validation_failed'] : []),
+        ...(scan.status === 'failed' && !budget.stoppedByRuntimeBudget
+          ? ['scan_validation_failed']
+          : []),
         ...(persistence.systemicPageFailure ? ['systemic_page_failure'] : []),
         ...(egressSlo?.exitCode === 1 ? ['adaptive_downshift_recovery_overdue'] : []),
       ],
@@ -265,6 +290,7 @@ async function main(): Promise<void> {
       dryRun: opts.dryRun,
       httpHealth: http.healthStats(),
       health,
+      ...budget.summary(),
     };
     const parseHealth =
       pool === null
@@ -306,6 +332,7 @@ async function main(): Promise<void> {
       parseHealth,
       egressSlo,
       http: compactHttp(http),
+      ...budget.summary(),
     });
     process.exitCode = exitCode;
   } catch (err) {
@@ -1038,6 +1065,7 @@ function parseArgs(): CliOptions {
     .option('--window-hours <n>', '仅 L0：updated_at 回看小时数（默认读配置）', (value) => Number(value))
     .option('--amc-probe <policy>', 'AMC 契约探针：require | warn | skip')
     .option('--proxy-check <policy>', '代理健康：require | warn | skip');
+  addRuntimeBudgetOption(program, { defaultSec: 180, minSec: 1, maxSec: 3_600 });
   program.parse(process.argv);
   const raw = program.opts<{
     layer: string;
@@ -1047,6 +1075,7 @@ function parseArgs(): CliOptions {
     windowHours?: number;
     amcProbe?: string;
     proxyCheck?: string;
+    maxRuntimeSec: number;
   }>();
   if (raw.layer !== 'l0' && raw.layer !== 'l1') {
     throw new Error(`--layer 只允许 l0|l1，收到 ${raw.layer}`);
@@ -1068,6 +1097,7 @@ function parseArgs(): CliOptions {
     dryRun: Boolean(raw.dryRun),
     skipTzCheck: Boolean(raw.skipTzCheck),
     concurrency: raw.concurrency,
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
     ...(raw.windowHours === undefined ? {} : { windowHours: raw.windowHours }),
     ...(raw.amcProbe === undefined ? {} : { amcProbe: raw.amcProbe }),
     ...(raw.proxyCheck === undefined ? {} : { proxyCheck: raw.proxyCheck }),

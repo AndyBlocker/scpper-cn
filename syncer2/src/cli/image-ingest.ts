@@ -25,6 +25,11 @@ import {
 import { SHARED_IMAGE_ASSET_ROOT } from '../image/config.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('image-ingest');
 
@@ -32,7 +37,7 @@ async function main(): Promise<void> {
   const cli = parseArgs();
   const config = loadConfig();
   const startedMs = Date.now();
-  const deadlineMs = startedMs + cli.maxRuntimeSec * 1_000;
+  const budget = new RuntimeBudget(cli.maxRuntimeSec);
   const workerId = `${os.hostname()}:${process.pid}:image`;
   const pool = createPool(config.databaseUrl, { max: 4 });
   const siteHost = new URL(config.siteBaseUrl).hostname.toLowerCase();
@@ -100,7 +105,7 @@ async function main(): Promise<void> {
 
   try {
     if (!cli.skipTzCheck) await assertTimezoneRoundTrip(pool);
-    while (counters.claimed < cli.limit && Date.now() < deadlineMs) {
+    while (counters.claimed < cli.limit && !budget.checkpoint()) {
       const job = await claimNextImageJob(pool, workerId);
       if (job === null) break;
       counters.claimed++;
@@ -155,7 +160,8 @@ async function main(): Promise<void> {
       wikidotMainHealth,
       routeCounters: routes,
       durationMs: Date.now() - startedMs,
-      runtimeBudgetReached: Date.now() >= deadlineMs,
+      runtimeBudgetReached: budget.checkpoint(),
+      ...budget.summary(),
       ...counters,
       queue: Object.fromEntries(queue.rows.map((row) => [row.status, Number(row.n)])),
       assetRoot: options.assetRoot,
@@ -201,13 +207,13 @@ function parseArgs(): {
   const command = new Command()
     .name('image-ingest')
     .option('--limit <n>', '单轮最多任务', Number, 500)
-    .option('--max-runtime-sec <n>', '单轮墙钟预算', Number, 420)
     .option('--max-bytes <n>', '单图解压后字节上限', Number, 20 * 1024 * 1024)
     .option('--max-attempts <n>', '瞬时失败最大尝试轮数', Number, 5)
     .option('--external-interval-ms <n>', '站外 aggregate 相邻 attempt 间隔（安全下限 3000ms）', Number, 3_000)
     .option('--asset-root <path>', '内容寻址资产目录')
-    .option('--skip-tz-check', '仅本地调试', false)
-    .parse();
+    .option('--skip-tz-check', '仅本地调试', false);
+  addRuntimeBudgetOption(command, { defaultSec: 420, minSec: 1, maxSec: 3_600 });
+  command.parse();
   const raw = command.opts<{
     limit: number;
     maxRuntimeSec: number;
@@ -221,7 +227,7 @@ function parseArgs(): {
     SHARED_IMAGE_ASSET_ROOT;
   return {
     limit: Math.min(2_000, Math.max(1, Math.floor(raw.limit))),
-    maxRuntimeSec: Math.min(540, Math.max(30, Math.floor(raw.maxRuntimeSec))),
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
     maxBytes: Math.min(100 * 1024 * 1024, Math.max(1_024, Math.floor(raw.maxBytes))),
     maxAttempts: Math.min(10, Math.max(1, Math.floor(raw.maxAttempts))),
     externalIntervalMs: Math.min(60_000, Math.max(3_000, Math.floor(raw.externalIntervalMs))),

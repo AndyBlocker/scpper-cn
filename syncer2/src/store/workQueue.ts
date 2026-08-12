@@ -59,13 +59,13 @@ export const WORK_QUEUE_MIN_REQUEST_INTERVAL_MS = 2_000;
 
 /*
  * 单轮时间预算，必须显著小于 systemd 的 TimeoutStartSec=10min。
- * 取 7 分钟：留 3 分钟给收尾（结账、finishIngestRun、释放未处理锁）。
+ * 取 6 分钟：恰好满足统一的「预算 <= 10 分钟硬超时的 60%」，留 4 分钟给最坏收尾。
  * 超预算是**正常收敛**而非失败——剩余任务下一轮继续。
  *
  * 由来：公平性修复让 votes_full 进入配额后单轮耗时上升，超过硬超时被 SIGTERM 杀死，
  * 任务认领了却无人做完，表现为「配额生效、队列反而越积越多」。
  */
-export const RUN_BUDGET_MS = 7 * 60_000;
+export const RUN_BUDGET_MS = 6 * 60_000;
 
 /**
  * 排序里被硬性置顶的 kind。置顶本身没错——确认删除与新页高频复查都需要及时性——

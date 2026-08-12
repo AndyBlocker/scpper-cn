@@ -87,6 +87,8 @@ export interface ScanIncrementalListPagesOptions {
   concurrency?: number;
   windowHours?: number;
   logger?: Logger;
+  /** true 时不再启动新批次；已经在飞的批次仍正常完成并留证。 */
+  shouldStop?: () => boolean;
 }
 
 const FIELD_SEPARATOR = '|||';
@@ -229,6 +231,7 @@ export async function scanIncrementalListPages(
   const log = options.logger ?? createLogger(`listpages-${layer}`);
   const concurrency = Math.max(1, Math.min(options.concurrency ?? 5, 5));
   const batches = new Map<number, IncrementalBatchResult<IncrementalListPageRow>>();
+  if (options.shouldStop?.() === true) return finalizeRun(layer, batches, null);
   const first = await fetchBatch(http, baseUrl, layer, 1, options.windowHours, log);
   batches.set(1, first);
   if (first.status === 'failed') {
@@ -250,7 +253,7 @@ export async function scanIncrementalListPages(
       batchNo,
       await fetchBatch(http, baseUrl, layer, batchNo, options.windowHours, log),
     );
-  });
+  }, options.shouldStop);
   return finalizeRun(layer, batches, expectedBatches);
 }
 
@@ -595,10 +598,12 @@ async function mapLimited<T>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<void>,
+  shouldStop?: () => boolean,
 ): Promise<void> {
   let cursor = 0;
   const workers = Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, async () => {
     for (;;) {
+      if (shouldStop?.() === true) return;
       const index = cursor++;
       if (index >= items.length) return;
       await fn(items[index] as T);

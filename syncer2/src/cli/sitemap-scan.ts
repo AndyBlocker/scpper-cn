@@ -84,6 +84,11 @@ import {
   type SitemapSnapshot,
   type SnapshotDiff,
 } from '../store/snapshot.js';
+import {
+  addRuntimeBudgetOption,
+  parseRuntimeBudgetSec,
+  RuntimeBudget,
+} from '../util/runtimeBudget.js';
 
 const log = createLogger('sitemap-scan');
 
@@ -107,6 +112,7 @@ interface CliOptions {
   /** 启动自检 #3 的两个策略（require | warn | skip）。 */
   amcProbe?: string;
   proxyCheck?: string;
+  maxRuntimeSec: number;
 }
 
 // ─── 入口 ────────────────────────────────────────────────────────────────────
@@ -116,6 +122,7 @@ async function main(): Promise<void> {
   const config = loadConfig({ requireDatabase: !opts.dryRun });
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
+  const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const populationType = sitemapPopulationType(opts.mode);
 
   const siteHost = new URL(config.siteBaseUrl).host;
@@ -181,12 +188,19 @@ async function main(): Promise<void> {
 
     if (pool) runId = await startIngestRun(pool, source, startedAt);
 
-    const outcome = await runMode(opts, config, http, pool, runId, startedAt);
+    const outcome = budget.checkpoint()
+      ? runtimeBudgetModeOutcome(opts.mode)
+      : await runMode(opts, config, http, pool, runId, startedAt);
+    budget.checkpoint();
     const health = evaluateRunHealth({
       claimed: outcome.batchesTotal,
       processed: outcome.batchesTotal,
-      partial: outcome.status === 'partial' ? Math.max(1, outcome.batchesFailed) : 0,
+      partial:
+        budget.stoppedByRuntimeBudget || outcome.status === 'partial'
+          ? Math.max(1, outcome.batchesFailed)
+          : 0,
       failed: outcome.batchesFailed,
+      deferred: budget.stoppedByRuntimeBudget ? 1 : 0,
       breakerOpen: http.breakerOpen,
       fatalReasons:
         outcome.status === 'failed' || outcome.status === 'aborted'
@@ -211,6 +225,7 @@ async function main(): Promise<void> {
       startupProbe: probeReport,
       dryRun: opts.dryRun,
       health,
+      ...budget.summary(),
     };
     let parseHealth = null;
     if (pool) {
@@ -248,6 +263,7 @@ async function main(): Promise<void> {
       deletionInference,
       http: compactHttpStats(http),
       egress: compactEgress(http),
+      ...budget.summary(),
     });
     process.exitCode = health.exitCode;
   } catch (err) {
@@ -329,6 +345,20 @@ interface ModeOutcome {
   parseFingerprint: Record<string, unknown>;
   stats: Record<string, unknown>;
   summary: Record<string, unknown>;
+}
+
+function runtimeBudgetModeOutcome(mode: Mode): ModeOutcome {
+  return {
+    status: 'partial',
+    pagesEnumerated: 0,
+    remoteTotal: null,
+    remoteTotalSource: null,
+    batchesTotal: 0,
+    batchesFailed: 0,
+    parseFingerprint: {},
+    stats: { mode, runtimeBudgetBeforeMode: true },
+    summary: { runtimeBudgetBeforeMode: true },
+  };
 }
 
 async function runMode(
@@ -892,6 +922,7 @@ function parseArgs(): CliOptions {
       '--proxy-check <policy>',
       '启动自检 #3 的代理健康探测：require | warn | skip（默认 warn；抓"代理静默回落直连"）',
     );
+  addRuntimeBudgetOption(program, { defaultSec: 240, minSec: 1, maxSec: 3_600 });
 
   program.parse(process.argv);
   const raw = program.opts<{
@@ -903,6 +934,7 @@ function parseArgs(): CliOptions {
     concurrency?: number;
     amcProbe?: string;
     proxyCheck?: string;
+    maxRuntimeSec: number;
   }>();
 
   const mode = raw.mode as Mode;
@@ -919,6 +951,7 @@ function parseArgs(): CliOptions {
     dryRun: Boolean(raw.dryRun),
     skipTzCheck: Boolean(raw.skipTzCheck),
     pageScan,
+    maxRuntimeSec: parseRuntimeBudgetSec(raw.maxRuntimeSec, { minSec: 1, maxSec: 3_600 }),
     ...(raw.emitEntries ? { emitEntries: raw.emitEntries } : {}),
     ...(raw.concurrency !== undefined && Number.isFinite(raw.concurrency)
       ? { concurrency: raw.concurrency }
