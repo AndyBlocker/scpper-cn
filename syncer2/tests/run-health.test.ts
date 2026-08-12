@@ -7,6 +7,7 @@ import {
   isDeterministicWorkFailure,
 } from '../src/work/failurePolicy.js';
 import {
+  applyAdaptiveSelfProtectionToRunHealth,
   evaluateRunHealth,
   RUN_FAILURE_RATE_THRESHOLD,
   RUN_REPEATED_FAILURE_ATTEMPTS,
@@ -69,6 +70,41 @@ describe('统一采集 run health', () => {
     assert.equal(RUN_REPEATED_FAILURE_ATTEMPTS, 3);
     assert.equal(repeated.exitCode, 1);
     assert.ok(repeated.reasons.includes('repeated_cross_run_failure'));
+  });
+
+  it('断路器 aborted 是预期内自我保护时 exit 0，恢复超期才 exit 1', () => {
+    const aborted = evaluateRunHealth({
+      claimed: 147,
+      processed: 147,
+      partial: 0,
+      failed: 141,
+      breakerOpen: true,
+      fatalReasons: ['scan_validation_failed'],
+    });
+    const expected = applyAdaptiveSelfProtectionToRunHealth(aborted, {
+      status: 'downshift_expected',
+      active: true,
+      overdue: false,
+      exitCode: 0,
+      level: 1,
+      levelName: 'cautious',
+      reason: 'connection_failure_streak_5_within_120s_sparse_backoff',
+      recoverNotBefore: '2026-08-12T02:00:00.000Z',
+      expectedRecoveryAt: '2026-08-12T02:30:00.000Z',
+    });
+    assert.equal(expected.status, 'aborted');
+    assert.equal(expected.exitCode, 0);
+    assert.ok(expected.reasons.includes('circuit_breaker_self_protection_expected'));
+
+    const overdue = applyAdaptiveSelfProtectionToRunHealth(aborted, {
+      ...expected.selfProtection,
+      status: 'downshift_overdue',
+      overdue: true,
+      exitCode: 1,
+    });
+    assert.equal(overdue.status, 'failed');
+    assert.equal(overdue.exitCode, 1);
+    assert.ok(overdue.reasons.includes('adaptive_downshift_recovery_overdue'));
   });
 
   it('breadcrumbs 缺 category id 是 classifyWorkFailure 的 structural 终态', () => {

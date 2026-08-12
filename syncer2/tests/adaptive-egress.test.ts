@@ -4,6 +4,8 @@ import test from 'node:test';
 
 import {
   ADAPTIVE_EGRESS_POLICY,
+  applyConnectionPressureBackoff,
+  evaluateConnectionPressure,
   evaluateFailureWindow,
   evaluateL1FreshnessSlo,
   evaluateRollingBudget,
@@ -13,7 +15,9 @@ import {
   type AdaptiveEgressPermit,
   type AdaptiveEgressRuntimeStats,
   type FailureWindowState,
+  type ConnectionPressureState,
 } from '../src/http/adaptiveEgress.js';
+import { evaluateEgressAccountingReconciliation } from '../src/observability/egressAccounting.js';
 import { HttpClient } from '../src/http/client.js';
 import {
   classifyWorkFailure,
@@ -53,6 +57,80 @@ test('生产护栏契约固定为 5%/10%/3% 与滚动小时 3,500', () => {
   assert.equal(ADAPTIVE_EGRESS_POLICY.severeFailureRate, 0.10);
   assert.equal(ADAPTIVE_EGRESS_POLICY.healthyFailureRate, 0.03);
   assert.equal(ADAPTIVE_EGRESS_POLICY.rollingBudgetRequests, 3_500);
+  assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakToBackoff, 5);
+  assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakWindowMs, 120_000);
+  assert.equal(ADAPTIVE_EGRESS_POLICY.connectionBackoffMinIntervalMs, 300_000);
+});
+
+function connectionFailures(
+  windowState: FailureWindowState,
+  connectionState: ConnectionPressureState,
+  count: number,
+  firstAtMs: number,
+): { windowState: FailureWindowState; connectionState: ConnectionPressureState } {
+  let nextWindow = windowState;
+  let nextConnection = connectionState;
+  for (let i = 0; i < count; i++) {
+    const atMs = firstAtMs + i;
+    const observed = evaluateConnectionPressure(nextConnection, true, atMs);
+    const applied = applyConnectionPressureBackoff(nextWindow, observed, 1, atMs);
+    nextWindow = applied.state;
+    nextConnection = applied.connectionState;
+  }
+  return { windowState: nextWindow, connectionState: nextConnection };
+}
+
+test('大批连接重置：100-request 窗未满也能看见并逐级降档', () => {
+  const initialConnection: ConnectionPressureState = {
+    failureStreak: 0,
+    lastFailureAtMs: null,
+    lastBackoffAtMs: null,
+  };
+  const firstBurst = connectionFailures(initialState(), initialConnection, 5, T0);
+  assert.equal(firstBurst.windowState.level, 1, '第五个真实无响应 attempt 必须触发 L1');
+  assert.match(firstBurst.windowState.reason, /connection_failure_streak_5/);
+
+  const secondBurst = connectionFailures(
+    firstBurst.windowState,
+    firstBurst.connectionState,
+    5,
+    T0 + 5 * 60_000,
+  );
+  assert.equal(secondBurst.windowState.level, 2);
+  const persistent = connectionFailures(
+    secondBurst.windowState,
+    secondBurst.connectionState,
+    5,
+    T0 + 10 * 60_000,
+  );
+  assert.equal(persistent.windowState.level, 3, '跨 10 分钟持续不可用最终必须可达 cooldown');
+});
+
+test('一次瞬时连接抖动：141 个派生失败也不会瞬间打到最高档或拿到长冷却', () => {
+  const burst = connectionFailures(
+    initialState(),
+    { failureStreak: 0, lastFailureAtMs: null, lastBackoffAtMs: null },
+    141,
+    T0,
+  );
+  assert.equal(burst.windowState.level, 1);
+  assert.equal(
+    burst.windowState.recoverNotBeforeMs,
+    T0 + 4 + 30 * 60_000,
+    '同一 burst 只消费一次逐级降档，保持期只能是 L1 的 30 分钟',
+  );
+});
+
+test('两视角失败率持续背离：441/2968 vs 5/3348 在巡检中成为 critical', () => {
+  const decision = evaluateEgressAccountingReconciliation(
+    { ingestFailures: 441, ingestTotal: 2_968, egressFailures: 5, egressTotal: 3_348 },
+    T0 + 60 * 60_000,
+    { status: 'divergent', divergentSinceMs: T0 },
+  );
+  assert.equal(decision.status, 'divergent');
+  assert.equal(decision.severity, 'critical');
+  assert.ok(decision.absoluteRateGap! > 0.14);
+  assert.ok(decision.rateRatio! > 80);
 });
 
 test('失败率缓慢上升：连续两个 5%+ 窗口在危险区前降档', () => {
@@ -307,11 +385,16 @@ class ObservableFakeGate implements AdaptiveEgressGate {
         recoverNotBefore: '2026-08-05T01:00:00.000Z',
         currentWindowRequests: 20,
         currentWindowFailures: 0,
+        currentWindowConnectionFailures: 0,
         currentWindowDeterministicFailures: 3,
+        connectionFailureStreak: 0,
+        lastConnectionFailureAt: null,
+        lastConnectionBackoffAt: null,
         elevatedWindows: 0,
         healthyWindows: 2,
         healthyWindowsRequired: 6,
         lastWindowFailureRate: 0,
+        lastWindowConnectionFailureRate: 0,
         lastWindowDeterministicFailureRate: 0.02,
         lastWindowCompletedAt: '2026-08-05T00:30:00.000Z',
         rollingHourRequests: 2_950,

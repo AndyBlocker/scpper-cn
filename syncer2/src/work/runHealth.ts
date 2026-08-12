@@ -123,8 +123,9 @@ export interface ProtectedRunHealthDecision extends RunHealthDecision {
 }
 
 /**
- * 降档造成的“本轮来不及处理任何任务”是预期吞吐，不是 unit failure；真实 breaker、
- * 高失败率和跨轮重复失败仍保留。恢复截止超期则无条件非零，明确指向恢复逻辑本身。
+ * 降档造成的“本轮来不及处理任何任务”是预期吞吐，不是 unit failure。连接 streak 已让
+ * 共享 gate 降档后，本地 breaker 的 aborted 同样是可解释的停手动作：保留 aborted 与
+ * 全部故障证据，但预期恢复期内 exit 0；恢复截止超期才非零。其它故障仍保留原判据。
  */
 export function applyAdaptiveSelfProtectionToRunHealth(
   base: RunHealthDecision,
@@ -141,6 +142,20 @@ export function applyAdaptiveSelfProtectionToRunHealth(
       exitCode: 1,
       baseExitCode: base.exitCode,
       reasons: [...new Set([...base.reasons, 'adaptive_downshift_recovery_overdue'])],
+      selfProtection,
+    };
+  }
+  if (
+    base.status === 'aborted'
+    && base.reasons.includes('http_breaker_open')
+    && selfProtection.active
+  ) {
+    return {
+      ...base,
+      status: 'aborted',
+      exitCode: 0,
+      baseExitCode: base.exitCode,
+      reasons: [...new Set([...base.reasons, 'circuit_breaker_self_protection_expected'])],
       selfProtection,
     };
   }

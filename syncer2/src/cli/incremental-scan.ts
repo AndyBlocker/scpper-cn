@@ -28,6 +28,7 @@ import { loadConfig } from '../config.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
 import {
+  evaluateAdaptiveSelfProtection,
   observeL1FreshnessSlo,
   PostgresAdaptiveEgressGate,
   type L1FreshnessSloSignal,
@@ -65,7 +66,10 @@ import {
   advanceDailyL1EnumerationSnapshot,
   l1EnumerationSnapshotPath,
 } from '../store/l1EnumerationSnapshot.js';
-import { evaluateRunHealth } from '../work/runHealth.js';
+import {
+  applyAdaptiveSelfProtectionToRunHealth,
+  evaluateRunHealth,
+} from '../work/runHealth.js';
 
 const log = createLogger('incremental-scan');
 const SOURCE = 'wikidot_listpages';
@@ -224,7 +228,7 @@ async function main(): Promise<void> {
     }
 
     const durationMs = Date.now() - t0;
-    const health = evaluateRunHealth({
+    const baseHealth = evaluateRunHealth({
       claimed: scan.expectedBatches ?? scan.requestedBatches,
       processed: scan.requestedBatches,
       partial: scan.status === 'partial' ? Math.max(1, scan.batchesFailed) : 0,
@@ -236,6 +240,13 @@ async function main(): Promise<void> {
         ...(egressSlo?.exitCode === 1 ? ['adaptive_downshift_recovery_overdue'] : []),
       ],
     });
+    const adaptiveState = http.stats().adaptiveEgress?.state ?? null;
+    const health = adaptiveState === null
+      ? baseHealth
+      : applyAdaptiveSelfProtectionToRunHealth(
+          baseHealth,
+          evaluateAdaptiveSelfProtection(adaptiveState, Date.now()),
+        );
     const runStatus = health.status;
     const stats = {
       mode,
@@ -300,10 +311,25 @@ async function main(): Promise<void> {
   } catch (err) {
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
     const durationMs = Date.now() - t0;
+    const baseHealth = evaluateRunHealth({
+      claimed: Math.max(1, http.healthStats().business.requests),
+      processed: http.healthStats().business.requests,
+      partial: 0,
+      failed: breaker ? Math.max(1, http.healthStats().business.transportFailures) : 1,
+      breakerOpen: breaker,
+      fatalReasons: breaker ? [] : ['incremental_scan_exception'],
+    });
+    const adaptiveState = http.stats().adaptiveEgress?.state ?? null;
+    const health = adaptiveState === null
+      ? baseHealth
+      : applyAdaptiveSelfProtectionToRunHealth(
+          baseHealth,
+          evaluateAdaptiveSelfProtection(adaptiveState, Date.now()),
+        );
     log.error('增量层本轮失败', { layer: opts.layer, error: String(err), breaker });
     if (pool !== null) {
       await finishIngestRun(pool, runId, {
-        status: breaker ? 'aborted' : 'failed',
+        status: health.status,
         finishedAt: new Date().toISOString(),
         pagesEnumerated: null,
         remoteTotal: null,
@@ -327,24 +353,26 @@ async function main(): Promise<void> {
           httpHealth: http.healthStats(),
           startupProbe,
           durationMs,
+          health,
         },
       }).catch((finishErr) =>
         log.error('失败收尾写 ingest_run 也失败', { error: String(finishErr) }),
       );
     }
     emitSummary({
-      ok: false,
-      status: breaker ? 'aborted' : 'failed',
+      ok: health.exitCode === 0,
+      status: health.status,
       layer: opts.layer.toUpperCase(),
       mode,
       populationType,
       runId,
       durationMs,
       error: String(err),
+      health,
       egressSlo,
       http: compactHttp(http),
     });
-    process.exitCode = 1;
+    process.exitCode = health.exitCode;
   } finally {
     await http.close();
     await pool?.end().catch(() => undefined);

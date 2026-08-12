@@ -16,7 +16,10 @@ import { loadConfig } from '../config.js';
 import { scanListPages } from '../collect/listpages.js';
 import { amcProbePolicyFor, assertEgressContract, parseProbePolicy } from '../http/amc.js';
 import { CircuitOpenError, HttpClient } from '../http/client.js';
-import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
+import {
+  evaluateAdaptiveSelfProtection,
+  PostgresAdaptiveEgressGate,
+} from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
 import { compareCromCanary, fetchAllCromPages, fetchV2CanaryPages } from '../reconcile/crom.js';
@@ -45,7 +48,11 @@ import {
   isReconcileToolFailure,
   unexplainedRatioRegressed,
 } from '../reconcile/types.js';
-import { evaluateRunHealth } from '../work/runHealth.js';
+import {
+  applyAdaptiveSelfProtectionToRunHealth,
+  evaluateRunHealth,
+  type RunHealthDecision,
+} from '../work/runHealth.js';
 
 /**
  * 未解释占比相对上一轮的容差（绝对百分点）。
@@ -315,6 +322,21 @@ async function main(): Promise<void> {
       cromHttp?.breakerOpen === true;
     const finishedAt = new Date().toISOString();
     const error = errorMessage(err);
+    const baseHealth = evaluateRunHealth({
+      claimed: 1,
+      processed: 1,
+      partial: 0,
+      failed: 1,
+      breakerOpen: aborted,
+      fatalReasons: aborted ? [] : ['reconcile_exception'],
+    });
+    const adaptiveState = wikidotHttp?.stats().adaptiveEgress?.state ?? null;
+    const health = adaptiveState === null
+      ? baseHealth
+      : applyAdaptiveSelfProtectionToRunHealth(
+          baseHealth,
+          evaluateAdaptiveSelfProtection(adaptiveState, Date.now()),
+        );
     log.error('M10 对账失败', { error, aborted });
     finalReport = {
       ...assembleReport({
@@ -333,7 +355,7 @@ async function main(): Promise<void> {
     const qq = buildQqSummary(finalReport);
     try {
       reportId = await persistReconcileReport(v2Pool, runId, finalReport, qq);
-      await finishRun(v2Pool, runId, finalReport, reportId, wikidotHttp, cromHttp);
+      await finishRun(v2Pool, runId, finalReport, reportId, wikidotHttp, cromHttp, health);
     } catch (persistErr) {
       log.error('失败报告落 meta.reconcile_report/ingest_run 也失败', {
         error: errorMessage(persistErr),
@@ -343,15 +365,16 @@ async function main(): Promise<void> {
       emitSummary(await imSummaryOrFallback(v2Pool, qq, reportId));
     } else {
       emitSummary({
-        ok: false,
+        ok: health.exitCode === 0,
         status: finalReport.status,
+        health,
         reportId,
         runId,
         error,
         qqSummary: qq,
       });
     }
-    process.exitCode = 1;
+    process.exitCode = health.exitCode;
   } finally {
     await wikidotHttp?.close();
     await cromHttp?.close();
@@ -411,6 +434,7 @@ async function finishRun(
   reportId: number,
   wikidotHttp: HttpClient | null,
   cromHttp: HttpClient | null,
+  health?: RunHealthDecision,
 ): Promise<void> {
   const combined = combinedHttp(wikidotHttp, cromHttp);
   await finishIngestRun(pool, runId, {
@@ -442,6 +466,7 @@ async function finishRun(
       status: report.status,
       counts: report.counts,
       alerts: report.alerts,
+      ...(health === undefined ? {} : { health }),
     },
   });
 }

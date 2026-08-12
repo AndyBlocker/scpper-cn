@@ -12,6 +12,9 @@
  *   * 恢复需连续 6 个 <=3% 窗口并满足最低保持期，健康窗可在保持期内累计；
  *   * identity_absent 等既有分类可把伪装成 5xx 的确定性失败改记审计；
  *     no_permission / structural 等业务结果本来就不进站点压力分子；
+ *   * 无 HTTP 响应的 DNS/代理/connect/TLS/timeout/reset 仍是压力失败；连续 5 个
+ *     发生在 2 分钟内即可在未满 100-request 时逐级退让，但两次连接降档至少隔 5 分钟，
+ *     避免同一瞬时抖动被多个短进程放大后直接打到 cooldown；
  *   * 滚动 60 分钟 >3,500 attempt 无条件进入 0.125 QPS cooldown；该值仍低于
  *     实测最低安全水位 3,663/h；
  *   * 全站档位保持共享；通道只分账，不允许因共享 IP/站点而各自解除全局保护。
@@ -39,6 +42,9 @@ export interface AdaptiveEgressPolicy {
   healthyWindowsToRecover: number;
   rollingBudgetMinutes: number;
   rollingBudgetRequests: number;
+  connectionFailureStreakToBackoff: number;
+  connectionFailureStreakWindowMs: number;
+  connectionBackoffMinIntervalMs: number;
   tiers: readonly AdaptiveEgressTier[];
 }
 
@@ -51,6 +57,9 @@ export const ADAPTIVE_EGRESS_POLICY: AdaptiveEgressPolicy = Object.freeze({
   healthyWindowsToRecover: 6,
   rollingBudgetMinutes: 60,
   rollingBudgetRequests: 3_500,
+  connectionFailureStreakToBackoff: 5,
+  connectionFailureStreakWindowMs: 2 * 60_000,
+  connectionBackoffMinIntervalMs: 5 * 60_000,
   tiers: Object.freeze([
     { level: 0, name: 'normal', minIntervalMs: 333, minimumHoldMs: 0 },
     { level: 1, name: 'cautious', minIntervalMs: 667, minimumHoldMs: 30 * 60_000 },
@@ -101,6 +110,118 @@ export interface FailureWindowDecision {
 export interface BudgetDecision {
   state: FailureWindowState;
   transition: AdaptiveEgressTransition | null;
+}
+
+export interface ConnectionPressureState {
+  failureStreak: number;
+  lastFailureAtMs: number | null;
+  lastBackoffAtMs: number | null;
+}
+
+export interface ConnectionPressureDecision {
+  state: ConnectionPressureState;
+  saturated: boolean;
+  backoffEligible: boolean;
+  reason: string | null;
+}
+
+/**
+ * 未满 100-request 窗口时的稀疏连接信号。只观察真正没有 HTTP 响应的 attempt；
+ * CircuitOpen 是这些 attempt 触发的派生停手，不会再次累加 streak。
+ */
+export function evaluateConnectionPressure(
+  input: ConnectionPressureState,
+  connectionFailure: boolean,
+  atMs: number,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): ConnectionPressureDecision {
+  if (!Number.isFinite(atMs)) throw new RangeError(`非法 connection pressure at=${atMs}`);
+  if (!Number.isSafeInteger(input.failureStreak) || input.failureStreak < 0) {
+    throw new RangeError(`非法 connection failure streak=${input.failureStreak}`);
+  }
+  if (!connectionFailure) {
+    return {
+      state: input.failureStreak === 0 ? input : { ...input, failureStreak: 0 },
+      saturated: false,
+      backoffEligible: false,
+      reason: null,
+    };
+  }
+
+  const sinceLast = input.lastFailureAtMs === null ? null : atMs - input.lastFailureAtMs;
+  const sameBurst = sinceLast !== null
+    && sinceLast >= 0
+    && sinceLast <= policy.connectionFailureStreakWindowMs;
+  const failureStreak = sameBurst
+    ? Math.min(input.failureStreak + 1, policy.connectionFailureStreakToBackoff)
+    : 1;
+  const saturated = failureStreak >= policy.connectionFailureStreakToBackoff;
+  const sinceBackoff = input.lastBackoffAtMs === null ? null : atMs - input.lastBackoffAtMs;
+  const backoffEligible = saturated && (
+    sinceBackoff === null
+    || sinceBackoff < 0
+    || sinceBackoff >= policy.connectionBackoffMinIntervalMs
+  );
+  return {
+    state: { ...input, failureStreak, lastFailureAtMs: atMs },
+    saturated,
+    backoffEligible,
+    reason: saturated
+      ? `connection_failure_streak_${failureStreak}_within_${Math.round(policy.connectionFailureStreakWindowMs / 1_000)}s`
+      : null,
+  };
+}
+
+export interface ConnectionBackoffDecision {
+  state: FailureWindowState;
+  connectionState: ConnectionPressureState;
+  transition: AdaptiveEgressTransition | null;
+}
+
+/** 消费一次已平滑的连接信号；无论多严重都只允许逐级下降一档。 */
+export function applyConnectionPressureBackoff(
+  input: FailureWindowState,
+  connection: ConnectionPressureDecision,
+  partialFailureRate: number,
+  atMs: number,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): ConnectionBackoffDecision {
+  if (!connection.backoffEligible) {
+    return { state: input, connectionState: connection.state, transition: null };
+  }
+  if (!Number.isFinite(partialFailureRate) || partialFailureRate < 0 || partialFailureRate > 1) {
+    throw new RangeError(`非法 partial connection failure rate=${partialFailureRate}`);
+  }
+  const connectionState = { ...connection.state, lastBackoffAtMs: atMs };
+  if (input.level === 3) {
+    return {
+      state: {
+        ...input,
+        recoverNotBeforeMs: Math.max(
+          input.recoverNotBeforeMs ?? 0,
+          atMs + tier(policy, 3).minimumHoldMs,
+        ),
+        elevatedWindows: 0,
+        healthyWindows: 0,
+      },
+      connectionState,
+      transition: null,
+    };
+  }
+  const toLevel = (input.level + 1) as AdaptiveEgressLevel;
+  const reason = `${connection.reason}_sparse_backoff`;
+  return {
+    state: downshiftState(input, toLevel, reason, atMs, policy),
+    connectionState,
+    transition: {
+      kind: 'failure_backoff',
+      fromLevel: input.level,
+      toLevel,
+      reason,
+      failureRate: partialFailureRate,
+      rollingHourRequests: null,
+    },
+  };
 }
 
 /** 纯状态机：测试用合成窗口验证，不需要碰活库。 */
@@ -277,11 +398,17 @@ export interface AdaptiveEgressSnapshot {
   currentWindowRequests: number;
   /** 站点压力分子：transport / 429 / 5xx，已排除确定性业务失败。 */
   currentWindowFailures: number;
+  /** 当前压力分子中尚未取得 HTTP 响应的连接失败子集。 */
+  currentWindowConnectionFailures: number;
   currentWindowDeterministicFailures: number;
+  connectionFailureStreak: number;
+  lastConnectionFailureAt: string | null;
+  lastConnectionBackoffAt: string | null;
   elevatedWindows: number;
   healthyWindows: number;
   healthyWindowsRequired: number;
   lastWindowFailureRate: number | null;
+  lastWindowConnectionFailureRate: number | null;
   lastWindowDeterministicFailureRate: number | null;
   lastWindowCompletedAt: string | null;
   rollingHourRequests: number;
@@ -424,10 +551,15 @@ interface ControlRow extends QueryResultRow {
   next_permit_at: string;
   current_window_requests: number;
   current_window_failures: number;
+  current_window_connection_failures: number;
   current_window_deterministic_failures: number;
+  connection_failure_streak: number;
+  last_connection_failure_at: string | null;
+  last_connection_backoff_at: string | null;
   elevated_windows: number;
   healthy_windows: number;
   last_window_failure_rate: number | null;
+  last_window_connection_failure_rate: number | null;
   last_window_deterministic_failure_rate: number | null;
   last_window_completed_at: string | null;
   rolling_hour_requests: number;
@@ -481,8 +613,9 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
           db,
           'adaptive-egress:bucket-request',
           `INSERT INTO meta.egress_request_bucket(
-             site_key, bucket_start, channel, requests, failures, updated_at
-           ) VALUES ($1, $2::timestamptz, $3, 1, 0, clock_timestamp())
+             site_key, bucket_start, channel, requests, failures,
+             connection_failures, updated_at
+           ) VALUES ($1, $2::timestamptz, $3, 1, 0, 0, clock_timestamp())
            ON CONFLICT (site_key, bucket_start, channel) DO UPDATE
              SET requests = meta.egress_request_bucket.requests + 1,
                  updated_at = clock_timestamp()`,
@@ -563,6 +696,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
         const clock = await databaseClock(db);
         const deterministicFailure = outcome.deterministicFailureClass != null;
         const pressureFailure = !outcome.ok && !deterministicFailure;
+        const connectionFailure = pressureFailure && outcome.status === null;
         if (pressureFailure || deterministicFailure) {
           const updated = await query(
             db,
@@ -570,6 +704,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
             `UPDATE meta.egress_request_bucket
                 SET failures = failures + $4::int,
                     deterministic_failures = deterministic_failures + $5::int,
+                    connection_failures = connection_failures + $6::int,
                     updated_at = clock_timestamp()
               WHERE site_key = $1 AND bucket_start = $2::timestamptz AND channel = $3
                 AND failures + deterministic_failures < requests`,
@@ -579,6 +714,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
               permit.channel,
               pressureFailure ? 1 : 0,
               deterministicFailure ? 1 : 0,
+              connectionFailure ? 1 : 0,
             ],
           );
           if (updated.rowCount !== 1) {
@@ -587,17 +723,28 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
         }
 
         let row = await loadControl(db);
+        const connection = evaluateConnectionPressure(
+          rowToConnectionPressureState(row),
+          connectionFailure,
+          clock.nowMs,
+          this.#policy,
+        );
+        let connectionState = connection.state;
         const requests = row.current_window_requests + 1;
         const failures = row.current_window_failures + (pressureFailure ? 1 : 0);
+        const connectionFailures = row.current_window_connection_failures
+          + (connectionFailure ? 1 : 0);
         const deterministicFailures = row.current_window_deterministic_failures
           + (deterministicFailure ? 1 : 0);
         let state = rowToWindowState(row);
         let transition: AdaptiveEgressTransition | null = null;
         let lastRate = row.last_window_failure_rate;
+        let lastConnectionRate = row.last_window_connection_failure_rate;
         let lastDeterministicRate = row.last_window_deterministic_failure_rate;
         let lastCompletedAt = row.last_window_completed_at;
         let nextRequests = requests;
         let nextFailures = failures;
+        let nextConnectionFailures = connectionFailures;
         let nextDeterministicFailures = deterministicFailures;
 
         if (requests === this.#policy.windowRequests) {
@@ -614,16 +761,37 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
           state = decision.state;
           transition = decision.transition;
           lastRate = decision.failureRate;
+          lastConnectionRate = connectionFailures / requests;
           lastDeterministicRate = deterministicFailures / requests;
           lastCompletedAt = toPgTimestamptz(clock.nowMs);
           nextRequests = 0;
           nextFailures = 0;
+          nextConnectionFailures = 0;
           nextDeterministicFailures = 0;
-          if (transition !== null) {
-            await insertAlert(db, transition, row.rolling_hour_requests, this.#policy);
-          }
         } else if (requests > this.#policy.windowRequests) {
           throw new Error(`反馈窗口计数越界 ${requests}/${this.#policy.windowRequests}`);
+        }
+
+        // 同一个 outcome 最多下降一级。若完整窗口已经消费了这次连接证据，就只更新时间戳；
+        // 否则由稀疏 streak 在窗口未满时逐级退让。level 3 只延长保持，不制造伪 transition。
+        if (connection.backoffEligible) {
+          if (transition === null) {
+            const sparse = applyConnectionPressureBackoff(
+              state,
+              connection,
+              failures / requests,
+              clock.nowMs,
+              this.#policy,
+            );
+            state = sparse.state;
+            connectionState = sparse.connectionState;
+            transition = sparse.transition;
+          } else {
+            connectionState = { ...connectionState, lastBackoffAtMs: clock.nowMs };
+          }
+        }
+        if (transition !== null) {
+          await insertAlert(db, transition, row.rolling_hour_requests, this.#policy);
         }
 
         row = await updateControl(
@@ -633,8 +801,11 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
           {
             currentWindowRequests: nextRequests,
             currentWindowFailures: nextFailures,
+            currentWindowConnectionFailures: nextConnectionFailures,
             currentWindowDeterministicFailures: nextDeterministicFailures,
+            connectionPressureState: connectionState,
             lastWindowFailureRate: lastRate,
+            lastWindowConnectionFailureRate: lastConnectionRate,
             lastWindowDeterministicFailureRate: lastDeterministicRate,
             lastWindowCompletedAt: lastCompletedAt,
           },
@@ -688,8 +859,12 @@ export async function readAdaptiveEgressState(
     `SELECT site_key, level, reason,
             changed_at::text, recover_not_before::text, next_permit_at::text,
             current_window_requests, current_window_failures,
+            current_window_connection_failures,
             current_window_deterministic_failures,
+            connection_failure_streak, last_connection_failure_at::text,
+            last_connection_backoff_at::text,
             elevated_windows, healthy_windows, last_window_failure_rate,
+            last_window_connection_failure_rate,
             last_window_deterministic_failure_rate,
             last_window_completed_at::text, rolling_hour_requests,
             budget_limit, budget_breached,
@@ -1024,8 +1199,12 @@ async function loadControl(db: PoolClient): Promise<ControlRow> {
     `SELECT site_key, level, reason,
             changed_at::text, recover_not_before::text, next_permit_at::text,
             current_window_requests, current_window_failures,
+            current_window_connection_failures,
             current_window_deterministic_failures,
+            connection_failure_streak, last_connection_failure_at::text,
+            last_connection_backoff_at::text,
             elevated_windows, healthy_windows, last_window_failure_rate,
+            last_window_connection_failure_rate,
             last_window_deterministic_failure_rate,
             last_window_completed_at::text, rolling_hour_requests,
             budget_limit, budget_breached,
@@ -1064,8 +1243,11 @@ interface ControlUpdate {
   lastPrunedAt?: string;
   currentWindowRequests?: number;
   currentWindowFailures?: number;
+  currentWindowConnectionFailures?: number;
   currentWindowDeterministicFailures?: number;
+  connectionPressureState?: ConnectionPressureState;
   lastWindowFailureRate?: number | null;
+  lastWindowConnectionFailureRate?: number | null;
   lastWindowDeterministicFailureRate?: number | null;
   lastWindowCompletedAt?: string | null;
 }
@@ -1088,23 +1270,32 @@ async function updateControl(
             next_permit_at = $6::timestamptz,
             current_window_requests = $7,
             current_window_failures = $8,
-            current_window_deterministic_failures = $9,
-            elevated_windows = $10,
-            healthy_windows = $11,
-            last_window_failure_rate = $12,
-            last_window_deterministic_failure_rate = $13,
-            last_window_completed_at = $14::timestamptz,
-            rolling_hour_requests = $15,
-            budget_limit = $16,
-            budget_breached = $17,
-            last_pruned_at = $18::timestamptz,
+            current_window_connection_failures = $9,
+            current_window_deterministic_failures = $10,
+            connection_failure_streak = $11,
+            last_connection_failure_at = $12::timestamptz,
+            last_connection_backoff_at = $13::timestamptz,
+            elevated_windows = $14,
+            healthy_windows = $15,
+            last_window_failure_rate = $16,
+            last_window_connection_failure_rate = $17,
+            last_window_deterministic_failure_rate = $18,
+            last_window_completed_at = $19::timestamptz,
+            rolling_hour_requests = $20,
+            budget_limit = $21,
+            budget_breached = $22,
+            last_pruned_at = $23::timestamptz,
             updated_at = clock_timestamp()
       WHERE site_key = $1
       RETURNING site_key, level, reason,
                 changed_at::text, recover_not_before::text, next_permit_at::text,
                 current_window_requests, current_window_failures,
+                current_window_connection_failures,
                 current_window_deterministic_failures,
+                connection_failure_streak, last_connection_failure_at::text,
+                last_connection_backoff_at::text,
                 elevated_windows, healthy_windows, last_window_failure_rate,
+                last_window_connection_failure_rate,
                 last_window_deterministic_failure_rate,
                 last_window_completed_at::text, rolling_hour_requests,
                 budget_limit, budget_breached,
@@ -1120,13 +1311,28 @@ async function updateControl(
       update.nextPermitAt ?? old.next_permit_at,
       update.currentWindowRequests ?? old.current_window_requests,
       update.currentWindowFailures ?? old.current_window_failures,
+      update.currentWindowConnectionFailures ?? old.current_window_connection_failures,
       update.currentWindowDeterministicFailures
         ?? old.current_window_deterministic_failures,
+      update.connectionPressureState?.failureStreak ?? old.connection_failure_streak,
+      update.connectionPressureState?.lastFailureAtMs === undefined
+        ? old.last_connection_failure_at
+        : update.connectionPressureState.lastFailureAtMs === null
+          ? null
+          : toPgTimestamptz(update.connectionPressureState.lastFailureAtMs),
+      update.connectionPressureState?.lastBackoffAtMs === undefined
+        ? old.last_connection_backoff_at
+        : update.connectionPressureState.lastBackoffAtMs === null
+          ? null
+          : toPgTimestamptz(update.connectionPressureState.lastBackoffAtMs),
       state.elevatedWindows,
       state.healthyWindows,
       update.lastWindowFailureRate === undefined
         ? old.last_window_failure_rate
         : update.lastWindowFailureRate,
+      update.lastWindowConnectionFailureRate === undefined
+        ? old.last_window_connection_failure_rate
+        : update.lastWindowConnectionFailureRate,
       update.lastWindowDeterministicFailureRate === undefined
         ? old.last_window_deterministic_failure_rate
         : update.lastWindowDeterministicFailureRate,
@@ -1189,6 +1395,18 @@ function rowToWindowState(row: ControlRow): FailureWindowState {
   };
 }
 
+function rowToConnectionPressureState(row: ControlRow): ConnectionPressureState {
+  return {
+    failureStreak: row.connection_failure_streak,
+    lastFailureAtMs: row.last_connection_failure_at === null
+      ? null
+      : Date.parse(row.last_connection_failure_at),
+    lastBackoffAtMs: row.last_connection_backoff_at === null
+      ? null
+      : Date.parse(row.last_connection_backoff_at),
+  };
+}
+
 function rowToSnapshot(
   row: ControlRow,
   policy: AdaptiveEgressPolicy,
@@ -1206,11 +1424,16 @@ function rowToSnapshot(
       row.recover_not_before === null ? null : new Date(row.recover_not_before).toISOString(),
     currentWindowRequests: row.current_window_requests,
     currentWindowFailures: row.current_window_failures,
+    currentWindowConnectionFailures: row.current_window_connection_failures,
     currentWindowDeterministicFailures: row.current_window_deterministic_failures,
+    connectionFailureStreak: row.connection_failure_streak,
+    lastConnectionFailureAt: isoOrNull(row.last_connection_failure_at),
+    lastConnectionBackoffAt: isoOrNull(row.last_connection_backoff_at),
     elevatedWindows: row.elevated_windows,
     healthyWindows: row.healthy_windows,
     healthyWindowsRequired: policy.healthyWindowsToRecover,
     lastWindowFailureRate: row.last_window_failure_rate,
+    lastWindowConnectionFailureRate: row.last_window_connection_failure_rate,
     lastWindowDeterministicFailureRate: row.last_window_deterministic_failure_rate,
     lastWindowCompletedAt:
       row.last_window_completed_at === null

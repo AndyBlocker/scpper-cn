@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 
 import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { toPgJson } from '../store/pgText.js';
+import { observeEgressAccounting } from './egressAccounting.js';
 
 const HOUR = 3_600;
 const DAY = 24 * HOUR;
@@ -195,6 +196,13 @@ export function pendingPolicyFor(collection: string, family: string): PendingPol
   }
   if (family === 'egress_alert' || family === 'egress_control') {
     return policy(15 * 60, HOUR, '出口控制按分钟窗口恢复；15 分钟未清需值守关注');
+  }
+  if (family === 'egress_accounting_divergence') {
+    return policy(
+      15 * 60,
+      HOUR,
+      'ingest_run 与 gate 最近 1h 失败率已相差至少 5 个百分点且至少 3 倍；持续 15 分钟告警、1 小时 critical',
+    );
   }
   if (family === 'serve_page_reference') {
     return policy(DAY, 7 * DAY, '歧义内链需身份变化或人工处理；红链 missing 不属于待处理');
@@ -425,6 +433,10 @@ async function captureInTransaction(
   if (['scpper-cn', 'scpper_cn', 'scpper-syncer', 'scpper_user'].includes(databaseName)) {
     throw new Error(`拒绝在受保护库 ${databaseName} 写 oldest-pending 时间序列`);
   }
+
+  // 先刷新“真实 run 结果 vs gate attempt”滚动对账，随后 current view 才能把本次状态
+  // 与其它待处理集合一起采样、累积 episode 并在恢复后明确收口。
+  await observeEgressAccounting(db, observedAt);
 
   const currentRows = await query<CurrentRow>(
     db,

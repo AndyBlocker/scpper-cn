@@ -29,10 +29,16 @@ import {
   CircuitOpenError,
   HttpClient,
 } from '../http/client.js';
-import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
+import {
+  evaluateAdaptiveSelfProtection,
+  PostgresAdaptiveEgressGate,
+} from '../http/adaptiveEgress.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { finishIngestRun, startIngestRun } from '../store/meta.js';
-import { evaluateRunHealth } from '../work/runHealth.js';
+import {
+  applyAdaptiveSelfProtectionToRunHealth,
+  evaluateRunHealth,
+} from '../work/runHealth.js';
 import {
   applyStoredRevisionSource,
   activeRevisionSourceWriteFreezes,
@@ -723,7 +729,7 @@ async function main(): Promise<void> {
     await flushEvidence(pool, runId, evidence);
     diskFreeEnd = await availableDiskBytes();
     endStorage = await loadRevisionSourceStorageStats(pool);
-    const health = evaluateRunHealth({
+    const baseHealth = evaluateRunHealth({
       claimed: counters.processed + counters.writeFreezeSkipped,
       processed: counters.processed,
       partial: 0,
@@ -732,6 +738,13 @@ async function main(): Promise<void> {
       deferred: counters.writeFreezeSkipped + Number(diskStopped),
       breakerOpen: http.breakerOpen,
     });
+    const adaptiveState = http.stats().adaptiveEgress?.state ?? null;
+    const health = adaptiveState === null
+      ? baseHealth
+      : applyAdaptiveSelfProtectionToRunHealth(
+          baseHealth,
+          evaluateAdaptiveSelfProtection(adaptiveState, Date.now()),
+        );
     const parseDropRate =
       counters.processed === 0 ? null : counters.failed / counters.processed;
     const elapsedSec = (Date.now() - startedMs) / 1_000;
@@ -853,8 +866,24 @@ async function main(): Promise<void> {
       log.error('失败 page_scan 留证失败', { error: String(scanErr) }),
     );
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
+    const baseHealth = evaluateRunHealth({
+      claimed: Math.max(1, counters.processed),
+      processed: counters.processed,
+      partial: 0,
+      failed: Math.max(1, counters.failed),
+      deterministicFailures: Math.min(counters.irreconcilable, Math.max(1, counters.failed)),
+      breakerOpen: breaker,
+      fatalReasons: breaker ? [] : ['revision_source_exception'],
+    });
+    const adaptiveState = http.stats().adaptiveEgress?.state ?? null;
+    const health = adaptiveState === null
+      ? baseHealth
+      : applyAdaptiveSelfProtectionToRunHealth(
+          baseHealth,
+          evaluateAdaptiveSelfProtection(adaptiveState, Date.now()),
+        );
     await finishIngestRun(pool, runId, {
-      status: breaker ? 'aborted' : 'failed',
+      status: health.status,
       finishedAt: new Date().toISOString(),
       pagesEnumerated: counters.processed,
       remoteTotal: opts.pilot ? PILOT_COUNT : eligible || null,
@@ -878,6 +907,7 @@ async function main(): Promise<void> {
         version: REVISION_SOURCE_VERSION,
         error,
         breaker,
+        health,
         ...counters,
         byKind: {
           revisions_full: { claimed: counters.processed },
@@ -889,12 +919,13 @@ async function main(): Promise<void> {
       log.error('失败 ingest_run 收尾也失败', { error: String(finishErr) }),
     );
     emitSummary({
-      ok: false,
-      status: breaker ? 'aborted' : 'failed',
+      ok: health.exitCode === 0,
+      status: health.status,
       error,
+      health,
       ...counters,
     });
-    process.exitCode = 1;
+    process.exitCode = health.exitCode;
   } finally {
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);
