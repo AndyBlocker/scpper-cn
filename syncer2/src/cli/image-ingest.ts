@@ -118,14 +118,15 @@ async function main(): Promise<void> {
       wikidotSite: wikidot.breakerOpen,
       external: external.breakerOpen,
     });
-    // 调度入口仍直接接统一判据；pipelineHealth 另外给出严格分账的两条链路判据。
-    const health = evaluateRunHealth({
-      claimed: counters.claimed,
-      processed: counters.completed + counters.retry + counters.failed,
-      partial: 0,
-      failed: counters.retry + counters.failed,
-      breakerOpen: wikidot.breakerOpen || external.breakerOpen,
-    });
+    /*
+     * 退出码改用分账结果：此前用合并计数走统一 25% 阈值，
+     * 而站外图床实测瞬时失败率就在 25.5% 上下，于是每轮都判 failed
+     * （实测 http_transient 456 / network 31 均为可重试，
+     * 确定性的 invalid_content_type 68 / blocked_host 7 / http_permanent 6 已另计）。
+     * pipelineHealth.unified 取两条链路各自判定后的较差者，且各用各的阈值——
+     * wikidot 主站不放宽，站外用 EXTERNAL_IMAGE_FAILURE_RATE_THRESHOLD。
+     */
+    const health = pipelineHealth.unified;
     emitSummary({
       ok: health.exitCode === 0,
       status: health.status,

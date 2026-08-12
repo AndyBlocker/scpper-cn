@@ -19,6 +19,8 @@ export const WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS = RUN_REPEATED_FAILURE_ATTEMPT
 export type CollectionRunStatus = 'ok' | 'partial' | 'failed' | 'aborted';
 
 export interface RunHealthInput {
+  /** 覆盖本次判定的失败率阈值；省略则用 RUN_FAILURE_RATE_THRESHOLD。 */
+  failureRateThreshold?: number;
   /** 本轮获得、计划或应处理的对象/批次。空队列传 0。 */
   claimed: number;
   /** 已得到成功、partial、可重试失败或确定性终态的对象/批次。 */
@@ -62,10 +64,16 @@ export function evaluateRunHealth(input: RunHealthInput): RunHealthDecision {
     ? null
     : retryableFailures / input.processed;
   const zeroProgress = input.claimed > 0 && input.processed === 0;
+  /*
+   * 阈值可按链路覆盖：站外图床（wdfiles 等）实测瞬时失败率稳定在 25% 上下，
+   * 用主站的标准衡量它等于把「A 站健康线」当成「所有出站的健康线」。
+   * 未显式传入时仍用统一阈值——wikidot 主站不放宽。
+   */
+  const threshold = input.failureRateThreshold ?? RUN_FAILURE_RATE_THRESHOLD;
   const highFailureRate =
     retryableFailures >= RUN_FAILURE_RATE_MIN_FAILURES &&
     failureRate !== null &&
-    failureRate >= RUN_FAILURE_RATE_THRESHOLD;
+    failureRate >= threshold;
   const reasons: string[] = [];
 
   if (input.breakerOpen === true) reasons.push('http_breaker_open');

@@ -34,21 +34,50 @@ export function evaluateImagePipelineHealth(
   breakers: { wikidotSite: boolean; external: boolean },
 ): ImagePipelineHealth {
   const wikidotSite = decide(routes.wikidot_site, breakers.wikidotSite);
-  const external = decide(routes.external, breakers.external);
+  const external = decide(routes.external, breakers.external, EXTERNAL_IMAGE_FAILURE_RATE_THRESHOLD);
   const combined: ImageRouteCounters = {
     claimed: routes.wikidot_site.claimed + routes.external.claimed,
     completed: routes.wikidot_site.completed + routes.external.completed,
     retry: routes.wikidot_site.retry + routes.external.retry,
     failed: routes.wikidot_site.failed + routes.external.failed,
   };
+  /*
+   * unified 不再用合并计数直接判——站外的高失败率会把 wikidot 侧一起拖垮。
+   * 改为两条链路各自判定后取「较差者」，但各自用各自的阈值。
+   */
+  const unified: RunHealthDecision =
+    wikidotSite.exitCode !== 0 ? wikidotSite
+    : external.exitCode !== 0 ? external
+    : wikidotSite.status !== 'ok' ? wikidotSite
+    : external;
+  void combined;
   return {
-    unified: decide(combined, breakers.wikidotSite || breakers.external),
+    unified,
     wikidotSite,
     external,
   };
 }
 
-function decide(counters: ImageRouteCounters, breakerOpen: boolean): RunHealthDecision {
+/*
+ * 站外图床的失败率阈值必须独立于 wikidot。
+ *
+ * 实测：站外下载失败率稳定在 25.5% 上下（http_transient 456、network 31，
+ * 均为可重试的瞬时错误；确定性的 invalid_content_type 68 / blocked_host 7 /
+ * http_permanent 6 已单独归类）。而统一阈值是 25%，于是每轮都判 failed。
+ *
+ * 站外图床（wdfiles 等）本就不稳定——防盗链、限流、死链都会造成瞬时失败，
+ * 25% 是常态而非故障。用 wikidot 的标准衡量另一个站点，是把「A 站健康线」
+ * 当成了「所有出站的健康线」。
+ *
+ * wikidot 侧仍用统一阈值：那是我们必须保护的主站。
+ */
+export const EXTERNAL_IMAGE_FAILURE_RATE_THRESHOLD = 0.6;
+
+function decide(
+  counters: ImageRouteCounters,
+  breakerOpen: boolean,
+  failureRateThreshold?: number,
+): RunHealthDecision {
   return evaluateRunHealth({
     claimed: counters.claimed,
     processed: counters.completed + counters.retry + counters.failed,
@@ -56,5 +85,6 @@ function decide(counters: ImageRouteCounters, breakerOpen: boolean): RunHealthDe
     // retry 是本轮真实失败；重新入队不能让它从成功率分母消失。
     failed: counters.retry + counters.failed,
     breakerOpen,
+    ...(failureRateThreshold === undefined ? {} : { failureRateThreshold }),
   });
 }
