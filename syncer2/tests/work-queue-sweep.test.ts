@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { describe, test } from 'node:test';
 
+import { SQL_TUNING_CONSTANTS } from '../src/health/sqlTuning.js';
 import {
   activeVoteSeedLane,
   availableHourlySeedBudget,
   hourlyVoteSweepQuota,
   nextVoteSweepDueAt,
   VOTE_CATCHUP_RATE_PER_HOUR,
-  VOTE_SWEEP_ACTIVITY_DAYS,
   VOTE_SWEEP_INTERVAL_DAYS,
   NEW_PAGE_INTERVAL_HOURS,
   NEW_PAGE_WINDOW_DAYS,
@@ -39,11 +39,7 @@ describe('vote sweep 稳定相位', () => {
       source.indexOf('export async function seedVoteTasks'),
       source.indexOf('export async function seedConventionTasks'),
     );
-    assert.match(seedSection, /\$4::bigint \* 86400000::bigint/);
-    assert.match(
-      seedSection,
-      /bindSqlTuning\('VOTE_SWEEP_ACTIVITY_DAYS', activityDays\)/,
-    );
+    assert.match(seedSection, /\$3::bigint \* 86400000::bigint/);
     assert.match(
       seedSection,
       /bindSqlTuning\('NEW_PAGE_WINDOW_DAYS', newPageWindowDays\)/,
@@ -52,14 +48,28 @@ describe('vote sweep 稳定相位', () => {
       seedSection,
       /bindSqlTuning\('VOTE_SWEEP_INTERVAL_DAYS', sweepIntervalDays\)/,
     );
+    assert.match(seedSection, /FROM serve\.page_current pc/);
+    assert.doesNotMatch(
+      seedSection,
+      /serve\.vote_current|recent_activity|last_vote_at|voteClaimEvidenceExists/,
+      '30 天盲扫 cohort 必须由全部 live 页定义，不能用采集自身产生的投票活动反向过滤',
+    );
+    assert.match(
+      seedSection,
+      /ps\.kind = 'votes'[\s\S]*ps\.status = 'ok'[\s\S]*NEW_PAGE_INTERVAL_HOURS/,
+      '高频播种必须有独立于快照字段的最近成功证据闸',
+    );
     assert.doesNotMatch(seedSection, /interval '(?:90 days|7 days|3 hours)'/);
-    assert.equal(VOTE_SWEEP_ACTIVITY_DAYS, 90);
     assert.equal(NEW_PAGE_WINDOW_DAYS, 7);
     assert.equal(NEW_PAGE_INTERVAL_HOURS, 3);
+    assert.match(
+      SQL_TUNING_CONSTANTS.VOTE_SWEEP_INTERVAL_DAYS.reason,
+      /全部 live 页.*最长兜底周期/,
+    );
   });
 
   test('全站快照同一秒时，到期被铺满整个周期而不是同日惊群', () => {
-    const total = 34_254;
+    const total = 36_532;
     const daily = Array.from({ length: VOTE_SWEEP_INTERVAL_DAYS }, () => 0);
     const snapshotMs = Date.parse(SNAPSHOT);
     for (let pageId = 1; pageId <= total; pageId++) {
@@ -89,8 +99,8 @@ describe('vote sweep 墙钟预算与车道切换', () => {
   }
 
   test('轮次频率翻倍不改变同一小时播种总量', () => {
-    const quota = hourlyVoteSweepQuota(34_254, 30, '2026-08-04T12:00:00.000Z');
-    assert.ok(quota === 47 || quota === 48);
+    const quota = hourlyVoteSweepQuota(36_532, 30, '2026-08-04T12:00:00.000Z');
+    assert.ok(quota === 50 || quota === 51);
     assert.equal(simulate(12, quota), quota);
     assert.equal(simulate(24, quota), quota);
     assert.equal(simulate(12, VOTE_CATCHUP_RATE_PER_HOUR), VOTE_CATCHUP_RATE_PER_HOUR);
@@ -98,7 +108,7 @@ describe('vote sweep 墙钟预算与车道切换', () => {
   });
 
   test('整周期小时额度总和等于合格总量', () => {
-    const total = 34_254;
+    const total = 36_532;
     const start = Date.parse('2026-08-01T00:00:00.000Z');
     let granted = 0;
     for (let hour = 0; hour < 30 * 24; hour++) {
@@ -110,8 +120,8 @@ describe('vote sweep 墙钟预算与车道切换', () => {
   test('追平和稳态 reason/预算可区分，追平归零后自动降速', async () => {
     assert.equal(activeVoteSeedLane(1), 'catchup');
     assert.equal(activeVoteSeedLane(0), 'sweep');
-    const steady = hourlyVoteSweepQuota(34_254, 30, '2026-08-04T12:00:00.000Z');
-    assert.ok(VOTE_CATCHUP_RATE_PER_HOUR > steady * 17);
+    const steady = hourlyVoteSweepQuota(36_532, 30, '2026-08-04T12:00:00.000Z');
+    assert.ok(VOTE_CATCHUP_RATE_PER_HOUR > steady * 16);
 
     const source = await readFile(new URL('../src/store/workQueue.ts', import.meta.url), 'utf8');
     assert.match(source, /votes_v2_initial_catchup/);

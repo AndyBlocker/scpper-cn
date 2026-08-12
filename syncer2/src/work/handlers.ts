@@ -32,6 +32,7 @@ import {
 } from '../collect/source.js';
 import {
   applyCollectedVoteSnapshot,
+  collectTargetedVoteClaim,
   collectVoteSnapshots,
   recordVoteScanFailure,
   type VoteTarget,
@@ -93,22 +94,55 @@ export type WorkHandler = (
 ) => Promise<WorkHandlerOutcome>;
 
 const voteHandler: WorkHandler = async (task, context) => {
-  const target = toVoteTarget(task);
+  let target = toVoteTarget(task);
+  let claimRunId = task.tier1RunId;
   if (
     task.claimedTotal === null ||
     task.claimedRating === null ||
     task.tier1RunId === null
   ) {
-    const error =
-      '缺少成功 L1/Tier1 ListPages 的 claimed_total/claimed_rating 证据；拒绝使用本地聚合值';
-    await recordVoteScanFailure(context.pool, target, context.runId, error);
-    return {
-      status: 'failed',
-      resultHash: null,
-      remoteValue: tier1Claims(task),
-      sample: { error, ...tier1Claims(task) },
+    const targeted = await collectTargetedVoteClaim(
+      httpForWorkTask(context, task),
+      context.baseUrl,
+      task.slug,
+    );
+    if (targeted.status === 'failed') {
+      const error =
+        '缺少成功 L1/Tier1 claim，且目标 ListPages 补证失败；' +
+        `拒绝使用本地聚合值：${targeted.error}`;
+      await recordVoteScanFailure(context.pool, target, context.runId, error);
+      return {
+        status: 'failed',
+        resultHash: null,
+        remoteValue: tier1Claims(task),
+        sample: { error, ...tier1Claims(task) },
+      };
+    }
+    target = {
+      ...target,
+      claimedTotal: targeted.data.claimedTotal,
+      claimedRating: targeted.data.claimedRating,
     };
+    claimRunId = context.runId;
+    await persistPageScan(context.pool, {
+      runId: context.runId,
+      pageId: task.pageId,
+      kind: 'meta',
+      status: 'ok',
+      claimedTotal: target.claimedTotal,
+      fetchedTotal: 1,
+      checksumOk: true,
+      checksumExpected: target.claimedRating,
+      checksumActual: target.claimedRating,
+      resultHash: null,
+      error: 'vote_claim_targeted_listpages',
+    });
   }
+  const claimEvidence = {
+    claimed_total: target.claimedTotal,
+    claimed_rating: target.claimedRating,
+    tier1_run_id: claimRunId,
+  };
 
   if (task.kind === 'new_page_highfreq') {
     await enqueueScanTasks(context.pool, [{
@@ -147,10 +181,10 @@ const voteHandler: WorkHandler = async (task, context) => {
     return {
       status: 'failed',
       resultHash: null,
-      remoteValue: tier1Claims(task),
+      remoteValue: claimEvidence,
       sample: {
         error,
-        ...tier1Claims(task),
+        ...claimEvidence,
       },
     };
   }
@@ -165,7 +199,7 @@ const voteHandler: WorkHandler = async (task, context) => {
     status: applied.scanStatus,
     resultHash: applied.resultHash,
     localValue: applied.applyResult,
-    remoteValue: tier1Claims(task),
+    remoteValue: claimEvidence,
     sample: {
       parsedEntries: result.data.entries.length,
       checksum: result.data.checksum,

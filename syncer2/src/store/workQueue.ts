@@ -6,7 +6,7 @@
  *   - enqueueScanTasks 与周期 seed 等发现侧入口绝不覆盖这些列。
  *
  * 调度预算：
- *   - 普通投票 sweep 仅覆盖 90 天内有活动的页，并按 page_id 稳定相位铺满 30 天；
+ *   - 普通投票 sweep 覆盖全部 live 页，并按 page_id 稳定相位铺满 30 天；
  *   - 发布未满 7 天的页保留 new_page_highfreq，3 小时一次；
  *   - M6 全站约定页在成功证据过期 24 小时后补一个审计锚任务。
  */
@@ -21,8 +21,6 @@ import { toPgJson } from './pgText.js';
 import { backoffFrom } from './queues.js';
 import type { ScanTaskKind } from './meta.js';
 
-export const VOTE_SWEEP_ACTIVITY_DAYS: number =
-  SQL_TUNING_CONSTANTS.VOTE_SWEEP_ACTIVITY_DAYS.defaultValue;
 /*
  * 盲扫周期。角色已经改变：L1 每 15 分钟读一次全站计数器（145 请求）即可发现绝大多数
  * 投票变化，盲扫只兜底 L1 看不见的「补偿性变化」——一人撤 +1、另一人补 +1，
@@ -93,6 +91,13 @@ const DAY_MS = 24 * HOUR_MS;
 function positiveInteger(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new RangeError(`${label} 必须是正安全整数，收到 ${String(value)}`);
+  }
+  return value;
+}
+
+function nonnegativeInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${label} 必须是非负安全整数，收到 ${String(value)}`);
   }
   return value;
 }
@@ -254,41 +259,10 @@ export const ALL_WORK_TASK_KINDS = [
 ] as const satisfies readonly ScanTaskKind[];
 
 /**
- * 投票深扫必须先有成功 ListPages 的远端声明。L1 的跨轮状态不是本地聚合：
- * last_l1_rating(_votes) 直接来自完整 L1 响应，且 last_l1_run_id 只在成功轮最后推进。
+ * 只复用全站/分段 L1 的新鲜远端声明。全站 L1 看不到的少量特殊 live 页会以 NULL
+ * claim 交给 handler，让每次盲扫都重新做目标 ListPages 补证；不能复用 30 天前的
+ * 定向 claim，否则页面有票变动后会拿旧 claim 永久校验失败。
  */
-function voteClaimEvidenceExists(pageIdSql: string): string {
-  return `(
-    EXISTS (
-      SELECT 1
-        FROM meta.page_scan ps
-        JOIN meta.ingest_run ir ON ir.id = ps.run_id
-       WHERE ps.page_id = ${pageIdSql}
-         AND ps.kind = 'meta'
-         AND ps.status = 'ok'
-         AND ps.claimed_total IS NOT NULL
-         AND ps.checksum_expected IS NOT NULL
-         AND ir.status = 'ok'
-         AND (
-           ir.source LIKE '%listpages%'
-           OR (ir.source = 'wikidot' AND ir.stats ->> 'mode' IN ('tier1', 'tier1_range'))
-         )
-    )
-    OR EXISTS (
-      SELECT 1
-        FROM meta.incremental_page_state ips
-        JOIN meta.ingest_run ir ON ir.id = ips.last_l1_run_id
-       WHERE ips.page_id = ${pageIdSql}
-         AND ips.last_l1_rating IS NOT NULL
-         AND ips.last_l1_rating_votes IS NOT NULL
-         AND ir.status = 'ok'
-         AND ir.source = 'wikidot_listpages'
-         AND ir.stats ->> 'mode' = 'l1_votes'
-         AND ir.stats ->> 'population_type' = 'l1_full_site_minimal'
-    )
-  )`;
-}
-
 function voteClaimEvidence(pageIdSql: string): string {
   return `SELECT evidence.claimed_total,
                  evidence.claimed_rating,
@@ -393,9 +367,10 @@ export interface SeedVoteTasksResult {
 
 export interface SeedVoteTasksOptions {
   highFrequencyLimit?: number;
+  /** 测试/人工定向高频播种；省略即保持生产全量候选。 */
+  highFrequencyPageIds?: readonly number[];
   /** 测试/人工小批的单次额外上限；生产默认只受墙钟小时预算约束。 */
   laneLimit?: number;
-  activityDays?: number;
   sweepIntervalDays?: number;
   newPageWindowDays?: number;
   newPageIntervalHours?: number;
@@ -562,12 +537,17 @@ export async function claimWorkTasks(
   slugPrefix: string | null = null,
   reservedLockOwner: string | null = null,
   starvedKinds: readonly ScanTaskKind[] = [],
+  newPageIntervalHours = NEW_PAGE_INTERVAL_HOURS,
 ): Promise<ClaimedWorkTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0 || kinds.length === 0) return [];
   const pinnedQuota = pinnedKindQuota(limit);
   const guaranteedQuota = fairShareGuaranteedQuota(limit, kinds.length);
   const shortLivedDays = positiveInteger(newPageWindowDays, '新页窗口天数');
+  const shortLivedIntervalHours = positiveInteger(
+    newPageIntervalHours,
+    '新页重扫间隔小时数',
+  );
 
   const result = await query<{
     id: string;
@@ -630,13 +610,23 @@ export async function claimWorkTasks(
             )
           )
           AND (
-            st.kind NOT IN ('votes_full', 'new_page_highfreq')
-            OR ${voteClaimEvidenceExists('st.page_id')}
-          )
-          AND (
             st.kind <> 'new_page_highfreq'
             OR COALESCE(pc.first_published_at, p.created_at, st.created_at)
                  > now() - ($7::integer * interval '1 day')
+          )
+          -- 执行侧硬闸：即使任务已被错误地重新播种，最近一次 votes/ok 仍会拒绝认领。
+          -- 它只依赖独立扫描证据，不依赖 last_complete_vote_snapshot_at 的推进逻辑。
+          AND (
+            st.kind <> 'new_page_highfreq'
+            OR NOT EXISTS (
+              SELECT 1
+                FROM meta.page_scan ps
+               WHERE ps.page_id = st.page_id
+                 AND ps.kind = 'votes'
+                 AND ps.status = 'ok'
+                 AND ps.scanned_at > now()
+                       - ($13::integer * interval '1 hour')
+            )
           )
           AND (st.not_before IS NULL OR st.not_before <= now())
           AND (
@@ -794,6 +784,7 @@ export async function claimWorkTasks(
       starvedKinds,
       guaranteedQuota,
       Math.floor(PRIORITY_AGING_INTERVAL_MS / 1_000),
+      bindSqlTuning('NEW_PAGE_INTERVAL_HOURS', shortLivedIntervalHours),
     ],
   );
 
@@ -836,9 +827,14 @@ export async function claimIrreconcilableReviews(
   kinds: readonly ScanTaskKind[] = ALL_WORK_TASK_KINDS,
   lockStaleAfterMs = 30 * 60_000,
   slugPrefix: string | null = null,
+  newPageIntervalHours = NEW_PAGE_INTERVAL_HOURS,
 ): Promise<ClaimedWorkTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0 || kinds.length === 0) return [];
+  const shortLivedIntervalHours = positiveInteger(
+    newPageIntervalHours,
+    '新页重扫间隔小时数',
+  );
 
   const result = await query<{
     page_id: number;
@@ -871,8 +867,16 @@ export async function claimIrreconcilableReviews(
           AND ($5::text IS NULL OR pc.slug LIKE $5 || '%')
           AND pc.status = 'live'
           AND (
-            i.kind NOT IN ('votes_full', 'new_page_highfreq')
-            OR ${voteClaimEvidenceExists('i.page_id')}
+            i.kind <> 'new_page_highfreq'
+            OR NOT EXISTS (
+              SELECT 1
+                FROM meta.page_scan ps
+               WHERE ps.page_id = i.page_id
+                 AND ps.kind = 'votes'
+                 AND ps.status = 'ok'
+                 AND ps.scanned_at > now()
+                       - ($6::integer * interval '1 hour')
+            )
           )
           AND (
             i.locked_by IS NULL
@@ -915,7 +919,14 @@ export async function claimIrreconcilableReviews(
          ${voteClaimEvidence('i.page_id')}
        ) tier1 ON true
       ORDER BY i.next_review_at, i.page_id, i.kind`,
-    [workerId, limit, String(lockStaleAfterMs), kinds, slugPrefix],
+    [
+      workerId,
+      limit,
+      String(lockStaleAfterMs),
+      kinds,
+      slugPrefix,
+      bindSqlTuning('NEW_PAGE_INTERVAL_HOURS', shortLivedIntervalHours),
+    ],
   );
 
   return result.rows.map((row) => ({
@@ -1378,9 +1389,10 @@ async function seedWithinHourlyBudget(
 /**
  * 补齐投票周期任务。
  *
- * new_page_highfreq 是实时保护，不占盲扫预算；其余页先走 832/h 的 v2 首轮追平，全部
- * 有真实完整快照后自动切换到 eligible/周期 的稳态车道。两条车道都按持久墙钟小时
- * 记账，与 work-queue 一小时跑几轮无关。
+ * new_page_highfreq 是实时保护，不占盲扫预算；其余 live 页先走 832/h 的 v2 首轮追平，
+ * 全部有真实完整快照后自动切换到 live/周期 的稳态车道。两条车道都按持久墙钟小时
+ * 记账，与 work-queue 一小时跑几轮无关。不能用 vote_current 活动反向定义 cohort：
+ * 安静页恰是盲扫要兜底的对象，而活动证据本身只能由采集产生。
  */
 export async function seedVoteTasks(
   pool: Pool,
@@ -1389,10 +1401,10 @@ export async function seedVoteTasks(
 ): Promise<SeedVoteTasksResult> {
   const ts = toPgTimestamptz(now);
   const highFrequencyLimit = positiveLimit(opts.highFrequencyLimit, WORK_QUEUE_LIMIT_MAX);
-  const activityDays = positiveInteger(
-    opts.activityDays ?? VOTE_SWEEP_ACTIVITY_DAYS,
-    '盲扫活动窗口天数',
-  );
+  const highFrequencyPageIds = opts.highFrequencyPageIds === undefined
+    ? null
+    : opts.highFrequencyPageIds.map((pageId) =>
+        positiveInteger(pageId, '定向高频 page_id'));
   const sweepIntervalDays = positiveInteger(
     opts.sweepIntervalDays ?? VOTE_SWEEP_INTERVAL_DAYS,
     '盲扫周期天数',
@@ -1411,7 +1423,7 @@ export async function seedVoteTasks(
   );
   const laneLimit = opts.laneLimit === undefined
     ? Number.MAX_SAFE_INTEGER
-    : positiveInteger(opts.laneLimit, '单次车道上限');
+    : nonnegativeInteger(opts.laneLimit, '单次车道上限');
   const budgetPrefix = opts.budgetKeyPrefix ?? 'vote';
   if (!/^[a-z0-9:_-]+$/i.test(budgetPrefix)) {
     throw new RangeError(`非法预算键前缀 ${budgetPrefix}`);
@@ -1444,6 +1456,7 @@ export async function seedVoteTasks(
          FROM serve.page_current pc
          JOIN ingest.page p ON p.id = pc.page_id
         WHERE pc.status = 'live'
+          AND ($5::int[] IS NULL OR pc.page_id = ANY($5::int[]))
           AND NOT EXISTS (
             SELECT 1
               FROM meta.irreconcilable i
@@ -1458,7 +1471,17 @@ export async function seedVoteTasks(
             OR pc.last_complete_vote_snapshot_at
                  <= $1::timestamptz - ($4::integer * interval '1 hour')
           )
-          AND ${voteClaimEvidenceExists('pc.page_id')}
+          -- 独立于 page_current 快照判定的成功证据闸：即使未来 apply 的推进逻辑退化，
+          -- 同一页也不能在 3h 合同内被重新播种。
+          AND NOT EXISTS (
+            SELECT 1
+              FROM meta.page_scan ps
+             WHERE ps.page_id = pc.page_id
+               AND ps.kind = 'votes'
+               AND ps.status = 'ok'
+               AND ps.scanned_at > $1::timestamptz
+                     - ($4::integer * interval '1 hour')
+          )
         ORDER BY COALESCE(pc.first_published_at, p.created_at) DESC
         LIMIT $2
      )
@@ -1478,6 +1501,7 @@ export async function seedVoteTasks(
       highFrequencyLimit,
       bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
       bindSqlTuning('NEW_PAGE_INTERVAL_HOURS', newPageIntervalHours),
+      highFrequencyPageIds,
     ],
   );
 
@@ -1489,21 +1513,13 @@ export async function seedVoteTasks(
   }>(
     pool,
     'meta.scan_task:vote_seed_population',
-    `WITH recent_activity AS (
-       SELECT vc.page_id
-         FROM serve.vote_current vc
-        WHERE vc.last_voted_at
-              >= $1::timestamptz - ($2::integer * interval '1 day')
-        GROUP BY vc.page_id
-     ),
-     qualified AS (
+    `WITH qualified AS (
        SELECT pc.page_id
-         FROM recent_activity va
-         JOIN serve.page_current pc ON pc.page_id = va.page_id
+         FROM serve.page_current pc
          JOIN ingest.page p ON p.id = pc.page_id
         WHERE pc.status = 'live'
           AND COALESCE(pc.first_published_at, p.created_at)
-                <= $1::timestamptz - ($3::integer * interval '1 day')
+                <= $1::timestamptz - ($2::integer * interval '1 day')
           AND NOT EXISTS (
             SELECT 1
               FROM meta.irreconcilable i
@@ -1511,7 +1527,6 @@ export async function seedVoteTasks(
                AND i.kind = 'votes_full'
                AND i.resolved_at IS NULL
           )
-          AND ${voteClaimEvidenceExists('pc.page_id')}
      )
      SELECT count(*)::text AS eligible_pages,
             count(*) FILTER (WHERE state.page_id IS NULL)::text AS catchup_remaining,
@@ -1527,7 +1542,6 @@ export async function seedVoteTasks(
          ON task.page_id = q.page_id AND task.kind = 'votes_full'`,
     [
       ts,
-      bindSqlTuning('VOTE_SWEEP_ACTIVITY_DAYS', activityDays),
       bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
     ],
   );
@@ -1555,23 +1569,15 @@ export async function seedVoteTasks(
         const seeded = await query(
           client,
           'meta.scan_task:seed_vote_catchup',
-          `WITH recent_activity AS (
-             SELECT vc.page_id, max(vc.last_voted_at) AS last_vote_at
-               FROM serve.vote_current vc
-              WHERE vc.last_voted_at
-                    >= $1::timestamptz - ($2::integer * interval '1 day')
-              GROUP BY vc.page_id
-           ),
-           candidates AS (
+          `WITH candidates AS (
              SELECT pc.page_id
-               FROM recent_activity va
-               JOIN serve.page_current pc ON pc.page_id = va.page_id
+               FROM serve.page_current pc
                JOIN ingest.page p ON p.id = pc.page_id
                LEFT JOIN meta.vote_sweep_page_state state ON state.page_id = pc.page_id
               WHERE pc.status = 'live'
                 AND state.page_id IS NULL
                 AND COALESCE(pc.first_published_at, p.created_at)
-                      <= $1::timestamptz - ($3::integer * interval '1 day')
+                      <= $1::timestamptz - ($2::integer * interval '1 day')
                 AND NOT EXISTS (
                   SELECT 1 FROM meta.scan_task st
                    WHERE st.page_id = pc.page_id AND st.kind = 'votes_full'
@@ -1582,9 +1588,8 @@ export async function seedVoteTasks(
                      AND i.kind = 'votes_full'
                      AND i.resolved_at IS NULL
                 )
-                AND ${voteClaimEvidenceExists('pc.page_id')}
-              ORDER BY va.last_vote_at DESC, pc.page_id
-              LIMIT $4
+              ORDER BY COALESCE(pc.first_published_at, p.created_at), pc.page_id
+              LIMIT $3
            )
            INSERT INTO meta.scan_task
              (page_id, kind, reasons, priority, not_before)
@@ -1594,7 +1599,6 @@ export async function seedVoteTasks(
            ON CONFLICT (page_id, kind) DO NOTHING`,
           [
             ts,
-            bindSqlTuning('VOTE_SWEEP_ACTIVITY_DAYS', activityDays),
             bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
             allowance,
           ],
@@ -1615,14 +1619,7 @@ export async function seedVoteTasks(
         const seeded = await query(
           client,
           'meta.scan_task:seed_vote_sweep',
-          `WITH recent_activity AS (
-             SELECT vc.page_id, max(vc.last_voted_at) AS last_vote_at
-               FROM serve.vote_current vc
-              WHERE vc.last_voted_at
-                    >= $1::timestamptz - ($2::integer * interval '1 day')
-              GROUP BY vc.page_id
-           ),
-           scheduled AS (
+          `WITH scheduled AS (
              SELECT pc.page_id,
                     to_timestamp((
                       (
@@ -1632,13 +1629,12 @@ export async function seedVoteTasks(
                         ) / cfg.period_ms) + 1
                       ) * cfg.period_ms + phase.phase_ms
                     ) / 1000.0) AS due_at,
-                    va.last_vote_at
-               FROM recent_activity va
-               JOIN serve.page_current pc ON pc.page_id = va.page_id
+                    COALESCE(pc.first_published_at, p.created_at) AS published_at
+               FROM serve.page_current pc
                JOIN ingest.page p ON p.id = pc.page_id
                JOIN meta.vote_sweep_page_state state ON state.page_id = pc.page_id
                CROSS JOIN LATERAL (
-                 SELECT ($4::bigint * 86400000::bigint) AS period_ms
+                 SELECT ($3::bigint * 86400000::bigint) AS period_ms
                ) cfg
                CROSS JOIN LATERAL (
                  SELECT mod(
@@ -1649,7 +1645,7 @@ export async function seedVoteTasks(
               WHERE pc.status = 'live'
                 AND pc.last_complete_vote_snapshot_at IS NOT NULL
                 AND COALESCE(pc.first_published_at, p.created_at)
-                      <= $1::timestamptz - ($3::integer * interval '1 day')
+                      <= $1::timestamptz - ($2::integer * interval '1 day')
                 AND NOT EXISTS (
                   SELECT 1 FROM meta.scan_task st
                    WHERE st.page_id = pc.page_id AND st.kind = 'votes_full'
@@ -1660,14 +1656,13 @@ export async function seedVoteTasks(
                      AND i.kind = 'votes_full'
                      AND i.resolved_at IS NULL
                 )
-                AND ${voteClaimEvidenceExists('pc.page_id')}
            ),
            candidates AS (
              SELECT page_id
                FROM scheduled
               WHERE due_at <= $1::timestamptz
-              ORDER BY due_at, last_vote_at DESC, page_id
-              LIMIT $5
+              ORDER BY due_at, published_at, page_id
+              LIMIT $4
            )
            INSERT INTO meta.scan_task
              (page_id, kind, reasons, priority, not_before)
@@ -1677,7 +1672,6 @@ export async function seedVoteTasks(
            ON CONFLICT (page_id, kind) DO NOTHING`,
           [
             ts,
-            bindSqlTuning('VOTE_SWEEP_ACTIVITY_DAYS', activityDays),
             bindSqlTuning('NEW_PAGE_WINDOW_DAYS', newPageWindowDays),
             bindSqlTuning('VOTE_SWEEP_INTERVAL_DAYS', sweepIntervalDays),
             allowance,
@@ -1781,10 +1775,15 @@ export async function claimVoteTasks(
   workerId: string,
   lockStaleAfterMs = 30 * 60_000,
   newPageWindowDays = NEW_PAGE_WINDOW_DAYS,
+  newPageIntervalHours = NEW_PAGE_INTERVAL_HOURS,
 ): Promise<ClaimedVoteTask[]> {
   const limit = Math.min(WORK_QUEUE_LIMIT_MAX, Math.max(0, Math.floor(requestedLimit)));
   if (limit === 0) return [];
   const shortLivedDays = positiveInteger(newPageWindowDays, '新页窗口天数');
+  const shortLivedIntervalHours = positiveInteger(
+    newPageIntervalHours,
+    '新页重扫间隔小时数',
+  );
 
   const res = await query<{
     id: string;
@@ -1811,11 +1810,22 @@ export async function claimVoteTasks(
          JOIN ingest.page p ON p.id = st.page_id
         WHERE st.kind IN ('votes_full', 'new_page_highfreq')
           AND pc.status = 'live'
-          AND ${voteClaimEvidenceExists('st.page_id')}
           AND (
             st.kind <> 'new_page_highfreq'
             OR COALESCE(pc.first_published_at, p.created_at, st.created_at)
                  > now() - ($4::integer * interval '1 day')
+          )
+          AND (
+            st.kind <> 'new_page_highfreq'
+            OR NOT EXISTS (
+              SELECT 1
+                FROM meta.page_scan ps
+               WHERE ps.page_id = st.page_id
+                 AND ps.kind = 'votes'
+                 AND ps.status = 'ok'
+                 AND ps.scanned_at > now()
+                       - ($5::integer * interval '1 hour')
+            )
           )
           AND (st.not_before IS NULL OR st.not_before <= now())
           AND (
@@ -1865,6 +1875,7 @@ export async function claimVoteTasks(
       limit,
       String(lockStaleAfterMs),
       bindSqlTuning('NEW_PAGE_WINDOW_DAYS', shortLivedDays),
+      bindSqlTuning('NEW_PAGE_INTERVAL_HOURS', shortLivedIntervalHours),
     ],
   );
 

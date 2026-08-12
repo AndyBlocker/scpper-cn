@@ -8,10 +8,12 @@ import type { Pool, PoolClient } from 'pg';
 
 import {
   applyCollectedVoteSnapshot,
+  buildTargetedVoteClaimRequest,
   collectVoteSnapshots,
   gateParsedVotes,
   isOversizedVotePage,
   parseWhoRatedPage,
+  parseTargetedVoteClaim,
   prepareVoteSnapshot,
   timeoutForVoteCount,
   voteIdentityKey,
@@ -33,12 +35,20 @@ const fixtureDir = path.join(here, 'fixtures', 'votes');
 let mixed = '';
 let empty = '';
 let mismatched = '';
+let targetedClaim = '';
 
 before(async () => {
-  [mixed, empty, mismatched] = await Promise.all([
+  [mixed, empty, mismatched, targetedClaim] = await Promise.all([
     readFile(path.join(fixtureDir, 'mixed.html'), 'utf8'),
     readFile(path.join(fixtureDir, 'empty.html'), 'utf8'),
     readFile(path.join(fixtureDir, 'mismatched.html'), 'utf8'),
+    readFile(path.join(here, 'fixtures', 'listpages_page_1.reconstructed.html'), 'utf8')
+      .then((source) => source
+        .replace(
+          /\s*<div class="list-pages-item">\s*<div class="syncer2-listpages-row">\s*<p>%%deleted-author-page%%[\s\S]*?<\/div>\s*<\/div>/,
+          '',
+        )
+        .replace('%%4%%|||%%2%%|||%%1%%</p>', '%%4%%|||%%1%%|||%%1%%</p>')),
   ]);
 });
 
@@ -78,6 +88,27 @@ describe('WhoRated 解析', () => {
     assert.equal(result.status, 'ok');
     assert.equal(result.data.entries.length, 0);
     assert.equal(result.data.isComplete, true);
+  });
+
+  test('全站 L1 缺席页可按 fullname 目标补 claim，仍由远端 ListPages 互证', () => {
+    assert.deepEqual(buildTargetedVoteClaimRequest('component:_template').params, {
+      category: 'component',
+      name: '_template',
+      pagetype: '*',
+      order: 'created_at desc',
+      perPage: 1,
+      offset: 0,
+      module_body: buildTargetedVoteClaimRequest('component:_template').params.module_body,
+    });
+    assert.equal(buildTargetedVoteClaimRequest('scp-cn-4813').params.category, '_default');
+    const parsed = parseTargetedVoteClaim(targetedClaim, 'scp-cn-4813');
+    assert.deepEqual(parsed, {
+      status: 'ok',
+      data: { claimedTotal: 2, claimedRating: 0 },
+    });
+    const wrongIdentity = parseTargetedVoteClaim(targetedClaim, 'component:_template');
+    assert.equal(wrongIdentity.status, 'failed');
+    if (wrongIdentity.status === 'failed') assert.match(wrongIdentity.error, /身份不唯一/);
   });
 
   test('用户/方向数量错位是 failed，与合法空结果可区分', () => {

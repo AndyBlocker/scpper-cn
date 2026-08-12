@@ -9,7 +9,12 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
 import { createPool, query } from '../src/store/db.js';
-import { claimWorkTasks } from '../src/store/workQueue.js';
+import {
+  claimWorkTasks,
+  finishVoteTask,
+  seedVoteTasks,
+  type ClaimedVoteTask,
+} from '../src/store/workQueue.js';
 import type { ScanTaskKind } from '../src/store/meta.js';
 import { cleanupAll, registerPage } from './helpers/fixture.js';
 import { openSess, resolveTestDatabaseUrl, type Sess } from './helpers/pg.js';
@@ -241,6 +246,144 @@ describe('work-queue kind fair-share SQL', () => {
       'test:fairshare:remove_evidence_run',
       `DELETE FROM meta.ingest_run WHERE id = $1::bigint`,
       [run.rows[0]!.id],
+    );
+  });
+
+  it('零票页首次完整快照推进时钟；错误重播种仍被成功证据闸拒绝认领', async () => {
+    await clearTasks();
+    const pageId = highPages[2]!;
+    const worker = `${WORKER}:zero-vote`;
+    const startedAt = new Date().toISOString();
+    const wikidot = await query<{ wikidot_id: number }>(
+      pool,
+      'test:spinloop:page_identity',
+      `UPDATE serve.page_current
+          SET first_published_at = clock_timestamp() + interval '1 minute',
+              last_complete_vote_snapshot_at = NULL
+        WHERE page_id = $1
+      RETURNING wikidot_id`,
+      [pageId],
+    );
+    const run = await query<{ id: string }>(
+      pool,
+      'test:spinloop:evidence_run',
+      `INSERT INTO meta.ingest_run(source, status, started_at)
+       VALUES ($1, 'ok', $2::timestamptz) RETURNING id::text`,
+      [EVIDENCE_SOURCE, startedAt],
+    );
+    const runId = Number(run.rows[0]!.id);
+    await query(
+      pool,
+      'test:spinloop:l1_zero_claim',
+      `INSERT INTO meta.page_scan(
+         run_id, page_id, kind, status, claimed_total, checksum_expected, scanned_at
+       ) VALUES ($1, $2, 'meta', 'ok', 0, 0, $3::timestamptz)`,
+      [runId, pageId, startedAt],
+    );
+
+    await seedVoteTasks(pool, startedAt, {
+      highFrequencyLimit: 1,
+      highFrequencyPageIds: [pageId],
+      laneLimit: 0,
+      budgetKeyPrefix: 'test:spinloop',
+    });
+    const claimed = await claimWorkTasks(
+      pool,
+      1,
+      worker,
+      ['new_page_highfreq'],
+      undefined,
+      undefined,
+      PREFIX,
+    );
+    assert.equal(claimed.length, 1);
+    assert.equal(claimed[0]!.pageId, pageId);
+
+    const applied = await query<{ applied: Record<string, unknown> }>(
+      pool,
+      'test:spinloop:apply_empty_snapshot',
+      `SELECT ingest.apply_vote_snapshot(
+         $1, '[]'::jsonb, true, 0, 0, ARRAY['wikidot']::text[],
+         $2::timestamptz, 'test_wikidot', $3, $4,
+         'candidate', 500, 0.20::real
+       ) AS applied`,
+      [pageId, startedAt, runId, wikidot.rows[0]!.wikidot_id],
+    );
+    assert.equal(applied.rows[0]!.applied['scan_status'], 'ok');
+    assert.equal(applied.rows[0]!.applied['idempotent_replay'], true,
+      '初始空 current 与零票快照相等，必须覆盖该幂等短路');
+    const advanced = await query<{ advanced: boolean; ok_scan: boolean }>(
+      pool,
+      'test:spinloop:clock_advanced',
+      `SELECT pc.last_complete_vote_snapshot_at IS NOT NULL AS advanced,
+              EXISTS (
+                SELECT 1 FROM meta.page_scan ps
+                 WHERE ps.page_id = pc.page_id
+                   AND ps.kind = 'votes' AND ps.status = 'ok'
+              ) AS ok_scan
+         FROM serve.page_current pc
+        WHERE pc.page_id = $1`,
+      [pageId],
+    );
+    assert.deepEqual(advanced.rows[0], { advanced: true, ok_scan: true });
+
+    const voteTask = claimed[0] as ClaimedVoteTask;
+    assert.equal((await finishVoteTask(pool, voteTask, {
+      workerId: worker,
+      status: 'ok',
+      now: new Date().toISOString(),
+    })).action, 'deleted');
+    assert.equal(
+      (await query<{ n: number }>(
+        pool,
+        'test:spinloop:no_task_after_finish',
+        `SELECT count(*)::int AS n FROM meta.scan_task
+          WHERE page_id = $1 AND kind = 'new_page_highfreq'`,
+        [pageId],
+      )).rows[0]!.n,
+      0,
+    );
+
+    // 故意破坏派生快照字段，证明播种/认领仍由独立 page_scan 成功证据兜住。
+    await query(
+      pool,
+      'test:spinloop:simulate_clock_regression',
+      `UPDATE serve.page_current
+          SET last_complete_vote_snapshot_at = NULL
+        WHERE page_id = $1`,
+      [pageId],
+    );
+    await seedVoteTasks(pool, new Date(Date.now() + 60 * 60_000).toISOString(), {
+      highFrequencyLimit: 1,
+      highFrequencyPageIds: [pageId],
+      laneLimit: 0,
+      budgetKeyPrefix: 'test:spinloop',
+    });
+    assert.equal(
+      (await query<{ n: number }>(
+        pool,
+        'test:spinloop:not_reseeded',
+        `SELECT count(*)::int AS n FROM meta.scan_task
+          WHERE page_id = $1 AND kind = 'new_page_highfreq'`,
+        [pageId],
+      )).rows[0]!.n,
+      0,
+      '最近 votes/ok 必须直接阻止重新播种，不能依赖快照字段',
+    );
+
+    await seedTasks([pageId], 'new_page_highfreq', 100, [new Date().toISOString()]);
+    assert.deepEqual(
+      await claimWorkTasks(
+        pool,
+        1,
+        `${worker}:forced-reseed`,
+        ['new_page_highfreq'],
+        undefined,
+        undefined,
+        PREFIX,
+      ),
+      [],
+      '即使绕过播种器强行插入任务，执行侧也必须在 3h 内拒绝扫描',
     );
   });
 });

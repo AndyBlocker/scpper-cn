@@ -171,14 +171,25 @@ describe('M4 work-queue', () => {
       new URL('../src/store/workQueue.ts', import.meta.url),
       'utf8',
     );
+    const handlerSource = await readFile(
+      new URL('../src/work/handlers.ts', import.meta.url),
+      'utf8',
+    );
     assert.match(storeSource, /FOR UPDATE OF st SKIP LOCKED/);
     assert.match(storeSource, /Math\.min\(WORK_QUEUE_LIMIT_MAX/);
     assert.match(storeSource, /ps\.claimed_total IS NOT NULL/);
     assert.match(storeSource, /meta\.incremental_page_state ips/);
     assert.match(storeSource, /l1_full_site_minimal/);
-    assert.match(
+    assert.doesNotMatch(
       storeSource,
-      /st\.kind NOT IN \('votes_full', 'new_page_highfreq'\)[\s\S]*voteClaimEvidenceExists/,
+      /ps\.error = 'vote_claim_targeted_listpages'/,
+      '定向 claim 不能跨轮复用；全站 L1 缺席页每次盲扫都必须刷新远端声明',
+    );
+    assert.match(handlerSource, /vote_claim_targeted_listpages/);
+    assert.doesNotMatch(
+      storeSource,
+      /pc\.rating AS claimed_rating|pc\.vote_(?:up|down) AS claimed_total/,
+      '缺 L1 页只能目标 ListPages 补证，不能把本地聚合伪装成远端 claim',
     );
     assert.match(storeSource, /attempts = GREATEST\(0, attempts - 1\)/);
     assert.doesNotMatch(storeSource, /release_work_locks[\s\S]{0,500}interval '1 hour'/);
@@ -338,6 +349,81 @@ describe('M4 work-queue', () => {
     for (const kind of ALL_WORK_TASK_KINDS) {
       assert.equal(typeof WORK_HANDLER_REGISTRY[kind], 'function', kind);
     }
+  });
+
+  it('11 种 kind 的成功出口均能关闭其入队驱动，周期 kind 不允许成功后原地自旋', async () => {
+    const stateDriven = [
+      'new_page_highfreq',
+      'votes_full',
+      'attributions',
+      'discussion',
+    ] as const;
+    const observationDriven = [
+      'confirm_deleted',
+      'meta',
+      'sitemap_delta',
+      'content',
+      'revisions_full',
+      'files',
+      'forum',
+    ] as const;
+    assert.deepEqual(
+      [...stateDriven, ...observationDriven].sort(),
+      [...ALL_WORK_TASK_KINDS].sort(),
+      '新增 kind 必须显式归类为状态驱动或外部观测驱动，不能留下未建模的永久未完成态',
+    );
+
+    const [queueSource, handlerSource, forumQueueSource, forumSource, migration] =
+      await Promise.all([
+        readFile(new URL('../src/store/workQueue.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../src/work/handlers.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../src/store/queues.ts', import.meta.url), 'utf8'),
+        readFile(new URL('../src/collect/forum.ts', import.meta.url), 'utf8'),
+        readFile(
+          new URL('../migrations/0059_vote_snapshot_success_clock.sql', import.meta.url),
+          'utf8',
+        ),
+      ]);
+
+    assert.match(
+      migration,
+      /NEW\.kind = 'votes' AND NEW\.status = 'ok'[\s\S]*last_complete_vote_snapshot_at/,
+      'votes_full/new_page_highfreq 的成功证书必须推进共同的快照驱动字段',
+    );
+    assert.match(
+      queueSource,
+      /seed_vote_highfreq[\s\S]*ps\.kind = 'votes'[\s\S]*ps\.status = 'ok'/,
+      '高频车道还必须有独立 page_scan 冷却闸，不能只依赖驱动字段',
+    );
+    assert.match(
+      queueSource,
+      /claim_all_work[\s\S]*st\.kind <> 'new_page_highfreq'[\s\S]*ps\.scanned_at > now\(\)/,
+      '错误重播种必须在执行侧再次被拒绝',
+    );
+    assert.match(
+      queueSource,
+      /vote_sweep_page_state:complete[\s\S]*last_v2_complete_at = GREATEST/,
+      'votes_full 成功还必须推进首轮追平/稳态切换状态',
+    );
+    assert.match(
+      queueSource,
+      /ps\.kind = 'attributions'[\s\S]*ps\.status = 'ok'[\s\S]*ps\.scanned_at > \$1/,
+      'attributions 周期由自身成功 page_scan 直接关闭',
+    );
+    assert.match(
+      handlerSource,
+      /task\.pageId, 'attributions'[\s\S]*status: refresh\.status/,
+    );
+    assert.match(
+      forumQueueSource,
+      /pc\.discussion_thread_id IS NULL[\s\S]*forum_link_initial_catchup/,
+      'discussion 首轮追平必须有可表达的缺失字段',
+    );
+    assert.match(
+      forumSource,
+      /forum:apply_page_meta_discussion_thread[\s\S]*discussion_thread_id: stored!\.value\.threadId/,
+      'discussion 成功必须填入驱动播种的 thread id',
+    );
   });
 
   it('普通成功即删', async () => {

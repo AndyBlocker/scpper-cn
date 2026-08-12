@@ -20,6 +20,7 @@ import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { recordPageScan } from '../store/meta.js';
 import { toPgJson } from '../store/pgText.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
+import { buildListPagesModuleBody, parseListPagesResponse } from './listpages.js';
 
 export type VoteDirection = -1 | 1;
 export type VoteScanStatus = 'ok' | 'partial' | 'failed';
@@ -95,6 +96,101 @@ export interface VoteTarget {
 
 export interface VoteSnapshotData extends ParsedVoteSnapshot {
   target: VoteTarget;
+}
+
+export interface TargetedVoteClaim {
+  claimedTotal: number;
+  claimedRating: number;
+}
+
+export type TargetedVoteClaimOutcome =
+  | { status: 'ok'; data: TargetedVoteClaim }
+  | { status: 'failed'; error: string };
+
+/**
+ * 全站 L1 的 category='*' 不返回 `_template` / `_404` 等少量 live 页面。盲扫不能因此
+ * 永久排除它们；缺 claim 时先按 fullname 做一次目标 ListPages 交叉观测，再抓 WhoRated。
+ * 这仍保持“两套独立模块互证”，绝不拿本地 page_current 聚合值冒充远端声明。
+ */
+export function buildTargetedVoteClaimRequest(
+  slug: string,
+): { moduleName: string; params: Record<string, string | number> } {
+  const normalized = slug.trim();
+  if (normalized === '' || /[\r\n]/.test(normalized)) {
+    throw new RangeError(`目标 ListPages slug 非法：${JSON.stringify(slug)}`);
+  }
+  const separator = normalized.indexOf(':');
+  const category = separator < 0 ? '_default' : normalized.slice(0, separator);
+  const name = separator < 0 ? normalized : normalized.slice(separator + 1);
+  if (!/^[a-z0-9_-]+$/i.test(category) || name === '') {
+    throw new RangeError(`目标 ListPages fullname 非法：${JSON.stringify(slug)}`);
+  }
+  return {
+    moduleName: 'list/ListPagesModule',
+    params: {
+      category,
+      name,
+      // `_template` / `_404` 正是全站 L1 默认漏掉的主要尾部；ListPages 默认也会
+      // 排除隐藏页，必须显式纳入 normal + hidden 才能让定向补证真的覆盖它们。
+      pagetype: '*',
+      order: 'created_at desc',
+      perPage: 1,
+      offset: 0,
+      module_body: buildListPagesModuleBody(),
+    },
+  };
+}
+
+export function parseTargetedVoteClaim(
+  body: string,
+  slug: string,
+): TargetedVoteClaimOutcome {
+  const parsed = parseListPagesResponse(body, 1, 1, 1);
+  if (parsed.status !== 'ok') {
+    return {
+      status: 'failed',
+      error: `目标 ListPages claim 解析失败：${parsed.error}`,
+    };
+  }
+  if (parsed.data.rows.length !== 1 || parsed.data.rows[0]!.fullname !== slug) {
+    return {
+      status: 'failed',
+      error:
+        `目标 ListPages claim 身份不唯一：expected=${slug}, ` +
+        `rows=${parsed.data.rows.map((row) => row.fullname).join(',') || '-'}`,
+    };
+  }
+  const row = parsed.data.rows[0]!;
+  return {
+    status: 'ok',
+    data: { claimedTotal: row.ratingVotes, claimedRating: row.rating },
+  };
+}
+
+export async function collectTargetedVoteClaim(
+  http: HttpClient,
+  baseUrl: string,
+  slug: string,
+): Promise<TargetedVoteClaimOutcome> {
+  try {
+    const response = await amcRequest(http, baseUrl, {
+      ...buildTargetedVoteClaimRequest(slug),
+      mode: 'votes:targeted-claim',
+      timeoutMs: 20_000,
+      maxAttempts: 3,
+    });
+    if (response.status !== 'ok' || response.body === null) {
+      return {
+        status: 'failed',
+        error:
+          `目标 ListPages claim AMC status=${response.status}, ` +
+          `body=${response.body === null ? 'null' : 'present'}`,
+      };
+    }
+    return parseTargetedVoteClaim(response.body, slug);
+  } catch (err) {
+    return { status: 'failed', error: `目标 ListPages claim 请求失败：${String(err)}` };
+  }
 }
 
 export type VoteScanOutcome =

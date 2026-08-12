@@ -1,11 +1,7 @@
 export const SQL_TUNING_CONSTANTS = Object.freeze({
-  VOTE_SWEEP_ACTIVITY_DAYS: {
-    defaultValue: 90,
-    reason: '盲扫只覆盖近期有投票活动的页面',
-  },
   VOTE_SWEEP_INTERVAL_DAYS: {
     defaultValue: 30,
-    reason: 'L1 看不见的抵消型变化之低优先兜底周期',
+    reason: '全部 live 页（新页由更快的 3h 车道覆盖）发现 L1 不可见抵消型投票变化的最长兜底周期',
   },
   NEW_PAGE_WINDOW_DAYS: {
     defaultValue: 7,
