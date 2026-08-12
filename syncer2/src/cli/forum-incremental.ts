@@ -37,7 +37,6 @@ import {
 import { evaluateRunHealth } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
-  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -67,13 +66,12 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: 2,
+    minRequestIntervalMs: 7_200,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'forum'),
-    requestBoundary: () => budget.assertRequestBoundary(),
   });
   http.assertHeaders();
   let runId: number | null = null;
-  let pageRequests = 0;
 
   try {
     if (!options.skipTzCheck) await assertTimezoneRoundTrip(pool);
@@ -94,6 +92,7 @@ async function main(): Promise<void> {
     );
     await observeForumCategorySignals(pool, start.data.categories, new Date().toISOString());
 
+    let pageRequests = 0;
     const baseFetcher = forumCategoryPageFetcher(http, config.siteBaseUrl);
     const fetchPage = async (
       categoryId: number,
@@ -198,35 +197,6 @@ async function main(): Promise<void> {
     emitSummary({ ok: health.exitCode === 0, status, runId, ...stats });
     process.exitCode = health.exitCode;
   } catch (error) {
-    if (isRuntimeBudgetExceededError(error)) {
-      await finishIngestRun(pool, runId, {
-        status: 'partial',
-        finishedAt: new Date().toISOString(),
-        pagesEnumerated: pageRequests,
-        remoteTotal: null,
-        remoteTotalSource: 'unknown',
-        batchesTotal: http.stats().requests,
-        batchesFailed: 0,
-        transportFailureRate: transportFailureRate(http),
-        exitIpStats: {},
-        parseFingerprint: {},
-        stats: {
-          mode: 'forum_incremental',
-          categoryPagesFetched: pageRequests,
-          http: http.stats(),
-          ...budget.summary(),
-        },
-      }).catch(() => undefined);
-      emitSummary({
-        ok: true,
-        status: 'partial',
-        runId,
-        categoryPagesFetched: pageRequests,
-        ...budget.summary(),
-      });
-      process.exitCode = 0;
-      return;
-    }
     await finishIngestRun(pool, runId, {
       status: 'failed',
       finishedAt: new Date().toISOString(),

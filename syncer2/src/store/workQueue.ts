@@ -40,6 +40,14 @@ export const WORK_QUEUE_LIMIT_MAX = 50;
 export const ADULT_STABLE_EGRESS_HOLD = 'adult-stable-egress-hold';
 export const CONSECUTIVE_PAGE_FAILURE_LIMIT = 5;
 
+/**
+ * work-queue 不再叠加进程内固定 pace。每个真实 attempt 的唯一权威是
+ * PostgresAdaptiveEgressGate：它同时看全站 pressure 档位与滚动小时总量。
+ *
+ * 保留这个显式 0 而不是魔法省略，为了让回归能直接断言「没有第二层独立节流」。
+ */
+export const WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS = 0;
+
 /*
  * 单轮时间预算，必须显著小于 systemd 的 TimeoutStartSec=10min。
  * 取 6 分钟：恰好满足统一的「预算 <= 10 分钟硬超时的 60%」，留 4 分钟给最坏收尾。

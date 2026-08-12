@@ -22,63 +22,10 @@ export interface EgressCapacityCheck extends EgressCapacityPlan {
 
 export const WIKIDOT_EGRESS_CAPACITY_HEADROOM_RATIO = 0.15;
 
-export type WikidotEgressChannelGroup =
-  | 'l1'
-  | 'forum'
-  | 'work-queue'
-  | 'image'
-  | 'background';
-
-export interface WikidotEgressChannelQuota {
-  group: WikidotEgressChannelGroup;
-  requestsPerHour: number;
-  priority: number;
-}
-
-/**
- * 0061 的代码侧镜像。门加载库内行时逐项比对并 fail closed，避免迁移未落地时
- * 新代码静默退回无通道配额。L1 的 2,100/h 比 145*12=1,740/h 多 20.7% attempt 余量。
- */
-export const WIKIDOT_EGRESS_CHANNEL_QUOTAS: readonly WikidotEgressChannelQuota[] = Object.freeze([
-  { group: 'l1', requestsPerHour: 2_100, priority: 100 },
-  { group: 'forum', requestsPerHour: 900, priority: 60 },
-  { group: 'work-queue', requestsPerHour: 1_300, priority: 50 },
-  { group: 'image', requestsPerHour: 300, priority: 30 },
-  { group: 'background', requestsPerHour: 800, priority: 10 },
-]);
-
-export const WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL = WIKIDOT_EGRESS_CHANNEL_QUOTAS.reduce(
-  (sum, item) => sum + item.requestsPerHour,
-  0,
-);
-
-export function wikidotEgressChannelQuota(channel: string): WikidotEgressChannelQuota {
-  const group: WikidotEgressChannelGroup = channel === 'l1'
-    ? 'l1'
-    : channel === 'forum'
-      ? 'forum'
-      : channel === 'work-queue' || channel.startsWith('work-queue:')
-        ? 'work-queue'
-        : channel === 'image' || channel === 'image-sample'
-          ? 'image'
-          : 'background';
-  const quota = WIKIDOT_EGRESS_CHANNEL_QUOTAS.find((item) => item.group === group);
-  if (quota === undefined) throw new Error(`缺少 Wikidot 出口通道组 ${group}`);
-  return quota;
-}
-
-export function channelQuotaMinIntervalMs(quotaRequestsPerHour: number): number {
-  if (!Number.isSafeInteger(quotaRequestsPerHour) || quotaRequestsPerHour <= 0) {
-    throw new RangeError(`非法通道小时配额 ${quotaRequestsPerHour}`);
-  }
-  return Math.ceil(3_600_000 / quotaRequestsPerHour);
-}
-
 /**
  * 2026-08-12 的生产稳态计划。这里取“持续运行时的稳态”而非单轮理论硬上限：
- * L1/调度型链路按调度算术，work-queue 按 7 日活跃小时 p95 向上取整；forum 的
- * 700/h 稳态低于 900/h catch-up 配额，image 以门内 300/h 上限计，低流量链路按
- * 近期峰值或单轮上限。五组配额总和就是 5,400/h，不再由 CLI 本地 pace 暗中分配。
+ * L1/调度型链路按调度算术，work-queue 按 7 日活跃小时 p95 向上取整，forum/image
+ * 按各自 7.2s 本地 pace 上限，低流量链路按近期峰值或单轮上限。
  */
 export const WIKIDOT_EGRESS_CAPACITY_ROUTES: readonly EgressCapacityRoute[] = Object.freeze([
   {
@@ -93,13 +40,13 @@ export const WIKIDOT_EGRESS_CAPACITY_ROUTES: readonly EgressCapacityRoute[] = Ob
   },
   {
     id: 'forum',
-    steadyRequestsPerHour: 700,
-    basis: 'forum expected steady catch-up, bounded by the shared gate at 900 requests/hour',
+    steadyRequestsPerHour: 500,
+    basis: 'forum discovery/consumer shared channel, 7.2s local steady pace ceiling',
   },
   {
     id: 'image',
-    steadyRequestsPerHour: 300,
-    basis: 'Wikidot-site image route shared-gate ceiling',
+    steadyRequestsPerHour: 500,
+    basis: 'Wikidot-site image route, 7.2s local steady pace ceiling',
   },
   {
     id: 'sitemap:full',

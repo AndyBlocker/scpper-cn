@@ -21,8 +21,8 @@ type Clock = () => number;
  * 所有短进程 CLI 共用的 `--max-runtime-sec` 入口。
  *
  * systemd TimeoutStartSec 是最后一道 SIGTERM 硬闸；这里是更早的协作式软闸。
- * 调用方在任务/批次/事务边界调用 checkpoint()，并可把 assertRequestBoundary()
- * 注入 HttpClient：任务仍原子收尾，但重试/下一次真实出站不会越过软截止时间。
+ * 调用方只在任务/批次/事务边界调用 checkpoint()，让正在执行的原子工作完成，
+ * 随后结账并释放尚未开始的 claim。预算命中是正常收敛，不抛异常。
  */
 export function addRuntimeBudgetOption(
   command: Command,
@@ -54,22 +54,6 @@ export function parseRuntimeBudgetSec(
   return value;
 }
 
-export class RuntimeBudgetExceededError extends Error {
-  override readonly name = 'RuntimeBudgetExceededError';
-
-  constructor(readonly deadlineAtMs: number) {
-    super(`runtime budget reached before HTTP attempt (deadline=${deadlineAtMs})`);
-  }
-}
-
-export function isRuntimeBudgetExceededError(error: unknown): error is RuntimeBudgetExceededError {
-  return error instanceof RuntimeBudgetExceededError;
-}
-
-export function rethrowRuntimeBudgetExceeded(error: unknown): void {
-  if (isRuntimeBudgetExceededError(error)) throw error;
-}
-
 export class RuntimeBudget {
   readonly maxRuntimeSec: number;
   readonly startedAtMs: number;
@@ -92,11 +76,6 @@ export class RuntimeBudget {
   checkpoint(): boolean {
     if (!this.#stopped && this.#clock() >= this.deadlineAtMs) this.#stopped = true;
     return this.#stopped;
-  }
-
-  /** HttpClient 每次真实出站（含 retry/redirect）前调用；命中后由 CLI 走正常释放路径。 */
-  assertRequestBoundary(): void {
-    if (this.checkpoint()) throw new RuntimeBudgetExceededError(this.deadlineAtMs);
   }
 
   get stoppedByRuntimeBudget(): boolean {

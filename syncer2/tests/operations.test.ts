@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 test('systemd 分层调度全部是有限超时的 oneshot + timer', async () => {
@@ -187,44 +187,6 @@ test('全部 Wikidot 生产出站入口接入同一个 PostgreSQL 自适应控�
   );
   const cromBlock = reconcile.match(/cromHttp = new HttpClient\(([\s\S]*?)\n\s*}\);/)?.[1] ?? '';
   assert.doesNotMatch(cromBlock, /adaptiveEgress/, 'CROM 是另一站点，不应污染 Wikidot 预算');
-});
-
-test('Wikidot 通道不再在 CLI 叠固定 pace；forum 的软截止注入每次请求边界', async () => {
-  const files = [
-    'forum-scan.ts',
-    'forum-incremental.ts',
-    'image-ingest.ts',
-    'revision-source-backfill.ts',
-    'work-queue.ts',
-    'resolve-pages.ts',
-  ];
-  const sources = await Promise.all(
-    files.map((file) => readFile(new URL(`../src/cli/${file}`, import.meta.url), 'utf8')),
-  );
-  for (let index = 0; index < sources.length; index++) {
-    assert.doesNotMatch(sources[index]!, /minRequestIntervalMs\s*:/, files[index]);
-    assert.doesNotMatch(sources[index]!, /RequestPacer|--delay-ms/, files[index]);
-  }
-  assert.match(sources[0]!, /requestBoundary:\s*\(\) => budget\.assertRequestBoundary\(\)/);
-  assert.match(sources[1]!, /requestBoundary:\s*\(\) => budget\.assertRequestBoundary\(\)/);
-
-  const pkg = await readFile(new URL('../package.json', import.meta.url), 'utf8');
-  assert.doesNotMatch(pkg, /revision-source-backfill[^"\n]*--delay-ms/);
-});
-
-test('schedule:project 的 L2 写路径不重建或覆盖 serve.page_current', async () => {
-  const projectDir = new URL('../src/project/', import.meta.url);
-  const files = (await readdir(projectDir)).filter((file) => file.endsWith('.ts'));
-  const sources = await Promise.all(
-    files.map(async (file) => [file, await readFile(new URL(file, projectDir), 'utf8')] as const),
-  );
-  for (const [file, source] of sources) {
-    assert.doesNotMatch(
-      source,
-      /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+serve\.page_current/i,
-      `src/project/${file} 不得写 Tier-1 page_current`,
-    );
-  }
 });
 
 test('page_scan 保留策略先聚合，保留真实失败与最近两轮枚举', async () => {

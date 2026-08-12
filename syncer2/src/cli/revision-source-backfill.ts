@@ -84,6 +84,7 @@ interface CliOptions {
   pilot: boolean;
   limit: number;
   seedLimit: number;
+  delayMs: number;
   maxRuntimeSec: number;
   minimumFreeGb: number;
   skipTzCheck: boolean;
@@ -121,6 +122,18 @@ interface Counters {
   loneSurrogatesSanitized: number;
 }
 
+class RequestPacer {
+  #lastStarted = 0;
+
+  constructor(private readonly minimumGapMs: number) {}
+
+  async wait(): Promise<void> {
+    const wait = this.#lastStarted + this.minimumGapMs - Date.now();
+    if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
+    this.#lastStarted = Date.now();
+  }
+}
+
 function bytesEqual(a: string, b: string): boolean {
   return Buffer.from(a, 'utf8').equals(Buffer.from(b, 'utf8'));
 }
@@ -142,7 +155,9 @@ async function fetchFullSource(
   http: HttpClient,
   baseUrl: string,
   row: RevisionSourceCandidate,
+  pacer: RequestPacer,
 ): Promise<RevisionSourceSnapshot> {
+  await pacer.wait();
   const result = await scanRevisionSourcesOnDemand(
     http,
     baseUrl,
@@ -169,7 +184,9 @@ async function fetchCurrentSource(
   http: HttpClient,
   baseUrl: string,
   row: RevisionSourceCandidate,
+  pacer: RequestPacer,
 ): Promise<SourceSnapshot> {
+  await pacer.wait();
   const result = await scanSources(
     http,
     baseUrl,
@@ -240,6 +257,7 @@ async function runPilot(args: {
   baseUrl: string;
   runId: number | null;
   observedAt: string;
+  pacer: RequestPacer;
   evidence: Map<number, PageEvidence>;
   counters: Counters;
 }): Promise<void> {
@@ -280,6 +298,7 @@ async function runPilot(args: {
           args.http,
           args.baseUrl,
           row,
+          args.pacer,
         );
         const stored = storedValue(row, snapshot, args.observedAt);
         const applied = await applyStoredRevisionSource(args.pool, stored);
@@ -304,6 +323,7 @@ async function runPilot(args: {
           args.http,
           args.baseUrl,
           row,
+          args.pacer,
         );
         const preparedCurrent = prepareRevisionSourceText(
           current.source,
@@ -426,6 +446,7 @@ function parseArgs(): CliOptions {
     .option('--pilot', '执行 1,000 条抓取/落库/回读门禁；失败绝不开放长跑')
     .option('--limit <n>', '长跑本轮最多处理的修订数', Number, 100)
     .option('--seed-limit <n>', '本轮最多补入的 job 元数据数', Number, 5_000)
+    .option('--delay-ms <n>', '逻辑 HTTP 请求最小间隔；250ms=最多4 req/s', Number, 250)
     .option('--minimum-free-gb <n>', '根文件系统余量低于此值立即停手', Number, 100)
     .option('--skip-tz-check', '仅本地诊断：跳过数据库时区回环')
     .option('--amc-probe <policy>', 'require | warn | skip')
@@ -441,6 +462,7 @@ function parseArgs(): CliOptions {
   for (const [name, value, min, max] of [
     ['limit', raw.limit, 1, 20_000],
     ['seed-limit', raw.seedLimit, 1, 500_000],
+    ['delay-ms', raw.delayMs, 250, 60_000],
     ['minimum-free-gb', raw.minimumFreeGb, 100, 10_000],
   ] as const) {
     if (!Number.isSafeInteger(value) || value < min || value > max) {
@@ -495,6 +517,7 @@ async function main(): Promise<void> {
       hostFilter: new URL(config.siteBaseUrl).host,
     },
   });
+  const pacer = new RequestPacer(opts.delayMs);
   const evidence = new Map<number, PageEvidence>();
   const counters: Counters = {
     selected: 0,
@@ -608,6 +631,7 @@ async function main(): Promise<void> {
         baseUrl: config.siteBaseUrl,
         runId,
         observedAt,
+        pacer,
         evidence,
         counters,
       });
@@ -653,6 +677,7 @@ async function main(): Promise<void> {
             http,
             config.siteBaseUrl,
             row,
+            pacer,
           );
           const stored = storedValue(row, snapshot, observedAt);
           const applied = await applyStoredRevisionSource(pool, stored);
@@ -741,6 +766,7 @@ async function main(): Promise<void> {
       population_type: REVISION_SOURCE_POPULATION,
       pilot: opts.pilot,
       version: REVISION_SOURCE_VERSION,
+      delayMs: opts.delayMs,
       ...counters,
       elapsedSec,
       revisionsPerSecond:
