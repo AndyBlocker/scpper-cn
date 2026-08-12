@@ -189,6 +189,14 @@ test('全部 Wikidot 生产出站入口接入同一个 PostgreSQL 自适应控�
   assert.doesNotMatch(cromBlock, /adaptiveEgress/, 'CROM 是另一站点，不应污染 Wikidot 预算');
 });
 
+test('forum/image 不再叠加 7200ms 固定间隔，小时配额只由共享令牌桶执行', async () => {
+  for (const file of ['forum-scan.ts', 'forum-incremental.ts', 'image-ingest.ts']) {
+    const source = await readFile(new URL(`../src/cli/${file}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /minRequestIntervalMs\s*:/, file);
+    assert.doesNotMatch(source, /7_200|7200/, file);
+  }
+});
+
 test('page_scan 保留策略先聚合，保留真实失败与最近两轮枚举', async () => {
   const migration = await readFile(
     new URL('../migrations/0017_page_scan_retention.sql', import.meta.url),

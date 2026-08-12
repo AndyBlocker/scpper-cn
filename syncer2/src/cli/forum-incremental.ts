@@ -66,7 +66,6 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: 2,
-    minRequestIntervalMs: 7_200,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'forum'),
   });

@@ -125,8 +125,6 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
-    // 当前实测约 2.26 attempts/thread；本地上限约 500 attempts/h，剩余空间留给 L1。
-    minRequestIntervalMs: 7_200,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'forum'),
     egress: {

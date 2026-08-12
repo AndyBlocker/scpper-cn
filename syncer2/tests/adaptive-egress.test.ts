@@ -7,9 +7,12 @@ import {
   applyConnectionPressureBackoff,
   evaluateConnectionPressure,
   evaluateFailureWindow,
+  evaluateTokenBucketBudget,
   evaluateL1FreshnessSlo,
   evaluateProportionalBudget,
   evaluateRecoveryEvidence,
+  comparePermitFifoOrder,
+  fifoPermitWaitUpperBoundMs,
   isAdaptivePressureFailure,
   type AdaptiveAttemptOutcome,
   type AdaptiveEgressGate,
@@ -23,6 +26,10 @@ import {
 import {
   assertEgressBudgetCapacity,
   checkEgressBudgetCapacity,
+  consumeTokenBucket,
+  WIKIDOT_EGRESS_CHANNEL_QUOTAS,
+  WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL,
+  wikidotEgressChannelQuota,
 } from '../src/http/egressCapacity.js';
 import { evaluateEgressAccountingReconciliation } from '../src/observability/egressAccounting.js';
 import { HttpClient } from '../src/http/client.js';
@@ -68,6 +75,88 @@ test('生产 pressure 合同固定为 5%/10%/3%，容量预算由链路计划推
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakToBackoff, 5);
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakWindowMs, 120_000);
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionBackoffMinIntervalMs, 300_000);
+});
+
+test('令牌桶允许 L1 同时突发 145 attempts，不附加逐请求间隔', () => {
+  const quota = wikidotEgressChannelQuota('l1');
+  assert.deepEqual(quota, {
+    group: 'l1', requestsPerHour: 2_100, bucketCapacity: 175, priority: 100,
+  });
+  let state = { availableTokens: quota.bucketCapacity, refilledAtMs: T0 };
+  for (let attempt = 1; attempt <= 145; attempt++) {
+    const decision = consumeTokenBucket(state, quota, T0);
+    assert.equal(decision.granted, true, `第 ${attempt} 个突发不应等待`);
+    assert.equal(decision.waitMs, 0);
+    state = decision;
+  }
+  assert.equal(state.availableTokens, 30, '145 基础请求后仍留 30 个 retry token');
+  assert.equal(WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL, 5_400);
+  assert.equal(
+    WIKIDOT_EGRESS_CHANNEL_QUOTAS.reduce((sum, item) => sum + item.bucketCapacity, 0),
+    784,
+  );
+});
+
+test('桶耗尽后等待补充而非拒绝；forum 严格退化为 900/h（每 4 秒一个）', () => {
+  const quota = wikidotEgressChannelQuota('forum');
+  const empty = consumeTokenBucket(
+    { availableTokens: 0, refilledAtMs: T0 },
+    quota,
+    T0,
+  );
+  assert.equal(empty.granted, false);
+  assert.equal(empty.waitMs, 4_000);
+  const refilled = consumeTokenBucket(empty, quota, T0 + empty.waitMs);
+  assert.equal(refilled.granted, true);
+  assert.ok(refilled.availableTokens < 1e-9);
+});
+
+test('高优先通道后到不能越过低优先票据；低优先等待上界不随抢占次数增长', () => {
+  const low = { tokenGrantedAtMs: T0, ticketId: 10 };
+  const laterHigh = Array.from({ length: 1_000 }, (_, index) => ({
+    tokenGrantedAtMs: T0 + 1 + index,
+    ticketId: 11 + index,
+  }));
+  const ordered = [low, ...laterHigh].sort(comparePermitFifoOrder);
+  assert.equal(ordered[0], low);
+  const beforeHighArrivals = fifoPermitWaitUpperBoundMs(0, 333);
+  const afterHighArrivals = fifoPermitWaitUpperBoundMs(0, 333);
+  assert.equal(afterHighArrivals, beforeHighArrivals);
+  assert.equal(afterHighArrivals, 10_533, '含一个 10s 崩溃 lease 的保守上界');
+  assert.equal(
+    fifoPermitWaitUpperBoundMs(2, 333),
+    31_599,
+    '三个可能在队首崩溃的前序各计一个 lease',
+  );
+});
+
+test('forum/其它通道满配额时 L1 仍满足五分钟 SLO 与 140 秒验收量级', () => {
+  const attempts = 145;
+  const globalIntervalMs = ADAPTIVE_EGRESS_POLICY.tiers[0]!.minIntervalMs;
+  const globalPerHour = 3_600_000 / globalIntervalMs;
+  const nonL1PerHour = WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL
+    - wikidotEgressChannelQuota('l1').requestsPerHour;
+  const l1AvailablePerHour = globalPerHour - nonL1PerHour;
+  const contendedGateSpanMs = (attempts - 1) * 3_600_000 / l1AvailablePerHour;
+  const baselineGateSpanMs = (attempts - 1) * globalIntervalMs;
+  const observedNonGateMs = 94_000 - baselineGateSpanMs;
+  const predictedRoundMs = observedNonGateMs + contendedGateSpanMs;
+  assert.ok(contendedGateSpanMs < 70_000);
+  assert.ok(predictedRoundMs < 140_000, `预测整轮 ${predictedRoundMs}ms 应低于 140s`);
+  assert.ok(predictedRoundMs < 5 * 60_000);
+});
+
+test('令牌桶接管后滚动总账只观测，旧 667ms budget pace 会立即恢复', () => {
+  const recovered = evaluateTokenBucketBudget({
+    level: 1,
+    reason: 'old_rolling_budget_pace',
+    changedAtMs: T0,
+    minRequestIntervalMs: 667,
+    throttleRatio: 0.9,
+  }, T0 + 1_000);
+  assert.equal(recovered.state.level, 0);
+  assert.equal(recovered.state.minRequestIntervalMs, 333);
+  assert.equal(recovered.transition?.kind, 'budget_recovery');
 });
 
 function connectionFailures(

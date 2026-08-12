@@ -16,17 +16,26 @@
  *   * 无 HTTP 响应的 DNS/代理/connect/TLS/timeout/reset 仍是压力失败；连续 5 个
  *     发生在 2 分钟内即可在未满 100-request 时逐级退让，但两次连接降档至少隔 5 分钟，
  *     避免同一瞬时抖动被多个短进程放大后直接打到 cooldown；
- *   * 滚动预算是我方容量管理，不再改变 pressure 档位：越界时把共享 pace 设为
- *     budget/window，比例因子恰为 budget/rolling；rolling 回落即解除，无固定冷却；
+ *   * 0062 起小时预算由五个连续补充令牌桶执行；合法 burst 不再被滚动总账重新翻译
+ *     成固定间隔。rolling_hour_requests 只保留观测，pressure 档仍控制全站礼貌 pace；
  *   * 当前 5,400/h = 已启用链路稳态 4,657/h +15% 余量后向上取整；容量计划有
  *     独立检查，新增链路必须先登记预算；
- *   * pressure 档位与预算 pace 都是全站共享；通道只分账。
+ *   * 通道 token 先按组内 ticket FIFO 获取，再按 token_granted_at 进入全站 FIFO；
+ *     新到高优先请求不能越过已经等待的低优先请求。
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import { createPool, query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { createLogger, type Logger } from '../util/log.js';
-import { WIKIDOT_EGRESS_REQUIRED_BUDGET_REQUESTS_PER_HOUR } from './egressCapacity.js';
+import {
+  consumeTokenBucket,
+  WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL,
+  WIKIDOT_EGRESS_REQUIRED_BUDGET_REQUESTS_PER_HOUR,
+  wikidotEgressChannelQuota,
+  type WikidotEgressChannelGroup,
+  type WikidotEgressChannelQuota,
+} from './egressCapacity.js';
 
 export type AdaptiveEgressLevel = 0 | 1 | 2 | 3;
 
@@ -596,6 +605,40 @@ export function evaluateProportionalBudget(
   };
 }
 
+/**
+ * 0062 的小时总量权威是五个 refill 总和恰为 5,400/h 的令牌桶。滚动总账可能合法地
+ * 包含至多一个总桶容量的 burst，不能再据此开启 667ms 固定 pace；这里只把旧状态
+ * 收敛回 normal，rolling_hour_requests 继续作为观测值落库。
+ */
+export function evaluateTokenBucketBudget(
+  input: BudgetControlState,
+  atMs: number,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): BudgetDecision {
+  if (!Number.isFinite(atMs)) throw new RangeError(`非法 token bucket budget at=${atMs}`);
+  const minRequestIntervalMs = tier(policy, 0).minIntervalMs;
+  const state: BudgetControlState = {
+    level: 0,
+    reason: input.level === 0 ? input.reason : 'channel_token_buckets_authoritative',
+    changedAtMs: input.level === 0 ? input.changedAtMs : atMs,
+    minRequestIntervalMs,
+    throttleRatio: 1,
+  };
+  return {
+    state,
+    transition: input.level === 0
+      ? null
+      : {
+          kind: 'budget_recovery',
+          fromLevel: 1,
+          toLevel: 0,
+          reason: state.reason,
+          failureRate: null,
+          rollingHourRequests: null,
+        },
+  };
+}
+
 /** 站外图片 host gate 的既有独立 tiered 预算合同；Wikidot 主 gate 不再调用它。 */
 export function evaluateRollingBudget(
   input: FailureWindowState,
@@ -776,6 +819,46 @@ export interface AdaptiveEgressPermit {
   scopeKey?: string;
 }
 
+export interface PermitFifoOrderKey {
+  tokenGrantedAtMs: number;
+  ticketId: number;
+}
+
+/** 代码侧镜像数据库 ORDER BY token_granted_at, ticket_id；priority 不参与插队。 */
+export function comparePermitFifoOrder(a: PermitFifoOrderKey, b: PermitFifoOrderKey): number {
+  if (!Number.isFinite(a.tokenGrantedAtMs) || !Number.isFinite(b.tokenGrantedAtMs)) {
+    throw new RangeError('FIFO tokenGrantedAtMs 必须有限');
+  }
+  if (!Number.isSafeInteger(a.ticketId) || !Number.isSafeInteger(b.ticketId)) {
+    throw new RangeError('FIFO ticketId 必须是安全整数');
+  }
+  return a.tokenGrantedAtMs - b.tokenGrantedAtMs || a.ticketId - b.ticketId;
+}
+
+/**
+ * token 已就绪后的保守等待上界：把每个既有前序都按“恰在轮到时崩溃并占满
+ * 一个 lease”计算，再加一个全站间隔和一次 poll 抖动。后到票据不计入
+ * readyAhead，因而不能延长此上界。
+ */
+export function fifoPermitWaitUpperBoundMs(
+  readyAhead: number,
+  permitIntervalMs: number,
+  pollMs = WAITER_POLL_MS,
+  staleLeaseMs = WAITER_LEASE_MS,
+): number {
+  for (const [label, value] of [
+    ['readyAhead', readyAhead],
+    ['permitIntervalMs', permitIntervalMs],
+    ['pollMs', pollMs],
+    ['staleLeaseMs', staleLeaseMs],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError(`${label} 必须是非负安全整数，收到 ${value}`);
+    }
+  }
+  return (readyAhead + 1) * (staleLeaseMs + permitIntervalMs + pollMs);
+}
+
 export interface AdaptiveAttemptOutcome {
   /** 对站点容量反馈而言是否健康；预期 3xx/4xx（429 除外）不冒充限流失败。 */
   ok: boolean;
@@ -798,8 +881,18 @@ export function isAdaptivePressureFailure(status: number | null): boolean {
 
 export interface AdaptiveEgressRuntimeStats {
   channel: string;
+  channelPolicy?: {
+    group: WikidotEgressChannelGroup;
+    quotaRequestsPerHour: number;
+    bucketCapacity: number;
+    priority: number;
+  };
   permits: number;
   totalDelayMs: number;
+  tokenDelayMs?: number;
+  fifoDelayMs?: number;
+  maxWaitMs?: number;
+  maxQueueDepth?: number;
   transitionsObserved: number;
   state: AdaptiveEgressSnapshot | null;
 }
@@ -863,17 +956,41 @@ interface ControlRow extends QueryResultRow {
   updated_at: string;
 }
 
+interface ChannelControlRow extends QueryResultRow {
+  site_key: string;
+  channel_group: WikidotEgressChannelGroup;
+  quota_requests_per_hour: number;
+  bucket_capacity: number;
+  available_tokens: string;
+  tokens_refilled_at: string;
+  priority: number;
+}
+
+interface WaiterRow extends QueryResultRow {
+  ticket_id: string;
+  waiter_id: string;
+  token_granted_at: string | null;
+}
+
 const SITE_KEY = 'wikidot';
 const CONTROL_LOCK_ID = 2_026_080_5;
+const WAITER_LEASE_MS = 10_000;
+const WAITER_POLL_MS = 200;
+const WAITER_MAX_SLEEP_MS = 3_000;
 
 export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
   readonly #pool: Pool;
   readonly #channel: string;
   readonly #log: Logger;
   readonly #policy: AdaptiveEgressPolicy;
+  readonly #channelPolicy: WikidotEgressChannelQuota;
   #latest: AdaptiveEgressSnapshot | null = null;
   #permits = 0;
   #totalDelayMs = 0;
+  #tokenDelayMs = 0;
+  #fifoDelayMs = 0;
+  #maxWaitMs = 0;
+  #maxQueueDepth = 0;
   #transitionsObserved = 0;
 
   constructor(
@@ -889,97 +1006,271 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
     this.#channel = channel;
     this.#log = opts.logger ?? createLogger(`adaptive-egress:${channel}`);
     this.#policy = opts.policy ?? ADAPTIVE_EGRESS_POLICY;
+    if (WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL !== this.#policy.rollingBudgetRequests) {
+      throw new Error(
+        `出口通道补充总量 ${WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL}/h `
+        + `不等于全站预算 ${this.#policy.rollingBudgetRequests}/h`,
+      );
+    }
+    this.#channelPolicy = wikidotEgressChannelQuota(channel);
   }
 
   async beforeAttempt(): Promise<AdaptiveEgressPermit> {
+    const waiterId = randomUUID();
+    const startedAtMs = Date.now();
     try {
-      const reservation = await withTransaction(this.#pool, 'adaptive-egress:permit', async (db) => {
-        await lockControl(db);
-        const clock = await databaseClock(db);
-        const bucketStart = new Date(Math.floor(clock.nowMs / 60_000) * 60_000).toISOString();
+      for (;;) {
+        const reservation = await withTransaction(
+          this.#pool,
+          'adaptive-egress:permit',
+          async (db) => {
+            await lockControl(db);
+            const clock = await databaseClock(db);
+            const leaseExpiresAt = toPgTimestamptz(clock.nowMs + WAITER_LEASE_MS);
 
-        await query(
-          db,
-          'adaptive-egress:bucket-request',
-          `INSERT INTO meta.egress_request_bucket(
-             site_key, bucket_start, channel, requests, failures,
-             connection_failures, updated_at
-           ) VALUES ($1, $2::timestamptz, $3, 1, 0, 0, clock_timestamp())
-           ON CONFLICT (site_key, bucket_start, channel) DO UPDATE
-             SET requests = meta.egress_request_bucket.requests + 1,
-                 updated_at = clock_timestamp()`,
-          [SITE_KEY, bucketStart, this.#channel],
+            await query(
+              db,
+              'adaptive-egress:prune-waiters',
+              `DELETE FROM meta.egress_permit_waiter
+                WHERE site_key = $1 AND lease_expires_at <= clock_timestamp()`,
+              [SITE_KEY],
+            );
+            const waiterResult = await query<WaiterRow>(
+              db,
+              'adaptive-egress:upsert-waiter',
+              `INSERT INTO meta.egress_permit_waiter(
+                 waiter_id, site_key, channel, channel_group, lease_expires_at
+               ) VALUES ($1::uuid, $2, $3, $4, $5::timestamptz)
+               ON CONFLICT (waiter_id) DO UPDATE
+                 SET lease_expires_at = EXCLUDED.lease_expires_at
+               RETURNING ticket_id::text, waiter_id::text, token_granted_at::text`,
+              [
+                waiterId,
+                SITE_KEY,
+                this.#channel,
+                this.#channelPolicy.group,
+                leaseExpiresAt,
+              ],
+            );
+            let waiter = waiterResult.rows[0];
+            if (waiter === undefined) throw new Error('出口 FIFO waiter UPSERT 未返回行');
+
+            const depthResult = await query<{ depth: number }>(
+              db,
+              'adaptive-egress:waiter-depth',
+              `SELECT count(*)::int AS depth
+                 FROM meta.egress_permit_waiter WHERE site_key = $1`,
+              [SITE_KEY],
+            );
+            const queueDepth = depthResult.rows[0]?.depth ?? 1;
+
+            if (waiter.token_granted_at === null) {
+              const tokenHead = await query<WaiterRow>(
+                db,
+                'adaptive-egress:token-head',
+                `SELECT ticket_id::text, waiter_id::text, token_granted_at::text
+                   FROM meta.egress_permit_waiter
+                  WHERE site_key = $1 AND channel_group = $2
+                    AND token_granted_at IS NULL
+                  ORDER BY ticket_id
+                  LIMIT 1`,
+                [SITE_KEY, this.#channelPolicy.group],
+              );
+              if (tokenHead.rows[0]?.waiter_id !== waiterId) {
+                return {
+                  kind: 'wait' as const,
+                  waitMs: WAITER_POLL_MS,
+                  waitStage: 'token' as const,
+                  queueDepth,
+                };
+              }
+
+              const channel = await loadChannelControl(db, this.#channelPolicy);
+              const token = consumeTokenBucket(
+                {
+                  availableTokens: Number(channel.available_tokens),
+                  refilledAtMs: Date.parse(channel.tokens_refilled_at),
+                },
+                this.#channelPolicy,
+                clock.nowMs,
+              );
+              await query(
+                db,
+                'adaptive-egress:update-token-bucket',
+                `UPDATE meta.egress_channel_control
+                    SET available_tokens = $3::numeric,
+                        tokens_refilled_at = $4::timestamptz,
+                        updated_at = clock_timestamp()
+                  WHERE site_key = $1 AND channel_group = $2`,
+                [
+                  SITE_KEY,
+                  this.#channelPolicy.group,
+                  token.availableTokens.toFixed(9),
+                  toPgTimestamptz(token.refilledAtMs),
+                ],
+              );
+              if (!token.granted) {
+                return {
+                  kind: 'wait' as const,
+                  waitMs: Math.min(token.waitMs, WAITER_MAX_SLEEP_MS),
+                  waitStage: 'token' as const,
+                  queueDepth,
+                };
+              }
+              const granted = await query<WaiterRow>(
+                db,
+                'adaptive-egress:grant-token',
+                `UPDATE meta.egress_permit_waiter
+                    SET token_granted_at = clock_timestamp(),
+                        lease_expires_at = $2::timestamptz
+                  WHERE waiter_id = $1::uuid
+                  RETURNING ticket_id::text, waiter_id::text, token_granted_at::text`,
+                [waiterId, leaseExpiresAt],
+              );
+              waiter = granted.rows[0];
+              if (waiter === undefined || waiter.token_granted_at === null) {
+                throw new Error('出口 FIFO token grant 未返回行');
+              }
+            }
+
+            const permitHead = await query<WaiterRow>(
+              db,
+              'adaptive-egress:permit-head',
+              `SELECT ticket_id::text, waiter_id::text, token_granted_at::text
+                 FROM meta.egress_permit_waiter
+                WHERE site_key = $1 AND token_granted_at IS NOT NULL
+                ORDER BY token_granted_at, ticket_id
+                LIMIT 1`,
+              [SITE_KEY],
+            );
+            if (permitHead.rows[0]?.waiter_id !== waiterId) {
+              return {
+                kind: 'wait' as const,
+                waitMs: WAITER_POLL_MS,
+                waitStage: 'fifo' as const,
+                queueDepth,
+              };
+            }
+
+            let row = await loadControl(db);
+            const pressureState = rowToWindowState(row);
+            const budget = evaluateTokenBucketBudget(
+              rowToBudgetState(row),
+              clock.nowMs,
+              this.#policy,
+            );
+            const minRequestIntervalMs = Math.max(
+              tier(this.#policy, pressureState.level).minIntervalMs,
+              budget.state.minRequestIntervalMs,
+            );
+            const nextPermitMs = Date.parse(row.next_permit_at);
+            if (!Number.isFinite(nextPermitMs)) {
+              throw new Error(`全站 next_permit_at 非法: ${row.next_permit_at}`);
+            }
+            if (nextPermitMs > clock.nowMs) {
+              return {
+                kind: 'wait' as const,
+                waitMs: Math.min(
+                  Math.max(1, Math.ceil(nextPermitMs - clock.nowMs)),
+                  WAITER_MAX_SLEEP_MS,
+                ),
+                waitStage: 'fifo' as const,
+                queueDepth,
+              };
+            }
+
+            const bucketStart = new Date(
+              Math.floor(clock.nowMs / 60_000) * 60_000,
+            ).toISOString();
+            await query(
+              db,
+              'adaptive-egress:bucket-request',
+              `INSERT INTO meta.egress_request_bucket(
+                 site_key, bucket_start, channel, requests, failures,
+                 connection_failures, updated_at
+               ) VALUES ($1, $2::timestamptz, $3, 1, 0, 0, clock_timestamp())
+               ON CONFLICT (site_key, bucket_start, channel) DO UPDATE
+                 SET requests = meta.egress_request_bucket.requests + 1,
+                     updated_at = clock_timestamp()`,
+              [SITE_KEY, bucketStart, this.#channel],
+            );
+            const rolling = await rollingRequestCount(db, this.#policy.rollingBudgetMinutes);
+            if (budget.transition !== null) {
+              await insertAlert(db, budget.transition, rolling, this.#policy);
+            }
+            const shouldPrune = clock.nowMs - Date.parse(row.last_pruned_at) >= 60 * 60_000;
+            if (shouldPrune) {
+              await query(
+                db,
+                'adaptive-egress:prune-buckets',
+                `DELETE FROM meta.egress_request_bucket
+                  WHERE site_key = $1
+                    AND bucket_start < clock_timestamp() - interval '48 hours'`,
+                [SITE_KEY],
+              );
+            }
+            row = await updateControl(
+              db,
+              row,
+              pressureState,
+              budget.state,
+              {
+                rollingHourRequests: rolling,
+                nextPermitAt: toPgTimestamptz(clock.nowMs + minRequestIntervalMs),
+                lastPrunedAt: shouldPrune
+                  ? toPgTimestamptz(clock.nowMs)
+                  : row.last_pruned_at,
+              },
+              this.#policy,
+            );
+            await query(
+              db,
+              'adaptive-egress:consume-waiter',
+              `DELETE FROM meta.egress_permit_waiter WHERE waiter_id = $1::uuid`,
+              [waiterId],
+            );
+            return {
+              kind: 'permit' as const,
+              permit: {
+                bucketStart,
+                channel: this.#channel,
+                grantAt: toPgTimestamptz(clock.nowMs),
+              },
+              queueDepth,
+              snapshot: rowToSnapshot(row, this.#policy),
+              transition: budget.transition,
+            };
+          },
         );
 
-        let row = await loadControl(db);
-        const rolling = await rollingRequestCount(db, this.#policy.rollingBudgetMinutes);
-        const pressureState = rowToWindowState(row);
-        const budget = evaluateProportionalBudget(
-          rowToBudgetState(row),
-          rolling,
-          clock.nowMs,
-          this.#policy,
-        );
-        if (budget.transition !== null) {
-          await insertAlert(db, budget.transition, rolling, this.#policy);
+        this.#maxQueueDepth = Math.max(this.#maxQueueDepth, reservation.queueDepth);
+        if (reservation.kind === 'wait') {
+          this.#totalDelayMs += reservation.waitMs;
+          if (reservation.waitStage === 'token') this.#tokenDelayMs += reservation.waitMs;
+          else this.#fifoDelayMs += reservation.waitMs;
+          await sleep(reservation.waitMs);
+          continue;
         }
 
-        const minRequestIntervalMs = Math.max(
-          tier(this.#policy, pressureState.level).minIntervalMs,
-          budget.state.minRequestIntervalMs,
-        );
-        const nextPermitMs = Date.parse(row.next_permit_at);
-        const grantMs = Math.max(clock.nowMs, nextPermitMs);
-        const nextMs = grantMs + minRequestIntervalMs;
-        const shouldPrune = clock.nowMs - Date.parse(row.last_pruned_at) >= 60 * 60_000;
-        if (shouldPrune) {
-          await query(
-            db,
-            'adaptive-egress:prune-buckets',
-            `DELETE FROM meta.egress_request_bucket
-              WHERE site_key = $1
-                AND bucket_start < clock_timestamp() - interval '48 hours'`,
-            [SITE_KEY],
-          );
+        this.#latest = reservation.snapshot;
+        this.#permits++;
+        this.#maxWaitMs = Math.max(this.#maxWaitMs, Date.now() - startedAtMs);
+        if (reservation.transition !== null) {
+          this.#transitionsObserved++;
+          this.#log.warn('旧滚动预算 pace 已由通道令牌桶权威收敛（持久告警已落库）', {
+            transition: reservation.transition,
+            state: reservation.snapshot,
+          });
         }
-
-        row = await updateControl(
-          db,
-          row,
-          pressureState,
-          budget.state,
-          {
-            rollingHourRequests: rolling,
-            nextPermitAt: toPgTimestamptz(nextMs),
-            lastPrunedAt: shouldPrune ? toPgTimestamptz(clock.nowMs) : row.last_pruned_at,
-          },
-          this.#policy,
-        );
-        return {
-          permit: {
-            bucketStart,
-            channel: this.#channel,
-            grantAt: toPgTimestamptz(grantMs),
-          },
-          waitMs: Math.max(0, grantMs - clock.nowMs),
-          snapshot: rowToSnapshot(row, this.#policy),
-          transition: budget.transition,
-        };
-      });
-
-      this.#latest = reservation.snapshot;
-      this.#permits++;
-      this.#totalDelayMs += reservation.waitMs;
-      if (reservation.transition !== null) {
-        this.#transitionsObserved++;
-        this.#log.warn('滚动小时预算状态变化，已按比例调整共享 pace（持久告警已落库）', {
-          transition: reservation.transition,
-          state: reservation.snapshot,
-        });
+        return reservation.permit;
       }
-      if (reservation.waitMs > 0) await sleep(reservation.waitMs);
-      return reservation.permit;
     } catch (err) {
+      await query(
+        this.#pool,
+        'adaptive-egress:abandon-waiter',
+        `DELETE FROM meta.egress_permit_waiter WHERE waiter_id = $1::uuid`,
+        [waiterId],
+      ).catch(() => undefined);
       if (err instanceof AdaptiveEgressUnavailableError) throw err;
       throw new AdaptiveEgressUnavailableError('beforeAttempt', err);
     }
@@ -1153,8 +1444,18 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
   stats(): AdaptiveEgressRuntimeStats {
     return {
       channel: this.#channel,
+      channelPolicy: {
+        group: this.#channelPolicy.group,
+        quotaRequestsPerHour: this.#channelPolicy.requestsPerHour,
+        bucketCapacity: this.#channelPolicy.bucketCapacity,
+        priority: this.#channelPolicy.priority,
+      },
       permits: this.#permits,
       totalDelayMs: this.#totalDelayMs,
+      tokenDelayMs: this.#tokenDelayMs,
+      fifoDelayMs: this.#fifoDelayMs,
+      maxWaitMs: this.#maxWaitMs,
+      maxQueueDepth: this.#maxQueueDepth,
       transitionsObserved: this.#transitionsObserved,
       state: this.#latest,
     };
@@ -1545,6 +1846,52 @@ async function loadControl(db: PoolClient): Promise<ControlRow> {
   );
   const row = result.rows[0];
   if (!row) throw new Error(`meta.egress_control 缺少 ${SITE_KEY} 单例（0037 未迁移）`);
+  return row;
+}
+
+async function loadChannelControl(
+  db: PoolClient,
+  expected: WikidotEgressChannelQuota,
+): Promise<ChannelControlRow> {
+  const result = await query<ChannelControlRow>(
+    db,
+    'adaptive-egress:load-channel-control',
+    `SELECT site_key, channel_group, quota_requests_per_hour, bucket_capacity,
+            available_tokens::text, tokens_refilled_at::text, priority
+       FROM meta.egress_channel_control
+      WHERE site_key = $1 AND channel_group = $2
+      FOR UPDATE`,
+    [SITE_KEY, expected.group],
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new Error(`meta.egress_channel_control 缺少 ${expected.group}（0062 未迁移）`);
+  }
+  if (
+    row.quota_requests_per_hour !== expected.requestsPerHour
+    || row.bucket_capacity !== expected.bucketCapacity
+    || row.priority !== expected.priority
+  ) {
+    throw new Error(
+      `出口通道 ${expected.group} 配置漂移：库=${row.quota_requests_per_hour}/h,`
+      + `capacity=${row.bucket_capacity},priority=${row.priority}；`
+      + `代码=${expected.requestsPerHour}/h,capacity=${expected.bucketCapacity},`
+      + `priority=${expected.priority}`,
+    );
+  }
+  const availableTokens = Number(row.available_tokens);
+  const refilledAtMs = Date.parse(row.tokens_refilled_at);
+  if (
+    !Number.isFinite(availableTokens)
+    || availableTokens < 0
+    || availableTokens > row.bucket_capacity + 1e-6
+    || !Number.isFinite(refilledAtMs)
+  ) {
+    throw new Error(
+      `出口通道 ${expected.group} 令牌桶状态非法：tokens=${row.available_tokens},`
+      + `refilled_at=${row.tokens_refilled_at}`,
+    );
+  }
   return row;
 }
 

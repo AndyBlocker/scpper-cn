@@ -68,7 +68,6 @@ async function main(): Promise<void> {
     breaker503: config.breaker503,
     breakerReset: config.breakerReset,
     connections: 1,
-    minRequestIntervalMs: 7_200,
     logger: log.child('wikidot'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'image'),
   });
