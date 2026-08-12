@@ -25,6 +25,7 @@ export type ImageFailureClass =
   | 'http_permanent'
   | 'timeout'
   | 'network'
+  | 'host_unresolvable'
   | 'too_large'
   | 'invalid_content_type'
   | 'invalid_url'
@@ -543,6 +544,13 @@ function normalizedContentType(response: HttpResponse): string {
   return (response.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
 }
 
+/** DNS 无法解析 / 主机不可达：域名已消失，重试无意义。 */
+function isHostUnresolvable(error: { message?: string; cause?: unknown }): boolean {
+  const code = (error as { cause?: { code?: unknown } }).cause?.code;
+  const text = `${String(code ?? '')} ${error.message ?? ''}`;
+  return /ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED|getaddrinfo/i.test(text);
+}
+
 function normalizeFailure(error: unknown): ImageValidationError {
   if (error instanceof ImageValidationError) return error;
   if (error instanceof HttpStatusError) {
@@ -555,6 +563,21 @@ function normalizeFailure(error: unknown): ImageValidationError {
     );
   }
   if (error instanceof TransportError) {
+    /*
+     * 站外图床的「主机不存在」是确定性的，不该无限重试。
+     *
+     * 实测这一轮 network 25 / timeout 4，逐主机看每个只失败 1-2 次
+     * （acsurlexample.com 直连 HTTP 000 连 DNS 都解析不了——那是文章里的示例占位 URL；
+     * a3.att.hudong.com、article.fd.zol-img.com.cn 等都是多年前的第三方图床）。
+     * 不是有人在限流我们，是这些站点本身已经不存在。
+     *
+     * 同一个「连接失败」在主站与站外图床含义不同：wikidot 连不上通常是瞬时的，
+     * 而 acsurlexample.com 这种域名不会某天突然复活。
+     * 因此按 DNS 解析失败与否细分：解析不了 ⇒ 确定性；超时/重置 ⇒ 仍可重试。
+     */
+    if (isHostUnresolvable(error)) {
+      return new ImageValidationError(error.message, 'host_unresolvable', true);
+    }
     return new ImageValidationError(
       error.message,
       error.kind === 'timeout' ? 'timeout' : 'network',
