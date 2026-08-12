@@ -530,6 +530,29 @@ describe('§3 500：与 503 分开处理，正常重试到 maxAttempts', () => {
     }
   });
 
+  it('图片重定向与瞬时失败重试分账：跟随 302，500 仍只打一次', async () => {
+    const c = mk({ maxAttempts: 4 });
+    const imageOptions = {
+      maxAttempts: 4,
+      maxTransientAttempts: 1,
+      maxRedirections: 3,
+      redirectPolicy: 'any' as const,
+    };
+    server.reset();
+    try {
+      const res = await c.get(`${server.base}/302`, 'image:external', imageOptions);
+      assert.equal(res.status, 200);
+      assert.equal(server.hitsOf('/302'), 1);
+      assert.equal(server.hitsOf('/ok'), 1);
+      assert.equal(res.telemetry.attempts, 2);
+
+      await assert.rejects(c.get(`${server.base}/500`, 'image:external', imageOptions), HttpStatusError);
+      assert.equal(server.hitsOf('/500'), 1, '瞬时失败不得在同一 job 内放大');
+    } finally {
+      await c.close();
+    }
+  });
+
   it('回归：gzip 404 先解压再构造错误消息，压缩头的 NUL 不得泄漏', async () => {
     const c = mk({ maxAttempts: 1 });
     server.reset();

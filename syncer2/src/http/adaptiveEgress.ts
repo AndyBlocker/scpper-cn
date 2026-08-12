@@ -498,6 +498,8 @@ export interface AdaptiveEgressPermit {
   bucketStart: string;
   channel: string;
   grantAt: string;
+  /** 可选的精细分账键；站外图片用 exact hostname，Wikidot 单例不需要。 */
+  scopeKey?: string;
 }
 
 export interface AdaptiveAttemptOutcome {
@@ -529,7 +531,8 @@ export interface AdaptiveEgressRuntimeStats {
 }
 
 export interface AdaptiveEgressGate {
-  beforeAttempt(): Promise<AdaptiveEgressPermit>;
+  /** url 供按 origin/host 分账的 gate 使用；Wikidot 单例 gate 会忽略它。 */
+  beforeAttempt(url?: string): Promise<AdaptiveEgressPermit>;
   afterAttempt(permit: AdaptiveEgressPermit, outcome: AdaptiveAttemptOutcome): Promise<void>;
   stats(): AdaptiveEgressRuntimeStats;
   close(): Promise<void>;

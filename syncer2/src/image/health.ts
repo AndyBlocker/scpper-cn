@@ -8,6 +8,8 @@ export interface ImageRouteCounters {
   completed: number;
   retry: number;
   failed: number;
+  /** failed 中属确定性、重试不会成功的部分；不计入压力分子。 */
+  deterministic: number;
 }
 
 export interface ImagePipelineHealth {
@@ -17,7 +19,7 @@ export interface ImagePipelineHealth {
 }
 
 export function emptyImageRouteCounters(): ImageRouteCounters {
-  return { claimed: 0, completed: 0, retry: 0, failed: 0 };
+  return { claimed: 0, completed: 0, retry: 0, failed: 0, deterministic: 0 };
 }
 
 export function recordImageRouteResult(
@@ -27,6 +29,25 @@ export function recordImageRouteResult(
   const route = counters[result.egressClass];
   route.claimed++;
   route[result.status]++;
+  if (result.status === 'failed' && isDeterministicImageFailure(result.failureClass)) {
+    route.deterministic++;
+  }
+}
+
+/*
+ * 确定性图片失败：重试一万次也不会成功，因此不代表链路压力。
+ *
+ * 实测：降速与自适应退让生效后 http_transient 归零，剩下的主体变成
+ * http_permanent 50——手工验证 https://i.loli.net/2020/11/26/… 返回 HTTP 404，
+ * 是 2020 年的免费图床链接早已失效。SCP 页面引用外部图床失效是常态，
+ * 把它计入失败率会让链路永远判 failed，掩盖真正的限流信号。
+ *
+ * 与 EGRESS 那轮确立的原则一致，只是当时没覆盖到图片链路。
+ */
+export function isDeterministicImageFailure(failureClass: string | null | undefined): boolean {
+  return failureClass === 'http_permanent'
+    || failureClass === 'invalid_content_type'
+    || failureClass === 'blocked_host';
 }
 
 export function evaluateImagePipelineHealth(
@@ -40,6 +61,7 @@ export function evaluateImagePipelineHealth(
     completed: routes.wikidot_site.completed + routes.external.completed,
     retry: routes.wikidot_site.retry + routes.external.retry,
     failed: routes.wikidot_site.failed + routes.external.failed,
+    deterministic: routes.wikidot_site.deterministic + routes.external.deterministic,
   };
   /*
    * unified 不再用合并计数直接判——站外的高失败率会把 wikidot 侧一起拖垮。
@@ -84,6 +106,7 @@ function decide(
     partial: 0,
     // retry 是本轮真实失败；重新入队不能让它从成功率分母消失。
     failed: counters.retry + counters.failed,
+    deterministicFailures: counters.deterministic,
     breakerOpen,
     ...(failureRateThreshold === undefined ? {} : { failureRateThreshold }),
   });

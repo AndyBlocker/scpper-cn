@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { loadConfig } from '../config.js';
 import { HttpClient } from '../http/client.js';
 import { PostgresAdaptiveEgressGate } from '../http/adaptiveEgress.js';
+import { ExternalImageDownloadClient } from '../image/externalClient.js';
 import {
   claimNextImageJob,
   processImageJob,
@@ -66,17 +67,16 @@ async function main(): Promise<void> {
     logger: log.child('wikidot'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'image'),
   });
-  // wdfiles/其它图床独立 1 req/s；其失败只出现在 externalHttp，不进入 Wikidot gate/health。
-  const external = new HttpClient({
+  // exact hostname 各自 breaker + 站外专用 PG gate；global 仅控制站外总量，绝不写 Wikidot gate。
+  const external = new ExternalImageDownloadClient({
+    databaseUrl: config.databaseUrl,
     userAgent: config.userAgent,
     referer: config.referer,
     proxyUrl: config.proxyUrl,
     timeoutMs: config.httpTimeoutMs,
-    maxAttempts: 2,
     breaker503: config.breaker503,
     breakerReset: config.breakerReset,
-    connections: 1,
-    minRequestIntervalMs: cli.externalIntervalMs,
+    globalMinIntervalMs: cli.externalIntervalMs,
     logger: log.child('external'),
   });
   wikidot.assertHeaders();
@@ -89,6 +89,9 @@ async function main(): Promise<void> {
     wikidotSite: 0,
     external: 0,
     bytes: 0,
+    external429: 0,
+    external503: 0,
+    externalOther5xx: 0,
   };
   const routes = {
     wikidot_site: emptyImageRouteCounters(),
@@ -105,7 +108,12 @@ async function main(): Promise<void> {
       recordImageRouteResult(routes, result);
       counters[result.status]++;
       if (result.egressClass === 'wikidot_site') counters.wikidotSite++;
-      else counters.external++;
+      else {
+        counters.external++;
+        if (result.httpStatus === 429) counters.external429++;
+        else if (result.httpStatus === 503) counters.external503++;
+        else if (result.httpStatus !== null && result.httpStatus >= 500) counters.externalOther5xx++;
+      }
       counters.bytes += result.bytes;
     }
     const queue = await query<{ status: string; n: string }>(
@@ -118,6 +126,18 @@ async function main(): Promise<void> {
       wikidotSite: wikidot.breakerOpen,
       external: external.breakerOpen,
     });
+    // CLI 入口仍直接接统一判据，并且不传 failureRateThreshold：这把 Wikidot 主站的
+    // 0.25 默认阈值钉死。分链路 helper 若未来意外放宽主站，这个一致性断言会 fail closed。
+    const wikidotMainHealth = evaluateRunHealth({
+      claimed: routes.wikidot_site.claimed,
+      processed: routes.wikidot_site.completed + routes.wikidot_site.retry + routes.wikidot_site.failed,
+      partial: 0,
+      failed: routes.wikidot_site.retry + routes.wikidot_site.failed,
+      breakerOpen: wikidot.breakerOpen,
+    });
+    if (JSON.stringify(wikidotMainHealth) !== JSON.stringify(pipelineHealth.wikidotSite)) {
+      throw new Error('图片 Wikidot 分链路健康判据偏离统一默认阈值');
+    }
     /*
      * 退出码改用分账结果：此前用合并计数走统一 25% 阈值，
      * 而站外图床实测瞬时失败率就在 25.5% 上下，于是每轮都判 failed
@@ -132,6 +152,7 @@ async function main(): Promise<void> {
       status: health.status,
       health,
       pipelineHealth,
+      wikidotMainHealth,
       routeCounters: routes,
       durationMs: Date.now() - startedMs,
       runtimeBudgetReached: Date.now() >= deadlineMs,
@@ -183,7 +204,7 @@ function parseArgs(): {
     .option('--max-runtime-sec <n>', '单轮墙钟预算', Number, 420)
     .option('--max-bytes <n>', '单图解压后字节上限', Number, 20 * 1024 * 1024)
     .option('--max-attempts <n>', '瞬时失败最大尝试轮数', Number, 5)
-    .option('--external-interval-ms <n>', '外站相邻请求间隔', Number, 1_000)
+    .option('--external-interval-ms <n>', '站外 aggregate 相邻 attempt 间隔（安全下限 3000ms）', Number, 3_000)
     .option('--asset-root <path>', '内容寻址资产目录')
     .option('--skip-tz-check', '仅本地调试', false)
     .parse();
@@ -203,7 +224,7 @@ function parseArgs(): {
     maxRuntimeSec: Math.min(540, Math.max(30, Math.floor(raw.maxRuntimeSec))),
     maxBytes: Math.min(100 * 1024 * 1024, Math.max(1_024, Math.floor(raw.maxBytes))),
     maxAttempts: Math.min(10, Math.max(1, Math.floor(raw.maxAttempts))),
-    externalIntervalMs: Math.min(60_000, Math.max(250, Math.floor(raw.externalIntervalMs))),
+    externalIntervalMs: Math.min(60_000, Math.max(3_000, Math.floor(raw.externalIntervalMs))),
     assetRoot: path.resolve(configuredRoot),
     skipTzCheck: Boolean(raw.skipTzCheck),
   };

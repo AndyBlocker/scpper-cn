@@ -191,7 +191,10 @@ export interface HttpRequestOptions {
   headers?: Record<string, string>;
   body?: string;
   timeoutMs?: number;
+  /** 总出站 attempt 上限（含重定向的每一跳）。 */
   maxAttempts?: number;
+  /** 瞬时失败的最大尝试次数（含首次失败）；默认与 maxAttempts 相同。 */
+  maxTransientAttempts?: number;
   /** 默认 0；由 HttpClient 逐跳记 attempt，普通 Wikidot 采集仍严格拒绝 3xx。 */
   maxRedirections?: number;
   /** same-host 防止共享 Wikidot gate 跟到站外；无 gate 的图片外站 client 可显式 any。 */
@@ -590,10 +593,15 @@ export class HttpClient {
 
     const timeoutMs = opts.timeoutMs ?? this.#timeoutMs;
     const maxAttempts = Math.max(1, opts.maxAttempts ?? this.#maxAttempts);
+    const maxTransientAttempts = Math.max(
+      1,
+      Math.min(maxAttempts, opts.maxTransientAttempts ?? maxAttempts),
+    );
     const startedAt = performance.now();
     const retryReasons: string[] = [];
 
     let attempts = 0;
+    let transientFailures = 0;
     let lastError: unknown;
     let lastStatus: number | null = null;
     let lastWireBytes = 0;
@@ -608,7 +616,7 @@ export class HttpClient {
         }
         // 本地任务节流之后，再向跨进程控制器预留真实出站 attempt。控制库不可用时
         // fail closed：宁可本轮退出，也不能悄悄绕过用户要求的安全前提。
-        const adaptivePermit = await this.#adaptiveEgress?.beforeAttempt();
+        const adaptivePermit = await this.#adaptiveEgress?.beforeAttempt(requestUrl);
         attempts++;
         this.#stats.attempts++;
 
@@ -720,7 +728,8 @@ export class HttpClient {
         this.#handleDisposition(attemptOutcome, requestUrl, retryReasons, attempts);
 
         const retryable = attemptOutcome.kind === 'retry' || attemptOutcome.kind === 'breaker-reset';
-        if (retryable && attempts < maxAttempts) {
+        if (retryable) transientFailures++;
+        if (retryable && transientFailures < maxTransientAttempts && attempts < maxAttempts) {
           // 重置类在断路器未打开时仍允许重试 —— 实测基线传输失败率 1–3%，
           // 完全不重试会让整轮 sitemap 因为一次抖动就白跑；断路器负责拦住"连续"失败。
           await sleep(backoffMs(attempts));

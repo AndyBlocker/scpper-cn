@@ -92,7 +92,7 @@ test('论坛增量/消费与图片 worker 均有有限短任务调度', async ()
   assert.match(forumDiscovery, /^OnUnitInactiveSec=5min$/m);
   assert.match(forumConsume, /^OnUnitInactiveSec=1min$/m);
   assert.match(forumAudit, /^OnCalendar=.*05:23:00 Asia\/Shanghai$/m);
-  assert.match(imageTimer, /^OnUnitInactiveSec=1min$/m);
+  assert.match(imageTimer, /^OnUnitInactiveSec=5min$/m);
   assert.match(imageTimeout, /^TimeoutStartSec=10min$/m);
   assert.match(pkg.scripts['schedule:forum-discovery'] ?? '', /forum-incremental/);
   assert.match(pkg.scripts['schedule:forum-audit'] ?? '', /sitemap-scan.*threads/);

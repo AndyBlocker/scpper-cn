@@ -43,7 +43,7 @@ export interface ClaimedImageJob {
 export interface ImageDownloadClients {
   /** 必须由调用方配置 PostgresAdaptiveEgressGate；站内请求计入全站 Wikidot 健康度。 */
   wikidot: Pick<HttpClient, 'get'>;
-  /** 无 adaptive gate 的独立低速 client；其统计不得合入 Wikidot health。 */
+  /** 按主机 breaker + 独立站外 adaptive gate；其统计不得合入 Wikidot health。 */
   external: Pick<HttpClient, 'get'>;
 }
 
@@ -62,6 +62,8 @@ export interface ProcessImageResult {
   status: 'completed' | 'retry' | 'failed';
   egressClass: ImageEgressClass;
   failureClass: ImageFailureClass | null;
+  /** 最近一次 HTTP 响应；transport/circuit-open/成功为 null。 */
+  httpStatus: number | null;
   bytes: number;
   hashHex: string | null;
 }
@@ -71,6 +73,7 @@ class ImageValidationError extends Error {
     message: string,
     readonly failureClass: ImageFailureClass,
     readonly permanent: boolean,
+    readonly httpStatus: number | null = null,
   ) {
     super(message);
   }
@@ -135,6 +138,8 @@ export async function claimNextImageJob(
            JOIN serve.page_image image
              ON image.page_id = job.page_id
             AND image.normalized_url = job.normalized_url
+          LEFT JOIN meta.external_image_egress_control external_gate
+            ON external_gate.host = split_part(job.normalized_url, '/', 3)
           WHERE (
                   job.status = 'pending'
                   OR (job.status = 'failed' AND job.not_before IS NOT NULL)
@@ -145,7 +150,9 @@ export async function claimNextImageJob(
               OR job.locked_at < now() - ($2::bigint || ' milliseconds')::interval
             )
             AND image.asset_sha IS NULL
-          ORDER BY job.not_before NULLS FIRST, job.id
+          -- 已降档 host 的 next_permit 排后；未见过/其它 host 先走，避免坏主机头阻塞。
+          ORDER BY COALESCE(external_gate.next_permit_at, '-infinity'::timestamptz),
+                   job.not_before NULLS FIRST, job.id
           LIMIT 1
           FOR UPDATE OF job SKIP LOCKED
        )
@@ -220,6 +227,7 @@ export async function processImageJob(
         status: 'completed',
         egressClass,
         failureClass: null,
+        httpStatus: null,
         bytes: 0,
         hashHex: knownHash.toString('hex'),
       };
@@ -260,6 +268,7 @@ export async function processImageJob(
         status: 'completed',
         egressClass,
         failureClass: null,
+        httpStatus: null,
         bytes: 0,
         hashHex,
       };
@@ -279,7 +288,10 @@ export async function processImageJob(
     const client = egressClass === 'wikidot_site' ? clients.wikidot : clients.external;
     response = await client.get(job.displayUrl, `image:${egressClass}`, {
       headers: { accept: 'image/*' },
-      maxAttempts: 5,
+      // 站外失败必须跨轮走持久 not_before；禁止同一个 job 在几秒内连打 5 次。
+      // 重定向仍逐跳过 gate，和瞬时失败重试预算分开；429/503 本来就是零重试。
+      maxAttempts: egressClass === 'external' ? 4 : 2,
+      maxTransientAttempts: egressClass === 'external' ? 1 : 2,
       maxRedirections: 3,
       redirectPolicy: egressClass === 'wikidot_site' ? 'same-host' : 'any',
     });
@@ -332,6 +344,7 @@ export async function processImageJob(
     status: 'completed',
     egressClass,
     failureClass: null,
+    httpStatus: null,
     bytes: response.body.length,
     hashHex,
   };
@@ -346,10 +359,7 @@ async function failJob(
 ): Promise<ProcessImageResult> {
   const exhausted = job.attempts >= options.maxAttempts;
   const permanent = error.permanent || exhausted;
-  const backoffMs = Math.min(
-    options.retryMaxMs,
-    options.retryBaseMs * (2 ** Math.max(0, job.attempts - 1)),
-  );
+  const backoffMs = imageRetryBackoffMs(job.attempts, options.retryBaseMs, options.retryMaxMs);
   await withTransaction(pool, `image:failure:${job.id}`, async (db) => {
     await query(
       db,
@@ -367,6 +377,7 @@ async function failJob(
         error.message.slice(0, 4_000),
         toPgJson({
           last_failure_class: error.failureClass,
+          last_http_status: error.httpStatus,
           egress_class: egressClass,
           attempts: job.attempts,
         }, `image.failure:${job.id}`),
@@ -381,8 +392,9 @@ async function failJob(
                                 THEN NULL
                                 ELSE now() + ($5::bigint || ' milliseconds')::interval END,
               failure_class = $6,
-              egress_class = $7,
-              error = $8,
+              http_status = $7,
+              egress_class = $8,
+              error = $9,
               locked_by = NULL,
               locked_at = NULL,
               updated_at = now()
@@ -394,6 +406,7 @@ async function failJob(
         permanent,
         String(backoffMs),
         error.failureClass,
+        error.httpStatus,
         egressClass,
         error.message.slice(0, 4_000),
       ],
@@ -403,6 +416,7 @@ async function failJob(
     status: permanent ? 'failed' : 'retry',
     egressClass,
     failureClass: error.failureClass,
+    httpStatus: error.httpStatus,
     bytes: 0,
     hashHex: null,
   };
@@ -517,7 +531,7 @@ async function resolveImageReferenceTx(
     db,
     'image:complete_job',
     `UPDATE meta.image_ingest_job
-        SET status = 'completed', not_before = NULL, failure_class = NULL,
+        SET status = 'completed', not_before = NULL, failure_class = NULL, http_status = NULL,
             egress_class = $3, error = NULL, locked_by = NULL, locked_at = NULL,
             updated_at = now()
       WHERE id = $1 AND page_id = $2`,
@@ -537,6 +551,7 @@ function normalizeFailure(error: unknown): ImageValidationError {
       error.message,
       transient ? 'http_transient' : 'http_permanent',
       !transient,
+      error.status,
     );
   }
   if (error instanceof TransportError) {
@@ -554,6 +569,17 @@ function normalizeFailure(error: unknown): ImageValidationError {
     'unknown',
     false,
   );
+}
+
+/** attempts 在 claim 时已 +1：第 1/2/3/4 次失败分别退 1/2/4/8 个 base。 */
+export function imageRetryBackoffMs(attempts: number, baseMs: number, maxMs: number): number {
+  if (!Number.isSafeInteger(attempts) || attempts < 1) {
+    throw new RangeError(`图片重试 attempts 必须是正整数，收到 ${attempts}`);
+  }
+  if (!Number.isFinite(baseMs) || baseMs <= 0 || !Number.isFinite(maxMs) || maxMs <= 0) {
+    throw new RangeError(`图片重试 base/max 非法 ${baseMs}/${maxMs}`);
+  }
+  return Math.min(maxMs, baseMs * (2 ** Math.max(0, attempts - 1)));
 }
 
 function extensionFor(mime: string): string {
