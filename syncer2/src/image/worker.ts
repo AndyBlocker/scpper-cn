@@ -1,3 +1,4 @@
+import { ExternalHostDeferredError } from './externalEgress.js';
 /**
  * v2 图片资产 worker。复用 v1 的认领/校验/SHA-256/原子写盘/退避状态机，
  * 但以 v2 的 (page_id, normalized_url) 引用键和 bytea hash 资产表重写。
@@ -26,6 +27,7 @@ export type ImageFailureClass =
   | 'timeout'
   | 'network'
   | 'host_unresolvable'
+  | 'host_deferred'
   | 'too_large'
   | 'invalid_content_type'
   | 'invalid_url'
@@ -583,6 +585,14 @@ function normalizeFailure(error: unknown): ImageValidationError {
       error.kind === 'timeout' ? 'timeout' : 'network',
       false,
     );
+  }
+  if (error instanceof ExternalHostDeferredError) {
+    /*
+     * 主机放行时间过远、本轮主动跳过——这不是失败，下轮会重新认领。
+     * 归为 host_deferred 并计入确定性侧（不驱动退让）：它本就是退让的结果，
+     * 再拿它当压力信号会自我放大。
+     */
+    return new ImageValidationError(error.message, 'host_deferred', true);
   }
   if (error instanceof CircuitOpenError) {
     return new ImageValidationError(error.message, 'http_transient', false);

@@ -29,7 +29,18 @@ export function recordImageRouteResult(
   const route = counters[result.egressClass];
   route.claimed++;
   route[result.status]++;
-  if (result.status === 'failed' && isDeterministicImageFailure(result.failureClass)) {
+  /*
+   * 确定性判定必须同时覆盖 failed 与 retry。
+   *
+   * 主动跳过（host_deferred）走的是 **retry** 状态——它会被重新入队等下轮，
+   * 而我最初只在 status==='failed' 时累加 deterministic，于是 117 条推迟
+   * 全被算成可重试失败，失败率 97.5%、每轮 exit 1。
+   * 推迟是限速层的正常输出，不是压力来源；再拿它当压力信号会自我放大。
+   */
+  if (
+    (result.status === 'failed' || result.status === 'retry')
+    && isDeterministicImageFailure(result.failureClass)
+  ) {
     route.deterministic++;
   }
 }
@@ -49,7 +60,9 @@ export function isDeterministicImageFailure(failureClass: string | null | undefi
     || failureClass === 'invalid_content_type'
     || failureClass === 'blocked_host'
     // 域名已消失，重试无意义；与 http_permanent 同级。
-    || failureClass === 'host_unresolvable';
+    || failureClass === 'host_unresolvable'
+    // 主动跳过（主机放行太远），是退让的结果而非压力来源。
+    || failureClass === 'host_deferred';
 }
 
 export function evaluateImagePipelineHealth(

@@ -1,3 +1,13 @@
+/** 单次等待上限：超过即放弃该任务、留给下轮。 */
+export const EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS = 20_000;
+
+export class ExternalHostDeferredError extends Error {
+  constructor(readonly host: string, readonly waitMs: number) {
+    super(`站外主机 ${host} 放行时间过远（${Math.round(waitMs / 1000)}s），本轮跳过`);
+    this.name = 'ExternalHostDeferredError';
+  }
+}
+
 /**
  * 站外图片 exact-hostname 自适应出口。
  *
@@ -298,10 +308,33 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
           limit: EXTERNAL_IMAGE_GLOBAL_HOURLY_BUDGET,
         });
       }
+      /*
+       * 等待必须有上限，否则一个被降档的主机会拖垮整轮。
+       *
+       * 事故：images-wixmp-….wixmp.com 降到 level 3、next_permit_at 排到 20 分钟后，
+       * worker 认领到该主机的任务后就在这里无限期 sleep，最终被 systemd 以
+       * TimeoutStartSec 杀死（result=timeout）——整轮进度作废，且日志在
+       * 「client 就绪」之后毫无输出，看起来像卡死在网络上。
+       * 把单轮预算从 420 降到 300 秒毫无效果，因为阻塞根本不在预算的检查点上。
+       *
+       * 按主机限速是对的，等待方式错了：应当放弃该任务留给下轮，
+       * 让 worker 去处理其它主机——队列里还有两万多个别的主机的任务。
+       */
+      if (reservation.waitMs > EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS) {
+        this.#log.info('主机放行时间过远，跳过本轮改由后续轮次处理', {
+          host,
+          waitMs: reservation.waitMs,
+          maxInlineWaitMs: EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS,
+        });
+        throw new ExternalHostDeferredError(host, reservation.waitMs);
+      }
       if (reservation.waitMs > 0) await sleep(reservation.waitMs);
       return reservation.permit;
     } catch (error) {
       if (error instanceof AdaptiveEgressUnavailableError) throw error;
+      // 主动跳过是**限速层的正常输出**，不是「限速层不可用」；
+      // 包装成 AdaptiveEgressUnavailableError 会让上层认不出来，落成 unknown 失败。
+      if (error instanceof ExternalHostDeferredError) throw error;
       throw new AdaptiveEgressUnavailableError(`external-image beforeAttempt(${host})`, error);
     }
   }
