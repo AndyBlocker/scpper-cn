@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "check:sql-tuning": "node --import tsx/esm src/cli/check-sql-tuning.ts",
+    "check:egress-capacity": "node --import tsx/esm src/cli/check-egress-capacity.ts",
     "build": "tsc",
     "test": "node --import tsx/esm --test --test-concurrency=1 'tests/**/*.test.ts'",
     "test:offline": "node --import tsx/esm --test tests/http.test.ts tests/parse.test.ts",

@@ -9,20 +9,24 @@
  * 设计标定来自两组实测：2026-08-02 的安全水位 <1%、危险区 22.6%（随后 78.5%），
  * 以及 2026-08-07 剔除既有分类确认的确定性失败后约 0.76% 的常态压力噪声。因此：
  *   * 5% 连续两个窗口才退让，10% 单窗口立即退让，仍早于 22.6% 拒绝区；
- *   * 恢复需连续 6 个 <=3% 窗口并满足最低保持期，健康窗可在保持期内累计；
+ *   * 降档仍由 100-request 窗判定；恢复改用连续 6 个非空 5 分钟 <=3% 证据窗，
+ *     并满足最低保持期，避免低吞吐时因凑不满 100 requests 自锁；
  *   * identity_absent 等既有分类可把伪装成 5xx 的确定性失败改记审计；
  *     no_permission / structural 等业务结果本来就不进站点压力分子；
  *   * 无 HTTP 响应的 DNS/代理/connect/TLS/timeout/reset 仍是压力失败；连续 5 个
  *     发生在 2 分钟内即可在未满 100-request 时逐级退让，但两次连接降档至少隔 5 分钟，
  *     避免同一瞬时抖动被多个短进程放大后直接打到 cooldown；
- *   * 滚动 60 分钟 >3,500 attempt 无条件进入 0.125 QPS cooldown；该值仍低于
- *     实测最低安全水位 3,663/h；
- *   * 全站档位保持共享；通道只分账，不允许因共享 IP/站点而各自解除全局保护。
+ *   * 滚动预算是我方容量管理，不再改变 pressure 档位：越界时把共享 pace 设为
+ *     budget/window，比例因子恰为 budget/rolling；rolling 回落即解除，无固定冷却；
+ *   * 当前 5,400/h = 已启用链路稳态 4,657/h +15% 余量后向上取整；容量计划有
+ *     独立检查，新增链路必须先登记预算；
+ *   * pressure 档位与预算 pace 都是全站共享；通道只分账。
  */
 
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import { createPool, query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { createLogger, type Logger } from '../util/log.js';
+import { WIKIDOT_EGRESS_REQUIRED_BUDGET_REQUESTS_PER_HOUR } from './egressCapacity.js';
 
 export type AdaptiveEgressLevel = 0 | 1 | 2 | 3;
 
@@ -40,6 +44,7 @@ export interface AdaptiveEgressPolicy {
   healthyFailureRate: number;
   elevatedWindowsToBackoff: number;
   healthyWindowsToRecover: number;
+  recoveryWindowMs: number;
   rollingBudgetMinutes: number;
   rollingBudgetRequests: number;
   connectionFailureStreakToBackoff: number;
@@ -55,8 +60,9 @@ export const ADAPTIVE_EGRESS_POLICY: AdaptiveEgressPolicy = Object.freeze({
   healthyFailureRate: 0.03,
   elevatedWindowsToBackoff: 2,
   healthyWindowsToRecover: 6,
+  recoveryWindowMs: 5 * 60_000,
   rollingBudgetMinutes: 60,
-  rollingBudgetRequests: 3_500,
+  rollingBudgetRequests: WIKIDOT_EGRESS_REQUIRED_BUDGET_REQUESTS_PER_HOUR,
   connectionFailureStreakToBackoff: 5,
   connectionFailureStreakWindowMs: 2 * 60_000,
   connectionBackoffMinIntervalMs: 5 * 60_000,
@@ -90,6 +96,7 @@ export interface CompletedFailureWindow {
 export type AdaptiveEgressTransitionKind =
   | 'failure_backoff'
   | 'budget_breach'
+  | 'budget_recovery'
   | 'recovery';
 
 export interface AdaptiveEgressTransition {
@@ -108,8 +115,34 @@ export interface FailureWindowDecision {
 }
 
 export interface BudgetDecision {
+  state: BudgetControlState;
+  transition: AdaptiveEgressTransition | null;
+}
+
+export interface TieredBudgetDecision {
   state: FailureWindowState;
   transition: AdaptiveEgressTransition | null;
+}
+
+export interface BudgetControlState {
+  level: 0 | 1;
+  reason: string;
+  changedAtMs: number;
+  minRequestIntervalMs: number;
+  throttleRatio: number;
+}
+
+export interface RecoveryWindowState {
+  startedAtMs: number | null;
+  requests: number;
+  failures: number;
+}
+
+export interface RecoveryEvidenceDecision {
+  state: FailureWindowState;
+  window: RecoveryWindowState;
+  transition: AdaptiveEgressTransition | null;
+  completedWindowFailureRate: number | null;
 }
 
 export interface ConnectionPressureState {
@@ -229,6 +262,7 @@ export function evaluateFailureWindow(
   input: FailureWindowState,
   window: CompletedFailureWindow,
   policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+  options: { allowRequestCountRecovery?: boolean } = {},
 ): FailureWindowDecision {
   if (window.requests !== policy.windowRequests) {
     throw new RangeError(
@@ -301,6 +335,16 @@ export function evaluateFailureWindow(
     };
   }
 
+  // Wikidot 主 gate 的恢复证据由独立 5 分钟窗维护；100-request 窗只负责降档，
+  // 不能再同时决定恢复速度。站外图片仍可保留原有按请求窗恢复合同。
+  if (options.allowRequestCountRecovery === false) {
+    return {
+      state: { ...input, elevatedWindows },
+      transition: null,
+      failureRate: rate,
+    };
+  }
+
   // 好窗口从降档后即可累计，但恢复必须同时满足“连续 6 窗”和最低保持期。
   // 这保留恢复慢于降档的迟滞，同时不再把保持期内的健康证据全部丢弃。
   const healthyWindows = Math.min(
@@ -342,13 +386,223 @@ export function evaluateFailureWindow(
   };
 }
 
-/** 纯预算护栏：超过而不是等于 3,500，立即强制最慢档并持久告警。 */
+/**
+ * 低吞吐安全的 pressure 恢复证据：按固定 5 分钟桶结算，空桶不计数。
+ *
+ * 降档判据仍只看完整 100-request 窗；这里永不触发降档。小样本窗的 <=3% 意味着
+ * 1..33 个请求必须全健康，因而缩短墙钟时间并未放宽健康定义。健康证据可在保持期内
+ * 累计，但只有保持期结束且六窗连续健康时才逐级恢复。
+ */
+export function evaluateRecoveryEvidence(
+  input: FailureWindowState,
+  current: RecoveryWindowState,
+  pressureFailure: boolean,
+  atMs: number,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): RecoveryEvidenceDecision {
+  if (!Number.isFinite(atMs)) throw new RangeError(`非法 recovery evidence at=${atMs}`);
+  if (!Number.isSafeInteger(current.requests) || current.requests < 0) {
+    throw new RangeError(`非法 recovery requests=${current.requests}`);
+  }
+  if (
+    !Number.isSafeInteger(current.failures)
+    || current.failures < 0
+    || current.failures > current.requests
+  ) {
+    throw new RangeError(`非法 recovery failures=${current.failures}/${current.requests}`);
+  }
+  if ((current.startedAtMs === null) !== (current.requests === 0 && current.failures === 0)) {
+    throw new RangeError('recovery 空窗口必须同时清空 startedAt/requests/failures');
+  }
+
+  if (input.level === 0) {
+    return {
+      state: input.healthyWindows === 0 ? input : { ...input, healthyWindows: 0 },
+      window: emptyRecoveryWindow(),
+      transition: null,
+      completedWindowFailureRate: null,
+    };
+  }
+
+  const bucketStartMs = Math.floor(atMs / policy.recoveryWindowMs) * policy.recoveryWindowMs;
+  if (current.startedAtMs === null) {
+    return {
+      state: input,
+      window: {
+        startedAtMs: bucketStartMs,
+        requests: 1,
+        failures: pressureFailure ? 1 : 0,
+      },
+      transition: null,
+      completedWindowFailureRate: null,
+    };
+  }
+  if (bucketStartMs < current.startedAtMs) {
+    throw new RangeError(
+      `recovery 时间倒退 ${bucketStartMs}<${current.startedAtMs}`,
+    );
+  }
+  if (bucketStartMs === current.startedAtMs) {
+    return {
+      state: input,
+      window: {
+        ...current,
+        requests: current.requests + 1,
+        failures: current.failures + (pressureFailure ? 1 : 0),
+      },
+      transition: null,
+      completedWindowFailureRate: null,
+    };
+  }
+
+  const completedWindowFailureRate = current.failures / current.requests;
+  const healthy = completedWindowFailureRate <= policy.healthyFailureRate;
+  const healthyWindows = healthy
+    ? Math.min(input.healthyWindows + 1, policy.healthyWindowsToRecover)
+    : 0;
+  let state: FailureWindowState = { ...input, healthyWindows };
+  if (!healthy) {
+    state = {
+      ...state,
+      recoverNotBeforeMs: Math.max(
+        state.recoverNotBeforeMs ?? 0,
+        current.startedAtMs + policy.recoveryWindowMs
+          + tier(policy, state.level).minimumHoldMs,
+      ),
+    };
+  }
+
+  const nextWindow: RecoveryWindowState = {
+    startedAtMs: bucketStartMs,
+    requests: 1,
+    failures: pressureFailure ? 1 : 0,
+  };
+  const holdComplete = state.recoverNotBeforeMs === null || atMs >= state.recoverNotBeforeMs;
+  if (healthyWindows < policy.healthyWindowsToRecover || !holdComplete || pressureFailure) {
+    return {
+      state,
+      window: nextWindow,
+      transition: null,
+      completedWindowFailureRate,
+    };
+  }
+
+  const fromLevel = state.level;
+  const toLevel = (fromLevel - 1) as AdaptiveEgressLevel;
+  const reason = `recovered_after_${healthyWindows}_nonempty_${Math.round(policy.recoveryWindowMs / 60_000)}m_windows_lte_${formatRate(policy.healthyFailureRate)}`;
+  state = {
+    ...state,
+    level: toLevel,
+    reason,
+    changedAtMs: atMs,
+    recoverNotBeforeMs: toLevel === 0 ? null : atMs + tier(policy, toLevel).minimumHoldMs,
+    elevatedWindows: 0,
+    healthyWindows: 0,
+  };
+  return {
+    state,
+    window: nextWindow,
+    transition: {
+      kind: 'recovery',
+      fromLevel,
+      toLevel,
+      reason,
+      failureRate: completedWindowFailureRate,
+      rollingHourRequests: null,
+    },
+    completedWindowFailureRate,
+  };
+}
+
+function emptyRecoveryWindow(): RecoveryWindowState {
+  return { startedAtMs: null, requests: 0, failures: 0 };
+}
+
+/**
+ * Wikidot 主 gate 的比例预算控制器。
+ *
+ * rolling=R、limit=L 时，过去一小时观测均值是 R/window；目标 pace 设为 L/window，
+ * 因而吞吐因子恰为 L/R。+1 只削去 1/R，大幅越界则按相同比例收缩。它只有独立的
+ * budget level 1，不会污染 pressure level 2/3，也没有固定冷却；R<=L 立即解除。
+ */
+export function evaluateProportionalBudget(
+  input: BudgetControlState,
+  rollingHourRequests: number,
+  atMs: number,
+  policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
+): BudgetDecision {
+  if (!Number.isInteger(rollingHourRequests) || rollingHourRequests < 0) {
+    throw new RangeError(`非法滚动小时请求数 ${rollingHourRequests}`);
+  }
+  if (!Number.isFinite(atMs)) throw new RangeError(`非法 budget at=${atMs}`);
+  const normalIntervalMs = tier(policy, 0).minIntervalMs;
+  if (rollingHourRequests <= policy.rollingBudgetRequests) {
+    if (input.level === 0) {
+      return {
+        state: input.minRequestIntervalMs === normalIntervalMs && input.throttleRatio === 1
+          ? input
+          : {
+              ...input,
+              minRequestIntervalMs: normalIntervalMs,
+              throttleRatio: 1,
+            },
+        transition: null,
+      };
+    }
+    const reason = `rolling_${policy.rollingBudgetMinutes}m_requests_${rollingHourRequests}_lte_${policy.rollingBudgetRequests}_budget_recovered`;
+    return {
+      state: {
+        level: 0,
+        reason,
+        changedAtMs: atMs,
+        minRequestIntervalMs: normalIntervalMs,
+        throttleRatio: 1,
+      },
+      transition: {
+        kind: 'budget_recovery',
+        fromLevel: 1,
+        toLevel: 0,
+        reason,
+        failureRate: null,
+        rollingHourRequests,
+      },
+    };
+  }
+
+  const throttleRatio = policy.rollingBudgetRequests / rollingHourRequests;
+  const minRequestIntervalMs = Math.ceil(
+    policy.rollingBudgetMinutes * 60_000 / policy.rollingBudgetRequests,
+  );
+  const reason = `rolling_${policy.rollingBudgetMinutes}m_requests_${rollingHourRequests}_gt_${policy.rollingBudgetRequests}_proportional_${formatRate(throttleRatio)}_pace`;
+  const firstBreach = input.level === 0;
+  return {
+    state: {
+      level: 1,
+      reason,
+      changedAtMs: firstBreach ? atMs : input.changedAtMs,
+      minRequestIntervalMs,
+      throttleRatio,
+    },
+    transition: firstBreach
+      ? {
+          kind: 'budget_breach',
+          fromLevel: 0,
+          toLevel: 1,
+          reason,
+          failureRate: null,
+          rollingHourRequests,
+        }
+      : null,
+  };
+}
+
+/** 站外图片 host gate 的既有独立 tiered 预算合同；Wikidot 主 gate 不再调用它。 */
 export function evaluateRollingBudget(
   input: FailureWindowState,
   rollingHourRequests: number,
   atMs: number,
   policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
-): BudgetDecision {
+): TieredBudgetDecision {
   if (!Number.isInteger(rollingHourRequests) || rollingHourRequests < 0) {
     throw new RangeError(`非法滚动小时请求数 ${rollingHourRequests}`);
   }
@@ -389,12 +643,22 @@ export function evaluateRollingBudget(
 
 export interface AdaptiveEgressSnapshot {
   siteKey: string;
+  /** 兼容有效档位：max(pressureLevel,budgetLevel)。 */
   level: AdaptiveEgressLevel;
   levelName: AdaptiveEgressTier['name'];
   minRequestIntervalMs: number;
   reason: string;
   changedAt: string;
   recoverNotBefore: string | null;
+  pressureLevel: AdaptiveEgressLevel;
+  pressureReason: string;
+  pressureChangedAt: string;
+  pressureRecoverNotBefore: string | null;
+  budgetLevel: 0 | 1;
+  budgetReason: string;
+  budgetChangedAt: string;
+  budgetMinRequestIntervalMs: number;
+  budgetThrottleRatio: number;
   currentWindowRequests: number;
   /** 站点压力分子：transport / 429 / 5xx，已排除确定性业务失败。 */
   currentWindowFailures: number;
@@ -407,6 +671,10 @@ export interface AdaptiveEgressSnapshot {
   elevatedWindows: number;
   healthyWindows: number;
   healthyWindowsRequired: number;
+  recoveryWindowMinutes: number;
+  recoveryWindowStartedAt: string | null;
+  recoveryWindowRequests: number;
+  recoveryWindowFailures: number;
   lastWindowFailureRate: number | null;
   lastWindowConnectionFailureRate: number | null;
   lastWindowDeterministicFailureRate: number | null;
@@ -444,29 +712,35 @@ export function evaluateAdaptiveSelfProtection(
   policy: AdaptiveEgressPolicy = ADAPTIVE_EGRESS_POLICY,
 ): AdaptiveSelfProtectionDecision {
   if (!Number.isFinite(nowMs)) throw new RangeError(`非法 self-protection now=${nowMs}`);
-  if (snapshot.level === 0) {
+  if (snapshot.pressureLevel === 0) {
+    if (snapshot.budgetLevel > 0) {
+      return {
+        status: 'downshift_expected', active: true, overdue: false, exitCode: 0,
+        level: snapshot.level, levelName: snapshot.levelName, reason: snapshot.budgetReason,
+        recoverNotBefore: null, expectedRecoveryAt: null,
+      };
+    }
     return {
       status: 'normal', active: false, overdue: false, exitCode: 0,
       level: snapshot.level, levelName: snapshot.levelName, reason: snapshot.reason,
       recoverNotBefore: snapshot.recoverNotBefore, expectedRecoveryAt: null,
     };
   }
-  const changedAtMs = Date.parse(snapshot.changedAt);
-  const holdUntilMs = snapshot.recoverNotBefore === null
+  const changedAtMs = Date.parse(snapshot.pressureChangedAt);
+  const holdUntilMs = snapshot.pressureRecoverNotBefore === null
     ? changedAtMs
-    : Date.parse(snapshot.recoverNotBefore);
+    : Date.parse(snapshot.pressureRecoverNotBefore);
   if (!Number.isFinite(changedAtMs) || !Number.isFinite(holdUntilMs)) {
     throw new RangeError('自适应出口快照含非法 changedAt/recoverNotBefore');
   }
-  const currentTier = tier(policy, snapshot.level);
-  const currentHealthyEvidenceMs =
-    policy.windowRequests * policy.healthyWindowsToRecover * currentTier.minIntervalMs;
+  const currentTier = tier(policy, snapshot.pressureLevel);
+  const currentHealthyEvidenceMs = policy.recoveryWindowMs * policy.healthyWindowsToRecover;
   let lowerTierRecoveryMs = 0;
-  for (let level = snapshot.level - 1; level > 0; level--) {
+  for (let level = snapshot.pressureLevel - 1; level > 0; level--) {
     const selected = tier(policy, level as AdaptiveEgressLevel);
     lowerTierRecoveryMs += Math.max(
       selected.minimumHoldMs,
-      policy.windowRequests * policy.healthyWindowsToRecover * selected.minIntervalMs,
+      policy.recoveryWindowMs * policy.healthyWindowsToRecover,
     );
   }
   const currentEvidenceStartedAtMs = Math.max(
@@ -474,7 +748,7 @@ export function evaluateAdaptiveSelfProtection(
     holdUntilMs - currentTier.minimumHoldMs,
   );
   const expectedRecoveryAtMs = Math.max(
-    changedAtMs + expectedFullRecoveryDurationMs(snapshot.level, policy),
+    changedAtMs + expectedFullRecoveryDurationMs(snapshot.pressureLevel, policy),
     Math.max(
       holdUntilMs,
       currentEvidenceStartedAtMs + currentHealthyEvidenceMs,
@@ -486,10 +760,10 @@ export function evaluateAdaptiveSelfProtection(
     active: true,
     overdue,
     exitCode: overdue ? 1 : 0,
-    level: snapshot.level,
-    levelName: snapshot.levelName,
-    reason: snapshot.reason,
-    recoverNotBefore: snapshot.recoverNotBefore,
+    level: snapshot.pressureLevel,
+    levelName: tier(policy, snapshot.pressureLevel).name,
+    reason: snapshot.pressureReason,
+    recoverNotBefore: snapshot.pressureRecoverNotBefore,
     expectedRecoveryAt: toPgTimestamptz(expectedRecoveryAtMs),
   };
 }
@@ -551,6 +825,18 @@ interface ControlRow extends QueryResultRow {
   reason: string;
   changed_at: string;
   recover_not_before: string | null;
+  pressure_level: number;
+  pressure_reason: string;
+  pressure_changed_at: string;
+  pressure_recover_not_before: string | null;
+  budget_level: number;
+  budget_reason: string;
+  budget_changed_at: string;
+  budget_min_interval_ms: number;
+  budget_throttle_ratio: number;
+  recovery_window_started_at: string | null;
+  recovery_window_requests: number;
+  recovery_window_failures: number;
   next_permit_at: string;
   current_window_requests: number;
   current_window_failures: number;
@@ -627,15 +913,24 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
 
         let row = await loadControl(db);
         const rolling = await rollingRequestCount(db, this.#policy.rollingBudgetMinutes);
-        const budget = evaluateRollingBudget(rowToWindowState(row), rolling, clock.nowMs, this.#policy);
+        const pressureState = rowToWindowState(row);
+        const budget = evaluateProportionalBudget(
+          rowToBudgetState(row),
+          rolling,
+          clock.nowMs,
+          this.#policy,
+        );
         if (budget.transition !== null) {
           await insertAlert(db, budget.transition, rolling, this.#policy);
         }
 
-        const current = tier(this.#policy, budget.state.level);
+        const minRequestIntervalMs = Math.max(
+          tier(this.#policy, pressureState.level).minIntervalMs,
+          budget.state.minRequestIntervalMs,
+        );
         const nextPermitMs = Date.parse(row.next_permit_at);
         const grantMs = Math.max(clock.nowMs, nextPermitMs);
-        const nextMs = grantMs + current.minIntervalMs;
+        const nextMs = grantMs + minRequestIntervalMs;
         const shouldPrune = clock.nowMs - Date.parse(row.last_pruned_at) >= 60 * 60_000;
         if (shouldPrune) {
           await query(
@@ -651,6 +946,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
         row = await updateControl(
           db,
           row,
+          pressureState,
           budget.state,
           {
             rollingHourRequests: rolling,
@@ -676,7 +972,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
       this.#totalDelayMs += reservation.waitMs;
       if (reservation.transition !== null) {
         this.#transitionsObserved++;
-        this.#log.error('滚动小时预算越界，已强制 cooldown（持久告警已落库）', {
+        this.#log.warn('滚动小时预算状态变化，已按比例调整共享 pace（持久告警已落库）', {
           transition: reservation.transition,
           state: reservation.snapshot,
         });
@@ -740,6 +1036,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
         const deterministicFailures = row.current_window_deterministic_failures
           + (deterministicFailure ? 1 : 0);
         let state = rowToWindowState(row);
+        let recoveryWindow = rowToRecoveryWindowState(row);
         let transition: AdaptiveEgressTransition | null = null;
         let lastRate = row.last_window_failure_rate;
         let lastConnectionRate = row.last_window_connection_failure_rate;
@@ -760,6 +1057,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
               completedAtMs: clock.nowMs,
             },
             this.#policy,
+            { allowRequestCountRecovery: false },
           );
           state = decision.state;
           transition = decision.transition;
@@ -793,6 +1091,20 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
             connectionState = { ...connectionState, lastBackoffAtMs: clock.nowMs };
           }
         }
+        if (transition?.kind === 'failure_backoff') {
+          recoveryWindow = emptyRecoveryWindow();
+        } else {
+          const recovery = evaluateRecoveryEvidence(
+            state,
+            recoveryWindow,
+            pressureFailure,
+            clock.nowMs,
+            this.#policy,
+          );
+          state = recovery.state;
+          recoveryWindow = recovery.window;
+          transition = recovery.transition ?? transition;
+        }
         if (transition !== null) {
           await insertAlert(db, transition, row.rolling_hour_requests, this.#policy);
         }
@@ -801,6 +1113,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
           db,
           row,
           state,
+          rowToBudgetState(row),
           {
             currentWindowRequests: nextRequests,
             currentWindowFailures: nextFailures,
@@ -811,6 +1124,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
             lastWindowConnectionFailureRate: lastConnectionRate,
             lastWindowDeterministicFailureRate: lastDeterministicRate,
             lastWindowCompletedAt: lastCompletedAt,
+            recoveryWindowState: recoveryWindow,
           },
           this.#policy,
         );
@@ -861,6 +1175,12 @@ export async function readAdaptiveEgressState(
     'adaptive-egress:read-state',
     `SELECT site_key, level, reason,
             changed_at::text, recover_not_before::text, next_permit_at::text,
+            pressure_level, pressure_reason, pressure_changed_at::text,
+            pressure_recover_not_before::text,
+            budget_level, budget_reason, budget_changed_at::text,
+            budget_min_interval_ms, budget_throttle_ratio,
+            recovery_window_started_at::text, recovery_window_requests,
+            recovery_window_failures,
             current_window_requests, current_window_failures,
             current_window_connection_failures,
             current_window_deterministic_failures,
@@ -1092,9 +1412,7 @@ function expectedFullRecoveryDurationMs(
   let durationMs = 0;
   for (let candidate = level; candidate > 0; candidate--) {
     const selected = tier(policy, candidate as AdaptiveEgressLevel);
-    const healthyEvidenceMs = policy.windowRequests
-      * policy.healthyWindowsToRecover
-      * selected.minIntervalMs;
+    const healthyEvidenceMs = policy.recoveryWindowMs * policy.healthyWindowsToRecover;
     durationMs += Math.max(selected.minimumHoldMs, healthyEvidenceMs);
   }
   return durationMs;
@@ -1201,6 +1519,12 @@ async function loadControl(db: PoolClient): Promise<ControlRow> {
     'adaptive-egress:load-control',
     `SELECT site_key, level, reason,
             changed_at::text, recover_not_before::text, next_permit_at::text,
+            pressure_level, pressure_reason, pressure_changed_at::text,
+            pressure_recover_not_before::text,
+            budget_level, budget_reason, budget_changed_at::text,
+            budget_min_interval_ms, budget_throttle_ratio,
+            recovery_window_started_at::text, recovery_window_requests,
+            recovery_window_failures,
             current_window_requests, current_window_failures,
             current_window_connection_failures,
             current_window_deterministic_failures,
@@ -1253,15 +1577,19 @@ interface ControlUpdate {
   lastWindowConnectionFailureRate?: number | null;
   lastWindowDeterministicFailureRate?: number | null;
   lastWindowCompletedAt?: string | null;
+  recoveryWindowState?: RecoveryWindowState;
 }
 
 async function updateControl(
   db: PoolClient,
   old: ControlRow,
   state: FailureWindowState,
+  budget: BudgetControlState,
   update: ControlUpdate,
   policy: AdaptiveEgressPolicy,
 ): Promise<ControlRow> {
+  const effective = combineControlState(state, budget);
+  const recoveryWindow = update.recoveryWindowState ?? rowToRecoveryWindowState(old);
   const result = await query<ControlRow>(
     db,
     'adaptive-egress:update-control',
@@ -1288,10 +1616,28 @@ async function updateControl(
             budget_limit = $21,
             budget_breached = $22,
             last_pruned_at = $23::timestamptz,
+            pressure_level = $24,
+            pressure_reason = $25,
+            pressure_changed_at = $26::timestamptz,
+            pressure_recover_not_before = $27::timestamptz,
+            budget_level = $28,
+            budget_reason = $29,
+            budget_changed_at = $30::timestamptz,
+            budget_min_interval_ms = $31,
+            budget_throttle_ratio = $32,
+            recovery_window_started_at = $33::timestamptz,
+            recovery_window_requests = $34,
+            recovery_window_failures = $35,
             updated_at = clock_timestamp()
       WHERE site_key = $1
       RETURNING site_key, level, reason,
                 changed_at::text, recover_not_before::text, next_permit_at::text,
+                pressure_level, pressure_reason, pressure_changed_at::text,
+                pressure_recover_not_before::text,
+                budget_level, budget_reason, budget_changed_at::text,
+                budget_min_interval_ms, budget_throttle_ratio,
+                recovery_window_started_at::text, recovery_window_requests,
+                recovery_window_failures,
                 current_window_requests, current_window_failures,
                 current_window_connection_failures,
                 current_window_deterministic_failures,
@@ -1307,10 +1653,12 @@ async function updateControl(
                 l1_slo_overdue, last_pruned_at::text, updated_at::text`,
     [
       SITE_KEY,
-      state.level,
-      state.reason,
-      toPgTimestamptz(state.changedAtMs),
-      state.recoverNotBeforeMs === null ? null : toPgTimestamptz(state.recoverNotBeforeMs),
+      effective.level,
+      effective.reason,
+      toPgTimestamptz(effective.changedAtMs),
+      effective.recoverNotBeforeMs === null
+        ? null
+        : toPgTimestamptz(effective.recoverNotBeforeMs),
       update.nextPermitAt ?? old.next_permit_at,
       update.currentWindowRequests ?? old.current_window_requests,
       update.currentWindowFailures ?? old.current_window_failures,
@@ -1344,8 +1692,22 @@ async function updateControl(
         : update.lastWindowCompletedAt,
       update.rollingHourRequests ?? old.rolling_hour_requests,
       policy.rollingBudgetRequests,
-      state.budgetBreached,
+      budget.level > 0,
       update.lastPrunedAt ?? old.last_pruned_at,
+      state.level,
+      state.reason,
+      toPgTimestamptz(state.changedAtMs),
+      state.recoverNotBeforeMs === null ? null : toPgTimestamptz(state.recoverNotBeforeMs),
+      budget.level,
+      budget.reason,
+      toPgTimestamptz(budget.changedAtMs),
+      budget.minRequestIntervalMs,
+      budget.throttleRatio,
+      recoveryWindow.startedAtMs === null
+        ? null
+        : toPgTimestamptz(recoveryWindow.startedAtMs),
+      recoveryWindow.requests,
+      recoveryWindow.failures,
     ],
   );
   const row = result.rows[0];
@@ -1387,14 +1749,69 @@ async function insertAlert(
 
 function rowToWindowState(row: ControlRow): FailureWindowState {
   return {
-    level: asLevel(row.level),
-    reason: row.reason,
-    changedAtMs: Date.parse(row.changed_at),
+    level: asLevel(row.pressure_level),
+    reason: row.pressure_reason,
+    changedAtMs: Date.parse(row.pressure_changed_at),
     recoverNotBeforeMs:
-      row.recover_not_before === null ? null : Date.parse(row.recover_not_before),
+      row.pressure_recover_not_before === null
+        ? null
+        : Date.parse(row.pressure_recover_not_before),
     elevatedWindows: row.elevated_windows,
     healthyWindows: row.healthy_windows,
-    budgetBreached: row.budget_breached,
+    budgetBreached: false,
+  };
+}
+
+function rowToBudgetState(row: ControlRow): BudgetControlState {
+  return {
+    level: asBudgetLevel(row.budget_level),
+    reason: row.budget_reason,
+    changedAtMs: Date.parse(row.budget_changed_at),
+    minRequestIntervalMs: row.budget_min_interval_ms,
+    throttleRatio: row.budget_throttle_ratio,
+  };
+}
+
+function rowToRecoveryWindowState(row: ControlRow): RecoveryWindowState {
+  return {
+    startedAtMs: row.recovery_window_started_at === null
+      ? null
+      : Date.parse(row.recovery_window_started_at),
+    requests: row.recovery_window_requests,
+    failures: row.recovery_window_failures,
+  };
+}
+
+function combineControlState(
+  pressure: FailureWindowState,
+  budget: BudgetControlState,
+): {
+  level: AdaptiveEgressLevel;
+  reason: string;
+  changedAtMs: number;
+  recoverNotBeforeMs: number | null;
+} {
+  if (pressure.level > 0 && pressure.level >= budget.level) {
+    return {
+      level: pressure.level,
+      reason: pressure.reason,
+      changedAtMs: pressure.changedAtMs,
+      recoverNotBeforeMs: pressure.recoverNotBeforeMs,
+    };
+  }
+  if (budget.level > 0) {
+    return {
+      level: budget.level,
+      reason: budget.reason,
+      changedAtMs: budget.changedAtMs,
+      recoverNotBeforeMs: null,
+    };
+  }
+  return {
+    level: 0,
+    reason: pressure.reason,
+    changedAtMs: Math.max(pressure.changedAtMs, budget.changedAtMs),
+    recoverNotBeforeMs: null,
   };
 }
 
@@ -1415,16 +1832,30 @@ function rowToSnapshot(
   policy: AdaptiveEgressPolicy,
 ): AdaptiveEgressSnapshot {
   const level = asLevel(row.level);
+  const pressureLevel = asLevel(row.pressure_level);
+  const budgetLevel = asBudgetLevel(row.budget_level);
   const selectedTier = tier(policy, level);
   return {
     siteKey: row.site_key,
     level,
     levelName: selectedTier.name,
-    minRequestIntervalMs: selectedTier.minIntervalMs,
+    minRequestIntervalMs: Math.max(
+      tier(policy, pressureLevel).minIntervalMs,
+      row.budget_min_interval_ms,
+    ),
     reason: row.reason,
     changedAt: new Date(row.changed_at).toISOString(),
     recoverNotBefore:
       row.recover_not_before === null ? null : new Date(row.recover_not_before).toISOString(),
+    pressureLevel,
+    pressureReason: row.pressure_reason,
+    pressureChangedAt: new Date(row.pressure_changed_at).toISOString(),
+    pressureRecoverNotBefore: isoOrNull(row.pressure_recover_not_before),
+    budgetLevel,
+    budgetReason: row.budget_reason,
+    budgetChangedAt: new Date(row.budget_changed_at).toISOString(),
+    budgetMinRequestIntervalMs: row.budget_min_interval_ms,
+    budgetThrottleRatio: row.budget_throttle_ratio,
     currentWindowRequests: row.current_window_requests,
     currentWindowFailures: row.current_window_failures,
     currentWindowConnectionFailures: row.current_window_connection_failures,
@@ -1435,6 +1866,10 @@ function rowToSnapshot(
     elevatedWindows: row.elevated_windows,
     healthyWindows: row.healthy_windows,
     healthyWindowsRequired: policy.healthyWindowsToRecover,
+    recoveryWindowMinutes: Math.round(policy.recoveryWindowMs / 60_000),
+    recoveryWindowStartedAt: isoOrNull(row.recovery_window_started_at),
+    recoveryWindowRequests: row.recovery_window_requests,
+    recoveryWindowFailures: row.recovery_window_failures,
     lastWindowFailureRate: row.last_window_failure_rate,
     lastWindowConnectionFailureRate: row.last_window_connection_failure_rate,
     lastWindowDeterministicFailureRate: row.last_window_deterministic_failure_rate,
@@ -1461,6 +1896,11 @@ function isoOrNull(value: string | null): string | null {
 function asLevel(value: number): AdaptiveEgressLevel {
   if (value === 0 || value === 1 || value === 2 || value === 3) return value;
   throw new Error(`数据库含非法出口档位 ${value}`);
+}
+
+function asBudgetLevel(value: number): 0 | 1 {
+  if (value === 0 || value === 1) return value;
+  throw new Error(`数据库含非法预算档位 ${value}`);
 }
 
 function sleep(ms: number): Promise<void> {

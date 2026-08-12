@@ -8,7 +8,8 @@ import {
   evaluateConnectionPressure,
   evaluateFailureWindow,
   evaluateL1FreshnessSlo,
-  evaluateRollingBudget,
+  evaluateProportionalBudget,
+  evaluateRecoveryEvidence,
   isAdaptivePressureFailure,
   type AdaptiveAttemptOutcome,
   type AdaptiveEgressGate,
@@ -16,7 +17,13 @@ import {
   type AdaptiveEgressRuntimeStats,
   type FailureWindowState,
   type ConnectionPressureState,
+  type BudgetControlState,
+  type RecoveryWindowState,
 } from '../src/http/adaptiveEgress.js';
+import {
+  assertEgressBudgetCapacity,
+  checkEgressBudgetCapacity,
+} from '../src/http/egressCapacity.js';
 import { evaluateEgressAccountingReconciliation } from '../src/observability/egressAccounting.js';
 import { HttpClient } from '../src/http/client.js';
 import {
@@ -52,11 +59,12 @@ function window(
   });
 }
 
-test('生产护栏契约固定为 5%/10%/3% 与滚动小时 3,500', () => {
+test('生产 pressure 合同固定为 5%/10%/3%，容量预算由链路计划推导为 5,400', () => {
   assert.equal(ADAPTIVE_EGRESS_POLICY.elevatedFailureRate, 0.05);
   assert.equal(ADAPTIVE_EGRESS_POLICY.severeFailureRate, 0.10);
   assert.equal(ADAPTIVE_EGRESS_POLICY.healthyFailureRate, 0.03);
-  assert.equal(ADAPTIVE_EGRESS_POLICY.rollingBudgetRequests, 3_500);
+  assert.equal(ADAPTIVE_EGRESS_POLICY.rollingBudgetRequests, 5_400);
+  assert.equal(ADAPTIVE_EGRESS_POLICY.recoveryWindowMs, 5 * 60_000);
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakToBackoff, 5);
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionFailureStreakWindowMs, 120_000);
   assert.equal(ADAPTIVE_EGRESS_POLICY.connectionBackoffMinIntervalMs, 300_000);
@@ -277,24 +285,44 @@ test('踩线后持续失败：冷却从最后坏窗口重算，六轮健康后�
   assert.equal(immediateGood.state.healthyWindows, 1);
 });
 
-test('滚动小时超 3,500：强制 cooldown、只在首次越界告警', () => {
-  const atLimit = evaluateRollingBudget(initialState(), 3_500, T0);
+test('超预算 1 个请求：只进独立 budget level 1，以恰好预算 pace 比例压回', () => {
+  const initialBudget: BudgetControlState = {
+    level: 0,
+    reason: 'within_budget',
+    changedAtMs: T0,
+    minRequestIntervalMs: 333,
+    throttleRatio: 1,
+  };
+  const atLimit = evaluateProportionalBudget(initialBudget, 5_400, T0);
   assert.equal(atLimit.state.level, 0);
   assert.equal(atLimit.transition, null);
 
-  const breached = evaluateRollingBudget(atLimit.state, 3_501, T0 + 1_000);
-  assert.equal(breached.state.level, 3);
-  assert.equal(breached.state.budgetBreached, true);
+  const breached = evaluateProportionalBudget(atLimit.state, 5_401, T0 + 1_000);
+  assert.equal(breached.state.level, 1, '我方容量越界不得跳 pressure level 2/3');
   assert.equal(breached.transition?.kind, 'budget_breach');
-  assert.match(breached.state.reason, /3501_gt_3500/);
+  assert.equal(breached.state.minRequestIntervalMs, 667);
+  assert.ok(3_600_000 / breached.state.minRequestIntervalMs <= 5_400);
+  assert.equal(breached.state.throttleRatio, 5_400 / 5_401);
+  assert.match(breached.state.reason, /5401_gt_5400_proportional/);
 
-  const stillBreached = evaluateRollingBudget(breached.state, 3_550, T0 + 2_000);
-  assert.equal(stillBreached.state.level, 3);
-  assert.equal(stillBreached.transition, null, '同一越界期不能每请求重复告警');
-  assert.ok(
-    stillBreached.state.recoverNotBeforeMs! > breached.state.recoverNotBeforeMs!,
-    '预算仍超限时继续后推冷却',
-  );
+  const recovered = evaluateProportionalBudget(breached.state, 5_400, T0 + 2_000);
+  assert.equal(recovered.state.level, 0, '预算回落立即解除，不等待 pressure 冷却/六窗');
+  assert.equal(recovered.transition?.kind, 'budget_recovery');
+});
+
+test('大幅超预算：比例因子按越界程度收缩，目标 pace 仍不超过预算', () => {
+  const initialBudget: BudgetControlState = {
+    level: 0,
+    reason: 'within_budget',
+    changedAtMs: T0,
+    minRequestIntervalMs: 333,
+    throttleRatio: 1,
+  };
+  const doubled = evaluateProportionalBudget(initialBudget, 10_800, T0 + 1_000);
+  assert.equal(doubled.state.level, 1);
+  assert.equal(doubled.state.throttleRatio, 0.5);
+  assert.ok(3_600_000 / doubled.state.minRequestIntervalMs <= 5_400);
+  assert.notEqual(doubled.state.level, 3);
 });
 
 test('冷却结束后常态噪声 1%：六个窗口完成恢复', () => {
@@ -310,6 +338,50 @@ test('冷却结束后常态噪声 1%：六个窗口完成恢复', () => {
     if (i < 6) assert.equal(state.level, 1);
   }
   assert.equal(state.level, 0);
+});
+
+test('pressure 降档后低吞吐：六个非空 5 分钟窗在一小时保持期内积累并恢复', () => {
+  let state: FailureWindowState = {
+    ...initialState(),
+    level: 3,
+    reason: 'test_pressure_cooldown',
+    changedAtMs: T0,
+    recoverNotBeforeMs: T0 + 60 * 60_000,
+  };
+  let recovery: RecoveryWindowState = { startedAtMs: null, requests: 0, failures: 0 };
+
+  // 只有 7 个健康请求，每 5 分钟一个；旧逻辑需要 600 个请求。
+  for (let minute = 1; minute <= 31; minute += 5) {
+    const decision = evaluateRecoveryEvidence(
+      state,
+      recovery,
+      false,
+      T0 + minute * 60_000,
+    );
+    state = decision.state;
+    recovery = decision.window;
+  }
+  assert.equal(state.level, 3, '健康证据可在保持期内积累但不能提前恢复');
+  assert.equal(state.healthyWindows, 6);
+
+  const afterHold = evaluateRecoveryEvidence(
+    state,
+    recovery,
+    false,
+    T0 + 60 * 60_000 + 1,
+  );
+  assert.equal(afterHold.state.level, 2);
+  assert.equal(afterHold.transition?.kind, 'recovery');
+});
+
+test('预算容量检查：4,200 无法容纳已启用链路，5,400 通过', () => {
+  const insufficient = checkEgressBudgetCapacity(4_200);
+  assert.equal(insufficient.steadyRequestsPerHour, 4_657);
+  assert.equal(insufficient.requiredBudgetRequestsPerHour, 5_400);
+  assert.equal(insufficient.sufficient, false);
+  assert.equal(insufficient.shortfallRequestsPerHour, 1_200);
+  assert.throws(() => assertEgressBudgetCapacity(4_200), /出口预算不足/);
+  assert.equal(assertEgressBudgetCapacity(5_400).sufficient, true);
 });
 
 test('降档让 L1 轮次超过五分钟：预期恢复期内有 SLO 信号但 exit 0，超期才 exit 1', () => {
@@ -351,7 +423,7 @@ test('HttpClient 摘要可读出档位、退让原因与最早恢复时刻', asy
     assert.equal(adaptive?.state?.healthyWindows, 2);
     assert.equal(adaptive?.state?.healthyWindowsRequired, 6);
     assert.equal(adaptive?.state?.rollingHourRequests, 2_950);
-    assert.equal(adaptive?.state?.budgetLimit, 3_500);
+    assert.equal(adaptive?.state?.budgetLimit, 5_400);
   } finally {
     await client.close();
   }
@@ -383,6 +455,15 @@ class ObservableFakeGate implements AdaptiveEgressGate {
         reason: 'test_failure_trend',
         changedAt: '2026-08-05T00:00:00.000Z',
         recoverNotBefore: '2026-08-05T01:00:00.000Z',
+        pressureLevel: 2,
+        pressureReason: 'test_failure_trend',
+        pressureChangedAt: '2026-08-05T00:00:00.000Z',
+        pressureRecoverNotBefore: '2026-08-05T01:00:00.000Z',
+        budgetLevel: 0,
+        budgetReason: 'within_budget',
+        budgetChangedAt: '2026-08-05T00:00:00.000Z',
+        budgetMinRequestIntervalMs: 333,
+        budgetThrottleRatio: 1,
         currentWindowRequests: 20,
         currentWindowFailures: 0,
         currentWindowConnectionFailures: 0,
@@ -393,12 +474,16 @@ class ObservableFakeGate implements AdaptiveEgressGate {
         elevatedWindows: 0,
         healthyWindows: 2,
         healthyWindowsRequired: 6,
+        recoveryWindowMinutes: 5,
+        recoveryWindowStartedAt: '2026-08-05T00:25:00.000Z',
+        recoveryWindowRequests: 20,
+        recoveryWindowFailures: 0,
         lastWindowFailureRate: 0,
         lastWindowConnectionFailureRate: 0,
         lastWindowDeterministicFailureRate: 0.02,
         lastWindowCompletedAt: '2026-08-05T00:30:00.000Z',
         rollingHourRequests: 2_950,
-        budgetLimit: 3_500,
+        budgetLimit: 5_400,
         budgetBreached: false,
         l1LastStartedAt: '2026-08-05T00:00:00.000Z',
         l1SloDegradedSince: null,

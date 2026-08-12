@@ -286,17 +286,25 @@ describe('M4 work-queue', () => {
     });
     const snapshot: AdaptiveEgressSnapshot = {
       siteKey: 'wikidot', level: 3, levelName: 'cooldown', minRequestIntervalMs: 8_000,
-      reason: 'rolling_60m_requests_3208_gt_3200',
+      reason: 'failure_rate_10.0pct_gte_10.0pct_single_window',
       changedAt: '2026-08-07T00:00:00.000Z',
       recoverNotBefore: '2026-08-07T01:00:00.000Z',
+      pressureLevel: 3, pressureReason: 'failure_rate_10.0pct_gte_10.0pct_single_window',
+      pressureChangedAt: '2026-08-07T00:00:00.000Z',
+      pressureRecoverNotBefore: '2026-08-07T01:00:00.000Z',
+      budgetLevel: 0, budgetReason: 'within_budget',
+      budgetChangedAt: '2026-08-07T00:00:00.000Z',
+      budgetMinRequestIntervalMs: 333, budgetThrottleRatio: 1,
       currentWindowRequests: 0, currentWindowFailures: 0,
       currentWindowConnectionFailures: 0, currentWindowDeterministicFailures: 0,
       connectionFailureStreak: 0, lastConnectionFailureAt: null,
       lastConnectionBackoffAt: null, elevatedWindows: 0, healthyWindows: 0,
       healthyWindowsRequired: 6, lastWindowFailureRate: 0,
+      recoveryWindowMinutes: 5, recoveryWindowStartedAt: null,
+      recoveryWindowRequests: 0, recoveryWindowFailures: 0,
       lastWindowConnectionFailureRate: 0, lastWindowDeterministicFailureRate: 0,
       lastWindowCompletedAt: null,
-      rollingHourRequests: 444, budgetLimit: 3_200, budgetBreached: false,
+      rollingHourRequests: 444, budgetLimit: 5_400, budgetBreached: false,
       l1LastStartedAt: null, l1SloDegradedSince: null, l1SloExpectedRecoveryAt: null,
       l1SloLastGapSeconds: null, l1SloOverdue: false,
       updatedAt: '2026-08-07T00:00:00.000Z',
@@ -309,7 +317,7 @@ describe('M4 work-queue', () => {
     assert.equal(expected.status, 'downshift_expected');
     assert.equal(protectedHealth.exitCode, 0);
     assert.equal(protectedHealth.selfProtection.levelName, 'cooldown');
-    assert.match(protectedHealth.selfProtection.reason, /3208_gt_3200/);
+    assert.match(protectedHealth.selfProtection.reason, /failure_rate_10\.0pct/);
     assert.ok(protectedHealth.selfProtection.expectedRecoveryAt);
 
     const overdue = evaluateAdaptiveSelfProtection(
