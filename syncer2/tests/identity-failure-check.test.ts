@@ -5,8 +5,13 @@ import { HttpStatusError, type HttpClient } from '../src/http/client.js';
 import { createPool, query } from '../src/store/db.js';
 import {
   acceptSameIdentityRevisionRegression,
+  reconcileRevisionRegressionIdentityStates,
   upsertRevisionRegressionIdentityStates,
 } from '../src/store/incremental.js';
+import {
+  applyIdentityMissingDeletion,
+  applySlugReuseIdentity,
+} from '../src/store/queues.js';
 import {
   claimWorkTasks,
   finishWorkTask,
@@ -276,7 +281,7 @@ describe('通用失败签名与身份复核', () => {
       `INSERT INTO meta.incremental_page_state(
          slug, page_id, last_l1_revision, last_l1_rating, last_l1_rating_votes,
          last_l1_seen_at, last_l1_run_id
-       ) VALUES ($1,$2,3,0,0,$3::timestamptz,$4::bigint)
+       ) VALUES ($1,NULL,3,0,0,$2::timestamptz,$3::bigint)
        ON CONFLICT (slug) DO UPDATE
          SET page_id=EXCLUDED.page_id,
              last_l1_revision=EXCLUDED.last_l1_revision,
@@ -284,7 +289,7 @@ describe('通用失败签名与身份复核', () => {
              last_l1_rating_votes=EXCLUDED.last_l1_rating_votes,
              last_l1_seen_at=EXCLUDED.last_l1_seen_at,
              last_l1_run_id=EXCLUDED.last_l1_run_id`,
-      [slug, pageId, OBSERVED_ISO, Number(run.id)],
+      [slug, OBSERVED_ISO, Number(run.id)],
     );
     await query(
       pool,
@@ -293,20 +298,29 @@ describe('通用失败签名与身份复核', () => {
        VALUES ($1,'meta','{}','{}')`,
       [pageId],
     );
-    await upsertRevisionRegressionIdentityStates(
+    const observation = {
+      layer: 'L1' as const,
+      pageId,
+      slug,
+      previousRevision: 3,
+      observedRevision: 1,
+      observedRating: 0,
+      observedRatingVotes: 0,
+    };
+    const firstEpisode = await upsertRevisionRegressionIdentityStates(
       pool,
       Number(run.id),
-      [{
-        layer: 'L1',
-        pageId,
-        slug,
-        previousRevision: 3,
-        observedRevision: 1,
-        observedRating: 0,
-        observedRatingVotes: 0,
-      }],
+      [observation],
       OBSERVED_ISO,
     );
+    assert.equal(firstEpisode.newEpisodeKeys.size, 1);
+    const replay = await upsertRevisionRegressionIdentityStates(
+      pool,
+      Number(run.id),
+      [observation],
+      new Date(Date.parse(OBSERVED_ISO) + 5 * 60_000).toISOString(),
+    );
+    assert.equal(replay.newEpisodeKeys.size, 0, '同一 episode 重放不得再派生 claim/partial');
     assert.equal(await enqueueScanTasks(pool, [{
       pageId,
       kind: 'meta',
@@ -390,6 +404,132 @@ describe('通用失败签名与身份复核', () => {
       0,
       '已收敛状态不得重复接受或无限 pending',
     );
+  });
+
+  it('同 slug 两代旧身份同时留有 regression：本地 live 后继证据将两条都收口为 slug_reused', async () => {
+    const slug = 'ts2test:revision-regression-two-generations';
+    const old1Wid = PAGE_WID_LO + 9_940;
+    const old2Wid = PAGE_WID_LO + 9_941;
+    const successorWid = PAGE_WID_LO + 9_942;
+    const old1 = await register(old1Wid, slug);
+    const second = await applySlugReuseIdentity(pool, {
+      predecessorId: old1,
+      observedWikidotId: old2Wid,
+      slug,
+      observedAt: OBSERVED_ISO,
+      runId: testRunId,
+    });
+    const old2 = Number(second.successor_id);
+    const nextObserved = new Date(Date.parse(OBSERVED_ISO) + 1_000).toISOString();
+    await applySlugReuseIdentity(pool, {
+      predecessorId: old2,
+      observedWikidotId: successorWid,
+      slug,
+      observedAt: nextObserved,
+      runId: testRunId,
+    });
+    await upsertRevisionRegressionIdentityStates(pool, testRunId, [
+      { layer: 'L1', pageId: old1, slug, previousRevision: 8, observedRevision: 0 },
+      { layer: 'L0', pageId: old2, slug, previousRevision: 3, observedRevision: 1 },
+    ], nextObserved);
+
+    const reconciled = await reconcileRevisionRegressionIdentityStates(
+      pool,
+      nextObserved,
+      60 * 60_000,
+      [old1, old2],
+    );
+    assert.equal(reconciled.slugReused, 2);
+    const states = await query<{ page_id: number; status: string }>(
+      pool,
+      'test:two_generation_regression_states',
+      `SELECT page_id,status
+         FROM meta.revision_regression_identity_state
+        WHERE page_id=ANY($1::int[])
+        ORDER BY page_id`,
+      [[old1, old2]],
+    );
+    assert.deepEqual(states.rows.map((row) => row.status), ['slug_reused', 'slug_reused']);
+  });
+
+  it('observed_revision=0 且旧身份已确认删除：自动进入 deleted 终态', async () => {
+    const slug = 'ts2test:revision-regression-deleted-zero';
+    const wikidotId = PAGE_WID_LO + 9_945;
+    const pageId = await register(wikidotId, slug);
+    await applyIdentityMissingDeletion(pool, {
+      pageId,
+      expectedWikidotId: wikidotId,
+      slug,
+      observedAt: OBSERVED_ISO,
+      runId: testRunId,
+    });
+    await upsertRevisionRegressionIdentityStates(pool, testRunId, [{
+      layer: 'L1',
+      pageId,
+      slug,
+      previousRevision: 1,
+      observedRevision: 0,
+    }], OBSERVED_ISO);
+
+    const reconciled = await reconcileRevisionRegressionIdentityStates(
+      pool,
+      OBSERVED_ISO,
+      60 * 60_000,
+      [pageId],
+    );
+    assert.equal(reconciled.deleted, 1);
+    const row = await one<{ status: string; resolution: string }>(
+      `SELECT status,resolution FROM meta.revision_regression_identity_state
+        WHERE page_id=$1 AND layer='L1'`,
+      [pageId],
+    );
+    assert.equal(row.status, 'deleted');
+    assert.match(row.resolution, /observed_revision=0/);
+  });
+
+  it('pending 满一小时仍无可靠身份结论：升级 manual_review 并退役确认任务', async () => {
+    const slug = 'ts2test:revision-regression-timeout';
+    const wikidotId = PAGE_WID_LO + 9_950;
+    const pageId = await register(wikidotId, slug);
+    const firstSeen = new Date(Date.parse(OBSERVED_ISO) - 60 * 60_000).toISOString();
+    await upsertRevisionRegressionIdentityStates(pool, testRunId, [{
+      layer: 'L1',
+      pageId,
+      slug,
+      previousRevision: 6,
+      observedRevision: 1,
+    }], firstSeen);
+    await enqueueScanTasks(pool, [{
+      pageId,
+      kind: 'meta',
+      reasons: ['revision_regression_identity_check', 'l1_revision_regression'],
+      priority: 100,
+    }]);
+
+    const reconciled = await reconcileRevisionRegressionIdentityStates(
+      pool,
+      OBSERVED_ISO,
+      60 * 60_000,
+      [pageId],
+    );
+    assert.equal(reconciled.manualReview, 1);
+    assert.equal(reconciled.tasksRetired, 1);
+    const replay = await upsertRevisionRegressionIdentityStates(pool, testRunId, [{
+      layer: 'L1',
+      pageId,
+      slug,
+      previousRevision: 6,
+      observedRevision: 1,
+    }], new Date(Date.parse(OBSERVED_ISO) + 5 * 60_000).toISOString());
+    assert.equal(replay.newEpisodeKeys.size, 0);
+    const row = await one<{ status: string; tasks: number }>(
+      `SELECT r.status,
+              (SELECT count(*)::int FROM meta.scan_task WHERE page_id=$1) AS tasks
+         FROM meta.revision_regression_identity_state r
+        WHERE r.page_id=$1 AND r.layer='L1'`,
+      [pageId],
+    );
+    assert.deepEqual(row, { status: 'manual_review', tasks: 0 });
   });
 
   it('确定性解析结构拒绝首次即进入 irreconcilable，不计算退避时间', async () => {

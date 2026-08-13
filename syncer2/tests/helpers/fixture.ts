@@ -125,6 +125,13 @@ export async function cleanupAll(sess: Sess): Promise<CleanupCounts> {
   const steps: Array<[string, string]> = [
     ['meta.revision_regression_identity_state',
       `DELETE FROM meta.revision_regression_identity_state WHERE page_id IN ${pagesSub}`],
+    ['meta.incremental_drift_state',
+      `DELETE FROM meta.incremental_drift_state WHERE page_id IN ${pagesSub}`],
+    ['meta.incremental_signal',
+      `DELETE FROM meta.incremental_signal WHERE page_id IN ${pagesSub}`],
+    ['meta.incremental_page_state',
+      `DELETE FROM meta.incremental_page_state
+        WHERE page_id IN ${pagesSub} OR slug LIKE '${TEST_KEY_PREFIX}%'`],
     ['meta.vote_sweep_page_state', `DELETE FROM meta.vote_sweep_page_state WHERE page_id IN ${pagesSub}`],
     ['meta.vote_seed_budget', `DELETE FROM meta.vote_seed_budget WHERE budget_key LIKE 'test:%'`],
     ['meta.revoke_candidate', `DELETE FROM meta.revoke_candidate WHERE page_id IN ${pagesSub}`],

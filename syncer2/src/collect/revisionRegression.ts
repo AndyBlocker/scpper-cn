@@ -7,6 +7,62 @@
  */
 
 export const REVISION_REGRESSION_MIN_COVERAGE = 0.98;
+/** L1 每 5 分钟、work-queue 至少每小时有一次可推导机会；超过一小时必须离开 pending。 */
+export const REVISION_REGRESSION_PENDING_TIMEOUT_MS = 60 * 60_000;
+
+export type RevisionRegressionPendingDisposition =
+  | 'pending'
+  | 'slug_reused'
+  | 'deleted'
+  | 'manual_review';
+
+export interface RevisionRegressionPendingEvidence {
+  expectedWikidotId: number;
+  currentPageStatus: 'live' | 'deleted' | null;
+  liveSlugWikidotIds: readonly number[];
+  observedRevision: number;
+  firstSeenAt: string;
+  now: string;
+}
+
+/**
+ * 本地生命周期证据优先于时钟：同 slug 已有另一 live 身份就是复用；旧身份已删且无
+ * 后继就是删除终态。revision=0 本身不等于删除，必须与生命周期证据合取。其余异常
+ * 一小时仍无远端身份结论时显式升级，而不是继续 pending 自旋。
+ */
+export function classifyRevisionRegressionPending(
+  evidence: RevisionRegressionPendingEvidence,
+): RevisionRegressionPendingDisposition {
+  if (!Number.isInteger(evidence.expectedWikidotId) || evidence.expectedWikidotId <= 0) {
+    throw new RangeError(`expectedWikidotId 必须是正整数，收到 ${evidence.expectedWikidotId}`);
+  }
+  if (!Number.isInteger(evidence.observedRevision) || evidence.observedRevision < 0) {
+    throw new RangeError(`observedRevision 必须是非负整数，收到 ${evidence.observedRevision}`);
+  }
+  if (evidence.liveSlugWikidotIds.some((id) => id !== evidence.expectedWikidotId)) {
+    return 'slug_reused';
+  }
+  if (evidence.currentPageStatus === 'deleted') return 'deleted';
+  const firstSeenMs = Date.parse(evidence.firstSeenAt);
+  const nowMs = Date.parse(evidence.now);
+  if (!Number.isFinite(firstSeenMs) || !Number.isFinite(nowMs)) {
+    throw new TypeError(
+      `非法 regression 时间 first=${evidence.firstSeenAt};now=${evidence.now}`,
+    );
+  }
+  return nowMs - firstSeenMs >= REVISION_REGRESSION_PENDING_TIMEOUT_MS
+    ? 'manual_review'
+    : 'pending';
+}
+
+/** 页级隔离边界：只拿掉异常 slug，其它页继续推进全站水位与 drift streak。 */
+export function excludeRevisionRegressionRows<T>(
+  rows: readonly T[],
+  regressionSlugs: ReadonlySet<string>,
+  slugOf: (row: T) => string,
+): T[] {
+  return rows.filter((row) => !regressionSlugs.has(slugOf(row)));
+}
 
 export interface RevisionRegressionHealth {
   regressions: number;

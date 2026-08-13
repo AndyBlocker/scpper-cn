@@ -4,9 +4,13 @@ import test from 'node:test';
 
 import { diffL0Rows, diffL1Rows } from '../src/collect/incrementalDiff.js';
 import {
+  classifyRevisionRegressionPending,
   decideRevisionRegressionIdentity,
   evaluateRevisionRegressionHealth,
+  excludeRevisionRegressionRows,
+  REVISION_REGRESSION_PENDING_TIMEOUT_MS,
 } from '../src/collect/revisionRegression.js';
+import { advanceDriftObservation } from '../src/collect/l1Drift.js';
 import {
   L0_SELECTORS,
   L1_SELECTORS,
@@ -360,6 +364,67 @@ test('大比例修订倒退仍升级整轮 failed；恰好 R9 边界不误杀', 
   });
   assert.equal(systemic.effectiveCoverage < 0.98, true);
   assert.equal(systemic.systemic, true);
+});
+
+test('单页 regression 只冻结自身：其它页继续推进水位与 drift streak', () => {
+  const rows = [
+    { fullname: 'regressed', revisions: 1 },
+    { fullname: 'healthy-drift', revisions: 7 },
+  ];
+  const advancing = excludeRevisionRegressionRows(
+    rows,
+    new Set(['regressed']),
+    (row) => row.fullname,
+  );
+  assert.deepEqual(advancing.map((row) => row.fullname), ['healthy-drift']);
+  assert.deepEqual(advanceDriftObservation({
+    consecutiveObservations: 4,
+    lastObservationRunId: 100,
+    resolved: false,
+  }, 101, 100), {
+    consecutiveObservations: 5,
+    eligible: true,
+  });
+});
+
+test('observed_revision=0 只有合取删除生命周期证据才进入 deleted', () => {
+  const now = '2026-08-14T04:00:00.000Z';
+  assert.equal(classifyRevisionRegressionPending({
+    expectedWikidotId: 1_468_000_001,
+    currentPageStatus: 'deleted',
+    liveSlugWikidotIds: [],
+    observedRevision: 0,
+    firstSeenAt: now,
+    now,
+  }), 'deleted');
+  assert.equal(classifyRevisionRegressionPending({
+    expectedWikidotId: 1_468_000_001,
+    currentPageStatus: 'live',
+    liveSlugWikidotIds: [1_468_000_001],
+    observedRevision: 0,
+    firstSeenAt: now,
+    now,
+  }), 'pending', 'revision=0 本身不能把仍 live 的同一身份误删');
+});
+
+test('同 slug 新旧身份并存优先判 slug_reused；无结论满一小时升级人工态', () => {
+  const nowMs = Date.parse('2026-08-14T04:00:00.000Z');
+  const base = {
+    expectedWikidotId: 1_468_000_001,
+    currentPageStatus: 'deleted' as const,
+    observedRevision: 1,
+    firstSeenAt: new Date(nowMs - REVISION_REGRESSION_PENDING_TIMEOUT_MS).toISOString(),
+    now: new Date(nowMs).toISOString(),
+  };
+  assert.equal(classifyRevisionRegressionPending({
+    ...base,
+    liveSlugWikidotIds: [1_468_000_002],
+  }), 'slug_reused');
+  assert.equal(classifyRevisionRegressionPending({
+    ...base,
+    currentPageStatus: 'live',
+    liveSlugWikidotIds: [base.expectedWikidotId],
+  }), 'manual_review');
 });
 
 test('长间隔后首轮只初始化基线：保留窗口，但不污染 rolling 也不告警', () => {

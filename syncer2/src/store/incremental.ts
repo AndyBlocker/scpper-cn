@@ -4,6 +4,7 @@ import type {
   L0ListPageRow,
   L1ListPageRow,
 } from '../collect/incrementalListPages.js';
+import { REVISION_REGRESSION_PENDING_TIMEOUT_MS } from '../collect/revisionRegression.js';
 import { chunk } from '../util/concurrency.js';
 import { query, toPgTimestamptz, withTransaction } from './db.js';
 import { toPgJson } from './pgText.js';
@@ -54,6 +55,23 @@ export interface RevisionRegressionIdentityObservation {
   observedUpdatedAt?: string | null;
   observedRating?: number | null;
   observedRatingVotes?: number | null;
+}
+
+export interface RevisionRegressionIdentityUpsertResult {
+  affected: number;
+  /** 只有新 episode 才需要派生一次身份确认；同一证据的周期重放只刷新 last_seen_at。 */
+  newEpisodeKeys: Set<string>;
+}
+
+export interface RevisionRegressionReconcileResult {
+  slugReused: number;
+  deleted: number;
+  manualReview: number;
+  tasksRetired: number;
+}
+
+export function revisionRegressionEpisodeKey(pageId: number, layer: 'L0' | 'L1'): string {
+  return `${pageId}:${layer}`;
 }
 
 export interface AcceptedRevisionRegressionIdentity {
@@ -440,8 +458,8 @@ export async function upsertRevisionRegressionIdentityStates(
   runId: number,
   rows: readonly RevisionRegressionIdentityObservation[],
   observedAt: string,
-): Promise<number> {
-  if (rows.length === 0) return 0;
+): Promise<RevisionRegressionIdentityUpsertResult> {
+  if (rows.length === 0) return { affected: 0, newEpisodeKeys: new Set() };
   const payload = rows.map((row) => ({
     layer: row.layer,
     page_id: row.pageId,
@@ -452,6 +470,39 @@ export async function upsertRevisionRegressionIdentityStates(
     observed_rating: row.observedRating ?? null,
     observed_rating_votes: row.observedRatingVotes ?? null,
   }));
+  const existing = await query<{
+    page_id: number;
+    layer: 'L0' | 'L1';
+    slug: string;
+    previous_revision: number;
+    observed_revision: number;
+  }>(
+    pool,
+    'incremental:load_revision_regression_episodes',
+    `WITH input AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(page_id int, layer text)
+     )
+     SELECT r.page_id, r.layer, r.slug, r.previous_revision, r.observed_revision
+       FROM meta.revision_regression_identity_state r
+       JOIN input i USING (page_id, layer)`,
+    [toPgJson(payload, 'incremental.revision_regression_identity_keys')],
+  );
+  const existingByKey = new Map(
+    existing.rows.map((row) => [revisionRegressionEpisodeKey(row.page_id, row.layer), row]),
+  );
+  const newEpisodeKeys = new Set<string>();
+  for (const row of rows) {
+    const key = revisionRegressionEpisodeKey(row.pageId, row.layer);
+    const previous = existingByKey.get(key);
+    if (
+      previous === undefined ||
+      previous.slug !== row.slug ||
+      Number(previous.previous_revision) !== row.previousRevision ||
+      Number(previous.observed_revision) !== row.observedRevision
+    ) {
+      newEpisodeKeys.add(key);
+    }
+  }
   const result = await query(
     pool,
     'incremental:upsert_revision_regression_identity',
@@ -483,10 +534,16 @@ export async function upsertRevisionRegressionIdentityStates(
            observed_rating = EXCLUDED.observed_rating,
            observed_rating_votes = EXCLUDED.observed_rating_votes,
            run_id = EXCLUDED.run_id,
-           status = 'pending',
+           status = CASE
+             WHEN r.slug = EXCLUDED.slug
+              AND r.expected_wikidot_id = EXCLUDED.expected_wikidot_id
+              AND r.previous_revision = EXCLUDED.previous_revision
+              AND r.observed_revision = EXCLUDED.observed_revision
+             THEN r.status
+             ELSE 'pending'
+           END,
            first_seen_at = CASE
-             WHEN r.status = 'pending'
-              AND r.slug = EXCLUDED.slug
+             WHEN r.slug = EXCLUDED.slug
               AND r.expected_wikidot_id = EXCLUDED.expected_wikidot_id
               AND r.previous_revision = EXCLUDED.previous_revision
               AND r.observed_revision = EXCLUDED.observed_revision
@@ -494,15 +551,144 @@ export async function upsertRevisionRegressionIdentityStates(
              ELSE EXCLUDED.first_seen_at
            END,
            last_seen_at = EXCLUDED.last_seen_at,
-           resolved_at = NULL,
-           resolution = NULL`,
+           resolved_at = CASE
+             WHEN r.slug = EXCLUDED.slug
+              AND r.expected_wikidot_id = EXCLUDED.expected_wikidot_id
+              AND r.previous_revision = EXCLUDED.previous_revision
+              AND r.observed_revision = EXCLUDED.observed_revision
+             THEN r.resolved_at
+             ELSE NULL
+           END,
+           resolution = CASE
+             WHEN r.slug = EXCLUDED.slug
+              AND r.expected_wikidot_id = EXCLUDED.expected_wikidot_id
+              AND r.previous_revision = EXCLUDED.previous_revision
+              AND r.observed_revision = EXCLUDED.observed_revision
+             THEN r.resolution
+             ELSE NULL
+           END`,
     [
       toPgJson(payload, 'incremental.revision_regression_identity'),
       runId,
       toPgTimestamptz(observedAt),
     ],
   );
-  return result.rowCount ?? 0;
+  return { affected: result.rowCount ?? 0, newEpisodeKeys };
+}
+
+/**
+ * pending 的周期收口：先消费已经落库的身份生命周期证据，再把超过一小时仍无可靠结论
+ * 的页升级 manual_review。终态页上的 regression 专用任务同时退役，避免终态仍被认领。
+ */
+export async function reconcileRevisionRegressionIdentityStates(
+  pool: Pool,
+  observedAt: string,
+  timeoutMs = REVISION_REGRESSION_PENDING_TIMEOUT_MS,
+  pageIds: readonly number[] | null = null,
+): Promise<RevisionRegressionReconcileResult> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError(`revision regression timeoutMs 必须是正安全整数，收到 ${timeoutMs}`);
+  }
+  return withTransaction(pool, 'revision-regression:reconcile', async (db) => {
+    const transitioned = await query<{
+      page_id: number;
+      status: 'slug_reused' | 'deleted' | 'manual_review';
+    }>(
+      db,
+      'revision_regression:reconcile_pending',
+      `WITH evidence AS (
+         SELECT r.page_id, r.layer, r.expected_wikidot_id, r.observed_revision,
+                pc.status AS page_status,
+                successor.page_id AS successor_page_id,
+                successor.wikidot_id AS successor_wikidot_id
+           FROM meta.revision_regression_identity_state r
+           LEFT JOIN serve.page_current pc ON pc.page_id = r.page_id
+           LEFT JOIN LATERAL (
+             SELECT next_pc.page_id, next_p.wikidot_id
+               FROM serve.page_current next_pc
+               JOIN ingest.page next_p ON next_p.id = next_pc.page_id
+              WHERE next_pc.slug = r.slug
+                AND next_pc.status = 'live'
+                AND next_p.wikidot_id <> r.expected_wikidot_id
+              ORDER BY next_pc.page_id DESC
+              LIMIT 1
+           ) successor ON true
+          WHERE r.status = 'pending'
+            AND ($3::int[] IS NULL OR r.page_id = ANY($3::int[]))
+       ), decided AS (
+         SELECT e.*,
+                CASE
+                  WHEN e.successor_page_id IS NOT NULL THEN 'slug_reused'
+                  WHEN e.page_status = 'deleted' THEN 'deleted'
+                  WHEN r.first_seen_at <= $1::timestamptz
+                       - ($2::bigint * interval '1 millisecond') THEN 'manual_review'
+                  ELSE NULL
+                END AS disposition
+           FROM evidence e
+           JOIN meta.revision_regression_identity_state r
+             ON r.page_id = e.page_id AND r.layer = e.layer
+       )
+       UPDATE meta.revision_regression_identity_state r
+          SET status = d.disposition,
+              resolved_at = GREATEST($1::timestamptz, r.first_seen_at, r.last_seen_at),
+              resolution = CASE d.disposition
+                WHEN 'slug_reused' THEN
+                  'local_lifecycle_successor:page_id=' || d.successor_page_id::text ||
+                  ';wikidot_id=' || d.successor_wikidot_id::text
+                WHEN 'deleted' THEN
+                  'local_lifecycle_predecessor_deleted;observed_revision=' ||
+                  d.observed_revision::text
+                ELSE 'identity_confirmation_timeout:' || $2::text || 'ms;manual_review_required'
+              END
+         FROM decided d
+        WHERE r.page_id = d.page_id
+          AND r.layer = d.layer
+          AND r.status = 'pending'
+          AND d.disposition IS NOT NULL
+       RETURNING r.page_id, r.status`,
+      [toPgTimestamptz(observedAt), timeoutMs, pageIds === null ? null : [...pageIds]],
+    );
+    const terminalPageIds = [...new Set(transitioned.rows.map((row) => Number(row.page_id)))];
+    let tasksRetired = 0;
+    if (terminalPageIds.length > 0) {
+      await query(
+        db,
+        'revision_regression:strip_terminal_task_reasons',
+        `UPDATE meta.scan_task st
+            SET reasons = ARRAY(
+              SELECT reason
+               FROM unnest(st.reasons) AS reason
+               WHERE reason <> ALL($2::text[])
+                 AND reason !~ '^l[01]_revision_regression$'
+                 AND reason !~ '^l1_projection_drift_'
+            )
+          WHERE st.page_id = ANY($1::int[])
+            AND (
+              'revision_regression_identity_check' = ANY(st.reasons)
+              OR 'same_identity_revision_regression_confirmed' = ANY(st.reasons)
+            )`,
+        [
+          terminalPageIds,
+          ['revision_regression_identity_check', 'same_identity_revision_regression_confirmed'],
+        ],
+      );
+      const retired = await query(
+        db,
+        'revision_regression:retire_empty_terminal_tasks',
+        `DELETE FROM meta.scan_task
+          WHERE page_id = ANY($1::int[])
+            AND cardinality(reasons) = 0`,
+        [terminalPageIds],
+      );
+      tasksRetired = retired.rowCount ?? 0;
+    }
+    return {
+      slugReused: transitioned.rows.filter((row) => row.status === 'slug_reused').length,
+      deleted: transitioned.rows.filter((row) => row.status === 'deleted').length,
+      manualReview: transitioned.rows.filter((row) => row.status === 'manual_review').length,
+      tasksRetired,
+    };
+  });
 }
 
 /**
@@ -534,7 +720,8 @@ export async function acceptSameIdentityRevisionRegression(
          FROM ingest.page p
          JOIN serve.page_current pc ON pc.page_id = p.id
          JOIN meta.incremental_page_state ips
-           ON ips.page_id = p.id AND ips.slug = pc.slug
+           ON ips.slug = pc.slug
+          AND (ips.page_id IS NULL OR ips.page_id = p.id)
         WHERE p.id = $1
         FOR UPDATE OF p, pc, ips`,
       [args.pageId],
@@ -598,7 +785,8 @@ export async function acceptSameIdentityRevisionRegression(
       db,
       'revision_regression:advance_state',
       `UPDATE meta.incremental_page_state
-          SET last_l0_revision = CASE WHEN $4::boolean THEN $5::int ELSE last_l0_revision END,
+          SET page_id = $1,
+              last_l0_revision = CASE WHEN $4::boolean THEN $5::int ELSE last_l0_revision END,
               last_l0_updated_at = CASE
                 WHEN $4::boolean THEN COALESCE($6::timestamptz, last_l0_updated_at)
                 ELSE last_l0_updated_at
@@ -621,7 +809,7 @@ export async function acceptSameIdentityRevisionRegression(
                 WHEN $7::boolean THEN $11::bigint ELSE last_l1_run_id
               END,
               updated_at = now()
-        WHERE page_id = $1 AND slug = $2`,
+        WHERE slug = $2 AND (page_id IS NULL OR page_id = $1)`,
       [
         args.pageId,
         args.slug,

@@ -15,6 +15,7 @@ import type { Pool } from 'pg';
 import { diffL0Rows, diffL1Rows } from '../collect/incrementalDiff.js';
 import {
   evaluateRevisionRegressionHealth,
+  excludeRevisionRegressionRows,
   type RevisionRegressionHealth,
 } from '../collect/revisionRegression.js';
 import {
@@ -46,7 +47,9 @@ import {
   loadIncrementalPageStates,
   loadRevisionCoverageWriteFreezeDomains,
   loadSuccessfulL0Bounds,
+  reconcileRevisionRegressionIdentityStates,
   recordRevisionCoverage,
+  revisionRegressionEpisodeKey,
   shouldAlertRevisionCoverage,
   upsertL0States,
   upsertL1States,
@@ -489,6 +492,7 @@ async function persistL0(
   observedAt: string,
   minCoverage: number,
 ): Promise<PersistResult> {
+  const regressionReconciled = await reconcileRevisionRegressionIdentityStates(pool, observedAt);
   const [states, resolution, knownPopulation] = await Promise.all([
     loadIncrementalPageStates(pool, rows.map((row) => row.fullname)),
     resolveSlugs(pool, rows.map((row) => row.fullname)),
@@ -516,7 +520,29 @@ async function persistL0(
     .filter((row) => resolution.map.has(row.fullname))
     .map((row) => ({ row, pageId: resolution.map.get(row.fullname)! }));
   const unresolved = rows.filter((row) => !resolution.map.has(row.fullname));
-  const tasks: ScanTaskRow[] = regressionTargets.map(({ pageId }) => ({
+  const regressionObservations = regressionTargets.map(({ slug, pageId }) => {
+    const row = rows.find((candidate) => candidate.fullname === slug)!;
+    return {
+      layer: 'L0' as const,
+      pageId,
+      slug,
+      previousRevision: states.get(slug)!.lastL0Revision!,
+      observedRevision: row.revisions,
+      observedUpdatedAt: row.updatedAt,
+    };
+  });
+  const regressionIdentityUpsert = regressionHealth.systemic
+    ? { affected: 0, newEpisodeKeys: new Set<string>() }
+    : await upsertRevisionRegressionIdentityStates(
+        pool,
+        runId,
+        regressionObservations,
+        observedAt,
+      );
+  const confirmationTargets = regressionTargets.filter(({ pageId }) =>
+    regressionIdentityUpsert.newEpisodeKeys.has(revisionRegressionEpisodeKey(pageId, 'L0')),
+  );
+  const tasks: ScanTaskRow[] = confirmationTargets.map(({ pageId }) => ({
     pageId,
     kind: 'meta',
     reasons: ['revision_regression_identity_check', 'l0_revision_regression'],
@@ -552,30 +578,12 @@ async function persistL0(
     })),
     observedAt,
   );
-  const regressionIdentityStates = regressionHealth.systemic
-    ? 0
-    : await upsertRevisionRegressionIdentityStates(
-        pool,
-        runId,
-        regressionTargets.map(({ slug, pageId }) => {
-          const row = rows.find((candidate) => candidate.fullname === slug)!;
-          return {
-            layer: 'L0' as const,
-            pageId,
-            slug,
-            previousRevision: states.get(slug)!.lastL0Revision!,
-            observedRevision: row.revisions,
-            observedUpdatedAt: row.updatedAt,
-          };
-        }),
-        observedAt,
-      );
   const tasksEnqueued = await enqueueScanTasks(pool, mergeTasks(tasks));
   const pageScansWritten = await insertPageScans(
     pool,
     runId,
     [
-      ...regressionTargets.flatMap(({ slug, pageId }) => {
+      ...confirmationTargets.flatMap(({ slug, pageId }) => {
         const row = rows.find((candidate) => candidate.fullname === slug)!;
         const previous = states.get(slug)?.lastL0Revision ?? null;
         const error =
@@ -649,8 +657,7 @@ async function persistL0(
     ? 0
     : await upsertL0States(
         pool,
-        rows
-          .filter((row) => !regressionSlugs.has(row.fullname))
+        excludeRevisionRegressionRows(rows, regressionSlugs, (row) => row.fullname)
           .map((row) => ({ row, pageId: resolution.map.get(row.fullname) ?? null })),
         observedAt,
       );
@@ -671,7 +678,12 @@ async function persistL0(
       changed: diff.changed.length,
       revisionChanged: diff.changed.filter((row) => row.revisionChanged).length,
       revisionRegressions: diff.revisionRegressions.length,
-      revisionRegressionIdentityStates: regressionIdentityStates,
+      revisionRegressionIdentityStates: regressionIdentityUpsert.affected,
+      revisionRegressionIdentityConfirmations: confirmationTargets.length,
+      revisionRegressionSlugReused: regressionReconciled.slugReused,
+      revisionRegressionDeleted: regressionReconciled.deleted,
+      revisionRegressionManualReview: regressionReconciled.manualReview,
+      revisionRegressionTasksRetired: regressionReconciled.tasksRetired,
       revisionRegressionSystemic: regressionHealth.systemic,
       updatedAtWithoutRevision: anomalyCount,
       unchanged: diff.unchanged,
@@ -687,6 +699,7 @@ async function persistL1(
   frequencyMinutes: number,
   minCoverage: number,
 ): Promise<PersistResult> {
+  const regressionReconciled = await reconcileRevisionRegressionIdentityStates(pool, observedAt);
   const [states, baseline, resolution, knownPopulation] = await Promise.all([
     loadIncrementalPageStates(pool, rows.map((row) => row.fullname)),
     hasL1Baseline(pool),
@@ -714,14 +727,44 @@ async function persistL1(
     .filter((row) => resolution.map.has(row.fullname))
     .map((row) => ({ row, pageId: resolution.map.get(row.fullname)! }));
   const unresolved = rows.filter((row) => !resolution.map.has(row.fullname));
+  const regressionObservations = regressionTargets.map(({ slug, pageId }) => {
+    const row = rows.find((candidate) => candidate.fullname === slug)!;
+    return {
+      layer: 'L1' as const,
+      pageId,
+      slug,
+      previousRevision: states.get(slug)!.lastL1Revision!,
+      observedRevision: row.revisions,
+      observedRating: row.rating,
+      observedRatingVotes: row.ratingVotes,
+    };
+  });
+  const regressionIdentityUpsert = regressionHealth.systemic
+    ? { affected: 0, newEpisodeKeys: new Set<string>() }
+    : await upsertRevisionRegressionIdentityStates(
+        pool,
+        runId,
+        regressionObservations,
+        observedAt,
+      );
+  const confirmationTargets = regressionTargets.filter(({ pageId }) =>
+    regressionIdentityUpsert.newEpisodeKeys.has(revisionRegressionEpisodeKey(pageId, 'L1')),
+  );
   const driftReconciliation = await observeL1ProjectionDrift(
     pool,
     runId,
-    resolved.map(({ row, pageId }) => ({
-      row,
-      pageId,
-      previousL1RunId: states.get(row.fullname)?.lastL1RunId ?? null,
-    })),
+    excludeRevisionRegressionRows(
+      resolved,
+      regressionSlugs,
+      ({ row }) => row.fullname,
+    )
+      // regression 页先完成自身身份确认；不能把其冻结的页级水位喂给漂移 streak，
+      // 更不能让它每轮派生 revisions_full。其它页照常连续推进。
+      .map(({ row, pageId }) => ({
+        row,
+        pageId,
+        previousL1RunId: states.get(row.fullname)?.lastL1RunId ?? null,
+      })),
     observedAt,
   );
   const identityConflictSlugs = new Set(
@@ -740,7 +783,7 @@ async function persistL1(
       revisionMismatches: driftReconciliation.summary.revisionMismatches,
     });
   }
-  const tasks: ScanTaskRow[] = regressionTargets.map(({ pageId }) => ({
+  const tasks: ScanTaskRow[] = confirmationTargets.map(({ pageId }) => ({
     pageId,
     kind: 'meta',
     reasons: ['revision_regression_identity_check', 'l1_revision_regression'],
@@ -791,25 +834,6 @@ async function persistL1(
     })),
     observedAt,
   );
-  const regressionIdentityStates = regressionHealth.systemic
-    ? 0
-    : await upsertRevisionRegressionIdentityStates(
-        pool,
-        runId,
-        regressionTargets.map(({ slug, pageId }) => {
-          const row = rows.find((candidate) => candidate.fullname === slug)!;
-          return {
-            layer: 'L1' as const,
-            pageId,
-            slug,
-            previousRevision: states.get(slug)!.lastL1Revision!,
-            observedRevision: row.revisions,
-            observedRating: row.rating,
-            observedRatingVotes: row.ratingVotes,
-          };
-        }),
-        observedAt,
-      );
   const tasksEnqueued = await enqueueScanTasks(pool, mergeTasks(tasks));
   const voteChanged = new Set(diff.voteChanges.map((row) => row.current.fullname));
   const revisionChanged = new Set(diff.revisionChanges.map((row) => row.current.fullname));
@@ -817,7 +841,7 @@ async function persistL1(
     pool,
     runId,
     [
-      ...regressionTargets.flatMap(({ slug, pageId }) => {
+      ...confirmationTargets.flatMap(({ slug, pageId }) => {
         const row = rows.find((candidate) => candidate.fullname === slug)!;
         const previous = states.get(slug)?.lastL1Revision ?? null;
         const error =
@@ -981,12 +1005,8 @@ async function persistL1(
     : await upsertL1States(
         pool,
         runId,
-        rows
-          .filter(
-            (row) =>
-              !regressionSlugs.has(row.fullname) &&
-              !identityConflictSlugs.has(row.fullname),
-          )
+        excludeRevisionRegressionRows(rows, regressionSlugs, (row) => row.fullname)
+          .filter((row) => !identityConflictSlugs.has(row.fullname))
           .map((row) => ({ row, pageId: resolution.map.get(row.fullname) ?? null })),
         observedAt,
       );
@@ -1009,7 +1029,12 @@ async function persistL1(
       revisionChanges: diff.revisionChanges.length,
       revisionMisses: diff.revisionMisses.length,
       revisionRegressions: diff.revisionRegressions.length,
-      revisionRegressionIdentityStates: regressionIdentityStates,
+      revisionRegressionIdentityStates: regressionIdentityUpsert.affected,
+      revisionRegressionIdentityConfirmations: confirmationTargets.length,
+      revisionRegressionSlugReused: regressionReconciled.slugReused,
+      revisionRegressionDeleted: regressionReconciled.deleted,
+      revisionRegressionManualReview: regressionReconciled.manualReview,
+      revisionRegressionTasksRetired: regressionReconciled.tasksRetired,
       revisionRegressionSystemic: regressionHealth.systemic,
       projectionDriftPages: driftReconciliation.summary.discoveredPages,
       projectionDriftVoteMismatches: driftReconciliation.summary.voteMismatches,
