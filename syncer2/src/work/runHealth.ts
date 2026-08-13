@@ -53,9 +53,21 @@ export interface RunHealthDecision {
   reasons: string[];
 }
 
-/** 持久化整轮跳过不能伪装成正常 partial；交给统一 run health 产生 failed + exit 1。 */
-export function persistenceSkipFatalReasons(skipped: boolean): string[] {
-  return skipped ? ['persistence_skipped'] : [];
+/**
+ * 持久化整轮跳过不能伪装成正常 partial；交给统一 run health 产生 failed + exit 1。
+ *
+ * 但「跳过」有两种来源，只有一种是异常：
+ *  - **不可信整轮**（缺批、结构损坏、重复异常放大）：证据本身不可用，必须响。
+ *  - **自愈型跳过**：零星批失败（下轮重扫）与单轮时间预算收敛。
+ *    两者都不推进状态、不入队、不喂缺失推断，下一轮自然补上，属于自我保护而非故障。
+ *
+ * 事故：此前该判据对所有跳过一律 fatal，同时撤销了两个既有设计——
+ * 零星批失败本已从 failed 降级为 partial（避免站点偶发 503 产生必然自愈的告警，
+ * L1 提频到 5 分钟后命中概率翻三倍），预算耗尽本已定为正常收敛 exit 0。
+ * 于是「自我保护」再次被报成「故障」，正是该判据想解决的问题的反面。
+ */
+export function persistenceSkipFatalReasons(skipped: boolean, selfHealing = false): string[] {
+  return skipped && !selfHealing ? ['persistence_skipped'] : [];
 }
 
 export function evaluateRunHealth(input: RunHealthInput): RunHealthDecision {

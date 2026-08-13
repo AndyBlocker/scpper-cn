@@ -202,6 +202,36 @@ test('L1 全站重复达到 4 条越过 0.01% 时拒绝，持久化跳过产生 
   assert.ok(health.reasons.includes('persistence_skipped'));
 });
 
+test('自愈型持久化跳过（零星批失败 / 预算收敛）不产生 failed 告警', () => {
+  // 零星批失败已由采集器判为 partial 并注明「下轮重扫」；预算耗尽是正常收敛。
+  // 两者都不推进状态、不入队、不喂缺失推断，下一轮自然补上——
+  // 把它们报成 failed 就是「自我保护被当成故障」，也会撤销既有的
+  // 「偶发 503 不再产生必然自愈告警」与「预算耗尽 exit 0」两项设计。
+  for (const selfHealing of [true]) {
+    const health = evaluateRunHealth({
+      claimed: 146,
+      processed: 145,
+      partial: 1,
+      failed: 0,
+      fatalReasons: persistenceSkipFatalReasons(true, selfHealing),
+    });
+    assert.equal(health.exitCode, 0);
+    assert.ok(!health.reasons.includes('persistence_skipped'));
+  }
+
+  // 不可信整轮仍必须响。
+  const untrusted = evaluateRunHealth({
+    claimed: 146,
+    processed: 146,
+    partial: 1,
+    failed: 0,
+    fatalReasons: persistenceSkipFatalReasons(true, false),
+  });
+  assert.equal(untrusted.status, 'failed');
+  assert.equal(untrusted.exitCode, 1);
+  assert.ok(untrusted.reasons.includes('persistence_skipped'));
+});
+
 function fullSiteDuplicateFixture(duplicates: number) {
   const expectedBatches = 146;
   const perPage = 250;

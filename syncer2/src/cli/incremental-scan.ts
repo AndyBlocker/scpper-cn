@@ -265,7 +265,13 @@ async function main(): Promise<void> {
           ? ['scan_validation_failed']
           : []),
         ...(persistence.systemicPageFailure ? ['systemic_page_failure'] : []),
-        ...persistenceSkipFatalReasons(persistence.counters.persistenceSkipped === true),
+        // 自愈型跳过不算故障：预算收敛与零星批失败（scan 自身已判 partial 而非 failed）
+        // 都会在下一轮自然补上；只有 scan.status==='failed' 的不可信整轮才响，
+        // 而那一条已由上面的 scan_validation_failed 覆盖。
+        ...persistenceSkipFatalReasons(
+          persistence.counters.persistenceSkipped === true,
+          budget.stoppedByRuntimeBudget || scan.status === 'partial',
+        ),
         ...(egressSlo?.exitCode === 1 ? ['adaptive_downshift_recovery_overdue'] : []),
       ],
     });
