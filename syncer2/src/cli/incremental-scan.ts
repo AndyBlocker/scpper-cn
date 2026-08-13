@@ -364,9 +364,13 @@ async function main(): Promise<void> {
         partial: 1,
         failed: 0,
         deferred: 1,
-        fatalReasons: persistenceSkipFatalReasons(true),
+        // 这条是 catch 分支：等待中抛出 RuntimeBudgetExceededError。
+        // 与正常分支同为「预算收敛」，属自愈型跳过——下一轮完整重扫，
+        // 不是故障。出口降档期间 L1 必然反复走到这里（8s/请求跑不完 147 批），
+        // 若判 fatal 就会在恢复期每 5 分钟报一次必然自愈的告警。
+        fatalReasons: persistenceSkipFatalReasons(true, true),
       });
-      log.warn('增量层在等待中命中单轮时间预算，整轮持久化跳过并告警', {
+      log.warn('增量层在等待中命中单轮时间预算，整轮持久化跳过；下一轮完整重扫', {
         layer: opts.layer,
         requests,
       });

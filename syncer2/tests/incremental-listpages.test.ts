@@ -199,7 +199,8 @@ test('L1 全站重复达到 4 条越过 0.01% 时拒绝，持久化跳过产生 
     processed: 146,
     partial: 1,
     failed: 0,
-    fatalReasons: persistenceSkipFatalReasons(true),
+    // 重复异常放大属于「不可信整轮」，不是自愈型跳过。
+    fatalReasons: persistenceSkipFatalReasons(true, false),
   });
   assert.equal(health.status, 'failed');
   assert.equal(health.exitCode, 1);

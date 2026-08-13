@@ -65,8 +65,14 @@ export interface RunHealthDecision {
  * 零星批失败本已从 failed 降级为 partial（避免站点偶发 503 产生必然自愈的告警，
  * L1 提频到 5 分钟后命中概率翻三倍），预算耗尽本已定为正常收敛 exit 0。
  * 于是「自我保护」再次被报成「故障」，正是该判据想解决的问题的反面。
+ *
+ * selfHealing **必填、无默认值**：本判据在 incremental-scan 有两个调用点
+ * （正常分支与 RuntimeBudgetExceededError 的 catch 分支），第一次修复只改了正常分支，
+ * 于是出口降档期间 L1 每 5 分钟仍报一次必然自愈的告警。同文件的既有注释早已写过
+ * 这条教训——「验证了逻辑，没验证逻辑被用到」。给默认值等于允许调用点不表态，
+ * 因此这里由类型系统强制每处显式声明。
  */
-export function persistenceSkipFatalReasons(skipped: boolean, selfHealing = false): string[] {
+export function persistenceSkipFatalReasons(skipped: boolean, selfHealing: boolean): string[] {
   return skipped && !selfHealing ? ['persistence_skipped'] : [];
 }
 
