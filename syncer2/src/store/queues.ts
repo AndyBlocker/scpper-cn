@@ -14,7 +14,7 @@
  */
 
 import type { Pool, PoolClient } from 'pg';
-import { query, toPgTimestamptz } from './db.js';
+import { query, toPgTimestamptz, withTransaction } from './db.js';
 import { toPgJson } from './pgText.js';
 import { chunk } from '../util/concurrency.js';
 import { createLogger } from '../util/log.js';
@@ -84,29 +84,51 @@ export async function upsertPendingPages(
                 seen_count   = pp.seen_count + 1,
                 reasons      = ARRAY(SELECT DISTINCT e FROM unnest(pp.reasons || EXCLUDED.reasons) AS e),
                 priority     = GREATEST(pp.priority, EXCLUDED.priority),
-                -- gone 只是“当时 404”。终结后又被完整发现层看见，代表同 slug 新实体或恢复，
-                -- 必须重新进身份解析；resolved 则已有 page_id，不在这里擅自重开。
+                -- gone 只是“当时 404”。resolved 也可能只解析到了后来被删的旧实体；
+                -- 完整发现层再次看见且库内没有同 slug live 当前态时，必须重开身份解析。
+                -- restricted v1 reuse 是受限分类 fullname→历史 canonical slug 的显式别名，
+                -- 当前 live slug 本来就不同，不能被这条“同 slug 不存在”规则误重开。
                 status       = CASE
-                  WHEN pp.status = 'gone'
+                  WHEN pp.status IN ('gone', 'resolved')
+                   AND pp.resolution_source IS DISTINCT FROM 'restricted_listpages_v1_reuse'
                    AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                   AND NOT EXISTS (
+                     SELECT 1 FROM serve.page_current pc
+                      WHERE pc.slug = pp.slug AND pc.status = 'live'
+                   )
                     THEN 'pending'
                   ELSE pp.status
                 END,
                 state_changed_at = CASE
-                  WHEN pp.status = 'gone'
+                  WHEN pp.status IN ('gone', 'resolved')
+                   AND pp.resolution_source IS DISTINCT FROM 'restricted_listpages_v1_reuse'
                    AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                   AND NOT EXISTS (
+                     SELECT 1 FROM serve.page_current pc
+                      WHERE pc.slug = pp.slug AND pc.status = 'live'
+                   )
                     THEN EXCLUDED.last_seen_at
                   ELSE pp.state_changed_at
                 END,
                 finished_at = CASE
-                  WHEN pp.status = 'gone'
+                  WHEN pp.status IN ('gone', 'resolved')
+                   AND pp.resolution_source IS DISTINCT FROM 'restricted_listpages_v1_reuse'
                    AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                   AND NOT EXISTS (
+                     SELECT 1 FROM serve.page_current pc
+                      WHERE pc.slug = pp.slug AND pc.status = 'live'
+                   )
                     THEN NULL
                   ELSE pp.finished_at
                 END,
                 not_before = CASE
-                  WHEN pp.status = 'gone'
+                  WHEN pp.status IN ('gone', 'resolved')
+                   AND pp.resolution_source IS DISTINCT FROM 'restricted_listpages_v1_reuse'
                    AND EXCLUDED.last_seen_at > COALESCE(pp.finished_at, pp.last_seen_at)
+                   AND NOT EXISTS (
+                     SELECT 1 FROM serve.page_current pc
+                      WHERE pc.slug = pp.slug AND pc.status = 'live'
+                   )
                     THEN NULL
                   ELSE pp.not_before
                 END`,
@@ -352,6 +374,28 @@ export interface ExistingIdentity {
   pageId: number;
   /** ingest.page_slug_history 里 valid_to IS NULL 的那一行（可能为 null：历史缺行）。 */
   currentSlug: string | null;
+  status: 'live' | 'deleted';
+}
+
+/** 同 slug 最近的 deleted 前身；仅供已经站上整页 pageId 证明的复用接力。 */
+export async function lookupLatestDeletedIdentityBySlug(
+  pool: PgExecutor,
+  slug: string,
+): Promise<ExistingIdentity | null> {
+  const res = await query<{ page_id: number; current_slug: string; status: 'deleted' }>(
+    pool,
+    'serve.page_current:latest_deleted_by_slug',
+    `SELECT page_id, slug AS current_slug, status
+       FROM serve.page_current
+      WHERE slug = $1 AND status = 'deleted'
+      ORDER BY deleted_at DESC NULLS LAST, page_id DESC
+      LIMIT 1`,
+    [slug],
+  );
+  const row = res.rows[0];
+  return row === undefined
+    ? null
+    : { pageId: Number(row.page_id), currentSlug: row.current_slug, status: row.status };
 }
 
 /**
@@ -370,11 +414,16 @@ export async function lookupIdentityByWikidotId(
   pool: PgExecutor,
   wikidotId: number,
 ): Promise<ExistingIdentity | null> {
-  const res = await query<{ page_id: number; current_slug: string | null }>(
+  const res = await query<{
+    page_id: number;
+    current_slug: string | null;
+    status: 'live' | 'deleted';
+  }>(
     pool,
     'ingest.page:lookup_by_wikidot_id',
-    `SELECT p.id AS page_id, psh.slug AS current_slug
+    `SELECT p.id AS page_id, psh.slug AS current_slug, pc.status
        FROM ingest.page p
+       JOIN serve.page_current pc ON pc.page_id = p.id
        LEFT JOIN ingest.page_slug_history psh
               ON psh.page_id = p.id AND psh.valid_to IS NULL
       WHERE p.wikidot_id = $1`,
@@ -382,7 +431,50 @@ export async function lookupIdentityByWikidotId(
   );
   const row = res.rows[0];
   if (row === undefined) return null;
-  return { pageId: Number(row.page_id), currentSlug: row.current_slug };
+  return { pageId: Number(row.page_id), currentSlug: row.current_slug, status: row.status };
+}
+
+/** 同一 wikidotId 的页重新出现：先用直接身份证据更新 slug，再写 restored 生命事件。 */
+export async function restorePageIdentity(
+  pool: Pool,
+  args: {
+    pageId: number;
+    wikidotId: number;
+    slug: string;
+    observedAt: string;
+    runId?: number | null;
+  },
+): Promise<void> {
+  await withTransaction(pool, 'restore-page-identity', async (db) => {
+    await query(
+      db,
+      'ingest.apply_page_meta:restore_identity',
+      `SELECT ingest.apply_page_meta(
+         p_page       => $1::int,
+         p_attrs      => jsonb_build_object('slug', $2::text),
+         p_observed   => $3::timestamptz,
+         p_source     => 'wikidot',
+         p_run        => $4::bigint,
+         p_wikidot_id => $5::int
+       )`,
+      [args.pageId, args.slug, toPgTimestamptz(args.observedAt), args.runId ?? null, args.wikidotId],
+    );
+    await query(
+      db,
+      'ingest.apply_page_life:restore_identity',
+      `SELECT ingest.apply_page_life(
+         p_page         => $1::int,
+         p_kind         => 'restored',
+         p_occurred     => $2::timestamptz,
+         p_precision    => 'inferred',
+         p_observed     => $2::timestamptz,
+         p_source       => 'wikidot',
+         p_run          => $3::bigint,
+         p_wikidot_id   => $4::int
+       )`,
+      [args.pageId, toPgTimestamptz(args.observedAt), args.runId ?? null, args.wikidotId],
+    );
+  });
 }
 
 /**

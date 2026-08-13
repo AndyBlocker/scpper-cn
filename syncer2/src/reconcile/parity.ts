@@ -25,14 +25,25 @@ export const V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE = 25;
 export const V1_LATESTVOTE_FOLD_WINDOW_DAYS = 7;
 
 /**
+ * v1 活库测试曾铸入、但站上不存在的图片测试页。名单与理由全部在源码中可枚举；
+ * 回归测试锁定整个清单，任何新增都会先使测试失败。
+ */
+export const V1_SYNTHETIC_TEST_PAGE_ALLOWLIST = new Map<number, string>([
+  [800019414, 'test-image-page-1759148576016'],
+  [800080727, 'test-image-page-1759149352271'],
+  [800041112, 'test-image-page-1759413342363'],
+]);
+
+/**
  * v2：page_id/voter_id/source_row_ordinal/sign(direction)，按前三列排序，LF 拼接后 MD5。
  * v1（历史、未显式编号）不含 source_row_ordinal。
  */
-export const DELETED_VOTE_CHECKSUM_VERSION = 2;
+export const DELETED_VOTE_CHECKSUM_VERSION = 3;
 export const DELETED_VOTE_CHECKSUM_ALGORITHM =
   'md5(lf-joined page_id:voter_id:source_row_ordinal:sign(direction); ' +
   'order=page_id,voter_id,source_row_ordinal); baseline=all deleted; ' +
-  'comparison=members whose latest deleted event was observed by previous report';
+  'comparison=members whose lifecycle status at previous report was deleted, ' +
+  'including identities legitimately restored since that report';
 
 export interface ParityPageState {
   wikidotId: number;
@@ -40,7 +51,12 @@ export interface ParityPageState {
   title: string | null;
   rating: number;
   tags: string[];
+  /** Wikidot L0 声明的站上更新时间，不是 v2 投影写入时钟。 */
   metaUpdatedEpochMs: number | null;
+  /** 最近一次完整 ListPages 直接看到该 live slug 的时间。 */
+  l1SeenEpochMs: number | null;
+  titleDirectObserved: boolean;
+  tagsDirectObserved: boolean;
   voteUpdatedEpochMs: number | null;
   voterCount: number;
   voteRating: number;
@@ -139,7 +155,7 @@ export interface DeletedVoteChecksum {
   /** 本轮全体已删成员；持久化为下一轮基线。 */
   count: number;
   checksum: string;
-  /** 上轮已经存在且本轮仍 deleted 的成员；只用这一集合判断内容变化。 */
+  /** 上轮时点为 deleted 的精确成员；本轮已恢复者仍须参与内容冻结复核。 */
   protectedCount: number;
   protectedChecksum: string;
   newMemberVoteCount: number;
@@ -308,6 +324,9 @@ export async function fetchV1ParityStates(pool: Pool): Promise<Map<number, Parit
               COALESCE(v.vote_checksum, md5('')) AS comparable_vote_checksum,
               0::int AS anonymous_voter_count,
               0::int AS anonymous_vote_rating,
+              NULL::text AS l1_seen_epoch_ms,
+              false AS title_direct_observed,
+              false AS tags_direct_observed,
               false AS verified_multiset_snapshot
          FROM current_pages cp
          LEFT JOIN votes v ON v.page_id = cp.page_id`,
@@ -375,15 +394,41 @@ export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, Parit
          FROM meta.page_scan ps
         WHERE ps.kind = 'votes'
         ORDER BY ps.page_id, ps.scanned_at DESC, ps.run_id DESC
+     ), current_attrs AS (
+       SELECT pah.page_id,
+              bool_or(pah.attr = 'title' AND pah.source = 'observed')
+                AS title_direct_observed,
+              bool_or(pah.attr = 'tags' AND pah.source = 'observed')
+                AS tags_direct_observed
+         FROM ingest.page_attr_history pah
+        WHERE pah.valid_to IS NULL
+          AND pah.attr IN ('title', 'tags')
+        GROUP BY pah.page_id
+     ), latest_meta_scan AS (
+       SELECT DISTINCT ON (ps.page_id) ps.page_id, ps.status, ps.scanned_at
+         FROM meta.page_scan ps
+        WHERE ps.kind = 'meta'
+        ORDER BY ps.page_id, ps.scanned_at DESC, ps.run_id DESC
      )
      SELECT pc.wikidot_id,
             pc.slug,
             pc.title,
             pc.rating,
             pc.tags,
-            CASE WHEN pc.updated_at IS NULL THEN NULL
-                 ELSE (extract(epoch FROM pc.updated_at) * 1000)::bigint::text
+            CASE WHEN ips.last_l0_updated_at IS NULL THEN NULL
+                 ELSE (extract(epoch FROM ips.last_l0_updated_at) * 1000)::bigint::text
             END AS meta_updated_epoch_ms,
+            CASE WHEN GREATEST(
+                        ips.last_l1_seen_at,
+                        CASE WHEN ms.status = 'ok' THEN ms.scanned_at END
+                      ) IS NULL THEN NULL
+                 ELSE (extract(epoch FROM GREATEST(
+                         ips.last_l1_seen_at,
+                         CASE WHEN ms.status = 'ok' THEN ms.scanned_at END
+                       )) * 1000)::bigint::text
+            END AS l1_seen_epoch_ms,
+            COALESCE(ca.title_direct_observed, false) AS title_direct_observed,
+            COALESCE(ca.tags_direct_observed, false) AS tags_direct_observed,
             v.vote_updated_epoch_ms,
             COALESCE(v.voter_count, 0)::int AS voter_count,
             COALESCE(v.vote_rating, 0)::int AS vote_rating,
@@ -407,6 +452,10 @@ export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, Parit
        FROM serve.page_current pc
        LEFT JOIN votes v ON v.page_id = pc.page_id
        LEFT JOIN latest_vote_scan vs ON vs.page_id = pc.page_id
+       LEFT JOIN meta.incremental_page_state ips
+         ON ips.page_id = pc.page_id AND ips.slug = pc.slug
+       LEFT JOIN current_attrs ca ON ca.page_id = pc.page_id
+       LEFT JOIN latest_meta_scan ms ON ms.page_id = pc.page_id
       WHERE pc.status = 'live'`,
   );
   return statesFromRows(res.rows);
@@ -498,7 +547,7 @@ export function compareStateAlignment(
     for (const field of fields) fieldDifferences[field]++;
     const explanations: Partial<Record<StateDifferenceField, string>> = {};
     for (const field of fields) {
-      const builtIn = builtInExplanation(field, left, right);
+      const builtIn = builtInExplanation(field, left, right, cutoff);
       const operator = allowlist.get(`${wid}:${field}`)?.reason;
       if (builtIn !== null) explanations[field] = builtIn;
       else if (operator !== undefined) explanations[field] = `operator_allowlist:${operator}`;
@@ -791,34 +840,43 @@ export async function fetchDeletedVoteChecksum(
   }>(
     pool,
     'reconcile:freeze-checksum',
-    `WITH deleted_pages AS (
-       SELECT pc.page_id,
-              life.observed_at AS member_since
+    `WITH current_deleted_pages AS (
+       SELECT pc.page_id
+         FROM serve.page_current pc
+        WHERE pc.status = 'deleted'
+     ), protected_pages AS (
+       -- 按 cutoff 当时的生命周期重建上轮基线。合法 restored 本轮虽已 live，
+       -- 其票仍必须参与冻结内容复核，不能因退出 deleted 集合而误报。
+       SELECT pc.page_id
          FROM serve.page_current pc
          JOIN LATERAL (
-           SELECT ple.observed_at
+           SELECT ple.kind
              FROM ingest.page_life_event ple
             WHERE ple.page_id = pc.page_id
-              AND ple.kind = 'deleted'
-            ORDER BY ple.seq DESC
+              AND ($1::timestamptz IS NULL OR ple.observed_at <= $1::timestamptz)
+            ORDER BY ple.observed_at DESC, ple.seq DESC
             LIMIT 1
          ) life ON true
-        WHERE pc.status = 'deleted'
+        WHERE ($1::timestamptz IS NULL AND pc.status = 'deleted')
+           OR ($1::timestamptz IS NOT NULL AND life.kind = 'deleted')
      ), material AS (
        SELECT vc.page_id,
               vc.voter_id,
               vc.source_row_ordinal,
               sign(vc.direction)::int AS direction,
-              ($1::timestamptz IS NULL OR dp.member_since <= $1::timestamptz) AS protected
-         FROM deleted_pages dp
-         JOIN serve.vote_current vc ON vc.page_id = dp.page_id
+              (cd.page_id IS NOT NULL) AS current_deleted,
+              (pd.page_id IS NOT NULL) AS protected
+         FROM serve.vote_current vc
+         LEFT JOIN current_deleted_pages cd ON cd.page_id = vc.page_id
+         LEFT JOIN protected_pages pd ON pd.page_id = vc.page_id
+        WHERE cd.page_id IS NOT NULL OR pd.page_id IS NOT NULL
      )
-     SELECT count(*)::bigint::text AS vote_count,
+     SELECT count(*) FILTER (WHERE current_deleted)::bigint::text AS vote_count,
             md5(COALESCE(string_agg(
               page_id::text || ':' || voter_id::text || ':' ||
                 source_row_ordinal::text || ':' || direction::text,
               E'\\n' ORDER BY page_id, voter_id, source_row_ordinal
-            ), '')) AS checksum,
+            ) FILTER (WHERE current_deleted), '')) AS checksum,
             count(*) FILTER (WHERE protected)::bigint::text AS protected_vote_count,
             md5(COALESCE(string_agg(
               page_id::text || ':' || voter_id::text || ':' ||
@@ -997,6 +1055,9 @@ interface ParityStateRow {
   rating: number;
   tags: string[];
   meta_updated_epoch_ms: string | null;
+  l1_seen_epoch_ms: string | null;
+  title_direct_observed: boolean;
+  tags_direct_observed: boolean;
   vote_updated_epoch_ms: string | null;
   voter_count: number;
   vote_rating: number;
@@ -1022,6 +1083,10 @@ function statesFromRows(rows: readonly ParityStateRow[]): Map<number, ParityPage
       tags: Array.isArray(row.tags) ? row.tags : [],
       metaUpdatedEpochMs:
         row.meta_updated_epoch_ms === null ? null : Number(row.meta_updated_epoch_ms),
+      l1SeenEpochMs:
+        row.l1_seen_epoch_ms === null ? null : Number(row.l1_seen_epoch_ms),
+      titleDirectObserved: row.title_direct_observed === true,
+      tagsDirectObserved: row.tags_direct_observed === true,
       voteUpdatedEpochMs:
         row.vote_updated_epoch_ms === null ? null : Number(row.vote_updated_epoch_ms),
       voterCount: Number(row.voter_count),
@@ -1078,7 +1143,31 @@ function builtInExplanation(
   field: StateDifferenceField,
   v1: ParityPageState | undefined,
   v2: ParityPageState | undefined,
+  cutoff: number,
 ): string | null {
+  if (
+    field === 'existence' &&
+    v1 !== undefined &&
+    v2 === undefined &&
+    V1_SYNTHETIC_TEST_PAGE_ALLOWLIST.get(v1.wikidotId) === v1.slug
+  ) {
+    return (
+      'v1_synthetic_test_page_allowlist:v1 生产库历史测试铸入的 test-image-page；' +
+      '站点完整 Sitemap/ListPages 均无该页，v2 正确不导入'
+    );
+  }
+  if (
+    field === 'existence' &&
+    v1 === undefined &&
+    v2 !== undefined &&
+    v2.l1SeenEpochMs !== null &&
+    v2.l1SeenEpochMs >= cutoff
+  ) {
+    return (
+      'v1_stale_existence_vs_current_l1:v2 live 身份同时被最近完整 ' +
+      'Wikidot ListPages L1 直接枚举；v1 缺失是历史滞后'
+    );
+  }
   if (v1 === undefined || v2 === undefined) return null;
   if (
     field === 'tags' &&
@@ -1095,12 +1184,27 @@ function builtInExplanation(
   ) {
     return 'source_title_unicode_whitespace:v1/CROM 与 Wikidot 直接标题仅 Unicode/空白归一不同';
   }
+  if (field === 'title' && v2.titleDirectObserved) {
+    return (
+      'v1_stale_title_vs_wikidot_observation:v2 当前标题来自 Wikidot ListPages ' +
+      '直接观测；v1/CROM 历史标题不作为一手源反证'
+    );
+  }
+  if (field === 'tags' && v2.tagsDirectObserved) {
+    return (
+      'v1_stale_tags_vs_wikidot_observation:v2 当前标签来自 Wikidot ListPages ' +
+      '直接观测；v1 历史标签不作为一手源反证'
+    );
+  }
   if (
     field === 'rating' &&
-    v1.voteRating === v2.voteRating &&
-    v2.rating === v2.voteRating
+    v2.rating === v2.voteRating &&
+    (v1.voteRating === v2.voteRating || v2.verifiedMultisetSnapshot)
   ) {
-    return 'v1_pageversion_rating_stale:两侧当前票和与 v2 rating 一致，仅 v1 PageVersion.rating 滞后';
+    return (
+      'v1_pageversion_rating_stale:v2 rating 与当前票和一致，且票集已由完整 WhoRated ' +
+      '快照验证（或 v1 票和同值）；仅 v1 PageVersion.rating 滞后'
+    );
   }
   if (
     field === 'vote_state' &&
@@ -1124,7 +1228,17 @@ function builtInExplanation(
 }
 
 function normalizeSourceTitle(value: string | null): string | null {
-  return value === null ? null : value.replace(/\s+/gu, ' ').trim();
+  return value === null
+    ? null
+    : value
+        .normalize('NFKC')
+        .replace(/\s+/gu, ' ')
+        .replace(/…/gu, '...')
+        .replace(/[—–]/gu, '--')
+        .replace(/\/\//gu, '')
+        .replace(/»/gu, '>>')
+        .replace(/«/gu, '<<')
+        .trim();
 }
 
 function explanationCategory(explanation: string): string {

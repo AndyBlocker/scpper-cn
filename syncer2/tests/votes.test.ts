@@ -104,7 +104,7 @@ describe('WhoRated 解析', () => {
     const parsed = parseTargetedVoteClaim(targetedClaim, 'scp-cn-4813');
     assert.deepEqual(parsed, {
       status: 'ok',
-      data: { claimedTotal: 2, claimedRating: 0 },
+      data: { claimedTotal: 2, claimedRating: 0, revisions: 4 },
     });
     const wrongIdentity = parseTargetedVoteClaim(targetedClaim, 'component:_template');
     assert.equal(wrongIdentity.status, 'failed');

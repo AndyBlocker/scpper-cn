@@ -102,6 +102,8 @@ export interface VoteSnapshotData extends ParsedVoteSnapshot {
 export interface TargetedVoteClaim {
   claimedTotal: number;
   claimedRating: number;
+  /** 同一次定向 ListPages 的零基 %%revisions%%，供三角时窗复核。 */
+  revisions: number;
 }
 
 export type TargetedVoteClaimOutcome =
@@ -164,7 +166,11 @@ export function parseTargetedVoteClaim(
   const row = parsed.data.rows[0]!;
   return {
     status: 'ok',
-    data: { claimedTotal: row.ratingVotes, claimedRating: row.rating },
+    data: {
+      claimedTotal: row.ratingVotes,
+      claimedRating: row.rating,
+      revisions: row.revisions,
+    },
   };
 }
 

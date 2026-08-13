@@ -13,6 +13,7 @@ import type { Pool } from 'pg';
 import { amcRequest } from '../http/amc.js';
 import type { HttpClient } from '../http/client.js';
 import {
+  collectTargetedVoteClaim,
   gateParsedVotes,
   parseWhoRatedPage,
   timeoutForVoteCount,
@@ -32,7 +33,7 @@ import {
   readListPagesSnapshot,
   type ListPagesSnapshot,
 } from '../collect/listpages.js';
-import { fetchPageIdentity } from '../page/identity.js';
+import { fetchPageIdentity, type IdentityOutcome } from '../page/identity.js';
 import { snapshotPath, readSnapshot, type SitemapSnapshot } from '../store/snapshot.js';
 import { query } from '../store/db.js';
 import {
@@ -237,6 +238,100 @@ export function compareEnumerationSets(
   };
 }
 
+/**
+ * sitemap 与 ListPages 都是派生枚举源；只对未解释差集逐页 GET，让站点页面本身裁决。
+ * 请求失败、重定向或结论方向不符时保持 failed，绝不把“没验证到”当成白名单。
+ */
+export async function adjudicateEnumerationWithPageGet(
+  http: HttpClient,
+  baseUrl: string,
+  report: EnumerationTriangleReport,
+  concurrency = 2,
+): Promise<EnumerationTriangleReport> {
+  if (!report.differenceCountsAvailable || report.counts.unexplained === 0) return report;
+  const candidates = report.samples.filter(
+    (sample) =>
+      sample['explained'] === false &&
+      typeof sample['slug'] === 'string' &&
+      (sample['side'] === 'sitemap_only' || sample['side'] === 'listpages_only'),
+  );
+  const outcomes = await mapWithConcurrency(candidates, concurrency, async (sample) => {
+    const slug = sample['slug'] as string;
+    return [slug, await fetchPageIdentity(http, baseUrl, slug)] as const;
+  });
+  return applyEnumerationPageGetEvidence(report, new Map(outcomes));
+}
+
+export function applyEnumerationPageGetEvidence(
+  report: EnumerationTriangleReport,
+  evidence: ReadonlyMap<string, IdentityOutcome>,
+): EnumerationTriangleReport {
+  let newlyExplainedSitemapOnly = 0;
+  let newlyExplainedListPagesOnly = 0;
+  const samples = report.samples.map((sample) => {
+    if (sample['explained'] !== false || typeof sample['slug'] !== 'string') return sample;
+    const outcome = evidence.get(sample['slug']);
+    if (outcome === undefined) return sample;
+    if (sample['side'] === 'listpages_only' && outcome.kind === 'ok') {
+      newlyExplainedListPagesOnly++;
+      return {
+        ...sample,
+        explained: true,
+        reason: 'sitemap_omission_confirmed_by_page_get',
+        pageGetWikidotId: outcome.identity.wikidotId,
+      };
+    }
+    if (sample['side'] === 'sitemap_only' && outcome.kind === 'gone') {
+      newlyExplainedSitemapOnly++;
+      return {
+        ...sample,
+        explained: true,
+        reason: 'listpages_stale_deletion_confirmed_by_page_get',
+        pageGetHttpStatus: outcome.httpStatus,
+      };
+    }
+    return {
+      ...sample,
+      pageGetOutcome: outcome.kind,
+      ...(outcome.kind === 'failed' || outcome.kind === 'gone'
+        ? { pageGetHttpStatus: outcome.httpStatus }
+        : {}),
+    };
+  });
+  const unexplainedSitemapOnly = Math.max(
+    0,
+    (report.unexplainedSitemapOnly ?? 0) - newlyExplainedSitemapOnly,
+  );
+  const unexplainedListPagesOnly = Math.max(
+    0,
+    (report.unexplainedListPagesOnly ?? 0) - newlyExplainedListPagesOnly,
+  );
+  const unexplained = unexplainedSitemapOnly + unexplainedListPagesOnly;
+  const alerts = unexplained === 0
+    ? []
+    : [
+        `sitemap/ListPages 有 ${unexplained} 个未解释枚举差异` +
+          `（sitemap-only=${unexplainedSitemapOnly}, ListPages-only=${unexplainedListPagesOnly}）`,
+      ];
+  return {
+    ...report,
+    status: unexplained === 0 ? 'ok' : 'failed',
+    counts: { ...report.counts, unexplained },
+    alerts,
+    explainedSitemapOnly:
+      report.explainedSitemapOnly === null
+        ? null
+        : report.explainedSitemapOnly + newlyExplainedSitemapOnly,
+    explainedListPagesOnly:
+      report.explainedListPagesOnly === null
+        ? null
+        : report.explainedListPagesOnly + newlyExplainedListPagesOnly,
+    unexplainedSitemapOnly,
+    unexplainedListPagesOnly,
+    samples,
+  };
+}
+
 export interface TriangleSubcheck {
   status: 'ok' | 'partial' | 'failed';
   claimed: number;
@@ -245,6 +340,8 @@ export interface TriangleSubcheck {
   /** actual 相对该模块期望值的偏差；修订模块的期望值是 claimed + offset。 */
   delta: number | null;
   error: string | null;
+  /** 两个模块在先后请求间发生真实变化时，由第二次定向 ListPages 形成闭环。 */
+  explanation?: string;
 }
 
 export interface TrianglePageData {
@@ -565,6 +662,27 @@ async function checkVoteTriangle(
     }
     const exact =
       parsed.data.entries.length === row.ratingVotes && parsed.data.checksum === row.rating;
+    if (!exact) {
+      const recheck = await collectTargetedVoteClaim(http, baseUrl, row.fullname);
+      if (
+        recheck.status === 'ok' &&
+        recheck.data.claimedTotal === parsed.data.entries.length &&
+        recheck.data.claimedRating === parsed.data.checksum
+      ) {
+        return {
+          status: 'ok',
+          claimed: row.rating,
+          fetched: parsed.data.entries.length,
+          actual: parsed.data.checksum,
+          delta: parsed.data.checksum - row.rating,
+          error: null,
+          explanation:
+            `source_changed_during_triangle:初始 ListPages=${row.ratingVotes}/${row.rating}，` +
+            `随后 WhoRated 与定向 ListPages 均为 ` +
+            `${recheck.data.claimedTotal}/${recheck.data.claimedRating}`,
+        };
+      }
+    }
     return {
       status: exact ? 'ok' : 'partial',
       claimed: row.rating,
@@ -634,6 +752,23 @@ async function checkRevisionTriangle(
     const fetched = parsed.data.entries.length;
     const exact = revisionCountsMatch(row.revisions, fetched);
     const expected = revisionListCountFromClaimed(row.revisions);
+    if (!exact) {
+      const recheck = await collectTargetedVoteClaim(http, baseUrl, row.fullname);
+      if (recheck.status === 'ok' && revisionCountsMatch(recheck.data.revisions, fetched)) {
+        return {
+          status: 'ok',
+          claimed: row.revisions,
+          fetched,
+          actual: fetched,
+          delta: revisionCountDelta(row.revisions, fetched),
+          error: null,
+          explanation:
+            `source_changed_during_triangle:初始 ListPages revisions=${row.revisions}，` +
+            `随后 RevisionList 行数=${fetched} 与定向 ListPages revisions=` +
+            `${recheck.data.revisions}（+offset）一致`,
+        };
+      }
+    }
     return {
       status: exact ? 'ok' : 'partial',
       claimed: row.revisions,

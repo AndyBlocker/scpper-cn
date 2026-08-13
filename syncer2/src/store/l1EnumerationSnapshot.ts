@@ -39,7 +39,7 @@ export interface L1EnumerationSnapshot {
 
 export interface L1SnapshotAdvanceResult {
   advanced: boolean;
-  reason: 'advanced' | 'already_current_day' | 'scan_incomplete';
+  reason: 'advanced' | 'scan_incomplete';
   snapshot: L1EnumerationSnapshot | null;
 }
 
@@ -171,8 +171,9 @@ export function writeL1EnumerationSnapshot(
 }
 
 /**
- * L1 仍按既有频率采集；这里只复用每天第一轮完整成功结果，不新增网络请求。
- * 当天后续完整轮继续做增量职责，但不反复改写 parity 基线。
+ * L1 仍按既有频率采集；每轮完整成功都原子替换快照，不新增网络请求。
+ * 枚举三角不能拿“今天第一轮”的 L1 与小时级 sitemap 比；否则页面真实新建/改名
+ * 会被稳定误报整天，页级 WhoRated 也会与早已过期的投票 claim 比较。
  */
 export function advanceDailyL1EnumerationSnapshot(
   file: string,
@@ -181,10 +182,6 @@ export function advanceDailyL1EnumerationSnapshot(
 ): L1SnapshotAdvanceResult {
   if (scan.status !== 'ok' || !scan.validation.complete) {
     return { advanced: false, reason: 'scan_incomplete', snapshot: null };
-  }
-  const previous = readL1EnumerationSnapshot(file);
-  if (previous !== null && shanghaiDay(previous.updatedAt) === shanghaiDay(updatedAt)) {
-    return { advanced: false, reason: 'already_current_day', snapshot: previous };
   }
   const snapshot = createL1EnumerationSnapshot(scan, updatedAt);
   writeL1EnumerationSnapshot(file, snapshot);
@@ -212,17 +209,6 @@ function checksumRows(rows: Record<string, L1EnumerationSnapshotRow>): string {
     })
     .join('\n');
   return createHash('sha256').update(material, 'utf8').digest('hex');
-}
-
-function shanghaiDay(value: string): string {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) throw new Error(`非法 L1 快照时间：${value}`);
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
 }
 
 function isL1SnapshotRow(value: unknown): value is L1EnumerationSnapshotRow {

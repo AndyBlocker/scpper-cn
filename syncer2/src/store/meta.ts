@@ -471,11 +471,16 @@ export async function insertPageScans(
   scannedAt: string,
 ): Promise<number> {
   if (runId === null || rows.length === 0) return 0;
+  // ListPages 分页期间页面移动会让同一 fullname 出现两次；整轮会因
+  // duplicateFullnames 明确降为 partial，但证据写入本身仍必须能结账。
+  // 同 run/page/kind 在一条 INSERT 里不去重会触发 PG cardinality violation。
+  const uniqueRows = new Map<string, PageScanRow>();
+  for (const row of rows) uniqueRows.set(`${row.pageId}:${row.kind}`, row);
   const ts = toPgTimestamptz(scannedAt);
   let written = 0;
   try {
     // 12 列 × 500 行（scanned_at 共用一个参数），远低于 65535 上限。
-    for (const part of chunk(rows, 500)) {
+    for (const part of chunk([...uniqueRows.values()], 500)) {
       const values: unknown[] = [];
       const tuples: string[] = [];
       part.forEach((r, i) => {
@@ -636,15 +641,17 @@ export async function resolveSlugs(
       'page_slug_history',
       `SELECT psh.slug, psh.page_id
          FROM ingest.page_slug_history psh
-         LEFT JOIN serve.page_current pc ON pc.page_id = psh.page_id
-        WHERE psh.valid_to IS NULL AND psh.slug = ANY($1::text[])
-        ORDER BY (pc.status = 'live') DESC, pc.deleted_at DESC NULLS LAST, psh.id DESC`,
+         JOIN serve.page_current pc ON pc.page_id = psh.page_id
+        WHERE psh.valid_to IS NULL
+          AND psh.slug = ANY($1::text[])
+          AND pc.status = 'live'
+        ORDER BY psh.id DESC`,
     ],
     [
       'page_current',
       `SELECT slug, page_id FROM serve.page_current
         WHERE slug = ANY($1::text[])
-        ORDER BY (status = 'live') DESC, deleted_at DESC NULLS LAST`,
+          AND status = 'live'`,
     ],
   ] as const) {
     try {
@@ -656,7 +663,8 @@ export async function resolveSlugs(
           [part],
         );
         for (const row of res.rows) {
-          // by-slug 裁决：删除重建会让两行共享同一 slug，ORDER BY 已把 live 排前，先到先得。
+          // by-slug 裁决只允许 live 当前态。deleted 旧身份不是“已解析”：
+          // 同 slug 删除重建时必须让 pending_page 重新取站上 pageId。
           if (!map.has(row.slug)) map.set(row.slug, Number(row.page_id));
         }
       }

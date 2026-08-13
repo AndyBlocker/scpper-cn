@@ -20,6 +20,7 @@ import {
   compareWhitelistMetrics,
   computeQualifiedDailyStreak,
   gateParityStatus,
+  V1_SYNTHETIC_TEST_PAGE_ALLOWLIST,
   type ParityPageState,
 } from '../src/reconcile/parity.js';
 import {
@@ -27,6 +28,7 @@ import {
   buildQqSummary,
 } from '../src/reconcile/report.js';
 import {
+  applyEnumerationPageGetEvidence,
   loadEnumerationSnapshots,
   compareEnumerationSets,
   summarizeActiveTriangle,
@@ -44,8 +46,10 @@ import {
 } from '../src/store/snapshot.js';
 import { isReconcileFailure } from '../src/reconcile/types.js';
 import {
+  advanceDailyL1EnumerationSnapshot,
   createL1EnumerationSnapshot,
   l1EnumerationSnapshotPath,
+  readL1EnumerationSnapshot,
   writeL1EnumerationSnapshot,
 } from '../src/store/l1EnumerationSnapshot.js';
 import type {
@@ -231,6 +235,50 @@ test('枚举三角：未知差集不会被吞成允许项', () => {
   assert.equal(report.counts.unexplained, 1);
 });
 
+test('枚举三角：仅 Page GET 方向闭合时解释派生枚举差，失败证据仍告警', () => {
+  const original = compareEnumerationSets(
+    sitemapSnapshot(['live', 'deleted-now']),
+    listSnapshot([listRow('live', '_default'), listRow('sitemap-missed', '_default')]),
+  );
+  assert.equal(original.counts.unexplained, 2);
+  const adjudicated = applyEnumerationPageGetEvidence(
+    original,
+    new Map([
+      [
+        'sitemap-missed',
+        {
+          kind: 'ok' as const,
+          httpStatus: 200,
+          identity: {
+            wikidotId: 123,
+            categoryId: null,
+            siteId: null,
+            siteUnixName: null,
+            pageUnixName: 'sitemap-missed',
+            requestPageName: 'sitemap-missed',
+            themeId: null,
+            lang: null,
+          },
+          wireBytes: 1,
+          durationMs: 1,
+        },
+      ],
+      ['deleted-now', { kind: 'gone' as const, httpStatus: 404, error: 'gone' }],
+    ]),
+  );
+  assert.equal(adjudicated.status, 'ok');
+  assert.equal(adjudicated.counts.unexplained, 0);
+  assert.equal(adjudicated.explainedListPagesOnly, 1);
+  assert.equal(adjudicated.explainedSitemapOnly, 1);
+
+  const failedEvidence = applyEnumerationPageGetEvidence(
+    original,
+    new Map([['sitemap-missed', { kind: 'failed' as const, httpStatus: 503, error: 'busy' }]]),
+  );
+  assert.equal(failedEvidence.status, 'failed');
+  assert.equal(failedEvidence.counts.unexplained, 2);
+});
+
 test('枚举三角：快照过旧时 inconclusive，说明原因且不计算差异', () => {
   const stateDir = mkdtempSync(path.join(tmpdir(), 'reconcile-stale-'));
   try {
@@ -327,6 +375,41 @@ test('每日 L1 枚举：新鲜完整原子快照恢复枚举 difference，并�
   }
 });
 
+test('每轮完整 L1 都替换同日旧快照，半截轮不覆盖最后完整证据', () => {
+  const stateDir = mkdtempSync(path.join(tmpdir(), 'reconcile-l1-advance-'));
+  const file = l1EnumerationSnapshotPath(stateDir);
+  try {
+    const first = l1Run([
+      { fullname: 'old-page', rating: 1, ratingVotes: 1, revisions: 1 },
+    ]);
+    const second = l1Run([
+      { fullname: 'new-page', rating: 2, ratingVotes: 2, revisions: 2 },
+    ]);
+    assert.equal(
+      advanceDailyL1EnumerationSnapshot(file, first, '2026-08-13T00:05:00.000Z').advanced,
+      true,
+    );
+    assert.equal(
+      advanceDailyL1EnumerationSnapshot(file, second, '2026-08-13T00:10:00.000Z').advanced,
+      true,
+    );
+    assert.deepEqual(Object.keys(readL1EnumerationSnapshot(file)?.rows ?? {}), ['new-page']);
+
+    const incomplete = {
+      ...l1Run([{ fullname: 'partial-page', rating: 3, ratingVotes: 3, revisions: 3 }]),
+      status: 'partial' as const,
+      validation: { complete: false, reasons: ['fixture'], duplicateFullnames: 0 },
+    };
+    assert.equal(
+      advanceDailyL1EnumerationSnapshot(file, incomplete, '2026-08-13T00:15:00.000Z').reason,
+      'scan_incomplete',
+    );
+    assert.deepEqual(Object.keys(readL1EnumerationSnapshot(file)?.rows ?? {}), ['new-page']);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('状态对齐：tags 顺序不构成差异，60 分钟内变更页被排除', () => {
   const now = Date.parse('2026-07-27T12:00:00.000Z');
   const stable = parityState(1, { tags: ['b', 'a'] });
@@ -396,6 +479,41 @@ test('状态对齐：仅 v1 crom:* 派生标签有确定判据，原始差异仍
   assert.equal(report.explanationCategoryPages.v1_crom_synthetic_tags, 1);
   assert.equal(report.rawDiffRate, 1);
   assert.equal(report.diffRate, 0);
+});
+
+test('v1 历史测试页白名单整体锁定，新增任何项都会失败', () => {
+  assert.deepEqual([...V1_SYNTHETIC_TEST_PAGE_ALLOWLIST], [
+    [800019414, 'test-image-page-1759148576016'],
+    [800080727, 'test-image-page-1759149352271'],
+    [800041112, 'test-image-page-1759413342363'],
+  ]);
+  const id = 800019414;
+  const report = compareStateAlignment(
+    new Map([[id, parityState(id, { slug: V1_SYNTHETIC_TEST_PAGE_ALLOWLIST.get(id)! })]]),
+    new Map(),
+    Date.parse('2026-07-27T12:00:00.000Z'),
+    3_600_000,
+    new Map(),
+  );
+  assert.equal(report.status, 'ok');
+  assert.equal(report.explanationCategoryPages.v1_synthetic_test_page_allowlist, 1);
+});
+
+test('状态对齐：新鲜 ListPages 存在性与空标题都能裁决 v1 历史态', () => {
+  const now = Date.parse('2026-07-27T12:00:00.000Z');
+  const v1 = parityState(1, { title: 'Historical title' });
+  const v2 = parityState(1, { title: null, titleDirectObserved: true });
+  const onlyV2 = parityState(2, { l1SeenEpochMs: now - 1_000 });
+  const report = compareStateAlignment(
+    new Map([[1, v1]]),
+    new Map([[1, v2], [2, onlyV2]]),
+    now,
+    3_600_000,
+    new Map(),
+  );
+  assert.equal(report.status, 'ok');
+  assert.equal(report.explanationCategoryPages.v1_stale_title_vs_wikidot_observation, 1);
+  assert.equal(report.explanationCategoryPages.v1_stale_existence_vs_current_l1, 1);
 });
 
 test('白名单轨：普通指标仍只允许稳定不增长', () => {
@@ -579,6 +697,9 @@ test('CROM 五项：新近 v2 页仍全量计数，但字段噪音不进入 acti
     voteCount: 9,
     revisionCount: 9,
     updatedEpochMs: 99_000,
+    titleDirectObserved: false,
+    voteDirectObservedEpochMs: null,
+    revisionDirectObservedEpochMs: null,
     l1Rating: null,
     l1VoteCount: null,
     l1RevisionClaimed: null,
@@ -616,6 +737,9 @@ test('CROM revisionCount 按零基声明换算：N 对本地 N+1 一致，N 对�
     voteCount: 2,
     revisionCount: 4,
     updatedEpochMs: null,
+    titleDirectObserved: false,
+    voteDirectObservedEpochMs: null,
+    revisionDirectObservedEpochMs: null,
     l1Rating: null,
     l1VoteCount: null,
     l1RevisionClaimed: null,
@@ -635,6 +759,66 @@ test('CROM revisionCount 按零基声明换算：N 对本地 N+1 一致，N 对�
   assert.equal(mismatched.fields.revisionCount.mismatches, 1);
   assert.equal(mismatched.fields.revisionCount.actionableMismatches, 1);
   assert.equal(mismatched.status, 'failed');
+});
+
+test('CROM 五项：新鲜 WhoRated/RevisionList 直接快照可判 CROM 旧，过期快照不可', () => {
+  const remote: CromPage = {
+    wikidotId: 1,
+    url: 'http://scp-wiki-cn.wikidot.com/a',
+    slug: 'a',
+    title: 'same',
+    rating: 1,
+    voteCount: 1,
+    revisionCount: 1,
+  };
+  const fetched: CromFetchResult = {
+    status: 'ok',
+    pages: new Map([[1, remote]]),
+    batches: new Map(),
+    isFull: true,
+    intentionallyLimited: false,
+    error: null,
+  };
+  const directlyVerified: V2CanaryPage = {
+    ...canaryPage(1),
+    title: 'same',
+    rating: 2,
+    voteCount: 2,
+    revisionCount: 3,
+    voteDirectObservedEpochMs: 99_000,
+    revisionDirectObservedEpochMs: 99_000,
+  };
+  const explained = compareCromCanary(
+    fetched,
+    new Map([[1, directlyVerified]]),
+    100_000,
+    10_000,
+  );
+  assert.equal(explained.fields.rating.categories.crom_stale_vs_verified_whorated, 1);
+  assert.equal(explained.fields.voteCount.categories.crom_stale_vs_verified_whorated, 1);
+  assert.equal(
+    explained.fields.revisionCount.categories.crom_stale_vs_verified_revision_list,
+    1,
+  );
+  assert.equal(explained.counts.unexplained, 0);
+
+  const staleEvidence = compareCromCanary(
+    fetched,
+    new Map([[
+      1,
+      {
+        ...directlyVerified,
+        voteDirectObservedEpochMs: 80_000,
+        revisionDirectObservedEpochMs: 80_000,
+      },
+    ]]),
+    100_000,
+    10_000,
+  );
+  assert.equal(staleEvidence.fields.rating.categories.unresolved_source_disagreement, 1);
+  assert.equal(staleEvidence.fields.voteCount.categories.unresolved_source_disagreement, 1);
+  assert.equal(staleEvidence.fields.revisionCount.categories.unresolved_source_disagreement, 1);
+  assert.equal(staleEvidence.counts.unexplained, 3);
 });
 
 test('CROM 存在性：新鲜 L1 确认的 v2-only 是 CROM 滞后，真实未知缺口仍 failed', () => {
@@ -691,6 +875,35 @@ test('CROM 存在性：新鲜 L1 确认的 v2-only 是 CROM 滞后，真实未�
   assert.equal(unknown.actionableExistenceDifferences, 1);
   assert.equal(unknown.existenceCategories.unresolved_existence_disagreement, 1);
   assert.equal(unknown.status, 'failed');
+});
+
+test('CROM 有 100+ 存在性差异时仍保留字段样本，报告总样本继续有界', () => {
+  const remote: CromPage = {
+    wikidotId: 1,
+    url: 'http://scp-wiki-cn.wikidot.com/p-1',
+    slug: 'p-1',
+    title: 'remote-title',
+    rating: 0,
+    voteCount: 0,
+    revisionCount: 0,
+  };
+  const fetched: CromFetchResult = {
+    status: 'ok',
+    pages: new Map([[1, remote]]),
+    batches: new Map(),
+    isFull: true,
+    intentionallyLimited: false,
+    error: null,
+  };
+  const local = new Map<number, V2CanaryPage>([
+    [1, { ...canaryPage(1), title: 'local-title' }],
+  ]);
+  for (let id = 1_000; id < 1_150; id++) local.set(id, canaryPage(id));
+
+  const report = compareCromCanary(fetched, local, 100_000, 10_000);
+  assert.equal(report.samples.length, 100);
+  assert.ok(report.samples.some((sample) => sample['field'] === 'title'));
+  assert.ok(report.samples.some((sample) => sample['field'] === 'existence'));
 });
 
 test('页级三角：failed 目标显式留在结果，不会被当作空通过', () => {
@@ -860,6 +1073,9 @@ function parityState(
     rating: 0,
     tags: [],
     metaUpdatedEpochMs: 0,
+    l1SeenEpochMs: null,
+    titleDirectObserved: false,
+    tagsDirectObserved: false,
     voteUpdatedEpochMs: 0,
     voterCount: 0,
     voteRating: 0,
@@ -883,6 +1099,9 @@ function canaryPage(wikidotId: number): V2CanaryPage {
     voteCount: 0,
     revisionCount: 1,
     updatedEpochMs: null,
+    titleDirectObserved: false,
+    voteDirectObservedEpochMs: null,
+    revisionDirectObservedEpochMs: null,
     l1Rating: null,
     l1VoteCount: null,
     l1RevisionClaimed: null,

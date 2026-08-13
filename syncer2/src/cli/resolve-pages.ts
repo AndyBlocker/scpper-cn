@@ -60,14 +60,17 @@ import {
 import { assertTimezoneRoundTrip, createPool } from '../store/db.js';
 import { enqueueScanTasks, finishIngestRun, startIngestRun, type ScanTaskRow } from '../store/meta.js';
 import {
+  applySlugReuseIdentity,
   claimPendingPages,
   countPendingPages,
   finishPendingPage,
+  lookupLatestDeletedIdentityBySlug,
   lookupIdentityByWikidotId,
   pendingStatusBreakdown,
   registerPage,
   releasePendingPageClaim,
   releasePendingPageClaims,
+  restorePageIdentity,
   type ClaimedPending,
 } from '../store/queues.js';
 import {
@@ -86,6 +89,7 @@ import {
 } from '../work/pendingPage.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
 import { applyRestrictedListPage } from '../work/restrictedPage.js';
+import { applyObservedPageMeta } from '../work/identityCheck.js';
 import {
   addRuntimeBudgetOption,
   parseRuntimeBudgetSec,
@@ -460,18 +464,33 @@ async function main(): Promise<void> {
         const tasks: ScanTaskRow[] = [];
 
         if (existing === null) {
-          // (a) 真·新页：铸身份 + 两个任务（元数据从没抓过；新页进 2–4h 高频队列，R7）
-          pageId = await registerPage(pool, {
-            wikidotId: outcome.identity.wikidotId,
-            slug: row.slug,
-            observedAt,
-            source: 'wikidot',
-            runId,
-          });
+          // (a) 真·新页，或同 slug 删除重建。后者必须走原子生命周期接力，
+          // 不能只 register_page 而丢掉 predecessor / lineage 证据。
+          const predecessor = await lookupLatestDeletedIdentityBySlug(pool, row.slug);
+          if (predecessor === null) {
+            pageId = await registerPage(pool, {
+              wikidotId: outcome.identity.wikidotId,
+              slug: row.slug,
+              observedAt,
+              source: 'wikidot',
+              runId,
+            });
+          } else {
+            const reuse = await applySlugReuseIdentity(pool, {
+              predecessorId: predecessor.pageId,
+              observedWikidotId: outcome.identity.wikidotId,
+              slug: row.slug,
+              observedAt,
+              runId,
+            });
+            pageId = Number(reuse.successor_id);
+          }
           counters.resolved++;
           tasks.push(
-            { pageId, kind: 'meta', reasons: ['identity_registered'], priority: 10 },
-            { pageId, kind: 'new_page_highfreq', reasons: ['identity_registered'], priority: 20 },
+            { pageId, kind: 'meta', reasons: ['identity_registered'], priority: 100 },
+            { pageId, kind: 'new_page_highfreq', reasons: ['identity_registered'], priority: 100 },
+            { pageId, kind: 'content', reasons: ['identity_registered'], priority: 100 },
+            { pageId, kind: 'revisions_full', reasons: ['identity_registered'], priority: 100 },
           );
           await finishPendingPage(pool, {
             slug: row.slug,
@@ -483,16 +502,55 @@ async function main(): Promise<void> {
             httpStatus: outcome.httpStatus,
             error: null,
             resolutionSource: 'wikidot_page_identity',
-            resolutionEvidence: { identityDisposition: 'registered' },
+            resolutionEvidence: {
+              identityDisposition: predecessor === null ? 'registered' : 'slug_reused',
+              predecessorPageId: predecessor?.pageId ?? null,
+            },
+          });
+        } else if (existing.status === 'deleted') {
+          // (b) 同一 wikidotId 恢复（也可能同时改名）。站上整页 GET 已给出
+          // 正向存在证据；只排 meta 任务不会改回 deleted 生命态。
+          pageId = existing.pageId;
+          await restorePageIdentity(pool, {
+            pageId,
+            wikidotId: outcome.identity.wikidotId,
+            slug: row.slug,
+            observedAt,
+            runId,
+          });
+          counters.resolved++;
+          tasks.push(
+            { pageId, kind: 'meta', reasons: ['identity_restored'], priority: 100 },
+            { pageId, kind: 'new_page_highfreq', reasons: ['identity_restored'], priority: 100 },
+            { pageId, kind: 'content', reasons: ['identity_restored'], priority: 100 },
+            { pageId, kind: 'revisions_full', reasons: ['identity_restored'], priority: 100 },
+          );
+          await finishPendingPage(pool, {
+            slug: row.slug,
+            status: 'resolved',
+            wikidotId: outcome.identity.wikidotId,
+            pageId,
+            categoryId: outcome.identity.categoryId,
+            observedSlug: outcome.identity.pageUnixName,
+            httpStatus: outcome.httpStatus,
+            error: null,
+            resolutionSource: 'wikidot_page_identity_restored',
+            resolutionEvidence: { previousSlug: existing.currentSlug },
           });
         } else if (existing.currentSlug !== null && existing.currentSlug !== row.slug) {
-          // (b) **改名**：wikidot_id 已在库里，但当前 slug 是另一个。
-          //     身份是解析出来了（page_id 已知），但 slug 的 SCD2 关旧开新 +
-          //     page_life_event('renamed') 只能由 ingest.apply_page_meta 做 ——
-          //     本 CLI 无权替它决定。所以：pending 标 resolved（身份确实解析完了）、
-          //     把改名事实写进 last_error 留痕、并下一个 kind='meta' 的高优任务。
+          // (c) **改名**：整页 GET 已经同时证明 wikidotId 与 canonical slug，
+          // 立即交 apply_page_meta 原子关旧开新 SCD2。若只排 meta 任务，任务再从
+          // page_current 读到的仍是旧 slug，会把改名事实静默吞掉。
           pageId = existing.pageId;
           counters.renamed++;
+          await applyObservedPageMeta(
+            pool,
+            runId,
+            pageId,
+            row.slug,
+            outcome.identity.wikidotId,
+            observedAt,
+          );
           tasks.push({
             pageId,
             kind: 'meta',
@@ -507,20 +565,17 @@ async function main(): Promise<void> {
             categoryId: outcome.identity.categoryId,
             observedSlug: outcome.identity.pageUnixName,
             httpStatus: outcome.httpStatus,
-            error:
-              `改名：wikidot_id=${outcome.identity.wikidotId} 当前 slug=${existing.currentSlug}，` +
-              `本轮在 sitemap 见到 ${row.slug}。slug 的 SCD2 变更归 apply_page_meta，` +
-              `已下 scan_task(kind='meta')。`,
+            error: null,
             resolutionSource: 'wikidot_identity_rename_queued',
             resolutionEvidence: { previousSlug: existing.currentSlug },
           });
-          log.warn('检测到改名，已交给 apply_page_meta 路径', {
+          log.info('检测到改名，apply_page_meta 已原子更新 SCD2', {
             slug: row.slug,
             currentSlug: existing.currentSlug,
             pageId,
           });
         } else {
-          // (c) 已注册且 slug 一致：幂等命中（并发/重复入队/上一轮崩在回写前）
+          // (d) 已注册且 slug 一致：幂等命中（并发/重复入队/上一轮崩在回写前）
           pageId = existing.pageId;
           counters.alreadyRegistered++;
           await finishPendingPage(pool, {
@@ -538,20 +593,22 @@ async function main(): Promise<void> {
         }
 
         if (row.reasons.includes('l0_updated_at_window')) {
-          tasks.push(
-            {
-              pageId,
-              kind: 'content',
-              reasons: ['l0_updated_at_window_after_identity'],
-              priority: 40,
-            },
-            {
-              pageId,
-              kind: 'revisions_full',
-              reasons: ['l0_updated_at_window_after_identity'],
-              priority: 40,
-            },
-          );
+          for (const kind of ['content', 'revisions_full'] as const) {
+            const task = tasks.find((candidate) => candidate.kind === kind);
+            if (task === undefined) {
+              tasks.push({
+                pageId,
+                kind,
+                reasons: ['l0_updated_at_window_after_identity'],
+                priority: 40,
+              });
+            } else {
+              task.reasons = [
+                ...new Set([...task.reasons, 'l0_updated_at_window_after_identity']),
+              ];
+              task.priority = Math.max(task.priority ?? 0, 40);
+            }
+          }
           const metaTask = tasks.find((task) => task.kind === 'meta');
           if (metaTask === undefined) {
             tasks.push({

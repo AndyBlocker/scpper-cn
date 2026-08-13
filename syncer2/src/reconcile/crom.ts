@@ -338,7 +338,13 @@ export interface V2CanaryPage {
   rating: number;
   voteCount: number;
   revisionCount: number;
+  /** Wikidot L0 的 updated_at；绝不能用 serve 投影写入时钟。 */
   updatedEpochMs: number | null;
+  titleDirectObserved: boolean;
+  /** 最近一次完整 WhoRated 直接快照与当前票数、评分同时一致的时间。 */
+  voteDirectObservedEpochMs: number | null;
+  /** 最近一次完整 RevisionList 直接快照与当前修订行数一致的时间。 */
+  revisionDirectObservedEpochMs: number | null;
   /** 最近一次完整当日 L1（Wikidot ListPages）的独立直接声明。 */
   l1Rating: number | null;
   l1VoteCount: number | null;
@@ -386,6 +392,9 @@ export async function fetchV2CanaryPages(pool: Pool): Promise<Map<number, V2Cana
     vote_count: number;
     revision_count: number;
     updated_epoch_ms: string | null;
+    title_direct_observed: boolean;
+    vote_direct_observed_epoch_ms: string | null;
+    revision_direct_observed_epoch_ms: string | null;
     last_l1_rating: number | null;
     last_l1_rating_votes: number | null;
     last_l1_revision: number | null;
@@ -402,22 +411,71 @@ export async function fetchV2CanaryPages(pool: Pool): Promise<Map<number, V2Cana
      SELECT pc.wikidot_id, pc.slug, pc.title, pc.rating,
             (pc.vote_up + pc.vote_down)::int AS vote_count,
             pc.revision_count,
-            CASE WHEN pc.updated_at IS NULL THEN NULL
-                 ELSE (extract(epoch FROM pc.updated_at) * 1000)::bigint::text
+            CASE WHEN ips.last_l0_updated_at IS NULL THEN NULL
+                 ELSE (extract(epoch FROM ips.last_l0_updated_at) * 1000)::bigint::text
             END AS updated_epoch_ms,
+            EXISTS (
+              SELECT 1 FROM ingest.page_attr_history pah
+               WHERE pah.page_id = pc.page_id
+                 AND pah.attr = 'title'
+                 AND pah.valid_to IS NULL
+                 AND pah.source = 'observed'
+            ) AS title_direct_observed,
+            CASE WHEN vscan.status = 'ok'
+                       AND vscan.claimed_total = (pc.vote_up + pc.vote_down)
+                       AND vscan.fetched_total = (pc.vote_up + pc.vote_down)
+                       AND vscan.checksum_ok
+                       AND vscan.checksum_actual = pc.rating
+                 THEN (extract(epoch FROM vscan.scanned_at) * 1000)::bigint::text
+                 ELSE NULL
+            END AS vote_direct_observed_epoch_ms,
+            CASE WHEN rscan.status = 'ok'
+                       AND rscan.fetched_total = pc.revision_count
+                 THEN (extract(epoch FROM rscan.scanned_at) * 1000)::bigint::text
+                 ELSE NULL
+            END AS revision_direct_observed_epoch_ms,
             CASE WHEN pc.live_slug_count = 1 THEN ips.last_l1_rating END
               AS last_l1_rating,
             CASE WHEN pc.live_slug_count = 1 THEN ips.last_l1_rating_votes END
               AS last_l1_rating_votes,
             CASE WHEN pc.live_slug_count = 1 THEN ips.last_l1_revision END
               AS last_l1_revision,
-            CASE WHEN pc.live_slug_count <> 1 OR ips.last_l1_seen_at IS NULL THEN NULL
-                 ELSE (extract(epoch FROM ips.last_l1_seen_at) * 1000)::bigint::text
+            CASE WHEN pc.live_slug_count <> 1 OR GREATEST(
+                        ips.last_l1_seen_at,
+                        (SELECT max(ps.scanned_at) FROM meta.page_scan ps
+                          WHERE ps.page_id = pc.page_id
+                            AND ps.kind = 'meta' AND ps.status = 'ok')
+                      ) IS NULL THEN NULL
+                 ELSE (extract(epoch FROM GREATEST(
+                         ips.last_l1_seen_at,
+                         (SELECT max(ps.scanned_at) FROM meta.page_scan ps
+                           WHERE ps.page_id = pc.page_id
+                             AND ps.kind = 'meta' AND ps.status = 'ok')
+                       )) * 1000)::bigint::text
             END AS last_l1_seen_epoch_ms
        FROM live_pages pc
        LEFT JOIN meta.incremental_page_state ips
          ON ips.slug = pc.slug
-        AND ips.page_id = pc.page_id`,
+        AND ips.page_id = pc.page_id
+       LEFT JOIN LATERAL (
+         SELECT ps.status, ps.claimed_total, ps.fetched_total,
+                ps.checksum_ok, ps.checksum_actual, ps.scanned_at
+           FROM meta.page_scan ps
+          WHERE ps.page_id = pc.page_id
+            AND ps.kind = 'votes'
+            AND ps.status = 'ok'
+          ORDER BY ps.scanned_at DESC, ps.run_id DESC
+          LIMIT 1
+       ) vscan ON true
+       LEFT JOIN LATERAL (
+         SELECT ps.status, ps.fetched_total, ps.scanned_at
+           FROM meta.page_scan ps
+          WHERE ps.page_id = pc.page_id
+            AND ps.kind = 'revisions'
+            AND ps.status = 'ok'
+          ORDER BY ps.scanned_at DESC, ps.run_id DESC
+          LIMIT 1
+       ) rscan ON true`,
   );
   return new Map(
     res.rows.map((row) => [
@@ -431,6 +489,15 @@ export async function fetchV2CanaryPages(pool: Pool): Promise<Map<number, V2Cana
         revisionCount: Number(row.revision_count),
         updatedEpochMs:
           row.updated_epoch_ms === null ? null : Number(row.updated_epoch_ms),
+        titleDirectObserved: row.title_direct_observed === true,
+        voteDirectObservedEpochMs:
+          row.vote_direct_observed_epoch_ms === null
+            ? null
+            : Number(row.vote_direct_observed_epoch_ms),
+        revisionDirectObservedEpochMs:
+          row.revision_direct_observed_epoch_ms === null
+            ? null
+            : Number(row.revision_direct_observed_epoch_ms),
         l1Rating: row.last_l1_rating === null ? null : Number(row.last_l1_rating),
         l1VoteCount:
           row.last_l1_rating_votes === null ? null : Number(row.last_l1_rating_votes),
@@ -557,17 +624,15 @@ export function compareCromCanary(
       cromOnly++;
       actionableExistenceDifferences++;
       incrementCategory(existenceCategories, 'v2_missing_live_page_seen_by_crom');
-      if (existenceSamples.length < MAX_REPORT_SAMPLES) {
-        existenceSamples.push({
-          wikidotId: wid,
-          slug: crom.slug,
-          field: 'existence',
-          crom: true,
-          v2: false,
-          category: 'v2_missing_live_page_seen_by_crom',
-          actionable: true,
-        });
-      }
+      existenceSamples.push({
+        wikidotId: wid,
+        slug: crom.slug,
+        field: 'existence',
+        crom: true,
+        v2: false,
+        category: 'v2_missing_live_page_seen_by_crom',
+        actionable: true,
+      });
       continue;
     }
     commonPages++;
@@ -592,6 +657,7 @@ export function compareCromCanary(
           crom,
           local,
           local.l1SeenEpochMs !== null && local.l1SeenEpochMs >= cutoff,
+          cutoff,
         );
         const category = recent ? 'lag_window_excluded' : classification.category;
         incrementCategory(stat.categories, category);
@@ -601,20 +667,19 @@ export function compareCromCanary(
         } else {
           stat.actionableMismatches = (stat.actionableMismatches ?? 0) + 1;
         }
-        if (fieldSamples.length < MAX_REPORT_SAMPLES) {
-          fieldSamples.push({
-            wikidotId: wid,
-            slug: crom.slug,
-            field,
-            crom: remoteValue,
-            v2: localValue,
-            ...(field === 'revisionCount' && crom.revisionCount !== null
-              ? { cromExpectedActual: revisionListCountFromClaimed(crom.revisionCount) }
-              : {}),
-            lagExcluded: recent,
-            category,
-          });
-        }
+        fieldSamples.push({
+          wikidotId: wid,
+          slug: crom.slug,
+          field,
+          crom: remoteValue,
+          v2: localValue,
+          ...(field === 'revisionCount' && crom.revisionCount !== null
+            ? { cromExpectedActual: revisionListCountFromClaimed(crom.revisionCount) }
+            : {}),
+          lagExcluded: recent,
+          category,
+          actionable,
+        });
       }
     }
   }
@@ -633,17 +698,15 @@ export function compareCromCanary(
       const actionable = !recent && !l1Fresh;
       if (actionable) actionableExistenceDifferences++;
       incrementCategory(existenceCategories, category);
-      if (existenceSamples.length < MAX_REPORT_SAMPLES) {
-        existenceSamples.push({
-          wikidotId: wid,
-          slug: local.slug,
-          field: 'existence',
-          crom: false,
-          v2: true,
-          category,
-          actionable,
-        });
-      }
+      existenceSamples.push({
+        wikidotId: wid,
+        slug: local.slug,
+        field: 'existence',
+        crom: false,
+        v2: true,
+        category,
+        actionable,
+      });
     }
   }
 
@@ -684,6 +747,32 @@ export function compareCromCanary(
   if (actionableFieldDiffs > 0) alerts.push(`CROM 五项中可行动字段差异 ${actionableFieldDiffs}`);
   alerts.push(...collapseAlerts);
 
+  // 两类各保留一半预算；任一类不足时把余量让给另一类。不能先拼 existence 再截断，
+  // 因为 CROM 固定不枚举 adult 等分类，v2-only 常年超过 100，会把字段样本全部挤掉。
+  const prioritizedExistenceSamples = [...existenceSamples].sort(
+    (a, b) => Number(b['actionable'] === true) - Number(a['actionable'] === true),
+  );
+  const prioritizedFieldSamples = [...fieldSamples].sort(
+    (a, b) => Number(b['actionable'] === true) - Number(a['actionable'] === true),
+  );
+  const existenceBudget = Math.min(
+    prioritizedExistenceSamples.length,
+    Math.ceil(MAX_REPORT_SAMPLES / 2),
+  );
+  const fieldBudget = Math.min(
+    prioritizedFieldSamples.length,
+    Math.floor(MAX_REPORT_SAMPLES / 2),
+  );
+  const remaining = MAX_REPORT_SAMPLES - existenceBudget - fieldBudget;
+  const extraExistence = Math.min(
+    remaining,
+    prioritizedExistenceSamples.length - existenceBudget,
+  );
+  const extraFields = Math.min(
+    remaining - extraExistence,
+    prioritizedFieldSamples.length - fieldBudget,
+  );
+
   return {
     status: collapseAlerts.length > 0 || actionable > 0 ? 'failed' : 'ok',
     counts: { compared, differences, unexplained: actionable },
@@ -703,7 +792,10 @@ export function compareCromCanary(
     lagExcluded,
     fields,
     collapseAlerts,
-    samples: [...existenceSamples, ...fieldSamples].slice(0, MAX_REPORT_SAMPLES),
+    samples: [
+      ...prioritizedExistenceSamples.slice(0, existenceBudget + extraExistence),
+      ...prioritizedFieldSamples.slice(0, fieldBudget + extraFields),
+    ],
   };
 }
 
@@ -714,6 +806,7 @@ function classifyFieldMismatch(
   crom: CromPage,
   local: V2CanaryPage,
   l1Fresh: boolean,
+  cutoffEpochMs: number,
 ): { category: string; actionable: boolean } {
   if (
     field === 'title' &&
@@ -722,6 +815,9 @@ function classifyFieldMismatch(
     normalizeSourceTitle(crom.title) === normalizeSourceTitle(local.title)
   ) {
     return { category: 'crom_title_source_normalization', actionable: false };
+  }
+  if (field === 'title' && local.titleDirectObserved) {
+    return { category: 'crom_stale_title_vs_wikidot_observation', actionable: false };
   }
   if (l1Fresh && field === 'rating' && local.l1Rating !== null) {
     if (crom.rating === local.l1Rating) {
@@ -752,6 +848,20 @@ function classifyFieldMismatch(
       return { category: 'crom_stale_vs_current_l1', actionable: false };
     }
   }
+  if (
+    (field === 'rating' || field === 'voteCount') &&
+    local.voteDirectObservedEpochMs !== null &&
+    local.voteDirectObservedEpochMs >= cutoffEpochMs
+  ) {
+    return { category: 'crom_stale_vs_verified_whorated', actionable: false };
+  }
+  if (
+    field === 'revisionCount' &&
+    local.revisionDirectObservedEpochMs !== null &&
+    local.revisionDirectObservedEpochMs >= cutoffEpochMs
+  ) {
+    return { category: 'crom_stale_vs_verified_revision_list', actionable: false };
+  }
   return { category: 'unresolved_source_disagreement', actionable: true };
 }
 
@@ -766,6 +876,8 @@ function normalizeSourceTitle(value: string): string {
     .replace(/…/gu, '...')
     .replace(/[—–]/gu, '--')
     .replace(/\/\//gu, '')
+    .replace(/»/gu, '>>')
+    .replace(/«/gu, '<<')
     .trim();
 }
 

@@ -34,6 +34,7 @@ import {
 } from '../reconcile/report.js';
 import { collectImReconcileReport } from '../reconcile/im.js';
 import {
+  adjudicateEnumerationWithPageGet,
   inconclusiveActiveTriangle,
   loadEnumerationSnapshots,
   runTrianglePageChecks,
@@ -231,6 +232,12 @@ async function main(): Promise<void> {
           opts.snapshotMaxAgeHours * 3_600_000,
         );
         enumeration = loaded.report;
+        enumeration = await adjudicateEnumerationWithPageGet(
+          wikidotHttp,
+          config.siteBaseUrl,
+          enumeration,
+          opts.concurrency,
+        );
         activeInputComplete = loaded.status !== 'inconclusive';
         rows =
           activeInputComplete && loaded.listPages
