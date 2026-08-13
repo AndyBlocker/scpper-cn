@@ -34,7 +34,10 @@ import {
   applyCollectedVoteSnapshot,
   collectTargetedVoteClaim,
   collectVoteSnapshots,
+  needsPostWhoRatedClaim,
+  reconcileAheadVoteSnapshot,
   recordVoteScanFailure,
+  type VoteScanOutcome,
   type VoteTarget,
 } from '../collect/votes.js';
 import type { HttpClient } from '../http/client.js';
@@ -52,7 +55,10 @@ import {
   type ScanTaskKind,
 } from '../store/meta.js';
 import { sanitizePageScanError } from '../store/pgText.js';
-import { type ClaimedWorkTask } from '../store/workQueue.js';
+import {
+  type ClaimedWorkTask,
+  type VoteRetryClass,
+} from '../store/workQueue.js';
 import {
   applyConfirmedSlugReuse,
   applyObservedPageMeta,
@@ -78,6 +84,7 @@ export interface WorkHandlerOutcome {
   resultHash: Buffer | null;
   /** 已解释且已留证的 partial：事实单调 upsert 成功，队列应收尾而不是退避。 */
   settledPartial?: boolean;
+  retryClass?: VoteRetryClass;
   localValue?: Record<string, unknown>;
   remoteValue?: Record<string, unknown>;
   sample?: Record<string, unknown>;
@@ -138,11 +145,12 @@ const voteHandler: WorkHandler = async (task, context) => {
       error: 'vote_claim_targeted_listpages',
     });
   }
-  const claimEvidence = {
+  const initialClaim = {
     claimed_total: target.claimedTotal,
     claimed_rating: target.claimedRating,
     tier1_run_id: claimRunId,
   };
+  let claimEvidence: Record<string, unknown> = initialClaim;
 
   if (task.kind === 'new_page_highfreq') {
     await enqueueScanTasks(context.pool, [{
@@ -160,7 +168,7 @@ const voteHandler: WorkHandler = async (task, context) => {
     [target],
     1,
   );
-  const result = results.get(task.pageId) ?? {
+  let result: VoteScanOutcome = results.get(task.pageId) ?? {
     status: 'failed' as const,
     error: '内部错误：投票结果 Map 缺项',
   };
@@ -189,25 +197,78 @@ const voteHandler: WorkHandler = async (task, context) => {
     };
   }
 
+  let retryClass: VoteRetryClass | undefined;
+  let postWhoRatedClaim: Record<string, unknown> | null = null;
+  if (needsPostWhoRatedClaim(result)) {
+    const postClaim = await collectTargetedVoteClaim(
+      httpForWorkTask(context, task),
+      context.baseUrl,
+      task.slug,
+    );
+    if (postClaim.status === 'ok') {
+      const reconciliation = reconcileAheadVoteSnapshot(result, postClaim.data);
+      result = reconciliation.outcome;
+      target = result.data?.target ?? target;
+      postWhoRatedClaim = {
+        status: 'ok',
+        claimed_total: postClaim.data.claimedTotal,
+        claimed_rating: postClaim.data.claimedRating,
+        revisions: postClaim.data.revisions,
+        target_changed: reconciliation.targetChanged,
+      };
+      claimEvidence = {
+        claimed_total: target.claimedTotal,
+        claimed_rating: target.claimedRating,
+        tier1_run_id: context.runId,
+        initial_claimed_total: initialClaim.claimed_total,
+        initial_claimed_rating: initialClaim.claimed_rating,
+        claim_confirmed_after_who_rated: true,
+      };
+      await persistPageScan(context.pool, {
+        runId: context.runId,
+        pageId: task.pageId,
+        kind: 'meta',
+        status: 'ok',
+        claimedTotal: target.claimedTotal,
+        fetchedTotal: 1,
+        checksumOk: true,
+        checksumExpected: target.claimedRating,
+        checksumActual: target.claimedRating,
+        resultHash: null,
+        error: 'vote_claim_post_who_rated',
+      });
+    } else {
+      postWhoRatedClaim = { status: 'failed', error: postClaim.error };
+    }
+    if (result.status !== 'ok') retryClass = 'target_changing';
+  }
+
   const applied = await applyCollectedVoteSnapshot(
     context.pool,
     result,
     context.runId,
     new Date().toISOString(),
   );
+  const resultData = result.data;
+  if (resultData === undefined) {
+    throw new Error('内部错误：投票后确认结果丢失 data');
+  }
   return {
     status: applied.scanStatus,
     resultHash: applied.resultHash,
+    ...(applied.scanStatus === 'ok' || retryClass === undefined ? {} : { retryClass }),
     localValue: applied.applyResult,
     remoteValue: claimEvidence,
     sample: {
-      parsedEntries: result.data.entries.length,
-      checksum: result.data.checksum,
-      identityKinds: result.data.identityKinds,
-      duplicateEntries: result.data.duplicateEntries,
+      parsedEntries: resultData.entries.length,
+      checksum: resultData.checksum,
+      identityKinds: resultData.identityKinds,
+      duplicateEntries: resultData.duplicateEntries,
       quarantined: applied.quarantined,
       identityCollisions: applied.identityCollisions,
       apply: applied.applyResult,
+      consistencyCause: retryClass ?? null,
+      postWhoRatedClaim,
       error: result.status === 'failed' ? result.error : null,
     },
   };

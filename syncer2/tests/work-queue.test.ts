@@ -21,6 +21,9 @@ import {
   finishVoteTask,
   reassignSlugReuseTasks,
   releaseWorkTaskLocks,
+  MAX_SUSPECTED_VOTE_RETRY_MS,
+  TARGET_CHANGING_VOTE_RETRY_MS,
+  voteRetryAt,
   WORK_QUEUE_LIMIT_MAX,
   type ClaimedVoteTask,
 } from '../src/store/workQueue.js';
@@ -161,6 +164,60 @@ describe('M4 work-queue', () => {
     const waf = parseWhoRatedPage('<html><title>Access denied</title></html>');
     assert.equal(waf.status, 'failed');
     assert.match(waf.error, /结构锚点/);
+  });
+
+  it('目标变化固定 5 分钟重试，疑似数据问题退避但永不超过 12 小时', () => {
+    const now = Date.parse(FIXED_NOW);
+    assert.equal(TARGET_CHANGING_VOTE_RETRY_MS, 5 * 60_000);
+    assert.equal(MAX_SUSPECTED_VOTE_RETRY_MS, 12 * 60 * 60_000);
+    assert.equal(
+      Date.parse(voteRetryAt('target_changing', 99, now)) - now,
+      5 * 60_000,
+    );
+    assert.equal(
+      Date.parse(voteRetryAt('suspected_data', 99, now)) - now,
+      12 * 60 * 60_000,
+    );
+  });
+
+  it('目标变化失败清空稳定矛盾 streak，并写入短 not_before', async () => {
+    const pageId = PAGE_BASE + 50;
+    const hash = createHash('sha256').update('changing-target').digest();
+    await insertLockedTask(pageId, {
+      attempts: 9,
+      stableCount: 2,
+      resultHash: hash,
+    });
+    const claimed = task(pageId, {
+      attempts: 9,
+      stableCount: 2,
+      lastResultHash: hash,
+    });
+    claimed.taskId = await taskId(pageId);
+    const result = await finishVoteTask(pool, claimed, {
+      workerId: WORKER,
+      status: 'partial',
+      retryClass: 'target_changing',
+      resultHash: hash,
+      now: FIXED_NOW,
+    });
+    assert.equal(result.action, 'retried');
+    assert.equal(result.stableCount, 0);
+    assert.equal(result.notBefore, '2026-07-27T00:05:00.000Z');
+    const state = await query<{
+      stable_count: number;
+      last_result_hash: Buffer | null;
+      not_before: Date;
+    }>(
+      pool,
+      'test:m4:target_changing_state',
+      `SELECT stable_count, last_result_hash, not_before
+         FROM meta.scan_task WHERE page_id=$1 AND kind='votes_full'`,
+      [pageId],
+    );
+    assert.equal(state.rows[0]!.stable_count, 0);
+    assert.equal(state.rows[0]!.last_result_hash, null);
+    assert.equal(state.rows[0]!.not_before.toISOString(), result.notBefore);
   });
 
   it('源码与 ecosystem 钉住 50/5/SKIP LOCKED/cron_restart 契约', async () => {

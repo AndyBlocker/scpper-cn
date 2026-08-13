@@ -1030,6 +1030,7 @@ export interface FinishWorkTaskArgs {
   remoteValue?: Record<string, unknown>;
   /** 确定性结构/权限拒绝：本次即进入 irreconcilable，不经过指数退避。 */
   terminalFailure?: boolean;
+  retryClass?: VoteRetryClass;
   now: string;
 }
 
@@ -1969,7 +1970,29 @@ export interface FinishVoteTaskArgs {
   remoteValue?: Record<string, unknown>;
   /** 确定性结构/权限拒绝：本次即进入 irreconcilable，不经过指数退避。 */
   terminalFailure?: boolean;
+  /** 远端目标仍在变化时走短重试；其它失败按疑似数据问题退避。 */
+  retryClass?: VoteRetryClass;
   now: string;
+}
+
+export type VoteRetryClass = 'target_changing' | 'suspected_data';
+
+/** 后读仍追不上活动页时不增加退避；下一轮 worker 到来即可再确认。 */
+export const TARGET_CHANGING_VOTE_RETRY_MS = 5 * 60_000;
+/** votes_full 不再产生超过 12h 的未来任务；结构性稳定矛盾仍会在第三次进终态。 */
+export const MAX_SUSPECTED_VOTE_RETRY_MS = 12 * 60 * 60_000;
+
+export function voteRetryAt(
+  retryClass: VoteRetryClass,
+  attempt: number,
+  nowMs: number,
+): string {
+  if (!Number.isFinite(nowMs)) throw new TypeError(`非法重试基准时间：${String(nowMs)}`);
+  if (retryClass === 'target_changing') {
+    return new Date(nowMs + TARGET_CHANGING_VOTE_RETRY_MS).toISOString();
+  }
+  const ordinary = Date.parse(backoffFrom(attempt, nowMs));
+  return new Date(Math.min(ordinary, nowMs + MAX_SUSPECTED_VOTE_RETRY_MS)).toISOString();
 }
 
 export interface FinishVoteTaskResult {
@@ -2039,6 +2062,23 @@ export async function finishVoteTask(
     return { action: 'deleted', stableCount: 0, notBefore: null };
   }
 
+  if (args.retryClass === 'target_changing') {
+    const notBefore = voteRetryAt('target_changing', task.attempts, Date.parse(now));
+    await query(
+      pool,
+      'meta.scan_task:finish_vote_target_changing',
+      `UPDATE meta.scan_task
+          SET stable_count = 0,
+              last_result_hash = NULL,
+              not_before = $3::timestamptz,
+              locked_by = NULL,
+              locked_at = NULL
+        WHERE id = $1 AND locked_by = $2`,
+      [task.taskId, args.workerId, notBefore],
+    );
+    return { action: 'retried', stableCount: 0, notBefore };
+  }
+
   const sameHash =
     args.resultHash !== undefined &&
     args.resultHash !== null &&
@@ -2047,7 +2087,7 @@ export async function finishVoteTask(
   const stableCount = args.resultHash ? (sameHash ? task.stableCount + 1 : 1) : 0;
   const converged = args.terminalFailure === true || stableCount >= 3;
   const backoffAttempt = converged ? stableCount - 2 : task.attempts;
-  const notBefore = backoffFrom(backoffAttempt, Date.parse(now));
+  const notBefore = voteRetryAt('suspected_data', backoffAttempt, Date.parse(now));
 
   if (converged) {
     await query(

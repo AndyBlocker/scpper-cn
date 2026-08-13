@@ -209,6 +209,12 @@ export type VoteScanOutcome =
       data?: VoteSnapshotData;
     };
 
+export interface AheadVoteSnapshotReconciliation {
+  outcome: VoteScanOutcome;
+  /** true 表示后读 ListPages 已证明两次读取之间目标计数或评分发生了变化。 */
+  targetChanged: boolean;
+}
+
 const SELECTOR_RESIDUE_RE = /%%[^%\r\n]+%%/;
 const USER_SELECTOR = 'span.printuser';
 
@@ -418,6 +424,44 @@ export function gateParsedVotes(
   }
 
   return reasons.length === 0 ? { status: 'ok', data } : { status: 'partial', data };
+}
+
+/**
+ * 只给 `WhoRated 行数 > 较早 claim` 的单向竞态补一次后读确认。
+ * `fetched < claimed` 可能是漏抓，绝不能走同一条放行路径。
+ */
+export function needsPostWhoRatedClaim(outcome: VoteScanOutcome): boolean {
+  return outcome.status === 'partial' &&
+    outcome.data !== undefined &&
+    outcome.data.target.claimedTotal !== null &&
+    outcome.data.rawEntries > outcome.data.target.claimedTotal;
+}
+
+/**
+ * 用 WhoRated 之后读取的独立 ListPages 计数重新执行原有四门校验。
+ * 只有 fresh claim 同时精确匹配 raw row count 与 Σsign 才会变成 ok；这里没有容差，
+ * 也不会跨轮拼接明细。目标在后读前继续变化时仍保持 partial。
+ */
+export function reconcileAheadVoteSnapshot(
+  outcome: VoteScanOutcome,
+  freshClaim: TargetedVoteClaim,
+): AheadVoteSnapshotReconciliation {
+  if (!needsPostWhoRatedClaim(outcome) || outcome.data === undefined) {
+    return { outcome, targetChanged: false };
+  }
+  const oldTarget = outcome.data.target;
+  const target: VoteTarget = {
+    ...oldTarget,
+    claimedTotal: freshClaim.claimedTotal,
+    claimedRating: freshClaim.claimedRating,
+  };
+  const regated = gateParsedVotes(target, { status: 'ok', data: outcome.data });
+  return {
+    outcome: regated,
+    targetChanged:
+      freshClaim.claimedTotal !== oldTarget.claimedTotal ||
+      freshClaim.claimedRating !== oldTarget.claimedRating,
+  };
 }
 
 /** 5,575 票实测页独占队列；其余按票数分档给超时，避免小页都背 60 秒尾延迟。 */

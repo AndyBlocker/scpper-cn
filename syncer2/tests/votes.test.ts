@@ -12,9 +12,11 @@ import {
   collectVoteSnapshots,
   gateParsedVotes,
   isOversizedVotePage,
+  needsPostWhoRatedClaim,
   parseWhoRatedPage,
   parseTargetedVoteClaim,
   prepareVoteSnapshot,
+  reconcileAheadVoteSnapshot,
   timeoutForVoteCount,
   voteIdentityKey,
   voteSnapshotContradictionHash,
@@ -292,6 +294,42 @@ describe('四重门控与尾部红线', () => {
     assert.equal(result.status, 'partial');
     assert.equal(result.data?.entries.length, 7);
     assert.equal(result.data?.checksum, 1);
+  });
+
+  test('读取期间新增票须由 WhoRated 后的精确 claim 二次确认才收敛', () => {
+    const stale = gateParsedVotes(target(6, 0), parseWhoRatedPage(mixed));
+    assert.equal(stale.status, 'partial');
+    assert.equal(needsPostWhoRatedClaim(stale), true);
+
+    const confirmed = reconcileAheadVoteSnapshot(stale, {
+      claimedTotal: 7,
+      claimedRating: 1,
+      revisions: 4,
+    });
+    assert.equal(confirmed.targetChanged, true);
+    assert.equal(confirmed.outcome.status, 'ok');
+    assert.equal(confirmed.outcome.data?.target.claimedTotal, 7);
+    assert.equal(confirmed.outcome.data?.target.claimedRating, 1);
+
+    const stillChanging = reconcileAheadVoteSnapshot(stale, {
+      claimedTotal: 8,
+      claimedRating: 2,
+      revisions: 4,
+    });
+    assert.equal(stillChanging.outcome.status, 'partial');
+  });
+
+  test('fetched < claimed 疑似漏抓不读取后确认、不能走活动页放行路径', () => {
+    const missing = gateParsedVotes(target(8, 1), parseWhoRatedPage(mixed));
+    assert.equal(missing.status, 'partial');
+    assert.equal(needsPostWhoRatedClaim(missing), false);
+    const unchanged = reconcileAheadVoteSnapshot(missing, {
+      claimedTotal: 7,
+      claimedRating: 1,
+      revisions: 4,
+    });
+    assert.equal(unchanged.outcome.status, 'partial');
+    assert.equal(unchanged.targetChanged, false);
   });
 
   test('status=ok ∧ entries=0 ∧ claimed_total>0 强制 failed 且携带空快照证据', () => {

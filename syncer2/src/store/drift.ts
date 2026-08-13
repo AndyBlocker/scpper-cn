@@ -3,9 +3,10 @@ import type { Pool } from 'pg';
 import {
   advanceDriftObservation,
   applyL1DriftFloodGate,
+  buildL1DriftDispatch,
   classifyL1ProjectionDrift,
   irreconcilableRemoteEvidenceChanged,
-  L1_DRIFT_REPAIR_PRIORITY,
+  l1DriftTaskNotBefore,
   type L1DriftFloodGate,
   type L1DriftTaskKind,
 } from '../collect/l1Drift.js';
@@ -30,6 +31,8 @@ interface StoredDriftRow {
   kind: L1DriftTaskKind;
   consecutive_observations: number;
   last_observation_run_id: string | number;
+  first_detected_at: Date | string;
+  last_enqueued_at: Date | string | null;
   resolved_at: Date | string | null;
 }
 
@@ -83,6 +86,8 @@ interface CurrentDrift {
   previousL1RunId: number | null;
   consecutiveObservations: number;
   eligible: boolean;
+  firstDetectedAt: string;
+  lastEnqueuedAt: string | null;
 }
 
 interface ChangedTerminalDrift extends CurrentDrift {
@@ -103,7 +108,10 @@ export async function observeL1ProjectionDrift(
   const byPageId = new Map(projection.map((row) => [Number(row.page_id), row]));
   const identityConflicts: L1DriftIdentityConflict[] = [];
   const aligned: L1DriftObservationInput[] = [];
-  const classified: Array<Omit<CurrentDrift, 'consecutiveObservations' | 'eligible'>> = [];
+  const classified: Array<Omit<
+    CurrentDrift,
+    'consecutiveObservations' | 'eligible' | 'firstDetectedAt' | 'lastEnqueuedAt'
+  >> = [];
 
   for (const observation of observations) {
     const local = byPageId.get(observation.pageId);
@@ -156,7 +164,17 @@ export async function observeL1ProjectionDrift(
       runId,
       drift.previousL1RunId,
     );
-    return { ...drift, ...advanced };
+    const continuing = stored !== undefined && stored.resolved_at === null;
+    return {
+      ...drift,
+      ...advanced,
+      firstDetectedAt: continuing
+        ? new Date(stored.first_detected_at).toISOString()
+        : observedAt,
+      lastEnqueuedAt: continuing && stored.last_enqueued_at !== null
+        ? new Date(stored.last_enqueued_at).toISOString()
+        : null,
+    };
   });
 
   const terminalBeforeReopen = await loadOpenIrreconcilable(
@@ -192,15 +210,21 @@ export async function observeL1ProjectionDrift(
     }
   }
   const candidates = current
-    .filter((drift) => drift.eligible && !openTerminal.has(driftKey(drift.pageId, drift.kind)))
-    .sort((a, b) => b.magnitude - a.magnitude || a.pageId - b.pageId || a.kind.localeCompare(b.kind))
-    .map((drift): ScanTaskRow => ({
-      pageId: drift.pageId,
-      kind: drift.kind,
-      reasons: drift.reasons,
-      priority: L1_DRIFT_REPAIR_PRIORITY,
-      notBefore: observedAt,
-    }));
+    .filter((drift) => !openTerminal.has(driftKey(drift.pageId, drift.kind)))
+    .sort((a, b) => compareDriftDispatchOrder(a, b, observedAt))
+    .map((drift): ScanTaskRow => {
+      const dispatch = buildL1DriftDispatch(
+        drift.reasons,
+        drift.eligible,
+        drift.firstDetectedAt,
+        observedAt,
+      );
+      return {
+        pageId: drift.pageId,
+        kind: drift.kind,
+        ...dispatch,
+      };
+    });
   const discoveredPages = new Set(current.map((row) => row.pageId)).size;
   const gate = applyL1DriftFloodGate(candidates, projection.length, discoveredPages);
   const selectedKeys = new Set(
@@ -279,7 +303,8 @@ async function loadStoredDrift(
       pool,
       'drift:load_state',
       `SELECT page_id, kind, consecutive_observations,
-              last_observation_run_id, resolved_at
+              last_observation_run_id, first_detected_at,
+              last_enqueued_at, resolved_at
          FROM meta.incremental_drift_state
         WHERE page_id = ANY($1::int[])`,
       [part],
@@ -287,6 +312,25 @@ async function loadStoredDrift(
     for (const row of result.rows) out.set(driftKey(Number(row.page_id), row.kind), row);
   }
   return out;
+}
+
+function compareDriftDispatchOrder(
+  a: CurrentDrift,
+  b: CurrentDrift,
+  observedAt: string,
+): number {
+  const due = Date.parse(l1DriftTaskNotBefore(a.eligible, a.firstDetectedAt, observedAt)) -
+    Date.parse(l1DriftTaskNotBefore(b.eligible, b.firstDetectedAt, observedAt));
+  if (due !== 0) return due;
+  if (a.lastEnqueuedAt === null && b.lastEnqueuedAt !== null) return -1;
+  if (a.lastEnqueuedAt !== null && b.lastEnqueuedAt === null) return 1;
+  const lastDispatched = Date.parse(a.lastEnqueuedAt ?? a.firstDetectedAt) -
+    Date.parse(b.lastEnqueuedAt ?? b.firstDetectedAt);
+  return lastDispatched ||
+    Date.parse(a.firstDetectedAt) - Date.parse(b.firstDetectedAt) ||
+    b.magnitude - a.magnitude ||
+    a.pageId - b.pageId ||
+    a.kind.localeCompare(b.kind);
 }
 
 async function loadOpenIrreconcilable(

@@ -29,10 +29,53 @@ export interface ClassifiedL1Drift {
 }
 
 export const L1_DRIFT_MIN_CONSECUTIVE_OBSERVATIONS = 2;
+/** 首次读数先消抖，但即使后续无法形成 streak，也必须在一小时后拥有可执行任务。 */
+export const L1_DRIFT_SINGLE_OBSERVATION_DELAY_MS = 60 * 60_000;
 export const L1_DRIFT_GATE_RATIO = 0.02;
 export const L1_DRIFT_GATE_ABSOLUTE_LIMIT = 2_000;
 /** 已连续确认的投影漂移与 L1 直接变化同级，必须高于 catch-up 的 20--99 老化带。 */
 export const L1_DRIFT_REPAIR_PRIORITY = 200;
+
+export interface L1DriftDispatch {
+  reasons: string[];
+  priority: number;
+  notBefore: string;
+}
+
+export function l1DriftTaskNotBefore(
+  eligible: boolean,
+  firstDetectedAt: string,
+  observedAt: string,
+): string {
+  const firstMs = Date.parse(firstDetectedAt);
+  const observedMs = Date.parse(observedAt);
+  if (!Number.isFinite(firstMs) || !Number.isFinite(observedMs)) {
+    throw new TypeError(
+      `非法 drift 时间 first=${firstDetectedAt};observed=${observedAt}`,
+    );
+  }
+  return new Date(
+    eligible ? observedMs : Math.max(observedMs, firstMs + L1_DRIFT_SINGLE_OBSERVATION_DELAY_MS),
+  ).toISOString();
+}
+
+export function buildL1DriftDispatch(
+  reasons: readonly string[],
+  eligible: boolean,
+  firstDetectedAt: string,
+  observedAt: string,
+): L1DriftDispatch {
+  return {
+    reasons: [
+      eligible
+        ? 'l1_projection_drift_persistent'
+        : 'l1_projection_drift_confirmation_due',
+      ...reasons,
+    ],
+    priority: L1_DRIFT_REPAIR_PRIORITY,
+    notBefore: l1DriftTaskNotBefore(eligible, firstDetectedAt, observedAt),
+  };
+}
 
 export function classifyL1ProjectionDrift(
   local: LocalProjectionCounters,
@@ -49,7 +92,7 @@ export function classifyL1ProjectionDrift(
   if (voteReasons.length > 0) {
     out.push({
       kind: 'votes_full',
-      reasons: ['l1_projection_drift_persistent', ...voteReasons],
+      reasons: voteReasons,
       localValue: {
         rating: local.rating,
         vote_count: local.voteCount,
@@ -69,10 +112,7 @@ export function classifyL1ProjectionDrift(
   if (local.revisionCount !== expectedRevisionCount) {
     out.push({
       kind: 'revisions_full',
-      reasons: [
-        'l1_projection_drift_persistent',
-        'l1_projection_drift_revision_count',
-      ],
+      reasons: ['l1_projection_drift_revision_count'],
       localValue: { revision_count: local.revisionCount },
       remoteValue: {
         revision_claim: remote.revisionClaim,

@@ -5,6 +5,7 @@ import type { Pool } from 'pg';
 import {
   advanceDriftObservation,
   applyL1DriftFloodGate,
+  buildL1DriftDispatch,
   classifyL1ProjectionDrift,
   irreconcilableRemoteEvidenceChanged,
   L1_DRIFT_REPAIR_PRIORITY,
@@ -47,6 +48,29 @@ describe('L1 projection drift reconciliation', () => {
       100,
     );
     assert.deepEqual(advanced, { consecutiveObservations: 2, eligible: true });
+  });
+
+  it('单次漂移也生成 p200 延迟确认任务，消解入口最迟一小时到期', () => {
+    const first = '2026-08-13T04:49:00.000Z';
+    const observed = '2026-08-13T04:49:00.000Z';
+    const dispatch = buildL1DriftDispatch(
+      ['l1_projection_drift_vote_count'],
+      false,
+      first,
+      observed,
+    );
+    assert.equal(dispatch.priority, 200);
+    assert.equal(dispatch.notBefore, '2026-08-13T05:49:00.000Z');
+    assert.ok(dispatch.reasons.includes('l1_projection_drift_confirmation_due'));
+
+    const persistent = buildL1DriftDispatch(
+      ['l1_projection_drift_vote_count'],
+      true,
+      first,
+      '2026-08-13T04:54:00.000Z',
+    );
+    assert.equal(persistent.notBefore, '2026-08-13T04:54:00.000Z');
+    assert.ok(persistent.reasons.includes('l1_projection_drift_persistent'));
   });
 
   it('抓完仍差 1 不使用容差；执行状态机会退避并最终进 irreconcilable', () => {

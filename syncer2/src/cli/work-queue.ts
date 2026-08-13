@@ -559,6 +559,7 @@ async function main(): Promise<void> {
           remoteValue: outcome.remoteValue,
           settledPartial: outcome.settledPartial,
           terminalFailure,
+          retryClass: outcome.retryClass,
           now: new Date().toISOString(),
         });
         action = finish.action;
