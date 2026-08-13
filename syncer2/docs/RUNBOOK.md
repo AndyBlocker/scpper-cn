@@ -584,6 +584,13 @@ journalctl --user -u syncer2-job@l0.service -u syncer2-job@l1.service \
 `ingest.revision.source_sha`。PageDiff 不参与源码重建；旧
 `ingest.revision_source_delta` 仅作为 append-only 遗留证据保留。
 
+历史源码请求复用 adult 源码的 `RestrictedIdentitySession` 与
+`loadRestrictedWikidotCredentials()`，账号只从既有受限凭证链加载。整个回填进程（启动
+探针、登录、PageSource、出口采样）都由 `createRestrictedStableHttp()` 固定到
+`http://127.0.0.1:7890`、TLS 1.2，禁止继承通用 `SYNCER2_HTTP_PROXY=7891`。session
+失效时归还当前 claim、保留 attempt 并显式记录 `emptyResult=false` 后结束本轮；不得把
+失败解释成空源码或删除证据。
+
 首次必须先跑 `npm run revision-source:pilot`。门禁要求 1,000/1,000 条完成抓取、入库、
 `source_sha` 回填和 content_blob 回读逐字节一致，其中 100 个当前版本还要与
 `ViewSourceModule` 逐字节一致。门禁通过后才启用
@@ -596,7 +603,10 @@ FIFO 约束，因此相位对齐不会把低优先级让路退化为永不执行
 每小时检查任务状态、`source_bytes`/`response_bytes`、`blob_inserted`、数据库与
 `content_blob` 增长及根文件系统余量；余量低于 100 GiB 时 CLI 会停止认领。`processing`
 锁超过 15 分钟会回到 retry，单条连续失败三次进入 irreconcilable；页面变为非 live
-则转 `skipped_deleted`，不保存其历史源码。
+则转 `skipped_deleted`，不保存其历史源码。已登录 session 强制重建后目标仍返回
+`no_permission` 时直接转 `unavailable`：它表示账号已验证但该历史修订不可得，不是可重试
+链路故障，也不是本地/远端事实冲突。每轮另记录 `outputHealth`；连续 3 个确实认领任务的
+轮次 `stored=0` 时记录 error、加入 `revision_source_zero_output_streak` 健康失败原因并非零退出。
 
 PageDiff 响应中的结构化标签两侧集合不受 `nl2br` 的不可逆问题影响。后续可用少量
 PageDiff 请求独立采集“标签: A → B”变更史；这会提供 v1 没有的标签历史能力，且与
@@ -743,6 +753,11 @@ npm run work:queue:probe -- --amc-probe require --proxy-check require
 
 只有 `problems=[]`、`leaked=false`、代理/直连出口不同，且 `byNode` 不含当前入口的
 `DIRECT` 才能恢复 timer；不得通过关闭 mihomo 归因来“修复”告警。
+
+账号历史源码/adult 是明确例外：它们固定使用 `7890`，不得为满足通用 `7891` 探针而回落
+轮换池。验收应同时看客户端 `proxyUrl=127.0.0.1:7890`、TLS 1.2、账号 session 日志和
+`exit_ip_stats`；当前主机直连与稳定入口都可能回显同一 `103.188.235.3`，因此仅凭“两 IP
+必须不同”不能裁决这条固定入口是否泄漏，更不能据此切换到 7891。
 
 ## 8. 发布前回归
 

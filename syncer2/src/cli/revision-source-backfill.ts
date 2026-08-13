@@ -17,7 +17,7 @@ import { Command } from 'commander';
 import type { Pool } from 'pg';
 
 import {
-  scanRevisionSourcesOnDemand,
+  scanAuthenticatedRevisionSourcesOnDemand,
   scanSources,
   type RevisionSourceSnapshot,
   type SourceSnapshot,
@@ -29,6 +29,13 @@ import {
   CircuitOpenError,
   HttpClient,
 } from '../http/client.js';
+import {
+  createRestrictedStableHttp,
+  loadRestrictedWikidotCredentials,
+  RestrictedIdentitySession,
+  RestrictedSessionUnavailableError,
+  type RestrictedSourceSession,
+} from '../http/restrictedSession.js';
 import {
   evaluateAdaptiveSelfProtection,
   PostgresAdaptiveEgressGate,
@@ -49,6 +56,7 @@ import {
   finishRevisionSourceJob,
   loadPilotCandidates,
   loadRevisionSourceStorageStats,
+  loadRevisionSourceOutputHealth,
   loadStoredRevisionSource,
   prepareRevisionSourceText,
   noteRevisionSourceFreezeSkip,
@@ -67,6 +75,7 @@ import {
   type ApplyRevisionSourceResult,
   type RevisionSourceCandidate,
   type RevisionSourceStorageStats,
+  type RevisionSourceOutputHealth,
   type StoredRevisionSource,
 } from '../store/revisionSource.js';
 import {
@@ -112,7 +121,11 @@ interface Counters {
   currentCrosschecks: number;
   retries: number;
   irreconcilable: number;
-  /** no_permission/revision_error 等目标级确定性结果；即使未满三次也不代表链路失败。 */
+  /** 固定 7890 重登成功后，账号对目标 revision 仍返回 no_permission。 */
+  unavailable: number;
+  /** session/登录前置条件失效；claim 已归还，不计 processed/failed。 */
+  sessionUnavailableSkipped: number;
+  /** revision_error/契约错误等确定性结果；账号 no_permission 已单列 unavailable。 */
   deterministicFailures: number;
   failed: number;
   /** PGF01 是我方状态，不进入 processed/failed、退避或任何健康指标分母。 */
@@ -125,6 +138,10 @@ interface Counters {
   textSanitized: number;
   nulCodeUnitsSanitized: number;
   loneSurrogatesSanitized: number;
+}
+
+class AuthenticatedRevisionUnavailableError extends Error {
+  override readonly name = 'AuthenticatedRevisionUnavailableError';
 }
 
 class RequestPacer {
@@ -160,15 +177,13 @@ function evidenceFor(map: Map<number, PageEvidence>, pageId: number): PageEviden
 }
 
 async function fetchFullSource(
-  http: HttpClient,
-  baseUrl: string,
+  session: RestrictedSourceSession,
   row: RevisionSourceCandidate,
   pacer: RequestPacer,
 ): Promise<RevisionSourceSnapshot> {
   await pacer.wait();
-  const result = await scanRevisionSourcesOnDemand(
-    http,
-    baseUrl,
+  const result = await scanAuthenticatedRevisionSourcesOnDemand(
+    session,
     [
       {
         pageId: row.pageId,
@@ -179,6 +194,9 @@ async function fetchFullSource(
     1,
   );
   const source = result.get(row.wikidotRevisionId);
+  if (source?.status === 'unavailable') {
+    throw new AuthenticatedRevisionUnavailableError(source.error);
+  }
   if (source?.status !== 'ok') {
     throw new Error(
       `PageSource revision=${row.wikidotRevisionId} failed: ` +
@@ -262,6 +280,7 @@ async function assertDiskReserve(minimumFreeGb: number): Promise<number> {
 async function runPilot(args: {
   pool: Pool;
   http: HttpClient;
+  session: RestrictedSourceSession;
   baseUrl: string;
   runId: number | null;
   observedAt: string;
@@ -303,8 +322,7 @@ async function runPilot(args: {
         args.counters.sourceBytes += existing.sourceBytes;
       } else {
         const snapshot = await fetchFullSource(
-          args.http,
-          args.baseUrl,
+          args.session,
           row,
           args.pacer,
         );
@@ -492,6 +510,9 @@ function storageDelta(
     contentBlobRelationBytes:
       after.contentBlobRelationBytes - before.contentBlobRelationBytes,
     done: after.done - before.done,
+    retry: after.retry - before.retry,
+    irreconcilable: after.irreconcilable - before.irreconcilable,
+    unavailable: after.unavailable - before.unavailable,
     sourceBytes: after.sourceBytes - before.sourceBytes,
     responseBytes: after.responseBytes - before.responseBytes,
     blobsInserted: after.blobsInserted - before.blobsInserted,
@@ -506,18 +527,20 @@ async function main(): Promise<void> {
   const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const workerId = `${os.hostname()}:${process.pid}:revision-source`;
   const pool = createPool(config.databaseUrl, { max: 4 });
-  const http = new HttpClient({
+  const http = createRestrictedStableHttp({
     userAgent: config.userAgent,
     referer: config.referer,
-    proxyUrl: config.proxyUrl,
     timeoutMs: config.httpTimeoutMs,
     maxAttempts: Math.max(3, config.httpMaxAttempts),
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: 1,
     signal: budget.signal,
-    logger: log.child('http'),
-    adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'revision-source'),
+    logger: log.child('authenticated-7890'),
+    adaptiveEgress: new PostgresAdaptiveEgressGate(
+      config.databaseUrl,
+      'revision-source:authenticated-7890',
+    ),
     egress: {
       probeUrl: config.exitIpProbeUrl,
       everyNRequests: config.exitIpProbeEvery,
@@ -526,6 +549,16 @@ async function main(): Promise<void> {
       hostFilter: new URL(config.siteBaseUrl).host,
     },
   });
+  const restrictedCredentials = loadRestrictedWikidotCredentials();
+  const restrictedSession =
+    restrictedCredentials === null
+      ? null
+      : new RestrictedIdentitySession(
+          http,
+          restrictedCredentials,
+          config.siteBaseUrl,
+          log.child('authenticated-session'),
+        );
   const pacer = new RequestPacer(opts.delayMs, budget.signal);
   const evidence = new Map<number, PageEvidence>();
   const counters: Counters = {
@@ -538,6 +571,8 @@ async function main(): Promise<void> {
     currentCrosschecks: 0,
     retries: 0,
     irreconcilable: 0,
+    unavailable: 0,
+    sessionUnavailableSkipped: 0,
     deterministicFailures: 0,
     failed: 0,
     writeFreezeSkipped: 0,
@@ -560,6 +595,8 @@ async function main(): Promise<void> {
   let diskFreeStart = 0;
   let diskFreeEnd = 0;
   let diskStopped = false;
+  let sessionDegradedReason: string | null = null;
+  let outputHealth: RevisionSourceOutputHealth | null = null;
   let realtimeContention = decideRevisionSourceRealtimeContention([]);
   const stop = (): void => {
     stopping = true;
@@ -623,6 +660,13 @@ async function main(): Promise<void> {
       await runPilot({
         pool,
         http,
+        session:
+          restrictedSession ??
+          (() => {
+            throw new RestrictedSessionUnavailableError(
+              '历史源码账号凭证不可用；emptyResult=false',
+            );
+          })(),
         baseUrl: config.siteBaseUrl,
         runId,
         observedAt,
@@ -643,12 +687,20 @@ async function main(): Promise<void> {
         skippedDeleted: counters.skippedDeleted,
       });
 
-      while (
-        counters.processed < opts.limit &&
-        !budget.checkpoint() &&
-        !stopping &&
-        !http.breakerOpen
-      ) {
+      if (restrictedSession === null) {
+        counters.sessionUnavailableSkipped++;
+        sessionDegradedReason = '历史源码账号凭证不可用；emptyResult=false';
+        log.error('历史源码账号链路不可用，本轮显式降级且不认领任务', {
+          error: sessionDegradedReason,
+          emptyResult: false,
+          deletionInference: false,
+        });
+      } else while (
+          counters.processed < opts.limit &&
+          !budget.checkpoint() &&
+          !stopping &&
+          !http.breakerOpen
+        ) {
         if (counters.processed % 100 === 0) {
           const free = await availableDiskBytes();
           if (free < opts.minimumFreeGb * GIB) {
@@ -669,8 +721,7 @@ async function main(): Promise<void> {
         pageEvidence.claimed++;
         try {
           const snapshot = await fetchFullSource(
-            http,
-            config.siteBaseUrl,
+            restrictedSession,
             row,
             pacer,
           );
@@ -688,6 +739,41 @@ async function main(): Promise<void> {
           pageEvidence.fetched++;
           pageEvidence.hashes.push(applied.sourceShaHex);
         } catch (err) {
+          if (err instanceof AuthenticatedRevisionUnavailableError) {
+            const error = String(err);
+            await finishRevisionSourceJob(pool, row, workerId, {
+              status: 'unavailable',
+              error,
+            });
+            activeRevisionSeq = null;
+            counters.processed++;
+            counters.unavailable++;
+            pageEvidence.errors.push(`revision=${row.wikidotRevisionId}: ${error}`);
+            continue;
+          }
+          if (err instanceof RestrictedSessionUnavailableError) {
+            pageEvidence.claimed = Math.max(0, pageEvidence.claimed - 1);
+            if (
+              pageEvidence.claimed === 0 &&
+              pageEvidence.fetched === 0 &&
+              pageEvidence.errors.length === 0 &&
+              pageEvidence.hashes.length === 0
+            ) {
+              evidence.delete(row.pageId);
+            }
+            await releaseRevisionSourceClaims(pool, [row.revisionSeq], workerId);
+            activeRevisionSeq = null;
+            counters.sessionUnavailableSkipped++;
+            sessionDegradedReason = String(err);
+            log.error('历史源码账号 session 不可用，本轮归还 claim 并显式降级', {
+              revisionSeq: row.revisionSeq,
+              wikidotRevisionId: row.wikidotRevisionId,
+              error: sessionDegradedReason,
+              emptyResult: false,
+              deletionInference: false,
+            });
+            break;
+          }
           if (isRuntimeBudgetExceededError(err)) {
             pageEvidence.claimed = Math.max(0, pageEvidence.claimed - 1);
             await releaseRevisionSourceClaims(pool, [row.revisionSeq], workerId);
@@ -734,7 +820,8 @@ async function main(): Promise<void> {
           counters.failed++;
           if (disposition === 'deterministic') counters.deterministicFailures++;
           if (action === 'retry') counters.retries++;
-          else counters.irreconcilable++;
+          else if (action === 'irreconcilable') counters.irreconcilable++;
+          else throw new Error(`failed outcome 返回非法 action=${action}`);
           pageEvidence.errors.push(`revision=${row.wikidotRevisionId}: ${error}`);
           if (http.breakerOpen) break;
         }
@@ -745,17 +832,33 @@ async function main(): Promise<void> {
     await flushEvidence(pool, runId, evidence);
     diskFreeEnd = await availableDiskBytes();
     endStorage = await loadRevisionSourceStorageStats(pool);
+    outputHealth = await loadRevisionSourceOutputHealth(pool, {
+      selected: counters.selected,
+      stored: counters.stored,
+      blobsInserted: counters.blobsInserted,
+    });
+    if (outputHealth.alert) {
+      log.error('历史源码回填连续多轮零产出告警', {
+        ...outputHealth,
+        emptyResult: false,
+      });
+    }
     const baseHealth = evaluateRunHealth({
-      claimed: counters.processed + counters.writeFreezeSkipped,
+      claimed:
+        counters.processed
+        + counters.writeFreezeSkipped
+        + counters.sessionUnavailableSkipped,
       processed: counters.processed,
-      partial: 0,
+      partial: counters.unavailable,
       failed: counters.failed,
       deterministicFailures: counters.deterministicFailures,
       deferred:
         counters.writeFreezeSkipped
+        + counters.sessionUnavailableSkipped
         + Number(diskStopped)
         + Number(budget.stoppedByRuntimeBudget),
       breakerOpen: http.breakerOpen,
+      fatalReasons: outputHealth.alert ? ['revision_source_zero_output_streak'] : [],
     });
     const adaptiveState = http.stats().adaptiveEgress?.state ?? null;
     const health = adaptiveState === null
@@ -804,12 +907,23 @@ async function main(): Promise<void> {
       httpHealth: http.healthStats(),
       startupProbe,
       stoppedBySignal: stopping,
+      authenticatedSource: {
+        enabled: restrictedSession !== null,
+        proxyUrl: http.proxyUrl,
+        tlsMaxVersion: http.tlsMaxVersion,
+        credentialSource: restrictedCredentials?.source ?? null,
+        sessionDegradedReason,
+        emptyResult: false,
+      },
+      outputHealth,
       timeBudgetReached: budget.checkpoint(),
       realtimeContention,
       ...budget.summary(),
       healthExclusions: {
         write_freeze: counters.writeFreezeSkipped,
         deterministic_failures: counters.deterministicFailures,
+        authenticated_unavailable: counters.unavailable,
+        restricted_session_unavailable: counters.sessionUnavailableSkipped,
       },
       health,
     };
@@ -860,6 +974,8 @@ async function main(): Promise<void> {
           ? null
           : storageDelta(startStorage, endStorage),
       parseHealth,
+      authenticatedProxyUrl: http.proxyUrl,
+      outputHealth,
       http: http.stats(),
       ...budget.summary(),
     });
@@ -940,6 +1056,14 @@ async function main(): Promise<void> {
           content: { claimed: counters.stored },
         },
         http: http.stats(),
+        authenticatedSource: {
+          enabled: restrictedSession !== null,
+          proxyUrl: http.proxyUrl,
+          tlsMaxVersion: http.tlsMaxVersion,
+          sessionDegradedReason,
+          emptyResult: false,
+        },
+        outputHealth,
         ...budget.summary(),
       },
     }).catch((finishErr) =>
@@ -966,6 +1090,7 @@ async function main(): Promise<void> {
           }),
       );
     }
+    await restrictedSession?.logout().catch(() => undefined);
     await http.close();
     await pool.end().catch(() => undefined);
   }

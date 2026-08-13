@@ -2,8 +2,9 @@
  * 受限分类身份发现的最小登录 session。
  *
  * 账号只用于 GET /<slug>/norender/true/noredirect/true 取得真实 pageId，以及匿名明确
- * no_permission 的 ViewSourceModule。投票、修订、ListPages、页面讨论全部仍走匿名请求。
- * 出口硬编码为本机 7890，禁止从通用 7891 配置继承。
+ * no_permission 的 ViewSourceModule，以及历史源码回填的 history/PageSourceModule。
+ * 投票、修订列表、ListPages、页面讨论全部仍走匿名请求。出口硬编码为本机 7890，
+ * 禁止从通用 7891 配置继承。
  */
 
 import fs from 'node:fs';
@@ -19,6 +20,7 @@ import {
   type IdentityOutcome,
 } from '../page/identity.js';
 import { createLogger, type Logger } from '../util/log.js';
+import { isRuntimeBudgetExceededError } from '../util/runtimeBudget.js';
 import { HttpClient, HttpStatusError, type HttpClientOptions } from './client.js';
 
 export const RESTRICTED_STABLE_PROXY_URL = 'http://127.0.0.1:7890';
@@ -44,6 +46,7 @@ export interface RestrictedIdentityHttp {
 export interface RestrictedSourceSession {
   readonly http: RestrictedIdentityHttp;
   fetchCurrentSource(slug: string, wikidotId: number): Promise<AmcResponse>;
+  fetchRevisionSource(revisionId: number): Promise<AmcResponse>;
 }
 
 export function loadRestrictedWikidotCredentials(
@@ -174,6 +177,65 @@ export class RestrictedIdentitySession {
         throw new RestrictedSessionUnavailableError(
           `重登后 ViewSourceModule 仍对 ${slug} 返回 no_permission；emptyResult=false`,
         );
+      }
+    }
+    return response;
+  }
+
+  /**
+   * 历史源码回填的账号入口。首次 no_permission 可能只是旧 session，先强制重登；
+   * 新 session 仍 no_permission 时把原响应交给调用方标为 unavailable，而不是伪造成
+   * 空源码或继续把目标塞进 retry。登录/会话本身无法建立则显式抛错，由 worker 归还 claim。
+   */
+  async fetchRevisionSource(revisionId: number): Promise<AmcResponse> {
+    if (!Number.isSafeInteger(revisionId) || revisionId <= 0) {
+      throw new RangeError(`受限历史源码 revisionId 非法：${revisionId}`);
+    }
+    await this.#ensureSession(false);
+    let response: AmcResponse;
+    let expiryReason: string | null = null;
+    try {
+      response = await this.#fetchAuthenticatedRevisionSource(revisionId);
+      if (response.status === 'no_permission') expiryReason = 'no_permission';
+    } catch (err) {
+      if (isRuntimeBudgetExceededError(err)) throw err;
+      if (!isExpiredSourceSessionError(err)) {
+        throw new RestrictedSessionUnavailableError(
+          `账号历史源码 AMC 请求失败：${String(err)}；emptyResult=false`,
+        );
+      }
+      expiryReason = describeSourceSessionError(err);
+      response = {
+        status: 'session_expired',
+        body: null,
+        message: null,
+        currentTimestamp: null,
+        raw: '',
+      };
+    }
+
+    if (expiryReason !== null) {
+      this.logger.warn('账号历史源码登录态失效候选，强制重登并重试一次', {
+        revisionId,
+        reason: expiryReason,
+        emptyResult: false,
+      });
+      await this.#ensureSession(true);
+      try {
+        response = await this.#fetchAuthenticatedRevisionSource(revisionId);
+      } catch (err) {
+        if (isRuntimeBudgetExceededError(err)) throw err;
+        this.#sessionId = null;
+        throw new RestrictedSessionUnavailableError(
+          `重登后历史源码 revision=${revisionId} 请求仍失败：${String(err)}；emptyResult=false`,
+        );
+      }
+      if (response.status === 'no_permission') {
+        this.logger.warn('登录账号复核后历史修订仍不可得', {
+          revisionId,
+          terminal: 'unavailable',
+          emptyResult: false,
+        });
       }
     }
     return response;
@@ -324,6 +386,20 @@ export class RestrictedIdentitySession {
       moduleName: 'viewsource/ViewSourceModule',
       params: { page_id: wikidotId },
       mode: 'restricted:authenticated-source',
+      maxAttempts: 3,
+      wikidotSessionId: sessionId,
+    });
+  }
+
+  async #fetchAuthenticatedRevisionSource(revisionId: number): Promise<AmcResponse> {
+    const sessionId = this.#sessionId;
+    if (sessionId === null) {
+      throw new RestrictedSessionUnavailableError('内部错误：未登录就请求历史源码');
+    }
+    return amcRequest(this.http as HttpClient, this.baseUrl, {
+      moduleName: 'history/PageSourceModule',
+      params: { revision_id: revisionId },
+      mode: 'restricted:authenticated-revision-source',
       maxAttempts: 3,
       wikidotSessionId: sessionId,
     });

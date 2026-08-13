@@ -17,6 +17,7 @@ export const REVISION_SOURCE_MODE = 'revision_source_backfill';
 export const REVISION_SOURCE_PAGE_SCAN_KIND = 'revision_source';
 
 export const REVISION_SOURCE_SCHEDULE_INTERVAL_MS = 30 * 60_000;
+export const REVISION_SOURCE_ZERO_OUTPUT_ALERT_ROUNDS = 3;
 
 export interface RevisionSourceRealtimeContentionDecision {
   action: 'execute';
@@ -37,6 +38,80 @@ export function decideRevisionSourceRealtimeContention(
     active: [...active],
     coordination: 'background_token_bucket',
   };
+}
+
+export interface RevisionSourceOutputHealth {
+  selected: number;
+  stored: number;
+  blobsInserted: number;
+  consecutiveZeroOutputRuns: number;
+  alertAfterRuns: number;
+  alert: boolean;
+}
+
+/** 连续“确实认领过任务但 stored=0”的轮次才累计；空队列/主动 skip 不伪造无产出。 */
+export function evaluateRevisionSourceOutputHealth(
+  current: { selected: number; stored: number; blobsInserted: number },
+  previousStoredNewestFirst: readonly number[],
+  alertAfterRuns = REVISION_SOURCE_ZERO_OUTPUT_ALERT_ROUNDS,
+): RevisionSourceOutputHealth {
+  for (const [name, value] of Object.entries(current)) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError(`revision source output ${name} 必须是非负整数，收到 ${value}`);
+    }
+  }
+  if (!Number.isSafeInteger(alertAfterRuns) || alertAfterRuns < 1) {
+    throw new RangeError(`alertAfterRuns 必须是正整数，收到 ${alertAfterRuns}`);
+  }
+  if (current.selected === 0 || current.stored > 0) {
+    return {
+      ...current,
+      consecutiveZeroOutputRuns: 0,
+      alertAfterRuns,
+      alert: false,
+    };
+  }
+  let consecutiveZeroOutputRuns = 1;
+  for (const stored of previousStoredNewestFirst) {
+    if (!Number.isSafeInteger(stored) || stored < 0) {
+      throw new RangeError(`previous stored 必须是非负整数，收到 ${stored}`);
+    }
+    if (stored > 0) break;
+    consecutiveZeroOutputRuns++;
+  }
+  return {
+    ...current,
+    consecutiveZeroOutputRuns,
+    alertAfterRuns,
+    alert: consecutiveZeroOutputRuns >= alertAfterRuns,
+  };
+}
+
+export async function loadRevisionSourceOutputHealth(
+  pool: Pool,
+  current: { selected: number; stored: number; blobsInserted: number },
+  alertAfterRuns = REVISION_SOURCE_ZERO_OUTPUT_ALERT_ROUNDS,
+): Promise<RevisionSourceOutputHealth> {
+  const previous = await query<{ stored: string | number }>(
+    pool,
+    'revision_source:previous_output_health',
+    `SELECT (stats->>'stored')::bigint AS stored
+       FROM meta.ingest_run
+      WHERE source = 'wikidot_tier2'
+        AND stats->>'mode' = $1
+        AND status <> 'running'
+        AND stats->>'selected' ~ '^[0-9]+$'
+        AND (stats->>'selected')::bigint > 0
+        AND stats->>'stored' ~ '^[0-9]+$'
+      ORDER BY id DESC
+      LIMIT $2`,
+    [REVISION_SOURCE_MODE, Math.max(0, alertAfterRuns - 1)],
+  );
+  return evaluateRevisionSourceOutputHealth(
+    current,
+    previous.rows.map((row) => Number(row.stored)),
+    alertAfterRuns,
+  );
 }
 
 /**
@@ -71,9 +146,9 @@ export function revisionSourceDispatchUpperBoundMs(
 export type RevisionSourceFailureDisposition = 'deterministic' | 'transient';
 
 /**
- * 只有稳定的目标级拒绝（no_permission / revision_error / 解析契约错误）才有资格在三次后
- * 进入 irreconcilable。5xx、传输重置与全局断路器是链路状态，把它们终结为“不可调和”
- * 会把一次出口故障永久伪装成 100% 完成。
+ * 登录账号复核后的 no_permission 已在上游直接进入 unavailable；这里只处理其余失败。
+ * revision_error / 解析契约错误等稳定目标拒绝在三次后进入 irreconcilable。5xx、传输重置
+ * 与全局断路器是链路状态，把它们终结为“不可调和”会把出口故障伪装成 100% 完成。
  */
 export function classifyRevisionSourceFailure(error: string): RevisionSourceFailureDisposition {
   return /(TransportError|CircuitOpenError)/i.test(error)
@@ -543,8 +618,12 @@ export async function finishRevisionSourceJob(
         error: string;
         disposition?: RevisionSourceFailureDisposition;
         resultHashHex?: string;
+      }
+    | {
+        status: 'unavailable';
+        error: string;
       },
-): Promise<'done' | 'retry' | 'irreconcilable'> {
+): Promise<'done' | 'retry' | 'irreconcilable' | 'unavailable'> {
   return withTransaction(pool, `revision_source:finish:${candidateRow.revisionSeq}`, async (db) => {
     if (outcome.status === 'done') {
       const done = await query(
@@ -567,6 +646,32 @@ export async function finishRevisionSourceJob(
       );
       if ((done.rowCount ?? 0) !== 1) throw new Error('job done 丢失锁所有权');
       return 'done';
+    }
+
+    if (outcome.status === 'unavailable') {
+      const unavailable = await query(
+        db,
+        'revision_source:job_unavailable',
+        `UPDATE meta.revision_source_backfill_job
+            SET status = 'unavailable', consecutive_failures = 0, not_before = now(),
+                locked_by = NULL, locked_at = NULL, last_error = left($3, 4000),
+                completed_at = now(), updated_at = now()
+          WHERE revision_seq = $1 AND status = 'processing' AND locked_by = $2`,
+        [candidateRow.revisionSeq, workerId, outcome.error],
+      );
+      if ((unavailable.rowCount ?? 0) !== 1) {
+        throw new Error('job unavailable 丢失锁所有权');
+      }
+      await query(
+        db,
+        'revision_source:resolve_old_irreconcilable',
+        `UPDATE meta.irreconcilable
+            SET resolved_at = now(), last_checked = now(), next_review_at = NULL,
+                locked_by = NULL, locked_at = NULL
+          WHERE kind = 'revision_source' AND instance_id = $1 AND resolved_at IS NULL`,
+        [candidateRow.revisionSeq],
+      );
+      return 'unavailable';
     }
 
     const disposition = outcome.disposition ?? classifyRevisionSourceFailure(outcome.error);
@@ -832,6 +937,7 @@ export interface RevisionSourceStorageStats {
   retry: number;
   irreconcilable: number;
   skippedDeleted: number;
+  unavailable: number;
   uniqueSourceShas: number;
   sourceBytes: number;
   responseBytes: number;
@@ -851,6 +957,7 @@ export async function loadRevisionSourceStorageStats(
             count(*) FILTER (WHERE status = 'retry') AS retry,
             count(*) FILTER (WHERE status = 'irreconcilable') AS irreconcilable,
             count(*) FILTER (WHERE status = 'skipped_deleted') AS skipped_deleted,
+            count(*) FILTER (WHERE status = 'unavailable') AS unavailable,
             count(DISTINCT source_sha) FILTER (WHERE status = 'done') AS unique_source_shas,
             COALESCE(sum(source_bytes) FILTER (WHERE status = 'done'), 0) AS source_bytes,
             COALESCE(sum(response_bytes) FILTER (WHERE status = 'done'), 0) AS response_bytes,
@@ -866,6 +973,7 @@ export async function loadRevisionSourceStorageStats(
     retry: Number(row['retry'] ?? 0),
     irreconcilable: Number(row['irreconcilable'] ?? 0),
     skippedDeleted: Number(row['skipped_deleted'] ?? 0),
+    unavailable: Number(row['unavailable'] ?? 0),
     uniqueSourceShas: Number(row['unique_source_shas'] ?? 0),
     sourceBytes: Number(row['source_bytes'] ?? 0),
     responseBytes: Number(row['response_bytes'] ?? 0),

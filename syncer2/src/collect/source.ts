@@ -76,6 +76,14 @@ export interface RevisionSourceSnapshot extends SourceSnapshot {
   revisionId: number;
 }
 
+export type AuthenticatedRevisionSourceResult =
+  | CollectResult<RevisionSourceSnapshot>
+  | {
+      status: 'unavailable';
+      reason: 'authenticated_no_permission';
+      error: string;
+    };
+
 const PAGE_SOURCE_DIV_RE = /<div\b([^>]*)>([\s\S]*?)<\/div\s*>/gi;
 
 function classTokens(attrs: string): string[] {
@@ -379,6 +387,73 @@ export async function scanRevisionSourcesOnDemand(
     ] as const;
   });
   return new Map(pairs);
+}
+
+/**
+ * 固定 7890 登录态的历史源码。session 失效错误故意向上抛，让 worker 归还 claim 并
+ * 显式降级；只有重登成功后目标仍 no_permission 才形成 unavailable 终态结果。
+ */
+export async function scanAuthenticatedRevisionSourcesOnDemand(
+  session: RestrictedSourceSession,
+  targets: readonly RevisionSourceTarget[],
+  concurrency = 1,
+): Promise<Map<number, AuthenticatedRevisionSourceResult>> {
+  if (session.http.proxyUrl !== RESTRICTED_STABLE_PROXY_URL) {
+    throw new Error(
+      `账号历史源码只允许 ${RESTRICTED_STABLE_PROXY_URL}，收到 ${String(session.http.proxyUrl)}`,
+    );
+  }
+  assertUniqueKeys(targets, (target) => target.revisionId);
+  const pairs = await mapWithConcurrency(targets, concurrency, async (target) => {
+    const response = await session.fetchRevisionSource(target.revisionId);
+    if (response.status === 'no_permission') {
+      return [
+        target.revisionId,
+        {
+          status: 'unavailable',
+          reason: 'authenticated_no_permission',
+          error:
+            `authenticated history/PageSourceModule revision=${target.revisionId} ` +
+            `status=no_permission（message=${response.message ?? '-'}）；emptyResult=false`,
+        },
+      ] as const;
+    }
+    if (response.status !== 'ok') {
+      return [
+        target.revisionId,
+        failed<RevisionSourceSnapshot>(
+          `authenticated history/PageSourceModule revision=${target.revisionId} ` +
+            `status=${response.status}（message=${response.message ?? '-'}）；emptyResult=false`,
+        ),
+      ] as const;
+    }
+    if (response.body === null) {
+      return [
+        target.revisionId,
+        failed<RevisionSourceSnapshot>(
+          `authenticated history/PageSourceModule revision=${target.revisionId} ` +
+            'status=ok 但 body 缺失；emptyResult=false',
+        ),
+      ] as const;
+    }
+    const parsed = parseSourceBody(response.body.replace(/&nbsp;/gi, ' '), target);
+    if (parsed.status !== 'ok') {
+      return [
+        target.revisionId,
+        failed<RevisionSourceSnapshot>(`${parsed.error}；emptyResult=false`, parsed.diagnostics),
+      ] as const;
+    }
+    return [
+      target.revisionId,
+      ok({
+        ...parsed.data,
+        revisionId: target.revisionId,
+        responseBytes: Buffer.byteLength(response.body, 'utf8'),
+        responseSha256Hex: createHash('sha256').update(response.body, 'utf8').digest('hex'),
+      }),
+    ] as const;
+  });
+  return new Map<number, AuthenticatedRevisionSourceResult>(pairs);
 }
 
 export interface ApplyCurrentContentOptions {
