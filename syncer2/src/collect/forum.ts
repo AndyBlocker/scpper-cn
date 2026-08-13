@@ -26,6 +26,7 @@ import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { recordPageScan } from '../store/meta.js';
 import { sanitizePgValue, toPgJson } from '../store/pgText.js';
 import { chunk, mapWithConcurrency } from '../util/concurrency.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import {
   assertUniqueKeys,
   diagnostics,
@@ -831,6 +832,7 @@ export async function scanForumStart(
     if (response.body === null) return failed('ForumStartModule status=ok 但 body 缺失');
     return parseForumStart(response.body);
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return failed(`ForumStartModule 请求失败：${String(err)}`);
   }
 }
@@ -855,6 +857,7 @@ export async function scanForumCategoryPage(
     if (response.body === null) return failed(`${CATEGORY_MODULE} status=ok 但 body 缺失`);
     return parseForumCategoryPage(response.body, categoryId, pageNo);
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return failed(`${CATEGORY_MODULE} 请求失败：${String(err)}`);
   }
 }
@@ -1020,6 +1023,7 @@ async function scanOneForumThread(
           first.data.thread.postCount,
         );
       } catch (err) {
+        throwIfRuntimeBudgetExceeded(err);
         return failed<ForumPostsPage>(`${POSTS_MODULE} page=${pageNo} 请求失败：${String(err)}`);
       }
     });
@@ -1068,6 +1072,7 @@ async function scanOneForumThread(
       diagnostics(first.data.thread.postCount, posts.length),
     );
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return failed(`${THREAD_MODULE} 请求失败：${String(err)}`);
   }
 }
@@ -1184,6 +1189,7 @@ export async function scanPageDiscussions(
         ok(snapshot, diagnostics(target.claimedTotal, thread.data.posts.length)),
       ] as const;
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       return [
         target.pageId,
         failed<ForumDiscussionSnapshot>(`页面讨论抓取失败：${String(err)}`),
@@ -1225,6 +1231,7 @@ export async function scanPageDiscussionLinks(
       }
       return [target.pageId, parseForumComments(response.body, target)] as const;
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       return [
         target.pageId,
         failed<ForumCommentsPage>(`页面讨论串关联抓取失败：${String(err)}`),

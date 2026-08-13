@@ -34,6 +34,11 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { performance } from 'node:perf_hooks';
 import { createLogger, type Logger } from '../util/log.js';
 import {
+  abortableSleep,
+  isRuntimeBudgetExceededError,
+  throwIfAborted,
+} from '../util/runtimeBudget.js';
+import {
   EgressAttributor,
   proxyInboundPortFromUrl,
   type EgressAttributorOptions,
@@ -183,6 +188,8 @@ export interface HttpClientOptions {
   egress?: Omit<EgressAttributorOptions, 'dispatcher' | 'logger' | 'proxyInboundPort'>;
   /** L0/L1/Tier2/sitemap 等跨进程共享的站点级反馈控制器。 */
   adaptiveEgress?: AdaptiveEgressGate;
+  /** 单轮墙钟预算；会中断 pace、permit、传输、重试退避与出口归因。 */
+  signal?: AbortSignal;
 }
 
 export interface HttpRequestOptions {
@@ -199,6 +206,7 @@ export interface HttpRequestOptions {
   maxRedirections?: number;
   /** same-host 防止共享 Wikidot gate 跟到站外；无 gate 的图片外站 client 可显式 any。 */
   redirectPolicy?: 'same-host' | 'any';
+  signal?: AbortSignal;
 }
 
 export interface HttpResponse {
@@ -330,6 +338,7 @@ export class HttpClient {
   readonly tlsMaxVersion: 'TLSv1.2' | 'TLSv1.3' | null;
   readonly #egress: EgressAttributor | null;
   readonly #adaptiveEgress: AdaptiveEgressGate | null;
+  readonly #signal: AbortSignal | undefined;
   #adaptiveOutcomeBatch: Array<{
     permit: AdaptiveEgressPermit;
     outcome: AdaptiveAttemptOutcome;
@@ -374,6 +383,7 @@ export class HttpClient {
     );
     this.#onTelemetry = opts.onTelemetry;
     this.#adaptiveEgress = opts.adaptiveEgress ?? null;
+    this.#signal = opts.signal;
     this.proxyUrl = opts.proxyUrl && opts.proxyUrl.trim() !== '' ? opts.proxyUrl.trim() : null;
     this.tlsMaxVersion = opts.tlsMaxVersion ?? null;
 
@@ -467,6 +477,10 @@ export class HttpClient {
     return this.#breakerReason;
   }
 
+  get signal(): AbortSignal | undefined {
+    return this.#signal;
+  }
+
   stats(): HttpClientStats {
     return {
       ...this.#stats,
@@ -516,7 +530,7 @@ export class HttpClient {
    * 这里只负责采样。
    */
   async primeEgress(): Promise<string | null> {
-    return (await this.#egress?.primeOnStart()) ?? null;
+    return (await this.#egress?.primeOnStart(this.#signal)) ?? null;
   }
 
   async close(): Promise<void> {
@@ -573,8 +587,14 @@ export class HttpClient {
             deterministicFailureClass,
           }
         : item.outcome;
-      await this.#adaptiveEgress?.afterAttempt(item.permit, outcome);
+      await this.#adaptiveEgress?.afterAttempt(item.permit, outcome, this.#signal);
     }
+  }
+
+  /** 预算中断的任务没有形成业务分类；丢弃暂存项，让 claim 按“未执行”释放。 */
+  discardAdaptiveOutcomeClassification(): void {
+    if (this.#adaptiveOutcomeBatch === null) return;
+    this.#adaptiveOutcomeBatch = null;
   }
 
   /**
@@ -582,6 +602,8 @@ export class HttpClient {
    * 由 request() 统一在出口处 #finish，#handleDisposition 只负责分类与计数器。
    */
   async request(url: string, opts: HttpRequestOptions): Promise<HttpResponse> {
+    const signal = combineSignals(this.#signal, opts.signal);
+    throwIfAborted(signal);
     if (this.#breakerReason !== null) {
       throw new CircuitOpenError(this.#breakerReason);
     }
@@ -607,16 +629,15 @@ export class HttpClient {
     let lastWireBytes = 0;
     let requestUrl = url;
     let redirectsRemaining = Math.max(0, Math.min(5, opts.maxRedirections ?? 0));
-
     try {
       while (attempts < maxAttempts) {
-        await this.#paceRequestAttempt();
+        await this.#paceRequestAttempt(signal);
         if (this.#breakerReason !== null) {
           throw new CircuitOpenError(this.#breakerReason);
         }
         // 本地任务节流之后，再向跨进程控制器预留真实出站 attempt。控制库不可用时
         // fail closed：宁可本轮退出，也不能悄悄绕过用户要求的安全前提。
-        const adaptivePermit = await this.#adaptiveEgress?.beforeAttempt(requestUrl);
+        const adaptivePermit = await this.#adaptiveEgress?.beforeAttempt(requestUrl, signal);
         attempts++;
         this.#stats.attempts++;
 
@@ -630,6 +651,7 @@ export class HttpClient {
             dispatcher: this.#dispatcher,
             headersTimeout: timeoutMs,
             bodyTimeout: timeoutMs,
+            signal,
             // 默认不跟随重定向：sitemap/AMC 一旦出现 3xx 是要人看的枚举面变化。
             // 图片路径的重定向由本循环逐跳处理，确保每个真实出站都单独经过 gate/记账。
           });
@@ -644,7 +666,7 @@ export class HttpClient {
             ok: !isAdaptivePressureFailure(lastStatus),
             status: lastStatus,
             errorKind: attemptOutcome?.reason ?? null,
-          });
+          }, signal);
           adaptiveOutcomeRecorded = true;
           const location = resHeaders['location'];
           if (
@@ -683,7 +705,8 @@ export class HttpClient {
               retryReasons,
             });
             // 出口归因：成功路径按 N 节流采样（不是每请求都探，见 egress.ts 成本纪律）
-            await this.#egress?.afterRequest(true);
+            await this.#egress?.afterRequest(true, signal);
+            throwIfAborted(signal);
             return {
               status: lastStatus,
               headers: resHeaders,
@@ -699,6 +722,7 @@ export class HttpClient {
           const snippet = errorBodySnippet(raw, resHeaders['content-encoding'] ?? null);
           lastError = new HttpStatusError(lastStatus, requestUrl, snippet);
         } catch (err) {
+          throwIfAborted(signal);
           if (
             err instanceof CircuitOpenError
             || err instanceof HeaderContractError
@@ -719,7 +743,7 @@ export class HttpClient {
               ok: false,
               status: null,
               errorKind: `transport_${kind}`,
-            });
+            }, signal);
             adaptiveOutcomeRecorded = true;
           }
         }
@@ -732,7 +756,7 @@ export class HttpClient {
         if (retryable && transientFailures < maxTransientAttempts && attempts < maxAttempts) {
           // 重置类在断路器未打开时仍允许重试 —— 实测基线传输失败率 1–3%，
           // 完全不重试会让整轮 sitemap 因为一次抖动就白跑；断路器负责拦住"连续"失败。
-          await sleep(backoffMs(attempts));
+          await abortableSleep(backoffMs(attempts), signal);
           continue;
         }
         break;
@@ -756,8 +780,11 @@ export class HttpClient {
       });
       // 失败路径**必采**：mihomo 节点归因 + 一次 IP 补探（受 maxProbes 封顶）。
       // 「某几个节点坏了」这个问题只有在失败的那一刻采样才答得上来。
-      if (!(err instanceof AdaptiveEgressUnavailableError)) {
-        await this.#egress?.afterRequest(false);
+      if (
+        !(err instanceof AdaptiveEgressUnavailableError)
+        && !isRuntimeBudgetExceededError(err)
+      ) {
+        await this.#egress?.afterRequest(false, signal);
       }
       throw err;
     }
@@ -766,29 +793,31 @@ export class HttpClient {
   async #recordAdaptiveOutcome(
     permit: AdaptiveEgressPermit | undefined,
     outcome: AdaptiveAttemptOutcome,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (permit === undefined || this.#adaptiveEgress === null) return;
     if (this.#adaptiveOutcomeBatch !== null) {
       this.#adaptiveOutcomeBatch.push({ permit, outcome });
       return;
     }
-    await this.#adaptiveEgress.afterAttempt(permit, outcome);
+    await this.#adaptiveEgress.afterAttempt(permit, outcome, signal);
   }
 
-  async #paceRequestAttempt(): Promise<void> {
+  async #paceRequestAttempt(signal?: AbortSignal): Promise<void> {
     if (this.#minRequestIntervalMs === 0) return;
     let release = (): void => undefined;
     const previous = this.#paceTail;
     this.#paceTail = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await previous;
     try {
+      await previous;
+      throwIfAborted(signal);
       const waitMs = Math.max(
         0,
         this.#lastAttemptStartedAt + this.#minRequestIntervalMs - performance.now(),
       );
-      if (waitMs > 0) await sleep(waitMs);
+      if (waitMs > 0) await abortableSleep(waitMs, signal);
       this.#lastAttemptStartedAt = performance.now();
     } finally {
       release();
@@ -949,6 +978,11 @@ function backoffMs(attempt: number): number {
   return base + Math.floor(Math.random() * 250);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function combineSignals(
+  first: AbortSignal | undefined,
+  second: AbortSignal | undefined,
+): AbortSignal | undefined {
+  if (first === undefined) return second;
+  if (second === undefined || second === first) return first;
+  return AbortSignal.any([first, second]);
 }

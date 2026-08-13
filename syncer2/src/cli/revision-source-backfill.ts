@@ -70,6 +70,8 @@ import {
 } from '../store/revisionSource.js';
 import {
   addRuntimeBudgetOption,
+  abortableSleep,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -125,11 +127,14 @@ interface Counters {
 class RequestPacer {
   #lastStarted = 0;
 
-  constructor(private readonly minimumGapMs: number) {}
+  constructor(
+    private readonly minimumGapMs: number,
+    private readonly signal?: AbortSignal,
+  ) {}
 
   async wait(): Promise<void> {
     const wait = this.#lastStarted + this.minimumGapMs - Date.now();
-    if (wait > 0) await new Promise<void>((resolve) => setTimeout(resolve, wait));
+    if (wait > 0) await abortableSleep(wait, this.signal);
     this.#lastStarted = Date.now();
   }
 }
@@ -507,6 +512,7 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: 1,
+    signal: budget.signal,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'revision-source'),
     egress: {
@@ -517,7 +523,7 @@ async function main(): Promise<void> {
       hostFilter: new URL(config.siteBaseUrl).host,
     },
   });
-  const pacer = new RequestPacer(opts.delayMs);
+  const pacer = new RequestPacer(opts.delayMs, budget.signal);
   const evidence = new Map<number, PageEvidence>();
   const counters: Counters = {
     selected: 0,
@@ -693,6 +699,12 @@ async function main(): Promise<void> {
           pageEvidence.fetched++;
           pageEvidence.hashes.push(applied.sourceShaHex);
         } catch (err) {
+          if (isRuntimeBudgetExceededError(err)) {
+            pageEvidence.claimed = Math.max(0, pageEvidence.claimed - 1);
+            await releaseRevisionSourceClaims(pool, [row.revisionSeq], workerId);
+            activeRevisionSeq = null;
+            break;
+          }
           const error = String(err);
           if (pgCode(err) === 'PGF01') {
             pageEvidence.claimed = Math.max(0, pageEvidence.claimed - 1);
@@ -748,7 +760,10 @@ async function main(): Promise<void> {
       partial: 0,
       failed: counters.failed,
       deterministicFailures: counters.irreconcilable,
-      deferred: counters.writeFreezeSkipped + Number(diskStopped),
+      deferred:
+        counters.writeFreezeSkipped
+        + Number(diskStopped)
+        + Number(budget.stoppedByRuntimeBudget),
       breakerOpen: http.breakerOpen,
     });
     const adaptiveState = http.stats().adaptiveEgress?.state ?? null;
@@ -858,9 +873,11 @@ async function main(): Promise<void> {
     });
     process.exitCode = health.exitCode;
   } catch (err) {
+    const runtimeBudget = isRuntimeBudgetExceededError(err);
+    if (runtimeBudget) budget.checkpoint();
     const error = String(err);
-    counters.failed++;
-    if (opts.pilot && !pilotGateWritten) {
+    if (!runtimeBudget) counters.failed++;
+    if (!runtimeBudget && opts.pilot && !pilotGateWritten) {
       await writePilotGate(pool, {
         runId,
         sampleCount: counters.selected,
@@ -884,11 +901,12 @@ async function main(): Promise<void> {
     const baseHealth = evaluateRunHealth({
       claimed: Math.max(1, counters.processed),
       processed: counters.processed,
-      partial: 0,
-      failed: Math.max(1, counters.failed),
+      partial: runtimeBudget ? 1 : 0,
+      failed: runtimeBudget ? counters.failed : Math.max(1, counters.failed),
       deterministicFailures: Math.min(counters.irreconcilable, Math.max(1, counters.failed)),
+      deferred: runtimeBudget ? 1 : 0,
       breakerOpen: breaker,
-      fatalReasons: breaker ? [] : ['revision_source_exception'],
+      fatalReasons: breaker || runtimeBudget ? [] : ['revision_source_exception'],
     });
     const adaptiveState = http.stats().adaptiveEgress?.state ?? null;
     const health = adaptiveState === null
@@ -904,7 +922,7 @@ async function main(): Promise<void> {
       remoteTotal: opts.pilot ? PILOT_COUNT : eligible || null,
       remoteTotalSource: 'unknown',
       batchesTotal: http.healthStats().business.requests,
-      batchesFailed: Math.max(1, counters.failed),
+      batchesFailed: runtimeBudget ? counters.failed : Math.max(1, counters.failed),
       transportFailureRate: businessTransportFailureRate(http),
       populationType: REVISION_SOURCE_POPULATION,
       parseFingerprint: {
@@ -929,6 +947,7 @@ async function main(): Promise<void> {
           content: { claimed: counters.stored },
         },
         http: http.stats(),
+        ...budget.summary(),
       },
     }).catch((finishErr) =>
       log.error('失败 ingest_run 收尾也失败', { error: String(finishErr) }),
@@ -939,6 +958,7 @@ async function main(): Promise<void> {
       error,
       health,
       ...counters,
+      ...budget.summary(),
     });
     process.exitCode = health.exitCode;
   } finally {

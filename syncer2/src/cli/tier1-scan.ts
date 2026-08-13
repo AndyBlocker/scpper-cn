@@ -53,6 +53,7 @@ import { chunk } from '../util/concurrency.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -129,6 +130,7 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: opts.concurrency,
+    signal: budget.signal,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'tier1'),
     egress: {
@@ -323,6 +325,63 @@ async function main(): Promise<void> {
     });
     process.exitCode = health.exitCode;
   } catch (err) {
+    if (isRuntimeBudgetExceededError(err)) {
+      budget.checkpoint();
+      const durationMs = Date.now() - t0;
+      const requests = http.healthStats().business.requests;
+      const health = evaluateRunHealth({
+        claimed: Math.max(1, requests),
+        processed: requests,
+        partial: 1,
+        failed: 0,
+        deferred: 1,
+      });
+      log.info('Tier1 在等待中命中单轮时间预算，按 partial 优雅收尾', { requests });
+      if (pool) {
+        await finishIngestRun(pool, runId, {
+          status: health.status,
+          finishedAt: new Date().toISOString(),
+          pagesEnumerated: 0,
+          remoteTotal: null,
+          remoteTotalSource: null,
+          batchesTotal: requests,
+          batchesFailed: 0,
+          transportFailureRate: transportFailureRate(http),
+          exitIpStats: exitIpStatsJson(http),
+          parseFingerprint: {
+            http_status_dist: http.healthStats().business.statusBuckets,
+            transport_failure_rate: transportFailureRate(http),
+          },
+          populationType,
+          evaluateParseHealth: false,
+          stats: {
+            mode: runMode,
+            layer: populationType === 'l3_full_site_tier1' ? 'L3' : null,
+            population_type: populationType,
+            range: opts.range ?? null,
+            logicalStatus: health.status,
+            durationMs,
+            health,
+            http: http.stats(),
+            ...budget.summary(),
+          },
+        }).catch((finishErr) =>
+          log.error('Tier1 预算收尾写 ingest_run 失败', { error: String(finishErr) }),
+        );
+      }
+      emitSummary({
+        ok: true,
+        status: health.status,
+        runId,
+        durationMs,
+        health,
+        http: compactHttp(http),
+        egress: compactEgress(http),
+        ...budget.summary(),
+      });
+      process.exitCode = 0;
+      return;
+    }
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
     const durationMs = Date.now() - t0;
     log.error('Tier1 本轮失败', { error: String(err), breaker });

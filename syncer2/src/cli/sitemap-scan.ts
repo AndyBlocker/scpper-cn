@@ -86,6 +86,7 @@ import {
 } from '../store/snapshot.js';
 import {
   addRuntimeBudgetOption,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -135,6 +136,7 @@ async function main(): Promise<void> {
     breaker503: config.breaker503,
     breakerReset: config.breakerReset,
     connections: Math.max(2, opts.concurrency ?? config.httpConcurrency),
+    signal: budget.signal,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, `sitemap:${opts.mode}`),
     // 出口归因（TODO #12）：每 N 个请求探一次出口 IP + mihomo 节点归因。
@@ -188,9 +190,18 @@ async function main(): Promise<void> {
 
     if (pool) runId = await startIngestRun(pool, source, startedAt);
 
-    const outcome = budget.checkpoint()
-      ? runtimeBudgetModeOutcome(opts.mode)
-      : await runMode(opts, config, http, pool, runId, startedAt);
+    let outcome: ModeOutcome;
+    if (budget.checkpoint()) {
+      outcome = runtimeBudgetModeOutcome(opts.mode);
+    } else {
+      try {
+        outcome = await runMode(opts, config, http, pool, runId, startedAt);
+      } catch (err) {
+        if (!isRuntimeBudgetExceededError(err)) throw err;
+        budget.checkpoint();
+        outcome = runtimeBudgetModeOutcome(opts.mode);
+      }
+    }
     budget.checkpoint();
     const health = evaluateRunHealth({
       claimed: outcome.batchesTotal,
@@ -267,6 +278,59 @@ async function main(): Promise<void> {
     });
     process.exitCode = health.exitCode;
   } catch (err) {
+    if (isRuntimeBudgetExceededError(err)) {
+      budget.checkpoint();
+      const durationMs = Date.now() - t0;
+      const health = evaluateRunHealth({
+        claimed: 1,
+        processed: 0,
+        partial: 1,
+        failed: 0,
+        deferred: 1,
+      });
+      log.info('sitemap 在启动等待中命中单轮时间预算，按 partial 优雅收尾', {
+        mode: opts.mode,
+      });
+      if (pool) {
+        await finishIngestRun(pool, runId, {
+          status: health.status,
+          finishedAt: new Date().toISOString(),
+          pagesEnumerated: 0,
+          remoteTotal: null,
+          remoteTotalSource: null,
+          batchesTotal: http.stats().requests,
+          batchesFailed: 0,
+          transportFailureRate: transportFailureRate(http),
+          exitIpStats: exitIpStatsJson(http),
+          parseFingerprint: { http_status_dist: http.healthStats().business.statusBuckets },
+          populationType,
+          stats: {
+            mode: opts.mode,
+            layer: opts.mode === 'full' ? 'L2' : null,
+            population_type: populationType,
+            durationMs,
+            health,
+            http: http.stats(),
+            ...budget.summary(),
+          },
+        }).catch((finishErr) =>
+          log.error('sitemap 预算收尾写 ingest_run 失败', { error: String(finishErr) }),
+        );
+      }
+      emitSummary({
+        ok: true,
+        mode: opts.mode,
+        runId,
+        status: health.status,
+        durationMs,
+        health,
+        http: compactHttpStats(http),
+        egress: compactEgress(http),
+        ...budget.summary(),
+      });
+      process.exitCode = 0;
+      return;
+    }
     const durationMs = Date.now() - t0;
     const breaker = err instanceof CircuitOpenError;
     log.error('本轮失败', { error: String(err), breaker });

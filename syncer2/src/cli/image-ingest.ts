@@ -27,6 +27,7 @@ import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
     breaker503: config.breaker503,
     breakerReset: config.breakerReset,
     connections: 1,
+    signal: budget.signal,
     logger: log.child('wikidot'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'image'),
   });
@@ -81,6 +83,7 @@ async function main(): Promise<void> {
     breaker503: config.breaker503,
     breakerReset: config.breakerReset,
     globalMinIntervalMs: cli.externalIntervalMs,
+    signal: budget.signal,
     logger: log.child('external'),
   });
   wikidot.assertHeaders();
@@ -108,7 +111,22 @@ async function main(): Promise<void> {
       const job = await claimNextImageJob(pool, workerId);
       if (job === null) break;
       counters.claimed++;
-      const result = await processImageJob(pool, job, { wikidot, external }, options);
+      let result: Awaited<ReturnType<typeof processImageJob>>;
+      try {
+        result = await processImageJob(pool, job, { wikidot, external }, options);
+      } catch (error) {
+        if (!isRuntimeBudgetExceededError(error)) throw error;
+        await query(
+          pool,
+          'image:release_runtime_budget_job',
+          `UPDATE meta.image_ingest_job
+              SET status = 'pending', locked_by = NULL, locked_at = NULL,
+                  attempts = GREATEST(0, attempts - 1), updated_at = now()
+            WHERE id = $1 AND locked_by = $2`,
+          [job.id, workerId],
+        );
+        break;
+      }
       recordImageRouteResult(routes, result);
       counters[result.status]++;
       if (result.egressClass === 'wikidot_site') counters.wikidotSite++;
@@ -172,17 +190,28 @@ async function main(): Promise<void> {
     });
     process.exitCode = health.exitCode;
   } catch (error) {
+    const runtimeBudget = isRuntimeBudgetExceededError(error);
+    if (runtimeBudget) budget.checkpoint();
     await query(
       pool,
       'image:release_worker_locks',
       `UPDATE meta.image_ingest_job
           SET status = 'pending', locked_by = NULL, locked_at = NULL,
-              not_before = COALESCE(not_before, now() + interval '1 hour'), updated_at = now()
+              attempts = GREATEST(0, attempts - CASE WHEN $2 THEN 1 ELSE 0 END),
+              not_before = CASE WHEN $2 THEN not_before
+                                ELSE COALESCE(not_before, now() + interval '1 hour') END,
+              updated_at = now()
         WHERE locked_by = $1`,
-      [workerId],
+      [workerId, runtimeBudget],
     ).catch(() => undefined);
-    emitSummary({ ok: false, status: 'failed', error: String(error), ...counters });
-    process.exitCode = 1;
+    emitSummary({
+      ok: runtimeBudget,
+      status: runtimeBudget ? 'partial' : 'failed',
+      error: String(error),
+      ...counters,
+      ...budget.summary(),
+    });
+    process.exitCode = runtimeBudget ? 0 : 1;
   } finally {
     await Promise.all([wikidot.close(), external.close()]);
     await pool.end().catch(() => undefined);

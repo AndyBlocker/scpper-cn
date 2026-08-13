@@ -20,6 +20,7 @@ import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { recordPageScan } from '../store/meta.js';
 import { toPgJson } from '../store/pgText.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import { buildListPagesModuleBody, parseListPagesResponse } from './listpages.js';
 
 export type VoteDirection = -1 | 1;
@@ -189,6 +190,7 @@ export async function collectTargetedVoteClaim(
     }
     return parseTargetedVoteClaim(response.body, slug);
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return { status: 'failed', error: `目标 ListPages claim 请求失败：${String(err)}` };
   }
 }
@@ -481,6 +483,7 @@ async function collectOneVoteSnapshot(
     }
     return gateParsedVotes(target, parseWhoRatedPage(response.body));
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return { status: 'failed', error: String(err) };
   }
 }

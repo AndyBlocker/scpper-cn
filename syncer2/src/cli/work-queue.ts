@@ -76,6 +76,7 @@ import {
 } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -140,6 +141,7 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
+    signal: budget.signal,
     ...(opts.adultOnly ? { tlsMaxVersion: RESTRICTED_TLS_MAX_VERSION } : {}),
     minRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
     logger: log.child('http'),
@@ -165,6 +167,7 @@ async function main(): Promise<void> {
         breaker503: Math.max(5, config.breaker503),
         breakerReset: Math.max(5, config.breakerReset),
         connections: Math.max(1, opts.concurrency),
+        signal: budget.signal,
         minRequestIntervalMs: WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
         logger: log.child('restricted-7890'),
         // 混合 worker 的 adult 专用 7890 客户端也必须参加全站共享门禁；固定出口
@@ -377,7 +380,7 @@ async function main(): Promise<void> {
     let consecutiveFailures = 0;
     let stoppedByRuntimeBudget = false;
 
-    for (const task of claimed) {
+    taskLoop: for (const task of claimed) {
       if (http.breakerOpen || counters.stoppedByFailureLimit) break;
       /*
        * 时间预算优先于条数预算。
@@ -407,6 +410,16 @@ async function main(): Promise<void> {
       try {
         outcome = await WORK_HANDLER_REGISTRY[task.kind](task, context);
       } catch (err) {
+        if (isRuntimeBudgetExceededError(err)) {
+          taskHttp.discardAdaptiveOutcomeClassification();
+          stoppedByRuntimeBudget = true;
+          log.info('当前任务在等待中命中单轮时间预算，按未执行释放 claim', {
+            taskId: task.taskId,
+            kind: task.kind,
+            processed: counters.processed,
+          });
+          break taskLoop;
+        }
         const error = String(err);
         if (pgCode(err) === 'PGF01') {
           await taskHttp.finishAdaptiveOutcomeClassification(null);
@@ -733,6 +746,8 @@ async function main(): Promise<void> {
     });
     process.exitCode = health.exitCode;
   } catch (err) {
+    const runtimeBudget = isRuntimeBudgetExceededError(err);
+    if (runtimeBudget) budget.checkpoint();
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
     const unfinishedTasks = claimed.filter((task) => !finished.has(taskKey(task)));
     const unfinished = unfinishedTasks
@@ -747,14 +762,15 @@ async function main(): Promise<void> {
       ),
       releaseIrreconcilableReviewLocks(pool, unfinishedTasks, workerId),
     ]).catch(() => undefined);
+    const status = runtimeBudget ? 'partial' : breaker ? 'aborted' : 'failed';
     await finishIngestRun(pool, runId, {
-      status: breaker ? 'aborted' : 'failed',
+      status,
       finishedAt: new Date().toISOString(),
       pagesEnumerated: counters.processed,
       remoteTotal: null,
       remoteTotalSource: 'unknown',
       batchesTotal: counters.claimed,
-      batchesFailed: Math.max(1, counters.failed),
+      batchesFailed: runtimeBudget ? counters.failed : Math.max(1, counters.failed),
       transportFailureRate: transportFailureRate(http),
       exitIpStats: exitIpStats(http),
       stats: {
@@ -767,18 +783,20 @@ async function main(): Promise<void> {
         unfinishedReleased: unfinishedTasks.length,
         http: http.stats(),
         httpHealth: http.healthStats(),
+        ...budget.summary(),
       },
     }).catch(() => undefined);
     emitSummary({
       ...counters,
-      ok: false,
-      status: breaker ? 'aborted' : 'failed',
+      ok: runtimeBudget,
+      status,
       runId,
       error: String(err),
       breaker,
       unfinishedReleased: unfinishedTasks.length,
+      ...budget.summary(),
     });
-    process.exitCode = 1;
+    process.exitCode = runtimeBudget ? 0 : 1;
   } finally {
     await restrictedSession?.logout().catch(() => undefined);
     await (restrictedHttp === http

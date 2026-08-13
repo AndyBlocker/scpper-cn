@@ -29,6 +29,11 @@ import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import { createPool, query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { createLogger, type Logger } from '../util/log.js';
 import {
+  abortableSleep,
+  isRuntimeBudgetExceededError,
+  throwIfAborted,
+} from '../util/runtimeBudget.js';
+import {
   consumeTokenBucket,
   WIKIDOT_EGRESS_CHANNEL_QUOTA_TOTAL,
   WIKIDOT_EGRESS_REQUIRED_BUDGET_REQUESTS_PER_HOUR,
@@ -899,8 +904,12 @@ export interface AdaptiveEgressRuntimeStats {
 
 export interface AdaptiveEgressGate {
   /** url 供按 origin/host 分账的 gate 使用；Wikidot 单例 gate 会忽略它。 */
-  beforeAttempt(url?: string): Promise<AdaptiveEgressPermit>;
-  afterAttempt(permit: AdaptiveEgressPermit, outcome: AdaptiveAttemptOutcome): Promise<void>;
+  beforeAttempt(url?: string, signal?: AbortSignal): Promise<AdaptiveEgressPermit>;
+  afterAttempt(
+    permit: AdaptiveEgressPermit,
+    outcome: AdaptiveAttemptOutcome,
+    signal?: AbortSignal,
+  ): Promise<void>;
   stats(): AdaptiveEgressRuntimeStats;
   close(): Promise<void>;
 }
@@ -1015,16 +1024,17 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
     this.#channelPolicy = wikidotEgressChannelQuota(channel);
   }
 
-  async beforeAttempt(): Promise<AdaptiveEgressPermit> {
+  async beforeAttempt(_url?: string, signal?: AbortSignal): Promise<AdaptiveEgressPermit> {
     const waiterId = randomUUID();
     const startedAtMs = Date.now();
     try {
       for (;;) {
+        throwIfAborted(signal);
         const reservation = await withTransaction(
           this.#pool,
           'adaptive-egress:permit',
           async (db) => {
-            await lockControl(db);
+            await lockControl(db, signal);
             const clock = await databaseClock(db);
             const leaseExpiresAt = toPgTimestamptz(clock.nowMs + WAITER_LEASE_MS);
 
@@ -1248,7 +1258,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
           this.#totalDelayMs += reservation.waitMs;
           if (reservation.waitStage === 'token') this.#tokenDelayMs += reservation.waitMs;
           else this.#fifoDelayMs += reservation.waitMs;
-          await sleep(reservation.waitMs);
+          await abortableSleep(reservation.waitMs, signal);
           continue;
         }
 
@@ -1271,6 +1281,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
         `DELETE FROM meta.egress_permit_waiter WHERE waiter_id = $1::uuid`,
         [waiterId],
       ).catch(() => undefined);
+      if (isRuntimeBudgetExceededError(err)) throw err;
       if (err instanceof AdaptiveEgressUnavailableError) throw err;
       throw new AdaptiveEgressUnavailableError('beforeAttempt', err);
     }
@@ -1279,10 +1290,12 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
   async afterAttempt(
     permit: AdaptiveEgressPermit,
     outcome: AdaptiveAttemptOutcome,
+    signal?: AbortSignal,
   ): Promise<void> {
     try {
+      throwIfAborted(signal);
       const result = await withTransaction(this.#pool, 'adaptive-egress:outcome', async (db) => {
-        await lockControl(db);
+        await lockControl(db, signal);
         const clock = await databaseClock(db);
         const deterministicFailure = outcome.deterministicFailureClass != null;
         const pressureFailure = !outcome.ok && !deterministicFailure;
@@ -1436,6 +1449,7 @@ export class PostgresAdaptiveEgressGate implements AdaptiveEgressGate {
         });
       }
     } catch (err) {
+      if (isRuntimeBudgetExceededError(err)) throw err;
       if (err instanceof AdaptiveEgressUnavailableError) throw err;
       throw new AdaptiveEgressUnavailableError('afterAttempt', err);
     }
@@ -1794,13 +1808,27 @@ function formatRate(value: number): string {
   return `${(value * 100).toFixed(1)}pct`;
 }
 
-async function lockControl(db: PoolClient): Promise<void> {
-  await query(
-    db,
-    'adaptive-egress:lock',
-    `SELECT pg_advisory_xact_lock($1)`,
-    [CONTROL_LOCK_ID],
-  );
+async function lockControl(db: PoolClient, signal?: AbortSignal): Promise<void> {
+  if (signal === undefined) {
+    await query(
+      db,
+      'adaptive-egress:lock',
+      `SELECT pg_advisory_xact_lock($1)`,
+      [CONTROL_LOCK_ID],
+    );
+    return;
+  }
+  for (;;) {
+    throwIfAborted(signal);
+    const locked = await query<{ locked: boolean }>(
+      db,
+      'adaptive-egress:try-lock',
+      `SELECT pg_try_advisory_xact_lock($1) AS locked`,
+      [CONTROL_LOCK_ID],
+    );
+    if (locked.rows[0]?.locked === true) return;
+    await abortableSleep(25, signal);
+  }
 }
 
 async function databaseClock(db: PoolClient): Promise<{ nowMs: number }> {
@@ -2248,8 +2276,4 @@ function asLevel(value: number): AdaptiveEgressLevel {
 function asBudgetLevel(value: number): 0 | 1 {
   if (value === 0 || value === 1) return value;
   throw new Error(`数据库含非法预算档位 ${value}`);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

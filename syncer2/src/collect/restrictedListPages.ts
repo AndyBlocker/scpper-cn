@@ -13,6 +13,7 @@ import { extractSearchText, type ExtractResult } from '../content/extractText.js
 import { amcRequest } from '../http/amc.js';
 import type { HttpClient } from '../http/client.js';
 import { createLogger, type Logger } from '../util/log.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import {
   LISTPAGES_PER_PAGE,
   buildListPagesModuleBody,
@@ -258,6 +259,7 @@ async function fetchMetadataBatch(
       pageCount: parsed.data.pager.totalPages,
     };
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return { status: 'failed', error: `受限 ListPages 批 ${batchNo} 请求失败：${String(err)}` };
   }
 }
@@ -283,6 +285,7 @@ async function fetchContent(
     }
     return parseSingleContentResponse(response.body, row.fullname);
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return { status: 'failed', error: `${row.fullname} 正文 ListPages 请求失败：${String(err)}` };
   }
 }
@@ -337,6 +340,7 @@ export async function scanRestrictedListPageContent(
       },
     };
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return { status: 'failed', error: `${slug} 正文 ListPages 请求失败：${String(err)}` };
   }
 }

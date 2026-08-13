@@ -13,6 +13,7 @@ import {
 } from '../page/identity.js';
 import { createLogger } from '../util/log.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import {
   assertUniqueKeys,
   failed,
@@ -59,6 +60,7 @@ export async function scanPageIds(
       }
       return [slug, ok({ slug, wikidotId, url })] as const;
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       return [slug, failed<PageIdSnapshot>(`pageId GET 失败：${String(err)}`)] as const;
     }
   });

@@ -25,6 +25,7 @@ export interface ExternalImageClientOptions {
   breaker503: number;
   breakerReset: number;
   globalMinIntervalMs: number;
+  signal?: AbortSignal;
   logger?: Logger;
 }
 
@@ -56,8 +57,8 @@ export class ExternalImageDownloadClient {
     // HttpClient.close() 会 close adaptive gate。多个 host 共用同一 gate 时由 manager 最后
     // 统一关闭；lease 的 close 刻意 no-op。
     this.#gateLease = {
-      beforeAttempt: (url) => this.#gate.beforeAttempt(url),
-      afterAttempt: (permit, outcome) => this.#gate.afterAttempt(permit, outcome),
+      beforeAttempt: (url, signal) => this.#gate.beforeAttempt(url, signal),
+      afterAttempt: (permit, outcome, signal) => this.#gate.afterAttempt(permit, outcome, signal),
       stats: () => this.#gate.stats(),
       close: async () => undefined,
     };
@@ -121,6 +122,7 @@ export class ExternalImageDownloadClient {
       minRequestIntervalMs: 0,
       logger: this.#log.child(host),
       adaptiveEgress: this.#gateLease,
+      signal: this.#opts.signal,
     });
     client.assertHeaders();
     this.#clients.set(host, client);

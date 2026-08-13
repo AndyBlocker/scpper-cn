@@ -69,6 +69,7 @@ import {
 } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -125,6 +126,7 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: Math.max(1, opts.concurrency),
+    signal: budget.signal,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, 'forum'),
     egress: {
@@ -283,9 +285,16 @@ async function main(): Promise<void> {
     const linkOnlyTasks = discussionTasks.filter((task) => task.expectedThreadId === null);
     const deepDiscussionTasks = discussionTasks.filter((task) => task.expectedThreadId !== null);
     const needsForumStart = forumTasks.length > 0 || deepDiscussionTasks.length > 0;
-    const start: CollectResult<ForumStartSnapshot> = needsForumStart
-      ? await scanForumStart(http, config.siteBaseUrl)
-      : ok({ categories: [] });
+    let start: CollectResult<ForumStartSnapshot>;
+    try {
+      start = needsForumStart
+        ? await scanForumStart(http, config.siteBaseUrl)
+        : ok({ categories: [] });
+    } catch (err) {
+      if (!isRuntimeBudgetExceededError(err)) throw err;
+      counters.stoppedByRuntimeBudget = true;
+      start = failed('ForumStartModule 被单轮时间预算中断');
+    }
     const stagedCategories = new Map<number, CollectResult<ForumCategorySnapshot>>();
     const stagedThreads = new Map<number, CollectResult<ForumThreadSnapshot>>();
     const stagedDiscussions = new Map<number, CollectResult<ForumDiscussionSnapshot>>();
@@ -293,7 +302,7 @@ async function main(): Promise<void> {
     let sitemapCategoryIds: Set<number> | null = null;
     let categoryCoverageError: string | null = null;
     let consecutiveFailures = start.status === 'failed' ? 1 : 0;
-    if (start.status === 'failed') {
+    if (start.status === 'failed' && !counters.stoppedByRuntimeBudget) {
       counters.consecutiveFailuresPeak = 1;
       for (const task of deepDiscussionTasks) {
         stagedDiscussions.set(
@@ -323,12 +332,19 @@ async function main(): Promise<void> {
         break;
       }
       const group = linkOnlyTasks.slice(offset, offset + opts.concurrency);
-      const results = await scanPageDiscussionLinks(
-        http,
-        config.siteBaseUrl,
-        group.map(toDiscussionTarget),
-        opts.concurrency,
-      );
+      let results: Awaited<ReturnType<typeof scanPageDiscussionLinks>>;
+      try {
+        results = await scanPageDiscussionLinks(
+          http,
+          config.siteBaseUrl,
+          group.map(toDiscussionTarget),
+          opts.concurrency,
+        );
+      } catch (err) {
+        if (!isRuntimeBudgetExceededError(err)) throw err;
+        counters.stoppedByRuntimeBudget = true;
+        break;
+      }
       for (const task of group) {
         const result = results.get(task.pageId) ??
           failed<ForumCommentsPage>('内部错误：页面讨论串关联结果 Map 缺项');
@@ -346,7 +362,12 @@ async function main(): Promise<void> {
       }
     }
 
-    if (start.status !== 'failed' && !http.breakerOpen && !counters.stoppedByFailureLimit) {
+    if (
+      start.status !== 'failed'
+      && !http.breakerOpen
+      && !counters.stoppedByFailureLimit
+      && !counters.stoppedByRuntimeBudget
+    ) {
       const categoryTasks = forumTasks.filter((task) => task.kind === 'category');
       const threadTasks = forumTasks.filter((task) => task.kind === 'thread');
       if (categoryTasks.length > 0) {
@@ -373,23 +394,38 @@ async function main(): Promise<void> {
             });
           }
         } catch (err) {
-          categoryCoverageError = `category sitemap 抓取失败：${String(err)}`;
-          log.warn('无法证明分类在 sitemap 中；本轮所有分类只保存正面观测，不判删除', {
-            error: categoryCoverageError,
-          });
+          if (isRuntimeBudgetExceededError(err)) {
+            counters.stoppedByRuntimeBudget = true;
+            categoryCoverageError = 'category sitemap 被单轮时间预算中断';
+          } else {
+            categoryCoverageError = `category sitemap 抓取失败：${String(err)}`;
+            log.warn('无法证明分类在 sitemap 中；本轮所有分类只保存正面观测，不判删除', {
+              error: categoryCoverageError,
+            });
+          }
         }
-        const results = await scanForumCategories(
-          http,
-          config.siteBaseUrl,
-          categoryTasks.map((task) => task.targetId),
-          opts.concurrency,
-        );
-        for (const task of categoryTasks) {
-          stagedCategories.set(
-            task.taskId,
-            results.get(task.targetId) ??
-              failed<ForumCategorySnapshot>('内部错误：分类枚举结果 Map 缺项'),
-          );
+        let results = new Map<number, CollectResult<ForumCategorySnapshot>>();
+        if (!counters.stoppedByRuntimeBudget) {
+          try {
+            results = await scanForumCategories(
+              http,
+              config.siteBaseUrl,
+              categoryTasks.map((task) => task.targetId),
+              opts.concurrency,
+            );
+          } catch (err) {
+            if (!isRuntimeBudgetExceededError(err)) throw err;
+            counters.stoppedByRuntimeBudget = true;
+          }
+        }
+        if (!counters.stoppedByRuntimeBudget) {
+          for (const task of categoryTasks) {
+            stagedCategories.set(
+              task.taskId,
+              results.get(task.targetId) ??
+                failed<ForumCategorySnapshot>('内部错误：分类枚举结果 Map 缺项'),
+            );
+          }
         }
       }
       scanGroups: for (let offset = 0; offset < deepDiscussionTasks.length; offset += opts.concurrency) {
@@ -398,12 +434,19 @@ async function main(): Promise<void> {
           break;
         }
         const group = deepDiscussionTasks.slice(offset, offset + opts.concurrency);
-        const results = await scanPageDiscussions(
-          http,
-          config.siteBaseUrl,
-          group.map(toDiscussionTarget),
-          opts.concurrency,
-        );
+        let results: Awaited<ReturnType<typeof scanPageDiscussions>>;
+        try {
+          results = await scanPageDiscussions(
+            http,
+            config.siteBaseUrl,
+            group.map(toDiscussionTarget),
+            opts.concurrency,
+          );
+        } catch (err) {
+          if (!isRuntimeBudgetExceededError(err)) throw err;
+          counters.stoppedByRuntimeBudget = true;
+          break;
+        }
         for (const task of group) {
           const result =
             results.get(task.pageId) ??
@@ -422,19 +465,30 @@ async function main(): Promise<void> {
         }
       }
 
-      if (!http.breakerOpen && !counters.stoppedByFailureLimit) {
+      if (
+        !http.breakerOpen
+        && !counters.stoppedByFailureLimit
+        && !counters.stoppedByRuntimeBudget
+      ) {
         for (let offset = 0; offset < threadTasks.length; offset += opts.concurrency) {
           if (budget.checkpoint()) {
             counters.stoppedByRuntimeBudget = true;
             break;
           }
           const group = threadTasks.slice(offset, offset + opts.concurrency);
-          const results = await scanForumThreads(
-            http,
-            config.siteBaseUrl,
-            group.map((task) => task.targetId),
-            opts.concurrency,
-          );
+          let results: Awaited<ReturnType<typeof scanForumThreads>>;
+          try {
+            results = await scanForumThreads(
+              http,
+              config.siteBaseUrl,
+              group.map((task) => task.targetId),
+              opts.concurrency,
+            );
+          } catch (err) {
+            if (!isRuntimeBudgetExceededError(err)) throw err;
+            counters.stoppedByRuntimeBudget = true;
+            break;
+          }
           for (const task of group) {
             const result =
               results.get(task.targetId) ??

@@ -37,6 +37,11 @@ import {
 } from '../http/adaptiveEgress.js';
 import { createPool, query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { createLogger, type Logger } from '../util/log.js';
+import {
+  abortableSleep,
+  isRuntimeBudgetExceededError,
+  throwIfAborted,
+} from '../util/runtimeBudget.js';
 
 const CONTROL_LOCK_ID = 2_026_081_2;
 const GLOBAL_BASE_INTERVAL_MS = 3_000;
@@ -197,14 +202,15 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
     );
   }
 
-  async beforeAttempt(url?: string): Promise<AdaptiveEgressPermit> {
+  async beforeAttempt(url?: string, signal?: AbortSignal): Promise<AdaptiveEgressPermit> {
     const host = externalHostname(url);
     try {
+      throwIfAborted(signal);
       const reservation = await withTransaction(
         this.#pool,
         `external-image-egress:permit:${host}`,
         async (db) => {
-          await lockControl(db);
+          await lockControl(db, signal);
           const nowMs = await databaseClock(db);
           const bucketStart = new Date(Math.floor(nowMs / 60_000) * 60_000).toISOString();
           await ensureHost(db, host, this.#policy);
@@ -328,9 +334,10 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
         });
         throw new ExternalHostDeferredError(host, reservation.waitMs);
       }
-      if (reservation.waitMs > 0) await sleep(reservation.waitMs);
+      if (reservation.waitMs > 0) await abortableSleep(reservation.waitMs, signal);
       return reservation.permit;
     } catch (error) {
+      if (isRuntimeBudgetExceededError(error)) throw error;
       if (error instanceof AdaptiveEgressUnavailableError) throw error;
       // 主动跳过是**限速层的正常输出**，不是「限速层不可用」；
       // 包装成 AdaptiveEgressUnavailableError 会让上层认不出来，落成 unknown 失败。
@@ -342,15 +349,17 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
   async afterAttempt(
     permit: AdaptiveEgressPermit,
     outcome: AdaptiveAttemptOutcome,
+    signal?: AbortSignal,
   ): Promise<void> {
     const host = permit.scopeKey;
     if (host === undefined) throw new Error('站外图片 permit 缺 scopeKey(host)');
     try {
+      throwIfAborted(signal);
       const result = await withTransaction(
         this.#pool,
         `external-image-egress:outcome:${host}`,
         async (db) => {
-          await lockControl(db);
+          await lockControl(db, signal);
           const nowMs = await databaseClock(db);
           const pressureFailure = !outcome.ok && isAdaptivePressureFailure(outcome.status);
           if (pressureFailure) {
@@ -465,6 +474,7 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
         });
       }
     } catch (error) {
+      if (isRuntimeBudgetExceededError(error)) throw error;
       if (error instanceof AdaptiveEgressUnavailableError) throw error;
       throw new AdaptiveEgressUnavailableError(`external-image afterAttempt(${host})`, error);
     }
@@ -510,8 +520,22 @@ function pressureCategory(status: number | null): '429' | '503' | 'other_5xx' | 
   return 'other_5xx';
 }
 
-async function lockControl(db: PoolClient): Promise<void> {
-  await query(db, 'external-image-egress:lock', 'SELECT pg_advisory_xact_lock($1)', [CONTROL_LOCK_ID]);
+async function lockControl(db: PoolClient, signal?: AbortSignal): Promise<void> {
+  if (signal === undefined) {
+    await query(db, 'external-image-egress:lock', 'SELECT pg_advisory_xact_lock($1)', [CONTROL_LOCK_ID]);
+    return;
+  }
+  for (;;) {
+    throwIfAborted(signal);
+    const locked = await query<{ locked: boolean }>(
+      db,
+      'external-image-egress:try-lock',
+      `SELECT pg_try_advisory_xact_lock($1) AS locked`,
+      [CONTROL_LOCK_ID],
+    );
+    if (locked.rows[0]?.locked === true) return;
+    await abortableSleep(25, signal);
+  }
 }
 
 async function databaseClock(db: PoolClient): Promise<number> {
@@ -806,8 +830,4 @@ function asLevel(value: number): AdaptiveEgressLevel {
     throw new Error(`非法站外图片出口 level=${value}`);
   }
   return value;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

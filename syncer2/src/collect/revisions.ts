@@ -18,6 +18,7 @@ import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
 import { recordPageScan } from '../store/meta.js';
 import { sanitizePgValue, toPgJson } from '../store/pgText.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import {
   revisionCountsMatch,
   revisionListCountFromClaimed,
@@ -336,6 +337,7 @@ export async function scanRevisions(
       }
       return [target.pageId, parseRevisionList(res.body, target)] as const;
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       return [
         target.pageId,
         failed<RevisionBatch>(`PageRevisionListModule 请求失败：${String(err)}`),

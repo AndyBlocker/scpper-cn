@@ -13,6 +13,7 @@ import type { HttpClient } from '../http/client.js';
 import { decodeEntities } from '../content/extractText.js';
 import { recordPageScan } from '../store/meta.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import type { RevisionEntry } from './revisions.js';
 import {
   assertUniqueKeys,
@@ -178,6 +179,7 @@ export async function scanFiles(
       }
       return [target.pageId, parseFilesBody(res.body, baseUrl, target)] as const;
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       return [
         target.pageId,
         failed<FileSnapshot>(`PageFilesModule 请求失败：${String(err)}`),

@@ -19,6 +19,7 @@ import {
 } from '../http/client.js';
 import { query, withTransaction } from '../store/db.js';
 import { toPgJson } from '../store/pgText.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 
 export type ImageEgressClass = 'wikidot_site' | 'external';
 export type ImageFailureClass =
@@ -314,6 +315,7 @@ export async function processImageJob(
       );
     }
   } catch (error) {
+    throwIfRuntimeBudgetExceeded(error);
     return failJob(pool, job, egressClass, normalizeFailure(error), options);
   }
 

@@ -31,6 +31,15 @@ import {
   decodeBody,
   type HttpClientOptions,
 } from '../src/http/client.js';
+import type {
+  AdaptiveAttemptOutcome,
+  AdaptiveEgressGate,
+  AdaptiveEgressPermit,
+} from '../src/http/adaptiveEgress.js';
+import {
+  abortableSleep,
+  RuntimeBudgetExceededError,
+} from '../src/util/runtimeBudget.js';
 
 // ─── 本地测试服 ──────────────────────────────────────────────────────────────
 
@@ -290,6 +299,70 @@ describe('请求启动节流：补账客户端遵守最小尝试间隔', () => {
         `期望至少 ${minIntervalMs - 5}ms，实际 ${elapsed.toFixed(1)}ms`,
       );
     } finally {
+      await c.close();
+    }
+  });
+});
+
+describe('单轮硬预算：等待路径可被立即中断', () => {
+  it('token permit 等待超过剩余预算时，不等完整 sleep', async () => {
+    server.reset();
+    const controller = new AbortController();
+    let beforeCalls = 0;
+    const gate: AdaptiveEgressGate = {
+      async beforeAttempt(_url?: string, signal?: AbortSignal): Promise<AdaptiveEgressPermit> {
+        beforeCalls++;
+        await abortableSleep(5_000, signal);
+        throw new Error('不应拿到 permit');
+      },
+      async afterAttempt(
+        _permit: AdaptiveEgressPermit,
+        _outcome: AdaptiveAttemptOutcome,
+      ): Promise<void> {},
+      stats: () => ({
+        channel: 'test-token-wait', permits: 0, totalDelayMs: 0,
+        transitionsObserved: 0, state: null,
+      }),
+      close: async () => undefined,
+    };
+    const c = mk({ adaptiveEgress: gate, signal: controller.signal });
+    const started = Date.now();
+    const abortTimer = setTimeout(
+      () => controller.abort(new RuntimeBudgetExceededError(Date.now())),
+      50,
+    );
+    try {
+      await assert.rejects(
+        c.get(`${server.base}/ok`, 'test:budget-token'),
+        RuntimeBudgetExceededError,
+      );
+      assert.equal(beforeCalls, 1);
+      assert.ok(Date.now() - started < 500, 'permit sleep 应被预算信号立即打断');
+      assert.equal(server.hitsOf('/ok'), 0, '尚未拿 permit 时绝不能触网');
+    } finally {
+      clearTimeout(abortTimer);
+      await c.close();
+    }
+  });
+
+  it('HTTP retry 链累计超过剩余预算时，在退避中中断', async () => {
+    server.reset();
+    const controller = new AbortController();
+    const c = mk({ maxAttempts: 3, signal: controller.signal });
+    const started = Date.now();
+    const abortTimer = setTimeout(
+      () => controller.abort(new RuntimeBudgetExceededError(Date.now())),
+      650,
+    );
+    try {
+      await assert.rejects(
+        c.get(`${server.base}/500`, 'test:budget-retry'),
+        RuntimeBudgetExceededError,
+      );
+      assert.ok(server.hitsOf('/500') >= 1);
+      assert.ok(Date.now() - started < 1_200, '不能等完整三次 HTTP timeout/backoff 链');
+    } finally {
+      clearTimeout(abortTimer);
       await c.close();
     }
   });

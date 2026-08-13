@@ -17,6 +17,54 @@ export interface RuntimeBudgetSummary {
 
 type Clock = () => number;
 
+export class RuntimeBudgetExceededError extends Error {
+  override readonly name = 'RuntimeBudgetExceededError';
+
+  constructor(readonly deadlineAtMs: number) {
+    super(`单轮墙钟预算已耗尽（deadline=${new Date(deadlineAtMs).toISOString()}）`);
+  }
+}
+
+export function isRuntimeBudgetExceededError(error: unknown): boolean {
+  return error instanceof RuntimeBudgetExceededError
+    || (error instanceof Error && error.name === 'RuntimeBudgetExceededError');
+}
+
+export function throwIfRuntimeBudgetExceeded(error: unknown): void {
+  if (isRuntimeBudgetExceededError(error)) throw error;
+}
+
+export function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted !== true) return;
+  const reason = signal.reason;
+  throw reason instanceof Error ? reason : new Error(String(reason ?? 'aborted'));
+}
+
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  if (ms <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      signal?.removeEventListener('abort', aborted);
+      resolve();
+    }
+    function aborted(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', aborted);
+      try {
+        throwIfAborted(signal);
+      } catch (error) {
+        reject(error);
+      }
+    }
+    signal?.addEventListener('abort', aborted, { once: true });
+    // AbortSignal 不会为“注册前已经触发”的 listener 补发事件；二次检查堵住
+    // 首次 throwIfAborted 与 addEventListener 之间的极窄竞态。
+    if (signal?.aborted === true) aborted();
+  });
+}
+
 /**
  * 所有短进程 CLI 共用的 `--max-runtime-sec` 入口。
  *
@@ -58,8 +106,10 @@ export class RuntimeBudget {
   readonly maxRuntimeSec: number;
   readonly startedAtMs: number;
   readonly deadlineAtMs: number;
+  readonly signal: AbortSignal;
 
   readonly #clock: Clock;
+  readonly #controller = new AbortController();
   #stopped = false;
 
   constructor(maxRuntimeSec: number, clock: Clock = Date.now) {
@@ -69,13 +119,25 @@ export class RuntimeBudget {
     if (!Number.isFinite(this.startedAtMs)) {
       throw new RangeError(`runtime budget clock 非法：${String(this.startedAtMs)}`);
     }
-    this.deadlineAtMs = this.startedAtMs + this.maxRuntimeSec * 1_000;
+    // maxRuntime 是整个进程的墙钟上限，不只是“开始新工作”的截止点。预留至多 2 秒
+    // 给落 ingest_run、释放 claim 与关闭连接，避免摘要在 300.7s 才出现。
+    const shutdownReserveMs = Math.min(2_000, this.maxRuntimeSec * 100);
+    this.deadlineAtMs = this.startedAtMs + this.maxRuntimeSec * 1_000 - shutdownReserveMs;
+    this.signal = this.#controller.signal;
+    const timer = setTimeout(() => this.#stop(), Math.max(0, this.deadlineAtMs - clock()));
+    timer.unref();
   }
 
   /** 命中后保持 latch=true，后续收尾阶段不会因时钟回拨重新启动工作。 */
   checkpoint(): boolean {
-    if (!this.#stopped && this.#clock() >= this.deadlineAtMs) this.#stopped = true;
+    if (!this.#stopped && this.#clock() >= this.deadlineAtMs) this.#stop();
     return this.#stopped;
+  }
+
+  #stop(): void {
+    if (this.#stopped) return;
+    this.#stopped = true;
+    this.#controller.abort(new RuntimeBudgetExceededError(this.deadlineAtMs));
   }
 
   get stoppedByRuntimeBudget(): boolean {

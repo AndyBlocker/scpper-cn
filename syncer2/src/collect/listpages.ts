@@ -24,6 +24,10 @@ import {
 } from '../http/client.js';
 import { decodeXmlEntities } from '../sitemap/parse.js';
 import { createLogger, type Logger } from '../util/log.js';
+import {
+  abortableSleep,
+  throwIfRuntimeBudgetExceeded,
+} from '../util/runtimeBudget.js';
 
 export const LISTPAGES_PER_PAGE = 250;
 export const LISTPAGES_PARSE_DROP_LIMIT = 0.005;
@@ -459,8 +463,12 @@ async function fetchUpdatedListPagesBatch(
       if (response.status !== 'try_again' || amcAttempt === 3) {
         return { status: 'failed', error: `L0 第 ${batchNo} 批 ${lastError}` };
       }
-      await sleep(500 * 2 ** (amcAttempt - 1) + Math.floor(Math.random() * 100));
+      await abortableSleep(
+        500 * 2 ** (amcAttempt - 1) + Math.floor(Math.random() * 100),
+        http.signal,
+      );
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       if (
         err instanceof CircuitOpenError ||
         err instanceof HeaderContractError ||
@@ -477,7 +485,10 @@ async function fetchUpdatedListPagesBatch(
         amcAttempt,
         error: lastError,
       });
-      await sleep(500 * 2 ** (amcAttempt - 1) + Math.floor(Math.random() * 100));
+      await abortableSleep(
+        500 * 2 ** (amcAttempt - 1) + Math.floor(Math.random() * 100),
+        http.signal,
+      );
     }
   }
   return { status: 'failed', error: `L0 第 ${batchNo} 批重试耗尽：${lastError}` };
@@ -514,8 +525,9 @@ export async function fetchListPagesBatch(
       }
       const waitMs = 500 * 2 ** (amcAttempt - 1) + Math.floor(Math.random() * 100);
       log.warn('ListPages 返回 try_again，批级退避重试', { batchNo, amcAttempt, waitMs });
-      await sleep(waitMs);
+      await abortableSleep(waitMs, http.signal);
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       // 503/429 与断路器必须立即停手；头契约错误也是配置错误，重试无意义。
       if (
         err instanceof CircuitOpenError ||
@@ -536,7 +548,7 @@ export async function fetchListPagesBatch(
         waitMs,
         error: lastError,
       });
-      await sleep(waitMs);
+      await abortableSleep(waitMs, http.signal);
     }
   }
   return { status: 'failed', error: `第 ${batchNo} 批重试耗尽：${lastError}` };
@@ -1452,8 +1464,4 @@ async function mapLimited<T>(
     }
   });
   await Promise.all(workers);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

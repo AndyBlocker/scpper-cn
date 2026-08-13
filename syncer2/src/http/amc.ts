@@ -45,6 +45,7 @@ import {
 } from './client.js';
 import { probeExitIpDirect } from './egress.js';
 import { createLogger, type Logger } from '../util/log.js';
+import { abortableSleep } from '../util/runtimeBudget.js';
 
 // ─── 错误类型 ────────────────────────────────────────────────────────────────
 
@@ -388,7 +389,7 @@ export async function assertEgressContract(
             waitMs: wait,
             error: err instanceof HttpStatusError ? `HTTP ${err.status}` : String(err),
           });
-          await sleep(wait);
+          await abortableSleep(wait, http.signal);
         }
       }
     }
@@ -424,8 +425,4 @@ export async function assertEgressContract(
   }
   for (const p of problems) log.warn('启动自检 #3 告警', { problem: p });
   return report;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }

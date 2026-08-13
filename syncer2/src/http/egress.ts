@@ -158,9 +158,9 @@ export class EgressAttributor {
   }
 
   /** 启动时探一次：既给池构成一个初值，也是「代理确实通」的第一手证据。 */
-  async primeOnStart(): Promise<string | null> {
-    const ip = await this.#probeIp(false);
-    await this.#sampleMihomo(false, true);
+  async primeOnStart(signal?: AbortSignal): Promise<string | null> {
+    const ip = await this.#probeIp(false, signal);
+    await this.#sampleMihomo(false, true, signal);
     return ip;
   }
 
@@ -168,22 +168,22 @@ export class EgressAttributor {
    * 每个 wikidot 请求结束后调用（成功或失败都调）。
    * 本方法**不得抛异常** —— 监控崩了不能把采集带走。
    */
-  async afterRequest(ok: boolean): Promise<void> {
+  async afterRequest(ok: boolean, signal?: AbortSignal): Promise<void> {
     try {
       this.#requestsSeen++;
       const failed = !ok;
       // mihomo 采样：失败必采（要归因坏节点），成功则按节流采
-      await this.#sampleMihomo(failed, failed);
+      await this.#sampleMihomo(failed, failed, signal);
       if (failed) {
         // 失败补探：知道「此刻池里是什么」比什么都不知道好，但仍受 maxProbes 封顶
-        await this.#probeIp(true);
+        await this.#probeIp(true, signal);
         if (this.#currentIp) {
           this.#failByIp.set(this.#currentIp, (this.#failByIp.get(this.#currentIp) ?? 0) + 1);
         }
         return;
       }
       const n = this.#opts.everyNRequests;
-      if (n > 0 && this.#requestsSeen % n === 0) await this.#probeIp(false);
+      if (n > 0 && this.#requestsSeen % n === 0) await this.#probeIp(false, signal);
     } catch (err) {
       this.#log.debug('归因采样异常（已忽略）', { error: String(err) });
     }
@@ -219,7 +219,7 @@ export class EgressAttributor {
   // ── 内部 ──────────────────────────────────────────────────────────────────
 
   /** 经**同一个 dispatcher**（同一个代理池）取一次出口 IP。 */
-  async #probeIp(afterFailure: boolean): Promise<string | null> {
+  async #probeIp(afterFailure: boolean, signal?: AbortSignal): Promise<string | null> {
     const url = this.#opts.probeUrl;
     if (url === null) return null;
     if (this.#probeOk + this.#probeFailed >= this.#opts.maxProbes) return this.#currentIp;
@@ -236,6 +236,7 @@ export class EgressAttributor {
         },
         headersTimeout: this.#opts.probeTimeoutMs,
         bodyTimeout: this.#opts.probeTimeoutMs,
+        signal,
       });
       const body = (await res.body.text()).trim();
       this.#probeMs += Date.now() - t0;
@@ -267,7 +268,11 @@ export class EgressAttributor {
    * 采样 mihomo `/connections`，把目标 host 的活连接归到 chains[0] 节点上。
    * force=true 时忽略节流（失败后要立刻采）。
    */
-  async #sampleMihomo(afterFailure: boolean, force: boolean): Promise<void> {
+  async #sampleMihomo(
+    afterFailure: boolean,
+    force: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const api = this.#opts.mihomoApi;
     if (api === null) return;
     const now = Date.now();
@@ -282,6 +287,7 @@ export class EgressAttributor {
         headers: { accept: 'application/json' },
         headersTimeout: 2_000,
         bodyTimeout: 2_000,
+        signal,
       });
       if (res.statusCode !== 200) {
         this.#mihomoLastError = `status=${res.statusCode}`;

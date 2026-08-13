@@ -19,6 +19,7 @@ import {
 } from './listpages.js';
 import { decodeXmlEntities } from '../sitemap/parse.js';
 import { createLogger, type Logger } from '../util/log.js';
+import { abortableSleep, throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 
 export type IncrementalListPagesLayer = 'l0' | 'l1';
 
@@ -298,6 +299,7 @@ async function fetchBatch(
         return failedBatch(layer, batchNo, emptyDiagnostics(), lastError);
       }
     } catch (err) {
+      throwIfRuntimeBudgetExceeded(err);
       if (
         err instanceof CircuitOpenError ||
         err instanceof HeaderContractError ||
@@ -312,7 +314,7 @@ async function fetchBatch(
     }
     const waitMs = 500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 100);
     log.warn('窄字段 ListPages 批级退避', { layer, batchNo, attempt, waitMs, lastError });
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    await abortableSleep(waitMs, http.signal);
   }
   return failedBatch(layer, batchNo, emptyDiagnostics(), `重试耗尽：${lastError}`);
 }

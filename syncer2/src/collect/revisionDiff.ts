@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { decodeEntities } from '../content/extractText.js';
 import { amcRequest } from '../http/amc.js';
 import type { HttpClient } from '../http/client.js';
+import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import {
   diagnostics,
   failed,
@@ -470,6 +471,7 @@ export async function fetchRevisionDiff(
     }
     return parseRevisionDiffBody(res.body, target);
   } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
     return failed(`PageDiffModule 请求失败：${String(err)}`, diagnostics(1, 0));
   }
 }

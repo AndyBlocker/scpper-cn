@@ -72,6 +72,7 @@ import {
 } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
+  isRuntimeBudgetExceededError,
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
@@ -136,6 +137,7 @@ async function main(): Promise<void> {
     breaker503: Math.max(5, config.breaker503),
     breakerReset: Math.max(5, config.breakerReset),
     connections: opts.concurrency,
+    signal: budget.signal,
     logger: log.child('http'),
     adaptiveEgress: new PostgresAdaptiveEgressGate(config.databaseUrl, opts.layer),
     egress: {
@@ -336,6 +338,64 @@ async function main(): Promise<void> {
     });
     process.exitCode = exitCode;
   } catch (err) {
+    if (isRuntimeBudgetExceededError(err)) {
+      budget.checkpoint();
+      const durationMs = Date.now() - t0;
+      const requests = http.healthStats().business.requests;
+      const health = evaluateRunHealth({
+        claimed: Math.max(1, requests),
+        processed: requests,
+        partial: 1,
+        failed: 0,
+        deferred: 1,
+      });
+      log.info('增量层在等待中命中单轮时间预算，按 partial 优雅收尾', {
+        layer: opts.layer,
+        requests,
+      });
+      if (pool !== null) {
+        await finishIngestRun(pool, runId, {
+          status: health.status,
+          finishedAt: new Date().toISOString(),
+          pagesEnumerated: 0,
+          remoteTotal: null,
+          batchesTotal: requests,
+          batchesFailed: 0,
+          transportFailureRate: transportFailureRate(http),
+          exitIpStats: exitIpStatsJson(http),
+          parseFingerprint: {
+            http_status_dist: http.healthStats().business.statusBuckets,
+            transport_failure_rate: transportFailureRate(http),
+          },
+          populationType,
+          stats: {
+            mode,
+            layer: opts.layer.toUpperCase(),
+            population_type: populationType,
+            durationMs,
+            health,
+            http: http.stats(),
+            egressSlo,
+            ...budget.summary(),
+          },
+        }).catch((finishErr) =>
+          log.error('预算收尾写 ingest_run 失败', { error: String(finishErr) }),
+        );
+      }
+      emitSummary({
+        ok: true,
+        status: health.status,
+        layer: opts.layer.toUpperCase(),
+        mode,
+        runId,
+        durationMs,
+        health,
+        http: compactHttp(http),
+        ...budget.summary(),
+      });
+      process.exitCode = 0;
+      return;
+    }
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;
     const durationMs = Date.now() - t0;
     const baseHealth = evaluateRunHealth({
