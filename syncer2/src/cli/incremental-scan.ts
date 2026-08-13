@@ -69,6 +69,7 @@ import {
 import {
   applyAdaptiveSelfProtectionToRunHealth,
   evaluateRunHealth,
+  persistenceSkipFatalReasons,
 } from '../work/runHealth.js';
 import {
   addRuntimeBudgetOption,
@@ -217,8 +218,8 @@ async function main(): Promise<void> {
         `达到 ${opts.maxRuntimeSec}s 单轮时间预算；不推进状态，下一轮完整重扫`,
       );
     } else if (scan.status !== 'ok') {
-      // 多页 ListPages 没有事务快照；分页期间的单条移动会产生重复/空洞。
-      // 整轮证据落为 partial，但不推进增量状态、不入队、不计算覆盖率。
+      // 可收敛的低比例 fullname 重复已在采集器内消化；到这里的是缺批、结构损坏、
+      // 重复异常放大等不可信整轮，不推进增量状态、不入队、不计算覆盖率。
       persistence = skippedPersistence(
         scan.rows.length,
         opts.layer,
@@ -264,6 +265,7 @@ async function main(): Promise<void> {
           ? ['scan_validation_failed']
           : []),
         ...(persistence.systemicPageFailure ? ['systemic_page_failure'] : []),
+        ...persistenceSkipFatalReasons(persistence.counters.persistenceSkipped === true),
         ...(egressSlo?.exitCode === 1 ? ['adaptive_downshift_recovery_overdue'] : []),
       ],
     });
@@ -342,14 +344,20 @@ async function main(): Promise<void> {
       budget.checkpoint();
       const durationMs = Date.now() - t0;
       const requests = http.healthStats().business.requests;
+      const persistence = skippedPersistence(
+        0,
+        opts.layer,
+        `达到 ${opts.maxRuntimeSec}s 单轮时间预算；等待阶段无可持久化证据，下一轮完整重扫`,
+      );
       const health = evaluateRunHealth({
         claimed: Math.max(1, requests),
         processed: requests,
         partial: 1,
         failed: 0,
         deferred: 1,
+        fatalReasons: persistenceSkipFatalReasons(true),
       });
-      log.info('增量层在等待中命中单轮时间预算，按 partial 优雅收尾', {
+      log.warn('增量层在等待中命中单轮时间预算，整轮持久化跳过并告警', {
         layer: opts.layer,
         requests,
       });
@@ -374,6 +382,7 @@ async function main(): Promise<void> {
             population_type: populationType,
             durationMs,
             health,
+            persistence,
             http: http.stats(),
             egressSlo,
             ...budget.summary(),
@@ -383,17 +392,18 @@ async function main(): Promise<void> {
         );
       }
       emitSummary({
-        ok: true,
+        ok: false,
         status: health.status,
         layer: opts.layer.toUpperCase(),
         mode,
         runId,
         durationMs,
         health,
+        persistence,
         http: compactHttp(http),
         ...budget.summary(),
       });
-      process.exitCode = 0;
+      process.exitCode = health.exitCode;
       return;
     }
     const breaker = err instanceof CircuitOpenError || http.breakerOpen;

@@ -43,7 +43,7 @@
     "schedule:work-queue": "node --import tsx/esm src/cli/work-queue.ts --limit 50 --concurrency 4 --max-runtime-sec 360 --amc-probe require --proxy-check warn",
     "schedule:forum-discovery": "node --import tsx/esm src/cli/forum-incremental.ts --max-pages 40 --max-runtime-sec 330",
     "schedule:forum-audit": "node --import tsx/esm src/cli/sitemap-scan.ts --mode threads --page-scan none --concurrency 4 --max-runtime-sec 300 --proxy-check warn",
-    "schedule:forum-consume": "node --import tsx/esm src/cli/forum-scan.ts --limit 50 --concurrency 4 --max-runtime-sec 300 --amc-probe require --proxy-check warn",
+    "schedule:forum-consume": "node --import tsx/esm src/cli/forum-scan.ts --limit 50 --concurrency 4 --max-runtime-sec 360 --amc-probe require --proxy-check warn",
     "schedule:image-ingest": "node --import tsx/esm src/cli/image-ingest.ts --limit 120 --max-runtime-sec 300 --external-interval-ms 3000 --asset-root /home/andyblocker/scpper-cn/.data/page-images",
     "schedule:revision-source-backfill": "node --import tsx/esm src/cli/revision-source-backfill.ts --limit 300 --seed-limit 5000 --delay-ms 250 --max-runtime-sec 200 --minimum-free-gb 100 --amc-probe require --proxy-check warn",
     "schedule:reconcile": "node --import tsx/esm src/cli/reconcile.ts --mode all --triangle-pages 10 --concurrency 2 --max-runtime-sec 720 --amc-probe require --proxy-check warn",

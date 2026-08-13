@@ -53,6 +53,11 @@ export interface RunHealthDecision {
   reasons: string[];
 }
 
+/** 持久化整轮跳过不能伪装成正常 partial；交给统一 run health 产生 failed + exit 1。 */
+export function persistenceSkipFatalReasons(skipped: boolean): string[] {
+  return skipped ? ['persistence_skipped'] : [];
+}
+
 export function evaluateRunHealth(input: RunHealthInput): RunHealthDecision {
   assertRunHealthInput(input);
   const deterministicFailures = input.deterministicFailures ?? 0;

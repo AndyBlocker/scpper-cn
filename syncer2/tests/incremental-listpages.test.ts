@@ -13,15 +13,20 @@ import {
   batchTargets,
   buildIncrementalListPagesRequest,
   buildIncrementalModuleBody,
+  finalizeIncrementalListPagesRun,
   parseIncrementalListPagesResponse,
   scanIncrementalListPages,
+  type IncrementalBatchResult,
+  type L1ListPageRow,
 } from '../src/collect/incrementalListPages.js';
+import { LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT } from '../src/collect/listpages.js';
 import type { HttpClient } from '../src/http/client.js';
 import {
   calculateRevisionCoverage,
   classifyRevisionCoverageBaseline,
   shouldAlertRevisionCoverage,
 } from '../src/store/incremental.js';
+import { evaluateRunHealth, persistenceSkipFatalReasons } from '../src/work/runHealth.js';
 
 test('L0 是 updated_at 两小时窗口并携带 revisions 二次确认', () => {
   assert.deepEqual(L0_SELECTORS, ['fullname', 'updated_at', 'revisions']);
@@ -130,7 +135,7 @@ test('L1 offset 批次严格验证剩余集合 pager，并完整翻到末批', a
   assert.equal(scan.pagesEnumerated, 251);
 });
 
-test('L1 多批抓取期间单条跨页移动记 partial，不冒充请求/解析 failed', async () => {
+test('小集合重复率异常放大时 L1 拒绝整轮', async () => {
   const row = (index: number) =>
     '<div class="syncer2-incremental-l1-row"><p>' +
     `%%page-${index}%%|||%%${index}%%|||%%${index + 1}%%|||%%${index + 2}%%` +
@@ -156,11 +161,83 @@ test('L1 多批抓取期间单条跨页移动记 partial，不冒充请求/解�
     'https://scp-wiki-cn.wikidot.com',
     'l1',
   );
-  assert.equal(scan.status, 'partial');
+  assert.equal(scan.status, 'failed');
   assert.equal(scan.batchesFailed, 0);
   assert.equal(scan.validation.duplicateFullnames, 1);
-  assert.match(scan.validation.reasons.join('；'), /跨批 fullname 重复 1/);
+  assert.ok(scan.validation.duplicateFullnameRate > LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT);
+  assert.match(scan.validation.reasons.join('；'), /跨批 fullname 重复率/);
 });
+
+test('L1 实测规模 1--2 条跨批重复仍为 ok，整行按最后一次观测收敛', () => {
+  for (const duplicates of [1, 2]) {
+    const scan = fullSiteDuplicateFixture(duplicates);
+    assert.equal(scan.status, 'ok');
+    assert.equal(scan.validation.complete, true);
+    assert.equal(scan.validation.rawRowsEnumerated, 36_500);
+    assert.equal(scan.validation.duplicateFullnames, duplicates);
+    assert.ok(scan.validation.duplicateFullnameRate <= LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT);
+    assert.equal(scan.pagesEnumerated, 36_500 - duplicates);
+    assert.equal(scan.rows.find((row) => row.fullname === 'page-250')?.rating, 90_000);
+    assert.equal(scan.rows.filter((row) => row.fullname === 'page-250').length, 1);
+    assert.deepEqual(scan.validation.reasons, []);
+  }
+});
+
+test('L1 全站重复达到 4 条越过 0.01% 时拒绝，持久化跳过产生 failed 告警事件', () => {
+  const scan = fullSiteDuplicateFixture(4);
+  assert.equal(scan.status, 'failed');
+  assert.equal(scan.validation.duplicateFullnames, 4);
+  assert.ok(scan.validation.duplicateFullnameRate > LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT);
+  assert.match(scan.validation.reasons.join('；'), /0\.0100%/);
+
+  const health = evaluateRunHealth({
+    claimed: 146,
+    processed: 146,
+    partial: 1,
+    failed: 0,
+    fatalReasons: persistenceSkipFatalReasons(true),
+  });
+  assert.equal(health.status, 'failed');
+  assert.equal(health.exitCode, 1);
+  assert.ok(health.reasons.includes('persistence_skipped'));
+});
+
+function fullSiteDuplicateFixture(duplicates: number) {
+  const expectedBatches = 146;
+  const perPage = 250;
+  const batches = new Map<number, IncrementalBatchResult<L1ListPageRow>>();
+  for (let batchNo = 1; batchNo <= expectedBatches; batchNo++) {
+    const start = (batchNo - 1) * perPage + 1;
+    const rows = Array.from({ length: perPage }, (_, offset) => {
+      const n = start + offset;
+      return { fullname: `page-${n}`, rating: n, ratingVotes: n + 1, revisions: n + 2 };
+    });
+    if (batchNo >= 2 && batchNo <= duplicates + 1) {
+      const duplicateNo = (batchNo - 1) * perPage;
+      rows[0] = {
+        fullname: `page-${duplicateNo}`,
+        rating: 90_000 + batchNo - 2,
+        ratingVotes: 80_000 + batchNo,
+        revisions: 70_000 + batchNo,
+      };
+    }
+    batches.set(batchNo, {
+      status: 'ok',
+      batchNo,
+      rows,
+      pager: { currentPage: 1, totalPages: expectedBatches - batchNo + 1 },
+      diagnostics: {
+        candidateRows: rows.length,
+        parsedRows: rows.length,
+        droppedRows: 0,
+        selectorLiteralFields: 0,
+        errors: [],
+      },
+      error: null,
+    });
+  }
+  return finalizeIncrementalListPagesRun('l1', batches, expectedBatches);
+}
 
 test('L0 按 revision 去重，L1 同时 diff vote 并核对 L0 revision', () => {
   const states = new Map([

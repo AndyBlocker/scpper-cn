@@ -17,6 +17,7 @@ import type { Pool, PoolClient } from 'pg';
 import { claimedRevisionCountFromListCount } from '../collect/revisionCount.js';
 import { bindSqlTuning, SQL_TUNING_CONSTANTS } from '../health/sqlTuning.js';
 import { query, toPgTimestamptz, withTransaction } from './db.js';
+import { resolveAlignedVoteDriftState } from './drift.js';
 import { toPgJson } from './pgText.js';
 import { backoffFrom } from './queues.js';
 import type { ScanTaskKind } from './meta.js';
@@ -770,7 +771,12 @@ export async function claimWorkTasks(
        SELECT id, priority_ord
          FROM priority_ordered
         ORDER BY priority_ord
-        LIMIT GREATEST(0, $2::int - (SELECT total FROM guaranteed_counts))
+        /*
+         * picked 才会 SKIP LOCKED。这里保留一倍后备候选，避免先把 scheduled
+         * 裁成恰好 limit 后，少量并发锁直接把本轮认领数打成 48/49 且无法补位。
+         * 最终 picked 仍按同一 schedule_ord 只取 limit，公平/优先级语义不变。
+         */
+        LIMIT GREATEST(0, ($2::int * 2) - (SELECT total FROM guaranteed_counts))
      ),
      scheduled AS (
        SELECT g.id, g.fair_ord::bigint AS schedule_ord
@@ -2019,6 +2025,10 @@ export async function finishVoteTask(
         WHERE page_id = $1 AND kind = $2 AND resolved_at IS NULL`,
       [task.pageId, task.kind, now],
     );
+
+    if (args.status === 'ok') {
+      await resolveAlignedVoteDriftState(pool, task.pageId, now);
+    }
 
     await query(
       pool,

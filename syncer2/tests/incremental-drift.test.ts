@@ -7,10 +7,23 @@ import {
   applyL1DriftFloodGate,
   classifyL1ProjectionDrift,
   irreconcilableRemoteEvidenceChanged,
+  L1_DRIFT_REPAIR_PRIORITY,
 } from '../src/collect/l1Drift.js';
-import { resolveNonLiveDriftStates } from '../src/store/drift.js';
+import { PRIORITY_AGING_BANDS } from '../src/store/workQueue.js';
+import {
+  resolveAlignedVoteDriftState,
+  resolveNonLiveDriftStates,
+} from '../src/store/drift.js';
 
 describe('L1 projection drift reconciliation', () => {
+  it('持久漂移修复优先级越过 catch-up 老化带', () => {
+    const catchupCeiling = PRIORITY_AGING_BANDS.find((band) => band.minimumPriority === 20)
+      ?.ceilingPriority;
+    assert.equal(catchupCeiling, 99);
+    assert.equal(L1_DRIFT_REPAIR_PRIORITY, 200);
+    assert.ok(L1_DRIFT_REPAIR_PRIORITY > catchupCeiling!);
+  });
+
   it('静态差额在 L1 本轮无变化时仍于第二次连续观测入队', () => {
     const first = classifyL1ProjectionDrift(
       { rating: 10, voteCount: 12, revisionCount: 4 },
@@ -125,5 +138,26 @@ describe('L1 projection drift reconciliation', () => {
     assert.match(sql, /pc\.status = 'live'/);
     assert.match(sql, /consecutive_observations = 0/);
     assert.deepEqual(params, ['2026-08-07T12:00:00.000Z']);
+  });
+
+  it('完整票扫描后仅在本地投影与 L1 保存值精确相等时立即结账', async () => {
+    let sql = '';
+    let params: unknown[] | undefined;
+    const pool = {
+      query: async (statement: string, values?: unknown[]) => {
+        sql = statement;
+        params = values;
+        return { rows: [], rowCount: 1 };
+      },
+    } as unknown as Pool;
+    assert.equal(
+      await resolveAlignedVoteDriftState(pool, 123, '2026-08-13T12:30:00.000Z'),
+      1,
+    );
+    assert.match(sql, /pc\.rating = CASE/);
+    assert.match(sql, /pc\.vote_up \+ pc\.vote_down = CASE/);
+    assert.match(sql, /ds\.remote_value->>'rating'/);
+    assert.match(sql, /ds\.resolved_at IS NULL/);
+    assert.deepEqual(params, [123, '2026-08-13T12:30:00.000Z']);
   });
 });

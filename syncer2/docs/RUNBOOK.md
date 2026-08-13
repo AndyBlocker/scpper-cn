@@ -657,8 +657,10 @@ pm2 ls
 不计作 run 失败；`aborted` 多为断路器；`failed` 再结合 `stats.error` 判断请求耗尽、
 解析失效、身份冲突、数据库或写闸。Tier1 的
 `coverage_ratio < 0.98`、有失败批次或 sample/range 模式都不能授权全站删除推断。
-L1 多批抓取期间若页面跨 offset 移动而出现重复，run 记 `partial`，且不推进增量状态
-或覆盖率；这与请求耗尽、pager/结构损坏的 `failed` 分开。
+L1 多批抓取期间若页面跨 offset 移动而出现重复，同 fullname 保留枚举顺序中的最后一条
+完整观测；重复率不超过 0.01% 时 run 仍为 `ok` 并正常推进。超过 0.01% 才拒绝持久化，
+run 必须为 `failed`、health reason 含 `persistence_skipped` 且进程非零退出，禁止静默降级。
+这与请求耗尽、pager/结构损坏的 `failed` 使用同一告警通道，但保留各自的结构化 reason。
 
 ### meta.page_scan
 

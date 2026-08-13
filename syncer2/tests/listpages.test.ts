@@ -271,7 +271,7 @@ describe('四道校验', () => {
       2,
       2,
     );
-    assert.equal(overlap.status, 'partial');
+    assert.equal(overlap.status, 'failed');
     assert.ok(overlap.validation.duplicateIndexes > 0);
   });
 

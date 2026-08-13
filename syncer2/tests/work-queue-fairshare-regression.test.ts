@@ -110,6 +110,47 @@ after(async () => {
 });
 
 describe('work-queue kind fair-share SQL', () => {
+  it('候选行被并发锁住时从同序后备候选补足 limit', async () => {
+    const pages = highPages.slice(0, 6);
+    await clearTasks();
+    await seedTasks(
+      pages,
+      'votes_full',
+      100,
+      pages.map((_pageId, index) => iso(Date.now() - 60_000 + index)),
+    );
+
+    await sess.begin();
+    try {
+      const locked = await sess.q<{ id: string }>(
+        'lock-two-leading-candidates',
+        `SELECT id::text
+           FROM meta.scan_task
+          WHERE page_id = ANY($1::int[]) AND kind = 'votes_full'
+          ORDER BY created_at, id
+          LIMIT 2
+          FOR UPDATE`,
+        [pages],
+      );
+      assert.equal(locked.length, 2);
+
+      const claimed = await claimWorkTasks(
+        pool,
+        4,
+        `${WORKER}:skip-locked-backfill`,
+        ['votes_full'],
+        undefined,
+        undefined,
+        PREFIX,
+      );
+      assert.equal(claimed.length, 4, '两行被锁时仍须由后备候选补足四个名额');
+      assert.ok(claimed.every((task) => !locked.some((row) => Number(row.id) === task.taskId)));
+    } finally {
+      await sess.rollback();
+      await clearTasks();
+    }
+  });
+
   it('同 kind 的 9 天低优先积压不再淹没新到 priority=200', async () => {
     const now = Date.now();
     await clearTasks();

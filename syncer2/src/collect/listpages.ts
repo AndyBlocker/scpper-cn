@@ -33,6 +33,15 @@ export const LISTPAGES_PER_PAGE = 250;
 export const LISTPAGES_PARSE_DROP_LIMIT = 0.005;
 
 /**
+ * 活动集合 offset 分页的 fullname 重复异常线。
+ *
+ * 生产实测 2,609 轮 L1 中，重复正常尾部为 1 条 95 轮、2 条 9 轮、3 条 1 轮；
+ * 全站约 36,500 页时 3 条仍低于 0.01%，4 条起越线。这个阈值覆盖全部已见分页移动，
+ * 又不会把成片重放误当成正常竞态。
+ */
+export const LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT = 0.0001;
+
+/**
  * 零星批失败的上限：同时受绝对条数与占比约束，两者都满足才算「偶发」。
  *
  * 绝对条数挡住小规模扫描（L0 只有 1--3 批，占比判据在那里没有意义）；
@@ -41,6 +50,35 @@ export const LISTPAGES_PARSE_DROP_LIMIT = 0.005;
 export const LISTPAGES_SPORADIC_FAILED_BATCHES = 3;
 export const LISTPAGES_SPORADIC_FAILED_BATCH_RATIO = 0.03;
 export const LISTPAGES_SNAPSHOT_VERSION = 1;
+
+export interface DuplicateFullnameConvergence<T> {
+  rows: T[];
+  duplicateFullnames: number;
+  duplicateFullnameRate: number;
+  thresholdExceeded: boolean;
+}
+
+/**
+ * 同一 fullname 保留枚举顺序中的最后一条完整观测，不逐字段拼接。
+ *
+ * 每个输出行都原样来自一次真实 ListPages 响应，因此不会合成从未存在过的 rating / votes /
+ * revisions 组合；删除较早重复项后也保持被选中观测原有的全局顺序。
+ */
+export function convergeDuplicateFullnames<T extends { fullname: string }>(
+  rawRows: readonly T[],
+): DuplicateFullnameConvergence<T> {
+  const lastIndex = new Map<string, number>();
+  rawRows.forEach((row, index) => lastIndex.set(row.fullname, index));
+  const rows = rawRows.filter((row, index) => lastIndex.get(row.fullname) === index);
+  const duplicateFullnames = rawRows.length - rows.length;
+  const duplicateFullnameRate = rawRows.length === 0 ? 0 : duplicateFullnames / rawRows.length;
+  return {
+    rows,
+    duplicateFullnames,
+    duplicateFullnameRate,
+    thresholdExceeded: duplicateFullnameRate > LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT,
+  };
+}
 
 /**
  * 规格 §3.2 逐字列出的 selector。
@@ -146,7 +184,11 @@ export interface ListPagesRunValidation {
   fiveStarAbsent: boolean;
   totalStable: boolean;
   pagerMatchesRemoteTotal: boolean;
+  rawRowsEnumerated: number;
   duplicateFullnames: number;
+  duplicateFullnameRate: number;
+  duplicateFullnameRateLimit: number;
+  duplicateConvergence: 'last_occurrence_wins';
   duplicateIndexes: number;
   expectedLastIndex: number | null;
   observedLastIndex: number | null;
@@ -1228,7 +1270,9 @@ export function finalizeListPagesRun(
   const data = ordered
     .map(([, outcome]) => outcomeData(outcome))
     .filter((v): v is ListPagesBatchData => v !== null);
-  const rows = data.flatMap((batch) => batch.rows);
+  const rawRows = data.flatMap((batch) => batch.rows);
+  const duplicateConvergence = convergeDuplicateFullnames(rawRows);
+  const rows = duplicateConvergence.rows;
   const actualFailed = ordered.filter(([, o]) => o.status === 'failed').length;
   const omitted = ordered.filter(
     ([, o]) => o.status === 'partial' && o.intentionalOmission === true,
@@ -1253,16 +1297,16 @@ export function finalizeListPagesRun(
   const fiveStarRows = data.reduce((n, b) => n + b.diagnostics.rejectedFiveStarRows, 0);
   const parseDropRate = candidateRows === 0 ? 0 : droppedRows / candidateRows;
 
-  const totals = rows.map((row) => row.total);
+  const totals = rawRows.map((row) => row.total);
   const firstTotal = totals[0] ?? null;
   const lastTotal = totals.at(-1) ?? null;
   const structurallyEmpty =
     data.length === 1 &&
-    rows.length === 0 &&
+    rawRows.length === 0 &&
     data[0]!.pager.totalPages === 1 &&
     data[0]!.diagnostics.candidateRows === 0;
   const remoteTotal = structurallyEmpty ? 0 : firstTotal;
-  const indices = rows.map((row) => row.index);
+  const indices = rawRows.map((row) => row.index);
   const observedLastIndex = indices.at(-1) ?? null;
   const expectedLastIndex = remoteTotal;
   let indexContinuous = structurallyEmpty || (indices.length > 0 && indices[0] === 1);
@@ -1279,9 +1323,8 @@ export function finalizeListPagesRun(
   }
 
   const duplicateIndexes = indices.length - new Set(indices).size;
-  const fullnames = rows.map((row) => row.fullname);
-  const duplicateFullnames = fullnames.length - new Set(fullnames).size;
-  if (duplicateIndexes > 0 || duplicateFullnames > 0) indexContinuous = false;
+  const duplicateFullnames = duplicateConvergence.duplicateFullnames;
+  if (duplicateIndexes > 0) indexContinuous = false;
 
   const totalStable = structurallyEmpty || (totals.length > 0 && totals.every((n) => n === firstTotal));
   const pagerMatchesRemoteTotal =
@@ -1295,6 +1338,13 @@ export function finalizeListPagesRun(
     reasons.push(`整轮丢行率 ${(parseDropRate * 100).toFixed(3)}% > 0.5%`);
   }
   if (!indexContinuous) reasons.push('跨批 index 不连续、重叠或有空洞');
+  if (duplicateConvergence.thresholdExceeded) {
+    reasons.push(
+      `跨批 fullname 重复率 ${(duplicateConvergence.duplicateFullnameRate * 100).toFixed(4)}% ` +
+        `> ${(LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT * 100).toFixed(4)}% ` +
+        `(${duplicateFullnames}/${rawRows.length})`,
+    );
+  }
   if (fiveStarRows > 0) reasons.push(`五星评分断言拒绝 ${fiveStarRows} 页`);
   if (!totalStable && totals.length > 0) {
     reasons.push(`首/末 total 漂移：${firstTotal} → ${lastTotal}`);
@@ -1336,7 +1386,8 @@ export function finalizeListPagesRun(
     (actualFailed > 0 && !sporadicBatchFailure) ||
     literalFields > 0 ||
     parseDropRate > LISTPAGES_PARSE_DROP_LIMIT ||
-    !pagerMatchesRemoteTotal
+    !pagerMatchesRemoteTotal ||
+    duplicateConvergence.thresholdExceeded
   ) {
     status = 'failed';
   } else if (
@@ -1382,8 +1433,7 @@ export function finalizeListPagesRun(
       avg_tags_len: avg(rows.reduce((n, row) => n + row.mergedTags.length, 0)),
       avg_votes_per_page: avg(rows.reduce((n, row) => n + row.ratingVotes, 0)),
       five_star_rejected: fiveStarRows,
-      duplicate_fullname_rate:
-        rows.length === 0 ? 0 : duplicateFullnames / rows.length,
+      duplicate_fullname_rate: duplicateConvergence.duplicateFullnameRate,
     },
     validation: {
       selectorLiteralFree: literalFields === 0,
@@ -1392,7 +1442,11 @@ export function finalizeListPagesRun(
       fiveStarAbsent: fiveStarRows === 0,
       totalStable,
       pagerMatchesRemoteTotal,
+      rawRowsEnumerated: rawRows.length,
       duplicateFullnames,
+      duplicateFullnameRate: duplicateConvergence.duplicateFullnameRate,
+      duplicateFullnameRateLimit: LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT,
+      duplicateConvergence: 'last_occurrence_wins',
       duplicateIndexes,
       expectedLastIndex,
       observedLastIndex,

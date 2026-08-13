@@ -14,8 +14,10 @@ import {
   type HttpClient,
 } from '../http/client.js';
 import {
+  LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT,
   LISTPAGES_SPORADIC_FAILED_BATCHES,
   LISTPAGES_SPORADIC_FAILED_BATCH_RATIO,
+  convergeDuplicateFullnames,
 } from './listpages.js';
 import { decodeXmlEntities } from '../sitemap/parse.js';
 import { createLogger, type Logger } from '../util/log.js';
@@ -78,7 +80,11 @@ export interface IncrementalListPagesRun<T extends IncrementalListPageRow> {
   pagesEnumerated: number;
   validation: {
     complete: boolean;
+    rawRowsEnumerated: number;
     duplicateFullnames: number;
+    duplicateFullnameRate: number;
+    duplicateFullnameRateLimit: number;
+    duplicateConvergence: 'last_occurrence_wins';
     reasons: string[];
   };
   parseFingerprint: Record<string, unknown>;
@@ -232,19 +238,21 @@ export async function scanIncrementalListPages(
   const log = options.logger ?? createLogger(`listpages-${layer}`);
   const concurrency = Math.max(1, Math.min(options.concurrency ?? 5, 5));
   const batches = new Map<number, IncrementalBatchResult<IncrementalListPageRow>>();
-  if (options.shouldStop?.() === true) return finalizeRun(layer, batches, null);
+  if (options.shouldStop?.() === true) {
+    return finalizeIncrementalListPagesRun(layer, batches, null);
+  }
   const first = await fetchBatch(http, baseUrl, layer, 1, options.windowHours, log);
   batches.set(1, first);
   if (first.status === 'failed') {
-    return finalizeRun(layer, batches, null);
+    return finalizeIncrementalListPagesRun(layer, batches, null);
   }
   if (first.pager === null) {
     if (layer === 'l0' && first.rows.length < INCREMENTAL_LISTPAGES_PER_PAGE) {
-      return finalizeRun(layer, batches, 1);
+      return finalizeIncrementalListPagesRun(layer, batches, 1);
     }
     first.status = 'failed';
     first.error = '首批缺 pager 且行数不能证明 L0 单页；禁止猜测总批数';
-    return finalizeRun(layer, batches, null);
+    return finalizeIncrementalListPagesRun(layer, batches, null);
   }
 
   const expectedBatches = first.pager.totalPages;
@@ -255,7 +263,7 @@ export async function scanIncrementalListPages(
       await fetchBatch(http, baseUrl, layer, batchNo, options.windowHours, log),
     );
   }, options.shouldStop);
-  return finalizeRun(layer, batches, expectedBatches);
+  return finalizeIncrementalListPagesRun(layer, batches, expectedBatches);
 }
 
 /** 导出供回归测试钉死“1..N 全翻、无阈值早停”。 */
@@ -319,11 +327,11 @@ async function fetchBatch(
   return failedBatch(layer, batchNo, emptyDiagnostics(), `重试耗尽：${lastError}`);
 }
 
-function finalizeRun(
+export function finalizeIncrementalListPagesRun<T extends IncrementalListPageRow>(
   layer: IncrementalListPagesLayer,
-  batches: Map<number, IncrementalBatchResult<IncrementalListPageRow>>,
+  batches: Map<number, IncrementalBatchResult<T>>,
   expectedBatches: number | null,
-): IncrementalListPagesRun<IncrementalListPageRow> {
+): IncrementalListPagesRun<T> {
   const hardReasons: string[] = [];
   const partialReasons: string[] = [];
   const ordered = [...batches.entries()].sort(([a], [b]) => a - b);
@@ -390,14 +398,19 @@ function finalizeRun(
     }
   }
 
-  const rows = ordered
+  const rawRows = ordered
     .filter(([, batch]) => batch.status === 'ok')
     .flatMap(([, batch]) => batch.rows);
-  const duplicateFullnames = rows.length - new Set(rows.map((row) => row.fullname)).size;
-  if (duplicateFullnames > 0) {
-    // 多批抓取不是远端事务快照；抓取期间页面移动会让相邻 offset 重复一条。
-    // 证据不完整，不能推进状态，但这不是请求耗尽或解析器失效。
-    partialReasons.push(`跨批 fullname 重复 ${duplicateFullnames}`);
+  const duplicateConvergence = convergeDuplicateFullnames(rawRows);
+  const rows = duplicateConvergence.rows;
+  const duplicateFullnames = duplicateConvergence.duplicateFullnames;
+  if (duplicateConvergence.thresholdExceeded) {
+    // 1--3 条实测为活动集合 offset 移动；比例越过历史尾部后不再假设同一成因。
+    hardReasons.push(
+      `跨批 fullname 重复率 ${(duplicateConvergence.duplicateFullnameRate * 100).toFixed(4)}% ` +
+        `> ${(LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT * 100).toFixed(4)}% ` +
+        `(${duplicateFullnames}/${rawRows.length})`,
+    );
   }
   const candidateRows = ordered.reduce((sum, [, batch]) => sum + batch.diagnostics.candidateRows, 0);
   const droppedRows = ordered.reduce((sum, [, batch]) => sum + batch.diagnostics.droppedRows, 0);
@@ -420,7 +433,15 @@ function finalizeRun(
     requestedBatches: batches.size,
     batchesFailed,
     pagesEnumerated: rows.length,
-    validation: { complete, duplicateFullnames, reasons },
+    validation: {
+      complete,
+      rawRowsEnumerated: rawRows.length,
+      duplicateFullnames,
+      duplicateFullnameRate: duplicateConvergence.duplicateFullnameRate,
+      duplicateFullnameRateLimit: LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT,
+      duplicateConvergence: 'last_occurrence_wins',
+      reasons,
+    },
     parseFingerprint: {
       sample_counts: {
         parse_drop_rate: candidateRows,
@@ -430,7 +451,7 @@ function finalizeRun(
         candidateRows === 0
           ? 0
           : literalFields / (candidateRows * selectorsFor(layer).length),
-      duplicate_fullname_rate: rows.length === 0 ? 0 : duplicateFullnames / rows.length,
+      duplicate_fullname_rate: duplicateConvergence.duplicateFullnameRate,
     },
   };
 }

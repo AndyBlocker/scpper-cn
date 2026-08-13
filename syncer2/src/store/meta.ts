@@ -471,9 +471,8 @@ export async function insertPageScans(
   scannedAt: string,
 ): Promise<number> {
   if (runId === null || rows.length === 0) return 0;
-  // ListPages 分页期间页面移动会让同一 fullname 出现两次；整轮会因
-  // duplicateFullnames 明确降为 partial，但证据写入本身仍必须能结账。
-  // 同 run/page/kind 在一条 INSERT 里不去重会触发 PG cardinality violation。
+  // 调用方通常已按 fullname 收敛；这里仍防御同 run/page/kind 的其它来源重复，
+  // 避免一条 INSERT 触发 PG cardinality violation。
   const uniqueRows = new Map<string, PageScanRow>();
   for (const row of rows) uniqueRows.set(`${row.pageId}:${row.kind}`, row);
   const ts = toPgTimestamptz(scannedAt);

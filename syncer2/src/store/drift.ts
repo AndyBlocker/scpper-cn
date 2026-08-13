@@ -5,6 +5,7 @@ import {
   applyL1DriftFloodGate,
   classifyL1ProjectionDrift,
   irreconcilableRemoteEvidenceChanged,
+  L1_DRIFT_REPAIR_PRIORITY,
   type L1DriftFloodGate,
   type L1DriftTaskKind,
 } from '../collect/l1Drift.js';
@@ -197,7 +198,7 @@ export async function observeL1ProjectionDrift(
       pageId: drift.pageId,
       kind: drift.kind,
       reasons: drift.reasons,
-      priority: Math.min(100, 70 + drift.magnitude),
+      priority: L1_DRIFT_REPAIR_PRIORITY,
       notBefore: observedAt,
     }));
   const discoveredPages = new Set(current.map((row) => row.pageId)).size;
@@ -484,6 +485,42 @@ export async function resolveNonLiveDriftStates(
            WHERE pc.page_id = ds.page_id AND pc.status = 'live'
         )`,
     [toPgTimestamptz(observedAt)],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * votes_full 成功写入本地投影后，若它已与保存的 L1 声明精确一致则立即结账。
+ * 扫描期间又发生投票、证据字段缺失或格式异常时条件不成立，仍留给下一轮 L1 复核。
+ */
+export async function resolveAlignedVoteDriftState(
+  pool: Pool,
+  pageId: number,
+  resolvedAt: string,
+): Promise<number> {
+  const result = await query(
+    pool,
+    'drift:resolve_aligned_vote_after_scan',
+    `UPDATE meta.incremental_drift_state ds
+        SET consecutive_observations = 0,
+            resolved_at = $2::timestamptz
+       FROM serve.page_current pc
+      WHERE ds.page_id = $1
+        AND ds.kind = 'votes_full'
+        AND ds.resolved_at IS NULL
+        AND pc.page_id = ds.page_id
+        AND pc.status = 'live'
+        AND pc.rating = CASE
+              WHEN ds.remote_value->>'rating' ~ '^-?[0-9]+$'
+              THEN (ds.remote_value->>'rating')::int
+              ELSE NULL
+            END
+        AND pc.vote_up + pc.vote_down = CASE
+              WHEN ds.remote_value->>'vote_count' ~ '^[0-9]+$'
+              THEN (ds.remote_value->>'vote_count')::int
+              ELSE NULL
+            END`,
+    [pageId, toPgTimestamptz(resolvedAt)],
   );
   return result.rowCount ?? 0;
 }

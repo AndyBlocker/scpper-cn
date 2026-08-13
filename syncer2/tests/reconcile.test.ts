@@ -398,7 +398,15 @@ test('每轮完整 L1 都替换同日旧快照，半截轮不覆盖最后完整�
     const incomplete = {
       ...l1Run([{ fullname: 'partial-page', rating: 3, ratingVotes: 3, revisions: 3 }]),
       status: 'partial' as const,
-      validation: { complete: false, reasons: ['fixture'], duplicateFullnames: 0 },
+      validation: {
+        complete: false,
+        rawRowsEnumerated: 1,
+        duplicateFullnames: 0,
+        duplicateFullnameRate: 0,
+        duplicateFullnameRateLimit: 0.0001,
+        duplicateConvergence: 'last_occurrence_wins' as const,
+        reasons: ['fixture'],
+      },
     };
     assert.equal(
       advanceDailyL1EnumerationSnapshot(file, incomplete, '2026-08-13T00:15:00.000Z').reason,
@@ -1057,7 +1065,15 @@ function l1Run(
     requestedBatches: 1,
     batchesFailed: 0,
     pagesEnumerated: rows.length,
-    validation: { complete: true, duplicateFullnames: 0, reasons: [] },
+    validation: {
+      complete: true,
+      rawRowsEnumerated: rows.length,
+      duplicateFullnames: 0,
+      duplicateFullnameRate: 0,
+      duplicateFullnameRateLimit: 0.0001,
+      duplicateConvergence: 'last_occurrence_wins',
+      reasons: [],
+    },
     parseFingerprint: {},
   };
 }

@@ -96,6 +96,11 @@ test('论坛增量/消费与图片 worker 均有有限短任务调度', async ()
   assert.match(imageTimeout, /^TimeoutStartSec=10min$/m);
   assert.match(pkg.scripts['schedule:forum-discovery'] ?? '', /forum-incremental/);
   assert.match(pkg.scripts['schedule:forum-audit'] ?? '', /sitemap-scan.*threads/);
+  assert.match(
+    pkg.scripts['schedule:forum-consume'] ?? '',
+    /forum-scan.*--limit 50.*--max-runtime-sec 360/,
+    '50 个重主题的实测尾部超过 300s；360s 恰守住 service 硬超时 60% 合同',
+  );
   assert.match(pkg.scripts['schedule:image-ingest'] ?? '', /image-ingest/);
   assert.match(
     pkg.scripts['schedule:image-ingest'] ?? '',
