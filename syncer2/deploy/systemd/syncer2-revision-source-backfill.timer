@@ -2,8 +2,8 @@
 Description=syncer2 low-priority live-page revision full-source backfill
 
 [Timer]
-# L1 实测通常在 :24/:54 前退出；本任务只在 :25/:55 启动，且自身 4 分钟预算，
-# 必须在下一轮 L0(:02/:32)前让路。CLI 还会看到 running 的 L0/L1 后零请求退出。
+# 保留 :25/:55 的历史相位；它可与 L1 重叠，不再以看到 running 的 L0/L1 为整轮退出条件。
+# revision-source 归 background 令牌桶（800/h，capacity 400），由配额等待而不是定时器相位让路。
 OnCalendar=*-*-* *:25,55:00 Asia/Shanghai
 AccuracySec=30s
 Persistent=false

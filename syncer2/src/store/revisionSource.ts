@@ -16,6 +16,58 @@ export const REVISION_SOURCE_POPULATION = 'revision_source_full';
 export const REVISION_SOURCE_MODE = 'revision_source_backfill';
 export const REVISION_SOURCE_PAGE_SCAN_KIND = 'revision_source';
 
+export const REVISION_SOURCE_SCHEDULE_INTERVAL_MS = 30 * 60_000;
+
+export interface RevisionSourceRealtimeContentionDecision {
+  action: 'execute';
+  active: string[];
+  coordination: 'background_token_bucket';
+}
+
+/**
+ * 实时链路繁忙只作为观测，不再成为整轮退出条件。revision-source 已被 0062 固定映射到
+ * background 令牌桶（800/h、容量 400），其 300 条/半小时需求在独立配额内；再叠一层
+ * “看见 L1 就退出”只会把定时器相位变成永久阻塞。
+ */
+export function decideRevisionSourceRealtimeContention(
+  active: readonly string[],
+): RevisionSourceRealtimeContentionDecision {
+  return {
+    action: 'execute',
+    active: [...active],
+    coordination: 'background_token_bucket',
+  };
+}
+
+/**
+ * 1-based FIFO 位置在“每轮硬保证的最少执行机会”下的保守调度界。
+ * 生产配置的 300 是上限，不是 200 秒预算内的最低吞吐；硬界因此使用 1。
+ * 失败或预算中断会把 not_before 推到当时/未来，不会让同一队头原地自旋。
+ * 此界不声称覆盖 Wikidot/网络持续不可用、写入冻结或 timer 被停用；
+ * 调用方还必须保持任务 due/live。
+ */
+export function revisionSourceDispatchUpperBoundMs(
+  waitingPosition: number,
+  guaranteedDispatchesPerRound: number,
+  scheduleIntervalMs = REVISION_SOURCE_SCHEDULE_INTERVAL_MS,
+): number {
+  if (!Number.isSafeInteger(waitingPosition) || waitingPosition < 1) {
+    throw new RangeError(`waitingPosition 必须是正整数，收到 ${waitingPosition}`);
+  }
+  if (
+    !Number.isSafeInteger(guaranteedDispatchesPerRound)
+    || guaranteedDispatchesPerRound < 1
+  ) {
+    throw new RangeError(
+      `guaranteedDispatchesPerRound 必须是正整数，收到 ${guaranteedDispatchesPerRound}`,
+    );
+  }
+  if (!Number.isSafeInteger(scheduleIntervalMs) || scheduleIntervalMs < 1) {
+    throw new RangeError(`scheduleIntervalMs 必须是正整数，收到 ${scheduleIntervalMs}`);
+  }
+  return Math.ceil(waitingPosition / guaranteedDispatchesPerRound) * scheduleIntervalMs;
+}
+
 export type RevisionSourceFailureDisposition = 'deterministic' | 'transient';
 
 /**

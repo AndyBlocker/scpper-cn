@@ -45,6 +45,7 @@ import {
   assertPilotPassed,
   classifyRevisionSourceFailure,
   claimRevisionSourceJobs,
+  decideRevisionSourceRealtimeContention,
   finishRevisionSourceJob,
   loadPilotCandidates,
   loadRevisionSourceStorageStats,
@@ -111,6 +112,8 @@ interface Counters {
   currentCrosschecks: number;
   retries: number;
   irreconcilable: number;
+  /** no_permission/revision_error 等目标级确定性结果；即使未满三次也不代表链路失败。 */
+  deterministicFailures: number;
   failed: number;
   /** PGF01 是我方状态，不进入 processed/failed、退避或任何健康指标分母。 */
   writeFreezeSkipped: number;
@@ -535,6 +538,7 @@ async function main(): Promise<void> {
     currentCrosschecks: 0,
     retries: 0,
     irreconcilable: 0,
+    deterministicFailures: 0,
     failed: 0,
     writeFreezeSkipped: 0,
     skippedDeleted: 0,
@@ -556,6 +560,7 @@ async function main(): Promise<void> {
   let diskFreeStart = 0;
   let diskFreeEnd = 0;
   let diskStopped = false;
+  let realtimeContention = decideRevisionSourceRealtimeContention([]);
   const stop = (): void => {
     stopping = true;
   };
@@ -570,27 +575,11 @@ async function main(): Promise<void> {
     runId = await startIngestRun(pool, SOURCE, observedAt);
 
     const active = await realtimeCollectionActive(pool);
+    realtimeContention = decideRevisionSourceRealtimeContention(active);
     if (active.length > 0) {
-      const stats = {
-        mode: REVISION_SOURCE_MODE,
-        population_type: REVISION_SOURCE_POPULATION,
-        skipped: 'l0_l1_active',
-        active,
-      };
-      await finishIngestRun(pool, runId, {
-        status: 'ok',
-        finishedAt: new Date().toISOString(),
-        pagesEnumerated: 0,
-        remoteTotal: null,
-        remoteTotalSource: 'unknown',
-        batchesTotal: 0,
-        batchesFailed: 0,
-        transportFailureRate: null,
-        populationType: REVISION_SOURCE_POPULATION,
-        stats,
+      log.info('实时采集活跃；回填继续在 background 独立令牌桶内排队', {
+        ...realtimeContention,
       });
-      emitSummary({ ok: true, status: 'skipped', ...stats });
-      return;
     }
 
     const activeWriteFreezes = await activeRevisionSourceWriteFreezes(pool);
@@ -733,15 +722,17 @@ async function main(): Promise<void> {
             // 同一 worker 的后续 job 会撞同一个闸；停在当前边界，等 release_writes。
             break;
           }
+          const disposition = classifyRevisionSourceFailure(error);
           const action = await finishRevisionSourceJob(pool, row, workerId, {
             status: 'failed',
             error,
-            disposition: classifyRevisionSourceFailure(error),
+            disposition,
             resultHashHex: createHash('sha256').update(error).digest('hex'),
           });
           activeRevisionSeq = null;
           counters.processed++;
           counters.failed++;
+          if (disposition === 'deterministic') counters.deterministicFailures++;
           if (action === 'retry') counters.retries++;
           else counters.irreconcilable++;
           pageEvidence.errors.push(`revision=${row.wikidotRevisionId}: ${error}`);
@@ -759,7 +750,7 @@ async function main(): Promise<void> {
       processed: counters.processed,
       partial: 0,
       failed: counters.failed,
-      deterministicFailures: counters.irreconcilable,
+      deterministicFailures: counters.deterministicFailures,
       deferred:
         counters.writeFreezeSkipped
         + Number(diskStopped)
@@ -814,10 +805,11 @@ async function main(): Promise<void> {
       startupProbe,
       stoppedBySignal: stopping,
       timeBudgetReached: budget.checkpoint(),
+      realtimeContention,
       ...budget.summary(),
       healthExclusions: {
         write_freeze: counters.writeFreezeSkipped,
-        deterministic_failures: counters.irreconcilable,
+        deterministic_failures: counters.deterministicFailures,
       },
       health,
     };
@@ -940,6 +932,7 @@ async function main(): Promise<void> {
         version: REVISION_SOURCE_VERSION,
         error,
         breaker,
+        realtimeContention,
         health,
         ...counters,
         byKind: {

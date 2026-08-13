@@ -187,6 +187,41 @@ describe('pending 收敛与生产写入门（事务回滚）', () => {
     assert.equal(real.rows.length, 1);
     assert.ok(Number(real.rows[0]!.revision_count) > 0);
   });
+
+  it('数据库门覆盖 record_page_scan 生成的 meta.ingest_run，但不误伤真实页缺 run 留证', async () => {
+    const syntheticPage = await client.query<{ page_id: number }>(
+      `SELECT ingest.register_page($1,$2,now(),'test_pending_cleanup') AS page_id`,
+      [2_109_998_003, 'ts2test:synthetic-run-guard'],
+    );
+    const syntheticPageId = Number(syntheticPage.rows[0]!.page_id);
+    await client.query('SAVEPOINT synthetic_run');
+    await assert.rejects(
+      client.query(
+        `INSERT INTO meta.ingest_run(source,status,stats)
+         VALUES ('synthetic','running',jsonb_build_object(
+           'synthetic',true,'first_page_id',$1::int,'first_kind','meta'
+         ))`,
+        [syntheticPageId],
+      ),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'P2T01');
+        return true;
+      },
+    );
+    await client.query('ROLLBACK TO SAVEPOINT synthetic_run');
+
+    const realPage = await client.query<{ page_id: number }>(
+      `SELECT page_id FROM serve.page_current WHERE slug='test-log-046-de-03'`,
+    );
+    const allowed = await client.query<{ id: string }>(
+      `INSERT INTO meta.ingest_run(source,status,stats)
+       VALUES ('synthetic','running',jsonb_build_object(
+         'synthetic',true,'first_page_id',$1::int,'first_kind','meta'
+       )) RETURNING id::text`,
+      [realPage.rows[0]!.page_id],
+    );
+    assert.equal(allowed.rows.length, 1);
+  });
 });
 
 test('存量三类已到语义终态，生产合成页已清零', async () => {

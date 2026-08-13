@@ -587,8 +587,10 @@ journalctl --user -u syncer2-job@l0.service -u syncer2-job@l1.service \
 首次必须先跑 `npm run revision-source:pilot`。门禁要求 1,000/1,000 条完成抓取、入库、
 `source_sha` 回填和 content_blob 回读逐字节一致，其中 100 个当前版本还要与
 `ViewSourceModule` 逐字节一致。门禁通过后才启用
-`syncer2-revision-source-backfill.timer`。timer 在 `:25/:55` 错峰、每轮 4 分钟、
-单并发且最多 4 req/s；发现 L0/L1 正在运行时零请求退出。
+`syncer2-revision-source-backfill.timer`。timer 在 `:25/:55` 启动，单并发、每轮最多
+300 条且有 200 秒运行预算。它可与 L1 重叠；看到 L0/L1 running 只记录观测，
+不再整轮退出。带宽由 `background` 连续令牌桶（800/h、capacity 400）与全局
+FIFO 约束，因此相位对齐不会把低优先级让路退化为永不执行。
 
 监控以 `population_type=revision_source_full` 独立分层，不能借 hybrid/L0/L1 基线。
 每小时检查任务状态、`source_bytes`/`response_bytes`、`blob_inserted`、数据库与

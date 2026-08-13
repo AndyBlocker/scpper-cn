@@ -30,11 +30,19 @@ import { openSess, resolveTestDatabaseUrl } from './helpers/pg.js';
 
 const WORKER = 'identity-check-test';
 const pool = createPool(resolveTestDatabaseUrl(), { max: 4 });
+let testRunId: number;
 
 before(async () => {
   const sess = await openSess('identity-check-clean-before');
   try {
     await cleanupAll(sess);
+    testRunId = Number(await sess.val<string>(
+      'identity-check-run',
+      `INSERT INTO meta.ingest_run(source,status,started_at)
+       VALUES ('test_syncer2','running',$1::timestamptz)
+       RETURNING id::text`,
+      [OBSERVED_ISO],
+    ));
   } finally {
     await sess.end();
   }
@@ -127,7 +135,7 @@ describe('通用失败签名与身份复核', () => {
           pool,
           http: identityHttp(slug, successorWid),
           baseUrl: 'https://scp-wiki-cn.wikidot.com',
-          runId: null,
+          runId: testRunId,
         },
         task,
         OBSERVED_ISO,
@@ -194,7 +202,7 @@ describe('通用失败签名与身份复核', () => {
           pool,
           http: goneHttp(),
           baseUrl: 'https://scp-wiki-cn.wikidot.com',
-          runId: null,
+          runId: testRunId,
         },
         task,
         OBSERVED_ISO,
@@ -227,7 +235,7 @@ describe('通用失败签名与身份复核', () => {
         pool,
         http: identityHttp(slug, wikidotId),
         baseUrl: 'https://scp-wiki-cn.wikidot.com',
-        runId: null,
+        runId: testRunId,
       },
       task,
       OBSERVED_ISO,
