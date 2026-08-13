@@ -126,11 +126,12 @@ export function sitemapResultHash(slug: string, lastmod: string | null): Buffer 
  * NUL 那个 bug 是「记录失败时自己失败」，这里是「连记录的机会都没有」，
  * 都属于系统无法如实描述自身状态。
  *
- * 阈值取 6 小时：远大于最慢的一轮（L3 全字段周扫），不会误伤仍在跑的长任务。
+ * 阈值取 1 小时：15 个 systemd 短任务中最长配置为 25 分钟，留足两倍余量；
+ * forum-consume 的正常 298 秒优雅收尾更不会被误伤。回填脚本自行维护其 run 生命周期。
  */
 export async function reapStaleIngestRuns(
   pool: Pool,
-  staleHours = 6,
+  staleHours = 1,
 ): Promise<number> {
   if (!Number.isFinite(staleHours) || staleHours <= 0) {
     throw new RangeError(`悬挂 run 回收阈值必须为正数小时，收到 ${String(staleHours)}`);
@@ -144,7 +145,8 @@ export async function reapStaleIngestRuns(
               finished_at = now(),
               stats = stats || jsonb_build_object(
                 'aborted_reason', 'stale_running_reaped',
-                'stale_hours', $1::numeric
+                'stale_hours', $1::numeric,
+                'reaped_at', now()
               )
         WHERE status = 'running'
           AND started_at < now() - make_interval(hours => $1::int)

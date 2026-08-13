@@ -256,8 +256,8 @@ test('v1 alias 指向的 SHA 路径缺失时不伪复用：实际下载并原子
 test('站外失败只进入 external 分链路，wikidot 成功率与 breaker 判据不受污染', () => {
   const health = evaluateImagePipelineHealth(
     {
-      wikidot_site: { claimed: 10, completed: 10, retry: 0, failed: 0 },
-      external: { claimed: 10, completed: 0, retry: 10, failed: 0 },
+      wikidot_site: { claimed: 10, completed: 10, retry: 0, failed: 0, healthExcluded: 0 },
+      external: { claimed: 10, completed: 0, retry: 10, failed: 0, healthExcluded: 0 },
     },
     { wikidotSite: false, external: false },
   );

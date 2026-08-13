@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 
 import { query, toPgTimestamptz, withTransaction } from '../store/db.js';
+import { reapStaleIngestRuns } from '../store/meta.js';
 import { toPgJson } from '../store/pgText.js';
 import { observeEgressAccounting } from './egressAccounting.js';
 
@@ -138,7 +139,7 @@ export function pendingPolicyFor(collection: string, family: string): PendingPol
     return policy(30 * 60, 2 * HOUR, '投影每 10 分钟；30 分钟已连续错过至少两轮');
   }
   if (family === 'ingest_run') {
-    return policy(HOUR, 6 * HOUR, '短进程通常分钟级；6h 是既有悬挂 run 回收边界');
+    return policy(30 * 60, HOUR, '短进程最长配置 25 分钟；30 分钟提示、1 小时自动收口');
   }
   if (family === 'incremental_drift_state') {
     return policy(HOUR, 6 * HOUR, 'L1 五分钟级且 work-queue 每分钟；一小时足够形成多轮证据');
@@ -194,8 +195,8 @@ export function pendingPolicyFor(collection: string, family: string): PendingPol
   if (family === 'write_freeze') {
     return policy(HOUR, 6 * HOUR, '写冻结是待人工释放的运行态，不能成为常态');
   }
-  if (family === 'egress_alert' || family === 'egress_control') {
-    return policy(15 * 60, HOUR, '出口控制按分钟窗口恢复；15 分钟未清需值守关注');
+  if (family === 'egress_control') {
+    return policy(15 * 60, HOUR, '真实站点 pressure 按分钟窗口恢复；15 分钟未清需值守关注');
   }
   if (family === 'egress_accounting_divergence') {
     return policy(
@@ -644,6 +645,8 @@ export async function captureOldestPending(
   observedAt: string = new Date().toISOString(),
 ): Promise<CaptureOldestPendingResult> {
   const timestamp = toPgTimestamptz(observedAt);
+  // 巡检本身每 5 分钟运行：即使没有新的采集 run 启动，也能收口异常退出留下的孤儿。
+  await reapStaleIngestRuns(pool);
   return withTransaction(pool, 'oldest_pending:capture', (db) =>
     captureInTransaction(db, timestamp));
 }

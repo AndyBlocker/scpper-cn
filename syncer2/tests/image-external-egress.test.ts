@@ -12,12 +12,18 @@ import {
 import {
   EXTERNAL_IMAGE_EGRESS_POLICY,
   EXTERNAL_IMAGE_GLOBAL_HOURLY_BUDGET,
+  ExternalHostDeferredError,
   evaluateExternalRateLimitSignal,
 } from '../src/image/externalEgress.js';
-import { evaluateImagePipelineHealth } from '../src/image/health.js';
+import {
+  emptyImageRouteCounters,
+  evaluateImagePipelineHealth,
+  recordImageRouteResult,
+} from '../src/image/health.js';
 import {
   claimNextImageJob,
   imageRetryBackoffMs,
+  isTerminalImageFailure,
   processImageJob,
   type ImageWorkerOptions,
 } from '../src/image/worker.js';
@@ -82,8 +88,8 @@ test('429/503 单次立即降档；普通 500 仍由失败窗口判断，恢复�
 test('站外全面故障仍与 Wikidot 健康判据隔离', () => {
   const health = evaluateImagePipelineHealth(
     {
-      wikidot_site: { claimed: 20, completed: 20, retry: 0, failed: 0 },
-      external: { claimed: 100, completed: 0, retry: 100, failed: 0 },
+      wikidot_site: { claimed: 20, completed: 20, retry: 0, failed: 0, healthExcluded: 0 },
+      external: { claimed: 100, completed: 0, retry: 100, failed: 0, healthExcluded: 0 },
     },
     { wikidotSite: false, external: true },
   );
@@ -165,6 +171,95 @@ test('失败项跨轮按 attempts 指数退避，并在 SQL 中写未来 not_bef
   assert.match(jobUpdates[0]!.sql, /not_before = CASE[\s\S]*now\(\) \+/);
   assert.equal(jobUpdates[0]!.params[2], 'pending');
   assert.equal(jobUpdates[0]!.params[4], String(60 * 60_000));
+});
+
+test('主机闸推迟：任务可重试且按放行时间调度，不消耗尝试预算或站点健康度', async () => {
+  const pageUpdates: Array<{ sql: string; params: unknown[] }> = [];
+  const jobUpdates: Array<{ sql: string; params: unknown[] }> = [];
+  const tx = {
+    query: async (sql: string, params?: unknown[]) => {
+      if (/^(?:BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [], rowCount: null };
+      if (sql.includes('UPDATE serve.page_image')) {
+        pageUpdates.push({ sql, params: params ?? [] });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE meta.image_ingest_job')) {
+        jobUpdates.push({ sql, params: params ?? [] });
+        return { rows: [], rowCount: 1 };
+      }
+      throw new Error(`unexpected tx SQL: ${sql}`);
+    },
+    release: () => undefined,
+  };
+  const pool = {
+    connect: async () => tx,
+    query: async (sql: string) => {
+      if (sql.includes('FROM serve.page_image pi')) return { rows: [], rowCount: 0 };
+      if (sql.includes('FROM serve.image_asset_url_alias alias')) return { rows: [], rowCount: 0 };
+      throw new Error(`unexpected pool SQL: ${sql}`);
+    },
+  } as unknown as Pool;
+  const deferredMs = 45_000.25;
+  const deferredClient = {
+    get: async () => {
+      throw new ExternalHostDeferredError('deferred.example.com', deferredMs);
+    },
+  };
+  const result = await processImageJob(
+    pool,
+    {
+      id: 3,
+      pageId: 3,
+      normalizedUrl: 'https://deferred.example.com/x.png',
+      displayUrl: 'https://deferred.example.com/x.png',
+      attempts: 6,
+    },
+    { wikidot: deferredClient, external: deferredClient },
+    {
+      siteHost: 'scp-wiki-cn.wikidot.com',
+      assetRoot: '/tmp/syncer2-image-external-egress-test',
+      maxBytes: 1024,
+      maxAttempts: 5,
+      allowedHosts: ['*'],
+      blockedHosts: [],
+      retryBaseMs: 60 * 60_000,
+      retryMaxMs: 7 * 24 * 60 * 60_000,
+    },
+  );
+
+  assert.equal(result.status, 'retry', '超过 maxAttempts 也不能把自我保护推迟终态化');
+  assert.equal(result.failureClass, 'host_deferred');
+  assert.equal(isTerminalImageFailure({
+    failureClass: 'host_deferred',
+    intrinsicTerminal: false,
+    attempts: 6,
+    maxAttempts: 5,
+  }), false);
+  assert.equal(pageUpdates.length, 1);
+  assert.match(pageUpdates[0]!.sql, /THEN 'queued'/);
+  assert.equal(pageUpdates[0]!.params[3], true, '页面引用仍是排队态，不累计资源失败');
+  assert.equal(jobUpdates.length, 1);
+  assert.equal(jobUpdates[0]!.params[2], 'pending');
+  assert.equal(jobUpdates[0]!.params[3], false);
+  assert.equal(jobUpdates[0]!.params[4], String(Math.ceil(deferredMs)), '调度毫秒必须是 bigint 可接受的整数');
+  assert.equal(jobUpdates[0]!.params[5], 'host_deferred');
+  assert.equal(jobUpdates[0]!.params[9], true, '本次闸推迟会归还 claim 增加的 attempts');
+  assert.match(jobUpdates[0]!.sql, /not_before = CASE[\s\S]*now\(\) \+/);
+  assert.match(jobUpdates[0]!.sql, /attempts = CASE[\s\S]*attempts - 1/);
+
+  const routes = {
+    wikidot_site: emptyImageRouteCounters(),
+    external: emptyImageRouteCounters(),
+  };
+  recordImageRouteResult(routes, result);
+  assert.equal(routes.external.retry, 1);
+  assert.equal(routes.external.healthExcluded, 1);
+  const health = evaluateImagePipelineHealth(
+    routes,
+    { wikidotSite: false, external: false },
+  );
+  assert.equal(health.external.failureRate, 0);
+  assert.equal(health.external.exitCode, 0);
 });
 
 test('认领只取已到 not_before 的任务，并优先绕过处于 host 退让期的队头', async () => {

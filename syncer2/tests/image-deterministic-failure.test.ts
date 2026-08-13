@@ -14,25 +14,28 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   emptyImageRouteCounters,
-  isDeterministicImageFailure,
+  isImageFailureExcludedFromHealth,
 } from '../src/image/health.js';
 
 describe('确定性图片失败分类', () => {
   it('死链/非图片/被封主机都是确定性的', () => {
     for (const c of ['http_permanent', 'invalid_content_type', 'blocked_host']) {
-      assert.equal(isDeterministicImageFailure(c), true, c);
+      assert.equal(isImageFailureExcludedFromHealth(c), true, c);
     }
   });
 
   it('限流与瞬时错误必须仍算压力——它们正是要驱动退让的信号', () => {
     for (const c of ['http_transient', 'network', 'timeout', 'unknown', null, undefined]) {
-      assert.equal(isDeterministicImageFailure(c), false, String(c));
+      assert.equal(isImageFailureExcludedFromHealth(c), false, String(c));
     }
   });
 
-  it('计数器带 deterministic 字段且初值为 0', () => {
+  it('计数器带 healthExcluded 字段且初值为 0', () => {
     const c = emptyImageRouteCounters();
-    assert.equal(c.deterministic, 0);
-    assert.deepEqual(Object.keys(c).sort(), ['claimed', 'completed', 'deterministic', 'failed', 'retry']);
+    assert.equal(c.healthExcluded, 0);
+    assert.deepEqual(
+      Object.keys(c).sort(),
+      ['claimed', 'completed', 'failed', 'healthExcluded', 'retry'],
+    );
   });
 });

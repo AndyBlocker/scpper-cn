@@ -12,20 +12,20 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isDeterministicImageFailure } from '../src/image/health.js';
+import { isImageFailureExcludedFromHealth } from '../src/image/health.js';
 
 describe('主机不可解析的定性', () => {
   it('host_unresolvable 属确定性，与 http_permanent 同级', () => {
-    assert.equal(isDeterministicImageFailure('host_unresolvable'), true);
-    assert.equal(isDeterministicImageFailure('http_permanent'), true);
+    assert.equal(isImageFailureExcludedFromHealth('host_unresolvable'), true);
+    assert.equal(isImageFailureExcludedFromHealth('http_permanent'), true);
   });
 
   it('超时与连接重置仍可重试——它们可能是真瞬时的', () => {
-    assert.equal(isDeterministicImageFailure('timeout'), false);
-    assert.equal(isDeterministicImageFailure('network'), false);
+    assert.equal(isImageFailureExcludedFromHealth('timeout'), false);
+    assert.equal(isImageFailureExcludedFromHealth('network'), false);
   });
 
   it('限流信号必须仍算压力，否则退让机制失去输入', () => {
-    assert.equal(isDeterministicImageFailure('http_transient'), false);
+    assert.equal(isImageFailureExcludedFromHealth('http_transient'), false);
   });
 });

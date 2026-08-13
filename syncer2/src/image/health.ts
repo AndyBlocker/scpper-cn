@@ -8,8 +8,8 @@ export interface ImageRouteCounters {
   completed: number;
   retry: number;
   failed: number;
-  /** failed 中属确定性、重试不会成功的部分；不计入压力分子。 */
-  deterministic: number;
+  /** 确定性坏资源或自我保护推迟；保留观测，但不计入站点健康压力分子。 */
+  healthExcluded: number;
 }
 
 export interface ImagePipelineHealth {
@@ -19,7 +19,7 @@ export interface ImagePipelineHealth {
 }
 
 export function emptyImageRouteCounters(): ImageRouteCounters {
-  return { claimed: 0, completed: 0, retry: 0, failed: 0, deterministic: 0 };
+  return { claimed: 0, completed: 0, retry: 0, failed: 0, healthExcluded: 0 };
 }
 
 export function recordImageRouteResult(
@@ -30,38 +30,41 @@ export function recordImageRouteResult(
   route.claimed++;
   route[result.status]++;
   /*
-   * 确定性判定必须同时覆盖 failed 与 retry。
+   * 健康度排除必须同时覆盖 failed 与 retry。
    *
    * 主动跳过（host_deferred）走的是 **retry** 状态——它会被重新入队等下轮，
-   * 而我最初只在 status==='failed' 时累加 deterministic，于是 117 条推迟
+   * 而我最初只在 status==='failed' 时累加 healthExcluded，于是 117 条推迟
    * 全被算成可重试失败，失败率 97.5%、每轮 exit 1。
    * 推迟是限速层的正常输出，不是压力来源；再拿它当压力信号会自我放大。
    */
   if (
     (result.status === 'failed' || result.status === 'retry')
-    && isDeterministicImageFailure(result.failureClass)
+    && isImageFailureExcludedFromHealth(result.failureClass)
   ) {
-    route.deterministic++;
+    route.healthExcluded++;
   }
 }
 
 /*
- * 确定性图片失败：重试一万次也不会成功，因此不代表链路压力。
+ * 图片健康度排除口径：这里回答的是“是否代表站点/链路压力”，不回答任务能否重试。
  *
  * 实测：降速与自适应退让生效后 http_transient 归零，剩下的主体变成
  * http_permanent 50——手工验证 https://i.loli.net/2020/11/26/… 返回 HTTP 404，
  * 是 2020 年的免费图床链接早已失效。SCP 页面引用外部图床失效是常态，
  * 把它计入失败率会让链路永远判 failed，掩盖真正的限流信号。
  *
- * 与 EGRESS 那轮确立的原则一致，只是当时没覆盖到图片链路。
+ * http_permanent 等确定性坏资源与 host_deferred 都不代表链路压力，但生命周期不同：
+ * 前者可以终态，后者必须重试。任务终态由 worker.isTerminalImageFailure 单独判断。
  */
-export function isDeterministicImageFailure(failureClass: string | null | undefined): boolean {
+export function isImageFailureExcludedFromHealth(
+  failureClass: string | null | undefined,
+): boolean {
   return failureClass === 'http_permanent'
     || failureClass === 'invalid_content_type'
     || failureClass === 'blocked_host'
     // 域名已消失，重试无意义；与 http_permanent 同级。
     || failureClass === 'host_unresolvable'
-    // 主动跳过（主机放行太远），是退让的结果而非压力来源。
+    // 主动跳过（主机放行太远）是退让的结果；只排除健康度，不代表任务终态。
     || failureClass === 'host_deferred';
 }
 
@@ -76,7 +79,7 @@ export function evaluateImagePipelineHealth(
     completed: routes.wikidot_site.completed + routes.external.completed,
     retry: routes.wikidot_site.retry + routes.external.retry,
     failed: routes.wikidot_site.failed + routes.external.failed,
-    deterministic: routes.wikidot_site.deterministic + routes.external.deterministic,
+    healthExcluded: routes.wikidot_site.healthExcluded + routes.external.healthExcluded,
   };
   /*
    * unified 不再用合并计数直接判——站外的高失败率会把 wikidot 侧一起拖垮。
@@ -121,7 +124,7 @@ function decide(
     partial: 0,
     // retry 是本轮真实失败；重新入队不能让它从成功率分母消失。
     failed: counters.retry + counters.failed,
-    deterministicFailures: counters.deterministic,
+    deterministicFailures: counters.healthExcluded,
     breakerOpen,
     ...(failureRateThreshold === undefined ? {} : { failureRateThreshold }),
   });

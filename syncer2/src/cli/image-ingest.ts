@@ -155,6 +155,7 @@ async function main(): Promise<void> {
       processed: routes.wikidot_site.completed + routes.wikidot_site.retry + routes.wikidot_site.failed,
       partial: 0,
       failed: routes.wikidot_site.retry + routes.wikidot_site.failed,
+      deterministicFailures: routes.wikidot_site.healthExcluded,
       breakerOpen: wikidot.breakerOpen,
     });
     if (JSON.stringify(wikidotMainHealth) !== JSON.stringify(pipelineHealth.wikidotSite)) {

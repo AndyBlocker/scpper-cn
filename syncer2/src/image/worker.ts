@@ -76,11 +76,26 @@ class ImageValidationError extends Error {
   constructor(
     message: string,
     readonly failureClass: ImageFailureClass,
-    readonly permanent: boolean,
+    readonly intrinsicTerminal: boolean,
     readonly httpStatus: number | null = null,
+    readonly retryAfterMs: number | null = null,
   ) {
     super(message);
   }
+}
+
+/**
+ * 任务生命周期判据；与 health.ts 的“是否进入健康压力分子”刻意分离。
+ * host_deferred 是我方闸主动推迟，即使 attempts 已到上限也不能被终态化。
+ */
+export function isTerminalImageFailure(args: {
+  failureClass: ImageFailureClass;
+  intrinsicTerminal: boolean;
+  attempts: number;
+  maxAttempts: number;
+}): boolean {
+  if (args.failureClass === 'host_deferred') return false;
+  return args.intrinsicTerminal || args.attempts >= args.maxAttempts;
 }
 
 export function classifyImageEgress(url: string, siteHost: string): ImageEgressClass {
@@ -362,29 +377,42 @@ async function failJob(
   error: ImageValidationError,
   options: ImageWorkerOptions,
 ): Promise<ProcessImageResult> {
-  const exhausted = job.attempts >= options.maxAttempts;
-  const permanent = error.permanent || exhausted;
-  const backoffMs = imageRetryBackoffMs(job.attempts, options.retryBaseMs, options.retryMaxMs);
+  const terminal = isTerminalImageFailure({
+    failureClass: error.failureClass,
+    intrinsicTerminal: error.intrinsicTerminal,
+    attempts: job.attempts,
+    maxAttempts: options.maxAttempts,
+  });
+  const deferred = error.failureClass === 'host_deferred';
+  const rawRetryAfterMs = error.retryAfterMs ??
+    imageRetryBackoffMs(job.attempts, options.retryBaseMs, options.retryMaxMs);
+  if (!Number.isFinite(rawRetryAfterMs) || rawRetryAfterMs <= 0) {
+    throw new RangeError(`图片 retryAfterMs 非法: ${rawRetryAfterMs}`);
+  }
+  // PostgreSQL bigint 不接受 databaseClock() 产生的亚毫秒小数；向上取整避免提前放行。
+  const retryAfterMs = Math.ceil(rawRetryAfterMs);
   await withTransaction(pool, `image:failure:${job.id}`, async (db) => {
     await query(
       db,
       'image:page_failure',
       `UPDATE serve.page_image
-          SET status = 'failed',
-              failure_count = failure_count + 1,
-              last_fetched_at = now(),
+          SET status = CASE WHEN $4::boolean THEN 'queued' ELSE 'failed' END,
+              failure_count = failure_count + CASE WHEN $4::boolean THEN 0 ELSE 1 END,
+              last_fetched_at = CASE WHEN $4::boolean THEN last_fetched_at ELSE now() END,
               last_error = $3,
-              metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb
+              metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb
         WHERE page_id = $1 AND normalized_url = $2`,
       [
         job.pageId,
         job.normalizedUrl,
         error.message.slice(0, 4_000),
+        deferred,
         toPgJson({
           last_failure_class: error.failureClass,
           last_http_status: error.httpStatus,
           egress_class: egressClass,
           attempts: job.attempts,
+          self_protection_deferred: deferred,
         }, `image.failure:${job.id}`),
       ],
     );
@@ -400,6 +428,8 @@ async function failJob(
               http_status = $7,
               egress_class = $8,
               error = $9,
+              attempts = CASE WHEN $10::boolean THEN GREATEST(0, attempts - 1)
+                              ELSE attempts END,
               locked_by = NULL,
               locked_at = NULL,
               updated_at = now()
@@ -407,18 +437,19 @@ async function failJob(
       [
         job.id,
         job.pageId,
-        permanent ? 'failed' : 'pending',
-        permanent,
-        String(backoffMs),
+        terminal ? 'failed' : 'pending',
+        terminal,
+        String(retryAfterMs),
         error.failureClass,
         error.httpStatus,
         egressClass,
         error.message.slice(0, 4_000),
+        deferred,
       ],
     );
   });
   return {
-    status: permanent ? 'failed' : 'retry',
+    status: terminal ? 'failed' : 'retry',
     egressClass,
     failureClass: error.failureClass,
     httpStatus: error.httpStatus,
@@ -591,10 +622,10 @@ function normalizeFailure(error: unknown): ImageValidationError {
   if (error instanceof ExternalHostDeferredError) {
     /*
      * 主机放行时间过远、本轮主动跳过——这不是失败，下轮会重新认领。
-     * 归为 host_deferred 并计入确定性侧（不驱动退让）：它本就是退让的结果，
-     * 再拿它当压力信号会自我放大。
+     * 归为 host_deferred、按主机实际放行时间调度后续重试；它本就是退让的结果，
+     * 不消耗失败尝试预算，也不进入站点健康压力分子。
      */
-    return new ImageValidationError(error.message, 'host_deferred', true);
+    return new ImageValidationError(error.message, 'host_deferred', false, null, error.waitMs);
   }
   if (error instanceof CircuitOpenError) {
     return new ImageValidationError(error.message, 'http_transient', false);

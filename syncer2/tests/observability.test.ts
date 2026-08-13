@@ -15,6 +15,7 @@ import {
   loadTypeScriptSources,
 } from '../src/health/sqlTuningCheck.js';
 import { classifyRevisionSourceFailure } from '../src/store/revisionSource.js';
+import { reapStaleIngestRuns } from '../src/store/meta.js';
 import { createRun } from './helpers/fixture.js';
 import { openSess, PROJECT_ROOT, type Sess } from './helpers/pg.js';
 
@@ -163,6 +164,34 @@ describe('oldest-pending 趋势判定', () => {
     assert.equal(decision.worseningStartedAt, '2026-08-06T00:00:00.000Z');
   });
 
+  it('出口正常 episode 为绿；持续真实 pressure 越线会变红', () => {
+    const normal = evaluatePendingCollection({
+      collection: 'egress_control:wikidot',
+      family: 'egress_control',
+      observedAt: '2026-08-13T00:00:00.000Z',
+      pendingCount: 0,
+      oldestItemAt: null,
+      oldestItemKey: null,
+      catchup: false,
+      evidence: { pressure_level: 0, budget_level: 0 },
+    }, []);
+    assert.equal(normal.severity, 'ok');
+    assert.equal(normal.decision, 'empty');
+
+    const pressure = evaluatePendingCollection({
+      collection: 'egress_control:wikidot',
+      family: 'egress_control',
+      observedAt: '2026-08-13T02:00:00.000Z',
+      pendingCount: 1,
+      oldestItemAt: '2026-08-13T00:00:00.000Z',
+      oldestItemKey: 'wikidot',
+      catchup: false,
+      evidence: { pressure_level: 2, pressure_reason: 'rolling_failure_rate' },
+    }, []);
+    assert.equal(pressure.severity, 'critical');
+    assert.equal(pressure.decision, 'age_threshold_exceeded');
+  });
+
   it('追平头部跨严重窗口不换仍告警，数量持续下降不能永久掩盖饿死项', () => {
     const oldest = '2026-07-28T00:00:00.000Z';
     const history = [
@@ -206,6 +235,24 @@ test('revision_source 只把确定性目标错误终结；5xx/链路错误可恢
   assert.equal(classifyRevisionSourceFailure('HttpStatusError: HTTP 503'), 'transient');
   assert.equal(classifyRevisionSourceFailure('TransportError: ECONNRESET'), 'transient');
   assert.equal(classifyRevisionSourceFailure('CircuitOpenError: egress circuit open'), 'transient');
+});
+
+test('进程异常退出留下 running 行：一小时后收为 aborted 并保留回收证据', async () => {
+  let executedSql = '';
+  let executedParams: readonly unknown[] | undefined;
+  const pool = {
+    query: async (sql: string, params?: readonly unknown[]) => {
+      executedSql = sql;
+      executedParams = params;
+      return { rows: [{ id: '26001' }], rowCount: 1 };
+    },
+  } as never;
+  assert.equal(await reapStaleIngestRuns(pool), 1);
+  assert.match(executedSql, /SET status = 'aborted'/);
+  assert.match(executedSql, /finished_at = now\(\)/);
+  assert.match(executedSql, /'aborted_reason', 'stale_running_reaped'/);
+  assert.match(executedSql, /started_at < now\(\) - make_interval/);
+  assert.deepEqual(executedParams, [1]);
 });
 
 test('0054 活库视图分账 claim_only；全真失败仍 critical，0 次任务仍 no_tasks', async () => {
@@ -348,6 +395,64 @@ test('0055 图片分链路健康与 pending 审计登记已在活库生效', asy
         collection_families: [],
       },
     ]);
+  } finally {
+    await db.end();
+  }
+});
+
+test('0063 追加式出口事件不再冒充 pending；当前 episode 只接受真实 pressure', async () => {
+  const db = await openSess('egress-episode-semantics');
+  try {
+    assert.equal(
+      await db.num(
+        'no-event-stream-pending',
+        `SELECT count(*) FROM meta.pending_collection_current WHERE family='egress_alert'`,
+      ),
+      0,
+    );
+    assert.equal(
+      await db.num(
+        'no-budget-as-pressure',
+        `SELECT count(*)
+           FROM meta.pending_collection_current p
+           JOIN meta.egress_control c ON p.oldest_item_key = c.site_key
+          WHERE p.family='egress_control' AND c.pressure_level <= 0`,
+      ),
+      0,
+    );
+    const registry = await db.one<{
+      classification: string;
+      collection_families: string[];
+    }>(
+      'egress-alert-registry',
+      `SELECT classification, collection_families
+         FROM meta.pending_collection_audit_registry
+        WHERE schema_name='meta' AND relation_name='egress_alert'`,
+    );
+    assert.deepEqual(registry, { classification: 'not_pending', collection_families: [] });
+
+    await db.begin();
+    try {
+      await db.q(
+        'construct-real-pressure',
+        `UPDATE meta.egress_control
+            SET pressure_level = 2,
+                pressure_reason = 'test_real_outbound_pressure',
+                pressure_changed_at = now() - interval '2 hours',
+                pressure_recover_not_before = now() + interval '30 minutes'
+          WHERE site_key = 'wikidot'`,
+      );
+      const episode = await db.one<{ pending_count: string; pressure_level: number }>(
+        'real-pressure-visible',
+        `SELECT pending_count::text,
+                (evidence->>'pressure_level')::int AS pressure_level
+           FROM meta.pending_collection_current
+          WHERE collection='egress_control:wikidot'`,
+      );
+      assert.deepEqual(episode, { pending_count: '1', pressure_level: 2 });
+    } finally {
+      await db.rollback();
+    }
   } finally {
     await db.end();
   }

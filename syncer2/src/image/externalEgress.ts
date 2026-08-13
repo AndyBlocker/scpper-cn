@@ -214,6 +214,34 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
           const nowMs = await databaseClock(db);
           const bucketStart = new Date(Math.floor(nowMs / 60_000) * 60_000).toISOString();
           await ensureHost(db, host, this.#policy);
+          let row = await loadHost(db, host);
+          const global = await loadGlobal(db);
+          const grantMs = Math.max(
+            nowMs,
+            Date.parse(row.next_permit_at),
+            Date.parse(global.next_permit_at),
+          );
+          const waitMs = Math.max(0, grantMs - nowMs);
+          if (!Number.isFinite(waitMs)) {
+            throw new Error(
+              `站外图片放行时间非法 host=${row.next_permit_at} global=${global.next_permit_at}`,
+            );
+          }
+          /*
+           * 只有本轮能够实际等待并发出 HTTP 的请求才消费 permit/滚动预算。
+           * host_deferred 是闸的退让结果；若先写 bucket、推进 next_permit_at 再抛出，
+           * 每次重试都会为一个根本没发生的请求继续排队，最终形成数天的虚假债务。
+           */
+          if (waitMs > EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS) {
+            return {
+              deferred: true as const,
+              permit: null,
+              waitMs,
+              snapshot: rowToHostSnapshot(row, this.#policy),
+              transition: null,
+              globalBreached: global.budget_breached,
+            };
+          }
           await query(
             db,
             'external-image-egress:bucket-request',
@@ -226,8 +254,6 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
             [host, bucketStart],
           );
 
-          let row = await loadHost(db, host);
-          const global = await loadGlobal(db);
           const [hostRolling, totalRolling] = await rollingCounts(
             db,
             host,
@@ -248,11 +274,6 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
           const globalInterval = globalBreached
             ? GLOBAL_BUDGET_BREACH_INTERVAL_MS
             : this.#globalMinIntervalMs;
-          const grantMs = Math.max(
-            nowMs,
-            Date.parse(row.next_permit_at),
-            Date.parse(global.next_permit_at),
-          );
           row = await updateHost(
             db,
             row,
@@ -292,13 +313,14 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
             );
           }
           return {
+            deferred: false as const,
             permit: {
               bucketStart,
               channel: 'external-image',
               grantAt: toPgTimestamptz(grantMs),
               scopeKey: host,
             },
-            waitMs: Math.max(0, grantMs - nowMs),
+            waitMs,
             snapshot: rowToHostSnapshot(row, this.#policy),
             transition: budget.transition,
             globalBreached,
@@ -306,14 +328,6 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
         },
       );
       this.#recordSnapshot(reservation.snapshot);
-      this.#permits++;
-      this.#totalDelayMs += reservation.waitMs;
-      if (reservation.transition !== null) this.#transitionsObserved++;
-      if (reservation.globalBreached) {
-        this.#log.warn('站外图片滚动总量越界，aggregate pace 已进入保护档', {
-          limit: EXTERNAL_IMAGE_GLOBAL_HOURLY_BUDGET,
-        });
-      }
       /*
        * 等待必须有上限，否则一个被降档的主机会拖垮整轮。
        *
@@ -326,13 +340,21 @@ export class PostgresExternalImageEgressGate implements AdaptiveEgressGate {
        * 按主机限速是对的，等待方式错了：应当放弃该任务留给下轮，
        * 让 worker 去处理其它主机——队列里还有两万多个别的主机的任务。
        */
-      if (reservation.waitMs > EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS) {
+      if (reservation.deferred) {
         this.#log.info('主机放行时间过远，跳过本轮改由后续轮次处理', {
           host,
           waitMs: reservation.waitMs,
           maxInlineWaitMs: EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS,
         });
         throw new ExternalHostDeferredError(host, reservation.waitMs);
+      }
+      this.#permits++;
+      this.#totalDelayMs += reservation.waitMs;
+      if (reservation.transition !== null) this.#transitionsObserved++;
+      if (reservation.globalBreached) {
+        this.#log.warn('站外图片滚动总量越界，aggregate pace 已进入保护档', {
+          limit: EXTERNAL_IMAGE_GLOBAL_HOURLY_BUDGET,
+        });
       }
       if (reservation.waitMs > 0) await abortableSleep(reservation.waitMs, signal);
       return reservation.permit;
