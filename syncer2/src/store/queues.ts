@@ -599,7 +599,11 @@ export async function enqueueForumTargets(
             SET last_seen_at = GREATEST(fst.last_seen_at, EXCLUDED.last_seen_at),
                 seen_count   = fst.seen_count + 1,
                 reasons      = ARRAY(SELECT DISTINCT e FROM unnest(fst.reasons || EXCLUDED.reasons) AS e),
-                priority     = GREATEST(fst.priority, EXCLUDED.priority),
+                priority     = CASE
+                                 WHEN 'forum_runtime_budget_rotated' = ANY(fst.reasons)
+                                   THEN fst.priority
+                                 ELSE GREATEST(fst.priority, EXCLUDED.priority)
+                               END,
                 lane         = CASE
                                  WHEN fst.lane = 'steady' OR EXCLUDED.lane = 'steady'
                                    THEN 'steady'
@@ -685,8 +689,7 @@ export async function claimForumTargets(
        SELECT fst.id, fst.lane,
               row_number() OVER (
                 PARTITION BY fst.lane
-                ORDER BY (fst.kind = 'category') DESC, fst.priority DESC,
-                         fst.not_before NULLS FIRST, fst.id
+                ORDER BY COALESCE(fst.not_before, fst.first_seen_at), fst.id
               ) AS lane_rank
         FROM meta.forum_scan_task fst
         WHERE (fst.not_before IS NULL OR fst.not_before <= now())
@@ -701,17 +704,19 @@ export async function claimForumTargets(
        SELECT c.id
          FROM candidates c
         WHERE c.lane_rank <= CASE c.lane
-          WHEN 'steady' THEN GREATEST(1, ceil($2 * 0.4)::int)
-          ELSE GREATEST(0, floor($2 * 0.6)::int)
+          WHEN 'steady' THEN GREATEST(1, ceil($2::int * 0.4)::int)
+          ELSE GREATEST(0, floor($2::int * 0.6)::int)
         END
-     ), chosen AS (
-       SELECT id FROM reserved
-       UNION ALL
+     ), fill AS (
        SELECT c.id
          FROM candidates c
         WHERE NOT EXISTS (SELECT 1 FROM reserved r WHERE r.id = c.id)
-        ORDER BY id
-        LIMIT $2
+        ORDER BY c.lane_rank, c.id
+        LIMIT GREATEST(0, $2::int - (SELECT count(*)::int FROM reserved))
+     ), chosen AS (
+       SELECT id FROM reserved
+       UNION ALL
+       SELECT id FROM fill
      ), picked AS (
        SELECT fst.id
          FROM meta.forum_scan_task fst
@@ -838,12 +843,16 @@ export async function finishForumTarget(
   return { action: 'retried', stableCount, notBefore };
 }
 
-/** 正常时间预算释放归还 claim attempt；异常/熔断才保留 attempt 并延后。 */
+/**
+ * 正常时间预算释放归还 claim attempt；已真正开始却超预算的头部任务再降一级优先级，
+ * 避免同一超大目标每轮重回 FIFO 队首。异常/熔断保留 attempt 并延后。
+ */
 export async function releaseForumTargetLocks(
   pool: Pool,
   taskIds: readonly number[],
   workerId: string,
   deferAfterCrash = false,
+  rotateAfterBudget = false,
 ): Promise<number> {
   if (taskIds.length === 0) return 0;
   const result = await query(
@@ -853,12 +862,24 @@ export async function releaseForumTargetLocks(
         SET locked_by = NULL,
             locked_at = NULL,
             attempts = CASE WHEN $3::boolean THEN attempts ELSE GREATEST(0, attempts - 1) END,
+            priority = CASE
+              WHEN $4::boolean AND priority > -2147483648 THEN priority - 1
+              ELSE priority
+            END,
+            reasons = CASE WHEN $4::boolean
+              THEN ARRAY(
+                SELECT DISTINCT reason
+                  FROM unnest(reasons || ARRAY['forum_runtime_budget_rotated']) AS reason
+              )
+              ELSE reasons
+            END,
             not_before = CASE WHEN $3::boolean
               THEN COALESCE(not_before, now() + interval '1 hour')
+              WHEN $4::boolean THEN now() + interval '1 hour'
               ELSE not_before
             END
       WHERE id = ANY($1::bigint[]) AND locked_by = $2`,
-    [taskIds, workerId, deferAfterCrash],
+    [taskIds, workerId, deferAfterCrash, rotateAfterBudget],
   );
   return result.rowCount ?? 0;
 }
@@ -876,13 +897,6 @@ export interface ClaimedDiscussionTask {
   lastResultHash: Buffer | null;
   reasons: string[];
   lane: 'catchup' | 'steady';
-}
-
-/** 页↔thread 关联追平优先，但保留 40% 给 thread 正文/稳态更新，避免 28k 冷启动饿死增量。 */
-export function forumConsumeQuotas(limit: number): { discussion: number; forum: number } {
-  const bounded = Math.max(0, Math.floor(limit));
-  const discussion = Math.ceil(bounded * 0.6);
-  return { discussion, forum: bounded - discussion };
 }
 
 /**
@@ -916,7 +930,10 @@ export async function seedForumDiscussionLinkTasks(
         SET reasons = ARRAY(
               SELECT DISTINCT e FROM unnest(st.reasons || EXCLUDED.reasons) AS e
             ),
-            priority = GREATEST(st.priority, EXCLUDED.priority),
+            priority = CASE
+              WHEN 'forum_runtime_budget_rotated' = ANY(st.reasons) THEN st.priority
+              ELSE GREATEST(st.priority, EXCLUDED.priority)
+            END,
             not_before = LEAST(
               COALESCE(st.not_before, EXCLUDED.not_before),
               COALESCE(EXCLUDED.not_before, st.not_before)
@@ -958,7 +975,7 @@ export async function claimDiscussionTasks(
                    THEN 'catchup' ELSE 'steady' END AS lane,
               row_number() OVER (
                 PARTITION BY ('forum_link_initial_catchup' = ANY(st.reasons))
-                ORDER BY st.priority DESC, st.not_before NULLS FIRST, st.id
+                ORDER BY COALESCE(st.not_before, st.created_at), st.id
               ) AS lane_rank
          FROM meta.scan_task st
          JOIN serve.page_current pc ON pc.page_id = st.page_id
@@ -975,16 +992,21 @@ export async function claimDiscussionTasks(
          FROM candidates c
         WHERE $4::int IS NOT NULL
            OR c.lane_rank <= CASE c.lane
-                WHEN 'catchup' THEN GREATEST(1, ceil($2 * 0.6)::int)
-                ELSE GREATEST(1, floor($2 * 0.4)::int)
+                WHEN 'catchup' THEN GREATEST(
+                  0,
+                  $2::int - GREATEST(1, floor($2::int * 0.4)::int)
+                )
+                ELSE GREATEST(1, floor($2::int * 0.4)::int)
               END
+     ), fill AS (
+       SELECT c.id FROM candidates c
+        WHERE NOT EXISTS (SELECT 1 FROM reserved r WHERE r.id = c.id)
+       ORDER BY c.lane_rank, c.id
+       LIMIT GREATEST(0, $2::int - (SELECT count(*)::int FROM reserved))
      ), chosen AS (
        SELECT id FROM reserved
        UNION ALL
-       SELECT c.id FROM candidates c
-        WHERE NOT EXISTS (SELECT 1 FROM reserved r WHERE r.id = c.id)
-       ORDER BY id
-       LIMIT $2
+       SELECT id FROM fill
      ), picked AS (
        SELECT st.id
          FROM meta.scan_task st
@@ -1147,6 +1169,7 @@ export async function releaseDiscussionTaskLocks(
   taskIds: readonly number[],
   workerId: string,
   deferAfterCrash = false,
+  rotateAfterBudget = false,
 ): Promise<number> {
   if (taskIds.length === 0) return 0;
   const result = await query(
@@ -1156,12 +1179,24 @@ export async function releaseDiscussionTaskLocks(
         SET locked_by = NULL,
             locked_at = NULL,
             attempts = CASE WHEN $3::boolean THEN attempts ELSE GREATEST(0, attempts - 1) END,
+            priority = CASE
+              WHEN $4::boolean AND priority > -2147483648 THEN priority - 1
+              ELSE priority
+            END,
+            reasons = CASE WHEN $4::boolean
+              THEN ARRAY(
+                SELECT DISTINCT reason
+                  FROM unnest(reasons || ARRAY['forum_runtime_budget_rotated']) AS reason
+              )
+              ELSE reasons
+            END,
             not_before = CASE WHEN $3::boolean
               THEN COALESCE(not_before, now() + interval '1 hour')
+              WHEN $4::boolean THEN now() + interval '1 hour'
               ELSE not_before
             END
       WHERE id = ANY($1::bigint[]) AND locked_by = $2`,
-    [taskIds, workerId, deferAfterCrash],
+    [taskIds, workerId, deferAfterCrash, rotateAfterBudget],
   );
   return result.rowCount ?? 0;
 }

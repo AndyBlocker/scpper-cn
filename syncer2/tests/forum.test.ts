@@ -27,11 +27,12 @@ import {
 import { applyInferredForumLinks } from '../src/collect/forumLinks.js';
 import {
   discoverChangedForumThreads,
+  planForumIncrementalCategories,
   type ForumCategoryIncrementalState,
 } from '../src/collect/forumIncremental.js';
 import { ok } from '../src/collect/result.js';
 import { HttpClient } from '../src/http/client.js';
-import { forumConsumeQuotas, seedForumDiscussionLinkTasks } from '../src/store/queues.js';
+import { seedForumDiscussionLinkTasks } from '../src/store/queues.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -131,12 +132,66 @@ test('论坛增量：全局信号仅变化少数分类时，只分页这些分�
   assert.deepEqual(results[0]?.changedThreadIds, [22], '不得深扫 post_count 未变化 thread');
 });
 
-test('讨论串关联冷启动：28,389 个缺口可整批播种，link-only 正确连接已有论坛帖', async () => {
+test('论坛增量：变化分类公平切分页预算并轮转首位，固定顺序不能饿死尾类', () => {
+  const categories = Array.from({ length: 4 }, (_unused, index) => ({
+    id: index + 1,
+    title: `category-${index + 1}`,
+    description: null,
+    threadCount: 1,
+    postCount: 1,
+  }));
+  const first = planForumIncrementalCategories(categories, 6, 0);
+  assert.deepEqual(first.map((item) => [item.category.id, item.maxPages]), [
+    [1, 2], [2, 2], [3, 1], [4, 1],
+  ]);
+  const rotated = planForumIncrementalCategories(categories, 2, 2);
+  assert.deepEqual(rotated.map((item) => [item.category.id, item.maxPages]), [
+    [3, 1], [4, 1],
+  ]);
   assert.deepEqual(
-    forumConsumeQuotas(50),
-    { discussion: 30, forum: 20 },
-    '追平期仍须给 thread/稳态深扫保留 kind 配额',
+    planForumIncrementalCategories(categories, 2, 0).map((item) => item.category.id),
+    [1, 2],
   );
+  // n=4、每轮2类时，offset 轮转使任一类最多两轮就获得至少一页。
+});
+
+test('论坛增量：一个分类耗时不能阻止另一分类启动第一页', async () => {
+  const categories = [1, 2].map((id) => ({
+    id,
+    title: `category-${id}`,
+    description: null,
+    threadCount: 0,
+    postCount: 0,
+  }));
+  const calls: number[] = [];
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  const pending = discoverChangedForumThreads(
+    categories,
+    new Map(),
+    new Map(),
+    async (categoryId) => {
+      calls.push(categoryId);
+      await barrier;
+      return ok({
+        categoryId,
+        categoryTitle: `category-${categoryId}`,
+        categoryDescription: null,
+        claimedThreadCount: 0,
+        claimedPostCount: 0,
+        pager: { pageNo: 1, totalPages: 1 },
+        threads: [],
+      });
+    },
+    2,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [1, 2], '两类第一页必须都已启动，不能等待 category-1 完成');
+  release();
+  assert.equal((await pending).length, 2);
+});
+
+test('讨论串关联冷启动：28,389 个缺口可整批播种，link-only 正确连接已有论坛帖', async () => {
   let seedSql = '';
   const seedPool = {
     query: async (sql: string) => {

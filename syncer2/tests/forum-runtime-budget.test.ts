@@ -38,17 +38,31 @@ describe('forum-consume runtime budget claim 收尾', () => {
       [TARGET_ID, WORKER],
     );
     const id = Number(inserted.rows[0]!.id);
-    assert.equal(await releaseForumTargetLocks(pool, [id], WORKER), 1);
+    assert.equal(await releaseForumTargetLocks(pool, [id], WORKER, false, true), 1);
     const state = await query<{
       attempts: number;
       locked_by: string | null;
       locked_at: Date | null;
+      priority: number;
+      reasons: string[];
+      not_before: Date | null;
     }>(
       pool,
       'test:forum-budget-state',
-      `SELECT attempts,locked_by,locked_at FROM meta.forum_scan_task WHERE id=$1`,
+      `SELECT attempts,locked_by,locked_at,priority,reasons,not_before
+         FROM meta.forum_scan_task WHERE id=$1`,
       [id],
     );
-    assert.deepEqual(state.rows[0], { attempts: 6, locked_by: null, locked_at: null });
+    const row = state.rows[0]!;
+    assert.ok(row.not_before instanceof Date);
+    assert.ok(row.not_before.getTime() > Date.now() + 55 * 60_000);
+    assert.deepEqual({ ...row, not_before: 'future' }, {
+      attempts: 6,
+      locked_by: null,
+      locked_at: null,
+      priority: 998,
+      reasons: ['runtime_budget_test', 'forum_runtime_budget_rotated'],
+      not_before: 'future',
+    });
   });
 });

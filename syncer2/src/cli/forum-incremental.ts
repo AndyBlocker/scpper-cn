@@ -111,6 +111,7 @@ async function main(): Promise<void> {
       knownPostCounts,
       fetchPage,
       options.maxPages,
+      Math.floor(Date.now() / (5 * 60_000)),
     );
 
     const changedThreadIds = [...new Set(

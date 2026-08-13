@@ -1,8 +1,8 @@
 /**
  * M5 论坛差集消费入口。
  *
- * 单次短进程，页级 forum/discussion 任务优先，然后消费 thread/category sitemap 差集；
- * 最多认领 50 个目标。所有远端读取都走匿名 AMC，绝不创建登录 session。
+ * 单次短进程，以公平微批同时消费页级 forum/discussion 与 thread/category sitemap 差集；
+ * 最多完成 50 个目标、在途最多 4 个。所有远端读取都走匿名 AMC，绝不创建登录 session。
  */
 
 import { redirectConsoleToStderr, createLogger, emitSummary } from '../util/log.js';
@@ -52,7 +52,6 @@ import {
   enqueueForumTargets,
   finishDiscussionTask,
   finishForumTarget,
-  forumConsumeQuotas,
   releaseDiscussionTaskLocks,
   releaseForumTargetLocks,
   type ClaimedDiscussionTask,
@@ -67,6 +66,12 @@ import {
   evaluateRunHealth,
   RUN_REPEATED_FAILURE_ATTEMPTS,
 } from '../work/runHealth.js';
+import {
+  FORUM_CONSUME_MAX_IN_FLIGHT,
+  assertForumConsumeFairLimit,
+  forumConsumeWaveQuotas,
+  runForumFairWave,
+} from '../work/forumOrder.js';
 import {
   addRuntimeBudgetOption,
   isRuntimeBudgetExceededError,
@@ -96,7 +101,13 @@ interface Counters {
   claimed: number;
   discussionClaimed: number;
   forumClaimed: number;
+  claimWaves: number;
   processed: number;
+  discussionProcessed: number;
+  forumProcessed: number;
+  forumThreadProcessed: number;
+  forumCatchupProcessed: number;
+  forumSteadyProcessed: number;
   succeeded: number;
   partial: number;
   failed: number;
@@ -149,7 +160,13 @@ async function main(): Promise<void> {
     claimed: 0,
     discussionClaimed: 0,
     forumClaimed: 0,
+    claimWaves: 0,
     processed: 0,
+    discussionProcessed: 0,
+    forumProcessed: 0,
+    forumThreadProcessed: 0,
+    forumCatchupProcessed: 0,
+    forumSteadyProcessed: 0,
     succeeded: 0,
     partial: 0,
     failed: 0,
@@ -213,47 +230,317 @@ async function main(): Promise<void> {
       return;
     }
 
-    // 标准轮按 kind 预留 60% 页级关联/评论、40% thread/category；任一侧空闲再回填，
-    // 既优先建立 28k 页关联，也不让稳态 thread 更新被冷启动饿死。
+    /*
+     * 认领与执行必须是同一个微批循环：上一版虽然先认领 30/20，却把 30 个
+     * discussion 全部跑完才碰 forum，导致 20 个 forum 每轮必然释放。
+     *
+     * 标准轮每波只认领 discussion=2 + forum=2，随后两类同时启动；上一波落到
+     * staged Map 后才认领下一波。预算无论在哪一侧命中，在途上限恒为 4，另一侧
+     * 已完成的结果仍由 allSettled 保留并在下面结账。
+     */
     const standardClaim = opts.pageId === null && opts.threadId === null && opts.categoryId === null;
-    const quotas = forumConsumeQuotas(opts.limit);
-    if (opts.threadId === null && opts.categoryId === null) {
-      discussionTasks = await claimDiscussionTasks(
-        pool,
-        standardClaim ? quotas.discussion : opts.limit,
-        workerId,
-        opts.pageId,
+    let start: CollectResult<ForumStartSnapshot> = ok({ categories: [] });
+    let startFetched = false;
+    const stagedCategories = new Map<number, CollectResult<ForumCategorySnapshot>>();
+    const stagedThreads = new Map<number, CollectResult<ForumThreadSnapshot>>();
+    const stagedDiscussions = new Map<number, CollectResult<ForumDiscussionSnapshot>>();
+    const stagedLinks = new Map<number, CollectResult<ForumCommentsPage>>();
+    let sitemapCategoryIds: Set<number> | null = null;
+    let categoryCoverageError: string | null = null;
+    let categoryCoveragePromise: Promise<void> | null = null;
+    let consecutiveFailures = 0;
+
+    const ensureCategoryCoverage = (): Promise<void> => {
+      categoryCoveragePromise ??= (async () => {
+        try {
+          const categorySitemap = await fetchCategorySitemap(
+            http,
+            config.siteBaseUrl,
+            log.child('category-sitemap'),
+          );
+          const normalized = normalizeSitemapEntries(categorySitemap.entries);
+          sitemapCategoryIds = new Set(
+            [...normalized.observed.keys()]
+              .map((slug) => /(?:^|\/)forum\/c-(\d+)/.exec(slug)?.[1])
+              .filter((id): id is string => id !== undefined)
+              .map(Number),
+          );
+          const missingCategories = start.status === 'failed'
+            ? []
+            : start.data.categories
+                .map((category) => category.id)
+                .filter((id) => !sitemapCategoryIds!.has(id));
+          if (missingCategories.length > 0) {
+            log.warn('category sitemap 覆盖不完整：缺席分类只记 partial，禁止判 thread 删除', {
+              missingCategories,
+              count: missingCategories.length,
+            });
+          }
+        } catch (err) {
+          if (isRuntimeBudgetExceededError(err)) throw err;
+          categoryCoverageError = `category sitemap 抓取失败：${String(err)}`;
+          log.warn('无法证明分类在 sitemap 中；本轮所有分类只保存正面观测，不判删除', {
+            error: categoryCoverageError,
+          });
+        }
+      })();
+      return categoryCoveragePromise;
+    };
+
+    type DiscussionWaveResult =
+      | { mode: 'link'; task: ClaimedDiscussionTask; result: CollectResult<ForumCommentsPage> }
+      | {
+          mode: 'deep';
+          task: ClaimedDiscussionTask;
+          result: CollectResult<ForumDiscussionSnapshot>;
+        };
+    type ForumWaveResult =
+      | {
+          mode: 'category';
+          task: ClaimedForumTarget;
+          result: CollectResult<ForumCategorySnapshot>;
+        }
+      | {
+          mode: 'thread';
+          task: ClaimedForumTarget;
+          result: CollectResult<ForumThreadSnapshot>;
+        };
+
+    let discussionQueueAvailable = true;
+    let forumQueueAvailable = true;
+
+    const scanDiscussionTask = async (
+      task: ClaimedDiscussionTask,
+    ): Promise<DiscussionWaveResult> => {
+      if (task.expectedThreadId === null) {
+        const results = await scanPageDiscussionLinks(
+          http,
+          config.siteBaseUrl,
+          [toDiscussionTarget(task)],
+          1,
+        );
+        return {
+          mode: 'link',
+          task,
+          result: results.get(task.pageId) ??
+            failed<ForumCommentsPage>('内部错误：页面讨论串关联结果 Map 缺项'),
+        };
+      }
+      if (start.status === 'failed') {
+        return {
+          mode: 'deep',
+          task,
+          result: failed(`ForumStartModule 前置抓取失败：${start.error}`),
+        };
+      }
+      const results = await scanPageDiscussions(
+        http,
+        config.siteBaseUrl,
+        [toDiscussionTarget(task)],
+        opts.concurrency,
       );
-    }
-    if (opts.pageId === null) {
-      forumTasks = await claimForumTargets(
-        pool,
-        standardClaim ? quotas.forum : opts.limit - discussionTasks.length,
-        workerId,
-        { threadId: opts.threadId, categoryId: opts.categoryId },
+      return {
+        mode: 'deep',
+        task,
+        result: results.get(task.pageId) ??
+          failed<ForumDiscussionSnapshot>('内部错误：页面讨论结果 Map 缺项'),
+      };
+    };
+
+    const scanForumTask = async (task: ClaimedForumTarget): Promise<ForumWaveResult> => {
+      if (start.status === 'failed') {
+        return task.kind === 'category'
+          ? {
+              mode: 'category',
+              task,
+              result: failed<ForumCategorySnapshot>(
+                `ForumStartModule 前置抓取失败：${start.error}`,
+              ),
+            }
+          : {
+              mode: 'thread',
+              task,
+              result: failed<ForumThreadSnapshot>(
+                `ForumStartModule 前置抓取失败：${start.error}`,
+              ),
+            };
+      }
+      if (task.kind === 'category') {
+        await ensureCategoryCoverage();
+        const results = await scanForumCategories(
+          http,
+          config.siteBaseUrl,
+          [task.targetId],
+          opts.concurrency,
+        );
+        return {
+          mode: 'category',
+          task,
+          result: results.get(task.targetId) ??
+            failed<ForumCategorySnapshot>('内部错误：分类枚举结果 Map 缺项'),
+        };
+      }
+      const results = await scanForumThreads(
+        http,
+        config.siteBaseUrl,
+        [task.targetId],
+        opts.concurrency,
       );
+      return {
+        mode: 'thread',
+        task,
+        result: results.get(task.targetId) ??
+          failed<ForumThreadSnapshot>('内部错误：主题结果 Map 缺项'),
+      };
+    };
+
+    claimWaves: while (counters.claimed < opts.limit) {
+      if (budget.checkpoint()) {
+        counters.stoppedByRuntimeBudget = true;
+        break;
+      }
+      const remaining = opts.limit - counters.claimed;
+      const quotas = standardClaim
+        ? forumConsumeWaveQuotas(remaining, {
+            discussion: discussionQueueAvailable,
+            forum: forumQueueAvailable,
+          })
+        : {
+            discussion: opts.pageId === null ? 0 : remaining,
+            forum: opts.pageId === null ? remaining : 0,
+          };
+      const claimResults = await Promise.allSettled([
+        opts.threadId === null && opts.categoryId === null
+          ? claimDiscussionTasks(pool, quotas.discussion, workerId, opts.pageId)
+          : Promise.resolve([]),
+        opts.pageId === null
+          ? claimForumTargets(
+              pool,
+              quotas.forum,
+              workerId,
+              { threadId: opts.threadId, categoryId: opts.categoryId },
+            )
+          : Promise.resolve([]),
+      ]);
+      const discussionWave = claimResults[0].status === 'fulfilled'
+        ? claimResults[0].value
+        : [];
+      const forumWave = claimResults[1].status === 'fulfilled'
+        ? claimResults[1].value
+        : [];
+      const claimError = claimResults.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      if (claimError !== undefined) {
+        // 两张表并行认领时，一侧 SQL 失败不代表另一侧没成功。先精确归还已成功
+        // 的 claim，再抛原错误；否则局部赋值尚未发生，外层 catch 看不到这些锁。
+        await Promise.all([
+          releaseDiscussionTaskLocks(
+            pool,
+            discussionWave.map((task) => task.taskId),
+            workerId,
+          ),
+          releaseForumTargetLocks(
+            pool,
+            forumWave.map((task) => task.taskId),
+            workerId,
+          ),
+        ]);
+        throw claimError.reason;
+      }
+      if (standardClaim) {
+        if (discussionWave.length < quotas.discussion) discussionQueueAvailable = false;
+        if (forumWave.length < quotas.forum) forumQueueAvailable = false;
+      }
+      if (discussionWave.length === 0 && forumWave.length === 0) break;
+
+      discussionTasks.push(...discussionWave);
+      forumTasks.push(...forumWave);
+      counters.claimWaves++;
+      counters.discussionClaimed += discussionWave.length;
+      counters.forumClaimed += forumWave.length;
+      counters.claimed += discussionWave.length + forumWave.length;
+
+      const needsForumStart = forumWave.length > 0 ||
+        discussionWave.some((task) => task.expectedThreadId !== null);
+      if (needsForumStart && !startFetched) {
+        startFetched = true;
+        try {
+          start = await scanForumStart(http, config.siteBaseUrl);
+          if (start.status === 'failed') {
+            consecutiveFailures = 1;
+            counters.consecutiveFailuresPeak = 1;
+          }
+        } catch (err) {
+          if (!isRuntimeBudgetExceededError(err)) throw err;
+          counters.stoppedByRuntimeBudget = true;
+          start = failed('ForumStartModule 被单轮时间预算中断');
+        }
+      }
+
+      if (counters.stoppedByRuntimeBudget) break;
+      const settled = await runForumFairWave(
+        discussionWave,
+        forumWave,
+        scanDiscussionTask,
+        scanForumTask,
+      );
+      for (const item of [...settled.discussion, ...settled.forum]) {
+        if (item.status === 'rejected') {
+          if (isRuntimeBudgetExceededError(item.reason)) {
+            counters.stoppedByRuntimeBudget = true;
+            continue;
+          }
+          throw item.reason;
+        }
+        const outcome = item.value;
+        if (outcome.mode === 'link') {
+          stagedLinks.set(outcome.task.taskId, outcome.result);
+          consecutiveFailures = updateFailureStreak(
+            outcome.result,
+            outcome.task.kind,
+            consecutiveFailures,
+            counters,
+          );
+        } else if (outcome.mode === 'deep') {
+          stagedDiscussions.set(outcome.task.taskId, outcome.result);
+          consecutiveFailures = updateFailureStreak(
+            outcome.result,
+            outcome.task.kind,
+            consecutiveFailures,
+            counters,
+          );
+        } else if (outcome.mode === 'category') {
+          stagedCategories.set(outcome.task.taskId, outcome.result);
+        } else {
+          stagedThreads.set(outcome.task.taskId, outcome.result);
+          consecutiveFailures = updateFailureStreak(
+            outcome.result,
+            'forum',
+            consecutiveFailures,
+            counters,
+          );
+        }
+      }
+      if (budget.checkpoint()) counters.stoppedByRuntimeBudget = true;
+      if (
+        http.breakerOpen ||
+        consecutiveFailures >= FAILURE_LIMIT ||
+        counters.stoppedByRuntimeBudget ||
+        start.status === 'failed' ||
+        !standardClaim
+      ) {
+        counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
+        break claimWaves;
+      }
     }
-    if (standardClaim && discussionTasks.length + forumTasks.length < opts.limit) {
-      discussionTasks.push(...await claimDiscussionTasks(
-        pool,
-        opts.limit - discussionTasks.length - forumTasks.length,
-        workerId,
-      ));
-    }
-    if (standardClaim && discussionTasks.length + forumTasks.length < opts.limit) {
-      forumTasks.push(...await claimForumTargets(
-        pool,
-        opts.limit - discussionTasks.length - forumTasks.length,
-        workerId,
-      ));
-    }
-    counters.discussionClaimed = discussionTasks.length;
-    counters.forumClaimed = forumTasks.length;
-    counters.claimed = discussionTasks.length + forumTasks.length;
-    log.info('已认领论坛差集', {
-      page: discussionTasks.length,
-      forum: forumTasks.length,
+
+    log.info('论坛公平微批认领结束', {
+      discussion: counters.discussionClaimed,
+      forum: counters.forumClaimed,
+      waves: counters.claimWaves,
       limit: opts.limit,
+      maxInFlight: FORUM_CONSUME_MAX_IN_FLIGHT,
     });
 
     if (counters.claimed === 0) {
@@ -273,6 +560,7 @@ async function main(): Promise<void> {
           mode: 'forum',
           durationMs,
           ...counters,
+          maxInFlight: FORUM_CONSUME_MAX_IN_FLIGHT,
           startupProbe,
           http: http.stats(),
           httpHealth: http.healthStats(),
@@ -284,231 +572,6 @@ async function main(): Promise<void> {
 
     const linkOnlyTasks = discussionTasks.filter((task) => task.expectedThreadId === null);
     const deepDiscussionTasks = discussionTasks.filter((task) => task.expectedThreadId !== null);
-    const needsForumStart = forumTasks.length > 0 || deepDiscussionTasks.length > 0;
-    let start: CollectResult<ForumStartSnapshot>;
-    try {
-      start = needsForumStart
-        ? await scanForumStart(http, config.siteBaseUrl)
-        : ok({ categories: [] });
-    } catch (err) {
-      if (!isRuntimeBudgetExceededError(err)) throw err;
-      counters.stoppedByRuntimeBudget = true;
-      start = failed('ForumStartModule 被单轮时间预算中断');
-    }
-    const stagedCategories = new Map<number, CollectResult<ForumCategorySnapshot>>();
-    const stagedThreads = new Map<number, CollectResult<ForumThreadSnapshot>>();
-    const stagedDiscussions = new Map<number, CollectResult<ForumDiscussionSnapshot>>();
-    const stagedLinks = new Map<number, CollectResult<ForumCommentsPage>>();
-    let sitemapCategoryIds: Set<number> | null = null;
-    let categoryCoverageError: string | null = null;
-    let consecutiveFailures = start.status === 'failed' ? 1 : 0;
-    if (start.status === 'failed' && !counters.stoppedByRuntimeBudget) {
-      counters.consecutiveFailuresPeak = 1;
-      for (const task of deepDiscussionTasks) {
-        stagedDiscussions.set(
-          task.taskId,
-          failed(`ForumStartModule 前置抓取失败：${start.error}`),
-        );
-      }
-      for (const task of forumTasks) {
-        if (task.kind === 'category') {
-          stagedCategories.set(
-            task.taskId,
-            failed(`ForumStartModule 前置抓取失败：${start.error}`),
-          );
-        } else {
-          stagedThreads.set(
-            task.taskId,
-            failed(`ForumStartModule 前置抓取失败：${start.error}`),
-          );
-        }
-      }
-    }
-
-    // 关联冷启动不依赖 ForumStart/分类父表；一个局部模块失败不能再拒绝 28k 页整体收敛。
-    linkGroups: for (let offset = 0; offset < linkOnlyTasks.length; offset += opts.concurrency) {
-      if (budget.checkpoint()) {
-        counters.stoppedByRuntimeBudget = true;
-        break;
-      }
-      const group = linkOnlyTasks.slice(offset, offset + opts.concurrency);
-      let results: Awaited<ReturnType<typeof scanPageDiscussionLinks>>;
-      try {
-        results = await scanPageDiscussionLinks(
-          http,
-          config.siteBaseUrl,
-          group.map(toDiscussionTarget),
-          opts.concurrency,
-        );
-      } catch (err) {
-        if (!isRuntimeBudgetExceededError(err)) throw err;
-        counters.stoppedByRuntimeBudget = true;
-        break;
-      }
-      for (const task of group) {
-        const result = results.get(task.pageId) ??
-          failed<ForumCommentsPage>('内部错误：页面讨论串关联结果 Map 缺项');
-        stagedLinks.set(task.taskId, result);
-        consecutiveFailures = updateFailureStreak(
-          result,
-          task.kind,
-          consecutiveFailures,
-          counters,
-        );
-        if (http.breakerOpen || consecutiveFailures >= FAILURE_LIMIT) {
-          counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
-          break linkGroups;
-        }
-      }
-    }
-
-    if (
-      start.status !== 'failed'
-      && !http.breakerOpen
-      && !counters.stoppedByFailureLimit
-      && !counters.stoppedByRuntimeBudget
-    ) {
-      const categoryTasks = forumTasks.filter((task) => task.kind === 'category');
-      const threadTasks = forumTasks.filter((task) => task.kind === 'thread');
-      if (categoryTasks.length > 0) {
-        try {
-          const categorySitemap = await fetchCategorySitemap(
-            http,
-            config.siteBaseUrl,
-            log.child('category-sitemap'),
-          );
-          const normalized = normalizeSitemapEntries(categorySitemap.entries);
-          sitemapCategoryIds = new Set(
-            [...normalized.observed.keys()]
-              .map((slug) => /(?:^|\/)forum\/c-(\d+)/.exec(slug)?.[1])
-              .filter((id): id is string => id !== undefined)
-              .map(Number),
-          );
-          const missingCategories = start.data.categories
-            .map((category) => category.id)
-            .filter((id) => !sitemapCategoryIds!.has(id));
-          if (missingCategories.length > 0) {
-            log.warn('category sitemap 覆盖不完整：缺席分类只记 partial，禁止判 thread 删除', {
-              missingCategories,
-              count: missingCategories.length,
-            });
-          }
-        } catch (err) {
-          if (isRuntimeBudgetExceededError(err)) {
-            counters.stoppedByRuntimeBudget = true;
-            categoryCoverageError = 'category sitemap 被单轮时间预算中断';
-          } else {
-            categoryCoverageError = `category sitemap 抓取失败：${String(err)}`;
-            log.warn('无法证明分类在 sitemap 中；本轮所有分类只保存正面观测，不判删除', {
-              error: categoryCoverageError,
-            });
-          }
-        }
-        let results = new Map<number, CollectResult<ForumCategorySnapshot>>();
-        if (!counters.stoppedByRuntimeBudget) {
-          try {
-            results = await scanForumCategories(
-              http,
-              config.siteBaseUrl,
-              categoryTasks.map((task) => task.targetId),
-              opts.concurrency,
-            );
-          } catch (err) {
-            if (!isRuntimeBudgetExceededError(err)) throw err;
-            counters.stoppedByRuntimeBudget = true;
-          }
-        }
-        if (!counters.stoppedByRuntimeBudget) {
-          for (const task of categoryTasks) {
-            stagedCategories.set(
-              task.taskId,
-              results.get(task.targetId) ??
-                failed<ForumCategorySnapshot>('内部错误：分类枚举结果 Map 缺项'),
-            );
-          }
-        }
-      }
-      scanGroups: for (let offset = 0; offset < deepDiscussionTasks.length; offset += opts.concurrency) {
-        if (budget.checkpoint()) {
-          counters.stoppedByRuntimeBudget = true;
-          break;
-        }
-        const group = deepDiscussionTasks.slice(offset, offset + opts.concurrency);
-        let results: Awaited<ReturnType<typeof scanPageDiscussions>>;
-        try {
-          results = await scanPageDiscussions(
-            http,
-            config.siteBaseUrl,
-            group.map(toDiscussionTarget),
-            opts.concurrency,
-          );
-        } catch (err) {
-          if (!isRuntimeBudgetExceededError(err)) throw err;
-          counters.stoppedByRuntimeBudget = true;
-          break;
-        }
-        for (const task of group) {
-          const result =
-            results.get(task.pageId) ??
-            failed<ForumDiscussionSnapshot>('内部错误：页面讨论结果 Map 缺项');
-          stagedDiscussions.set(task.taskId, result);
-          consecutiveFailures = updateFailureStreak(
-            result,
-            task.kind,
-            consecutiveFailures,
-            counters,
-          );
-          if (http.breakerOpen || consecutiveFailures >= FAILURE_LIMIT) {
-            counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
-            break scanGroups;
-          }
-        }
-      }
-
-      if (
-        !http.breakerOpen
-        && !counters.stoppedByFailureLimit
-        && !counters.stoppedByRuntimeBudget
-      ) {
-        for (let offset = 0; offset < threadTasks.length; offset += opts.concurrency) {
-          if (budget.checkpoint()) {
-            counters.stoppedByRuntimeBudget = true;
-            break;
-          }
-          const group = threadTasks.slice(offset, offset + opts.concurrency);
-          let results: Awaited<ReturnType<typeof scanForumThreads>>;
-          try {
-            results = await scanForumThreads(
-              http,
-              config.siteBaseUrl,
-              group.map((task) => task.targetId),
-              opts.concurrency,
-            );
-          } catch (err) {
-            if (!isRuntimeBudgetExceededError(err)) throw err;
-            counters.stoppedByRuntimeBudget = true;
-            break;
-          }
-          for (const task of group) {
-            const result =
-              results.get(task.targetId) ??
-              failed<ForumThreadSnapshot>('内部错误：主题结果 Map 缺项');
-            stagedThreads.set(task.taskId, result);
-            consecutiveFailures = updateFailureStreak(
-              result,
-              'forum',
-              consecutiveFailures,
-              counters,
-            );
-            if (http.breakerOpen || consecutiveFailures >= FAILURE_LIMIT) {
-              counters.stoppedByFailureLimit = consecutiveFailures >= FAILURE_LIMIT;
-              break;
-            }
-          }
-          if (http.breakerOpen || counters.stoppedByFailureLimit) break;
-        }
-      }
-    }
 
     const earlyFingerprint = fingerprint(
       http,
@@ -556,7 +619,10 @@ async function main(): Promise<void> {
     for (const task of forumTasks.filter((item) => item.kind === 'category')) {
       const result = stagedCategories.get(task.taskId);
       if (result === undefined) continue;
-      const listedInSitemap = sitemapCategoryIds?.has(task.targetId) === true;
+      // 该引用在 ensureCategoryCoverage 的异步闭包内赋值；显式保留可空类型，
+      // 避免 TypeScript 把外层初值错误收窄成恒 null。
+      const categoryIds = sitemapCategoryIds as Set<number> | null;
+      const listedInSitemap = categoryIds?.has(task.targetId) === true;
       let status: 'ok' | 'partial' | 'failed' = result.status;
       let error = result.status === 'ok' ? null : result.error;
       let applyResult: Record<string, unknown> | null = null;
@@ -605,7 +671,14 @@ async function main(): Promise<void> {
         now: new Date().toISOString(),
       });
       finishedForum.add(task.taskId);
-      countFinished(counters, status, finish.action === 'retried' ? null : finish.action);
+      countFinished(
+        counters,
+        status,
+        finish.action === 'retried' ? null : finish.action,
+        'forum',
+        undefined,
+        task.lane,
+      );
       countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: 'category',
@@ -668,7 +741,7 @@ async function main(): Promise<void> {
         now: new Date().toISOString(),
       });
       finishedForum.add(task.taskId);
-      countFinished(counters, status, finish.action);
+      countFinished(counters, status, finish.action, 'forum', 'thread', task.lane);
       countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: 'thread',
@@ -732,7 +805,7 @@ async function main(): Promise<void> {
         now: new Date().toISOString(),
       });
       finishedDiscussion.add(task.taskId);
-      countFinished(counters, status, finish.action);
+      countFinished(counters, status, finish.action, 'discussion');
       countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: 'discussion_link',
@@ -798,7 +871,7 @@ async function main(): Promise<void> {
         now: new Date().toISOString(),
       });
       finishedDiscussion.add(task.taskId);
-      countFinished(counters, status, finish.action);
+      countFinished(counters, status, finish.action, 'discussion');
       countRepeatedFailure(counters, task.attempts, status, finish.action);
       pushSample(samples, {
         kind: task.kind,
@@ -821,8 +894,20 @@ async function main(): Promise<void> {
     const unprocessedDiscussion = discussionTasks
       .filter((task) => !finishedDiscussion.has(task.taskId))
       .map((task) => task.taskId);
-    await releaseForumTargetLocks(pool, unprocessedForum, workerId);
-    await releaseDiscussionTaskLocks(pool, unprocessedDiscussion, workerId);
+    await releaseForumTargetLocks(
+      pool,
+      unprocessedForum,
+      workerId,
+      false,
+      counters.stoppedByRuntimeBudget,
+    );
+    await releaseDiscussionTaskLocks(
+      pool,
+      unprocessedDiscussion,
+      workerId,
+      false,
+      counters.stoppedByRuntimeBudget,
+    );
 
     const unprocessedReleased = unprocessedForum.length + unprocessedDiscussion.length;
     if (budget.checkpoint()) counters.stoppedByRuntimeBudget = true;
@@ -854,6 +939,7 @@ async function main(): Promise<void> {
         mode: 'forum',
         durationMs,
         ...counters,
+        maxInFlight: FORUM_CONSUME_MAX_IN_FLIGHT,
         unprocessedReleased,
         health,
         healthExclusions: {
@@ -874,6 +960,7 @@ async function main(): Promise<void> {
       runId,
       durationMs,
       ...counters,
+      maxInFlight: FORUM_CONSUME_MAX_IN_FLIGHT,
       unprocessedReleased,
       parseHealth,
       http: http.stats(),
@@ -971,8 +1058,16 @@ function countFinished(
   counters: Counters,
   status: 'ok' | 'partial' | 'failed',
   action: string | null,
+  taskClass: 'discussion' | 'forum',
+  forumKind?: 'thread',
+  forumLane?: 'catchup' | 'steady',
 ): void {
   counters.processed++;
+  if (taskClass === 'discussion') counters.discussionProcessed++;
+  else counters.forumProcessed++;
+  if (forumKind === 'thread') counters.forumThreadProcessed++;
+  if (forumLane === 'catchup') counters.forumCatchupProcessed++;
+  if (forumLane === 'steady') counters.forumSteadyProcessed++;
   if (action === 'irreconcilable') {
     counters.irreconcilable++;
   } else if (status === 'ok') {
@@ -1179,6 +1274,7 @@ function parseArgs(): CliOptions {
     Number.isFinite(raw.concurrency) && raw.concurrency > 0
       ? Math.min(5, Math.floor(raw.concurrency))
       : 4;
+  assertForumConsumeFairLimit(limit, ids.length > 0, Boolean(raw.probeOnly));
   const maxRuntimeSec = parseRuntimeBudgetSec(raw.maxRuntimeSec, {
     minSec: 1,
     maxSec: 3_600,

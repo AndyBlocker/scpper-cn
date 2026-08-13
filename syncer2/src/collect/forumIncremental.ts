@@ -37,6 +37,11 @@ export type ForumCategoryPageFetcher = (
   pageNo: number,
 ) => Promise<CollectResult<ForumCategoryPage>>;
 
+export interface ForumCategoryScanPlan {
+  category: ForumCategoryRecord;
+  maxPages: number;
+}
+
 function nullableNumber(value: string | number | null): number | null {
   return value === null ? null : Number(value);
 }
@@ -187,6 +192,34 @@ export async function scanChangedForumCategory(
   };
 }
 
+/**
+ * 把全局页预算先按变化分类公平切片，并旋转每轮的首分类。
+ * 当 maxPages >= 分类数时每类本轮至少 1 页；分类数更多时，rotationOffset 仍保证
+ * 任一分类至多等待 ceil(n/maxPages) 轮获得名额。剩余额按轮转顺序逐页分配。
+ */
+export function planForumIncrementalCategories(
+  categories: readonly ForumCategoryRecord[],
+  maxPages: number,
+  rotationOffset = 0,
+): ForumCategoryScanPlan[] {
+  const pageBudget = Math.max(0, Math.floor(maxPages));
+  if (categories.length === 0 || pageBudget === 0) return [];
+  const start = ((Math.floor(rotationOffset) % categories.length) + categories.length) %
+    categories.length;
+  const rotated = [
+    ...categories.slice(start),
+    ...categories.slice(0, start),
+  ];
+  const allocations = new Array<number>(rotated.length).fill(0);
+  for (let page = 0; page < pageBudget; page++) {
+    allocations[page % rotated.length]!++;
+  }
+  return rotated.flatMap((category, index) => {
+    const allocation = allocations[index]!;
+    return allocation === 0 ? [] : [{ category, maxPages: allocation }];
+  });
+}
+
 /** 回归友好的总规划器：没有变化的分类绝不会调用 fetchPage。 */
 export async function discoverChangedForumThreads(
   categories: readonly ForumCategoryRecord[],
@@ -194,16 +227,29 @@ export async function discoverChangedForumThreads(
   knownPostCounts: ReadonlyMap<number, number>,
   fetchPage: ForumCategoryPageFetcher,
   maxPages = 25,
+  rotationOffset = 0,
 ): Promise<ForumIncrementalCategoryResult[]> {
-  const results: ForumIncrementalCategoryResult[] = [];
-  for (const category of categories) {
+  const changed = categories.filter((category) =>
+    forumCategorySignalChanged(category, states.get(category.id))
+  );
+  const plan = planForumIncrementalCategories(
+    changed,
+    maxPages,
+    rotationOffset,
+  );
+  // 每个变化分类的第一页同时入共享 FIFO gate；只有各自第一页完成后才会申请第二页。
+  // 因此在当前 16 分类、40 页生产预算下，任何一个大分类都不能在其余分类启动前
+  // 串行吃完整轮墙钟预算。
+  return Promise.all(plan.map(async ({ category, maxPages: categoryMaxPages }) => {
     const state = states.get(category.id);
-    if (!forumCategorySignalChanged(category, state)) continue;
-    results.push(
-      await scanChangedForumCategory(category, state, knownPostCounts, fetchPage, maxPages),
+    return scanChangedForumCategory(
+      category,
+      state,
+      knownPostCounts,
+      fetchPage,
+      categoryMaxPages,
     );
-  }
-  return results;
+  }));
 }
 
 export async function fetchForumIncrementalStates(
