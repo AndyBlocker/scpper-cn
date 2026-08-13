@@ -80,8 +80,34 @@ export const PINNED_KIND_SHARE = 0.4;
 export const KIND_SERVICE_MIN_PER_ROUND = 1;
 /** 饥饿 kind 用 FIFO 轮转占用的纠偏车道上限；至少一半仍依优先级。 */
 export const FAIR_SHARE_GUARANTEED_SHARE = 0.5;
-/** 等待每跨过 30min，有效优先级 +1；新高优先仍快，老任务会逐步追上。 */
-export const PRIORITY_AGING_INTERVAL_MS = 30 * 60_000;
+
+export interface PriorityAgingBand {
+  /** 本带包含该值以上、下一带以下的基础优先级。 */
+  minimumPriority: number;
+  /** 老化最多到达的有效优先级；必须低于上一带的下界。 */
+  ceilingPriority: number;
+  /** 从基础分线性老化到本带 ceiling 的最长时间。 */
+  maxWaitMs: number;
+}
+
+/**
+ * 严格分带老化。
+ *
+ * 2026-08-13 事故：无上界的 `priority + wait/30min` 使等了 9 天的
+ * priority=20 变成 452，永久压过新到的 priority=200 已确证漂移。
+ *
+ * 现在年龄只能改变带内顺序：20 最多到 99，100 最多到 199，
+ * 因而任何低带都不能淹没更高的基础优先级。各带 maxWait 只是“到达带内最高
+ * 排序分”的上界；真正的不饥饿证明仍是每 kind FIFO 保底的
+ * `(eligibleAhead + 1) * WORK_QUEUE_ROUND_UPPER_BOUND_MS`。
+ */
+export const PRIORITY_AGING_BANDS: readonly PriorityAgingBand[] = [
+  { minimumPriority: 200, ceilingPriority: 299, maxWaitMs: WORK_QUEUE_ROUND_UPPER_BOUND_MS },
+  { minimumPriority: 100, ceilingPriority: 199, maxWaitMs: 60 * 60_000 },
+  { minimumPriority: 20, ceilingPriority: 99, maxWaitMs: 24 * 60 * 60_000 },
+  { minimumPriority: 10, ceilingPriority: 19, maxWaitMs: 7 * 24 * 60 * 60_000 },
+  { minimumPriority: -2_147_483_648, ceilingPriority: 9, maxWaitMs: 30 * 24 * 60 * 60_000 },
+];
 /** 终态复查不得先于常规 scan_task 吃光整轮。 */
 export const IRRECONCILABLE_REVIEW_SHARE = 0.2;
 
@@ -225,7 +251,16 @@ export function kindClaimWaitUpperBoundMs(eligibleAhead: number): number {
   return (eligibleAhead + 1) * WORK_QUEUE_ROUND_UPPER_BOUND_MS;
 }
 
-/** SQL 认领排序的纯函数对照，便于对老化转折点做精确回归。 */
+export function priorityAgingBand(priority: number): PriorityAgingBand {
+  if (!Number.isSafeInteger(priority)) {
+    throw new RangeError(`优先级必须是安全整数，收到 ${String(priority)}`);
+  }
+  const band = PRIORITY_AGING_BANDS.find((candidate) => priority >= candidate.minimumPriority);
+  if (!band) throw new RangeError(`优先级低于 PostgreSQL integer 下界：${priority}`);
+  return band;
+}
+
+/** SQL 认领排序的纯函数对照，便于对分带上界做精确回归。 */
 export function effectiveTaskPriority(
   priority: number,
   createdAt: string | number,
@@ -239,7 +274,13 @@ export function effectiveTaskPriority(
   if (!Number.isFinite(createdMs) || !Number.isFinite(nowMs)) {
     throw new TypeError(`非法老化时间 createdAt=${String(createdAt)} now=${String(now)}`);
   }
-  return priority + Math.floor(Math.max(0, nowMs - createdMs) / PRIORITY_AGING_INTERVAL_MS);
+  const band = priorityAgingBand(priority);
+  const ceiling = Math.max(priority, band.ceilingPriority);
+  const span = ceiling - priority;
+  if (span === 0) return priority;
+  const ageMs = Math.max(0, nowMs - createdMs);
+  const bonus = Math.min(span, Math.floor((ageMs * span) / band.maxWaitMs));
+  return priority + bonus;
 }
 
 export type VoteTaskKind = 'votes_full' | 'new_page_highfreq';
@@ -543,6 +584,9 @@ export async function claimWorkTasks(
   if (limit === 0 || kinds.length === 0) return [];
   const pinnedQuota = pinnedKindQuota(limit);
   const guaranteedQuota = fairShareGuaranteedQuota(limit, kinds.length);
+  const agingMinimumPriorities = PRIORITY_AGING_BANDS.map((band) => band.minimumPriority);
+  const agingCeilingPriorities = PRIORITY_AGING_BANDS.map((band) => band.ceilingPriority);
+  const agingMaxWaitMs = PRIORITY_AGING_BANDS.map((band) => band.maxWaitMs);
   const shortLivedDays = positiveInteger(newPageWindowDays, '新页窗口天数');
   const shortLivedIntervalHours = positiveInteger(
     newPageIntervalHours,
@@ -574,10 +618,12 @@ export async function claimWorkTasks(
     'meta.scan_task:claim_all_work',
     `WITH eligible AS (
        SELECT st.id, st.kind, st.priority, st.not_before, st.created_at,
-              (
-                st.priority::bigint + floor(
-                  GREATEST(0, extract(epoch FROM now() - st.created_at))
-                  / $12::numeric
+              st.priority::bigint + LEAST(
+                aging.ceiling_priority - st.priority::bigint,
+                floor(
+                  GREATEST(0, extract(epoch FROM now() - st.created_at) * 1000)
+                  * (aging.ceiling_priority - st.priority::bigint)
+                  / aging.max_wait_ms::numeric
                 )::bigint
               ) AS effective_priority,
               row_number() OVER (
@@ -587,6 +633,15 @@ export async function claimWorkTasks(
          FROM meta.scan_task st
          JOIN serve.page_current pc ON pc.page_id = st.page_id
          JOIN ingest.page p ON p.id = st.page_id
+         CROSS JOIN LATERAL (
+           SELECT GREATEST(st.priority, band.ceiling_priority)::bigint AS ceiling_priority,
+                  band.max_wait_ms
+             FROM unnest($12::integer[], $13::integer[], $14::bigint[])
+                    AS band(minimum_priority, ceiling_priority, max_wait_ms)
+            WHERE st.priority >= band.minimum_priority
+            ORDER BY band.minimum_priority DESC
+            LIMIT 1
+         ) aging
         WHERE st.kind = ANY($4::text[])
           AND ($8::text IS NULL OR pc.slug LIKE $8 || '%')
           AND (
@@ -625,7 +680,7 @@ export async function claimWorkTasks(
                  AND ps.kind = 'votes'
                  AND ps.status = 'ok'
                  AND ps.scanned_at > now()
-                       - ($13::integer * interval '1 hour')
+                       - ($15::integer * interval '1 hour')
             )
           )
           AND (st.not_before IS NULL OR st.not_before <= now())
@@ -673,8 +728,8 @@ export async function claimWorkTasks(
      ),
      /*
       * 层次二：剩余名额保留原有置顶语义，但置顶 kind 仍受每轮封顶。
-      * 非置顶任务按 priority + wait/30min 的有效优先级竞争；这使持续到来
-      * 的新高优先任务仍然更快，但不能永久压住已等待的低优先任务。
+      * 非置顶任务按严格分带后的有效优先级竞争。老化只改变带内顺序，
+      * 低带不能淹没高带；低带的不饥饿性由上面的 FIFO 保底独立提供。
       */
      priority_candidates AS (
        SELECT e.*,
@@ -783,7 +838,9 @@ export async function claimWorkTasks(
       reservedLockOwner,
       starvedKinds,
       guaranteedQuota,
-      Math.floor(PRIORITY_AGING_INTERVAL_MS / 1_000),
+      agingMinimumPriorities,
+      agingCeilingPriorities,
+      agingMaxWaitMs.map((value) => String(value)),
       bindSqlTuning('NEW_PAGE_INTERVAL_HOURS', shortLivedIntervalHours),
     ],
   );

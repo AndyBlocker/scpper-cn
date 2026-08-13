@@ -21,7 +21,7 @@ import {
   kindClaimWaitUpperBoundMs,
   KIND_SERVICE_MIN_PER_ROUND,
   PINNED_KIND_SHARE,
-  PRIORITY_AGING_INTERVAL_MS,
+  PRIORITY_AGING_BANDS,
   WORK_QUEUE_ROUND_UPPER_BOUND_MS,
   WORK_QUEUE_LIMIT_MAX,
   pinnedKindQuota,
@@ -87,17 +87,21 @@ describe('kind 公平服务下限', () => {
     );
   });
 
-  it('老化让低优先老任务追上持续到来的高优先新任务', () => {
+  it('分带老化有可推导的上界，低带永远不能压过高带', () => {
     const now = Date.parse('2026-08-13T00:00:00.000Z');
-    const freshHigh = effectiveTaskPriority(100, now, now);
-    const oldLow = effectiveTaskPriority(
-      20,
-      now - 81 * PRIORITY_AGING_INTERVAL_MS,
-      now,
-    );
-    assert.equal(freshHigh, 100);
-    assert.equal(oldLow, 101);
-    assert.ok(oldLow > freshHigh);
+    const policies = new Map(PRIORITY_AGING_BANDS.map((band) => [band.minimumPriority, band]));
+    assert.equal(policies.get(200)?.maxWaitMs, 425_000);
+    assert.equal(policies.get(100)?.maxWaitMs, 3_600_000);
+    assert.equal(policies.get(20)?.maxWaitMs, 86_400_000);
+    assert.equal(policies.get(10)?.maxWaitMs, 604_800_000);
+
+    assert.equal(effectiveTaskPriority(200, now - 425_000, now), 299);
+    assert.equal(effectiveTaskPriority(100, now - 3_600_000, now), 199);
+    assert.equal(effectiveTaskPriority(20, now - 9 * 24 * 60 * 60_000, now), 99);
+    assert.equal(effectiveTaskPriority(10, now - 7 * 24 * 60 * 60_000, now), 19);
+    assert.ok(effectiveTaskPriority(20, now - 365 * 24 * 60 * 60_000, now) < 100);
+    assert.ok(effectiveTaskPriority(100, now - 365 * 24 * 60 * 60_000, now) < 200);
+    assert.ok(effectiveTaskPriority(10, now - 365 * 24 * 60 * 60_000, now) < 20);
   });
 
   it('终态复查有封顶，不会在常规认领之前吃光整轮', () => {
@@ -114,7 +118,8 @@ describe('kind 公平服务下限', () => {
     );
     assert.match(claim, /PARTITION BY st\.kind[\s\S]*ORDER BY st\.created_at, st\.id/);
     assert.match(claim, /e\.fifo_rank = 1 OR e\.kind = ANY\(\$10::text\[\]\)/);
-    assert.match(claim, /st\.priority::bigint \+ floor/);
+    assert.match(claim, /CROSS JOIN LATERAL[\s\S]*unnest\(\$12::integer\[\], \$13::integer\[\], \$14::bigint\[\]\)/);
+    assert.match(claim, /st\.priority::bigint \+ LEAST/);
     assert.match(claim, /ORDER BY picked\.schedule_ord/);
     assert.match(claim, /\(e\.kind = 'confirm_deleted'\) DESC/);
     assert.match(claim, /\(e\.kind = 'new_page_highfreq'\) DESC/);

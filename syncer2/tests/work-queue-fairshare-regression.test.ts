@@ -11,7 +11,9 @@ import { after, before, describe, it } from 'node:test';
 import { createPool, query } from '../src/store/db.js';
 import {
   claimWorkTasks,
+  effectiveTaskPriority,
   finishVoteTask,
+  PRIORITY_AGING_BANDS,
   seedVoteTasks,
   type ClaimedVoteTask,
 } from '../src/store/workQueue.js';
@@ -108,6 +110,139 @@ after(async () => {
 });
 
 describe('work-queue kind fair-share SQL', () => {
+  it('同 kind 的 9 天低优先积压不再淹没新到 priority=200', async () => {
+    const now = Date.now();
+    await clearTasks();
+    await seedTasks(
+      lowPages.slice(0, 10),
+      'votes_full',
+      20,
+      lowPages.slice(0, 10).map((_pageId, index) => iso(now - 9 * 24 * 60 * 60_000 + index)),
+    );
+    await seedTasks(
+      highPages.slice(0, 2),
+      'votes_full',
+      200,
+      highPages.slice(0, 2).map((_pageId, index) => iso(now + index)),
+    );
+
+    const claimed = await claimWorkTasks(
+      pool,
+      5,
+      `${WORKER}:banded-high`,
+      ['votes_full'],
+      undefined,
+      undefined,
+      PREFIX,
+    );
+    const claimedHigh = claimed.filter((task) => highPages.slice(0, 2).includes(task.pageId));
+    assert.equal(claimed.length, 5);
+    assert.equal(claimedHigh.length, 2, '两个 priority=200 必须在第一轮全部被认领');
+    assert.ok(claimedHigh.every((task) => task.attempts >= 1));
+    await deleteClaimed(claimed.map((task) => task.taskId));
+  });
+
+  it('同 kind 的低优先 FIFO 在持续 priority=200 下仍按可推导上界前进', async () => {
+    const now = Date.now();
+    const low = lowPages.slice(0, 3);
+    const high = highPages.slice(0, 6);
+    await clearTasks();
+    await seedTasks(
+      low,
+      'votes_full',
+      10,
+      low.map((_pageId, index) => iso(now - 8 * 24 * 60 * 60_000 + index)),
+    );
+    await seedTasks(high, 'votes_full', 200, high.map((_pageId, index) => iso(now + index)));
+
+    const consumedLow: number[] = [];
+    for (let round = 0; round < low.length; round++) {
+      const claimed = await claimWorkTasks(
+        pool,
+        2,
+        `${WORKER}:banded-low:${round}`,
+        ['votes_full'],
+        undefined,
+        undefined,
+        PREFIX,
+      );
+      const roundLow = claimed.filter((task) => low.includes(task.pageId));
+      const roundHigh = claimed.filter((task) => high.includes(task.pageId));
+      assert.equal(roundLow.length, 1, `round=${round} FIFO 保底应消化 1 个低优先任务`);
+      assert.equal(roundHigh.length, 1, `round=${round} 优先级车道应同时消化 1 个高优先任务`);
+      consumedLow.push(roundLow[0]!.pageId);
+      await deleteClaimed(claimed.map((task) => task.taskId));
+      if (round + 1 < low.length) {
+        await seedTasks(
+          [roundHigh[0]!.pageId],
+          'votes_full',
+          200,
+          [iso(Date.now() + round)],
+        );
+      }
+    }
+    assert.deepEqual(consumedLow, low, '低优先任务必须按 created_at/id FIFO 有限前进');
+  });
+
+  it('effectiveTaskPriority 纯函数与 PostgreSQL 分带公式的排序一致', async () => {
+    const now = Date.parse('2026-08-13T00:00:00.000Z');
+    const fixtures = [
+      { id: 1, priority: 20, createdAt: iso(now - 30 * 24 * 60 * 60_000) },
+      { id: 2, priority: 200, createdAt: iso(now) },
+      { id: 3, priority: 100, createdAt: iso(now - 60 * 60_000) },
+      { id: 4, priority: 10, createdAt: iso(now - 365 * 24 * 60 * 60_000) },
+      { id: 5, priority: 200, createdAt: iso(now - 212_500) },
+    ];
+    const sql = await query<{ id: number; effective_priority: string }>(
+      pool,
+      'test:fairshare:effective_priority_sql_parity',
+      `WITH scored AS (
+         SELECT input.id,
+                input.priority::bigint + LEAST(
+                aging.ceiling_priority - input.priority::bigint,
+                floor(
+                  GREATEST(0, extract(epoch FROM $4::timestamptz - input.created_at) * 1000)
+                  * (aging.ceiling_priority - input.priority::bigint)
+                  / aging.max_wait_ms::numeric
+                )::bigint
+                ) AS effective_priority
+           FROM unnest($1::integer[], $2::integer[], $3::timestamptz[])
+                  AS input(id, priority, created_at)
+           CROSS JOIN LATERAL (
+             SELECT GREATEST(input.priority, band.ceiling_priority)::bigint AS ceiling_priority,
+                    band.max_wait_ms
+               FROM unnest($5::integer[], $6::integer[], $7::bigint[])
+                      AS band(minimum_priority, ceiling_priority, max_wait_ms)
+              WHERE input.priority >= band.minimum_priority
+              ORDER BY band.minimum_priority DESC
+              LIMIT 1
+           ) aging
+       )
+       SELECT id, effective_priority::text AS effective_priority
+         FROM scored
+        ORDER BY scored.effective_priority DESC, id`,
+      [
+        fixtures.map((row) => row.id),
+        fixtures.map((row) => row.priority),
+        fixtures.map((row) => row.createdAt),
+        iso(now),
+        PRIORITY_AGING_BANDS.map((band) => band.minimumPriority),
+        PRIORITY_AGING_BANDS.map((band) => band.ceilingPriority),
+        PRIORITY_AGING_BANDS.map((band) => String(band.maxWaitMs)),
+      ],
+    );
+    const expected = fixtures
+      .map((row) => ({
+        id: row.id,
+        effectivePriority: effectiveTaskPriority(row.priority, row.createdAt, now),
+      }))
+      .sort((left, right) => right.effectivePriority - left.effectivePriority || left.id - right.id);
+    assert.deepEqual(
+      sql.rows.map((row) => ({ id: row.id, effectivePriority: Number(row.effective_priority) })),
+      expected,
+    );
+  });
+
   it('高优先持续播种时低优先每轮仍非零，饥饿检测会扩大实际名额', async () => {
     const now = Date.now();
     await clearTasks();
