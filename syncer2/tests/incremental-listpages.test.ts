@@ -13,18 +13,21 @@ import {
 import { advanceDriftObservation } from '../src/collect/l1Drift.js';
 import {
   L0_SELECTORS,
+  L1_BATCH_ROTATION_MINUTES,
   L1_SELECTORS,
   batchTargets,
   buildIncrementalListPagesRequest,
   buildIncrementalModuleBody,
   finalizeIncrementalListPagesRun,
   parseIncrementalListPagesResponse,
+  rotatingBatchTargets,
   scanIncrementalListPages,
   type IncrementalBatchResult,
   type L1ListPageRow,
 } from '../src/collect/incrementalListPages.js';
 import { LISTPAGES_DUPLICATE_FULLNAME_RATE_LIMIT } from '../src/collect/listpages.js';
 import type { HttpClient } from '../src/http/client.js';
+import { RuntimeBudgetExceededError } from '../src/util/runtimeBudget.js';
 import {
   calculateRevisionCoverage,
   classifyRevisionCoverageBaseline,
@@ -44,11 +47,56 @@ test('L0 是 updated_at 两小时窗口并携带 revisions 二次确认', () => 
 });
 
 test('L1 module_body 严格四字段，batchTargets 无早停入口并覆盖 2..N', () => {
+  assert.equal(L1_BATCH_ROTATION_MINUTES, 5);
   assert.deepEqual(L1_SELECTORS, ['fullname', 'rating', 'rating_votes', 'revisions']);
   const body = buildIncrementalModuleBody('l1');
   assert.equal((body.match(/%%%%/g) ?? []).length, 8);
   assert.doesNotMatch(body, /updated_at|total|index|title|tags/);
   assert.deepEqual(batchTargets(145), Array.from({ length: 144 }, (_, index) => index + 2));
+  const firstRotation = rotatingBatchTargets(145, 0);
+  const secondRotation = rotatingBatchTargets(145, 1);
+  assert.deepEqual([...firstRotation].sort((a, b) => a - b), batchTargets(145));
+  assert.deepEqual([...secondRotation].sort((a, b) => a - b), batchTargets(145));
+  assert.notEqual(firstRotation[0], secondRotation[0], '相邻降档轮不能反复覆盖同一批前缀');
+});
+
+test('L1 预算中止保留已完成批次为正向 partial，并明确标出未覆盖范围', async () => {
+  const row = (index: number) =>
+    '<div class="syncer2-incremental-l1-row"><p>' +
+    `%%page-${index}%%|||%%${index}%%|||%%${index + 1}%%|||%%${index + 2}%%` +
+    '</p></div>';
+  const batchBody = (batchNo: number) => {
+    const start = (batchNo - 1) * 250 + 1;
+    return `<div class="list-pages-box">${Array.from({ length: 250 }, (_, i) => row(start + i)).join('')}` +
+      `</div><span class="pager-no">page 1 of ${5 - batchNo}</span>`;
+  };
+  let requests = 0;
+  const fakeHttp = {
+    request: async (_url: string, options: { body?: string }) => {
+      requests++;
+      if (requests > 2) throw new RuntimeBudgetExceededError(Date.now());
+      const offset = Number(new URLSearchParams(options.body).get('offset') ?? '0');
+      const batchNo = offset / 250 + 1;
+      return {
+        status: 200,
+        text: () => JSON.stringify({ status: 'ok', body: batchBody(batchNo) }),
+      };
+    },
+  } as unknown as HttpClient;
+  const scan = await scanIncrementalListPages(
+    fakeHttp,
+    'https://scp-wiki-cn.wikidot.com',
+    'l1',
+    { concurrency: 1 },
+  );
+  assert.equal(scan.status, 'partial');
+  assert.equal(scan.stoppedByRuntimeBudget, true);
+  assert.equal(scan.validation.positiveEvidenceSafe, true);
+  assert.equal(scan.pagesEnumerated, 500);
+  assert.equal(scan.coverage.scope, 'partial');
+  assert.equal(scan.coverage.batchCoverageRatio, 0.5);
+  assert.deepEqual(scan.coverage.completedBatchRanges, ['1-2']);
+  assert.deepEqual(scan.coverage.missingBatchRanges, ['3-4']);
 });
 
 test('窄字段响应严格解析日期/整数，WAF 不能伪装成空集合', () => {

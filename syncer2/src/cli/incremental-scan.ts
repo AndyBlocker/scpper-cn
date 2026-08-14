@@ -19,6 +19,7 @@ import {
   type RevisionRegressionHealth,
 } from '../collect/revisionRegression.js';
 import {
+  L1_BATCH_ROTATION_MINUTES,
   scanIncrementalListPages,
   type IncrementalListPagesRun,
   type IncrementalListPagesLayer,
@@ -69,6 +70,7 @@ import {
   advanceDailyL1EnumerationSnapshot,
   l1EnumerationSnapshotPath,
 } from '../store/l1EnumerationSnapshot.js';
+import { upsertL1VoteObservationStates } from '../store/l1PartialVotes.js';
 import {
   applyAdaptiveSelfProtectionToRunHealth,
   evaluateRunHealth,
@@ -80,6 +82,10 @@ import {
   parseRuntimeBudgetSec,
   RuntimeBudget,
 } from '../util/runtimeBudget.js';
+import {
+  persistL1PartialCoverage,
+  type L1PartialCoveragePersistResult,
+} from '../work/l1PartialCoverage.js';
 
 const log = createLogger('incremental-scan');
 const SOURCE = 'wikidot_listpages';
@@ -194,6 +200,11 @@ async function main(): Promise<void> {
             concurrency: opts.concurrency,
             logger: log.child('l1'),
             shouldStop: () => budget.checkpoint(),
+            // L1 的 systemd 周期是 5 分钟；用真实轮转周期而不是 L0 的 30 分钟
+            // revision 比较窗口，避免降档时连续六轮反复覆盖同一批次切片。
+            batchRotationSeed: Math.floor(
+              Date.parse(startedAt) / (L1_BATCH_ROTATION_MINUTES * 60_000),
+            ),
           });
     budget.checkpoint();
     let l1EnumerationSnapshot: Record<string, unknown> | null = null;
@@ -214,38 +225,58 @@ async function main(): Promise<void> {
     }
 
     let persistence: PersistResult;
-    if (budget.stoppedByRuntimeBudget) {
+    const partialL1Eligible =
+      opts.layer === 'l1'
+      && scan.status === 'partial'
+      && scan.stoppedByRuntimeBudget
+      && scan.validation.positiveEvidenceSafe
+      && scan.rows.length > 0;
+    if (scan.status === 'ok' && (pool === null || runId === null)) {
+      persistence = dryPersistence(scan.rows.length, opts.layer);
+    } else if (scan.status === 'ok' && opts.layer === 'l0') {
+      persistence = await persistL0(
+        pool!,
+        runId!,
+        scan.rows as L0ListPageRow[],
+        startedAt,
+        config.minEnumeratedRatio,
+      );
+    } else if (scan.status === 'ok') {
+      persistence = await persistL1(
+        pool!,
+        runId!,
+        scan.rows as L1ListPageRow[],
+        startedAt,
+        config.incrementalFrequencyMinutes,
+        config.minEnumeratedRatio,
+      );
+    } else if (partialL1Eligible && (pool === null || runId === null)) {
+      persistence = dryPersistence(scan.rows.length, opts.layer);
+      persistence.counters['partialPositiveOnly'] = true;
+      persistence.counters['absenceInferenceForbidden'] = true;
+    } else if (partialL1Eligible) {
+      persistence = partialL1PersistenceResult(
+        await persistL1PartialCoverage(
+          pool!,
+          runId!,
+          scan.rows as L1ListPageRow[],
+          startedAt,
+        ),
+        scan.rows.length,
+      );
+    } else if (budget.stoppedByRuntimeBudget) {
       persistence = skippedPersistence(
         scan.rows.length,
         opts.layer,
         `达到 ${opts.maxRuntimeSec}s 单轮时间预算；不推进状态，下一轮完整重扫`,
       );
-    } else if (scan.status !== 'ok') {
+    } else {
       // 可收敛的低比例 fullname 重复已在采集器内消化；到这里的是缺批、结构损坏、
       // 重复异常放大等不可信整轮，不推进增量状态、不入队、不计算覆盖率。
       persistence = skippedPersistence(
         scan.rows.length,
         opts.layer,
         scan.validation.reasons.join('；'),
-      );
-    } else if (pool === null || runId === null) {
-      persistence = dryPersistence(scan.rows.length, opts.layer);
-    } else if (opts.layer === 'l0') {
-      persistence = await persistL0(
-        pool,
-        runId,
-        scan.rows as L0ListPageRow[],
-        startedAt,
-        config.minEnumeratedRatio,
-      );
-    } else {
-      persistence = await persistL1(
-        pool,
-        runId,
-        scan.rows as L1ListPageRow[],
-        startedAt,
-        config.incrementalFrequencyMinutes,
-        config.minEnumeratedRatio,
       );
     }
     budget.checkpoint();
@@ -293,6 +324,7 @@ async function main(): Promise<void> {
       frequencyMinutes: config.incrementalFrequencyMinutes,
       windowHours: opts.layer === 'l0' ? windowHours : null,
       earlyStop: false,
+      coverage: scan.coverage,
       validation: scan.validation,
       persistence,
       l1EnumerationSnapshot,
@@ -312,8 +344,8 @@ async function main(): Promise<void> {
             status: runStatus,
             finishedAt: new Date().toISOString(),
             pagesEnumerated: scan.pagesEnumerated,
-            remoteTotal: scan.pagesEnumerated,
-            remoteTotalSource: 'listpages_total',
+            remoteTotal: scan.status === 'ok' ? scan.pagesEnumerated : null,
+            remoteTotalSource: scan.status === 'ok' ? 'listpages_total' : null,
             batchesTotal: scan.expectedBatches,
             batchesFailed: scan.batchesFailed,
             transportFailureRate: transportFailureRate(http),
@@ -324,6 +356,9 @@ async function main(): Promise<void> {
               transport_failure_rate: transportFailureRate(http),
             },
             populationType,
+            healthDecisionSkipReason: partialL1Eligible
+              ? 'l1_partial_positive_coverage'
+              : null,
             stats,
           });
 
@@ -339,6 +374,7 @@ async function main(): Promise<void> {
       pagesEnumerated: scan.pagesEnumerated,
       expectedBatches: scan.expectedBatches,
       requestedBatches: scan.requestedBatches,
+      coverage: scan.coverage,
       persistence,
       health,
       l1EnumerationSnapshot,
@@ -1014,6 +1050,15 @@ async function persistL1(
           .map((row) => ({ row, pageId: resolution.map.get(row.fullname) ?? null })),
         observedAt,
       );
+  const voteObservationStatesAdvanced = await upsertL1VoteObservationStates(
+    pool,
+    runId,
+    excludeRevisionRegressionRows(rows, regressionSlugs, (row) => row.fullname)
+      .filter((row) => !identityConflictSlugs.has(row.fullname))
+      .map((row) => ({ row, pageId: resolution.map.get(row.fullname) ?? null })),
+    observedAt,
+    'full',
+  );
   return {
     resolved: resolved.length,
     unresolved: unresolved.length,
@@ -1055,6 +1100,41 @@ async function persistL1(
         driftReconciliation.summary.identityConflicts,
       unchanged: diff.unchanged,
       earlyStop: false,
+      voteObservationStatesAdvanced,
+    },
+  };
+}
+
+function partialL1PersistenceResult(
+  result: L1PartialCoveragePersistResult,
+  pagesEnumerated: number,
+): PersistResult {
+  return {
+    resolved: result.resolved,
+    unresolved: result.unresolved,
+    pendingEnqueued: result.pendingEnqueued,
+    tasksEnqueued: result.tasksEnqueued,
+    pageScansWritten: result.pageScansWritten,
+    signalsWritten: result.signalsWritten,
+    statesAdvanced: result.voteStatesAdvanced,
+    revisionCoverage: null,
+    driftReconciliation: null,
+    coverageAlert: false,
+    revisionRegressionHealth: evaluateRevisionRegressionHealth({
+      regressions: 0,
+      pagesEnumerated,
+    }),
+    systemicPageFailure: false,
+    counters: {
+      partialPositiveOnly: true,
+      absenceInferenceForbidden: true,
+      fullCoverageStateAdvanced: result.fullCoverageStateAdvanced,
+      revisionCoverageRecorded: result.revisionCoverageRecorded,
+      driftReconciliationPerformed: result.driftReconciliationPerformed,
+      voteChanges: result.voteChanges,
+      voteObservationStatesAdvanced: result.voteStatesAdvanced,
+      revisionRegressionsSkipped: result.revisionRegressionsSkipped,
+      unchanged: result.unchanged,
     },
   };
 }

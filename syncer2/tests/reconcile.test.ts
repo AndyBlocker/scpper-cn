@@ -400,6 +400,7 @@ test('每轮完整 L1 都替换同日旧快照，半截轮不覆盖最后完整�
       status: 'partial' as const,
       validation: {
         complete: false,
+        positiveEvidenceSafe: true,
         rawRowsEnumerated: 1,
         duplicateFullnames: 0,
         duplicateFullnameRate: 0,
@@ -1065,8 +1066,18 @@ function l1Run(
     requestedBatches: 1,
     batchesFailed: 0,
     pagesEnumerated: rows.length,
+    stoppedByRuntimeBudget: false,
+    coverage: {
+      scope: 'full',
+      completedBatches: 1,
+      expectedBatches: 1,
+      batchCoverageRatio: 1,
+      completedBatchRanges: ['1'],
+      missingBatchRanges: [],
+    },
     validation: {
       complete: true,
+      positiveEvidenceSafe: true,
       rawRowsEnumerated: rows.length,
       duplicateFullnames: 0,
       duplicateFullnameRate: 0,

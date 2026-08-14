@@ -129,6 +129,9 @@ export async function cleanupAll(sess: Sess): Promise<CleanupCounts> {
       `DELETE FROM meta.incremental_drift_state WHERE page_id IN ${pagesSub}`],
     ['meta.incremental_signal',
       `DELETE FROM meta.incremental_signal WHERE page_id IN ${pagesSub}`],
+    ['meta.l1_partial_vote_state',
+      `DELETE FROM meta.l1_partial_vote_state
+        WHERE page_id IN ${pagesSub} OR slug LIKE '${TEST_KEY_PREFIX}%'`],
     ['meta.incremental_page_state',
       `DELETE FROM meta.incremental_page_state
         WHERE page_id IN ${pagesSub} OR slug LIKE '${TEST_KEY_PREFIX}%'`],
@@ -199,6 +202,8 @@ export async function assertNoResidue(sess: Sess): Promise<Record<string, number
        (SELECT count(*) FROM serve.page_current WHERE page_id IN ${pagesSub})::text AS page_current,
        (SELECT count(*) FROM serve.vote_current WHERE page_id IN ${pagesSub})::text AS vote_current,
        (SELECT count(*) FROM meta.ingest_run WHERE source = '${TEST_RUN_SOURCE}')::text AS ingest_run,
+       (SELECT count(*) FROM meta.l1_partial_vote_state
+         WHERE page_id IN ${pagesSub} OR slug LIKE '${TEST_KEY_PREFIX}%')::text AS l1_partial_vote_state,
        (SELECT count(*) FROM meta.projection_cursor WHERE projection LIKE '${TEST_PROJECTION_PREFIX}%')::text AS projection_cursor,
        (SELECT count(*) FROM meta.ingest_gate
          WHERE COALESCE(pg_catalog.txid_status(txid), 'committed') = 'in progress')::text AS gate_in_progress`,

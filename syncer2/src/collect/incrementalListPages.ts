@@ -21,13 +21,19 @@ import {
 } from './listpages.js';
 import { decodeXmlEntities } from '../sitemap/parse.js';
 import { createLogger, type Logger } from '../util/log.js';
-import { abortableSleep, throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
+import {
+  abortableSleep,
+  isRuntimeBudgetExceededError,
+  throwIfRuntimeBudgetExceeded,
+} from '../util/runtimeBudget.js';
 
 export type IncrementalListPagesLayer = 'l0' | 'l1';
 
 export const L0_SELECTORS = ['fullname', 'updated_at', 'revisions'] as const;
 export const L1_SELECTORS = ['fullname', 'rating', 'rating_votes', 'revisions'] as const;
 export const INCREMENTAL_LISTPAGES_PER_PAGE = 250;
+/** deploy/systemd/syncer2-l1.timer 的真实轮转周期。 */
+export const L1_BATCH_ROTATION_MINUTES = 5;
 
 type L0Selector = (typeof L0_SELECTORS)[number];
 type L1Selector = (typeof L1_SELECTORS)[number];
@@ -78,8 +84,19 @@ export interface IncrementalListPagesRun<T extends IncrementalListPageRow> {
   requestedBatches: number;
   batchesFailed: number;
   pagesEnumerated: number;
+  stoppedByRuntimeBudget: boolean;
+  coverage: {
+    scope: 'none' | 'partial' | 'full';
+    completedBatches: number;
+    expectedBatches: number | null;
+    batchCoverageRatio: number | null;
+    completedBatchRanges: string[];
+    missingBatchRanges: string[];
+  };
   validation: {
     complete: boolean;
+    /** 完成批次里的行可作为正向观测；不代表未覆盖范围可以做 absence。 */
+    positiveEvidenceSafe: boolean;
     rawRowsEnumerated: number;
     duplicateFullnames: number;
     duplicateFullnameRate: number;
@@ -96,6 +113,8 @@ export interface ScanIncrementalListPagesOptions {
   logger?: Logger;
   /** true 时不再启动新批次；已经在飞的批次仍正常完成并留证。 */
   shouldStop?: () => boolean;
+  /** 每轮换一个起始 offset，让预算内部分覆盖不会永远只盯全站头部。 */
+  batchRotationSeed?: number;
 }
 
 const FIELD_SEPARATOR = '|||';
@@ -238,32 +257,48 @@ export async function scanIncrementalListPages(
   const log = options.logger ?? createLogger(`listpages-${layer}`);
   const concurrency = Math.max(1, Math.min(options.concurrency ?? 5, 5));
   const batches = new Map<number, IncrementalBatchResult<IncrementalListPageRow>>();
-  if (options.shouldStop?.() === true) {
-    return finalizeIncrementalListPagesRun(layer, batches, null);
+  let stoppedByRuntimeBudget = false;
+  const shouldStop = (): boolean => {
+    if (stoppedByRuntimeBudget) return true;
+    stoppedByRuntimeBudget = options.shouldStop?.() === true;
+    return stoppedByRuntimeBudget;
+  };
+  if (shouldStop()) {
+    return finalizeIncrementalListPagesRun(layer, batches, null, { stoppedByRuntimeBudget });
   }
   const first = await fetchBatch(http, baseUrl, layer, 1, options.windowHours, log);
   batches.set(1, first);
   if (first.status === 'failed') {
-    return finalizeIncrementalListPagesRun(layer, batches, null);
+    return finalizeIncrementalListPagesRun(layer, batches, null, { stoppedByRuntimeBudget });
   }
   if (first.pager === null) {
     if (layer === 'l0' && first.rows.length < INCREMENTAL_LISTPAGES_PER_PAGE) {
-      return finalizeIncrementalListPagesRun(layer, batches, 1);
+      return finalizeIncrementalListPagesRun(layer, batches, 1, { stoppedByRuntimeBudget });
     }
     first.status = 'failed';
     first.error = '首批缺 pager 且行数不能证明 L0 单页；禁止猜测总批数';
-    return finalizeIncrementalListPagesRun(layer, batches, null);
+    return finalizeIncrementalListPagesRun(layer, batches, null, { stoppedByRuntimeBudget });
   }
 
   const expectedBatches = first.pager.totalPages;
-  const targets = batchTargets(expectedBatches);
+  const targets = rotatingBatchTargets(expectedBatches, options.batchRotationSeed ?? 0);
   await mapLimited(targets, concurrency, async (batchNo) => {
-    batches.set(
-      batchNo,
-      await fetchBatch(http, baseUrl, layer, batchNo, options.windowHours, log),
-    );
-  }, options.shouldStop);
-  return finalizeIncrementalListPagesRun(layer, batches, expectedBatches);
+    try {
+      batches.set(
+        batchNo,
+        await fetchBatch(http, baseUrl, layer, batchNo, options.windowHours, log),
+      );
+    } catch (error) {
+      if (isRuntimeBudgetExceededError(error)) {
+        stoppedByRuntimeBudget = true;
+        return;
+      }
+      throw error;
+    }
+  }, shouldStop);
+  return finalizeIncrementalListPagesRun(layer, batches, expectedBatches, {
+    stoppedByRuntimeBudget,
+  });
 }
 
 /** 导出供回归测试钉死“1..N 全翻、无阈值早停”。 */
@@ -272,6 +307,19 @@ export function batchTargets(totalPages: number): number[] {
     throw new RangeError(`totalPages 必须是正整数，收到 ${totalPages}`);
   }
   return Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+}
+
+/**
+ * 部分轮的完成前缀由该顺序决定。用与批数互质的步长轮换起点，使相邻五分钟轮次覆盖
+ * 不同的全站切片；完整轮仍严格覆盖 2..N 的同一全集，顺序变化不改变完整性口径。
+ */
+export function rotatingBatchTargets(totalPages: number, seed: number): number[] {
+  const targets = batchTargets(totalPages);
+  if (targets.length <= 1) return targets;
+  if (!Number.isSafeInteger(seed)) throw new RangeError(`batch rotation seed 非法：${seed}`);
+  const stride = coprimeStride(targets.length);
+  const offset = positiveModulo(seed * stride, targets.length);
+  return [...targets.slice(offset), ...targets.slice(0, offset)];
 }
 
 async function fetchBatch(
@@ -331,6 +379,7 @@ export function finalizeIncrementalListPagesRun<T extends IncrementalListPageRow
   layer: IncrementalListPagesLayer,
   batches: Map<number, IncrementalBatchResult<T>>,
   expectedBatches: number | null,
+  options: { stoppedByRuntimeBudget?: boolean } = {},
 ): IncrementalListPagesRun<T> {
   const hardReasons: string[] = [];
   const partialReasons: string[] = [];
@@ -354,11 +403,17 @@ export function finalizeIncrementalListPagesRun<T extends IncrementalListPageRow
       ? false
       : batchesFailed / expectedBatches <= LISTPAGES_SPORADIC_FAILED_BATCH_RATIO);
 
-  if (expectedBatches === null) hardReasons.push('首批没有可信 pager');
+  const stoppedByRuntimeBudget = options.stoppedByRuntimeBudget === true;
+  if (expectedBatches === null) {
+    if (stoppedByRuntimeBudget) partialReasons.push('预算在取得可信 pager 前耗尽');
+    else hardReasons.push('首批没有可信 pager');
+  }
   if (expectedBatches !== null && batches.size !== expectedBatches) {
     // 批数对不上若纯粹由零星失败批造成，则与失败批同级处理，不再重复升级为 hard。
     const missing = expectedBatches - batches.size;
-    if (sporadicBatchFailure && missing > 0 && missing <= batchesFailed) {
+    if (stoppedByRuntimeBudget && missing > 0) {
+      partialReasons.push(`预算内完成 ${batches.size}/${expectedBatches} 批`);
+    } else if (sporadicBatchFailure && missing > 0 && missing <= batchesFailed) {
       partialReasons.push(`实际批数 ${batches.size} != pager ${expectedBatches}（零星失败批所致）`);
     } else {
       hardReasons.push(`实际批数 ${batches.size} != pager ${expectedBatches}`);
@@ -420,6 +475,14 @@ export function finalizeIncrementalListPagesRun<T extends IncrementalListPageRow
   );
   const reasons = [...hardReasons, ...partialReasons];
   const complete = reasons.length === 0;
+  const completedBatchNumbers = ordered
+    .filter(([, batch]) => batch.status === 'ok')
+    .map(([batchNo]) => batchNo);
+  const missingBatchNumbers = expectedBatches === null
+    ? []
+    : Array.from({ length: expectedBatches }, (_, index) => index + 1)
+        .filter((batchNo) => !completedBatchNumbers.includes(batchNo));
+  const positiveEvidenceSafe = hardReasons.length === 0;
   return {
     status:
       hardReasons.length > 0
@@ -433,8 +496,24 @@ export function finalizeIncrementalListPagesRun<T extends IncrementalListPageRow
     requestedBatches: batches.size,
     batchesFailed,
     pagesEnumerated: rows.length,
+    stoppedByRuntimeBudget,
+    coverage: {
+      scope:
+        complete
+          ? 'full'
+          : positiveEvidenceSafe && completedBatchNumbers.length > 0
+            ? 'partial'
+            : 'none',
+      completedBatches: completedBatchNumbers.length,
+      expectedBatches,
+      batchCoverageRatio:
+        expectedBatches === null ? null : completedBatchNumbers.length / expectedBatches,
+      completedBatchRanges: compactNumberRanges(completedBatchNumbers),
+      missingBatchRanges: compactNumberRanges(missingBatchNumbers),
+    },
     validation: {
       complete,
+      positiveEvidenceSafe,
       rawRowsEnumerated: rawRows.length,
       duplicateFullnames,
       duplicateFullnameRate: duplicateConvergence.duplicateFullnameRate,
@@ -454,6 +533,42 @@ export function finalizeIncrementalListPagesRun<T extends IncrementalListPageRow
       duplicate_fullname_rate: duplicateConvergence.duplicateFullnameRate,
     },
   };
+}
+
+function coprimeStride(length: number): number {
+  let candidate = Math.max(1, Math.floor(length / 4) + 1);
+  while (greatestCommonDivisor(candidate, length) !== 1) candidate++;
+  return candidate;
+}
+
+function greatestCommonDivisor(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) [x, y] = [y, x % y];
+  return x;
+}
+
+function positiveModulo(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function compactNumberRanges(values: readonly number[]): string[] {
+  if (values.length === 0) return [];
+  const ordered = [...new Set(values)].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  let start = ordered[0]!;
+  let end = start;
+  for (const value of ordered.slice(1)) {
+    if (value === end + 1) {
+      end = value;
+      continue;
+    }
+    ranges.push(start === end ? String(start) : `${start}-${end}`);
+    start = value;
+    end = value;
+  }
+  ranges.push(start === end ? String(start) : `${start}-${end}`);
+  return ranges;
 }
 
 function parseDelimitedFields(
