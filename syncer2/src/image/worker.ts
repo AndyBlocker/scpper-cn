@@ -20,6 +20,11 @@ import {
 import { query, withTransaction } from '../store/db.js';
 import { toPgJson } from '../store/pgText.js';
 import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
+import { contentPrefixHex, sniffImageContent } from './contentValidation.js';
+import {
+  isWikimediaFileDescriptionUrl,
+  resolveWikimediaOgImageUrl,
+} from './descriptionPage.js';
 
 export type ImageEgressClass = 'wikidot_site' | 'external';
 export type ImageFailureClass =
@@ -31,6 +36,8 @@ export type ImageFailureClass =
   | 'host_deferred'
   | 'too_large'
   | 'invalid_content_type'
+  | 'invalid_image_content'
+  | 'description_page_unresolved'
   | 'invalid_url'
   | 'blocked_host'
   | 'storage'
@@ -302,7 +309,9 @@ export async function processImageJob(
   }
 
   let response: HttpResponse;
-  let contentType: string;
+  let declaredContentType: string;
+  let downloadedFromUrl = job.displayUrl;
+  let descriptionPageUrl: string | null = null;
   try {
     const client = egressClass === 'wikidot_site' ? clients.wikidot : clients.external;
     response = await client.get(job.displayUrl, `image:${egressClass}`, {
@@ -314,14 +323,6 @@ export async function processImageJob(
       maxRedirections: 3,
       redirectPolicy: egressClass === 'wikidot_site' ? 'same-host' : 'any',
     });
-    contentType = normalizedContentType(response);
-    if (!contentType.startsWith('image/')) {
-      throw new ImageValidationError(
-        `非图片 content-type: ${contentType || '(missing)'}`,
-        'invalid_content_type',
-        true,
-      );
-    }
     if (response.body.length > options.maxBytes) {
       throw new ImageValidationError(
         `图片超过 ${options.maxBytes} bytes: ${response.body.length}`,
@@ -329,45 +330,98 @@ export async function processImageJob(
         true,
       );
     }
+    declaredContentType = normalizedContentType(response);
+    let detected = sniffImageContent(response.body);
+
+    if (detected === null && isWikimediaFileDescriptionUrl(job.displayUrl)) {
+      descriptionPageUrl = job.displayUrl;
+      const resolvedUrl = resolveWikimediaOgImageUrl(job.displayUrl, response.text());
+      if (resolvedUrl === null) {
+        throw new ImageValidationError(
+          `Wikimedia 文件描述页缺少安全的 upload.wikimedia.org og:image: ${safeUrl(job.displayUrl)}`,
+          'description_page_unresolved',
+          true,
+        );
+      }
+      if (!imageHostAllowed(resolvedUrl, options.allowedHosts, options.blockedHosts)) {
+        throw new ImageValidationError(
+          `描述页解析出的图片 host 不在 allowlist: ${safeHost(resolvedUrl)}`,
+          'blocked_host',
+          true,
+        );
+      }
+      // 二跳仍走 external client：exact-host breaker、全局/单主机限速和失败归类均不绕过。
+      response = await clients.external.get(resolvedUrl, 'image:external:description-resolved', {
+        headers: { accept: 'image/*' },
+        maxAttempts: 4,
+        maxTransientAttempts: 1,
+        maxRedirections: 3,
+        redirectPolicy: 'any',
+      });
+      if (response.body.length > options.maxBytes) {
+        throw new ImageValidationError(
+          `图片超过 ${options.maxBytes} bytes: ${response.body.length}`,
+          'too_large',
+          true,
+        );
+      }
+      downloadedFromUrl = resolvedUrl;
+      declaredContentType = normalizedContentType(response);
+      detected = sniffImageContent(response.body);
+    }
+
+    if (detected === null) {
+      throw new ImageValidationError(
+        `响应字节不是已支持图片：declared=${declaredContentType || '(missing)'};` +
+          `prefix=${contentPrefixHex(response.body) || '(empty)'}`,
+        'invalid_image_content',
+        true,
+      );
+    }
+
+    const hash = createHash('sha256').update(response.body).digest();
+    const hashHex = hash.toString('hex');
+    const existing = await query<{ storage_path: string | null }>(
+      pool,
+      'image:existing_asset_path',
+      `SELECT storage_path FROM serve.image_asset WHERE hash_sha256 = $1`,
+      [hash],
+    );
+    const relativePath = existing.rows[0]?.storage_path ??
+      assetRelativePath(hashHex, detected.extension);
+    try {
+      await storeAssetBuffer(options.assetRoot, relativePath, response.body, hashHex);
+    } catch (error) {
+      return failJob(pool, job, egressClass, normalizeFailure(error), options);
+    }
+    const dimensions = imageDimensions(response.body, detected.mime);
+    await storeImageSuccess(
+      pool,
+      job,
+      egressClass,
+      hash,
+      relativePath,
+      detected.mime,
+      response.body.length,
+      dimensions,
+      {
+        downloadedFromUrl,
+        declaredContentType,
+        descriptionPageUrl,
+      },
+    );
+    return {
+      status: 'completed',
+      egressClass,
+      failureClass: null,
+      httpStatus: null,
+      bytes: response.body.length,
+      hashHex,
+    };
   } catch (error) {
     throwIfRuntimeBudgetExceeded(error);
     return failJob(pool, job, egressClass, normalizeFailure(error), options);
   }
-
-  const hash = createHash('sha256').update(response.body).digest();
-  const hashHex = hash.toString('hex');
-  const extension = extensionFor(contentType);
-  const existing = await query<{ storage_path: string | null }>(
-    pool,
-    'image:existing_asset_path',
-    `SELECT storage_path FROM serve.image_asset WHERE hash_sha256 = $1`,
-    [hash],
-  );
-  const relativePath = existing.rows[0]?.storage_path ?? assetRelativePath(hashHex, extension);
-  try {
-    await storeAssetBuffer(options.assetRoot, relativePath, response.body, hashHex);
-  } catch (error) {
-    return failJob(pool, job, egressClass, normalizeFailure(error), options);
-  }
-  const dimensions = imageDimensions(response.body, contentType);
-  await storeImageSuccess(
-    pool,
-    job,
-    egressClass,
-    hash,
-    relativePath,
-    contentType,
-    response.body.length,
-    dimensions,
-  );
-  return {
-    status: 'completed',
-    egressClass,
-    failureClass: null,
-    httpStatus: null,
-    bytes: response.body.length,
-    hashHex,
-  };
 }
 
 async function failJob(
@@ -467,8 +521,13 @@ async function storeImageSuccess(
   mime: string,
   bytes: number,
   dimensions: { width: number | null; height: number | null },
+  evidence: {
+    downloadedFromUrl: string;
+    declaredContentType: string;
+    descriptionPageUrl: string | null;
+  },
 ): Promise<void> {
-  const host = safeHost(job.displayUrl);
+  const host = safeHost(evidence.downloadedFromUrl);
   await withTransaction(pool, `image:success:${job.id}`, async (db) => {
     await query(
       db,
@@ -501,11 +560,11 @@ async function storeImageSuccess(
         dimensions.width,
         dimensions.height,
         relativePath,
-        job.displayUrl,
+        evidence.downloadedFromUrl,
         host,
       ],
     );
-    await resolveImageReferenceTx(db, job, egressClass, hash, null, host);
+    await resolveImageReferenceTx(db, job, egressClass, hash, null, host, evidence);
   });
 }
 
@@ -535,6 +594,11 @@ async function resolveImageReferenceTx(
   hash: Buffer,
   reuseSource: 'normalized_url' | 'v1_alias' | null,
   host: string,
+  evidence?: {
+    downloadedFromUrl: string;
+    declaredContentType: string;
+    descriptionPageUrl: string | null;
+  },
 ): Promise<void> {
   await query(
     db,
@@ -558,6 +622,14 @@ async function resolveImageReferenceTx(
           reused_by_normalized_url: reuseSource === 'normalized_url',
           reused_by_v1_alias: reuseSource === 'v1_alias',
           reuse_sha_verified: reuseSource !== null,
+          ...(evidence === undefined
+            ? {}
+            : {
+                content_detected_by: 'magic_bytes',
+                declared_content_type: evidence.declaredContentType || null,
+                downloaded_from_url: evidence.downloadedFromUrl,
+                description_page_url: evidence.descriptionPageUrl,
+              }),
         },
         `image.resolve:${job.id}`,
       ),
@@ -646,20 +718,6 @@ export function imageRetryBackoffMs(attempts: number, baseMs: number, maxMs: num
     throw new RangeError(`图片重试 base/max 非法 ${baseMs}/${maxMs}`);
   }
   return Math.min(maxMs, baseMs * (2 ** Math.max(0, attempts - 1)));
-}
-
-function extensionFor(mime: string): string {
-  const known: Record<string, string> = {
-    'image/jpeg': 'jpg',
-    'image/png': 'png',
-    'image/gif': 'gif',
-    'image/webp': 'webp',
-    'image/svg+xml': 'svg',
-    'image/avif': 'avif',
-    'image/bmp': 'bmp',
-    'image/x-icon': 'ico',
-  };
-  return known[mime] ?? 'bin';
 }
 
 function assetRelativePath(hashHex: string, extension: string): string {
@@ -770,6 +828,17 @@ function safeHost(url: string): string {
     return new URL(url).hostname.toLowerCase();
   } catch {
     return 'invalid';
+  }
+}
+
+function safeUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = '';
+    url.password = '';
+    return url.toString();
+  } catch {
+    return '(invalid-url)';
   }
 }
 

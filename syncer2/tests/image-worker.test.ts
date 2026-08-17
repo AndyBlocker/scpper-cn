@@ -50,6 +50,16 @@ const options: ImageWorkerOptions = {
   retryMaxMs: 10_000,
 };
 
+function validPngFixture(): Buffer {
+  const buffer = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer);
+  buffer.writeUInt32BE(13, 8);
+  buffer.write('IHDR', 12, 'ascii');
+  buffer.writeUInt32BE(1, 16);
+  buffer.writeUInt32BE(1, 20);
+  return buffer;
+}
+
 test('图片 egress：站内才走共享 Wikidot gate；wdfiles 外站失败不触碰其健康窗口', async () => {
   let sharedGateAttempts = 0;
   let externalAttempts = 0;
@@ -188,7 +198,7 @@ test('SHA 文件不存在：下载后 temp+fsync+同目录 rename，最终路径
 
 test('v1 alias 指向的 SHA 路径缺失时不伪复用：实际下载并原子补齐共享目录', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'syncer2-image-download-'));
-  const body = Buffer.from('fresh downloaded image bytes');
+  const body = validPngFixture();
   const hashHex = createHash('sha256').update(body).digest('hex');
   const hash = Buffer.from(hashHex, 'hex');
   const storagePath = path.join(

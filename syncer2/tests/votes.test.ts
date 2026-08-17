@@ -9,6 +9,7 @@ import type { Pool, PoolClient } from 'pg';
 import {
   applyCollectedVoteSnapshot,
   buildTargetedVoteClaimRequest,
+  isStructurallyEmptyTargetedListPages,
   collectVoteSnapshots,
   gateParsedVotes,
   isOversizedVotePage,
@@ -111,6 +112,20 @@ describe('WhoRated 解析', () => {
     const wrongIdentity = parseTargetedVoteClaim(targetedClaim, 'component:_template');
     assert.equal(wrongIdentity.status, 'failed');
     if (wrongIdentity.status === 'failed') assert.match(wrongIdentity.error, /身份不唯一/);
+  });
+
+  test('目标 ListPages 的结构完整空盒是不可枚举终态，不冒充 0 票 claim', () => {
+    const emptyTarget = '<div class="list-pages-box">\n\n</div>';
+    assert.equal(isStructurallyEmptyTargetedListPages(emptyTarget), true);
+    assert.deepEqual(parseTargetedVoteClaim(emptyTarget, 'old:scp-1046'), {
+      status: 'unavailable',
+      reason: 'listpages_unenumerable',
+      error: '目标 ListPages 对 old:scp-1046 返回结构完整空集合',
+    });
+    assert.equal(
+      isStructurallyEmptyTargetedListPages('<html><title>Access denied</title></html>'),
+      false,
+    );
   });
 
   test('用户/方向数量错位是 failed，与合法空结果可区分', () => {

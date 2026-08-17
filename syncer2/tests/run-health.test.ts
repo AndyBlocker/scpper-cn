@@ -124,6 +124,32 @@ describe('统一采集 run health', () => {
     assert.equal(gone.action, 'irreconcilable');
     assert.equal(isDeterministicWorkFailure(gone), true);
   });
+
+  it('目标 ListPages 明确不可枚举时进入确定性终态，不触发跨轮失败告警', () => {
+    const policy = classifyWorkFailure(
+      'votes_full',
+      'listpages_unenumerable：目标 ListPages 对 scp-sb 返回结构完整空集合；' +
+        '缺少权威投票 claim，拒绝使用本地聚合值并进入显式终态',
+    );
+    assert.deepEqual(
+      { family: policy.family, signature: policy.signature, action: policy.action },
+      {
+        family: 'structural',
+        signature: 'vote_claim_listpages_unenumerable',
+        action: 'irreconcilable',
+      },
+    );
+    const health = evaluateRunHealth({
+      claimed: 4,
+      processed: 4,
+      partial: 0,
+      failed: 4,
+      deterministicFailures: 4,
+      repeatedFailures: 0,
+    });
+    assert.equal(health.exitCode, 0);
+    assert.ok(!health.reasons.includes('repeated_cross_run_failure'));
+  });
 });
 
 describe('采集 CLI 统一判据接入覆盖', () => {

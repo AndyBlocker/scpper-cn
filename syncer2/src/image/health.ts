@@ -61,6 +61,8 @@ export function isImageFailureExcludedFromHealth(
 ): boolean {
   return failureClass === 'http_permanent'
     || failureClass === 'invalid_content_type'
+    || failureClass === 'invalid_image_content'
+    || failureClass === 'description_page_unresolved'
     || failureClass === 'blocked_host'
     // 域名已消失，重试无意义；与 http_permanent 同级。
     || failureClass === 'host_unresolvable'

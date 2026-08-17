@@ -113,6 +113,23 @@ const voteHandler: WorkHandler = async (task, context) => {
       context.baseUrl,
       task.slug,
     );
+    if (targeted.status === 'unavailable') {
+      const error =
+        `listpages_unenumerable：${targeted.error}；` +
+        '缺少权威投票 claim，拒绝使用本地聚合值并进入显式终态';
+      const remoteValue = {
+        ...tier1Claims(task),
+        terminal_classification: targeted.reason,
+        targeted_claim: 'structurally_empty',
+      };
+      await recordVoteScanFailure(context.pool, target, context.runId, error);
+      return {
+        status: 'failed',
+        resultHash: null,
+        remoteValue,
+        sample: { error, ...remoteValue },
+      };
+    }
     if (targeted.status === 'failed') {
       const error =
         '缺少成功 L1/Tier1 claim，且目标 ListPages 补证失败；' +

@@ -108,6 +108,7 @@ export interface TargetedVoteClaim {
 
 export type TargetedVoteClaimOutcome =
   | { status: 'ok'; data: TargetedVoteClaim }
+  | { status: 'unavailable'; reason: 'listpages_unenumerable'; error: string }
   | { status: 'failed'; error: string };
 
 /**
@@ -148,6 +149,15 @@ export function parseTargetedVoteClaim(
   body: string,
   slug: string,
 ): TargetedVoteClaimOutcome {
+  // 定向 exact-fullname 查询的结构完整空盒是权威“不可枚举”证据。全站/分页解析器仍
+  // 保持 pager 必需；这里只处理 Wikidot 实际返回的精确空形态，不把 WAF/任意 HTML 当空集。
+  if (isStructurallyEmptyTargetedListPages(body)) {
+    return {
+      status: 'unavailable',
+      reason: 'listpages_unenumerable',
+      error: `目标 ListPages 对 ${slug} 返回结构完整空集合`,
+    };
+  }
   const parsed = parseListPagesResponse(body, 1, 1, 1);
   if (parsed.status !== 'ok') {
     return {
@@ -172,6 +182,15 @@ export function parseTargetedVoteClaim(
       revisions: row.revisions,
     },
   };
+}
+
+export function isStructurallyEmptyTargetedListPages(body: string): boolean {
+  const $ = load(body, {}, false);
+  const boxes = $('div.list-pages-box');
+  if (boxes.length !== 1 || boxes.first().text().trim() !== '') return false;
+  const root = $.root();
+  root.find('div.list-pages-box').remove();
+  return root.text().trim() === '' && root.children().length === 0;
 }
 
 export async function collectTargetedVoteClaim(

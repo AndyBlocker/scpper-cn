@@ -81,6 +81,16 @@ export function classifyWorkFailure(kind: ScanTaskKind, error: string): WorkFail
     };
   }
 
+  if (/listpages_unenumerable/.test(lower)) {
+    return {
+      family: 'structural',
+      signature: 'vote_claim_listpages_unenumerable',
+      action: 'irreconcilable',
+      identityReviewThreshold: null,
+      rationale: '目标 ListPages 成功返回结构完整空集合；该页没有可用于投票写入的权威枚举 claim',
+    };
+  }
+
   if (isPrerequisiteFailure(lower)) {
     return {
       family: 'prerequisite',
