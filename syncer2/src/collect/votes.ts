@@ -21,7 +21,11 @@ import { recordPageScan } from '../store/meta.js';
 import { toPgJson } from '../store/pgText.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
 import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
-import { buildListPagesModuleBody, parseListPagesResponse } from './listpages.js';
+import {
+  buildTargetedListPagesRequest,
+  isStructurallyEmptyTargetedListPages as isStructurallyEmptyListPages,
+  parseTargetedListPage,
+} from './listpages.js';
 
 export type VoteDirection = -1 | 1;
 export type VoteScanStatus = 'ok' | 'partial' | 'failed';
@@ -119,61 +123,16 @@ export type TargetedVoteClaimOutcome =
 export function buildTargetedVoteClaimRequest(
   slug: string,
 ): { moduleName: string; params: Record<string, string | number> } {
-  const normalized = slug.trim();
-  if (normalized === '' || /[\r\n]/.test(normalized)) {
-    throw new RangeError(`目标 ListPages slug 非法：${JSON.stringify(slug)}`);
-  }
-  const separator = normalized.indexOf(':');
-  const category = separator < 0 ? '_default' : normalized.slice(0, separator);
-  const name = separator < 0 ? normalized : normalized.slice(separator + 1);
-  if (!/^[a-z0-9_-]+$/i.test(category) || name === '') {
-    throw new RangeError(`目标 ListPages fullname 非法：${JSON.stringify(slug)}`);
-  }
-  return {
-    moduleName: 'list/ListPagesModule',
-    params: {
-      category,
-      name,
-      // `_template` / `_404` 正是全站 L1 默认漏掉的主要尾部；ListPages 默认也会
-      // 排除隐藏页，必须显式纳入 normal + hidden 才能让定向补证真的覆盖它们。
-      pagetype: '*',
-      order: 'created_at desc',
-      perPage: 1,
-      offset: 0,
-      module_body: buildListPagesModuleBody(),
-    },
-  };
+  return buildTargetedListPagesRequest(slug);
 }
 
 export function parseTargetedVoteClaim(
   body: string,
   slug: string,
 ): TargetedVoteClaimOutcome {
-  // 定向 exact-fullname 查询的结构完整空盒是权威“不可枚举”证据。全站/分页解析器仍
-  // 保持 pager 必需；这里只处理 Wikidot 实际返回的精确空形态，不把 WAF/任意 HTML 当空集。
-  if (isStructurallyEmptyTargetedListPages(body)) {
-    return {
-      status: 'unavailable',
-      reason: 'listpages_unenumerable',
-      error: `目标 ListPages 对 ${slug} 返回结构完整空集合`,
-    };
-  }
-  const parsed = parseListPagesResponse(body, 1, 1, 1);
-  if (parsed.status !== 'ok') {
-    return {
-      status: 'failed',
-      error: `目标 ListPages claim 解析失败：${parsed.error}`,
-    };
-  }
-  if (parsed.data.rows.length !== 1 || parsed.data.rows[0]!.fullname !== slug) {
-    return {
-      status: 'failed',
-      error:
-        `目标 ListPages claim 身份不唯一：expected=${slug}, ` +
-        `rows=${parsed.data.rows.map((row) => row.fullname).join(',') || '-'}`,
-    };
-  }
-  const row = parsed.data.rows[0]!;
+  const parsed = parseTargetedListPage(body, slug);
+  if (parsed.status !== 'ok') return parsed;
+  const row = parsed.data;
   return {
     status: 'ok',
     data: {
@@ -185,12 +144,7 @@ export function parseTargetedVoteClaim(
 }
 
 export function isStructurallyEmptyTargetedListPages(body: string): boolean {
-  const $ = load(body, {}, false);
-  const boxes = $('div.list-pages-box');
-  if (boxes.length !== 1 || boxes.first().text().trim() !== '') return false;
-  const root = $.root();
-  root.find('div.list-pages-box').remove();
-  return root.text().trim() === '' && root.children().length === 0;
+  return isStructurallyEmptyListPages(body);
 }
 
 export async function collectTargetedVoteClaim(

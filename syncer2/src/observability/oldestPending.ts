@@ -114,6 +114,13 @@ export function pendingPolicyFor(collection: string, family: string): PendingPol
   if (family === 'page_scan_zero_success') {
     return policy(1, 1, '最近 1h 同 kind 可判定扫描至少 10 次且成功数为 0，立即 critical');
   }
+  if (family === 'page_scan_no_output') {
+    return policy(
+      30 * 60,
+      2 * HOUR,
+      'meta/work-queue 为分钟级；meta ok 后 30 分钟仍无 title/tags observed 行即跨多轮',
+    );
+  }
   if (family === 'revision_regression_identity') {
     return policy(30 * 60, 2 * HOUR, '身份复核每分钟消费；30 分钟未收敛已跨多轮');
   }

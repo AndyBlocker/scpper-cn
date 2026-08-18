@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import { load } from 'cheerio';
 
 import { amcRequest } from '../http/amc.js';
 import {
@@ -298,6 +299,118 @@ export function buildListPagesRequest(batchNo: number, perPage = LISTPAGES_PER_P
       module_body: buildListPagesModuleBody(),
     },
   };
+}
+
+export type PageEnumerationScope = 'standard' | 'listpages_hidden';
+
+/**
+ * 与 serve.classify_page_enumeration_scope() 保持同一口径。
+ *
+ * 隐藏名和站点渲染零件不是主内容枚举域；它们可以合法不被全站 ListPages 返回，因而
+ * 不应被“meta 成功无 title/tags 产出”告警误判。普通分类页（包括带冒号的业务分类）
+ * 仍属于 standard，必须产生完整元数据观测。
+ */
+export function classifyPageEnumerationScope(slug: string): PageEnumerationScope {
+  const normalized = slug.trim().toLowerCase();
+  return /(^|:)_/.test(normalized) || /^(fragment|component|theme|system):/.test(normalized)
+    ? 'listpages_hidden'
+    : 'standard';
+}
+
+/** 精确 fullname 的单页 ListPages 请求；meta 与 votes 共用，防止字段契约再次分叉。 */
+export function buildTargetedListPagesRequest(
+  slug: string,
+): { moduleName: string; params: Record<string, string | number> } {
+  const normalized = slug.trim();
+  if (normalized === '' || /[\r\n]/.test(normalized)) {
+    throw new RangeError(`目标 ListPages slug 非法：${JSON.stringify(slug)}`);
+  }
+  const separator = normalized.indexOf(':');
+  const category = separator < 0 ? '_default' : normalized.slice(0, separator);
+  const name = separator < 0 ? normalized : normalized.slice(separator + 1);
+  if (!/^[a-z0-9_-]+$/i.test(category) || name === '') {
+    throw new RangeError(`目标 ListPages fullname 非法：${JSON.stringify(slug)}`);
+  }
+  return {
+    moduleName: 'list/ListPagesModule',
+    params: {
+      category,
+      name,
+      // 精确补证也显式包含 normal + hidden；是否属于告警域由 classification 决定。
+      pagetype: '*',
+      order: 'created_at desc',
+      perPage: 1,
+      offset: 0,
+      module_body: buildListPagesModuleBody(),
+    },
+  };
+}
+
+export type TargetedListPageOutcome =
+  | { status: 'ok'; data: ListPageRecord }
+  | { status: 'unavailable'; reason: 'listpages_unenumerable'; error: string }
+  | { status: 'failed'; error: string };
+
+export function isStructurallyEmptyTargetedListPages(body: string): boolean {
+  const $ = load(body, {}, false);
+  const boxes = $('div.list-pages-box');
+  if (boxes.length !== 1 || boxes.first().text().trim() !== '') return false;
+  const root = $.root();
+  root.find('div.list-pages-box').remove();
+  return root.text().trim() === '' && root.children().length === 0;
+}
+
+export function parseTargetedListPage(body: string, slug: string): TargetedListPageOutcome {
+  // 精确空结果会省略 pager。只有“唯一空 list-pages-box 且无其它内容”的权威形态
+  // 才解释为不可枚举；WAF/错误 HTML 即使碰巧带同名 class 也不能冒充合法空集。
+  if (isStructurallyEmptyTargetedListPages(body)) {
+    return {
+      status: 'unavailable',
+      reason: 'listpages_unenumerable',
+      error: `目标 ListPages 对 ${slug} 返回结构完整空集合`,
+    };
+  }
+  const parsed = parseListPagesResponse(body, 1, 1, 1);
+  if (parsed.status !== 'ok') {
+    return { status: 'failed', error: `目标 ListPages 解析失败：${parsed.error}` };
+  }
+  if (parsed.data.rows.length !== 1 || parsed.data.rows[0]!.fullname !== slug) {
+    return {
+      status: 'failed',
+      error:
+        `目标 ListPages 身份不唯一：expected=${slug}, ` +
+        `rows=${parsed.data.rows.map((row) => row.fullname).join(',') || '-'}`,
+    };
+  }
+  return { status: 'ok', data: parsed.data.rows[0]! };
+}
+
+/** 对标准页补一次完整 20 字段 ListPages 观测；任何无行/解析问题都不能冒充 meta ok。 */
+export async function collectTargetedListPage(
+  http: HttpClient,
+  baseUrl: string,
+  slug: string,
+): Promise<TargetedListPageOutcome> {
+  try {
+    const response = await amcRequest(http, baseUrl, {
+      ...buildTargetedListPagesRequest(slug),
+      mode: 'meta:targeted-listpages',
+      timeoutMs: 20_000,
+      maxAttempts: 3,
+    });
+    if (response.status !== 'ok' || response.body === null) {
+      return {
+        status: 'failed',
+        error:
+          `目标 ListPages meta AMC status=${response.status}, ` +
+          `body=${response.body === null ? 'null' : 'present'}`,
+      };
+    }
+    return parseTargetedListPage(response.body, slug);
+  } catch (err) {
+    throwIfRuntimeBudgetExceeded(err);
+    return { status: 'failed', error: `目标 ListPages meta 请求失败：${String(err)}` };
+  }
 }
 
 export function buildUpdatedListPagesRequest(

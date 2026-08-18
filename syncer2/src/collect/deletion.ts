@@ -184,7 +184,10 @@ export function intersectConsecutiveAbsences(
 /** sitemap 枚举域已知排除项。缺席这些 slug 永远不构成删除证据。 */
 export function isDeletionScopeSlug(slug: string): boolean {
   const normalized = slug.trim().toLowerCase();
-  if (normalized === '' || /^(?:deleted|forum|adult|wanderers-adult):/.test(normalized)) {
+  if (
+    normalized === '' ||
+    /^(?:deleted|forum|adult|wanderers-adult|fragment|component|theme|system):/.test(normalized)
+  ) {
     return false;
   }
   // `_foo` 与 `category:_foo` 都属于 sitemap 隐藏页。

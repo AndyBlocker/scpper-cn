@@ -217,13 +217,17 @@ describe('M7 删除推断四道门', () => {
       'forum:x',
       'adult:x',
       'wanderers-adult:x',
+      'fragment:page-piece',
+      'component:image-block',
+      'theme:black-highlighter',
+      'system:join',
       '_hidden',
       'component:_hidden',
     ]) {
       assert.equal(isDeletionScopeSlug(slug), false, slug);
     }
     assert.equal(isDeletionScopeSlug('scp-cn-1000'), true);
-    assert.equal(isDeletionScopeSlug('component:image-block'), true);
+    assert.equal(isDeletionScopeSlug('wanderers:entry'), true);
   });
 
   it('合法存在、单点 404 与解析失败显式可区分，失败项不会从 Map 消失', async () => {

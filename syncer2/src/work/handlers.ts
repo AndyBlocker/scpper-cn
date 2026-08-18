@@ -22,6 +22,11 @@ import {
   type ForumDiscussionTarget,
 } from '../collect/forum.js';
 import { scanPageIds } from '../collect/pageid.js';
+import {
+  classifyPageEnumerationScope,
+  collectTargetedListPage,
+  listPagesResultHash,
+} from '../collect/listpages.js';
 import { scanRestrictedListPageContent } from '../collect/restrictedListPages.js';
 import { failed, partial, type CollectResult } from '../collect/result.js';
 import { applyRevisionResult, scanRevisions, type RevisionBatch } from '../collect/revisions.js';
@@ -61,6 +66,7 @@ import {
 } from '../store/workQueue.js';
 import {
   applyConfirmedSlugReuse,
+  applyObservedListPageMeta,
   applyObservedPageMeta,
 } from './identityCheck.js';
 import { applyRestrictedRenderedContent } from './restrictedPage.js';
@@ -632,32 +638,43 @@ const metaHandler: WorkHandler = async (task, context) => {
       );
     }
   }
-  const status = result.status;
-  const resultHash =
-    status === 'failed'
+  if (result.status !== 'ok') {
+    const resultHash = result.status === 'failed'
       ? null
       : createHash('sha256')
           .update(`${task.slug}\n${result.data.wikidotId}`, 'utf8')
           .digest();
-  await recordPageScan(context.pool, context.runId, task.pageId, 'meta', {
-    status,
-    claimed: 1,
-    fetched: status === 'failed' ? 0 : 1,
-    checksumOk: status === 'ok',
-    resultHash,
-    error: status === 'ok'
-      ? revisionRegressionResolution === null
-        ? null
-        : `revision_regression_same_identity_accepted:` +
-          revisionRegressionResolution.layers
-            .map((layer) =>
-              `${layer.layer}:${layer.previousRevision}->${layer.observedRevision}`)
-            .join(',')
-      : result.error,
-  });
-  let applied: Record<string, unknown> | null = null;
-  if (status === 'ok') {
-    applied = await applyObservedPageMeta(
+    await recordPageScan(context.pool, context.runId, task.pageId, 'meta', {
+      status: result.status,
+      claimed: 1,
+      fetched: result.status === 'failed' ? 0 : 1,
+      checksumOk: false,
+      resultHash,
+      error: result.error,
+    });
+    return {
+      status: result.status,
+      resultHash,
+      localValue: {},
+      sample: {
+        observedWikidotId: result.status === 'failed' ? null : result.data.wikidotId,
+        revisionRegressionResolution,
+        apply: null,
+        error: result.error,
+      },
+    };
+  }
+
+  const enumerationScope = classifyPageEnumerationScope(task.slug);
+  const regressionEvidence = revisionRegressionResolution === null
+    ? null
+    : `revision_regression_same_identity_accepted:` +
+      revisionRegressionResolution.layers
+        .map((layer) => `${layer.layer}:${layer.previousRevision}->${layer.observedRevision}`)
+        .join(',');
+
+  if (enumerationScope === 'listpages_hidden') {
+    const applied = await applyObservedPageMeta(
       context.pool,
       context.runId,
       task.pageId,
@@ -665,21 +682,103 @@ const metaHandler: WorkHandler = async (task, context) => {
       task.wikidotId,
       observedAt,
     );
+    const resultHash = createHash('sha256')
+      .update(`${task.slug}\n${result.data.wikidotId}\nlistpages_hidden`, 'utf8')
+      .digest();
+    const classificationEvidence = 'listpages_hidden:metadata_output_not_required';
+    await recordPageScan(context.pool, context.runId, task.pageId, 'meta', {
+      status: 'ok',
+      claimed: 1,
+      fetched: 1,
+      checksumOk: true,
+      resultHash,
+      error: regressionEvidence ?? classificationEvidence,
+    });
+    return {
+      status: 'ok',
+      resultHash,
+      localValue: {
+        ...applied,
+        enumeration_scope: enumerationScope,
+        metadata_output_required: false,
+        ...(revisionRegressionResolution === null
+          ? {}
+          : { revision_regression_resolution: revisionRegressionResolution }),
+      },
+      sample: {
+        observedWikidotId: result.data.wikidotId,
+        enumerationScope,
+        revisionRegressionResolution,
+        apply: applied,
+        error: null,
+      },
+    };
   }
+
+  const targeted = await collectTargetedListPage(
+    httpForWorkTask(context, task),
+    context.baseUrl,
+    task.slug,
+  );
+  if (targeted.status !== 'ok') {
+    await recordPageScan(context.pool, context.runId, task.pageId, 'meta', {
+      status: 'failed',
+      claimed: 1,
+      fetched: 0,
+      checksumOk: false,
+      resultHash: null,
+      error: targeted.error,
+    });
+    return {
+      status: 'failed',
+      resultHash: null,
+      localValue: { enumeration_scope: enumerationScope },
+      sample: {
+        observedWikidotId: result.data.wikidotId,
+        enumerationScope,
+        revisionRegressionResolution,
+        apply: null,
+        error: targeted.error,
+      },
+    };
+  }
+
+  // 先落完整元数据并正面核验 title/tags observed 行，再允许写 meta ok。顺序不能倒置，
+  // 否则 apply_page_meta 的异常会再次制造“扫描全绿、实际零产出”。
+  const applied = await applyObservedListPageMeta(
+    context.pool,
+    context.runId,
+    task.pageId,
+    task.wikidotId,
+    targeted.data,
+    observedAt,
+  );
+  const resultHash = listPagesResultHash(targeted.data);
+  await recordPageScan(context.pool, context.runId, task.pageId, 'meta', {
+    status: 'ok',
+    claimed: 1,
+    fetched: 1,
+    checksumOk: true,
+    resultHash,
+    error: regressionEvidence,
+  });
   return {
-    status,
+    status: 'ok',
     resultHash,
     localValue: {
-      ...(applied ?? {}),
+      ...applied,
+      enumeration_scope: enumerationScope,
+      metadata_output_required: true,
       ...(revisionRegressionResolution === null
         ? {}
         : { revision_regression_resolution: revisionRegressionResolution }),
     },
     sample: {
-      observedWikidotId: status === 'failed' ? null : result.data.wikidotId,
+      observedWikidotId: result.data.wikidotId,
+      enumerationScope,
       revisionRegressionResolution,
       apply: applied,
-      error: status === 'ok' ? null : result.error,
+      error: null,
     },
   };
 };

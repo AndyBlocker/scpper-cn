@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
+import type { ListPageRecord } from '../collect/listpages.js';
 import { fetchPageIdentity } from '../page/identity.js';
 import { query, toPgTimestamptz } from '../store/db.js';
 import { resolveRevisionRegressionIdentityStates } from '../store/incremental.js';
@@ -17,6 +18,7 @@ import {
   type ClaimedWorkTask,
 } from '../store/workQueue.js';
 import type { HttpClient } from '../http/client.js';
+import { toPgJson } from '../store/pgText.js';
 
 export interface IdentityReviewContext {
   pool: Pool;
@@ -188,6 +190,12 @@ export async function applyConfirmedSlugReuse(
   const tasksEnqueued = await enqueueScanTasks(context.pool, [
     {
       pageId: successorPageId,
+      kind: 'meta',
+      reasons: ['slug_reuse_identity_registered'],
+      priority: 100,
+    },
+    {
+      pageId: successorPageId,
       kind: 'new_page_highfreq',
       reasons: ['slug_reuse_identity_registered'],
       priority: 100,
@@ -242,6 +250,81 @@ export async function applyObservedPageMeta(
     [pageId, slug, toPgTimestamptz(observedAt), runId, wikidotId],
   );
   return response.rows[0]?.result ?? {};
+}
+
+/**
+ * 单页完整 ListPages 观测的属性契约。
+ *
+ * parent 需要先解析成稳定 page_id，定向 meta 不在这里用 slug 猜身份；层级由全站 Tier1
+ * 的完整快照维护。其余字段都能从这一条远端行直接落库，其中 title/tags 是 meta ok 的
+ * 最低产出契约，即使远端值为空字符串/空数组，也必须存在 source=observed 的历史行。
+ */
+export function observedListPageMetaAttrs(row: ListPageRecord): Record<string, unknown> {
+  return {
+    slug: row.fullname,
+    title: row.title,
+    tags: row.tags,
+    hidden_tags: row.hiddenTags,
+    category: row.category,
+    first_published_at: row.createdAt,
+    comment_count: row.comments,
+    claimed_rating: row.rating,
+    claimed_vote_count: row.ratingVotes,
+  };
+}
+
+/** 完整落库后在同一路径正面核验产出；没有 observed 行就抛错，调用方不得记录 meta ok。 */
+export async function applyObservedListPageMeta(
+  pool: Pool | PoolClient,
+  runId: number | null,
+  pageId: number,
+  wikidotId: number,
+  row: ListPageRecord,
+  observedAt: string,
+): Promise<Record<string, unknown>> {
+  const response = await query<{ result: Record<string, unknown> }>(
+    pool,
+    'work.meta:apply_observed_listpage_meta',
+    `SELECT ingest.apply_page_meta(
+       p_page       => $1::int,
+       p_attrs      => $2::jsonb,
+       p_observed   => $3::timestamptz,
+       p_source     => 'wikidot',
+       p_run        => $4::bigint,
+       p_wikidot_id => $5::int
+     ) AS result`,
+    [
+      pageId,
+      toPgJson(observedListPageMetaAttrs(row), `work.meta.page_meta:${pageId}`),
+      toPgTimestamptz(observedAt),
+      runId,
+      wikidotId,
+    ],
+  );
+  const output = await query<{ attrs: string[] }>(
+    pool,
+    'work.meta:verify_observed_output',
+    `SELECT array_agg(attr ORDER BY attr)::text[] AS attrs
+       FROM ingest.page_attr_history
+      WHERE page_id = $1::int
+        AND source = 'observed'
+        AND valid_to IS NULL
+        AND attr = ANY(ARRAY['title', 'tags']::text[])`,
+    [pageId],
+  );
+  const fields = output.rows[0]?.attrs ?? [];
+  const missing = ['title', 'tags'].filter((attr) => !fields.includes(attr));
+  if (missing.length > 0) {
+    throw new Error(
+      `meta_success_without_output:page_id=${pageId};wikidot_id=${wikidotId};` +
+        `slug=${row.fullname};missing=${missing.join(',')}`,
+    );
+  }
+  return {
+    ...(response.rows[0]?.result ?? {}),
+    output_fields: fields,
+    output_verified: true,
+  };
 }
 
 function identityHash(slug: string, wikidotId: number): Buffer {

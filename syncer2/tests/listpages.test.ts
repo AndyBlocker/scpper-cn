@@ -16,6 +16,8 @@ import {
   LISTPAGES_SELECTORS,
   buildListPagesModuleBody,
   buildListPagesRequest,
+  buildTargetedListPagesRequest,
+  classifyPageEnumerationScope,
   createListPagesSnapshot,
   deriveListPagesTriggers,
   diffListPages,
@@ -71,6 +73,20 @@ describe('ListPages 请求构造', () => {
     assert.equal(request.params.order, 'created_at desc');
     assert.equal(request.params.perPage, 250);
     assert.equal(request.params.offset, 500);
+  });
+
+  it('定向请求补完整字段；模板/系统页与普通业务分类页有稳定枚举域', () => {
+    const request = buildTargetedListPagesRequest('scp-cn-4294');
+    assert.equal(request.params.category, '_default');
+    assert.equal(request.params.name, 'scp-cn-4294');
+    assert.equal(request.params.perPage, 1);
+    assert.equal(request.params.pagetype, '*');
+    assert.equal(classifyPageEnumerationScope('scp-cn-4294'), 'standard');
+    assert.equal(classifyPageEnumerationScope('wanderers-library:entry'), 'standard');
+    assert.equal(classifyPageEnumerationScope('_template'), 'listpages_hidden');
+    assert.equal(classifyPageEnumerationScope('component:_theme'), 'listpages_hidden');
+    assert.equal(classifyPageEnumerationScope('fragment:scp-cn-4294-1'), 'listpages_hidden');
+    assert.equal(classifyPageEnumerationScope('theme:black-highlighter'), 'listpages_hidden');
   });
 });
 
