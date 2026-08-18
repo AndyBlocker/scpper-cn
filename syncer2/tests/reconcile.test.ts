@@ -525,6 +525,23 @@ test('状态对齐：新鲜 ListPages 存在性与空标题都能裁决 v1 历�
   assert.equal(report.explanationCategoryPages.v1_stale_existence_vs_current_l1, 1);
 });
 
+test('状态对齐：显式 listpages_hidden 系统页不进入 existence 差异', () => {
+  const hidden = parityState(2, {
+    slug: 'component:_template',
+    enumerationScope: 'listpages_hidden',
+  });
+  const report = compareStateAlignment(
+    new Map(),
+    new Map([[2, hidden]]),
+    Date.parse('2026-07-27T12:00:00.000Z'),
+    3_600_000,
+    new Map(),
+  );
+  assert.equal(report.fieldDifferences.existence, 0);
+  assert.equal(report.unexplainedFieldDifferences.existence, 0);
+  assert.equal(report.classificationPages['excluded:listpages_hidden'], 1);
+});
+
 test('白名单轨：普通指标仍只允许稳定不增长', () => {
   const stable = compareWhitelistMetrics({ a: 5, b: 3 }, { a: 5, b: 4 });
   assert.equal(stable.status, 'ok');
@@ -1099,6 +1116,7 @@ function parityState(
     title: 'same',
     rating: 0,
     tags: [],
+    enumerationScope: 'standard',
     metaUpdatedEpochMs: 0,
     l1SeenEpochMs: null,
     titleDirectObserved: false,

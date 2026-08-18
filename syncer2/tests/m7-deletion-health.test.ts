@@ -14,6 +14,7 @@ import {
   confirmDeletedPages,
   evaluateAbsenceCircuit,
   inferDeletionCandidates,
+  intersectConsecutiveAbsences,
   isDeletionScopeSlug,
   validateDeletionRunPair,
   type DeletionEnumerationRun,
@@ -170,6 +171,33 @@ describe('M7 删除推断四道门', () => {
     };
     assert.equal(validateDeletionRunPair(incompleteEvidence).ok, false);
     assert.match(validateDeletionRunPair(incompleteEvidence).reasons.join(' '), /page_scan=changed/);
+  });
+
+  it('L1 单轮漏页不构成连续缺席，现代 L1 partial/降档覆盖不能提供负证据', () => {
+    const page = { pageId: 42, wikidotId: 700042, slug: 'scp-cn-42' };
+    assert.deepEqual(intersectConsecutiveAbsences([page], []), []);
+    assert.deepEqual(intersectConsecutiveAbsences([], [page]), []);
+    assert.deepEqual(intersectConsecutiveAbsences([page], [page]), [page]);
+
+    const sitemap = run(10, 'sitemap', '2026-07-27T04:00:00.000Z');
+    const modernL1: DeletionEnumerationRun = {
+      ...run(11, 'listpages', '2026-07-27T03:30:00.000Z'),
+      source: 'wikidot_listpages',
+      mode: 'l1_votes',
+    };
+    assert.deepEqual(validateDeletionRunPair({ sitemap, listpages: modernL1 }), {
+      ok: true,
+      reasons: [],
+    });
+
+    const degraded = {
+      sitemap,
+      listpages: { ...modernL1, status: 'partial', coverageRatio: 0.4 },
+    };
+    const gate = validateDeletionRunPair(degraded);
+    assert.equal(gate.ok, false);
+    assert.match(gate.reasons.join(' '), /status=partial/);
+    assert.match(gate.reasons.join(' '), /coverage=0.4/);
   });
 
   it('absence >500 或 >1.5% 任一条件立即整轮熔断，边界值本身放行', () => {

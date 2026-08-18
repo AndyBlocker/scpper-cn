@@ -15,7 +15,12 @@ import type { Pool } from 'pg';
 import type { HttpClient } from '../http/client.js';
 import { fetchPageIdentity } from '../page/identity.js';
 import { query, toPgTimestamptz } from '../store/db.js';
-import { enqueueScanTasks, recordPageScan } from '../store/meta.js';
+import {
+  enqueueScanTasks,
+  finishIngestRun,
+  recordPageScan,
+  startIngestRun,
+} from '../store/meta.js';
 import { toPgJson } from '../store/pgText.js';
 import { backoffFrom } from '../store/queues.js';
 import { mapWithConcurrency } from '../util/concurrency.js';
@@ -116,10 +121,7 @@ export function validateDeletionRunPair(pair: DeletionRunPair): { ok: boolean; r
   if (pair.sitemap.source !== 'wikidot_sitemap') {
     reasons.push(`sitemap source=${pair.sitemap.source}≠wikidot_sitemap`);
   }
-  if (
-    pair.listpages.source !== 'wikidot' &&
-    !pair.listpages.source.toLowerCase().includes('listpages')
-  ) {
+  if (!isListPagesEnumerationRun(pair.listpages)) {
     reasons.push(`ListPages source=${pair.listpages.source} 不是独立枚举源`);
   }
   if (pair.sitemap.remoteTotalSource !== 'sitemap') {
@@ -135,8 +137,8 @@ export function validateDeletionRunPair(pair: DeletionRunPair): { ok: boolean; r
     );
   }
   if (pair.sitemap.usedFallback) reasons.push('sitemap 使用命名 fallback，分片完整性不可证明');
-  if (pair.listpages.mode !== 'tier1') {
-    reasons.push(`ListPages mode=${pair.listpages.mode ?? 'null'}≠tier1`);
+  if (!['tier1', 'l1_votes'].includes(pair.listpages.mode ?? '')) {
+    reasons.push(`ListPages mode=${pair.listpages.mode ?? 'null'} 不是完整枚举`);
   }
   const sitemapAt = Date.parse(pair.sitemap.startedAt);
   const listpagesAt = Date.parse(pair.listpages.startedAt);
@@ -165,6 +167,18 @@ export function evaluateAbsenceCircuit(
   if (absent > maxPages) reasons.push(`absence ${absent} > ${maxPages}`);
   if (ratio > maxRatio) reasons.push(`absence ratio ${ratio} > ${maxRatio}`);
   return { tripped: reasons.length > 0, ratio, reasons };
+}
+
+/**
+ * 只有在两组完整双源枚举中都缺席，页面才进入下一道“期间无正证据”检查。
+ * 保持为纯函数，确保单轮 L1 漏页这一关键反例与生产交集算法完全一致。
+ */
+export function intersectConsecutiveAbsences(
+  current: readonly DeletionCandidate[],
+  previous: readonly DeletionCandidate[],
+): DeletionCandidate[] {
+  const previousAbsentIds = new Set(previous.map((page) => page.pageId));
+  return current.filter((page) => previousAbsentIds.has(page.pageId));
 }
 
 /** sitemap 枚举域已知排除项。缺席这些 slug 永远不构成删除证据。 */
@@ -219,7 +233,8 @@ export async function inferDeletionCandidates(
   // 正证据不依赖上一轮，也不应因本轮稍后触发 absence 熔断而被搁置。
   await dismissRefutedTasks(pool, currentPair);
 
-  // 必须取“紧邻的上一轮完整 full”，不能跳过一个看见过该页的中间轮去拼两次缺席。
+  // L2 每小时一轮，而安全 TTL 是 2h；取最近一个已经跨过 TTL 的完整 full。
+  // 中间任意 L1/L2（含 partial）正观测仍会在下面逐页否决，不能靠跨轮选择跳过。
   const previousSitemap = await findPreviousSitemapRun(pool, currentSitemap);
   if (!previousSitemap) {
     return empty('还没有上一轮完整 sitemap full；本轮只建立首次 absence 证据', {
@@ -292,8 +307,7 @@ export async function inferDeletionCandidates(
     return report;
   }
 
-  const previousAbsentIds = new Set(previousAbsent.map((page) => page.pageId));
-  const priorAbsent = currentAbsent.filter((page) => previousAbsentIds.has(page.pageId));
+  const priorAbsent = intersectConsecutiveAbsences(currentAbsent, previousAbsent);
   // 即使夹在两轮完整枚举之间的是一个失败/局部 run，其中的“看见了”仍是可靠正证据；
   // 不能跳过它拼出两次 absence。失败只不能提供负证据，不代表其正证据也作废。
   const consecutive = await filterWithoutPositiveObservationBetween(
@@ -371,9 +385,8 @@ export async function verifyDeletionEvidence(
   if (evaluateAbsenceCircuit(currentAbsent.length, eligible.length).tripped) return null;
   const previousAbsent = await filterAbsentFromPair(pool, eligible, evidence.previous);
   if (evaluateAbsenceCircuit(previousAbsent.length, eligible.length).tripped) return null;
-  const previousAbsentIds = new Set(previousAbsent.map((page) => page.pageId));
-  const candidate = currentAbsent.find(
-    (page) => page.pageId === pageId && previousAbsentIds.has(page.pageId),
+  const candidate = intersectConsecutiveAbsences(currentAbsent, previousAbsent).find(
+    (page) => page.pageId === pageId,
   );
   if (!candidate) return null;
   const uninterrupted = await filterWithoutPositiveObservationBetween(
@@ -383,6 +396,37 @@ export async function verifyDeletionEvidence(
     currentSitemap.startedAt,
   );
   return uninterrupted.length === 1 ? evidence : null;
+}
+
+/**
+ * 完整现代 L1 只持久化缺席的小集合。observedSlugs 也作为正证据输入：即使某个
+ * slug 因身份冲突暂时不能映射 page_id，也绝不能把它反推成 absence。
+ */
+export async function recordL1AbsenceObservations(
+  pool: Pool,
+  runId: number,
+  observedAt: string,
+  presentPageIds: readonly number[],
+  observedSlugs: readonly string[],
+): Promise<number> {
+  const result = await query(
+    pool,
+    'deletion:record_l1_absence',
+    `INSERT INTO meta.l1_absence_observation(run_id, page_id, slug, observed_at)
+     SELECT $1::bigint, pc.page_id, pc.slug, $2::timestamptz
+       FROM serve.page_current pc
+       JOIN ingest.page p ON p.id = pc.page_id
+      WHERE pc.status = 'live'
+        AND pc.enumeration_scope = 'standard'
+        AND p.created_at <= $2::timestamptz
+        AND NOT (pc.page_id = ANY($3::int[]))
+        AND NOT (pc.slug = ANY($4::text[]))
+     ON CONFLICT (run_id, page_id) DO UPDATE
+       SET slug = EXCLUDED.slug,
+           observed_at = EXCLUDED.observed_at`,
+    [runId, toPgTimestamptz(observedAt), presentPageIds, observedSlugs],
+  );
+  return result.rowCount ?? 0;
 }
 
 /** 整页 GET 的显式结果：合法存在、404 删除、解析/传输失败三者绝不混淆。 */
@@ -538,6 +582,15 @@ export async function processDeletionTask(
   }
 
   try {
+    // 通用 work-queue run 在整批结束前必然仍是 running；apply_page_life 的数据库红线
+    // 正确要求删除所引用的 run 已经 status=ok。为本页 404 签发一个独立、已结束的
+    // 身份确认 run，不能靠放宽生命周期函数去接受“未来也许失败”的父 run。
+    const certificateRunId = await createDeletionConfirmationCertificate(
+      pool,
+      task.pageId,
+      confirmationRunId,
+      observedAt,
+    );
     const applied = await query<{ seq: string | number | null }>(
       pool,
       'deletion:apply_page_life',
@@ -548,7 +601,7 @@ export async function processDeletionTask(
       [
         task.pageId,
         toPgTimestamptz(observedAt),
-        confirmationRunId,
+        certificateRunId,
         task.wikidotId,
         DELETION_MIN_COVERAGE,
       ],
@@ -654,6 +707,7 @@ async function findPreviousSitemapRun(
         AND ir.coverage_ratio >= $1
         AND ir.batches_failed = 0
         AND (ir.started_at, ir.id) < ($2::timestamptz, $3::bigint)
+        AND ir.started_at <= $2::timestamptz - interval '2 hours'
       ORDER BY ir.started_at DESC, ir.id DESC
       LIMIT 1`,
     [DELETION_MIN_COVERAGE, current.startedAt, current.id],
@@ -670,14 +724,17 @@ async function findListPagesBefore(
     'deletion:listpages_pair',
     `${RUN_SELECT}
       WHERE (
-          ir.source LIKE '%listpages%'
+          (ir.source = 'wikidot_listpages'
+           AND ir.stats ->> 'mode' = 'l1_votes'
+           AND ir.stats ->> 'layer' = 'L1'
+           AND ir.stats #>> '{coverage,scope}' = 'full'
+           AND ir.stats #>> '{validation,complete}' = 'true')
           OR (ir.source = 'wikidot' AND ir.stats ->> 'mode' = 'tier1')
         )
-        AND ir.stats ->> 'mode' = 'tier1'
         AND ir.status = 'ok'
         AND ir.coverage_ratio >= $1
         AND ir.batches_failed = 0
-        AND ir.started_at <= $2::timestamptz
+        AND ir.finished_at <= $2::timestamptz
         AND ir.started_at >= $2::timestamptz - interval '6 hours'
       ORDER BY ir.started_at DESC, ir.id DESC
       LIMIT 1`,
@@ -693,6 +750,7 @@ async function loadEligibleLivePages(pool: Pool): Promise<DeletionCandidate[]> {
     `SELECT page_id, wikidot_id, slug
        FROM serve.page_current
       WHERE status = 'live'
+        AND enumeration_scope = 'standard'
       ORDER BY page_id`,
   );
   return result.rows
@@ -711,9 +769,30 @@ async function filterAbsentFromPair(
 ): Promise<DeletionCandidate[]> {
   if (pages.length === 0) return [];
   const ids = pages.map((page) => page.pageId);
+  if (isModernL1Run(pair.listpages)) {
+    const absent = await query<{ page_id: number }>(
+      pool,
+      'deletion:pair_absent_modern_l1',
+      `SELECT a.page_id
+         FROM meta.l1_absence_observation a
+        WHERE a.run_id = $1
+          AND a.page_id = ANY($2::int[])
+          AND NOT EXISTS (
+            SELECT 1
+              FROM meta.page_scan ps
+             WHERE ps.run_id = $3
+               AND ps.page_id = a.page_id
+               AND ps.kind = 'meta'
+               AND ps.status = 'ok'
+          )`,
+      [pair.listpages.id, ids, pair.sitemap.id],
+    );
+    const absentIds = new Set(absent.rows.map((row) => Number(row.page_id)));
+    return pages.filter((page) => absentIds.has(page.pageId));
+  }
   const seen = await query<{ page_id: number }>(
     pool,
-    'deletion:pair_seen',
+    'deletion:pair_seen_legacy_l1',
     `SELECT DISTINCT page_id
        FROM meta.page_scan
       WHERE run_id IN ($1, $2)
@@ -736,14 +815,24 @@ async function filterWithoutPositiveObservationBetween(
   const seen = await query<{ page_id: number }>(
     pool,
     'deletion:intervening_positive',
-    `SELECT DISTINCT ps.page_id
-       FROM meta.page_scan ps
-       JOIN meta.ingest_run ir ON ir.id = ps.run_id
-      WHERE ps.page_id = ANY($1::int[])
-        AND ps.kind = 'meta'
-        AND ps.status = 'ok'
-        AND ir.started_at > $2::timestamptz
-        AND ir.started_at < $3::timestamptz`,
+    `SELECT DISTINCT positive.page_id
+       FROM (
+         SELECT ps.page_id, ir.started_at AS observed_at
+           FROM meta.page_scan ps
+           JOIN meta.ingest_run ir ON ir.id = ps.run_id
+          WHERE ps.kind = 'meta' AND ps.status = 'ok'
+         UNION ALL
+         SELECT ips.page_id, ips.last_l1_seen_at
+           FROM meta.incremental_page_state ips
+          WHERE ips.page_id IS NOT NULL AND ips.last_l1_seen_at IS NOT NULL
+         UNION ALL
+         SELECT pvs.page_id, pvs.observed_at
+           FROM meta.l1_partial_vote_state pvs
+          WHERE pvs.page_id IS NOT NULL
+       ) positive
+      WHERE positive.page_id = ANY($1::int[])
+        AND positive.observed_at > $2::timestamptz
+        AND positive.observed_at < $3::timestamptz`,
     [pages.map((page) => page.pageId), after, before],
   );
   const positive = new Set(seen.rows.map((row) => Number(row.page_id)));
@@ -751,6 +840,30 @@ async function filterWithoutPositiveObservationBetween(
 }
 
 async function dismissRefutedTasks(pool: Pool, pair: DeletionRunPair): Promise<void> {
+  if (isModernL1Run(pair.listpages)) {
+    await query(
+      pool,
+      'deletion:dismiss_refuted_modern_l1',
+      `DELETE FROM meta.scan_task st
+        WHERE st.kind = 'confirm_deleted'
+          AND st.locked_by IS NULL
+          AND (
+            EXISTS (
+              SELECT 1 FROM meta.page_scan ps
+               WHERE ps.page_id = st.page_id
+                 AND ps.run_id = $1
+                 AND ps.kind = 'meta'
+                 AND ps.status = 'ok'
+            )
+            OR NOT EXISTS (
+              SELECT 1 FROM meta.l1_absence_observation a
+               WHERE a.page_id = st.page_id AND a.run_id = $2
+            )
+          )`,
+      [pair.sitemap.id, pair.listpages.id],
+    );
+    return;
+  }
   await query(
     pool,
     'deletion:dismiss_refuted',
@@ -797,6 +910,54 @@ async function recordConfirmationScan(
       error: note,
     },
   );
+}
+
+async function createDeletionConfirmationCertificate(
+  pool: Pool,
+  pageId: number,
+  parentRunId: number,
+  observedAt: string,
+): Promise<number> {
+  const runId = await startIngestRun(pool, 'wikidot_page_identity', observedAt);
+  if (runId === null) {
+    throw new Error('无法创建 confirm_deleted 身份确认 run');
+  }
+  try {
+    await recordConfirmationScan(pool, runId, pageId, 'confirmed_http_404');
+    await finishIngestRun(pool, runId, {
+      status: 'ok',
+      finishedAt: new Date().toISOString(),
+      pagesEnumerated: 1,
+      remoteTotal: 1,
+      remoteTotalSource: 'unknown',
+      batchesTotal: 1,
+      batchesFailed: 0,
+      populationType: 'targeted_page_identity',
+      stats: {
+        mode: 'confirm_deleted',
+        parentRunId,
+        evidence: 'confirmed_http_404',
+      },
+    });
+    return runId;
+  } catch (err) {
+    await finishIngestRun(pool, runId, {
+      status: 'failed',
+      finishedAt: new Date().toISOString(),
+      pagesEnumerated: 0,
+      remoteTotal: 1,
+      remoteTotalSource: 'unknown',
+      batchesTotal: 1,
+      batchesFailed: 1,
+      populationType: 'targeted_page_identity',
+      stats: {
+        mode: 'confirm_deleted',
+        parentRunId,
+        certificateError: String(err),
+      },
+    }).catch(() => undefined);
+    throw err;
+  }
 }
 
 async function deleteDeletionTask(pool: Pool, taskId: number, workerId: string): Promise<void> {
@@ -868,6 +1029,14 @@ function mapRun(row: RunRow): DeletionEnumerationRun {
     coverageRatio: row.coverage_ratio === null ? null : Number(row.coverage_ratio),
     batchesFailed: row.batches_failed === null ? null : Number(row.batches_failed),
   };
+}
+
+function isModernL1Run(run: DeletionEnumerationRun): boolean {
+  return run.source === 'wikidot_listpages' && run.mode === 'l1_votes';
+}
+
+function isListPagesEnumerationRun(run: DeletionEnumerationRun): boolean {
+  return isModernL1Run(run) || (run.source === 'wikidot' && run.mode === 'tier1');
 }
 
 function assertUniquePageIds(targets: readonly DeletionTarget[]): void {

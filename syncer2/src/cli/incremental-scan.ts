@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import type { Pool } from 'pg';
 
 import { diffL0Rows, diffL1Rows } from '../collect/incrementalDiff.js';
+import { recordL1AbsenceObservations } from '../collect/deletion.js';
 import {
   evaluateRevisionRegressionHealth,
   excludeRevisionRegressionRows,
@@ -1059,6 +1060,13 @@ async function persistL1(
     observedAt,
     'full',
   );
+  const l1AbsenceObservations = await recordL1AbsenceObservations(
+    pool,
+    runId,
+    observedAt,
+    resolved.map(({ pageId }) => pageId),
+    rows.map((row) => row.fullname),
+  );
   return {
     resolved: resolved.length,
     unresolved: unresolved.length,
@@ -1101,6 +1109,7 @@ async function persistL1(
       unchanged: diff.unchanged,
       earlyStop: false,
       voteObservationStatesAdvanced,
+      l1AbsenceObservations,
     },
   };
 }

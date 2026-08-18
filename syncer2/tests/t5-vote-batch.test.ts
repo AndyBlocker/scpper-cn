@@ -6,6 +6,7 @@
  * 同一规范化快照重放不增行，后一个快照严格覆盖前一个快照。
  */
 
+import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRun, ensureUsers, OBSERVED_ISO, registerPage } from './helpers/fixture.js';
 import { openSess, type Sess } from './helpers/pg.js';
@@ -132,6 +133,88 @@ test('T5.2 · 页级 snapshot replace：大页、重放与随机属性', async (
                ORDER BY source_row_ordinal),'')) FROM serve.vote_current WHERE page_id=$1`, [page]));
         rep.eq('T5.2a', '只产生一个 snapshot marker',
           await s.num('t5:markers', `SELECT count(*) FROM ingest.vote_snapshot_event WHERE page_id=$1`, [page]), 1);
+      } finally {
+        await s.rollback();
+      }
+    });
+
+    await t.test('T5.2a2 幂等快照为 legacy 有效票建立出身并保留撤销行/事实 seq', async () => {
+      await s.begin();
+      try {
+        const run = await createRun(s);
+        const page = await registerPage(s, 899, 'ts2test:t5-provenance-replay');
+        const voters = await ensureUsers(s, 'wikidot', 19_000, 3);
+        await s.q(
+          't5:seed_legacy_current',
+          `INSERT INTO serve.vote_current(
+             page_id,voter_id,direction,first_voted_at,last_voted_at,
+             last_precision,last_seq,source_row_ordinal
+           ) VALUES
+             ($1,$2, 1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','bootstrap',70001,0),
+             ($1,$3,-1,NULL,                  '2026-01-02T00:00:00Z','bootstrap',70002,0),
+             ($1,$4, 0,'2026-01-03T00:00:00Z','2026-01-03T00:00:00Z','bootstrap',70003,0)`,
+          [page, voters[0], voters[1], voters[2]],
+        );
+        const entries: Entry[] = [
+          {
+            voter_id: voters[0]!, direction: 1, source_ordinal: 1,
+            identity_key: 'wikidot:19000',
+          },
+          {
+            voter_id: voters[1]!, direction: -1, source_ordinal: 2,
+            identity_key: 'wikidot:19001',
+          },
+        ];
+
+        const first = await applySnapshot(s, page, run, entries);
+        const replay = await applySnapshot(s, page, run, entries);
+        assert.equal(first['idempotent_replay'], true);
+        assert.equal(first['provenance_established'], true);
+        assert.equal(first['provenance_rows_written'], 2);
+        assert.equal(replay['idempotent_replay'], true);
+        assert.equal(replay['provenance_established'], false);
+        assert.equal(replay['provenance_rows_written'], 0);
+
+        const state = await s.one<Record<string, string | boolean>>(
+          't5:provenance_state',
+          `WITH active AS (
+             SELECT count(*)::int AS n,
+                    bool_and(source_row_ordinal>0) AS ordinalled,
+                    count(DISTINCT snapshot_hash)::int AS hash_count,
+                    min(encode(snapshot_hash,'hex')) AS hash_hex,
+                    string_agg(last_seq::text,',' ORDER BY voter_id) AS seqs
+               FROM serve.vote_current
+              WHERE page_id=$1 AND direction<>0
+           ), latest AS (
+             SELECT claimed_total,fetched_total,checksum_ok,checksum_actual,
+                    encode(result_hash,'hex') AS hash_hex
+               FROM meta.page_scan
+              WHERE page_id=$1 AND kind='votes'
+              ORDER BY scanned_at DESC,run_id DESC LIMIT 1
+           )
+           SELECT (SELECT count(*) FROM serve.vote_current WHERE page_id=$1)::text AS rows,
+                  (SELECT count(*) FROM serve.vote_current
+                    WHERE page_id=$1 AND direction=0)::text AS revoked,
+                  (SELECT count(*) FROM ingest.vote_snapshot_event
+                    WHERE page_id=$1)::text AS markers,
+                  active.seqs,
+                  (latest.claimed_total=active.n
+                   AND latest.fetched_total=active.n
+                   AND latest.checksum_ok
+                   AND latest.checksum_actual=0
+                   AND active.ordinalled
+                   AND active.hash_count=1
+                   AND latest.hash_hex=active.hash_hex) AS verified
+             FROM active CROSS JOIN latest`,
+          [page],
+        );
+        assert.deepEqual(state, {
+          rows: '3',
+          revoked: '1',
+          markers: '0',
+          seqs: '70001,70002',
+          verified: true,
+        });
       } finally {
         await s.rollback();
       }

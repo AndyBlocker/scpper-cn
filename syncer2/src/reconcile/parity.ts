@@ -51,6 +51,8 @@ export interface ParityPageState {
   title: string | null;
   rating: number;
   tags: string[];
+  /** 页面是否属于完整 ListPages 的可枚举域；隐藏系统页不参与 existence 缺失推断。 */
+  enumerationScope: 'standard' | 'listpages_hidden';
   /** Wikidot L0 声明的站上更新时间，不是 v2 投影写入时钟。 */
   metaUpdatedEpochMs: number | null;
   /** 最近一次完整 ListPages 直接看到该 live slug 的时间。 */
@@ -296,6 +298,7 @@ export async function fetchV1ParityStates(pool: Pool): Promise<Map<number, Parit
            JOIN "LatestVote" lv ON lv."pageVersionId" = cp.page_version_id
            JOIN "User" u ON u.id = lv."userId"
           WHERE u."wikidotId" IS NOT NULL
+            AND lv.direction <> 0
        ),
        votes AS (
          SELECT page_id,
@@ -327,6 +330,7 @@ export async function fetchV1ParityStates(pool: Pool): Promise<Map<number, Parit
               NULL::text AS l1_seen_epoch_ms,
               false AS title_direct_observed,
               false AS tags_direct_observed,
+              'standard'::text AS enumeration_scope,
               false AS verified_multiset_snapshot
          FROM current_pages cp
          LEFT JOIN votes v ON v.page_id = cp.page_id`,
@@ -354,6 +358,7 @@ export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, Parit
               vc.last_voted_at
          FROM serve.vote_current vc
          JOIN ingest."user" u ON u.id = vc.voter_id
+        WHERE vc.direction <> 0
      ),
      votes AS (
        SELECT page_id,
@@ -415,6 +420,7 @@ export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, Parit
             pc.title,
             pc.rating,
             pc.tags,
+            pc.enumeration_scope,
             CASE WHEN ips.last_l0_updated_at IS NULL THEN NULL
                  ELSE (extract(epoch FROM ips.last_l0_updated_at) * 1000)::bigint::text
             END AS meta_updated_epoch_ms,
@@ -501,6 +507,10 @@ export function compareStateAlignment(
       isRecent(right, cutoff);
     if (recent) {
       lagExcludedPages++;
+      continue;
+    }
+    if (left === undefined && right?.enumerationScope === 'listpages_hidden') {
+      incrementCount(classificationPages, 'excluded:listpages_hidden');
       continue;
     }
     comparablePages++;
@@ -1054,6 +1064,7 @@ interface ParityStateRow {
   title: string | null;
   rating: number;
   tags: string[];
+  enumeration_scope: 'standard' | 'listpages_hidden';
   meta_updated_epoch_ms: string | null;
   l1_seen_epoch_ms: string | null;
   title_direct_observed: boolean;
@@ -1081,6 +1092,7 @@ function statesFromRows(rows: readonly ParityStateRow[]): Map<number, ParityPage
       title: row.title,
       rating: Number(row.rating),
       tags: Array.isArray(row.tags) ? row.tags : [],
+      enumerationScope: row.enumeration_scope,
       metaUpdatedEpochMs:
         row.meta_updated_epoch_ms === null ? null : Number(row.meta_updated_epoch_ms),
       l1SeenEpochMs:
