@@ -22,6 +22,7 @@ import {
   evaluateImagePipelineHealth,
   recordImageRouteResult,
 } from '../image/health.js';
+import { sweepUnreachableExternalHosts } from '../image/unreachableHosts.js';
 import { SHARED_IMAGE_ASSET_ROOT } from '../image/config.js';
 import { assertTimezoneRoundTrip, createPool, query } from '../store/db.js';
 import { evaluateRunHealth } from '../work/runHealth.js';
@@ -138,6 +139,21 @@ async function main(): Promise<void> {
       }
       counters.bytes += result.bytes;
     }
+    /*
+     * 推定不可达主机的收口：host_deferred 永不终态化的豁免对临时限速是对的，
+     * 但对永远不会恢复的主机会让任务无限空转（实测 603 个任务反复认领六小时零产出）。
+     * 判据只认「历史 0 次成功」，健康主机成功过一次即永久豁免。
+     */
+    const unreachableHosts = await sweepUnreachableExternalHosts(
+      pool,
+      new URL(config.siteBaseUrl).host,
+    );
+    if (unreachableHosts.terminalized > 0) {
+      log.warn('站外主机推定不可达，其待处理任务已收口为 host_unresolvable', {
+        terminalized: unreachableHosts.terminalized,
+        hosts: unreachableHosts.hosts,
+      });
+    }
     const queue = await query<{ status: string; n: string }>(
       pool,
       'image:queue_summary',
@@ -181,6 +197,7 @@ async function main(): Promise<void> {
       runtimeBudgetReached: budget.checkpoint(),
       ...budget.summary(),
       ...counters,
+      unreachableHosts,
       queue: Object.fromEntries(queue.rows.map((row) => [row.status, Number(row.n)])),
       assetRoot: options.assetRoot,
       wikidotHttp: wikidot.stats(),
