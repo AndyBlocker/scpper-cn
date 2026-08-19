@@ -120,6 +120,10 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="2996561" :display-name="'miku393'" bare />
             ：以上资金用于赞助奶茶以增加Andy的体重（bushi） -- 2026.7.19
           </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="10018496" :display-name="'Fleeting Meteors'" bare />
+            ：祝scpper 未来一切顺利，同时也希望大家能够写出自己所期盼的文字，以上。 -- 2026.8.16
+          </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
