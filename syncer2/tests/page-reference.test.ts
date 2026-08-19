@@ -8,6 +8,7 @@ import type { Pool, PoolClient } from 'pg';
 
 import {
   extractPageReferences,
+  normalizeIncludeReferenceTarget,
   normalizePageReferenceTarget,
 } from '../src/content/extractPageReferences.js';
 import { loadConfig } from '../src/config.js';
@@ -95,6 +96,7 @@ describe('page-reference 纯解析（零网络）', () => {
   it('站外 http(s) 保留；javascript/mailto/local--files 与其他 scheme 排除', () => {
     const refs = extractPageReferences(`
       [https://outside.example/a?q=1#part 外站短链]
+      [*https://outside.example/starred 新窗口外站短链]
       https://outside.example/b#raw
       [javascript:alert(1) JS]
       [mailto:test@example.com 邮件]
@@ -102,26 +104,43 @@ describe('page-reference 纯解析（零网络）', () => {
       [[[https://scp-wiki-cn.wikidot.com/local--files/example/file.png|本站附件]]]
       [ftp://outside.example/file FTP]
     `);
-    assert.equal(refs.filter((ref) => ref.targetScope === 'external').length, 2);
+    assert.equal(refs.filter((ref) => ref.targetScope === 'external').length, 3);
     assert.ok(refs.some((ref) => ref.kind === 'SHORT' && ref.targetFragment === 'part'));
+    assert.ok(refs.some(
+      (ref) => ref.kind === 'SHORT' && ref.targetKey === 'https://outside.example/starred',
+    ));
     assert.ok(refs.some((ref) => ref.kind === 'DIRECT' && ref.targetFragment === 'raw'));
     assert.ok(refs.every((ref) => !/javascript:|mailto:|local--files|ftp:/i.test(ref.rawTarget)));
   });
 
-  it('SHORT 不吞 Wikidot 双括号指令（v1 会误报 div/include/module）', () => {
+  it('SHORT 不吞 Wikidot 双括号指令；有效 INCLUDE 单独分类，缩进转义不采', () => {
     const refs = extractPageReferences(`
       [[div class="content"]]
       [[include component:example |name=value]]
       [[module CSS]]
       [real-target 真正短链]
+[[include component:real |name=value]]
+[[include component:continued inc-top=--]
+|title=多行参数
+]]
+[[include component:nested caption=[[footnote]]参数内标记[[/footnote]]|width=250px]]
+[[include component:broken
+[[include component:after-broken]]
+ [[include component:escaped]]
     `);
     assert.deepEqual(
       refs.map((ref) => [ref.kind, ref.targetSlug]),
-      [['SHORT', 'real-target']],
+      [
+        ['INCLUDE', 'component:real'],
+        ['INCLUDE', 'component:continued'],
+        ['INCLUDE', 'component:nested'],
+        ['INCLUDE', 'component:after-broken'],
+        ['SHORT', 'real-target'],
+      ],
     );
   });
 
-  it('本站域名剥离、星号、query 和 NFKC/slug 归一稳定', () => {
+  it('各类实站形态：category、锚点、参数、相对路径、大小写与中文字符均稳定', () => {
     assert.deepEqual(normalizePageReferenceTarget('* SCP CN 4860?x=1#片段'), {
       scope: 'internal',
       key: 'scp-cn-4860',
@@ -130,6 +149,74 @@ describe('page-reference 纯解析（零网络）', () => {
       fragment: '片段',
       rawTarget: '* SCP CN 4860?x=1#片段',
     });
+
+    const refs = extractPageReferences(`
+[[[Component:Image Block|分类页]]]
+[[[SCP 中文 Slug#段落|中文目标]]]
+[/Relative-Target?view=full#锚点 相对短链]
+https://SCP-WIKI-CN.wikidot.com/Direct-Target?from=test#Part
+[[include :scp-wiki-cn:Theme:Black-Highlighter-Theme |mode=dark]]
+[[include :scp-wiki:component:bhl-dark-sidebar]]
+    `);
+    assert.deepEqual(
+      refs.map((ref) => [
+        ref.kind,
+        ref.targetScope,
+        ref.targetSlug,
+        ref.targetFragment,
+        ref.targetKey,
+      ]),
+      [
+        ['TRIPLE', 'internal', 'component:image-block', '', 'component:image-block'],
+        ['TRIPLE', 'internal', 'scp-slug', '段落', 'scp-slug'],
+        ['INCLUDE', 'internal', 'theme:black-highlighter-theme', '', 'theme:black-highlighter-theme'],
+        [
+          'INCLUDE',
+          'external',
+          null,
+          '',
+          'https://scp-wiki.wikidot.com/component:bhl-dark-sidebar',
+        ],
+        ['SHORT', 'internal', 'relative-target', '锚点', 'relative-target'],
+        ['DIRECT', 'internal', 'direct-target', 'Part', 'direct-target'],
+      ],
+    );
+    assert.equal(normalizePageReferenceTarget('ftp://outside.example/file'), null);
+    assert.equal(normalizePageReferenceTarget('纯中文页面'), null, 'Wikidot unix-name 只允许 ASCII');
+  });
+
+  it('INCLUDE 本站显式目标与跨站目标分别落 internal/external，动态目标不伪解析', () => {
+    assert.deepEqual(normalizeIncludeReferenceTarget(':scp-wiki-cn:component:license-box'), {
+      scope: 'internal',
+      key: 'component:license-box',
+      path: '/component:license-box',
+      slug: 'component:license-box',
+      fragment: '',
+      rawTarget: ':scp-wiki-cn:component:license-box',
+    });
+    assert.deepEqual(normalizeIncludeReferenceTarget(':scp-wiki:component:license-box'), {
+      scope: 'external',
+      key: 'https://scp-wiki.wikidot.com/component:license-box',
+      path: 'https://scp-wiki.wikidot.com/component:license-box',
+      slug: null,
+      fragment: '',
+      rawTarget: ':scp-wiki:component:license-box',
+    });
+    assert.deepEqual(
+      normalizeIncludeReferenceTarget(
+        ':shitake-crude-production:javascript:pseudomusicplayer',
+      ),
+      {
+        scope: 'external',
+        key: 'https://shitake-crude-production.wikidot.com/javascript:pseudomusicplayer',
+        path: 'https://shitake-crude-production.wikidot.com/javascript:pseudomusicplayer',
+        slug: null,
+        fragment: '',
+        rawTarget: ':shitake-crude-production:javascript:pseudomusicplayer',
+      },
+    );
+    assert.equal(normalizeIncludeReferenceTarget('javascript:local-template')?.slug, 'javascript:local-template');
+    assert.equal(normalizeIncludeReferenceTarget(':scp-wiki-cn:@@%%fullname%%@@'), null);
   });
 });
 
@@ -228,7 +315,7 @@ describe('effective page-reference 数据库投影', () => {
       await seedPage(client, AMBIGUOUS_A, 'pageref-ambiguous', 'live');
       await seedPage(client, AMBIGUOUS_B, 'pageref-ambiguous', 'live');
 
-      const source = `
+      const source = `[[include :scp-wiki-cn:pageref-reused |name=结构依赖]]
         [[[pageref-reused#triple-fragment|复用目标]]]
         [/pageref-missing 缺页目标]
         https://scp-wiki-cn.wikidot.com/pageref-ambiguous
@@ -240,9 +327,11 @@ describe('effective page-reference 数据库投影', () => {
       assert.equal(projected.affectedKeys, 1);
 
       const refs = await readReferences(client);
-      assert.equal(refs.length, 4, '三种链接形态 + 站外都应落库');
+      assert.equal(refs.length, 5, '四种链接形态 + 站外都应落库');
 
-      const reused = refs.find((row) => row.target_slug === 'pageref-reused');
+      const reused = refs.find(
+        (row) => row.target_slug === 'pageref-reused' && row.kind === 'TRIPLE',
+      );
       assert.ok(reused);
       assert.equal(reused.kind, 'TRIPLE');
       assert.equal(reused.target_fragment, 'triple-fragment');
@@ -251,6 +340,12 @@ describe('effective page-reference 数据库投影', () => {
       assert.deepEqual(reused.candidate_page_ids, [REUSED_DELETED, REUSED_LIVE]);
       assert.deepEqual(reused.live_candidate_page_ids, [REUSED_LIVE]);
       assert.equal(reused.slug_reused, true, '即使可唯一解析，也显式记录 slug 复用');
+
+      const included = refs.find((row) => row.kind === 'INCLUDE');
+      assert.ok(included);
+      assert.equal(included.target_slug, 'pageref-reused');
+      assert.equal(included.to_page_id, REUSED_LIVE);
+      assert.equal(included.resolution_status, 'resolved');
 
       const missing = refs.find((row) => row.target_slug === 'pageref-missing');
       assert.ok(missing);
@@ -322,7 +417,7 @@ describe('effective page-reference 数据库投影', () => {
         client,
         projectionWindow(Number(secondSeq.rows[0]!.change_seq)),
       );
-      assert.equal(rotated.rowsDeleted, 4);
+      assert.equal(rotated.rowsDeleted, 5);
       const afterRotation = await readReferences(client);
       assert.equal(afterRotation.length, 1);
       assert.equal(afterRotation[0]!.target_slug, 'pageref-new');

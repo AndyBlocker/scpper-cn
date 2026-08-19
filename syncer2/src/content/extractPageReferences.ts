@@ -5,7 +5,7 @@
  * projector：slug 是可复用的名称，只有 serve.page_current 才知道哪个身份当前 live。
  */
 
-export type PageReferenceKind = 'TRIPLE' | 'SHORT' | 'DIRECT';
+export type PageReferenceKind = 'TRIPLE' | 'SHORT' | 'DIRECT' | 'INCLUDE';
 export type PageReferenceScope = 'internal' | 'external';
 
 export interface PageReferenceCandidate {
@@ -46,8 +46,11 @@ const SITE_HOST = 'scp-wiki-cn.wikidot.com';
 const HTTP_PREFIX_REGEX = /^https?:\/\//i;
 const PROTOCOL_RELATIVE_REGEX = /^\/\//;
 const INVALID_PREFIXES = /^(?:javascript:|mailto:)/i;
-const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+// Wikidot page unix-name permits category:page. Only scheme:// is unambiguously a URI;
+// treating every leading `word:` as a scheme drops component:/theme:/fragment: references.
+const URI_WITH_AUTHORITY = /^[a-z][a-z0-9+.-]*:\/\//i;
 const LOCAL_FILES_SEGMENT = /^local--files$/i;
+const INCLUDE_DYNAMIC_TARGET = /(?:\{\$|%%|@@|##)/;
 const MAX_DISPLAY_VARIANTS = 10;
 
 function slugifySegment(input: string, allowColon: boolean): string {
@@ -98,6 +101,11 @@ export function normalizePageReferenceTarget(rawTarget: string): NormalizedTarge
   let working = rawTarget.trim();
   if (!working || INVALID_PREFIXES.test(working)) return null;
 
+  // Wikidot 在 URL 前加 * 表示新窗口；它是链接修饰符，不是目标的一部分。
+  // 必须先剥离再判断协议，否则 *https://... 会被错误 slugify 成本站页面。
+  if (working.startsWith('*')) working = working.slice(1).trim();
+  if (!working || INVALID_PREFIXES.test(working)) return null;
+
   if (PROTOCOL_RELATIVE_REGEX.test(working)) working = `https:${working}`;
 
   if (HTTP_PREFIX_REGEX.test(working)) {
@@ -134,10 +142,9 @@ export function normalizePageReferenceTarget(rawTarget: string): NormalizedTarge
     };
   }
 
-  // ftp:/data: 等 URI 不能被误 slugify 成本站页面；当前只保留 http(s) 站外引用。
-  if (URI_SCHEME.test(working)) return null;
-  if (working.startsWith('*')) working = working.slice(1).trim();
-
+  // ftp:// 等带 authority 的 URI 不能被误 slugify 成本站页面；裸 `category:page`
+  // 则是 Wikidot 的合法内部页名。javascript:/mailto: 已在前置黑名单排除。
+  if (URI_WITH_AUTHORITY.test(working)) return null;
   let fragment = '';
   const hashIndex = working.indexOf('#');
   if (hashIndex >= 0) {
@@ -168,6 +175,50 @@ export function normalizePageReferenceTarget(rawTarget: string): NormalizedTarge
   };
 }
 
+/**
+ * Wikidot include 目标：`page` 是本站结构依赖，`:site:page` 是跨站结构依赖。
+ * 本站显式写法 `:scp-wiki-cn:page` 仍归 internal；其它站点规范成稳定 https URL。
+ */
+export function normalizeIncludeReferenceTarget(
+  rawTarget: string,
+): NormalizedTarget | null {
+  const target = rawTarget.trim();
+  if (!target || INCLUDE_DYNAMIC_TARGET.test(target)) return null;
+
+  // include 的这个位置语法上只能是 page unix-name，不会执行 javascript:/mailto:。
+  // 前置 `/` 让通用归一器走明确的本站路径分支，因此 `javascript:template` 这类
+  // 合法 category 不会被普通 URL 链接所需的 scheme 安全过滤误伤。
+  const normalizePagePart = (pageTarget: string): NormalizedTarget | null => {
+    const pageName = pageTarget.trim();
+    if (
+      !pageName
+      || HTTP_PREFIX_REGEX.test(pageName)
+      || PROTOCOL_RELATIVE_REGEX.test(pageName)
+      || URI_WITH_AUTHORITY.test(pageName)
+    ) return null;
+    const page = normalizePageReferenceTarget(
+      pageName.startsWith('/') ? pageName : `/${pageName}`,
+    );
+    return page ? { ...page, rawTarget: target } : null;
+  };
+
+  const crossSite = /^:([^:\s]+):(.+)$/.exec(target);
+  if (!crossSite) return normalizePagePart(target);
+
+  const site = crossSite[1]!.normalize('NFKC').trim().toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(site)) return null;
+  const page = normalizePagePart(crossSite[2]!);
+  if (!page || page.scope !== 'internal') return null;
+
+  if (site === 'scp-wiki-cn') {
+    return { ...page, rawTarget: target };
+  }
+
+  const host = site.includes('.') ? site : `${site}.wikidot.com`;
+  const external = normalizePageReferenceTarget(`https://${host}${page.path}`);
+  return external ? { ...external, rawTarget: target } : null;
+}
+
 function overlaps(spans: readonly Span[], start: number, end: number): boolean {
   return spans.some((span) => start < span.end && end > span.start);
 }
@@ -178,7 +229,7 @@ function addDisplayValue(set: Set<string>, value: string | undefined): void {
   set.add(trimmed);
 }
 
-/** TRIPLE / SHORT / DIRECT 三类在各自口径内聚合，保留出现次数与最多十个显示变体。 */
+/** 四类源码引用在各自口径内聚合，保留出现次数与最多十个显示变体。 */
 export function extractPageReferences(source: string | null | undefined): PageReferenceCandidate[] {
   if (!source) return [];
   const map = new Map<string, CandidateAccumulator>();
@@ -223,6 +274,18 @@ export function extractPageReferences(source: string | null | undefined): PageRe
     const display = pipeIndex >= 0 ? inner.slice(pipeIndex + 1) : undefined;
     const normalized = normalizePageReferenceTarget(target);
     if (normalized) add('TRIPLE', normalized, rawText, display);
+  }
+
+  // Wikidot 官方语义：include 必须自成一行；行首加一个空格会转义、不执行。
+  // 参数可以跨行，目标止于首个空白、| 或 ]。坏源码里偶有未闭合的 include；不得
+  // 跨过下一条行首 include 去借用它的结尾，否则会把坏目标记成有效、吞掉真目标。
+  // 先于 DIRECT 扫描并登记 span，避免把参数里的图片/CSS URL 误报成页面上的裸链接。
+  const includePattern = /^\[\[include[^\S\r\n]+([^\]\s|]+)(?:(?!^\[\[include\b)[\s\S])*?\]\][ \t]*(?=\r?$)/gim;
+  while ((match = includePattern.exec(source)) !== null) {
+    const rawText = match[0];
+    structuredSpans.push({ start: match.index, end: match.index + rawText.length });
+    const normalized = normalizeIncludeReferenceTarget(match[1] ?? '');
+    if (normalized) add('INCLUDE', normalized, rawText);
   }
 
   // 两侧都必须是单方括号。v1 只有右向 (?!\[)，会从 [[div ...]] 的第二个 [
