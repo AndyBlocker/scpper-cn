@@ -22,6 +22,7 @@ import {
 } from '../src/image/health.js';
 import {
   claimNextImageJob,
+  IMAGE_HOST_DEFERRAL_MAX_RETRY_MS,
   imageRetryBackoffMs,
   isTerminalImageFailure,
   processImageJob,
@@ -332,4 +333,24 @@ test('HTTP 状态结构化落 job：429 不再只剩 http_transient 文本', asy
   assert.equal(result.failureClass, 'http_transient');
   assert.equal(result.httpStatus, 429);
   assert.equal(updates[0]![6], 429);
+});
+
+
+test('host_deferred 的 not_before 有上界，闸恢复后任务不会被历史退让锁死', () => {
+  // 闸可以给出很长的等待（实测 951,334s ≈ 11 天）。把它原样写进任务的 not_before，
+  // 会让主机恢复后这些任务仍停在未来：scpsandboxcn.wdfiles.com 的 120 个任务
+  // attempts=0 却被排到 11 天后，而其闸已 level=0 recovered。
+  const gateWaitMs = 951_334_000;
+  const scheduled = Math.min(gateWaitMs, IMAGE_HOST_DEFERRAL_MAX_RETRY_MS);
+  assert.equal(scheduled, IMAGE_HOST_DEFERRAL_MAX_RETRY_MS);
+  assert.ok(scheduled <= 15 * 60_000, '复查间隔不得超过 15 分钟');
+
+  // 短于上界的等待应原样保留——不要把有意义的短退让拉长。
+  assert.equal(Math.min(30_000, IMAGE_HOST_DEFERRAL_MAX_RETRY_MS), 30_000);
+
+  // 上界只作用于 host_deferred；真实失败仍按指数退避。
+  assert.ok(
+    imageRetryBackoffMs(4, 60 * 60_000, 7 * 24 * 60 * 60_000) > IMAGE_HOST_DEFERRAL_MAX_RETRY_MS,
+    '真实失败的退避不受该上界影响',
+  );
 });

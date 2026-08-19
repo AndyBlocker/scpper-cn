@@ -443,8 +443,22 @@ async function failJob(
   if (!Number.isFinite(rawRetryAfterMs) || rawRetryAfterMs <= 0) {
     throw new RangeError(`图片 retryAfterMs 非法: ${rawRetryAfterMs}`);
   }
+  /*
+   * host_deferred 的 waitMs 是闸在**当时**的估计；原样写进 not_before 会把一个瞬时
+   * 退让烤成长期停摆，而闸恢复后没有任何机制回头修正这些任务。
+   *
+   * 实测：scpsandboxcn.wdfiles.com 的 120 个任务被排到 08-24（11 天后、attempts=0），
+   * 而同一个主机的闸在数小时内就已 recovered_after_3_healthy_windows、level=0，
+   * 任务却仍停在未来——健康主机被自己的历史退让锁死。
+   *
+   * 闸在认领时会重新裁决，且 claim 的 ORDER BY 已按 next_permit_at 把降档主机排后，
+   * 因此任务侧只需要一个有界的复查间隔，不需要复刻闸的长等待。
+   */
+  const cappedRetryAfterMs = deferred
+    ? Math.min(rawRetryAfterMs, IMAGE_HOST_DEFERRAL_MAX_RETRY_MS)
+    : rawRetryAfterMs;
   // PostgreSQL bigint 不接受 databaseClock() 产生的亚毫秒小数；向上取整避免提前放行。
-  const retryAfterMs = Math.ceil(rawRetryAfterMs);
+  const retryAfterMs = Math.ceil(cappedRetryAfterMs);
   await withTransaction(pool, `image:failure:${job.id}`, async (db) => {
     await query(
       db,
@@ -708,6 +722,12 @@ function normalizeFailure(error: unknown): ImageValidationError {
     false,
   );
 }
+
+/**
+ * host_deferred 的 not_before 上界。闸才是放行的权威，任务侧只需定期回来复查；
+ * 超过该上界的等待一律截断，避免把闸的瞬时状态固化成任务的长期停摆。
+ */
+export const IMAGE_HOST_DEFERRAL_MAX_RETRY_MS = 15 * 60_000;
 
 /** attempts 在 claim 时已 +1：第 1/2/3/4 次失败分别退 1/2/4/8 个 base。 */
 export function imageRetryBackoffMs(attempts: number, baseMs: number, maxMs: number): number {
