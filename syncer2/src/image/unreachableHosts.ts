@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 
 import { query } from '../store/db.js';
+import { LEGACY_IMAGE_HOST_REWRITES } from './legacyHosts.js';
 
 /**
  * 站外图床「推定不可达」的收敛路径。
@@ -44,6 +45,12 @@ export interface UnreachableHostSweepResult {
  *  3. 最早入队距今 ≥ 观察窗 —— 排除主机临时故障。
  *
  * 站点主机（wikidot 本身）永不参与：主站连不上通常是瞬时的，语义与站外图床不同。
+ *
+ * 已登记改写的旧域名同样永不参与：它们的 normalized_url 主机并不是实际抓取主机
+ * （ja.scp-wiki.net 的图片实际取自 scp-jp.wdfiles.com），按自身统计「0 次成功」
+ * 得到的是改写前的历史，会把刚刚变得可抓的 URL 误判成不可达——
+ * 实测就发生过一次：改写上线的同一轮，194 个 ja.scp-wiki.net 任务被本判据收口。
+ * 这类主机的可达性应由其改写目标承担。
  */
 export async function sweepUnreachableExternalHosts(
   pool: Pool,
@@ -84,6 +91,7 @@ export async function sweepUnreachableExternalHosts(
          FROM host_stats
         WHERE host IS NOT NULL
           AND host <> lower($1)
+          AND NOT (host = ANY($4::text[]))
           AND completed = 0
           AND attempted >= $2
           AND pending > 0
@@ -112,7 +120,7 @@ export async function sweepUnreachableExternalHosts(
        FROM updated
       GROUP BY host
       ORDER BY count(*) DESC`,
-    [siteHost, minAttempted, minHours],
+    [siteHost, minAttempted, minHours, [...LEGACY_IMAGE_HOST_REWRITES.keys()]],
   );
   const hosts = result.rows.map((row) => ({
     host: row.host,

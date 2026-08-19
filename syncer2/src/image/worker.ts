@@ -1,4 +1,5 @@
 import { ExternalHostDeferredError } from './externalEgress.js';
+import { rewriteLegacyImageHost } from './legacyHosts.js';
 /**
  * v2 图片资产 worker。复用 v1 的认领/校验/SHA-256/原子写盘/退避状态机，
  * 但以 v2 的 (page_id, normalized_url) 引用键和 bytea hash 资产表重写。
@@ -302,19 +303,28 @@ export async function processImageJob(
   }
 
   // host allow/block 是出站边界，不应阻止已经过 SHA 校验的本地内容复用。
-  if (!imageHostAllowed(job.displayUrl, options.allowedHosts, options.blockedHosts)) {
+  /*
+   * 旧域名（www.scp-wiki.net / ja.scp-wiki.net）为其自身出示 *.wikidot.com 证书，
+   * 主机名不匹配导致第一跳 TLS 即失败、永远走不到站点自己的跳转。
+   * 这里把那个跳转前置到最终文件主机，全程不放宽 TLS 校验。
+   * normalized_url 不变——它是页面源码给出的去重身份。
+   */
+  const legacyRewrite = rewriteLegacyImageHost(job.displayUrl);
+  const fetchUrl = legacyRewrite.url;
+
+  if (!imageHostAllowed(fetchUrl, options.allowedHosts, options.blockedHosts)) {
     return failJob(pool, job, egressClass,
-      new ImageValidationError(`图片 host 不在 allowlist: ${safeHost(job.displayUrl)}`, 'blocked_host', true),
+      new ImageValidationError(`图片 host 不在 allowlist: ${safeHost(fetchUrl)}`, 'blocked_host', true),
       options);
   }
 
   let response: HttpResponse;
   let declaredContentType: string;
-  let downloadedFromUrl = job.displayUrl;
+  let downloadedFromUrl = fetchUrl;
   let descriptionPageUrl: string | null = null;
   try {
     const client = egressClass === 'wikidot_site' ? clients.wikidot : clients.external;
-    response = await client.get(job.displayUrl, `image:${egressClass}`, {
+    response = await client.get(fetchUrl, `image:${egressClass}`, {
       headers: { accept: 'image/*' },
       // 站外失败必须跨轮走持久 not_before；禁止同一个 job 在几秒内连打 5 次。
       // 重定向仍逐跳过 gate，和瞬时失败重试预算分开；429/503 本来就是零重试。

@@ -11,6 +11,7 @@ import type { Pool } from 'pg';
 
 import { loadConfig } from '../src/config.js';
 import { createPool, query } from '../src/store/db.js';
+import { LEGACY_IMAGE_HOST_REWRITES } from '../src/image/legacyHosts.js';
 import {
   UNREACHABLE_HOST_MIN_ATTEMPTED_JOBS,
   UNREACHABLE_HOST_MIN_OBSERVATION_HOURS,
@@ -92,4 +93,18 @@ test('站点主机永不参与——主站连不上通常是瞬时的', async ()
     !result.hosts.some((row) => row.host.toLowerCase() === siteHost.toLowerCase()),
     '站点主机不得被收口',
   );
+});
+
+
+test('已登记改写的旧域名永不被收口——其可达性由改写目标承担', async () => {
+  // 实测事故：改写上线的同一轮，194 个 ja.scp-wiki.net 任务被本判据收口，
+  // 因为按 normalized_url 的主机统计时它仍是「历史 0 次成功」。
+  const config = loadConfig({ requireDatabase: true });
+  const result = await sweepUnreachableExternalHosts(pool, new URL(config.siteBaseUrl).host);
+  for (const legacy of LEGACY_IMAGE_HOST_REWRITES.keys()) {
+    assert.ok(
+      !result.hosts.some((row) => row.host.toLowerCase() === legacy),
+      `${legacy} 是可改写旧域名，不得按自身可达性收口`,
+    );
+  }
 });
