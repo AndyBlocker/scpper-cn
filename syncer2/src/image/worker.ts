@@ -170,6 +170,15 @@ export async function claimNextImageJob(
           WHERE (
                   job.status = 'pending'
                   OR (job.status = 'failed' AND job.not_before IS NOT NULL)
+                  -- processing 不在此列时，worker 崩溃留下的锁永远无人回收：
+                  -- 实测 2 个任务自 08-12 起卡在 processing 298 小时，
+                  -- 锁属于早已不存在的进程（PID 2873249 / 2886979）。
+                  -- 下方的陈旧锁判据本就能识别它们，缺的只是让这个状态进入候选集。
+                  OR (
+                    job.status = 'processing'
+                    AND job.locked_at IS NOT NULL
+                    AND job.locked_at < now() - ($2::bigint || ' milliseconds')::interval
+                  )
                 )
             AND (job.not_before IS NULL OR job.not_before <= now())
             AND (
