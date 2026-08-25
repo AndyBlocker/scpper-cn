@@ -230,12 +230,14 @@ export async function observeL1ProjectionDrift(
   const selectedKeys = new Set(
     gate.selected.map((task) => driftKey(task.pageId, task.kind as L1DriftTaskKind)),
   );
+  const terminalKeys = new Set(openTerminal.keys());
 
   const statesWritten = await upsertCurrentDriftStates(
     pool,
     runId,
     current,
     selectedKeys,
+    terminalKeys,
     observedAt,
   );
   const statesResolved = await resolveMissingDriftStates(
@@ -412,6 +414,7 @@ async function upsertCurrentDriftStates(
   runId: number,
   rows: readonly CurrentDrift[],
   selectedKeys: ReadonlySet<string>,
+  terminalKeys: ReadonlySet<string>,
   observedAt: string,
 ): Promise<number> {
   let written = 0;
@@ -425,6 +428,7 @@ async function upsertCurrentDriftStates(
       local_value: row.localValue,
       remote_value: row.remoteValue,
       enqueued: selectedKeys.has(driftKey(row.pageId, row.kind)),
+      terminal: terminalKeys.has(driftKey(row.pageId, row.kind)),
     }));
     const result = await query(
       pool,
@@ -433,7 +437,7 @@ async function upsertCurrentDriftStates(
          SELECT *
            FROM jsonb_to_recordset($1::jsonb) AS x(
              page_id int, slug text, kind text, consecutive_observations int,
-             local_value jsonb, remote_value jsonb, enqueued boolean
+             local_value jsonb, remote_value jsonb, enqueued boolean, terminal boolean
            )
        )
        INSERT INTO meta.incremental_drift_state AS ds
@@ -441,14 +445,15 @@ async function upsertCurrentDriftStates(
           last_observation_run_id, consecutive_observations,
           local_value, remote_value, last_enqueued_at, resolved_at)
        SELECT page_id, kind, slug, $2::timestamptz, $2::timestamptz,
-              $3::bigint, consecutive_observations,
+              $3::bigint, CASE WHEN terminal THEN 0 ELSE consecutive_observations END,
               local_value, remote_value,
               CASE WHEN enqueued THEN $2::timestamptz ELSE NULL END,
-              NULL
+              CASE WHEN terminal THEN $2::timestamptz ELSE NULL END
          FROM input
        ON CONFLICT (page_id, kind) DO UPDATE
          SET slug = EXCLUDED.slug,
              first_detected_at = CASE
+               WHEN EXCLUDED.resolved_at IS NOT NULL THEN ds.first_detected_at
                WHEN ds.resolved_at IS NULL THEN ds.first_detected_at
                ELSE EXCLUDED.first_detected_at
              END,
@@ -462,7 +467,7 @@ async function upsertCurrentDriftStates(
                WHEN ds.resolved_at IS NOT NULL THEN NULL
                ELSE ds.last_enqueued_at
              END,
-             resolved_at = NULL`,
+             resolved_at = EXCLUDED.resolved_at`,
       [
         toPgJson(payload, 'drift.state'),
         toPgTimestamptz(observedAt),

@@ -13,6 +13,7 @@ import {
   applyForumBatch,
   applyForumCategorySnapshot,
   applyForumDiscussionLink,
+  isDiscussionCountInconsistent,
   parseForumCategoryPage,
   parseForumComments,
   parseForumPostsPage,
@@ -22,6 +23,7 @@ import {
   scanForumCategoryPage,
   scanForumStart,
   scanForumThreads,
+  scanPageDiscussionLinks,
   scanPageDiscussions,
 } from '../src/collect/forum.js';
 import { applyInferredForumLinks } from '../src/collect/forumLinks.js';
@@ -32,7 +34,11 @@ import {
 } from '../src/collect/forumIncremental.js';
 import { ok } from '../src/collect/result.js';
 import { HttpClient } from '../src/http/client.js';
-import { seedForumDiscussionLinkTasks } from '../src/store/queues.js';
+import {
+  finishDiscussionTask,
+  seedForumDiscussionLinkTasks,
+} from '../src/store/queues.js';
+import { classifyWorkFailure, workFailureHash } from '../src/work/failurePolicy.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -203,6 +209,7 @@ test('讨论串关联冷启动：28,389 个缺口可整批播种，link-only 正
   assert.match(seedSql, /comment_count > 0/);
   assert.match(seedSql, /discussion_thread_id IS NULL/);
   assert.match(seedSql, /forum_link_initial_catchup/);
+  assert.match(seedSql, /meta\.irreconcilable/, '开放终态不得被下一轮 seed 重建');
 
   const statements: string[] = [];
   const client = {
@@ -503,6 +510,98 @@ test('M5 Comments fixture：实站 WIKIDOT.forumThreadId 形态与合法零评�
   const broken = parseForumComments('<div id="thread-container-posts"></div>', target);
   assert.equal(broken.status, 'failed');
   assert.match(broken.error, /没有回显/);
+});
+
+test('讨论关联：CommentsList ok+threadId 但折叠 0 帖，经 ViewThread=0 确认后进入终态', async () => {
+  const threadId = 14_045_830;
+  const comments = `<script>WIKIDOT.forumThreadId = ${threadId};</script>` +
+    '<div id="thread-container-posts" style="display:none"></div>';
+  const emptyThread = fixture('forum-thread.reconstructed.html')
+    .replace('文章数: 2', '文章数: 0')
+    .replace(
+      /  <div id="thread-container-posts">[\s\S]*\n  <\/div>\n<\/div>/,
+      '  <div id="thread-container-posts"></div>\n</div>',
+    );
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      const moduleName = form.get('moduleName');
+      const payload = moduleName === 'forum/ForumCommentsListModule'
+        ? { status: 'ok', body: comments }
+        : moduleName === 'forum/ForumViewThreadModule'
+          ? { status: 'ok', body: emptyThread }
+          : { status: 'not_ok', message: `unexpected ${String(moduleName)}` };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const client = new HttpClient({
+    userAgent: 'syncer2-forum-folded-test/1',
+    referer: `${baseUrl}/`,
+    proxyUrl: null,
+    maxAttempts: 1,
+    connections: 1,
+  });
+  try {
+    const result = (await scanPageDiscussionLinks(
+      client,
+      baseUrl,
+      [{ pageId: 23_030, wikidotId: 1_304_581_332, claimedTotal: 7 }],
+      1,
+    )).get(23_030);
+    assert.equal(result?.status, 'partial');
+    assert.equal(result === undefined ? false : isDiscussionCountInconsistent(result), true);
+    if (result?.status !== 'partial') throw new Error('预期双模块计数矛盾 partial');
+    assert.equal(result.data.threadId, threadId);
+    assert.deepEqual(result.data.threadEvidence, { reportedPosts: 0, fetchedPosts: 0 });
+
+    const policy = classifyWorkFailure('discussion', result.error);
+    assert.equal(policy.signature, 'discussion:wikidot_discussion_count_inconsistent');
+    const sql: string[] = [];
+    const terminalPool = {
+      query: async (statement: string) => {
+        sql.push(statement);
+        return { rows: [], rowCount: 1 };
+      },
+    } as unknown as Pool;
+    const finished = await finishDiscussionTask(
+      terminalPool,
+      {
+        taskId: 1,
+        pageId: 23_030,
+        wikidotId: 1_304_581_332,
+        slug: 'scp-cn-2337',
+        kind: 'discussion',
+        claimedTotal: 7,
+        expectedThreadId: null,
+        attempts: 1,
+        stableCount: 0,
+        lastResultHash: null,
+        reasons: ['test'],
+        lane: 'catchup',
+      },
+      {
+        workerId: 'forum-folded-test',
+        status: 'partial',
+        resultHash: workFailureHash(policy),
+        terminalFailure: true,
+        localValue: { discussion_thread_id: null },
+        remoteValue: { thread_id: threadId, claimed_total: 7, thread_posts: 0 },
+        now: '2026-08-25T00:35:42.392Z',
+      },
+    );
+    assert.equal(finished.action, 'irreconcilable');
+    assert.match(sql.join('\n'), /INSERT INTO meta\.irreconcilable/);
+    assert.match(sql.join('\n'), /DELETE FROM meta\.scan_task/);
+  } finally {
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test('M5 完整 thread 才生成缺席帖软删 tombstone，并仍走 apply_forum_batch', async () => {

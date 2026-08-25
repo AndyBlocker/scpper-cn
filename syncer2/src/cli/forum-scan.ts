@@ -19,6 +19,7 @@ import {
   applyForumDiscussion,
   applyForumDiscussionLink,
   forumBatchResultHash,
+  isDiscussionCountInconsistent,
   scanForumCategories,
   scanForumStart,
   scanForumThreads,
@@ -59,9 +60,14 @@ import {
 } from '../store/queues.js';
 import {
   classifyWorkFailure,
+  reviewIdentityIfDue,
   workFailureHash,
   type WorkFailurePolicy,
 } from '../work/failurePolicy.js';
+import {
+  reviewFailedTaskIdentity,
+  type IdentityReviewResult,
+} from '../work/identityCheck.js';
 import {
   evaluateRunHealth,
   RUN_REPEATED_FAILURE_ATTEMPTS,
@@ -762,7 +768,7 @@ async function main(): Promise<void> {
       let status = result.status;
       let error = result.status === 'ok' ? null : result.error;
       let resultHash: Buffer | null = null;
-      let threadId: number | null = result.status === 'ok' ? result.data.threadId : null;
+      let threadId: number | null = result.status === 'failed' ? null : result.data.threadId;
       let knownThreadLinked = false;
       try {
         const applied = await applyForumDiscussionLink(
@@ -791,17 +797,65 @@ async function main(): Promise<void> {
           await noteFreezeSkip(pool, runId, task, error);
         }
       }
-      const failurePolicy = classifyFinishedFailure(task.kind, status, error);
-      if (failurePolicy?.action === 'irreconcilable') {
+      const countInconsistent = isDiscussionCountInconsistent(result) && status === 'partial';
+      const failurePolicy = countInconsistent
+        ? classifyWorkFailure(task.kind, error ?? 'wikidot_discussion_count_inconsistent')
+        : classifyFinishedFailure(task.kind, status, error);
+      if (failurePolicy !== null && failurePolicy.action !== 'retry') {
         resultHash = workFailureHash(failurePolicy);
+      }
+      let identityReview: IdentityReviewResult | null = null;
+      if (failurePolicy !== null && status === 'failed') {
+        try {
+          identityReview = await reviewIdentityIfDue(task, failurePolicy, () =>
+            reviewFailedTaskIdentity(
+              { pool, http, baseUrl: config.siteBaseUrl, runId },
+              task,
+            ),
+          );
+        } catch (err) {
+          identityReview = {
+            status: 'failed',
+            finalized: false,
+            error: `身份复核执行失败：${String(err)}`,
+          };
+        }
+      }
+      if (identityReview?.finalized === true) {
+        finishedDiscussion.add(task.taskId);
+        countFinished(counters, 'ok', null, 'discussion');
+        pushSample(samples, {
+          kind: 'discussion_link',
+          lane: task.lane,
+          pageId: task.pageId,
+          status: 'identity_finalized',
+          failurePolicy,
+          identityReview,
+          error,
+        });
+        continue;
       }
       const finish = await finishDiscussionTask(pool, task, {
         workerId,
         status,
         resultHash,
-        terminalFailure: failurePolicy?.action === 'irreconcilable',
-        localValue: { thread_id: threadId, known_thread_linked: knownThreadLinked },
-        remoteValue: { expected_thread_id: task.expectedThreadId },
+        terminalFailure: countInconsistent || failurePolicy?.action === 'irreconcilable',
+        localValue: {
+          discussion_thread_id: task.expectedThreadId,
+          known_thread_linked: knownThreadLinked,
+          stored_wikidot_id: task.wikidotId,
+        },
+        remoteValue: {
+          classification: countInconsistent ? 'wikidot_discussion_count_inconsistent' : null,
+          claimed_total: task.claimedTotal,
+          expected_thread_id: task.expectedThreadId,
+          thread_id: threadId,
+          comments_posts: result.status === 'failed' ? null : result.data.posts.length,
+          thread_reported_posts:
+            result.status === 'failed' ? null : result.data.threadEvidence?.reportedPosts ?? null,
+          thread_posts:
+            result.status === 'failed' ? null : result.data.threadEvidence?.fetchedPosts ?? null,
+        },
         now: new Date().toISOString(),
       });
       finishedDiscussion.add(task.taskId);
@@ -816,6 +870,9 @@ async function main(): Promise<void> {
         knownThreadLinked,
         action: finish.action,
         failurePolicy,
+        identityReview: identityReview?.status ?? null,
+        identityReviewError:
+          identityReview?.status === 'failed' ? identityReview.error : null,
         error,
       });
     }
@@ -853,20 +910,58 @@ async function main(): Promise<void> {
       }
       const deletedThread =
         result.status !== 'failed' && result.data.thread.isDeleted;
-      const failurePolicy = classifyFinishedFailure(task.kind, status, error);
-      if (failurePolicy?.action === 'irreconcilable') {
+      const countInconsistent = isDiscussionCountInconsistent(result) && status === 'partial';
+      const failurePolicy = countInconsistent
+        ? classifyWorkFailure(task.kind, error ?? 'wikidot_discussion_count_inconsistent')
+        : classifyFinishedFailure(task.kind, status, error);
+      if (failurePolicy !== null && failurePolicy.action !== 'retry') {
         resultHash = workFailureHash(failurePolicy);
+      }
+      let identityReview: IdentityReviewResult | null = null;
+      if (failurePolicy !== null && status === 'failed') {
+        try {
+          identityReview = await reviewIdentityIfDue(task, failurePolicy, () =>
+            reviewFailedTaskIdentity(
+              { pool, http, baseUrl: config.siteBaseUrl, runId },
+              task,
+            ),
+          );
+        } catch (err) {
+          identityReview = {
+            status: 'failed',
+            finalized: false,
+            error: `身份复核执行失败：${String(err)}`,
+          };
+        }
+      }
+      if (identityReview?.finalized === true) {
+        finishedDiscussion.add(task.taskId);
+        countFinished(counters, 'ok', null, 'discussion');
+        pushSample(samples, {
+          kind: task.kind,
+          pageId: task.pageId,
+          status: 'identity_finalized',
+          failurePolicy,
+          identityReview,
+          error,
+        });
+        continue;
       }
       const finish = await finishDiscussionTask(pool, task, {
         workerId,
         status,
         resultHash,
-        terminalFailure: deletedThread || failurePolicy?.action === 'irreconcilable',
+        terminalFailure:
+          deletedThread || countInconsistent || failurePolicy?.action === 'irreconcilable',
         localValue: applyResult ?? {},
         remoteValue: {
+          classification: countInconsistent ? 'wikidot_discussion_count_inconsistent' : null,
           claimed_total: task.claimedTotal,
           fetched_total: result.diagnostics.fetchedTotal,
           expected_thread_id: task.expectedThreadId,
+          thread_id: result.status === 'failed' ? null : result.data.threadId,
+          thread_reported_posts:
+            result.status === 'failed' ? null : result.data.thread.postCount,
         },
         now: new Date().toISOString(),
       });
@@ -883,6 +978,9 @@ async function main(): Promise<void> {
         posts: result.status === 'failed' ? null : result.data.posts.length,
         action: finish.action,
         failurePolicy,
+        identityReview: identityReview?.status ?? null,
+        identityReviewError:
+          identityReview?.status === 'failed' ? identityReview.error : null,
         apply: applyResult,
         error,
       });

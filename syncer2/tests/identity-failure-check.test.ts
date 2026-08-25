@@ -121,6 +121,50 @@ describe('通用失败签名与身份复核', () => {
     assert.equal(sharedForumPreflight.identityReviewThreshold, null);
   });
 
+  it('discussion CommentsList no_page 首次即重解析身份；id 已变时迁移到 successor', async () => {
+    const slug = 'ts2test:discussion-no-page-reused';
+    const predecessorWid = PAGE_WID_LO + 9_880;
+    const successorWid = PAGE_WID_LO + 9_881;
+    const predecessorId = await register(predecessorWid, slug);
+    const taskId = await insertTask(predecessorId, 'discussion', true);
+    const task = taskShape(taskId, predecessorId, predecessorWid, slug, 'discussion');
+    const policy = classifyWorkFailure(
+      'discussion',
+      'forum/ForumCommentsListModule status=no_page（message=无法找到相关页面）',
+    );
+    assert.equal(policy.action, 'review_identity');
+    assert.equal(policy.identityReviewThreshold, 1);
+
+    let reviews = 0;
+    const reviewed = await reviewIdentityIfDue(task, policy, async () => {
+      reviews++;
+      return reviewFailedTaskIdentity(
+        {
+          pool,
+          http: identityHttp(slug, successorWid),
+          baseUrl: 'https://scp-wiki-cn.wikidot.com',
+          runId: testRunId,
+        },
+        task,
+        OBSERVED_ISO,
+      );
+    });
+    assert.equal(reviews, 1, 'no_page 不能只拿旧 pageId 重试，必须额外按 slug GET');
+    assert.equal(reviewed?.status, 'slug_reused');
+    if (reviewed?.status !== 'slug_reused') throw new Error('预期 slug_reused');
+    const row = await one<{ old_status: string; successor_tasks: number; predecessor_tasks: number }>(
+      `SELECT old_pc.status AS old_status,
+              (SELECT count(*)::int FROM meta.scan_task st
+                JOIN serve.page_current next_pc ON next_pc.page_id=st.page_id
+               WHERE next_pc.wikidot_id=$2 AND st.kind='discussion') AS successor_tasks,
+              (SELECT count(*)::int FROM meta.scan_task
+                WHERE page_id=$1 AND kind='discussion') AS predecessor_tasks
+         FROM serve.page_current old_pc WHERE old_pc.page_id=$1`,
+      [predecessorId, successorWid],
+    );
+    assert.deepEqual(row, { old_status: 'deleted', successor_tasks: 1, predecessor_tasks: 0 });
+  });
+
   it('首次空体 500 + slug 上 wikidotId 已变：注册 lineage 并迁移当前及其它 kind 待办', async () => {
     const slug = 'ts2test:identity-reused';
     const predecessorWid = PAGE_WID_LO + 9_901;

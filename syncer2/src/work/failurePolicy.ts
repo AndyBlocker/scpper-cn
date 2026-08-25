@@ -210,6 +210,9 @@ function prerequisiteSignature(error: string): string {
 }
 
 function structuralSignature(kind: ScanTaskKind, error: string): string {
+  if (/wikidot_discussion_count_inconsistent/.test(error)) {
+    return `${kind}:wikidot_discussion_count_inconsistent`;
+  }
   const marker = [
     '解析不出',
     '结构锚点',

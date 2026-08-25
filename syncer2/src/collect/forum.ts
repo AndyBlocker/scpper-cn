@@ -53,6 +53,11 @@ export function isThreadGoneStatus(status: string): boolean {
 }
 const POSTS_MODULE = 'forum/ForumViewThreadPostsModule';
 const COMMENTS_MODULE = 'forum/ForumCommentsListModule';
+export const DISCUSSION_COUNT_INCONSISTENT = 'wikidot_discussion_count_inconsistent';
+
+export function isDiscussionCountInconsistent<T>(result: CollectResult<T>): boolean {
+  return result.status === 'partial' && result.error.includes(DISCUSSION_COUNT_INCONSISTENT);
+}
 
 export type ForumAuthorKind = 'wikidot' | 'deleted' | 'guest' | 'anonymous' | 'system';
 
@@ -159,6 +164,11 @@ export interface ForumCommentsPage {
   threadId: number;
   pager: ForumPager;
   posts: ForumPostRecord[];
+  /** CommentsList 折叠为空时，以同一 threadId 追加 ViewThread 的独立计数证据。 */
+  threadEvidence?: {
+    reportedPosts: number;
+    fetchedPosts: number;
+  };
 }
 
 export interface ForumDiscussionSnapshot {
@@ -793,22 +803,24 @@ export function parseForumComments(
   }
   try {
     const pager = parsePager($, 1);
+    const data: ForumCommentsPage = {
+      pageId: target.pageId,
+      wikidotId: target.wikidotId,
+      threadId,
+      pager,
+      posts: parsed.posts,
+    };
     if (parsed.posts.length === 0 && target.claimedTotal !== null && target.claimedTotal > 0) {
-      return failed(
-        `ForumCommentsListModule 第一页 0 帖，但 claimed_total=${target.claimedTotal}`,
+      // 2026-08-25 起实站会返回 ok + threadId，但把 #thread-container-posts 折叠为空。
+      // threadId 是有价值的正面证据；保留为 partial，调用方再以 ViewThread 独立确认。
+      return partial(
+        data,
+        `ForumCommentsListModule 第一页 0 帖但 claimed_total=${target.claimedTotal}；` +
+          '需要 ForumViewThreadModule 独立确认',
         diagnostics(target.claimedTotal, 0),
       );
     }
-    return ok(
-      {
-        pageId: target.pageId,
-        wikidotId: target.wikidotId,
-        threadId,
-        pager,
-        posts: parsed.posts,
-      },
-      diagnostics(target.claimedTotal, parsed.posts.length),
-    );
+    return ok(data, diagnostics(target.claimedTotal, parsed.posts.length));
   } catch (err) {
     return failed(`ForumCommentsListModule pager 解析失败：${String(err)}`);
   }
@@ -1120,7 +1132,7 @@ export async function scanPageDiscussions(
         return [target.pageId, failed<ForumDiscussionSnapshot>(`${COMMENTS_MODULE} body 缺失`)] as const;
       }
       const comments = parseForumComments(response.body, target);
-      if (comments.status !== 'ok') {
+      if (comments.status === 'failed') {
         return [
           target.pageId,
           failed<ForumDiscussionSnapshot>(comments.error, comments.diagnostics),
@@ -1179,7 +1191,11 @@ export async function scanPageDiscussions(
           target.pageId,
           partial(
             snapshot,
-            `完整 thread ${thread.data.posts.length} 帖 < Tier1 claimed_total ${target.claimedTotal}`,
+            `完整 thread ${thread.data.posts.length} 帖 < Tier1 claimed_total ${target.claimedTotal}; ` +
+              `${DISCUSSION_COUNT_INCONSISTENT}: CommentsList=${comments.data.posts.length}; ` +
+              `thread_id=${comments.data.threadId}; ` +
+              `ViewThread reported=${thread.data.thread.postCount},fetched=${thread.data.posts.length}; ` +
+              `ListPages claimed_total=${target.claimedTotal}`,
             diagnostics(target.claimedTotal, thread.data.posts.length),
           ),
         ] as const;
@@ -1200,8 +1216,9 @@ export async function scanPageDiscussions(
 }
 
 /**
- * 讨论串关联冷启动只需要 CommentsList 的 thread id，不应顺手深扫整个 thread。
- * 这条路径每页恰好一个 AMC 请求；正文随后由 forum_scan_task 的独立车道消费。
+ * 讨论串关联冷启动通常只需要 CommentsList 的 thread id。若 CommentsList 返回折叠空容器
+ * 而 ListPages claim>0，则必须追加一次 ViewThread：它若有帖，threadId 仍可安全关联；它也
+ * 自报 0 时形成双模块矛盾终态，不能把空容器谎报成成功关联。
  */
 export async function scanPageDiscussionLinks(
   http: HttpClient,
@@ -1229,7 +1246,47 @@ export async function scanPageDiscussionLinks(
       if (response.body === null) {
         return [target.pageId, failed<ForumCommentsPage>(`${COMMENTS_MODULE} body 缺失`)] as const;
       }
-      return [target.pageId, parseForumComments(response.body, target)] as const;
+      const comments = parseForumComments(response.body, target);
+      if (comments.status !== 'partial' || comments.data.posts.length > 0) {
+        return [target.pageId, comments] as const;
+      }
+      const thread = await scanOneForumThread(http, baseUrl, comments.data.threadId, concurrency);
+      if (thread.status === 'failed') {
+        return [
+          target.pageId,
+          failed<ForumCommentsPage>(
+            `${comments.error}；ViewThread 确认失败：${thread.error}`,
+            thread.diagnostics,
+          ),
+        ] as const;
+      }
+      const data: ForumCommentsPage = {
+        ...comments.data,
+        threadEvidence: {
+          reportedPosts: thread.data.thread.postCount,
+          fetchedPosts: thread.data.posts.length,
+        },
+      };
+      if (
+        thread.status === 'ok' &&
+        (target.claimedTotal === null || thread.data.posts.length >= target.claimedTotal)
+      ) {
+        return [target.pageId, ok(data, diagnostics(target.claimedTotal, thread.data.posts.length))] as const;
+      }
+      const detail = thread.status === 'partial'
+        ? `；ViewThread partial=${thread.error}`
+        : '';
+      return [
+        target.pageId,
+        partial(
+          data,
+          `${DISCUSSION_COUNT_INCONSISTENT}: CommentsList=0; ` +
+            `thread_id=${comments.data.threadId}; ` +
+            `ViewThread reported=${thread.data.thread.postCount},fetched=${thread.data.posts.length}; ` +
+            `ListPages claimed_total=${target.claimedTotal}${detail}`,
+          diagnostics(target.claimedTotal, thread.data.posts.length),
+        ),
+      ] as const;
     } catch (err) {
       throwIfRuntimeBudgetExceeded(err);
       return [
@@ -1550,9 +1607,9 @@ export async function applyForumDiscussionLink(
       runId,
       pageId: target.pageId,
       kind: target.scanKind ?? 'discussion',
-      status: 'failed',
-      claimedTotal: null,
-      fetchedTotal: null,
+      status: result.status,
+      claimedTotal: result.diagnostics.claimedTotal,
+      fetchedTotal: result.diagnostics.fetchedTotal,
       resultHash,
       error: result.error,
     });

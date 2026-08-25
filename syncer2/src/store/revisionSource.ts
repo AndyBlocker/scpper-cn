@@ -19,6 +19,31 @@ export const REVISION_SOURCE_PAGE_SCAN_KIND = 'revision_source';
 export const REVISION_SOURCE_SCHEDULE_INTERVAL_MS = 30 * 60_000;
 export const REVISION_SOURCE_ZERO_OUTPUT_ALERT_ROUNDS = 3;
 
+export interface RevisionSourceWorkAvailability {
+  activeJobs: number;
+  hasUnseededEligible: boolean;
+  hasWork: boolean;
+}
+
+export type RevisionSourceStartupGate<T> =
+  | { action: 'skip'; reason: 'no_pending_or_unseeded_revision_source_work'; probe: null }
+  | { action: 'probe'; reason: null; probe: T };
+
+/** 无活时 probe 回调在类型和执行上都不触发；测试可用计数器直接断言零调用。 */
+export async function probeRevisionSourceStartupIfNeeded<T>(
+  availability: RevisionSourceWorkAvailability,
+  probe: () => Promise<T>,
+): Promise<RevisionSourceStartupGate<T>> {
+  if (!availability.hasWork) {
+    return {
+      action: 'skip',
+      reason: 'no_pending_or_unseeded_revision_source_work',
+      probe: null,
+    };
+  }
+  return { action: 'probe', reason: null, probe: await probe() };
+}
+
 export interface RevisionSourceRealtimeContentionDecision {
   action: 'execute';
   active: string[];
@@ -260,6 +285,47 @@ function eligibleCte(): string {
       SELECT b.*, true AS is_anchor, b.reverse_ordinal = 1 AS is_latest
         FROM eligible_base b
     )`;
+}
+
+/**
+ * 只做 EXISTS/计数，不建 job、不拿锁、不访问 Wikidot。active 包括未来到期 retry 和
+ * processing，确保“有活时行为不变”；只有 active=0 且不存在尚未登记的 eligible 才跳过。
+ */
+export async function inspectRevisionSourceWorkAvailability(
+  pool: Pool,
+): Promise<RevisionSourceWorkAvailability> {
+  const result = await query<{
+    active_jobs: string | number;
+    has_unseeded_eligible: boolean;
+  }>(
+    pool,
+    'revision_source:work_availability',
+    `SELECT (
+              SELECT count(*)
+                FROM meta.revision_source_backfill_job j
+               WHERE j.status IN ('pending','retry','processing')
+            ) AS active_jobs,
+            EXISTS (
+              SELECT 1
+                FROM ingest.revision r
+                JOIN serve.page_current pc
+                  ON pc.page_id = r.page_id AND pc.status = 'live'
+                LEFT JOIN meta.revision_source_backfill_job j
+                  ON j.revision_seq = r.seq
+               WHERE r.wikidot_revision_id IS NOT NULL
+                 AND ${SOURCE_TYPE_SQL}
+                 AND j.revision_seq IS NULL
+               LIMIT 1
+            ) AS has_unseeded_eligible`,
+  );
+  const row = result.rows[0];
+  const activeJobs = Number(row?.active_jobs ?? 0);
+  const hasUnseededEligible = row?.has_unseeded_eligible === true;
+  return {
+    activeJobs,
+    hasUnseededEligible,
+    hasWork: activeJobs > 0 || hasUnseededEligible,
+  };
 }
 
 /**

@@ -58,7 +58,9 @@ import {
   loadRevisionSourceStorageStats,
   loadRevisionSourceOutputHealth,
   loadStoredRevisionSource,
+  inspectRevisionSourceWorkAvailability,
   prepareRevisionSourceText,
+  probeRevisionSourceStartupIfNeeded,
   noteRevisionSourceFreezeSkip,
   realtimeCollectionActive,
   recordRevisionSourcePageScan,
@@ -76,6 +78,7 @@ import {
   type RevisionSourceCandidate,
   type RevisionSourceStorageStats,
   type RevisionSourceOutputHealth,
+  type RevisionSourceWorkAvailability,
   type StoredRevisionSource,
 } from '../store/revisionSource.js';
 import {
@@ -519,10 +522,67 @@ function storageDelta(
   };
 }
 
+async function inspectRevisionSourceAvailability(
+  databaseUrl: string,
+): Promise<RevisionSourceWorkAvailability> {
+  const pool = createPool(databaseUrl, { max: 1 });
+  try {
+    return await inspectRevisionSourceWorkAvailability(pool);
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
+}
+
+/** 完全排空时只写一条正常 run 摘要；这里没有 HttpClient/session/pacer，自然不可能探针。 */
+async function finishEmptyRevisionSourceRun(
+  databaseUrl: string,
+  observedAt: string,
+  availability: RevisionSourceWorkAvailability,
+): Promise<void> {
+  const pool = createPool(databaseUrl, { max: 1 });
+  const reason = 'no_pending_or_unseeded_revision_source_work';
+  let runId: number | null = null;
+  try {
+    runId = await startIngestRun(pool, SOURCE, observedAt);
+    const stats = {
+      mode: REVISION_SOURCE_MODE,
+      population_type: REVISION_SOURCE_POPULATION,
+      skipped: reason,
+      availability,
+      startupProbe: null,
+      http: { requests: 0 },
+    };
+    await finishIngestRun(pool, runId, {
+      status: 'ok',
+      finishedAt: new Date().toISOString(),
+      pagesEnumerated: 0,
+      remoteTotal: 0,
+      remoteTotalSource: 'unknown',
+      batchesTotal: 0,
+      batchesFailed: 0,
+      transportFailureRate: null,
+      populationType: REVISION_SOURCE_POPULATION,
+      healthDecisionSkipReason: reason,
+      stats,
+    });
+    emitSummary({ ok: true, status: 'skipped', runId, reason, ...stats });
+    process.exitCode = 0;
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
+}
+
 async function main(): Promise<void> {
   const opts = parseArgs();
   const config = loadConfig();
   const observedAt = new Date().toISOString();
+  const workAvailability: RevisionSourceWorkAvailability = opts.pilot
+    ? { activeJobs: 0, hasUnseededEligible: true, hasWork: true }
+    : await inspectRevisionSourceAvailability(config.databaseUrl);
+  if (!opts.pilot && !workAvailability.hasWork) {
+    await finishEmptyRevisionSourceRun(config.databaseUrl, observedAt, workAvailability);
+    return;
+  }
   const startedMs = Date.now();
   const budget = new RuntimeBudget(opts.maxRuntimeSec);
   const workerId = `${os.hostname()}:${process.pid}:revision-source`;
@@ -645,16 +705,23 @@ async function main(): Promise<void> {
       return;
     }
 
-    const startupProbe = await assertEgressContract(http, {
-      baseUrl: config.siteBaseUrl,
-      amcPolicy: parseProbePolicy(
-        opts.amcProbe ?? config.amcProbe,
-        amcProbePolicyFor(SOURCE),
-      ),
-      proxyPolicy: parseProbePolicy(opts.proxyCheck ?? config.proxyCheck, 'warn'),
-      ipProbeUrl: config.exitIpProbeUrl,
-      logger: log.child('probe'),
-    });
+    const startupGate = await probeRevisionSourceStartupIfNeeded(
+      workAvailability,
+      () => assertEgressContract(http, {
+        baseUrl: config.siteBaseUrl,
+        amcPolicy: parseProbePolicy(
+          opts.amcProbe ?? config.amcProbe,
+          amcProbePolicyFor(SOURCE),
+        ),
+        proxyPolicy: parseProbePolicy(opts.proxyCheck ?? config.proxyCheck, 'warn'),
+        ipProbeUrl: config.exitIpProbeUrl,
+        logger: log.child('probe'),
+      }),
+    );
+    if (startupGate.action === 'skip') {
+      throw new Error('内部错误：有活路径被 revision source startup gate 判为空');
+    }
+    const startupProbe = startupGate.probe;
 
     if (opts.pilot) {
       await runPilot({

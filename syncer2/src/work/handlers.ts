@@ -17,6 +17,7 @@ import {
   applyForumBatch,
   applyForumDiscussion,
   forumBatchResultHash,
+  isDiscussionCountInconsistent,
   scanForumStart,
   scanPageDiscussions,
   type ForumDiscussionTarget,
@@ -70,6 +71,7 @@ import {
   applyObservedPageMeta,
 } from './identityCheck.js';
 import { applyRestrictedRenderedContent } from './restrictedPage.js';
+import { classifyWorkFailure, workFailureHash } from './failurePolicy.js';
 
 export interface WorkHandlerContext {
   pool: Pool;
@@ -90,6 +92,8 @@ export interface WorkHandlerOutcome {
   resultHash: Buffer | null;
   /** 已解释且已留证的 partial：事实单调 upsert 成功，队列应收尾而不是退避。 */
   settledPartial?: boolean;
+  /** 双模块已确认的确定性 partial：保留矛盾证据并立即进入 irreconcilable。 */
+  terminalFailure?: boolean;
   retryClass?: VoteRetryClass;
   localValue?: Record<string, unknown>;
   remoteValue?: Record<string, unknown>;
@@ -821,22 +825,32 @@ const discussionHandler: WorkHandler = async (task, context) => {
     new Date().toISOString(),
     context.runId,
   );
-  const resultHash =
-    applied?.resultHash ??
-    (result.status === 'failed'
-      ? null
-      : forumBatchResultHash({
-          categories: [],
-          threads: [result.data.thread],
-          posts: result.data.posts,
-        }));
+  const countInconsistent = isDiscussionCountInconsistent(result);
+  const inconsistencyPolicy = countInconsistent && result.status !== 'ok'
+    ? classifyWorkFailure(task.kind, result.error)
+    : null;
+  const resultHash = inconsistencyPolicy !== null
+    ? workFailureHash(inconsistencyPolicy)
+    : applied?.resultHash ??
+      (result.status === 'failed'
+        ? null
+        : forumBatchResultHash({
+            categories: [],
+            threads: [result.data.thread],
+            posts: result.data.posts,
+          }));
   return {
     status: result.status,
     resultHash,
+    terminalFailure: countInconsistent,
     localValue: applied?.forum ?? {},
     remoteValue: {
+      classification: countInconsistent ? 'wikidot_discussion_count_inconsistent' : null,
       claimed_total: task.commentCount,
       expected_thread_id: task.expectedThreadId,
+      thread_id: result.status === 'failed' ? null : result.data.threadId,
+      thread_reported_posts: result.status === 'failed' ? null : result.data.thread.postCount,
+      thread_posts: result.status === 'failed' ? null : result.data.posts.length,
     },
     sample: {
       threadId: result.status === 'failed' ? null : result.data.threadId,

@@ -15,7 +15,6 @@ import {
   reassignSlugReuseTasks,
   resolveObsoletePageIrreconcilables,
   retireDeletedPageTasks,
-  type ClaimedWorkTask,
 } from '../store/workQueue.js';
 import type { HttpClient } from '../http/client.js';
 import { toPgJson } from '../store/pgText.js';
@@ -25,6 +24,14 @@ export interface IdentityReviewContext {
   http: HttpClient;
   baseUrl: string;
   runId: number | null;
+}
+
+/** 失败身份复核只依赖页面身份；revision claim 仅用于可选的 successor 待抓证据。 */
+export interface IdentityReviewTask {
+  pageId: number;
+  wikidotId: number;
+  slug: string;
+  revisionClaimedTotal?: number;
 }
 
 export type IdentityReviewResult =
@@ -63,7 +70,7 @@ export type IdentityReviewResult =
  */
 export async function reviewFailedTaskIdentity(
   context: IdentityReviewContext,
-  task: ClaimedWorkTask,
+  task: IdentityReviewTask,
   observedAt = new Date().toISOString(),
 ): Promise<IdentityReviewResult> {
   const identity = await fetchPageIdentity(context.http, context.baseUrl, task.slug);
@@ -127,7 +134,7 @@ export async function reviewFailedTaskIdentity(
 /** REGRESS meta 路径与通用失败复核共用同一套 slug-reuse 写入及任务迁移。 */
 export async function applyConfirmedSlugReuse(
   context: Pick<IdentityReviewContext, 'pool' | 'runId'>,
-  task: ClaimedWorkTask,
+  task: IdentityReviewTask,
   observedWikidotId: number,
   observedAt: string,
   /** meta 身份任务传自身 id；通用失败复核传 null，连当前失败任务一起迁走。 */
@@ -174,7 +181,7 @@ export async function applyConfirmedSlugReuse(
     pageId: successorPageId,
     kind: 'revisions',
     status: 'partial',
-    claimedTotal: task.revisionClaimedTotal,
+    claimedTotal: task.revisionClaimedTotal ?? null,
     resultHash,
     error: 'slug_reuse_identity_registered:等待 revisions_full 完整抓取',
   });

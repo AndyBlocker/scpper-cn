@@ -467,7 +467,7 @@ async function main(): Promise<void> {
 
       let failurePolicy: WorkFailurePolicy | null = null;
       let identityReview: IdentityReviewResult | null = null;
-      let terminalFailure = false;
+      let terminalFailure = outcome.terminalFailure === true;
       if (!outcome.finalized && outcome.status === 'failed') {
         const failureError = outcomeFailureError(outcome);
         failurePolicy = classifyWorkFailure(task.kind, failureError);
@@ -477,7 +477,7 @@ async function main(): Promise<void> {
         } else {
           outcome.resultHash = workFailureHash(failurePolicy);
         }
-        terminalFailure = failurePolicy.action === 'irreconcilable';
+        terminalFailure ||= failurePolicy.action === 'irreconcilable';
 
         // 分类一旦完成就先结算原任务的 HTTP outcomes，再做额外的身份复核请求。
         // 这样空体 500 复用 identity_absent 判据被排除，而复核自身的真实链路故障

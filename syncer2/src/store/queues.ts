@@ -1012,6 +1012,12 @@ export async function seedForumDiscussionLinkTasks(
             SELECT 1 FROM meta.scan_task st
              WHERE st.page_id = pc.page_id AND st.kind IN ('forum', 'discussion')
           )
+          AND NOT EXISTS (
+            SELECT 1 FROM meta.irreconcilable i
+             WHERE i.page_id = pc.page_id
+               AND i.kind IN ('forum', 'discussion')
+               AND i.resolved_at IS NULL
+          )
         ORDER BY pc.page_id
         LIMIT COALESCE($1::int, 2147483647)
      )

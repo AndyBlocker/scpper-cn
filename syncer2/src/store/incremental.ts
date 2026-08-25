@@ -68,6 +68,7 @@ export interface RevisionRegressionReconcileResult {
   deleted: number;
   manualReview: number;
   tasksRetired: number;
+  statesRebased: number;
 }
 
 export function revisionRegressionEpisodeKey(pageId: number, layer: 'L0' | 'L1'): string {
@@ -682,11 +683,81 @@ export async function reconcileRevisionRegressionIdentityStates(
       );
       tasksRetired = retired.rowCount ?? 0;
     }
+    const rebased = await query(
+      db,
+      'revision_regression:rebase_slug_reused_incremental_state',
+      `WITH terminal AS (
+         SELECT DISTINCT ON (r.slug, r.page_id)
+                r.slug,
+                r.page_id AS predecessor_page_id,
+                successor.page_id AS successor_page_id
+           FROM meta.revision_regression_identity_state r
+           JOIN LATERAL (
+             SELECT pc.page_id
+               FROM serve.page_current pc
+               JOIN ingest.page p ON p.id = pc.page_id
+              WHERE pc.slug = r.slug
+                AND pc.status = 'live'
+                AND p.wikidot_id <> r.expected_wikidot_id
+              ORDER BY pc.page_id DESC
+              LIMIT 1
+           ) successor ON true
+          WHERE r.status = 'slug_reused'
+            AND ($1::int[] IS NULL OR r.page_id = ANY($1::int[]))
+          ORDER BY r.slug, r.page_id, r.last_seen_at DESC
+       ), observations AS (
+         SELECT t.*,
+                l0.observed_revision AS l0_revision,
+                l0.observed_updated_at AS l0_updated_at,
+                l0.last_seen_at AS l0_seen_at,
+                l1.observed_revision AS l1_revision,
+                l1.observed_rating AS l1_rating,
+                l1.observed_rating_votes AS l1_rating_votes,
+                l1.last_seen_at AS l1_seen_at,
+                l1.run_id AS l1_run_id
+           FROM terminal t
+           LEFT JOIN LATERAL (
+             SELECT r.observed_revision, r.observed_updated_at, r.last_seen_at
+               FROM meta.revision_regression_identity_state r
+              WHERE r.page_id = t.predecessor_page_id AND r.layer = 'L0'
+              ORDER BY r.last_seen_at DESC
+              LIMIT 1
+           ) l0 ON true
+           LEFT JOIN LATERAL (
+             SELECT r.observed_revision, r.observed_rating, r.observed_rating_votes,
+                    r.last_seen_at, r.run_id
+               FROM meta.revision_regression_identity_state r
+              WHERE r.page_id = t.predecessor_page_id AND r.layer = 'L1'
+              ORDER BY r.last_seen_at DESC
+              LIMIT 1
+           ) l1 ON true
+       )
+       UPDATE meta.incremental_page_state ips
+          SET page_id = o.successor_page_id,
+              last_l0_revision = COALESCE(o.l0_revision, ips.last_l0_revision),
+              last_l0_updated_at = COALESCE(o.l0_updated_at, ips.last_l0_updated_at),
+              last_l0_seen_at = COALESCE(o.l0_seen_at, ips.last_l0_seen_at),
+              last_l1_revision = COALESCE(o.l1_revision, ips.last_l1_revision),
+              last_l1_rating = COALESCE(o.l1_rating, ips.last_l1_rating),
+              last_l1_rating_votes = COALESCE(o.l1_rating_votes, ips.last_l1_rating_votes),
+              last_l1_seen_at = COALESCE(o.l1_seen_at, ips.last_l1_seen_at),
+              last_l1_run_id = COALESCE(o.l1_run_id, ips.last_l1_run_id),
+              updated_at = GREATEST(
+                ips.updated_at,
+                COALESCE(o.l0_seen_at, '-infinity'::timestamptz),
+                COALESCE(o.l1_seen_at, '-infinity'::timestamptz)
+              )
+         FROM observations o
+        WHERE ips.slug = o.slug
+          AND ips.page_id = o.predecessor_page_id`,
+      [pageIds === null ? null : [...pageIds]],
+    );
     return {
       slugReused: transitioned.rows.filter((row) => row.status === 'slug_reused').length,
       deleted: transitioned.rows.filter((row) => row.status === 'deleted').length,
       manualReview: transitioned.rows.filter((row) => row.status === 'manual_review').length,
       tasksRetired,
+      statesRebased: rebased.rowCount ?? 0,
     };
   });
 }
