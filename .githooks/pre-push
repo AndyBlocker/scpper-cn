@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# 钩子环境里 git 会导出 GIT_DIR/GIT_INDEX_FILE，这使子进程里的
+# `git rev-parse --show-toplevel` 把 **cwd 当作工作树顶层**（在 syncer2/ 下
+# 运行就返回 syncer2/）。0008 因此在钩子里找错路径、门禁自我误报。
+# 标准钩子卫生：进门先清干净再解析任何仓库路径。
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 set -euo pipefail
 
-bash scripts/git-main-guard.sh pre-push
+repo_root="$(git rev-parse --show-toplevel)"
+
+bash "$repo_root/scripts/git-main-guard.sh" pre-push
+exec "$repo_root/syncer2/deploy/run-gates.sh"

@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# 门禁全绿后创建独立快照，并以单次 rename 原子翻转 current。
+set -Eeuo pipefail
+
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_ROOT="$(cd "$DEPLOY_DIR/.." && pwd)"
+REPO_ROOT="$(git -C "$SOURCE_ROOT" rev-parse --show-toplevel)"
+RELEASE_ROOT="${SYNCER2_RELEASE_ROOT:-$HOME/syncer2-releases}"
+KEEP_RELEASES="${SYNCER2_KEEP_RELEASES:-5}"
+
+usage() {
+  cat <<'EOF'
+用法: syncer2/deploy/deploy
+
+门禁全绿后在 ~/syncer2-releases/<UTC时间戳>-<git短sha>/ 创建快照，快照内
+npm ci 安装独立 node_modules，--help 校验可启动后原子翻转 current。保留最近 5 个。
+不应用 migrations。失败绝不翻转 current。
+EOF
+}
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
+[[ $# -eq 0 ]] || { usage >&2; exit 2; }
+[[ "$KEEP_RELEASES" =~ ^[0-9]+$ && "$KEEP_RELEASES" -ge 3 ]] || {
+  echo "SYNCER2_KEEP_RELEASES 必须是 >=3 的整数" >&2; exit 2;
+}
+[[ -f "$SOURCE_ROOT/package-lock.json" ]] || {
+  echo "缺少 package-lock.json，不能用 npm ci 构造可复现快照" >&2; exit 2;
+}
+
+mkdir -p "$RELEASE_ROOT"
+gate_log="$(mktemp "$RELEASE_ROOT/.gate.XXXXXX")"
+stage=""
+cleanup() {
+  rm -f "$gate_log"
+  if [[ -n "$stage" && -d "$stage" ]]; then rm -rf -- "$stage"; fi
+}
+trap cleanup EXIT
+
+current_before="$(readlink "$RELEASE_ROOT/current" 2>/dev/null || true)"
+echo "[deploy] current(before)=${current_before:-<不存在>}"
+if ! "$DEPLOY_DIR/run-gates.sh" 2>&1 | tee "$gate_log"; then
+  echo "[deploy] 门禁失败；current 未翻转" >&2
+  exit 1
+fi
+
+git_sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+git_short="${git_sha:0:12}"
+created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+release_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+release_name="$release_stamp-$git_short"
+final="$RELEASE_ROOT/$release_name"
+stage="$RELEASE_ROOT/.staging-$release_name-$$"
+[[ ! -e "$final" && ! -e "$stage" ]] || { echo "快照名冲突: $release_name" >&2; exit 1; }
+mkdir -p "$stage"
+
+echo "[deploy] 同步源码到 $release_name"
+rsync -a --delete \
+  --exclude '/node_modules/' --exclude '/state/' --exclude '/dist/' --exclude '*.log' \
+  "$SOURCE_ROOT/" "$stage/"
+[[ -f "$stage/.env" ]] || { echo "快照缺少 .env" >&2; exit 1; }
+chmod 0600 "$stage/.env"
+
+# state 是跨快照运行态，不属于代码快照。首次发布从工作树无损复制，之后共享。
+shared_state="$RELEASE_ROOT/shared-state"
+if [[ ! -d "$shared_state" ]]; then
+  mkdir -p "$shared_state"
+  if [[ -d "$SOURCE_ROOT/state" ]]; then rsync -a "$SOURCE_ROOT/state/" "$shared_state/"; fi
+fi
+ln -s "$shared_state" "$stage/state"
+
+echo "[deploy] npm ci（快照独立 node_modules）"
+(cd "$stage" && npm ci)
+
+echo "[deploy] 快照启动校验"
+(cd "$stage" && node --import tsx/esm src/cli/incremental-scan.ts --help >/dev/null)
+
+dirty=false
+[[ -n "$(git -C "$REPO_ROOT" status --porcelain=v1)" ]] && dirty=true
+cp "$gate_log" "$stage/DEPLOY-GATES.log"
+cat >"$stage/DEPLOYMENT.json" <<EOF
+{
+  "release": "$release_name",
+  "git_sha": "$git_sha",
+  "git_dirty": $dirty,
+  "created_at": "$created_at",
+  "gates": {
+    "tsc_no_emit": "ok",
+    "npm_test": "ok",
+    "numbered_sql_checks": "ok",
+    "numbered_shell_checks": "ok",
+    "snapshot_help": "ok"
+  },
+  "migrations_applied": false,
+  "node_modules": "snapshot-local npm ci"
+}
+EOF
+
+mv "$stage" "$final"
+stage=""
+link_tmp="$RELEASE_ROOT/.current-$release_name-$$"
+ln -s "$release_name" "$link_tmp"
+mv -Tf "$link_tmp" "$RELEASE_ROOT/current"
+printf '{"event":"deploy","release":"%s","git_sha":"%s","at":"%s","gates":"ok","migrations_applied":false}\n' \
+  "$release_name" "$git_sha" "$created_at" >>"$RELEASE_ROOT/deployments.jsonl"
+
+# 仅删除根目录下、严格匹配时间戳命名且已超出保留数的快照。
+mapfile -t releases < <(find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d \
+  -regextype posix-extended -regex '.*/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}' -printf '%f\n' \
+  | LC_ALL=C sort -r)
+if (( ${#releases[@]} > KEEP_RELEASES )); then
+  for old in "${releases[@]:KEEP_RELEASES}"; do
+    [[ "$old" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$ ]] || continue
+    rm -rf -- "$RELEASE_ROOT/$old"
+  done
+fi
+
+echo "[deploy] RELEASE=$release_name"
+echo "[deploy] current=$(readlink "$RELEASE_ROOT/current")"

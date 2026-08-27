@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# 默认翻到当前版本的前一个时间戳快照；--to 可显式翻回任一保留快照。
+set -Eeuo pipefail
+
+RELEASE_ROOT="${SYNCER2_RELEASE_ROOT:-$HOME/syncer2-releases}"
+target_arg=""
+case "${1:-}" in
+  "") ;;
+  --to) target_arg="${2:-}"; [[ -n "$target_arg" && $# -eq 2 ]] || exit 2 ;;
+  --to=*) target_arg="${1#*=}"; [[ $# -eq 1 ]] || exit 2 ;;
+  -h|--help)
+    echo "用法: syncer2/deploy/rollback [--to <快照名|latest>]"; exit 0 ;;
+  *) echo "未知参数: $1" >&2; exit 2 ;;
+esac
+
+current_real="$(readlink -f "$RELEASE_ROOT/current" 2>/dev/null || true)"
+[[ -n "$current_real" ]] || { echo "current 不存在" >&2; exit 1; }
+current_name="$(basename "$current_real")"
+mapfile -t releases < <(find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d \
+  -regextype posix-extended -regex '.*/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}' -printf '%f\n' \
+  | LC_ALL=C sort -r)
+(( ${#releases[@]} >= 2 )) || { echo "至少需要两个快照才能 rollback" >&2; exit 1; }
+
+if [[ "$target_arg" == "latest" ]]; then
+  target="${releases[0]}"
+elif [[ -n "$target_arg" ]]; then
+  target="$target_arg"
+else
+  target=""
+  for ((i=0; i<${#releases[@]}; i++)); do
+    if [[ "${releases[$i]}" == "$current_name" && $((i + 1)) -lt ${#releases[@]} ]]; then
+      target="${releases[$((i + 1))]}"
+      break
+    fi
+  done
+  [[ -n "$target" ]] || { echo "当前已是最旧保留快照，需用 --to 显式选择" >&2; exit 1; }
+fi
+
+[[ "$target" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$ ]] || {
+  echo "非法快照名: $target" >&2; exit 2;
+}
+target_dir="$RELEASE_ROOT/$target"
+[[ -d "$target_dir" && -f "$target_dir/package.json" && -d "$target_dir/node_modules" ]] || {
+  echo "目标不是完整快照: $target_dir" >&2; exit 1;
+}
+
+link_tmp="$RELEASE_ROOT/.current-rollback-$target-$$"
+ln -s "$target" "$link_tmp"
+mv -Tf "$link_tmp" "$RELEASE_ROOT/current"
+at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{"event":"rollback","from":"%s","to":"%s","at":"%s"}\n' \
+  "$current_name" "$target" "$at" >>"$RELEASE_ROOT/deployments.jsonl"
+echo "[rollback] $current_name -> $target"

@@ -5,10 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/srv/scpper/syncer2
-EnvironmentFile=/etc/scpper/syncer2.env
-Environment=PATH=/opt/node/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/env npm run schedule:%i
+# `current` 由 deploy/deploy 原子翻转。oneshot 已启动的进程继续使用旧 inode，
+# 下一轮自然从新快照启动，不需要 restart，也绝不能从开发工作树直跑。
+WorkingDirectory=%h/syncer2-releases/current
+EnvironmentFile=%h/syncer2-releases/current/.env
+Environment=PATH=%h/.nvm/versions/node/v22.17.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env npm --prefix %h/syncer2-releases/current run schedule:%i
 # 未单列的轻量作业使用有限默认值；各生产实例在同目录的 drop-in 中按实测覆盖。
 TimeoutStartSec=15min
 TimeoutStopSec=30s

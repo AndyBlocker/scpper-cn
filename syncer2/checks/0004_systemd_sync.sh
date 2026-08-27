@@ -13,6 +13,18 @@ set -uo pipefail
 W="$(cd "$(dirname "${BASH_SOURCE[0]}")/../deploy/systemd" && pwd)"
 U="${SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
 bad=0
+
+expected_current='%h/syncer2-releases/current'
+service="$W/syncer2-job@.service"
+if ! grep -Fxq "WorkingDirectory=$expected_current" "$service"; then
+  echo "仓库模板 WorkingDirectory 未指向 current 快照"; bad=1
+fi
+if ! grep -Eq '^ExecStart=.*%h/syncer2-releases/current([ /]|$)' "$service"; then
+  echo "仓库模板 ExecStart 未指向 current 快照"; bad=1
+fi
+if grep -Eq '^ExecStart=.*(scpper-cn-worktrees|tsx/esm src/)' "$service"; then
+  echo "仓库模板 ExecStart 仍从工作树/源码直跑"; bad=1
+fi
 for f in "$W"/syncer2-*.timer "$W"/syncer2-job@.service; do
   [ -e "$f" ] || continue
   b="$(basename "$f")"
@@ -35,5 +47,32 @@ for d in "$W"/syncer2-job@*.service.d; do
     fi
   done
 done
+
+# base template 上的任意本机 override 都可能把已安装态偷偷改回工作树。
+# 只要 override 重定义执行目录、环境文件或启动命令，就必须同样钉住 current。
+for override in "$U"/syncer2-job@.service.d/*.conf; do
+  [ -e "$override" ] || continue
+  while IFS= read -r directive; do
+    case "$directive" in
+      WorkingDirectory=*|EnvironmentFile=*|ExecStart=*)
+        if [[ "$directive" != *'/syncer2-releases/current'* ]]; then
+          echo "override 绕过 current: $(basename "$override"): $directive"; bad=1
+        fi
+        ;;
+    esac
+  done < <(grep -E '^(WorkingDirectory|EnvironmentFile|ExecStart)=' "$override" || true)
+done
+
+# 在真实 user manager 上再核对最终合并值；SYSTEMD_USER_DIR 用于离线 fixture 时跳过。
+if [ -z "${SYSTEMD_USER_DIR:-}" ] && command -v systemctl >/dev/null 2>&1; then
+  effective="$(systemctl --user show syncer2-job@l1.service \
+    -p WorkingDirectory -p EnvironmentFiles -p ExecStart --no-pager 2>/dev/null || true)"
+  if [[ "$effective" != *'/syncer2-releases/current'* ]]; then
+    echo "systemd 合并后的 l1 未指向 current 快照"; bad=1
+  fi
+  if [[ "$effective" == *'scpper-cn-worktrees'* ]]; then
+    echo "systemd 合并后的 l1 仍指向开发工作树"; bad=1
+  fi
+fi
 [ "$bad" -eq 0 ] && echo "systemd 定义与安装一致"
 exit "$bad"

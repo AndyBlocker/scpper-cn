@@ -514,13 +514,13 @@ timer 重复启动。`work-queue` 使用 `OnUnitInactiveSec=1min`，只在上一
 | unit | 触发时间（Asia/Shanghai） | 超时 | 单轮职责 |
 |---|---:|---:|---|
 | `syncer2-l0.timer` | 每小时 `:02/:32` | 5 min | L0 两小时 updated-at 窗口 |
-| `syncer2-l1.timer` | 每小时 `:07/:37` | 45 min | L1 四字段全站扫描；vote/revision 同频 |
+| `syncer2-l1.timer` | 每 5 min（`:04/:09/...`） | 45 min | L1 四字段全站扫描；vote/revision 同频 |
 | `syncer2-l2.timer` | 每小时 `:27` | 10 min | full sitemap absence 基准 |
 | `syncer2-l3.timer` | 每周日 `04:55` | 45 min | 全字段 Tier1 兜底 |
 | `syncer2-work-queue.timer` | 上轮退出后 1 min | 10 min | 每轮最多 50 个深扫任务 |
 | `syncer2-resolve-pages.timer` | 每 5 min | 5 min | 解析新发现 slug |
 | `syncer2-oldest-pending.timer` | 每 5 min（`:01/:06/...`） | 2 min | 零出站采样最老待处理项、趋势与告警证据 |
-| `syncer2-forum-discovery.timer` / `syncer2-forum-consume.timer` | 每日 `05:23/05:43` | 10/30 min | 论坛差集与成员刷新 |
+| `syncer2-forum-discovery.timer` / `syncer2-forum-consume.timer` | 上轮退出后 5/1 min | 10/10 min | 论坛差集与成员刷新 |
 | `syncer2-reconcile.timer` | 每日 `06:13` | 20 min | M10 三角与 CROM 金丝雀；v1 只读 |
 | `syncer2-page-scan-maintenance.timer` | 每小时 `:55` | 5 min | 聚合、保留与 VACUUM |
 
@@ -528,29 +528,38 @@ L1/L3 的 45 分钟是全站实测 1,045 秒的 2.58 倍。模板的未分类默
 每个生产实例再由 `syncer2-job@NAME.service.d/timeout.conf` 收紧或放宽。超时后 oneshot
 以失败退出，timer 负责下一次触发；禁止 `TimeoutStartSec=infinity`。
 
-安装到当前用户（在 `syncer2/` 下执行）：
+生产单元只从 `~/syncer2-releases/current` 运行。`current` 是 deploy 原子翻转的符号链接；
+开发工作树保存到一半不会进入下一轮 timer。首次切换时，在 `syncer2/` 下执行：
 
 ```bash
-user_unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-install -d "$user_unit_dir"
-install -m 0644 deploy/systemd/syncer2-job@.service deploy/systemd/*.timer \
-  "$user_unit_dir/"
-for source_dropin in deploy/systemd/syncer2-job@*.service.d/*.conf; do
-  dropin_dir="$user_unit_dir/$(basename "$(dirname "$source_dropin")")"
-  install -D -m 0644 "$source_dropin" "$dropin_dir/$(basename "$source_dropin")"
-done
+mkdir -p "$HOME/syncer2-releases"
+ln -sfn "$PWD" "$HOME/syncer2-releases/current" # 仅首次切换的无中断桥
+./deploy/install-systemd.sh                     # 安装 unit + daemon-reload，不 restart
+./deploy/install-pre-push-hook.sh
+./deploy/deploy                                 # 全门禁、快照 npm ci、校验、原子翻转
 ```
 
-若 checkout 或 `.env` 不在模板默认的 `/srv/scpper/syncer2`、`/etc/scpper/syncer2.env`，
-先用 `systemctl --user edit syncer2-job@.service` 添加本机 override：
+不得再创建把 `WorkingDirectory`、`EnvironmentFile` 或 `ExecStart` 指回 checkout 的
+`syncer2-job@.service.d` override；`checks/0004_systemd_sync.sh` 会拒绝这种旁路。
 
-```ini
-[Service]
-WorkingDirectory=/absolute/path/to/syncer2
-EnvironmentFile=
-EnvironmentFile=/absolute/path/to/syncer2/.env
-Environment=PATH=/absolute/path/to/node/bin:/usr/local/bin:/usr/bin:/bin
+日常发布与回滚：
+
+```bash
+./deploy/deploy              # 不跑 migration；依赖 localhost:5434/scpper-v2 活库
+./deploy/rollback            # 原子翻回当前快照的前一个版本
+./deploy/rollback --to latest # rollback 验证后显式翻回最新
+git push                     # pre-push 跑同一套门禁
+# 仅生产紧急逃生，事后必须补跑 deploy/run-gates.sh：
+git push --no-verify
+# 首次切换/发布失败时恢复工作树直跑（不停止 timer）：
+./deploy/fallback-to-worktree.sh
 ```
+
+迁移永远先由人按独立时序执行；deploy 与 pre-push 都不会调用
+`migrations/apply.sh`。门禁是 `npx tsc --noEmit`、`npm test`、全部 numbered SQL checks
+与全部 numbered shell checks。测试依赖部署机端口 5434 的 v2 活库，不能在无库环境静默
+跳过。每个快照用 `npm ci` 安装独立 `node_modules`；`state/` 链到
+`~/syncer2-releases/shared-state`，避免发布重置采集基线。
 
 启用、停用和检查：
 

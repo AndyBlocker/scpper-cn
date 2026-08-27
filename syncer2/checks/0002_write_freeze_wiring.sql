@@ -25,7 +25,10 @@ DECLARE
     'apply_vote_observation','apply_vote_cas_batch','apply_vote_history','apply_vote_snapshot',
     'promote_revoke_candidates','apply_revision_batch','apply_revision_source_full',
     'apply_attribution_snapshot',
-    'apply_forum_batch'
+    'apply_forum_batch',
+    -- 0211：门禁首次全量执行抓到的四个漏网写入函数（TITLE/PROV/DEGRADE 波次新增）
+    'apply_current_page_source','apply_identity_missing_deletion',
+    'apply_listpages_rendered_content','apply_vote_snapshot_state_replace_v0072'
   ];
   v_bad text[];
   v_n   int;

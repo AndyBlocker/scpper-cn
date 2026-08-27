@@ -30,7 +30,13 @@ test('systemd 分层调度全部是有限超时的 oneshot + timer', async () =>
   );
 
   assert.match(service, /^Type=oneshot$/m);
-  assert.match(service, /^ExecStart=\/usr\/bin\/env npm run schedule:%i$/m);
+  assert.match(service, /^WorkingDirectory=%h\/syncer2-releases\/current$/m);
+  assert.match(service, /^EnvironmentFile=%h\/syncer2-releases\/current\/\.env$/m);
+  assert.match(
+    service,
+    /^ExecStart=\/usr\/bin\/env npm --prefix %h\/syncer2-releases\/current run schedule:%i$/m,
+  );
+  assert.doesNotMatch(service, /scpper-cn-worktrees|node --import tsx\/esm src\//);
   assert.match(service, /^TimeoutStartSec=15min$/m);
   assert.doesNotMatch(service, /TimeoutStartSec=infinity/);
   assert.match(service, /禁止.*restart_delay/);
