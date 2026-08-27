@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { openSess } from './helpers/pg.js';
-import { reapTasksOnNonLivePages } from '../src/store/workQueue.js';
+import { reapTasksOnNonLivePages, resolveIrreconcilableOnNonLivePages } from '../src/store/workQueue.js';
 import { createPool } from '../src/store/db.js';
 import { loadConfig } from '../src/config.js';
 
@@ -43,6 +43,33 @@ describe('已删页死任务清理', () => {
       assert.equal(leftover, 0, '不应残留任何非 live 页面上的可清理任务');
     } finally {
       await pool.end().catch(() => undefined);
+    }
+  });
+
+  it('页面非 live 时其未决 irreconcilable 被连带解决——复查车道只认 live，删页上的行否则永无人碰', async () => {
+    // 实测 204 条（files 177 / content 9 / meta 等）全挂在 deleted 页上、最久逾期自 08-06。
+    const pool = createPool(loadConfig().databaseUrl, { max: 1 });
+    try {
+      await resolveIrreconcilableOnNonLivePages(pool);
+      const second = await resolveIrreconcilableOnNonLivePages(pool);
+      assert.equal(second.total, 0, '第二次应为空，说明幂等');
+      const sess = await openSess('non-live-irreconcilable-check');
+      try {
+        const r = await sess.q<{ n: string }>(
+          'non_live_unresolved_irreconcilable',
+          `SELECT count(*)::text AS n
+             FROM meta.irreconcilable i
+            WHERE i.resolved_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM serve.page_current pc
+                 WHERE pc.page_id = i.page_id AND pc.status = 'live')`,
+        );
+        assert.equal(Number(r[0]?.n ?? -1), 0, '删页上的未决 irreconcilable 应被连带解决');
+      } finally {
+        await sess.end();
+      }
+    } finally {
+      await pool.end();
     }
   });
 });

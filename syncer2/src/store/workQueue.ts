@@ -1065,6 +1065,44 @@ export async function reapTasksOnNonLivePages(
   return { total: res.rows.length, byKind };
 }
 
+/**
+ * 页面已非 live 时，连带解决其未决 irreconcilable。
+ *
+ * 复查车道只认 pc.status='live'（对：已删页无从对着站点复核），
+ * 但这让删页上的未决行永远没人碰——实测 7 条（content 6 / meta 1）
+ * 全挂在 deleted 页上，最久逾期自 08-06。页面一删，争议即失去意义：
+ * 站上 404、不再参与服务，两侧证据留在行里即可。
+ * 与 reapTasksOnNonLivePages 同轮执行，同一收敛原则：
+ * 「因局部异常而拒绝整体」的判断必须同时给出收敛路径。
+ */
+export async function resolveIrreconcilableOnNonLivePages(
+  pool: Pool,
+): Promise<{ total: number; byKind: Record<string, number> }> {
+  const res = await query<{ kind: string }>(
+    pool,
+    'meta.irreconcilable:resolve_non_live',
+    `UPDATE meta.irreconcilable i
+        SET resolved_at = now(), last_checked = now(),
+            locked_by = NULL, locked_at = NULL
+      WHERE i.id IN (
+        -- SKIP LOCKED：复查车道可能正 FOR UPDATE 持有个别行；
+        -- 连带解决是每轮都跑的清扫，跳过本轮被锁的行即可，绝不能排队等锁
+        -- （首版没加，单测在 work-queue 活动轮期间直接阻塞到超时）。
+        SELECT x.id FROM meta.irreconcilable x
+         WHERE x.resolved_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM serve.page_current pc
+              WHERE pc.page_id = x.page_id AND pc.status = 'live'
+           )
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING i.kind`,
+  );
+  const byKind: Record<string, number> = {};
+  for (const r of res.rows) byKind[r.kind] = (byKind[r.kind] ?? 0) + 1;
+  return { total: res.rows.length, byKind };
+}
+
 export async function finishWorkTask(
   pool: Pool,
   task: ClaimedWorkTask,

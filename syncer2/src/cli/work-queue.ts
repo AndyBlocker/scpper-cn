@@ -39,6 +39,7 @@ import {
   detectKindStarvation,
   irreconcilableReviewQuota,
   reapTasksOnNonLivePages,
+  resolveIrreconcilableOnNonLivePages,
   RUN_BUDGET_MS,
   WORK_QUEUE_LOCAL_REQUEST_INTERVAL_MS,
   finishWorkTask,
@@ -309,6 +310,12 @@ async function main(): Promise<void> {
       : await reapTasksOnNonLivePages(pool);
     if (reaped.total > 0) {
       log.info('清理已非 live 页面上的待办任务', reaped);
+    }
+    const resolvedNonLive = opts.adultOnly
+      ? { total: 0, byKind: {} as Record<string, number> }
+      : await resolveIrreconcilableOnNonLivePages(pool);
+    if (resolvedNonLive.total > 0) {
+      log.info('页面已删除，连带解决其未决 irreconcilable', resolvedNonLive);
     }
     const starvationBeforeClaim = opts.adultOnly
       ? []
