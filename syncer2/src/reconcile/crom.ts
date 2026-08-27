@@ -17,8 +17,8 @@ import {
 import { query } from '../store/db.js';
 import { MAX_REPORT_SAMPLES, errorMessage, type ReconcileSection } from './types.js';
 
-export const CROM_ENDPOINT = 'https://apiv2.crom.avn.sh/graphql';
-export const CROM_DEFAULT_BATCH_SIZE = 100;
+const CROM_ENDPOINT = 'https://apiv2.crom.avn.sh/graphql';
+const CROM_DEFAULT_BATCH_SIZE = 100;
 const MAX_CURSOR_BATCHES = 1_000;
 
 export interface CromPage {
@@ -41,7 +41,7 @@ export type CromConnectionParseOutcome =
   | { status: 'ok'; data: CromConnection }
   | { status: 'failed'; error: string };
 
-export type CromBatchOutcome =
+type CromBatchOutcome =
   | { status: 'ok'; cursor: string | null; data: CromConnection }
   | { status: 'failed'; cursor: string | null; error: string };
 
@@ -352,7 +352,7 @@ export interface V2CanaryPage {
   l1SeenEpochMs: number | null;
 }
 
-export interface CromFieldStats {
+interface CromFieldStats {
   compared: number;
   /** 枚举不完整时为 null，禁止把未测量伪装成 0。 */
   mismatches: number | null;

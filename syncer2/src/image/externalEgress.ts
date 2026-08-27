@@ -1,5 +1,5 @@
 /** 单次等待上限：超过即放弃该任务、留给下轮。 */
-export const EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS = 20_000;
+const EXTERNAL_IMAGE_MAX_INLINE_WAIT_MS = 20_000;
 
 export class ExternalHostDeferredError extends Error {
   constructor(readonly host: string, readonly waitMs: number) {

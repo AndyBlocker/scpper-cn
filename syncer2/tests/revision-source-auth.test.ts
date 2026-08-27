@@ -136,7 +136,14 @@ describe('历史源码账号 session', () => {
 describe('历史源码权限终态与出口', () => {
   it('新 session 仍 no_permission 时形成 authenticated unavailable，不进入空结果', async () => {
     const session = {
-      http: { proxyUrl: RESTRICTED_STABLE_PROXY_URL },
+      http: {
+        proxyUrl: RESTRICTED_STABLE_PROXY_URL,
+        request: async () => { throw new Error('不应由 session stub 直接请求'); },
+        get: async () => { throw new Error('不应由 session stub 直接 GET'); },
+      },
+      fetchCurrentSource: async () => {
+        throw new Error('不应读取当前源码');
+      },
       fetchRevisionSource: async () => ({
         status: 'no_permission',
         body: null,
@@ -144,7 +151,7 @@ describe('历史源码权限终态与出口', () => {
         currentTimestamp: null,
         raw: '{"status":"no_permission"}',
       }),
-    } as RestrictedSourceSession;
+    } satisfies RestrictedSourceSession;
     const results = await scanAuthenticatedRevisionSourcesOnDemand(session, [{
       pageId: 1,
       wikidotId: 2,
@@ -183,11 +190,18 @@ describe('历史源码权限终态与出口', () => {
     await http.close();
 
     const wrong = {
-      http: { proxyUrl: 'http://127.0.0.1:7891' },
+      http: {
+        proxyUrl: 'http://127.0.0.1:7891',
+        request: async () => { throw new Error('不应发出请求'); },
+        get: async () => { throw new Error('不应发出请求'); },
+      },
+      fetchCurrentSource: async () => {
+        throw new Error('不应发出请求');
+      },
       fetchRevisionSource: async () => {
         throw new Error('不应发出请求');
       },
-    } as RestrictedSourceSession;
+    } satisfies RestrictedSourceSession;
     await assert.rejects(
       scanAuthenticatedRevisionSourcesOnDemand(wrong, [{
         pageId: 1,

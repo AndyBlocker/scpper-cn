@@ -4,7 +4,6 @@ import {
   extractPageReferences,
   type PageReferenceCandidate,
 } from '../content/extractPageReferences.js';
-import { query } from '../store/db.js';
 import { sanitizePgText } from '../store/pgText.js';
 import { asNumber, exec, rows } from './sql.js';
 import type { ProjectionApplyResult, ProjectionWindow } from './types.js';

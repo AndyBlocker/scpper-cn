@@ -111,7 +111,7 @@ export function classifyImageEgress(url: string, siteHost: string): ImageEgressC
   return host === siteHost.toLowerCase() ? 'wikidot_site' : 'external';
 }
 
-export function hostMatchesPattern(host: string, pattern: string): boolean {
+function hostMatchesPattern(host: string, pattern: string): boolean {
   const normalized = pattern.trim().toLowerCase();
   if (normalized === '*') return true;
   if (normalized.startsWith('*.')) {
@@ -882,7 +882,7 @@ function safeUrl(raw: string): string {
 }
 
 /** 无额外依赖的常见格式尺寸探测；未知/损坏格式保留 null，不阻断资产摄取。 */
-export function imageDimensions(
+function imageDimensions(
   buffer: Buffer,
   mime: string,
 ): { width: number | null; height: number | null } {

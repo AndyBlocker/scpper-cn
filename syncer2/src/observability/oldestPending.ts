@@ -7,10 +7,9 @@ import { observeEgressAccounting } from './egressAccounting.js';
 
 const HOUR = 3_600;
 const DAY = 24 * HOUR;
-export const PIPELINE_SUCCESS_WINDOW_SECONDS = HOUR;
-export const PIPELINE_SUCCESS_CRITICAL_MIN_SCANS = 10;
+const PIPELINE_SUCCESS_CRITICAL_MIN_SCANS = 10;
 
-export type PendingSeverity = 'ok' | 'warn' | 'critical';
+type PendingSeverity = 'ok' | 'warn' | 'critical';
 
 export interface PendingPoint {
   observedAt: string;

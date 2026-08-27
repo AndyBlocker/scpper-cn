@@ -30,12 +30,12 @@ import { toPgTimestamptz } from './pg.js';
 // 旧段 970m/980m 与真实 Wikidot id 重叠：2026-07-28 清理曾误删 9 个 S1 page。
 // 改用 int4 顶部的测试保留段；启动/清理仍只按 wikidot_id，不碰 v1 page.id 值域。
 export const PAGE_WID_LO = 2_100_000_000;
-export const PAGE_WID_HI = 2_109_999_999;
-export const USER_WID_LO = 2_110_000_000;
-export const USER_WID_HI = 2_119_999_999;
-export const TEST_KEY_PREFIX = 'ts2test:';
+const PAGE_WID_HI = 2_109_999_999;
+const USER_WID_LO = 2_110_000_000;
+const USER_WID_HI = 2_119_999_999;
+const TEST_KEY_PREFIX = 'ts2test:';
 export const TEST_RUN_SOURCE = 'test_syncer2';
-export const TEST_PROJECTION_PREFIX = 'test_';
+const TEST_PROJECTION_PREFIX = 'test_';
 
 /** 测试用的固定观测时刻（不带整点/整日对称性，任何 ±整小时偏移都会被打出来）。 */
 export const OBSERVED_ISO = toPgTimestamptz(Date.UTC(2026, 6, 27, 12, 34, 56, 789));

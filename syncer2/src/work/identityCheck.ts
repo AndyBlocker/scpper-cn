@@ -266,7 +266,7 @@ export async function applyObservedPageMeta(
  * 的完整快照维护。其余字段都能从这一条远端行直接落库，其中 title/tags 是 meta ok 的
  * 最低产出契约，即使远端值为空字符串/空数组，也必须存在 source=observed 的历史行。
  */
-export function observedListPageMetaAttrs(row: ListPageRecord): Record<string, unknown> {
+function observedListPageMetaAttrs(row: ListPageRecord): Record<string, unknown> {
   return {
     slug: row.fullname,
     title: row.title,

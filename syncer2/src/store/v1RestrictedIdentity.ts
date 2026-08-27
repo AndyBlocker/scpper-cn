@@ -4,7 +4,7 @@ import { restrictedLegacySlug, type RestrictedV1Identity } from '../work/pending
 
 const V1_DATABASES = new Set(['scpper-cn', 'scpper_cn']);
 
-export function assertV1RestrictedReadOnlyUrl(connectionString: string): void {
+function assertV1RestrictedReadOnlyUrl(connectionString: string): void {
   const url = new URL(connectionString);
   const database = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
   if (!V1_DATABASES.has(database)) {

@@ -3,13 +3,13 @@ import { createHash } from 'node:crypto';
 import type { ScanTaskKind } from '../store/meta.js';
 import type { ClaimedWorkTask } from '../store/workQueue.js';
 
-export type WorkFailureFamily =
+type WorkFailureFamily =
   | 'identity_absent'
   | 'transient'
   | 'structural'
   | 'prerequisite';
 
-export type WorkFailureAction = 'review_identity' | 'retry' | 'irreconcilable';
+type WorkFailureAction = 'review_identity' | 'retry' | 'irreconcilable';
 
 export interface WorkFailurePolicy {
   family: WorkFailureFamily;
@@ -125,7 +125,7 @@ export function workFailureHash(policy: WorkFailurePolicy): Buffer {
 }
 
 /** 按“同一签名”计连续次数；换签名必须从 1 重新算，不能复用统一 attempts。 */
-export function failureSignatureCount(
+function failureSignatureCount(
   task: Pick<ClaimedWorkTask, 'stableCount' | 'lastResultHash'>,
   policy: WorkFailurePolicy,
 ): number {

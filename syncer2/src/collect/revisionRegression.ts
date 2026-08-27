@@ -6,7 +6,7 @@
  * 0.98 才视为系统性故障；零星页不杀死整轮。
  */
 
-export const REVISION_REGRESSION_MIN_COVERAGE = 0.98;
+const REVISION_REGRESSION_MIN_COVERAGE = 0.98;
 /** L1 每 5 分钟、work-queue 至少每小时有一次可推导机会；超过一小时必须离开 pending。 */
 export const REVISION_REGRESSION_PENDING_TIMEOUT_MS = 60 * 60_000;
 

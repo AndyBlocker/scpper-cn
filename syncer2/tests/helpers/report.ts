@@ -9,7 +9,7 @@
  * 跳过必须打印原因和补救提示，绝不能静默变成"通过"）。
  */
 
-export type CheckState = 'pass' | 'fail' | 'skip';
+type CheckState = 'pass' | 'fail' | 'skip';
 
 export interface CheckRow {
   section: string;

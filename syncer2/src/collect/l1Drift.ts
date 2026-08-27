@@ -28,11 +28,11 @@ export interface ClassifiedL1Drift {
   magnitude: number;
 }
 
-export const L1_DRIFT_MIN_CONSECUTIVE_OBSERVATIONS = 2;
+const L1_DRIFT_MIN_CONSECUTIVE_OBSERVATIONS = 2;
 /** 首次读数先消抖，但即使后续无法形成 streak，也必须在一小时后拥有可执行任务。 */
-export const L1_DRIFT_SINGLE_OBSERVATION_DELAY_MS = 60 * 60_000;
-export const L1_DRIFT_GATE_RATIO = 0.02;
-export const L1_DRIFT_GATE_ABSOLUTE_LIMIT = 2_000;
+const L1_DRIFT_SINGLE_OBSERVATION_DELAY_MS = 60 * 60_000;
+const L1_DRIFT_GATE_RATIO = 0.02;
+const L1_DRIFT_GATE_ABSOLUTE_LIMIT = 2_000;
 /** 已连续确认的投影漂移与 L1 直接变化同级，必须高于 catch-up 的 20--99 老化带。 */
 export const L1_DRIFT_REPAIR_PRIORITY = 200;
 

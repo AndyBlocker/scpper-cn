@@ -64,7 +64,7 @@ export interface ProjectOptions {
   targetSeq?: number;
 }
 
-export function isProjectionName(value: string): value is ProjectionName {
+function isProjectionName(value: string): value is ProjectionName {
   return (L2_PROJECTIONS as readonly string[]).includes(value);
 }
 

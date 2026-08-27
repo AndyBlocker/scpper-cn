@@ -69,7 +69,7 @@ export interface Syncer2Config {
   pendingColdStart: number;
 }
 
-export class ConfigError extends Error {
+class ConfigError extends Error {
   override readonly name = 'ConfigError';
 }
 

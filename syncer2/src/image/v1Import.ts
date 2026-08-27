@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
-import { Client, Pool, type PoolClient, type QueryResultRow } from 'pg';
+import { Client, Pool, type QueryResultRow } from 'pg';
 
 import { normalizeImageUrl } from '../content/extractImages.js';
 import { SHARED_IMAGE_ASSET_ROOT } from './config.js';
@@ -25,7 +25,7 @@ import { chunk, mapWithConcurrency } from '../util/concurrency.js';
 
 export { SHARED_IMAGE_ASSET_ROOT } from './config.js';
 
-export type V1AssetFileFailureClass =
+type V1AssetFileFailureClass =
   | 'invalid_sha256'
   | 'invalid_storage_path'
   | 'file_missing'
@@ -58,7 +58,7 @@ interface V1ReferenceRow extends QueryResultRow {
   first_seen_at: string;
 }
 
-export interface V1AssetFileVerification {
+interface V1AssetFileVerification {
   status: 'ready' | 'failed' | 'unimportable';
   failureClass: V1AssetFileFailureClass | null;
   detail: string | null;
@@ -151,7 +151,7 @@ export interface V1ImageImportOptions {
 }
 
 /** 真实读文件并核对内容地址；worker 的命中快路径也使用同一套 SHA 口径。 */
-export async function verifyV1AssetFile(
+async function verifyV1AssetFile(
   row: Pick<V1AssetRow, 'hash_sha256' | 'storage_path' | 'bytes'>,
   assetRoot: string,
 ): Promise<V1AssetFileVerification> {
@@ -342,7 +342,7 @@ export async function runV1ImageAssetImport(
   }
 }
 
-export async function verifyV1WriteRejected(client: Client): Promise<'25006'> {
+async function verifyV1WriteRejected(client: Client): Promise<'25006'> {
   try {
     // WHERE false 保证即使外层防线被误删也不会改变任何行；正确 session 会在执行前以
     // read_only_sql_transaction 拒绝该 UPDATE，这是报告中的数据库侧零写入证据。

@@ -30,73 +30,15 @@ npm run work:queue:probe -- --amc-probe require --proxy-check require
 
 ## 2. 冷启动
 
-### 2.0 v1 迁移的顺序硬约束
+### 2.0 已封存的 v1 历史迁移
 
-**v1 历史回填必须发生在首次爬取之前。** 对生产迁移库，顺序固定为：
+S1–S6 历史回填已完成并验收，执行代码和阶段专用检查已退役；迁移过程、顺序约束及
+事故语义保留在 git 历史与对应 build report 中。不要在现役库重放这些一次性阶段。
 
-```text
-清理无价值的演练数据
-→ S1 身份回填（保留 v1 Page.id / User.id）
-→ S1 strict gate
-→ S2–S6 历史回填与各阶段 gate
-→ 首次 sitemap / resolve-pages / Tier1 / work-queue
-```
+### 2.0.1 活库 identity top-up（按需）
 
-原因：首次爬取会由 `register_page` / `ensure_user` 铸造新 id。若先爬再回填，同一个
-`wikidot_id` 已占用另一个 v2 id，而 v1 原 id 又可能被演练身份占用；此时无法同时满足
-“`id` 永不重排”和“同一 Wikidot 身份只保留一行”。其中 Page.id 还是
-`scpper_user.GachaCardDefinition.pageId` 的跨库软外键，错位会让收藏卡指向错误页面。
-先回填后爬取时，采集器按 `wikidot_id` 命中既有行并复用原 id，才是无损路径。
-
-`sitemap` 本身虽只做发现，也会产生 `pending_page`；随后的 `resolve-pages` 会立即铸身份，
-所以整个首次爬取链都必须排在回填之后。不要把 WIRE 演练形成的 pages/users 当成可合并
-基线；只有在确认演练数据无保留价值并已留快照时才允许清空，正式爬取数据不得照此处理。
-
-S1 的阶段验收使用 strict scope，gacha 身份集是必需输入，缺失会硬失败：
-
-```bash
-export V1_DATABASE_URL=...       # scpper-cn；loader 与 S1 都强制源连接只读
-export USER_DATABASE_URL=...     # scpper_user；A3.1 必需
-npm run backfill:s1
-./checks/load_v1_identity.sh
-psql "$SYNCER2_DATABASE_URL" -v gate_scope=s1 -f checks/backfill_finalize.sql
-```
-
-只有 `scope=s1` 全绿后才继续 S2；S2–S6 全部完成后，仍须不带 `gate_scope`
-再跑一次完整 strict `backfill_finalize.sql`。`scope=s1` 不检查尚未回填的
-`serve.page_current` / `page_life_event`，不能冒充全量迁移验收。
-
-### 2.0.1 批量回填后的 L1 投影重建
-
-`migration_role` 批量装载事实会绕过 `apply_vote_*`、`apply_revision_batch` 和
-`apply_attributions`，因此也绕过这些函数对 `serve.page_current` 的同事务维护。
-**批量回填完成不等于 Tier-1 投影已完成**；S2–S6 全部落库后、finalize/smoke 之前，
-必须显式执行：
-
-```bash
-psql "$SYNCER2_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f checks/backfill_rebuild_l1.sql
-```
-
-脚本从 `serve.vote_current` 重建 `rating/vote_up/vote_down/vote_revoked`，从
-`ingest.revision` 直接 `COUNT(*)` 重建 `revision_count`，从
-`serve.attribution_current` 重建 `attribution_count`，并在提交前检查投票/署名孤儿、
-票终态主键冲突、`source_sha` 与最新 `page_source` 一致性。修订编号从 0 开始，但这里
-计算的是本地事实行数，**不得加 `REVISION_COUNT_OFFSET`**；offset 只用于比较远端
-零基声明值与本地修订列表行数。
-
-`comment_count` 是远端页面元数据声明值，不是本地 `forum_post` 行数；两者差异是论坛
-采集完整度信号，禁止用后者反写前者。`search_text` 是页面观测时提取的文本；相同源码
-SHA 可以复用 canonical `content_blob`，所以也禁止用 `content_blob.text_content`
-无条件覆盖非空的 `page_current.search_text`。脚本对这两列只做语义审计。
-
-### 2.0.2 活库窗口的 identity top-up
-
-`scpper-cn` 在回填窗口内仍由 CROM 持续同步，所以首次 S1 之后身份集合会继续增长。
-**v1 不冻结，除非用户另行明确下令。** 因此初次 S1 完成后，每次进入任一后续回填
-阶段（S2/S3/S4/S5/S6）、任何回填修复事务，以及最终 finalize 前，都必须先做一次
-只补缺行的 identity top-up。这是阶段入口的标准步骤，不是 S3 特例：回填面对的是
-移动靶，上一阶段刚通过只证明上一份快照。
+`scpper-cn` 仍会增长，因此保留只补缺行的 identity top-up。它拒绝任何
+`id`/`wikidot_id` 冲突；执行前必须先看 dry-run，只有冲突数为零且确有缺行时才可执行。
 
 top-up 保留 v1 id、拒绝 id/wikidot_id 冲突；v2 自铸 page/user 则由 0204 从具名保留
 高位段分配，不再使用“当前 v1 上界 + 1”。命令可重复执行，第二次应报告
@@ -108,21 +50,21 @@ npm run backfill:s1:top-up:dry
 npm run backfill:s1:top-up       # 这是身份增量，不执行 S3 投票事实回填
 ```
 
-每个需要跨库 gate 的阶段，在 top-up 后还要立即重载 identity 证据，再跑对应 strict
-gate；不得拿旧 `meta.v1_identity_load.loaded_at` 证明新快照：
+top-up 后要立即重载 identity 证据并跑 strict gate；不得拿旧
+`meta.v1_identity_load.loaded_at` 证明新快照：
 
 ```bash
 ./checks/load_v1_identity.sh
 psql "$SYNCER2_DATABASE_URL" -v gate_scope=s1 -f checks/backfill_finalize.sql
 ```
 
-最终 S3/S4/finalize 也原样执行这套入口步骤。只要 v1 仍在线，就不存在“一次性的收尾
-top-up”，也不得把“让 v1 停止增长”当成 gate 通过的前置条件。
+只要 v1 仍在线，就不存在“一次性的收尾 top-up”，也不得把“让 v1 停止增长”当成
+gate 通过的前置条件。
 
 ### 2.1 正式全量
 
-以下命令只允许在 v1 历史回填及其阶段 gate 完成后执行。爬取链内部顺序也不能颠倒：
-sitemap 先给出枚举基准；未知 slug 再按 `wikidot_id` 命中已回填身份并复用原 id；
+以下命令只用于已完成 v1 历史迁移并通过 strict gate 的现役库。爬取链内部顺序不能
+颠倒：sitemap 先给出枚举基准；未知 slug 再按 `wikidot_id` 命中既有身份并复用原 id；
 Tier1 再写评分、标签等信号并产生深扫任务；最后由 work-queue 消费。
 
 ```bash

@@ -455,7 +455,7 @@ function parseCategoryStats($: CheerioAPI): {
   };
 }
 
-function parseThreadRow($: CheerioAPI, $row: Q, categoryId: number): ForumThreadRecord {
+function parseThreadRow($row: Q, categoryId: number): ForumThreadRecord {
   const $link = $row.find('td.name div.title a').first();
   const id = positiveInt(/\/forum\/t-(\d+)/i.exec($link.attr('href') ?? '')?.[1]);
   const title = normalizeText($link.text());
@@ -515,7 +515,7 @@ export function parseForumCategoryPage(
       if ($row.hasClass('head')) return;
       if ($row.find('td').length === 0) return;
       try {
-        threads.push(parseThreadRow($, $row, categoryId));
+        threads.push(parseThreadRow($row, categoryId));
       } catch (err) {
         errors.push(String(err));
       }
@@ -557,7 +557,7 @@ function findParentPostId($post: Q): number | null {
   );
 }
 
-function parsePost($: CheerioAPI, $post: Q, threadId: number): ForumPostRecord {
+function parsePost($post: Q, threadId: number): ForumPostRecord {
   const id = positiveInt(/^post-(\d+)$/.exec($post.attr('id') ?? '')?.[1]);
   if (id === null) throw new Error(`post id 非法：${String($post.attr('id'))}`);
   const $long = $post.children('div.long').first();
@@ -596,7 +596,7 @@ function parsePostsFromDom(
   const candidates = $('div.post').length;
   $('div.post').each((_i, post) => {
     try {
-      posts.push(parsePost($, $(post), threadId));
+      posts.push(parsePost($(post), threadId));
     } catch (err) {
       errors.push(String(err));
     }

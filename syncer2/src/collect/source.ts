@@ -354,42 +354,6 @@ export async function scanRestrictedCurrentContents(
 }
 
 /**
- * 抓取一个或多个显式历史 revision 源码。全量枚举、退避、live 守卫与限速均由
- * revision-source-backfill 的独立低优先队列承担；本函数不接受页面后自动展开版本。
- */
-export async function scanRevisionSourcesOnDemand(
-  http: HttpClient,
-  baseUrl: string,
-  targets: readonly RevisionSourceTarget[],
-  concurrency = 2,
-): Promise<Map<number, CollectResult<RevisionSourceSnapshot>>> {
-  assertUniqueKeys(targets, (t) => t.revisionId);
-  const pairs = await mapWithConcurrency(targets, concurrency, async (target) => {
-    const source = await fetchSource(
-      http,
-      baseUrl,
-      target,
-      'history/PageSourceModule',
-      target.revisionId,
-    );
-    if (source.status !== 'ok') {
-      return [
-        target.revisionId,
-        failed<RevisionSourceSnapshot>(source.error, source.diagnostics),
-      ] as const;
-    }
-    return [
-      target.revisionId,
-      ok({
-        ...source.data,
-        revisionId: target.revisionId,
-      }),
-    ] as const;
-  });
-  return new Map(pairs);
-}
-
-/**
  * 固定 7890 登录态的历史源码。session 失效错误故意向上抛，让 worker 归还 claim 并
  * 显式降级；只有重登成功后目标仍 no_permission 才形成 unavailable 终态结果。
  */

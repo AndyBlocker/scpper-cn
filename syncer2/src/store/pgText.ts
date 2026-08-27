@@ -26,7 +26,7 @@ export interface SanitizedPgText {
   sanitation: PgTextSanitization;
 }
 
-export interface PgValueSanitization {
+interface PgValueSanitization {
   stringsVisited: number;
   stringsChanged: number;
   nulCodeUnits: number;

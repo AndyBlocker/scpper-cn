@@ -154,11 +154,6 @@ export function businessTransportFailureRate(http: HttpClient): number | null {
   return business.requests === 0 ? null : business.transportFailures / business.requests;
 }
 
-export function businessHttpStatusDistribution(http: HttpClient): Record<string, number> | null {
-  const business = http.healthStats().business;
-  return business.requests === 0 ? null : business.statusBuckets;
-}
-
 export interface HttpClientOptions {
   userAgent: string;
   referer: string;
@@ -313,7 +308,7 @@ function classifyStatus(status: number): Disposition | null {
   return { kind: 'fatal', reason: `http_${status}` };
 }
 
-export function describeError(e: unknown): string {
+function describeError(e: unknown): string {
   if (e instanceof Error) {
     const code = (e as { code?: unknown }).code;
     return code ? `${e.name}(${String(code)}): ${e.message}` : `${e.name}: ${e.message}`;

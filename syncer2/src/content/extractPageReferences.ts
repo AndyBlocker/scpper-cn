@@ -5,8 +5,8 @@
  * projector：slug 是可复用的名称，只有 serve.page_current 才知道哪个身份当前 live。
  */
 
-export type PageReferenceKind = 'TRIPLE' | 'SHORT' | 'DIRECT' | 'INCLUDE';
-export type PageReferenceScope = 'internal' | 'external';
+type PageReferenceKind = 'TRIPLE' | 'SHORT' | 'DIRECT' | 'INCLUDE';
+type PageReferenceScope = 'internal' | 'external';
 
 export interface PageReferenceCandidate {
   kind: PageReferenceKind;

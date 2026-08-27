@@ -16,10 +16,10 @@ import type {
   L1ListPageRow,
 } from '../collect/incrementalListPages.js';
 
-export const L1_ENUMERATION_SNAPSHOT_VERSION = 1;
-export const L1_ENUMERATION_SNAPSHOT_FILENAME = 'listpages-l1-enum.snapshot.json.gz';
+const L1_ENUMERATION_SNAPSHOT_VERSION = 1;
+const L1_ENUMERATION_SNAPSHOT_FILENAME = 'listpages-l1-enum.snapshot.json.gz';
 
-export interface L1EnumerationSnapshotRow extends L1ListPageRow {
+interface L1EnumerationSnapshotRow extends L1ListPageRow {
   category: string;
   /** 本轮确定性枚举顺序；不是 Wikidot 远端字段。 */
   index: number;

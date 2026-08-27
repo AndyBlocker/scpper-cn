@@ -71,7 +71,10 @@ after(async () => {
 async function rollbackFixture(fn: (client: PoolClient) => Promise<void>): Promise<void> {
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    // These assertions compare a rebuilt global projection with its source tables across
+    // several statements. Live collectors keep writing the shared v2 verification DB, so
+    // READ COMMITTED can compare two different snapshots and manufacture a mismatch.
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     await fn(client);
   } finally {
     await client.query('ROLLBACK').catch(() => undefined);

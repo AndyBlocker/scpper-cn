@@ -19,9 +19,9 @@ export const VIEW_SOURCE_TABLES = [
 
 export type ViewSourceTable = (typeof VIEW_SOURCE_TABLES)[number];
 export type ViewMigrationMode = 'full' | 'incremental';
-export type ViewCursorKind = 'id' | 'updated_at_id';
+type ViewCursorKind = 'id' | 'updated_at_id';
 
-export type ViewMigrationRejectReason =
+type ViewMigrationRejectReason =
   | 'v1_source_missing'
   | 'v1_page_missing'
   | 'v1_page_wikidot_id_missing'
@@ -61,7 +61,7 @@ export interface PageViewSourceRow extends ViewSourceIdentity {
   tls_fingerprint: string | null;
 }
 
-export interface UserPixelSourceRow extends ViewSourceIdentity {
+interface UserPixelSourceRow extends ViewSourceIdentity {
   wikidot_id: number | null;
   username: string;
   client_hash: string;
@@ -574,7 +574,7 @@ function selectFor(table: ViewSourceTable): string {
             LEFT JOIN public."User" u ON u.id=e."userId"`;
 }
 
-export async function fetchViewSourceBatch(
+async function fetchViewSourceBatch(
   client: Client,
   table: ViewSourceTable,
   cursor: ViewMigrationCursor,
@@ -603,7 +603,7 @@ export async function fetchViewSourceBatch(
   return result.rows.map((row) => normalizeIdentityRow(row) as ViewSourceRow);
 }
 
-export async function fetchViewSourceRowsById(
+async function fetchViewSourceRowsById(
   client: Client,
   table: ViewSourceTable,
   ids: readonly number[],

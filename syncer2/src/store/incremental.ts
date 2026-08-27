@@ -9,7 +9,7 @@ import { chunk } from '../util/concurrency.js';
 import { query, toPgTimestamptz, withTransaction } from './db.js';
 import { toPgJson } from './pgText.js';
 
-export type IncrementalLayer = 'L0' | 'L1' | 'L2' | 'L3';
+type IncrementalLayer = 'L0' | 'L1' | 'L2' | 'L3';
 
 export interface IncrementalPageState {
   slug: string;

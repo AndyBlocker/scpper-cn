@@ -19,7 +19,7 @@
  */
 
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
-import { createLogger, type Logger } from '../util/log.js';
+import { createLogger } from '../util/log.js';
 import { sanitizePgValue } from './pgText.js';
 
 const log = createLogger('db');

@@ -39,9 +39,9 @@ export interface RevisionTarget extends PageCollectTarget {
   claimedTotal: number;
 }
 
-export type RevisionAuthorKind = 'wikidot' | 'deleted' | 'guest';
+type RevisionAuthorKind = 'wikidot' | 'deleted' | 'guest';
 
-export interface RevisionAuthor {
+interface RevisionAuthor {
   kind: RevisionAuthorKind;
   wikidotId: number | null;
   displayName: string | null;

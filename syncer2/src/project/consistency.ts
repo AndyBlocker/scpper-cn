@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { rows } from './sql.js';
 
-export const DELETED_AUTHOR_RATING_SAMPLE_SIZE = 64;
+const DELETED_AUTHOR_RATING_SAMPLE_SIZE = 64;
 
 interface RatingConsistencyRow {
   checked: string;

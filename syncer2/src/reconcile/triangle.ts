@@ -332,7 +332,7 @@ export function applyEnumerationPageGetEvidence(
   };
 }
 
-export interface TriangleSubcheck {
+interface TriangleSubcheck {
   status: 'ok' | 'partial' | 'failed';
   claimed: number;
   fetched: number | null;
@@ -344,7 +344,7 @@ export interface TriangleSubcheck {
   explanation?: string;
 }
 
-export interface TrianglePageData {
+interface TrianglePageData {
   fullname: string;
   wikidotId: number;
   pageId: number | null;

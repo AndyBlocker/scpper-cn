@@ -708,9 +708,8 @@ absence 基准 / 第二独立源**。sitemap 上浮与投票活动的相关性�
 
 - **不引 XML 解析库**：sitemap 是结构极窄的机器生成 XML，正则解析面更小，
   也省掉 XXE / entity-expansion 那一堆需要显式关掉的开关。代价由 `parse.ts` 的三道结构断言兜住。
-- **`@ukwhatn/wikidot` 已列入依赖但本次交付未使用**：sitemap 通道是纯 GET，不经 AMC。
-  后续的 ListPages / WhoRatedPageModule 采集会用到它（库默认带 `Referer: https://www.wikidot.com/`，
-  所以**库路径是安全的**；手搓请求必须自己带 Referer）。
+- **不依赖通用 Wikidot SDK**：现有 ListPages / WhoRatedPageModule 通道由仓库内的 AMC
+  客户端统一承载出口节流、Referer 与可观测性；不要绕开该路径另接 SDK。
 - **迁移不依赖任何扩展**。`0001`–`0004` / `0006` 零扩展依赖（`pgcrypto` 的依赖已在整合中
   去掉，改用内建 `sha256(bytea)`）；只有 `0005` 会尝试建扩展，且失败不阻断。
 

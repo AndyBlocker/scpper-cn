@@ -14,8 +14,6 @@ export const REVISION_SOURCE_VERSION = 'page-source-v1';
 export const REVISION_SOURCE_DOMAIN = 'revision_source_full';
 export const REVISION_SOURCE_POPULATION = 'revision_source_full';
 export const REVISION_SOURCE_MODE = 'revision_source_backfill';
-export const REVISION_SOURCE_PAGE_SCAN_KIND = 'revision_source';
-
 export const REVISION_SOURCE_SCHEDULE_INTERVAL_MS = 30 * 60_000;
 export const REVISION_SOURCE_ZERO_OUTPUT_ALERT_ROUNDS = 3;
 

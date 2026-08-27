@@ -55,7 +55,7 @@ export class AmcContractError extends Error {
 }
 
 /** 代理链路不健康（回落直连 / 出口不可达）。 */
-export class ProxyHealthError extends Error {
+class ProxyHealthError extends Error {
   override readonly name = 'ProxyHealthError';
 }
 

@@ -37,7 +37,7 @@ import {
 } from './result.js';
 import { parseSourceBody } from './source.js';
 
-export const ATTRIBUTION_SOURCE_SLUGS = [
+const ATTRIBUTION_SOURCE_SLUGS = [
   'attribution-metadata',
   'attribution-metadata-translation',
 ] as const;
@@ -46,7 +46,7 @@ const CONVENTION_SOURCE_TIMEOUT_MS = 40_000;
 const ATTRIBUTION_HEADER = ['标题', '用户', '类型', '时间'] as const;
 const ATTRIBUTION_HEADER_EN = ['title', 'user', 'type', 'date'] as const;
 
-export type AttributionRole =
+type AttributionRole =
   | 'AUTHOR'
   | 'REWRITER'
   | 'MAINTAINER'
@@ -70,7 +70,7 @@ const ATTRIBUTION_ROLE_MAP: Readonly<Record<string, AttributionRole>> = {
   貢獻者: 'CONTRIBUTOR',
 };
 
-export interface ConventionSource {
+interface ConventionSource {
   slug: string;
   wikidotId: number;
   source: string;
@@ -84,7 +84,7 @@ export interface ConventionSourceScan<T> {
   sources: Map<string, CollectResult<ConventionSource>>;
 }
 
-export type AttributionDatePrecision = 'none' | 'day' | 'month' | 'unknown';
+type AttributionDatePrecision = 'none' | 'day' | 'month' | 'unknown';
 
 export interface ParsedAttributionEntry {
   sourceSlug: string;
@@ -102,7 +102,7 @@ export interface ParsedAttributionEntry {
   ord: number;
 }
 
-export interface RejectedConventionRow {
+interface RejectedConventionRow {
   sourceSlug: string;
   line: number;
   raw: string;
@@ -125,7 +125,7 @@ export interface AttributionCollection {
   warnings: string[];
 }
 
-export interface AlternateTitleEntry {
+interface AlternateTitleEntry {
   sourceSlug: string;
   line: number;
   pageSlug: string;
@@ -891,9 +891,9 @@ export async function collectAlternateTitles(
   };
 }
 
-export type PageLifeKind = 'created' | 'deleted' | 'restored';
+type PageLifeKind = 'created' | 'deleted' | 'restored';
 
-export interface AttributionLifeEvent {
+interface AttributionLifeEvent {
   kind: PageLifeKind;
   occurredAt: string;
 }
@@ -1004,21 +1004,21 @@ export function resolveAttributionPage(
   };
 }
 
-export interface ResolvedAttributionEntry extends ParsedAttributionEntry {
+interface ResolvedAttributionEntry extends ParsedAttributionEntry {
   pageId: number;
   wikidotId: number;
   actorId: number;
   pageResolution: 'unique_slug' | 'dated_lifecycle';
 }
 
-export interface AttributionResolutionRejection {
+interface AttributionResolutionRejection {
   entry: ParsedAttributionEntry;
   reason: string;
   candidatePageIds: number[];
   candidateActorIds: number[];
 }
 
-export interface NewAttributionResolution {
+interface NewAttributionResolution {
   resolved: ResolvedAttributionEntry[];
   rejected: AttributionResolutionRejection[];
 }
@@ -1126,7 +1126,7 @@ function normalizeUserLookupKey(value: string): string {
  * 仅供“已确认是新行”的署名使用。调用方不得把全量存量 source 直接传进来。
  * 用户名只在三个现存身份字段中唯一命中才接受；零命中/多命中都不铸派生身份。
  */
-export async function resolveNewAttributionEntriesBySlug(
+async function resolveNewAttributionEntriesBySlug(
   pool: Pool,
   newEntries: readonly ParsedAttributionEntry[],
 ): Promise<NewAttributionResolution> {
@@ -1451,7 +1451,7 @@ export function attributionFingerprint(entry: ParsedAttributionEntry): string {
     .digest('hex');
 }
 
-export interface ResolvedAlternateTitle {
+interface ResolvedAlternateTitle {
   pageId: number;
   wikidotId: number;
   pageSlug: string;
@@ -1460,7 +1460,7 @@ export interface ResolvedAlternateTitle {
   line: number;
 }
 
-export interface AlternateTitleResolution {
+interface AlternateTitleResolution {
   resolved: ResolvedAlternateTitle[];
   rejected: Array<{
     entry: AlternateTitleEntry;
@@ -1473,7 +1473,7 @@ export interface AlternateTitleResolution {
  * 备用标题是当前态列表：优先唯一 live 页；没有 live 时仅在总候选唯一时接受。
  * 多个已删页复用同 slug 且无日期可裁决，宁可拒绝也不猜。
  */
-export async function resolveAlternateTitles(
+async function resolveAlternateTitles(
   pool: Pool,
   entries: readonly AlternateTitleEntry[],
 ): Promise<AlternateTitleResolution> {

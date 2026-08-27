@@ -90,7 +90,7 @@ async function assertSnapshotState(
     ordinals: Number(row['bad_ordinal']) === 0,
     hashes: entries.length === 0 || Number(row['missing_hash']) === 0,
   };
-  return Object.values(mismatch).every(Boolean) ? row['fingerprint'] : stable(mismatch);
+  return Object.values(mismatch).every(Boolean) ? row['fingerprint'] ?? null : stable(mismatch);
 }
 
 test('T5.2 · 页级 snapshot replace：大页、重放与随机属性', async (t) => {

@@ -102,6 +102,7 @@ test('WhoRated 多重集：重复、冲突、幂等、整体替换与普通页',
       `SELECT count(*) FROM ingest.vote_snapshot_event WHERE page_id=$1`,
       [idempotent],
     );
+    if (markerBefore === null) assert.fail('snapshot marker 计数不应为 NULL');
     const replays = [];
     for (let i = 0; i < 3; i++) replays.push(await applySnapshot(s, idempotent, run, three));
     assert.equal(replays[0]?.['snapshot_replaced'], true);

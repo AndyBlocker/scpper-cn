@@ -55,6 +55,9 @@ cd "$SYNCER_ROOT"
 printf '[gate] npx tsc --noEmit\n'
 npx tsc --noEmit
 
+printf '[gate] npm run typecheck:tests\n'
+npm run typecheck:tests
+
 printf '[gate] npm test\n'
 npm test
 

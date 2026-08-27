@@ -202,9 +202,8 @@ semantic 分桶：
 
 ## 3. `extractTextContent(html)` 原型
 
-`src/content/extractText.ts`，零依赖手写扫描器（**刻意不用 cheerio**：它是
-`@ukwhatn/wikidot` 的传递依赖、没写进本包 `package.json`，把摄入热路径压在
-未声明的传递依赖上等于埋雷）。单遍 O(n)，只做四件事：定位 `#page-content` 子树、
+`src/content/extractText.ts`，零依赖手写扫描器（**刻意不用 cheerio**：这里需要的
+结构能力很窄，没必要引入完整 DOM 解析层）。单遍 O(n)，只做四件事：定位 `#page-content` 子树、
 按 class/id 剪区域、块级元素转换行、HTML 实体解码。
 
 ### 3.1 CROM 的提取规则是**实测反推**的

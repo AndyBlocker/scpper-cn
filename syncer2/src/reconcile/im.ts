@@ -32,7 +32,7 @@ interface CoverageSnapshot {
   measuredAt: string;
 }
 
-export interface LayerHealth {
+interface LayerHealth {
   layer: string;
   ok: number;
   total: number;
@@ -69,7 +69,7 @@ interface FreezeState {
   frozenAt: string | null;
 }
 
-export interface QueueHealth {
+interface QueueHealth {
   name: string;
   ready: number;
   total: number;

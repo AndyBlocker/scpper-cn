@@ -7,12 +7,10 @@
  * 必须自己从 `#page-content` 提取。
  *
  * ── 为什么零依赖手写扫描器，不用 cheerio ────────────────────────────────────
- * node_modules 里确实有 cheerio，但它是 `@ukwhatn/wikidot` 的**传递依赖**，
- * 没有写进本包 package.json。把摄入热路径压在一个未声明的传递依赖上，
- * 等于给"某天上游换 HTML 解析器"埋一颗静默炸弹。我们需要的能力只有四项：
+ * cheerio 是本包的直接依赖，但这里需要的能力只有四项：
  *   (1) 定位 `#page-content` 子树  (2) 按 class/id 剪掉若干区域
  *   (3) 块级元素边界转换行        (4) 实体解码
- * 都不需要真正的 DOM。手写扫描器 ~300 行、可测、无依赖、单遍 O(n)。
+ * 都不需要真正的 DOM。手写扫描器可测、无额外解析层、单遍 O(n)。
  *
  * ── CROM 提取规则的实测反推（2026-07-27，100 页样本）────────────────────────
  * 对齐 CROM 时先搞清它到底提取了什么。逐结构统计"HTML 里有该结构的页数 / 其中
@@ -337,7 +335,7 @@ export function decodeEntities(s: string): string {
  *   4. 连续空行压到**一个**空行（段落分隔），不是全删 —— 段落结构对分块有意义。
  *   5. 首尾 trim。
  */
-export function normalizeExtracted(s: string): string {
+function normalizeExtracted(s: string): string {
   let t = s
     .replace(/^﻿/, '')
     .replace(/[​‌‍⁠﻿]/g, '')
@@ -350,69 +348,6 @@ export function normalizeExtracted(s: string): string {
     .join('\n');
   t = t.replace(/\n{3,}/g, '\n\n');
   return t.trim();
-}
-
-/**
- * 已删页正文兜底：从留存的 Wikidot 源码提取可搜索纯文本。
- *
- * 这不是 HTML 提取的等价替代品。`[[include]]`、运行时 module、模板展开结果在页面删除后
- * 已不可再生，因此调用方必须把结果标成 `v1_source_fallback`，不能冒充
- * `wikidot_html`。实现刻意保守：丢掉 CSS/HTML/code/module 等明显非正文块，保留普通
- * 容器里的文字、链接显示名和表格单元格；无法展开的 include 只去指令，不猜内容。
- */
-export function extractTextFromWikidotSource(source: string): string {
-  let text = source.replace(/\r\n?/g, '\n');
-
-  // 注释和确定不是正文的成对块。非贪婪匹配并允许参数，避免一个坏闭合吞掉整页。
-  text = text.replace(/\[!--[\s\S]*?--\]/g, '');
-  text = text.replace(
-    /\[\[(?:module\s+css|css|code|html)\b[^\]]*\]\][\s\S]*?\[\[\/(?:module|css|code|html)\s*\]\]/gi,
-    '',
-  );
-
-  // 单行模块/include 的输出在删页后不可再生；只移除指令本身。
-  text = text.replace(/^\s*\[\[(?:module|include)\b[^\]]*\]\]\s*$/gim, '');
-
-  // Wikidot 三括号链接：显式 label 优先；空 label 回落目标，保证仍可搜索。
-  text = text.replace(/\[\[\[([^\]|\n]+)\|([^\]\n]*)\]\]\]/g, (_m, target: string, label: string) =>
-    label.trim() === '' ? target : label,
-  );
-  text = text.replace(/\[\[\[([^\]\n]+)\]\]\]/g, '$1');
-
-  // 普通外链 `[url label]` 保留 label；裸 URL 形式保留 URL，避免误删正文里的方括号。
-  text = text.replace(/\[((?:https?|ftp):\/\/[^\s\]]+)\s+([^\]]+)\]/gi, '$2');
-
-  // 图片没有可靠正文；只保留明确给出的替代文字。
-  text = text.replace(/\[\[(?:=)?image\b[^\]]*?\balt=(?:"([^"]*)"|'([^']*)')[^\]]*\]\]/gi, '$1$2');
-  text = text.replace(/\[\[(?:=)?image\b[^\]]*\]\]/gi, '');
-
-  // 容器/排版指令本身不贡献文字。tab/collapsible 的标题参数会由后面的通用属性
-  // 处理丢失；正文仍保留，这比把整块删除安全。
-  text = text.replace(
-    /\[\[\/?(?:div_?|span|tabview|tab|collapsible|footnote|note|size|iframe|embed|toc|f<|f>|ul|li|table|row|cell|blockquote|section|iftags|iftag|ifcategory|iftree|if)\b[^\]]*\]\]/gi,
-    '\n',
-  );
-  text = text.replace(/\[\[\/?[^\]\n]+\]\]/g, '\n');
-
-  // 表格分隔符、引用/列表/标题与常见行内标记。
-  text = text.replace(/^\s*\|\|~?/gm, '');
-  text = text.replace(/\|\|/g, ' ');
-  text = text.replace(/^\s*(?:\+{1,6}|>{1,3}|\*{1,3}|#{1,3})\s*/gm, '');
-  text = text.replace(/^----+\s*$/gm, '\n');
-  text = text.replace(/\{\{\{([\s\S]*?)\}\}\}/g, '$1');
-  for (const re of [
-    /\*\*([\s\S]*?)\*\*/g,
-    /\/\/([\s\S]*?)\/\//g,
-    /__([\s\S]*?)__/g,
-    /--([\s\S]*?)--/g,
-    /\^\^([\s\S]*?)\^\^/g,
-    /,,([\s\S]*?),,/g,
-  ]) {
-    text = text.replace(re, '$1');
-  }
-
-  // 少量源码会直接含 HTML entity；与整页 HTML 提取共用同一解码口径。
-  return normalizeExtracted(decodeEntities(text));
 }
 
 /**
@@ -442,9 +377,9 @@ export interface Chunk {
 }
 
 /** v1 生成器实测参数：定长窗口 1500 字符、步长 1300（重叠 200）、最多 16 块。 */
-export const V1_CHUNK_WINDOW = 1500;
-export const V1_CHUNK_STRIDE = 1300;
-export const V1_CHUNK_MAX = 16;
+const V1_CHUNK_WINDOW = 1500;
+const V1_CHUNK_STRIDE = 1300;
+const V1_CHUNK_MAX = 16;
 
 /**
  * 码点数（**不是** `String.prototype.length`）。

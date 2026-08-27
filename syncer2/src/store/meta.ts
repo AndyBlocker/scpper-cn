@@ -75,7 +75,7 @@ export type PageScanKind =
   | 'discussion'   // 0007：单页讨论区（与 forum 分开，见 0007 §1 注释）
   | 'files'        // 0007：页面附件列表
   | 'revision_source';
-export type PageScanStatus = 'ok' | 'partial' | 'failed';
+type PageScanStatus = 'ok' | 'partial' | 'failed';
 export type ScanTaskKind =
   | 'meta'
   | 'votes_full'
@@ -609,7 +609,7 @@ export async function enqueueScanTasks(
 
 // ─── slug → page_id 解析 ─────────────────────────────────────────────────────
 
-export type SlugResolutionSource = 'page_slug_history' | 'page_current' | 'unavailable';
+type SlugResolutionSource = 'page_slug_history' | 'page_current' | 'unavailable';
 
 export interface SlugResolution {
   source: SlugResolutionSource;
@@ -679,29 +679,6 @@ export async function resolveSlugs(
   }
   log.warn('slug→page_id 解析不可用（两张表都不存在），全部 slug 记为未解析');
   return { source: 'unavailable', map };
-}
-
-/** 取当前被认为存活的全部 slug（absence 推断的本地一侧）。 */
-export async function fetchLiveSlugs(
-  pool: Pool,
-): Promise<{ available: boolean; rows: Array<{ slug: string; pageId: number }> }> {
-  try {
-    const res = await query<{ slug: string; page_id: number }>(
-      pool,
-      'serve.page_current:live',
-      `SELECT slug, page_id FROM serve.page_current WHERE status = 'live'`,
-    );
-    return {
-      available: true,
-      rows: res.rows.map((r) => ({ slug: r.slug, pageId: Number(r.page_id) })),
-    };
-  } catch (err) {
-    if (isMissingRelation(err)) {
-      log.warn('serve.page_current 尚未建表，本轮不做 absence 推断');
-      return { available: false, rows: [] };
-    }
-    throw err;
-  }
 }
 
 export type { Pool, PoolClient };

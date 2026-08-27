@@ -21,7 +21,7 @@ import {
   type ListPageRecord,
 } from './listpages.js';
 
-export const RESTRICTED_CONTENT_ROW_CLASS = 'syncer2-restricted-content-row';
+const RESTRICTED_CONTENT_ROW_CLASS = 'syncer2-restricted-content-row';
 export const RESTRICTED_SLUG_START = 'SYNCER2_RESTRICTED_SLUG_7B1D6D91_START_';
 export const RESTRICTED_SLUG_END = '_SYNCER2_RESTRICTED_SLUG_7B1D6D91_END';
 export const RESTRICTED_CONTENT_START = 'SYNCER2_RESTRICTED_CONTENT_7B1D6D91_START_';
@@ -57,7 +57,7 @@ export type RestrictedListPagesOutcome =
  * 确有不平衡标签/残留 wiki 语法，会吞掉调用方追加的 [[div]]。长随机文字哨兵在原始
  * AMC 响应中按顺序切片，随后再单独规范化 HTML，正文中的 div/分隔符不污染边界。
  */
-export function buildRestrictedListPagesModuleBody(): string {
+function buildRestrictedListPagesModuleBody(): string {
   return `${buildListPagesModuleBody()}\n` +
     `[[div class="${RESTRICTED_CONTENT_ROW_CLASS}"]]\n` +
     `${RESTRICTED_SLUG_START}%%fullname%%${RESTRICTED_SLUG_END}\n` +

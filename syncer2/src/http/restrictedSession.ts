@@ -25,7 +25,7 @@ import { HttpClient, HttpStatusError, type HttpClientOptions } from './client.js
 
 export const RESTRICTED_STABLE_PROXY_URL = 'http://127.0.0.1:7890';
 export const RESTRICTED_TLS_MAX_VERSION = 'TLSv1.2' as const;
-export const RESTRICTED_SESSION_RECHECK_MS = 20 * 60_000;
+const RESTRICTED_SESSION_RECHECK_MS = 20 * 60_000;
 
 export interface WikidotCredentials {
   username: string;

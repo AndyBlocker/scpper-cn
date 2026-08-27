@@ -1,7 +1,8 @@
 # S3 用户偏差逐人归因（2026-07-28）
 
-口径与查询固定在
-[`checks/backfill_s3_user_attribution.sql`](../checks/backfill_s3_user_attribution.sql)：
+> 历史记录：S3 已完成并封存，复算 SQL 随一次性回填实现退役；原文件可从 git 历史读取。
+
+当时的口径与查询固定在 `checks/backfill_s3_user_attribution.sql`：
 `old` 是 v1 当前活页 `PageVersion` 上的 `LatestVote`，`new` 是 Jun-1
 换源后的 A3 最终状态；偏差定义为
 `abs(new-old) / max(old,1) > 5%`。查询以 `REPEATABLE READ READ ONLY`

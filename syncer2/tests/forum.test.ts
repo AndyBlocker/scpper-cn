@@ -797,10 +797,11 @@ test('M5 五个 AMC 模块（含真实评论 CommentsList）全部匿名，且�
       [{ pageId: 27, wikidotId: 1452770417, claimedTotal: 4 }],
       2,
     );
-    assert.equal(missingFromThread.get(27)?.status, 'partial');
+    const missingDiscussion = missingFromThread.get(27);
+    assert.equal(missingDiscussion?.status, 'partial');
     assert.match(
-      missingFromThread.get(27)?.status === 'partial'
-        ? missingFromThread.get(27)!.error
+      missingDiscussion?.status === 'partial'
+        ? missingDiscussion.error
         : '',
       /完整 thread 3 帖 < Tier1 claimed_total 4/,
     );

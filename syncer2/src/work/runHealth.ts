@@ -8,15 +8,10 @@
 import type { AdaptiveSelfProtectionDecision } from '../http/adaptiveEgress.js';
 
 export const RUN_FAILURE_RATE_THRESHOLD = 0.25;
-export const RUN_FAILURE_RATE_MIN_FAILURES = 2;
+const RUN_FAILURE_RATE_MIN_FAILURES = 2;
 export const RUN_REPEATED_FAILURE_ATTEMPTS = 3;
 
-/** 兼容既有运维/测试引用；判据只有上面这一份。 */
-export const WORK_QUEUE_FAILURE_RATE_THRESHOLD = RUN_FAILURE_RATE_THRESHOLD;
-export const WORK_QUEUE_FAILURE_RATE_MIN_FAILURES = RUN_FAILURE_RATE_MIN_FAILURES;
-export const WORK_QUEUE_REPEATED_FAILURE_ATTEMPTS = RUN_REPEATED_FAILURE_ATTEMPTS;
-
-export type CollectionRunStatus = 'ok' | 'partial' | 'failed' | 'aborted';
+type CollectionRunStatus = 'ok' | 'partial' | 'failed' | 'aborted';
 
 export interface RunHealthInput {
   /** 覆盖本次判定的失败率阈值；省略则用 RUN_FAILURE_RATE_THRESHOLD。 */
@@ -203,13 +198,3 @@ export function applyAdaptiveSelfProtectionToRunHealth(
   }
   return { ...base, baseExitCode: base.exitCode, selfProtection };
 }
-
-/** @deprecated 新代码直接调用 evaluateRunHealth。 */
-export const evaluateWorkQueueHealth = evaluateRunHealth;
-/** @deprecated 新代码直接调用 applyAdaptiveSelfProtectionToRunHealth。 */
-export const applyAdaptiveSelfProtectionToWorkQueueHealth =
-  applyAdaptiveSelfProtectionToRunHealth;
-export type WorkQueueRunStatus = CollectionRunStatus;
-export type WorkQueueHealthInput = RunHealthInput;
-export type WorkQueueHealthDecision = RunHealthDecision;
-export type ProtectedWorkQueueHealthDecision = ProtectedRunHealthDecision;

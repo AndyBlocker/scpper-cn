@@ -9,9 +9,9 @@
 
 import { decodeEntities, extractPageContentHtml } from './extractText.js';
 
-export const IMAGE_EXTRACTION_VERSION = 2;
+const IMAGE_EXTRACTION_VERSION = 2;
 
-export type ImageCandidateSource =
+type ImageCandidateSource =
   | 'html_img'
   | 'wikidot_image'
   | 'wikidot_image_block'

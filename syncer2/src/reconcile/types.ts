@@ -71,7 +71,7 @@ export function unexplainedRatioRegressed(
   return now - before > tolerancePoints;
 }
 
-export function emptyCounts(): ReconcileCounts {
+function emptyCounts(): ReconcileCounts {
   return { compared: 0, differences: 0, unexplained: 0 };
 }
 

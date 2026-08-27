@@ -3,12 +3,11 @@ import type { PoolClient, QueryResultRow } from 'pg';
 import { query, toPgTimestamptz } from '../store/db.js';
 import { toPgJson } from '../store/pgText.js';
 
-export const EGRESS_ACCOUNTING_WINDOW_MINUTES = 60;
-export const EGRESS_ACCOUNTING_MINIMUM_SAMPLES = 100;
-export const EGRESS_ACCOUNTING_MINIMUM_ABSOLUTE_GAP = 0.05;
-export const EGRESS_ACCOUNTING_MINIMUM_RATE_RATIO = 3;
-export const EGRESS_ACCOUNTING_WARN_AFTER_MS = 15 * 60_000;
-export const EGRESS_ACCOUNTING_CRITICAL_AFTER_MS = 60 * 60_000;
+const EGRESS_ACCOUNTING_MINIMUM_SAMPLES = 100;
+const EGRESS_ACCOUNTING_MINIMUM_ABSOLUTE_GAP = 0.05;
+const EGRESS_ACCOUNTING_MINIMUM_RATE_RATIO = 3;
+const EGRESS_ACCOUNTING_WARN_AFTER_MS = 15 * 60_000;
+const EGRESS_ACCOUNTING_CRITICAL_AFTER_MS = 60 * 60_000;
 
 export interface EgressAccountingCounts {
   ingestFailures: number;

@@ -24,7 +24,7 @@ import {
   type PageCollectTarget,
 } from './result.js';
 
-export interface PageFile {
+interface PageFile {
   wikidotFileId: number;
   name: string;
   url: string;

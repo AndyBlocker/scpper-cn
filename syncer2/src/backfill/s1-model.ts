@@ -15,7 +15,7 @@ export interface V1PageRow {
   created_at: string;
 }
 
-export interface SlugInterval {
+interface SlugInterval {
   slug: string;
   valid_from: string;
   valid_to: string | null;
@@ -28,7 +28,7 @@ export interface PagePlan {
   currentSlug: string;
 }
 
-export type BackfillUserKind = 'wikidot' | 'guest' | 'anon' | 'synthetic';
+type BackfillUserKind = 'wikidot' | 'guest' | 'anon' | 'synthetic';
 
 export interface V1UserRow {
   id: number;

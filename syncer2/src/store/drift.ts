@@ -48,7 +48,7 @@ export interface L1DriftObservationInput {
   previousL1RunId: number | null;
 }
 
-export interface L1DriftIdentityConflict {
+interface L1DriftIdentityConflict {
   slug: string;
   resolvedPageId: number;
   livePageIds: number[];

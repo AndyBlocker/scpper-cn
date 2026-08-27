@@ -8,7 +8,7 @@ export interface IncrementalDiffState {
   lastL1RatingVotes: number | null;
 }
 
-export interface L0DiffRow {
+interface L0DiffRow {
   current: L0ListPageRow;
   previous: IncrementalDiffState | null;
   revisionChanged: boolean;
@@ -21,7 +21,7 @@ export interface L0Diff {
   revisionRegressions: string[];
 }
 
-export interface L1DiffRow {
+interface L1DiffRow {
   current: L1ListPageRow;
   previous: IncrementalDiffState | null;
   voteChanged: boolean;

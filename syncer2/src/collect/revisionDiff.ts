@@ -9,9 +9,6 @@
 import { createHash } from 'node:crypto';
 
 import { decodeEntities } from '../content/extractText.js';
-import { amcRequest } from '../http/amc.js';
-import type { HttpClient } from '../http/client.js';
-import { throwIfRuntimeBudgetExceeded } from '../util/runtimeBudget.js';
 import {
   diagnostics,
   failed,
@@ -445,33 +442,5 @@ export function parseRevisionDiffBody(
     );
   } catch (err) {
     return failed(`inline diff 解析失败：${String(err)}`, diagnostics(1, 0));
-  }
-}
-
-export async function fetchRevisionDiff(
-  http: HttpClient,
-  baseUrl: string,
-  target: RevisionDiffTarget,
-): Promise<CollectResult<RevisionDiffSnapshot>> {
-  try {
-    const res = await amcRequest(http, baseUrl, {
-      moduleName: 'history/PageDiffModule',
-      params: revisionDiffRequestParams(target),
-      mode: 'tier2:revision-source-diff',
-      maxAttempts: 3,
-    });
-    if (res.status !== 'ok') {
-      return failed(
-        `PageDiffModule status=${res.status}（message=${res.message ?? '-'}）`,
-        diagnostics(1, 0),
-      );
-    }
-    if (res.body === null) {
-      return failed('PageDiffModule status=ok 但 body 缺失。', diagnostics(1, 0));
-    }
-    return parseRevisionDiffBody(res.body, target);
-  } catch (err) {
-    throwIfRuntimeBudgetExceeded(err);
-    return failed(`PageDiffModule 请求失败：${String(err)}`, diagnostics(1, 0));
   }
 }

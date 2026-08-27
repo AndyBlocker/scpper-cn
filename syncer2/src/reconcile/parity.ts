@@ -21,8 +21,8 @@ import {
 } from './types.js';
 
 /** 保留 RECON2 的 25x 形状红线，只把分母从单日改为至少七日滚动窗口。 */
-export const V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE = 25;
-export const V1_LATESTVOTE_FOLD_WINDOW_DAYS = 7;
+const V1_LATESTVOTE_FOLD_MAX_PER_NEW_VOTE = 25;
+const V1_LATESTVOTE_FOLD_WINDOW_DAYS = 7;
 
 /**
  * v1 活库测试曾铸入、但站上不存在的图片测试页。名单与理由全部在源码中可枚举；
@@ -38,8 +38,8 @@ export const V1_SYNTHETIC_TEST_PAGE_ALLOWLIST = new Map<number, string>([
  * v2：page_id/voter_id/source_row_ordinal/sign(direction)，按前三列排序，LF 拼接后 MD5。
  * v1（历史、未显式编号）不含 source_row_ordinal。
  */
-export const DELETED_VOTE_CHECKSUM_VERSION = 3;
-export const DELETED_VOTE_CHECKSUM_ALGORITHM =
+const DELETED_VOTE_CHECKSUM_VERSION = 3;
+const DELETED_VOTE_CHECKSUM_ALGORITHM =
   'md5(lf-joined page_id:voter_id:source_row_ordinal:sign(direction); ' +
   'order=page_id,voter_id,source_row_ordinal); baseline=all deleted; ' +
   'comparison=members whose lifecycle status at previous report was deleted, ' +
@@ -79,9 +79,9 @@ export interface StateAllowlistEntry {
   expiresAt: string | null;
 }
 
-export type StateDifferenceField = 'existence' | 'title' | 'rating' | 'tags' | 'vote_state';
+type StateDifferenceField = 'existence' | 'title' | 'rating' | 'tags' | 'vote_state';
 
-export interface StateDifference {
+interface StateDifference {
   wikidotId: number;
   slug: string;
   fields: StateDifferenceField[];
@@ -127,7 +127,7 @@ export interface V1LatestVoteFoldWindowInput {
   windowVoteRows: number | null;
 }
 
-export interface V1LatestVoteFoldWindowCriterion extends V1LatestVoteFoldWindowInput {
+interface V1LatestVoteFoldWindowCriterion extends V1LatestVoteFoldWindowInput {
   multiplier: number;
   minimumWindowDays: number;
   intervalDays: number | null;
@@ -265,7 +265,7 @@ export function gateParityStatus(
   return base === 'ok' && !sevenDayGatePassed ? 'partial' : base;
 }
 
-export async function fetchV1ParityStates(pool: Pool): Promise<Map<number, ParityPageState>> {
+async function fetchV1ParityStates(pool: Pool): Promise<Map<number, ParityPageState>> {
   return withReadOnlyClient(pool, 'reconcile:v1:state', async (db) => {
     const res = await query<ParityStateRow>(
       db,
@@ -339,7 +339,7 @@ export async function fetchV1ParityStates(pool: Pool): Promise<Map<number, Parit
   });
 }
 
-export async function fetchV2ParityStates(pool: Pool): Promise<Map<number, ParityPageState>> {
+async function fetchV2ParityStates(pool: Pool): Promise<Map<number, ParityPageState>> {
   const res = await query<ParityStateRow>(
     pool,
     'reconcile:v2:state-select',
@@ -629,7 +629,7 @@ export function compareStateAlignment(
   };
 }
 
-export async function loadStateAllowlist(
+async function loadStateAllowlist(
   pool: Pool,
   observedAt: string,
 ): Promise<Map<string, StateAllowlistEntry>> {
@@ -671,7 +671,7 @@ export async function loadStateAllowlist(
   return out;
 }
 
-export async function fetchWhitelistMetrics(
+async function fetchWhitelistMetrics(
   v1Pool: Pool,
   v2Pool: Pool,
   windowBaselineObservedAt: string | null,
@@ -838,7 +838,7 @@ function buildFoldWindowCriterion(
   };
 }
 
-export async function fetchDeletedVoteChecksum(
+async function fetchDeletedVoteChecksum(
   pool: Pool,
   membershipCutoff: string | null = null,
 ): Promise<DeletedVoteChecksum> {

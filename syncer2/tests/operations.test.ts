@@ -170,8 +170,6 @@ test('全部 Wikidot 生产出站入口接入同一个 PostgreSQL 自适应控�
     'cli/revision-source-backfill.ts',
     'cli/image-sample-refresh.ts',
     'cli/image-ingest.ts',
-    'backfill/s2.ts',
-    'backfill/s3-live-remediate.ts',
   ];
   for (const file of files) {
     const source = await readFile(new URL(`../src/${file}`, import.meta.url), 'utf8');

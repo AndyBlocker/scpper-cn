@@ -24,7 +24,7 @@ import { LEGACY_IMAGE_HOST_REWRITES } from './legacyHosts.js';
 export const UNREACHABLE_HOST_MIN_ATTEMPTED_JOBS = 20;
 export const UNREACHABLE_HOST_MIN_OBSERVATION_HOURS = 48;
 
-export interface UnreachableHostRow {
+interface UnreachableHostRow {
   host: string;
   terminalized: number;
   attemptedJobs: number;

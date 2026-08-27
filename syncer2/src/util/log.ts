@@ -3,8 +3,8 @@
  *
  * 沿用 monitor-bridge 已在生产验证过的 CLI 契约（syncer/src/cli/monitor-bridge.ts:16）：
  *   stdout 只允许出现最后那一行 JSON 摘要，调度器可以直接 `JSON.parse(stdout)`。
- * 因此这里同时把 console.* 整体劫持到 stderr —— 第三方库（@ukwhatn/wikidot 的
- * connect()/setupProxy() 等）用 console.log 打进度，一旦漏到 stdout 就会污染摘要。
+ * 因此这里同时把 console.* 整体劫持到 stderr；任何第三方库一旦用 console.log
+ * 打进度并漏到 stdout，都会污染摘要。
  */
 
 type Level = 'debug' | 'info' | 'warn' | 'error';

@@ -26,15 +26,7 @@ import {
   type SitemapKind,
 } from './parse.js';
 
-/** sitemap 枚举域中合法缺席的 slug 前缀 —— absence 推断必须先排除它们。 */
-export const SITEMAP_EXCLUDED_PREFIXES = ['deleted:', 'forum:'] as const;
-
-/** 该 slug 是否本来就不该出现在 sitemap 里（缺席不构成删除证据）。 */
-export function isExcludedFromSitemap(slug: string): boolean {
-  return SITEMAP_EXCLUDED_PREFIXES.some((p) => slug.startsWith(p));
-}
-
-export interface SitemapFile {
+interface SitemapFile {
   url: string;
   kind: SitemapKind;
   index: number | null;
@@ -57,11 +49,11 @@ export interface SitemapFetchResult {
   durationMs: number;
 }
 
-export function sitemapIndexUrl(baseUrl: string): string {
+function sitemapIndexUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/sitemap.xml`;
 }
 
-export function sitemapFileUrl(baseUrl: string, kind: SitemapKind, index: number): string {
+function sitemapFileUrl(baseUrl: string, kind: SitemapKind, index: number): string {
   return `${baseUrl.replace(/\/+$/, '')}/sitemap_${kind}_${index}.xml`;
 }
 
@@ -89,7 +81,7 @@ export async function fetchSitemapIndex(
 }
 
 /** 抓单个 sitemap 文件并解析。 */
-export async function fetchSitemapFile(
+async function fetchSitemapFile(
   http: HttpClient,
   entry: SitemapIndexEntry,
   log: Logger = createLogger('sitemap'),
@@ -116,7 +108,7 @@ export async function fetchSitemapFile(
   };
 }
 
-export interface FetchFamilyOptions {
+interface FetchFamilyOptions {
   kind: SitemapKind;
   /**
    * 只取前 N 个（按 index 升序）。
@@ -135,7 +127,7 @@ export interface FetchFamilyOptions {
  * fallback，且在结果里显式标 usedFallback=true —— 调用方据此禁止本轮做 absence 推断
  * （fallback 猜的 URL 可能漏掉刚新增的第 5 个分片，漏掉即等价于"1 万个页面消失"）。
  */
-export async function fetchSitemapFamily(
+async function fetchSitemapFamily(
   http: HttpClient,
   baseUrl: string,
   opts: FetchFamilyOptions,
@@ -202,23 +194,6 @@ export function fetchPageSitemapDelta(
   logger?: Logger,
 ): Promise<SitemapFetchResult> {
   return fetchSitemapFamily(http, baseUrl, { kind: 'page', limit: 1, concurrency: 1, ...(logger ? { logger } : {}) });
-}
-
-/**
- * L1 固定成本入口：直接抓 sitemap_page_1，不先取 sitemap.xml。
- * 该函数的网络预算恒为 1 个 wiki GET；TTL 实测为 60 分钟。
- */
-export function fetchPageSitemapActivityHead(
-  http: HttpClient,
-  baseUrl: string,
-  logger?: Logger,
-): Promise<SitemapFile> {
-  const entry: SitemapIndexEntry = {
-    loc: sitemapFileUrl(baseUrl, 'page', 1),
-    kind: 'page',
-    index: 1,
-  };
-  return fetchSitemapFile(http, entry, logger);
 }
 
 /** full 模式：抓全部 page sitemap（实测 4 个 / gzip 620 KB / ≈5 s / 35,983 slug）。 */

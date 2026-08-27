@@ -70,7 +70,7 @@ function sweptSignal(state: ForumCategoryIncrementalState): readonly unknown[] {
   ];
 }
 
-export function forumCategorySignalChanged(
+function forumCategorySignalChanged(
   category: ForumCategoryRecord,
   state: ForumCategoryIncrementalState | undefined,
 ): boolean {
@@ -78,16 +78,7 @@ export function forumCategorySignalChanged(
   return JSON.stringify(signal(category)) !== JSON.stringify(sweptSignal(state));
 }
 
-export function changedForumCategoryIds(
-  categories: readonly ForumCategoryRecord[],
-  states: ReadonlyMap<number, ForumCategoryIncrementalState>,
-): number[] {
-  return categories
-    .filter((category) => forumCategorySignalChanged(category, states.get(category.id)))
-    .map((category) => category.id);
-}
-
-export function changedThreadsOnCategoryPage(
+function changedThreadsOnCategoryPage(
   threads: readonly ForumThreadRecord[],
   knownPostCounts: ReadonlyMap<number, number>,
 ): number[] {
@@ -114,7 +105,7 @@ function crossedWatermark(
  * 只扫描一个已由 ForumStart 判定变化的分类。初次建水位只取第一页；历史冷数据由
  * catchup 队列负责，不能在第一次增量轮偷偷退化成全分类 87k 枚举。
  */
-export async function scanChangedForumCategory(
+async function scanChangedForumCategory(
   category: ForumCategoryRecord,
   state: ForumCategoryIncrementalState | undefined,
   knownPostCounts: ReadonlyMap<number, number>,

@@ -10,15 +10,16 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { selectStalledBusy } from '../src/project/runner.js';
+import type { ProjectionRunResult } from '../src/project/types.js';
 
 const THRESHOLD = 30 * 60;
 
 function row(
-  projection: string,
+  projection: ProjectionRunResult['projection'],
   status: 'ok' | 'idle' | 'busy',
   lagBeforeSeconds: number,
-) {
-  return { projection, status, lagBeforeSeconds } as const;
+): Pick<ProjectionRunResult, 'projection' | 'status' | 'lagBeforeSeconds'> {
+  return { projection, status, lagBeforeSeconds };
 }
 
 describe('projector busy gate', () => {
