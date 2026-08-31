@@ -29,11 +29,24 @@ function getSyncerPool(): pg.Pool | null {
  * 它就变成一块盖住整个视口的透明浮层，点哪里都触发 history.back()。
  * 实测同一页面：主题 CSS 正常时 0x0 不拦截，主题 CSS 失败时 1216x639 且吃掉所有点击。
  *
- * 关键是把"能铺满视口"这个性质本身去掉：改成 absolute + inset:0，让它至多覆盖自己的
- * 定位包含块，而不是整个视口。仅靠"容器被 :target 激活"来控制显隐是不够的 ——
- * credit module 有 #u-credit-view 与 #u-credit-otherwise 两个模态框（后者见于 314 份
- * 缓存页面），而且有的主题用 class（.unfolded）而不是 :target 来开合。所以显隐规则
- * 用 [id^="u-credit"] 覆盖同族容器，定位规则则不依赖任何容器身份。
+ * 两条规则各管一件事：
+ *   display:none + [id^="u-credit"]:target  —— 只在模态框真的被打开时才让它存在。
+ *     必须用 [id^="u-credit"] 而不是单个 id：credit module 有 #u-credit-view 与
+ *     #u-credit-otherwise 两个模态框（后者见于 314 份缓存页面），只写前者会让后者的
+ *     "点背景关闭"在主题 CSS 正常的页面上失效 —— 那是比原 bug 更常见的回归。
+ *   position:absolute + inset:0            —— 打开时它填满自己的定位包含块
+ *     （模态容器），而不是像原来的 position:fixed 那样无条件铺满视口。
+ *
+ * 为什么不能干脆不依赖 :target、只靠几何约束：主题 CSS 里给背景定尺寸的规则是
+ *   [id*=u-credit] .fader, [id*=u-credit] .fader iframe { width:100vw; height:100% }
+ * —— 它只认 iframe，而我们已经把 iframe 换成了 div，所以主题根本不会给这个 div
+ * 任何尺寸；全屏背景一直是 MIRROR_CSS 自己提供的。试过改成"让 .fader 决定"，
+ * 结果是背景在主题正常的页面上直接消失（实测点开模态后不再可点关闭）。
+ *
+ * 已知残留：主题 CSS 失败且用户主动点开模态时，包含块退化为初始包含块，
+ * 捕获层仍会覆盖首屏 —— 但点一下就会 history.back() popping 掉 hash 而自愈，
+ * 不再是加载即锁死。另外查过缓存里的主题 CSS，没有用 class 开合 credit 模态的
+ * 写法（unfolded 的命中全是 collapsible-block），所以没有为此加投机性的选择器。
  *
  * 放在 BFF 出口而不是只改 syncer，是因为 PageContentCache 中已存的三万多份 HTML
  * 都已经定型，服务端注入可以立刻对存量缓存生效，无需重跑同步。

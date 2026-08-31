@@ -96,7 +96,10 @@ iframe[src*="backmodule"] { display: none !important; }
    （祖先容器不再被隐藏），它就盖住整个视口，整页点击都被它吃掉（触发 history.back()）。
    改成 absolute + inset:0，至多覆盖自己的定位包含块。
    显隐另外用 [id^="u-credit"] 兜一层：credit module 有 #u-credit-view 与
-   #u-credit-otherwise 两个模态框，不能只写其中一个。
+   #u-credit-otherwise 两个模态框，不能只写其中一个（后者见于 314 份缓存页面）。
+   注意不能干脆去掉 :target 只靠几何约束 —— 主题给背景定尺寸的规则只认 iframe
+   （[id*=u-credit] .fader iframe），而我们已经把 iframe 换成了 div，
+   全屏背景一直是这里自己提供的，去掉就等于把背景删了。
    BFF 的预览出口注入了同样的规则，用于已经存下来的历史 HTML。 */
 .fader-mirror {
   display: none;
