@@ -114,7 +114,7 @@ function withProxiedInlineAssets(html: string): string {
     .replace(
       /(\sstyle=")([^"]*)(")/gi,
       (all: string, open: string, value: string, close: string) =>
-        value.includes('url(') ? open + rewriteStyleAttribute(value, base, proxyPath) + close : all,
+        /url\(/i.test(value) ? open + rewriteStyleAttribute(value, base, proxyPath) + close : all,
     );
 }
 

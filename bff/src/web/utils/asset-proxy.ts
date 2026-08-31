@@ -46,8 +46,18 @@ export function isAlreadyProxyRef(raw: string): boolean {
   }
 }
 
+/**
+ * encodeURIComponent 不会转义 ( ) ' —— 但这三个字符必须转义：
+ * 无引号的 `url(...)` 里出现 `)` 会让 CSS 解析器提前结束该 token，
+ * 文件名带括号（wikidot 上很常见，例如 `image (1).png`）的图片就会整个失效。
+ * 额外转义不改变服务端 decodeURIComponent 的结果。
+ */
 export function toProxyHref(proxyPath: string, raw: string): string {
-  return `${proxyPath}?url=${encodeURIComponent(raw)}`;
+  const encoded = encodeURIComponent(raw)
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+    .replace(/'/g, '%27');
+  return `${proxyPath}?url=${encoded}`;
 }
 
 /**
@@ -71,21 +81,29 @@ export function rewriteAssetRef(rawUrl: string, base: URL, proxyPath: string): s
   }
 }
 
-/** 改写一段 CSS 里的 url() 与 @import */
+/**
+ * 改写一段 CSS 里的 url() 与 @import。
+ *
+ * url() 的取值按 CSS 语法分两种情况：带引号的可以包含括号（`url("image (1).png")`
+ * 是合法的），不带引号的则不允许出现裸括号与空白。用一个字符类同时对付两者会在
+ * 遇到第一个 `)` 时截断，导致这类引用整条匹配失败、被原样跳过。
+ */
 export function rewriteCssUrls(css: string, baseUrl: string | URL, proxyPath: string): string {
   const base = baseUrl instanceof URL ? baseUrl : new URL(baseUrl);
+  const rewrite = (raw: string) => rewriteAssetRef(raw, base, proxyPath);
+
   return css
-    .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_all, quote, rawUrl) => {
-      const rewritten = rewriteAssetRef(rawUrl, base, proxyPath);
-      return `url(${quote}${rewritten}${quote})`;
-    })
     .replace(
-      /@import\s+url\(\s*(["']?)([^"')]+)\1\s*\)/gi,
-      (_all, quote, rawUrl) =>
-        `@import url(${quote}${rewriteAssetRef(rawUrl, base, proxyPath)}${quote})`,
+      /url\(\s*(?:"([^"]*)"|'([^']*)'|([^"'()\s]*))\s*\)/gi,
+      (all, dq?: string, sq?: string, bare?: string) => {
+        if (dq !== undefined) return `url("${rewrite(dq)}")`;
+        if (sq !== undefined) return `url('${rewrite(sq)}')`;
+        if (bare !== undefined && bare !== '') return `url(${rewrite(bare)})`;
+        return all;
+      },
     )
     .replace(
       /@import\s+(["'])([^"']+)\1/gi,
-      (_all, quote, rawUrl) => `@import ${quote}${rewriteAssetRef(rawUrl, base, proxyPath)}${quote}`,
+      (_all, quote: string, rawUrl: string) => `@import ${quote}${rewrite(rawUrl)}${quote}`,
     );
 }

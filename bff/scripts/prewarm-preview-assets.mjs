@@ -63,17 +63,37 @@ const { rows } = await client.query(
 await client.end();
 console.log(`待扫描页面：${rows.length}`);
 
+/**
+ * 从预览 HTML 里取出所有代理资源。
+ *
+ * 不能简单地用字符黑名单去截断 —— 代理链接的 ?url= 参数里可能出现 ( ) '，
+ * 靠边界字符切会把 `image (1).png` 这类文件名截断。这里按承载它的语法结构来解析：
+ * HTML 属性看引号，CSS 的 url() 看括号/引号。
+ */
+function collectProxyTargets(html, into) {
+  const push = (raw) => {
+    const m = /[?&]url=([^&#]+)/.exec(raw);
+    if (!m) return;
+    try { into.add(decodeURIComponent(m[1])); } catch { /* 跳过坏链接 */ }
+  };
+  // href="..." / src="..."（含单引号写法）
+  for (const m of html.matchAll(/\b(?:href|src)=("([^"]*)"|'([^']*)')/gi)) {
+    const value = m[2] ?? m[3] ?? '';
+    if (value.includes('css-proxy')) push(value);
+  }
+  // CSS 的 url(...)：有引号就按引号取，无引号才退回到括号
+  for (const m of html.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/gi)) {
+    const value = m[1] ?? m[2] ?? m[3] ?? '';
+    if (value.includes('css-proxy')) push(value);
+  }
+}
+
 // ── 1. 收集资源清单 ──
 const assets = new Set();
 let scanned = 0;
 await pool(rows, PAGE_CONCURRENCY, async ({ wikidotId }) => {
   const res = await fetch(`${BASE}/pages/${wikidotId}/preview`);
-  if (res.ok) {
-    const html = await res.text();
-    for (const m of html.matchAll(/css-proxy\?url=([^"'\s)&]+)/gi)) {
-      try { assets.add(decodeURIComponent(m[1])); } catch { /* 跳过坏链接 */ }
-    }
-  }
+  if (res.ok) collectProxyTargets(await res.text(), assets);
   if (++scanned % 500 === 0) console.log(`  已扫描 ${scanned}/${rows.length}，累计资源 ${assets.size}`);
 });
 

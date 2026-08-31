@@ -46,6 +46,21 @@ describe('asset-proxy', () => {
     expect(once.match(/css-proxy/g)).toHaveLength(1);
   });
 
+  test('括号与单引号被额外转义，避免无引号 url() 被 CSS 解析器提前截断', () => {
+    const src = 'https://scp-wiki-cn.wdfiles.com/local--files/x/image (1).png';
+    const out = rewriteAssetRef(src, BASE, P);
+    expect(out).not.toMatch(/[()']/);
+    // 转义不能改变服务端解码结果
+    const decoded = decodeURIComponent(new URL(out).searchParams.get('url') as string);
+    expect(decoded).toBe(src);
+    // 带括号的文件名在 CSS 里必须写成带引号的形式（无引号 url() 不允许裸括号，
+    // 浏览器自己也会截断）。改写后的结果里除 url() 本身的一对括号外不应再有括号，
+    // 这样它无论落到 CSS、HTML 属性还是后续的提取脚本里都不会被切断。
+    const css = rewriteCssUrls(`a{background:url("${src}")}`, BASE, P);
+    expect(css.match(/\(/g)).toHaveLength(1);
+    expect(css.match(/\)/g)).toHaveLength(1);
+  });
+
   test('@import 与 url() 都会被改写', () => {
     const css = [
       '@import url("https://sigma9.scpwikicn.com/a.css");',

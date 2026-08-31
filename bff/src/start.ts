@@ -62,6 +62,10 @@ export async function createServer() {
     legacyHeaders: false,
     message: { error: 'too_many_requests' },
     skip: (req) => {
+      // 本机发起的请求不限流：app 设了 trust proxy:1，经 nginx 进来的请求 req.ip
+      // 一定是真实客户端地址，只有本机脚本（如资源预热）才会落到回环地址上
+      const ip = String(req.ip || '').replace(/^::ffff:/, '');
+      if (ip === '127.0.0.1' || ip === '::1') return true;
       const p = req.path;
       return p === '/healthz' || p.startsWith('/internal') || p.startsWith('/avatar')
         || p.startsWith('/tracking/pixel');

@@ -26,6 +26,7 @@ const CACHED_HTML = [
   '</style>',
   '</head><body id="html-body">',
   '<div style="background:url(&quot;http://scp-wiki.wdfiles.com/local--files/x/d.png&quot;)">正文</div>',
+  '<div style="background:URL(https://scp-wiki.wdfiles.com/local--files/x/e.png)">大写</div>',
   '</body></html>'
 ].join('');
 
@@ -77,6 +78,9 @@ describe('page preview viewport', () => {
 
     // style="" 属性里被 HTML 实体包裹的 url() 也要正确改写，且实体要保留
     expect(body).toContain(`&quot;${PROXY}?url=${enc('http://scp-wiki.wdfiles.com/local--files/x/d.png')}&quot;`);
+
+    // CSS 函数名大小写不敏感，URL() 也要改写
+    expect(body).toContain(`${PROXY}?url=${enc('https://scp-wiki.wdfiles.com/local--files/x/e.png')}`);
 
     // 已经是代理链接的不被二次包装
     expect(body).toContain(`${PROXY}?url=interwiki`);
