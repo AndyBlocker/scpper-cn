@@ -36,69 +36,109 @@ function cacheKeyFor(url: string): string {
 
 type CachedEntry = { contentType: string; body: Buffer; fresh: boolean };
 
-function readFromDisk(url: string): CachedEntry | null {
+/**
+ * 读缓存。全程异步 —— 缓存命中是最热的路径（且刻意不受限流约束），
+ * 单进程的 BFF 在这里做同步读会把事件循环卡住，一张图最大 8MB。
+ */
+async function readFromDisk(url: string): Promise<CachedEntry | null> {
   if (!DISK_CACHE_ENABLED) return null;
   const key = cacheKeyFor(url);
   const metaPath = path.join(DISK_CACHE_DIR, key + '.meta');
   const dataPath = path.join(DISK_CACHE_DIR, key + '.data');
   try {
-    if (!fs.existsSync(metaPath) || !fs.existsSync(dataPath)) return null;
-    const stat = fs.statSync(metaPath);
-    const contentType = fs.readFileSync(metaPath, 'utf-8').trim();
-    const body = fs.readFileSync(dataPath);
-    return { contentType, body, fresh: Date.now() - stat.mtimeMs <= DISK_CACHE_FRESH_MS };
+    const [stat, contentType, body] = await Promise.all([
+      fsp.stat(metaPath),
+      fsp.readFile(metaPath, 'utf-8'),
+      fsp.readFile(dataPath),
+    ]);
+    return {
+      contentType: contentType.trim(),
+      body,
+      fresh: Date.now() - stat.mtimeMs <= DISK_CACHE_FRESH_MS,
+    };
   } catch {
     return null;
   }
 }
 
-function writeToDisk(url: string, contentType: string, body: Buffer | string): void {
+/**
+ * 写缓存。
+ *
+ * 必须先写临时文件再 rename：后台回源会覆盖正在被其他请求读取的条目，
+ * 直接原地截断重写的话，读到一半的请求会拿到残缺内容，还会带着
+ * `public, max-age=3600` 进浏览器缓存待上一小时。rename 在同一文件系统上是原子的。
+ * 顺序也重要 —— 先落 .data 再落 .meta，readFromDisk 以 .meta 为准。
+ */
+async function writeToDisk(url: string, contentType: string, body: Buffer | string): Promise<void> {
   if (!DISK_CACHE_ENABLED) return;
   const key = cacheKeyFor(url);
+  const dataTmp = path.join(DISK_CACHE_DIR, `${key}.${process.pid}.tmp`);
+  const metaTmp = path.join(DISK_CACHE_DIR, `${key}.${process.pid}.meta.tmp`);
   try {
-    // Write .data first, then .meta — readFromDisk checks .meta existence,
-    // so if .data write fails we won't serve stale content.
-    fs.writeFileSync(path.join(DISK_CACHE_DIR, key + '.data'), body);
-    fs.writeFileSync(path.join(DISK_CACHE_DIR, key + '.meta'), contentType, 'utf-8');
-  } catch { /* ignore write errors */ }
+    await fsp.writeFile(dataTmp, body);
+    await fsp.rename(dataTmp, path.join(DISK_CACHE_DIR, key + '.data'));
+    await fsp.writeFile(metaTmp, contentType, 'utf-8');
+    await fsp.rename(metaTmp, path.join(DISK_CACHE_DIR, key + '.meta'));
+  } catch {
+    await fsp.rm(dataTmp, { force: true }).catch(() => {});
+    await fsp.rm(metaTmp, { force: true }).catch(() => {});
+  }
 }
 
-/** 记一次命中，让 LRU 能识别热条目（只动 .data 的 atime，不影响 .meta 的新鲜度判断） */
+/** 记一次命中，让 LRU 能识别热条目。发出去就不管了，不阻塞响应 */
 function touchOnDisk(url: string): void {
   if (!DISK_CACHE_ENABLED) return;
   const dataPath = path.join(DISK_CACHE_DIR, cacheKeyFor(url) + '.data');
-  const now = new Date();
-  try { fs.utimesSync(dataPath, now, fs.statSync(dataPath).mtime); } catch { /* ignore */ }
+  void (async () => {
+    try {
+      const stat = await fsp.stat(dataPath);
+      await fsp.utimes(dataPath, new Date(), stat.mtime);
+    } catch { /* 条目可能刚被淘汰 */ }
+  })();
 }
 
 // 按容量上限做 LRU 淘汰（不再按年龄删除 —— 见上面的缓存策略说明）
 async function sweepDiskCache(): Promise<void> {
-  {
-    try {
-      const names = await fsp.readdir(DISK_CACHE_DIR);
-      const items: Array<{ key: string; bytes: number; atimeMs: number }> = [];
-      let total = 0;
-      for (const name of names) {
-        if (!name.endsWith('.data')) continue;
-        const key = name.replace(/\.data$/, '');
-        try {
-          const stat = await fsp.stat(path.join(DISK_CACHE_DIR, name));
-          items.push({ key, bytes: stat.size, atimeMs: stat.atimeMs });
-          total += stat.size;
-        } catch { /* ignore per-file errors */ }
+  try {
+    const names = await fsp.readdir(DISK_CACHE_DIR);
+    const dataKeys = new Set<string>();
+    const items: Array<{ key: string; bytes: number; atimeMs: number }> = [];
+    let total = 0;
+
+    for (const name of names) {
+      // 清理中断留下的临时文件
+      if (name.endsWith('.tmp')) {
+        await fsp.rm(path.join(DISK_CACHE_DIR, name), { force: true }).catch(() => {});
+        continue;
       }
-      if (total <= DISK_CACHE_MAX_BYTES) return;
-      // 最久未访问的先淘汰，直到回到上限的 90%
-      const target = DISK_CACHE_MAX_BYTES * 0.9;
-      items.sort((a, b) => a.atimeMs - b.atimeMs);
-      for (const item of items) {
-        if (total <= target) break;
-        await fsp.rm(path.join(DISK_CACHE_DIR, item.key + '.data'), { force: true });
-        await fsp.rm(path.join(DISK_CACHE_DIR, item.key + '.meta'), { force: true });
-        total -= item.bytes;
-      }
-    } catch { /* ignore sweep errors */ }
-  }
+      if (!name.endsWith('.data')) continue;
+      const key = name.replace(/\.data$/, '');
+      dataKeys.add(key);
+      try {
+        const stat = await fsp.stat(path.join(DISK_CACHE_DIR, name));
+        items.push({ key, bytes: stat.size, atimeMs: stat.atimeMs });
+        total += stat.size;
+      } catch { /* ignore per-file errors */ }
+    }
+
+    // 回收没有对应 .data 的孤儿 .meta（写入中途失败会留下）
+    for (const name of names) {
+      if (!name.endsWith('.meta')) continue;
+      if (dataKeys.has(name.replace(/\.meta$/, ''))) continue;
+      await fsp.rm(path.join(DISK_CACHE_DIR, name), { force: true }).catch(() => {});
+    }
+
+    if (total <= DISK_CACHE_MAX_BYTES) return;
+    // 最久未访问的先淘汰，直到回到上限的 90%
+    const target = DISK_CACHE_MAX_BYTES * 0.9;
+    items.sort((a, b) => a.atimeMs - b.atimeMs);
+    for (const item of items) {
+      if (total <= target) break;
+      await fsp.rm(path.join(DISK_CACHE_DIR, item.key + '.data'), { force: true });
+      await fsp.rm(path.join(DISK_CACHE_DIR, item.key + '.meta'), { force: true });
+      total -= item.bytes;
+    }
+  } catch { /* ignore sweep errors */ }
 }
 
 if (DISK_CACHE_ENABLED) {
@@ -113,8 +153,15 @@ const DEFAULT_CACHE_CONTROL =
 const MAX_REDIRECTS = 5;
 /** 单个资源体积上限；SCP 正文里的大幅插图经常超过 2MB */
 const MAX_RESPONSE_SIZE = Number(process.env.CSS_PROXY_MAX_RESPONSE_BYTES || 8 * 1024 * 1024);
-/** 回源超时 —— 上游不可达时会一直挂着，必须掐断，否则连接被拖死 */
+/**
+ * 回源超时分两段。
+ *
+ * 不能只用一个 AbortSignal.timeout()：它同时管住响应体的下载，10 秒一到连正在
+ * 传输的数据也会被掐断 —— 对慢链路上的大图（正是把上限提到 8MB 想救的那些）
+ * 等于必然失败。所以握手/响应头一个短超时，拿到响应头后换成一个宽松的整体超时。
+ */
 const UPSTREAM_TIMEOUT_MS = Number(process.env.CSS_PROXY_UPSTREAM_TIMEOUT_MS || 10_000);
+const UPSTREAM_BODY_TIMEOUT_MS = Number(process.env.CSS_PROXY_BODY_TIMEOUT_MS || 60_000);
 const RATE_WINDOW_MS = 60_000;
 // 限流只作用于真正需要回源的请求（缓存命中不计数）。
 // 一个预览页要拉 13~15 个资源，旧的 60/min 意味着看四个页面就全被 429 掉。
@@ -180,6 +227,23 @@ function requestWantsCss(req: Request, url: string): boolean {
   return /\/local--code\//i.test(url);
 }
 
+// 响应体超时定时器要跟着响应走，读完或丢弃时才清掉
+const bodyTimers = new WeakMap<globalThis.Response, ReturnType<typeof setTimeout>>();
+
+function clearBodyTimer(response: globalThis.Response): void {
+  const timer = bodyTimers.get(response);
+  if (timer) {
+    clearTimeout(timer);
+    bodyTimers.delete(response);
+  }
+}
+
+/** 提前返回时丢弃响应体，否则 undici 会一直占着这条连接直到 GC */
+async function discard(response: globalThis.Response): Promise<void> {
+  clearBodyTimer(response);
+  try { await response.body?.cancel(); } catch { /* 已消费或已关闭 */ }
+}
+
 async function fetchAllowedUpstream(inputUrl: string): Promise<globalThis.Response> {
   let currentUrl = inputUrl;
 
@@ -188,20 +252,31 @@ async function fetchAllowedUpstream(inputUrl: string): Promise<globalThis.Respon
       throw new Error(`Redirected to disallowed URL`);
     }
 
-    const upstream = await fetch(currentUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; scpper-css-proxy/1.0)',
-        Accept: '*/*',
-      },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+    const controller = new AbortController();
+    const headersTimer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    let upstream: globalThis.Response;
+    try {
+      upstream = await fetch(currentUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; scpper-css-proxy/1.0)',
+          Accept: '*/*',
+        },
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(headersTimer);
+    }
+    // 响应头已到，改成给整个响应体一个宽松的上限
+    const bodyTimer = setTimeout(() => controller.abort(), UPSTREAM_BODY_TIMEOUT_MS);
+    bodyTimers.set(upstream, bodyTimer);
 
     if (![301, 302, 303, 307, 308].includes(upstream.status)) {
       return upstream;
     }
 
     const location = upstream.headers.get('location');
+    await discard(upstream);
     if (!location) {
       throw new Error(`Redirect response missing location header`);
     }
@@ -273,33 +348,40 @@ async function fetchAndStore(url: string, proxyPath: string): Promise<FetchResul
 
     const declaredLength = Number(upstream.headers.get('content-length'));
     if (declaredLength && declaredLength > MAX_RESPONSE_SIZE) {
+      await discard(upstream);
       return { ok: false, reason: 'Upstream response too large', status: 502 };
     }
 
     if (!upstream.ok) {
-      return { ok: false, reason: `Upstream returned ${upstream.status}`, status: upstream.status };
+      const status = upstream.status;
+      await discard(upstream);
+      return { ok: false, reason: `Upstream returned ${status}`, status };
     }
 
     const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
     const finalUrl = upstream.url || url;
     if (!isAllowedUrl(finalUrl)) {
+      await discard(upstream);
       return { ok: false, reason: 'Disallowed final URL', status: 502 };
     }
 
     if (contentType.includes('text/html')) {
+      await discard(upstream);
       return { ok: false, reason: 'Upstream returned text/html instead of CSS', status: 502 };
     }
 
     if (contentType.includes('text/css') || contentType.includes('/css')) {
       let css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
+      clearBodyTimer(upstream);
       css = rewriteCssUrls(css, finalUrl, proxyPath);
-      writeToDisk(url, 'text/css; charset=utf-8', css);
+      await writeToDisk(url, 'text/css; charset=utf-8', css);
       return { ok: true, contentType: 'text/css; charset=utf-8', body: css };
     }
 
     const buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
+    clearBodyTimer(upstream);
     const finalContentType = contentType || 'application/octet-stream';
-    writeToDisk(url, finalContentType, buf);
+    await writeToDisk(url, finalContentType, buf);
     return { ok: true, contentType: finalContentType, body: buf };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -351,7 +433,7 @@ export function cssProxyRouter() {
 
     // 缓存优先：命中就直接吐，不占限流额度。
     // 限流的目的是保护上游和本机出口带宽，命中缓存的请求两者都不消耗。
-    const cached = readFromDisk(url);
+    const cached = await readFromDisk(url);
     if (cached) {
       touchOnDisk(url);
       if (!cached.fresh) {

@@ -27,6 +27,8 @@ const CACHED_HTML = [
   '</head><body id="html-body">',
   '<div style="background:url(&quot;http://scp-wiki.wdfiles.com/local--files/x/d.png&quot;)">正文</div>',
   '<div style="background:URL(https://scp-wiki.wdfiles.com/local--files/x/e.png)">大写</div>',
+  '<div style="background:url(&#x27;https://scp-wiki.wdfiles.com/local--files/x/f.png&#x27;)">十六进制实体</div>',
+  '<div style="background:url(&quot;https://scp-wiki.wdfiles.com/local--files/x/g.png&quot;);content:&nbsp;">未处理实体</div>',
   '</body></html>'
 ].join('');
 
@@ -81,6 +83,12 @@ describe('page preview viewport', () => {
 
     // CSS 函数名大小写不敏感，URL() 也要改写
     expect(body).toContain(`${PROXY}?url=${enc('https://scp-wiki.wdfiles.com/local--files/x/e.png')}`);
+
+    // 数字实体（&#x27;）也要正确解码，不能把实体本身吃进 URL
+    expect(body).toContain(`${PROXY}?url=${enc('https://scp-wiki.wdfiles.com/local--files/x/f.png')}`);
+    expect(body).not.toMatch(/url=[^"'\s)]*%26%23x27/i);
+    // 解码后不得残留被二次编码的实体
+    expect(body).not.toContain('&amp;#x27;');
 
     // 已经是代理链接的不被二次包装
     expect(body).toContain(`${PROXY}?url=interwiki`);

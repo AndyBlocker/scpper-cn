@@ -65,11 +65,24 @@ const PROXY_PATH_SUFFIX = '/api/css-proxy';
  * 因为文档里注入了 <base href="wikidot">，相对路径会被解析到 wikidot 去。
  * 这里直接从文档里认出已有的前缀，跟着它走，避免 BFF 再配一份镜像域名。
  */
+let warnedMissingProxyPath = false;
+
 function detectProxyPath(html: string): string | null {
   const found = html.match(/https?:\/\/[^"'\s)]+?\/api\/css-proxy(?=\?)/i);
   if (found) return found[0];
   const origin = process.env.MIRROR_ORIGIN || '';
-  return origin ? origin.replace(/\/+$/, '') + PROXY_PATH_SUFFIX : null;
+  if (origin) return origin.replace(/\/+$/, '') + PROXY_PATH_SUFFIX;
+  // 认不出前缀就只能整段跳过改写。这种情况下预览里的图片会退回直连源站，
+  // 静默失效很难察觉，所以至少提醒一次。
+  if (!warnedMissingProxyPath) {
+    warnedMissingProxyPath = true;
+    console.warn(
+      '[page-preview] 无法确定 css-proxy 的绝对前缀，内联 CSS 的资源改写已跳过。' +
+      '缓存 HTML 里没有绝对形式的代理链接（syncer 存储时 MIRROR_ORIGIN 为空），' +
+      '请给 BFF 配置 MIRROR_ORIGIN。',
+    );
+  }
+  return null;
 }
 
 function detectBaseHref(html: string): string {
@@ -77,12 +90,34 @@ function detectBaseHref(html: string): string {
   return found?.[1] || DEFAULT_WIKI_BASE;
 }
 
-/** style="" 属性里的 CSS 会经过 HTML 实体解码，改写前后要跟着转换 */
+const NAMED_ENTITIES: Record<string, string> = {
+  quot: '"', apos: "'", amp: '&', lt: '<', gt: '>', nbsp: '\u00a0',
+};
+
+/**
+ * style="" 属性里的 CSS 会先经过 HTML 实体解码，所以改写前要解码、改写后要重新编码。
+ *
+ * 关键是"解码得彻底"：如果只认识一部分实体却无条件把 & 重新编码成 &amp;，
+ * 没被解码的实体（比如 &#x27;）会被 rewriteCssUrls 当成 URL 的一部分吃进去，
+ * 解析成 https://…/&#x27;https:/… 这种垃圾，把本来能正常显示的图片改坏。
+ * 这里数字实体与常见命名实体都解码；遇到不认识的实体就整段放弃改写，宁可不动。
+ */
 function rewriteStyleAttribute(value: string, base: string, proxyPath: string): string {
-  const decoded = value
-    .replace(/&quot;|&#34;/gi, '"')
-    .replace(/&apos;|&#39;/gi, "'")
-    .replace(/&amp;/gi, '&');
+  let unknown = false;
+  const decoded = value.replace(/&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g, (all, body: string) => {
+    if (body.startsWith('#')) {
+      const code = body[1] === 'x' || body[1] === 'X'
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : all;
+    }
+    const named = NAMED_ENTITIES[body.toLowerCase()];
+    if (named !== undefined) return named;
+    unknown = true;
+    return all;
+  });
+  if (unknown) return value;
+
   const rewritten = rewriteCssUrls(decoded, base, proxyPath);
   return rewritten.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
