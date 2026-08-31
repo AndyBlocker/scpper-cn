@@ -71,18 +71,33 @@ const PROXY_PATH_SUFFIX = '/api/css-proxy';
  */
 let warnedMissingProxyPath = false;
 
+/** 只取 <head> 区域 —— <body> 里是用户投稿的正文，不能当作可信输入 */
+function headRegion(html: string): string {
+  const end = html.search(/<\/head\s*>|<body\b/i);
+  return end === -1 ? html.slice(0, 8192) : html.slice(0, end);
+}
+
 function detectProxyPath(html: string): string | null {
-  const found = html.match(/https?:\/\/[^"'\s)]+?\/api\/css-proxy(?=\?)/i);
-  if (found) return found[0];
+  // 配了环境变量就以它为准，不去猜
   const origin = process.env.MIRROR_ORIGIN || '';
   if (origin) return origin.replace(/\/+$/, '') + PROXY_PATH_SUFFIX;
-  // 认不出前缀就只能整段跳过改写。这种情况下预览里的图片会退回直连源站，
+
+  // 回退：从 <head> 里已有的 <link href> / <script src> 认出前缀。
+  // 必须同时限制在 head 内、且限制在属性值里 —— 早先的实现扫描整份文档，
+  // 而 SCP 页面正文是用户投稿的：只要在正文里写一句
+  // https://evil.example/api/css-proxy?x 且排在合法链接前面，
+  // 这一页所有内联 CSS 资源都会被劫持到攻击者的域，泄露访问者 IP/UA。
+  const head = headRegion(html);
+  for (const m of head.matchAll(/\b(?:href|src)="(https?:\/\/[^"]+?\/api\/css-proxy)\?/gi)) {
+    return m[1];
+  }
+
+  // 认不出前缀就整段跳过改写。这种情况下预览里的图片会退回直连源站，
   // 静默失效很难察觉，所以至少提醒一次。
   if (!warnedMissingProxyPath) {
     warnedMissingProxyPath = true;
     console.warn(
       '[page-preview] 无法确定 css-proxy 的绝对前缀，内联 CSS 的资源改写已跳过。' +
-      '缓存 HTML 里没有绝对形式的代理链接（syncer 存储时 MIRROR_ORIGIN 为空），' +
       '请给 BFF 配置 MIRROR_ORIGIN。',
     );
   }
@@ -90,8 +105,15 @@ function detectProxyPath(html: string): string | null {
 }
 
 function detectBaseHref(html: string): string {
-  const found = html.match(/<base\b[^>]*\bhref="([^"]+)"/i);
-  return found?.[1] || DEFAULT_WIKI_BASE;
+  // 同样只认 <head> 里的 <base>，正文里写的不算
+  const found = headRegion(html).match(/<base\b[^>]*\bhref="([^"]+)"/i);
+  const value = found?.[1] || DEFAULT_WIKI_BASE;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : DEFAULT_WIKI_BASE;
+  } catch {
+    return DEFAULT_WIKI_BASE;
+  }
 }
 
 const NAMED_ENTITIES: Record<string, string> = {

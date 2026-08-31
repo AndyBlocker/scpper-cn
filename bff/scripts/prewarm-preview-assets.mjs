@@ -101,8 +101,10 @@ function collectProxyTargets(html, into) {
     const value = m[2] ?? m[3] ?? '';
     if (value.includes('css-proxy')) push(value);
   }
-  // CSS 的 url(...)：有引号就按引号取，无引号才退回到括号
-  for (const m of html.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/gi)) {
+  // CSS 的 url(...)：有引号就按引号取；无引号时允许成对的括号，
+  // 因为 syncer 生成的代理链接用的是裸 encodeURIComponent，不转义 ( )，
+  // 直接切到第一个 ) 会把 `image (1).png` 这类文件名截断
+  for (const m of html.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^()]*(?:\([^()]*\)[^()]*)*))\s*\)/gi)) {
     const value = m[1] ?? m[2] ?? m[3] ?? '';
     if (value.includes('css-proxy')) push(value);
   }

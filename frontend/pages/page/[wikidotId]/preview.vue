@@ -122,6 +122,9 @@ useHead({
   /* --preview-height 由 syncPreviewHeight() 在客户端量出（它自己会钳到最小高度）；
      兜底值给 SSR 首帧用，扣掉 header/内边距/footer 的大致高度 */
   height: var(--preview-height, calc(100vh - 240px));
+  /* 与 MIN_PREVIEW_HEIGHT 保持一致。这里不能省：hydration 之前以及脚本执行失败时
+     只有兜底值生效，矮屏（例如 500px 高的横屏手机）会被压到 260px */
+  min-height: 420px;
 }
 
 .preview-header {

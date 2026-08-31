@@ -89,6 +89,10 @@ async function writeToDisk(url: string, contentType: string, body: Buffer | stri
   } catch {
     await fsp.rm(dataTmp, { force: true }).catch(() => {});
     await fsp.rm(metaTmp, { force: true }).catch(() => {});
+    // .data 换新了但 .meta 没跟上的话，条目会用旧 Content-Type 描述新内容
+    // （比如把图片标成 text/css），而且 meta 的 mtime 没动会永远算作陈旧。
+    // 直接把 .meta 删掉让整条失效，下次请求重新回源。
+    await fsp.rm(path.join(DISK_CACHE_DIR, key + '.meta'), { force: true }).catch(() => {});
   }
 }
 
@@ -197,10 +201,13 @@ const RATE_WINDOW_MS = 60_000;
 // 限流只作用于真正需要回源的请求（缓存命中不计数）。
 // 一个预览页要拉 13~15 个资源，旧的 60/min 意味着看四个页面就全被 429 掉。
 const RATE_MAX_PER_IP = Number(process.env.CSS_PROXY_RATE_MAX || 300);
+// 光数请求数挡不住体积：300 次 × 8MB 理论上能拉出 2.4GB/分钟的回源流量，
+// 足以在十来分钟内把 20GB 的缓存冲刷一遍、把预热好的条目挤掉。再加一道字节预算。
+const RATE_MAX_BYTES_PER_IP = Number(process.env.CSS_PROXY_RATE_MAX_BYTES || 256 * 1024 * 1024);
 const RATE_BUCKETS_MAX_SIZE = 10_000;
 
 // Simple in-memory per-IP rate limiter
-const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+const rateBuckets = new Map<string, { count: number; bytes: number; resetAt: number }>();
 
 function isRateLimited(ip: string): boolean {
   const now = Date.now();
@@ -210,11 +217,17 @@ function isRateLimited(ip: string): boolean {
     if (!bucket && rateBuckets.size >= RATE_BUCKETS_MAX_SIZE) {
       return true;
     }
-    rateBuckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    rateBuckets.set(ip, { count: 1, bytes: 0, resetAt: now + RATE_WINDOW_MS });
     return false;
   }
   bucket.count += 1;
-  return bucket.count > RATE_MAX_PER_IP;
+  return bucket.count > RATE_MAX_PER_IP || bucket.bytes > RATE_MAX_BYTES_PER_IP;
+}
+
+/** 回源实际取回的字节数计入该 IP 的预算 */
+function noteUpstreamBytes(ip: string, bytes: number): void {
+  const bucket = rateBuckets.get(ip);
+  if (bucket && Date.now() < bucket.resetAt) bucket.bytes += bytes;
 }
 
 // Periodic cleanup to prevent memory leak
@@ -401,15 +414,29 @@ async function fetchAndStore(url: string, proxyPath: string): Promise<FetchResul
       return { ok: false, reason: 'Upstream returned text/html instead of CSS', status: 502 };
     }
 
+    // 读取过程本身可能抛（超出体积上限、连接中断），
+    // 这时同样要丢弃响应体并清掉 60 秒的 body 定时器，否则连接会一直被占着
     if (contentType.includes('text/css') || contentType.includes('/css')) {
-      let css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
+      let css: string;
+      try {
+        css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
+      } catch (err) {
+        await discard(upstream);
+        throw err;
+      }
       clearBodyTimer(upstream);
       css = rewriteCssUrls(css, finalUrl, proxyPath);
       await writeToDisk(url, 'text/css; charset=utf-8', css);
       return { ok: true, contentType: 'text/css; charset=utf-8', body: css };
     }
 
-    const buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
+    let buf: Buffer;
+    try {
+      buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
+    } catch (err) {
+      await discard(upstream);
+      throw err;
+    }
     clearBodyTimer(upstream);
     const finalContentType = contentType || 'application/octet-stream';
     await writeToDisk(url, finalContentType, buf);
@@ -489,6 +516,7 @@ export function cssProxyRouter() {
     const result = await fetchAndStore(url, proxyPath);
 
     if (result.ok) {
+      noteUpstreamBytes(clientIp, Buffer.byteLength(result.body as Buffer));
       setHeaders(res, result.contentType, DEFAULT_CACHE_CONTROL);
       return res.status(200).send(result.body);
     }

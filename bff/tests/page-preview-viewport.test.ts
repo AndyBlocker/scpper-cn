@@ -103,4 +103,33 @@ describe('page preview viewport', () => {
     expect(body).toContain(`${PROXY}?url=interwiki`);
     expect(body).not.toMatch(/css-proxy\?url=[^"'\s)]*css-proxy/i);
   });
+
+  // 回归：head 里没有可用的代理前缀，正文里却有一个伪造的。
+  // 旧实现在整份文档里找第一个匹配，会采信正文里这条，把该页所有内联 CSS
+  // 资源劫持到攻击者的域上（泄露访问者 IP/UA）。正文是用户投稿内容，不可信。
+  test('不采信正文里伪造的代理前缀与 <base>', async () => {
+    const hostile = [
+      '<!DOCTYPE html><html><head><base href="https://scp-wiki-cn.wikidot.com/"></head>',
+      '<body id="html-body">',
+      '<p>https://evil.example/api/css-proxy?url=pwn</p>',
+      '<base href="https://evil.example/">',
+      '<div style="background:url(https://scp-wiki.wdfiles.com/local--files/x/z.png)"></div>',
+      '</body></html>',
+    ].join('');
+
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ fullname: 'scp-1449' }] })
+      .mockResolvedValueOnce({ rows: [{ full_page_html: hostile }] });
+
+    const { createServer } = await import('../src/start');
+    const app = await createServer();
+    const body = (await request(app).get('/pages/21558311/preview').expect(200)).text;
+
+    // 绝不能拿攻击者的域去构造代理链接
+    expect(body).not.toContain('evil.example/api/css-proxy?url=https');
+    // 认不出可信前缀时应整段跳过改写，原样保留
+    expect(body).toContain('url(https://scp-wiki.wdfiles.com/local--files/x/z.png)');
+    // 视口解锁仍然要注入
+    expect(body).toContain('scpper-preview-viewport-unlock');
+  });
 });
