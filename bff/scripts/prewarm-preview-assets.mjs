@@ -37,19 +37,39 @@ if (!SYNCER_DB_URL) {
   process.exit(1);
 }
 
+// 带内部密钥，避免占用面向公网的限流额度（见 bff/src/web/utils/internal-key.ts）
+const INTERNAL_KEY = (process.env.BFF_INTERNAL_API_KEY || '').trim();
+if (!INTERNAL_KEY) {
+  console.warn('警告：BFF_INTERNAL_API_KEY 未配置，预热请求会占用公网限流额度并很快被 429');
+}
+const HEADERS = INTERNAL_KEY ? { 'x-internal-key': INTERNAL_KEY } : {};
+
+/** 读完或丢弃响应体，否则 Node 的 fetch 无法回收连接，并发上限会形同虚设 */
+async function drain(res) {
+  try { await res.body?.cancel(); } catch { /* 已被消费或已关闭 */ }
+}
+
 const isCached = (url) =>
   fs.existsSync(path.join(CACHE_DIR, createHash('sha256').update(url).digest('hex') + '.meta'));
 
-/** 以固定并发跑完一批任务 */
+/** 以固定并发跑完一批任务，返回抛错的条数（不能静默吞掉：BFF 挂了要能看出来） */
 async function pool(items, concurrency, worker) {
   let cursor = 0;
+  let errors = 0;
+  let firstError = null;
   const runners = Array.from({ length: Math.max(1, concurrency) }, async () => {
     while (cursor < items.length) {
       const item = items[cursor++];
-      try { await worker(item); } catch { /* 单条失败不影响整体 */ }
+      try {
+        await worker(item);
+      } catch (err) {
+        errors += 1;
+        firstError ??= err;
+      }
     }
   });
   await Promise.all(runners);
+  return { errors, firstError };
 }
 
 const client = new pg.Client({ connectionString: SYNCER_DB_URL });
@@ -91,11 +111,21 @@ function collectProxyTargets(html, into) {
 // ── 1. 收集资源清单 ──
 const assets = new Set();
 let scanned = 0;
-await pool(rows, PAGE_CONCURRENCY, async ({ wikidotId }) => {
-  const res = await fetch(`${BASE}/pages/${wikidotId}/preview`);
+let scanFailed = 0;
+const scan = await pool(rows, PAGE_CONCURRENCY, async ({ wikidotId }) => {
+  const res = await fetch(`${BASE}/pages/${wikidotId}/preview`, { headers: HEADERS });
   if (res.ok) collectProxyTargets(await res.text(), assets);
+  else { scanFailed += 1; await drain(res); }
   if (++scanned % 500 === 0) console.log(`  已扫描 ${scanned}/${rows.length}，累计资源 ${assets.size}`);
 });
+if (scan.errors) {
+  console.warn(`扫描阶段有 ${scan.errors} 个页面请求抛错，首个错误：${scan.firstError?.message || scan.firstError}`);
+}
+if (scanFailed) console.warn(`扫描阶段有 ${scanFailed} 个页面返回非 2xx`);
+if (assets.size === 0) {
+  console.error('没有提取到任何资源 —— 请确认 BFF 正在运行且 --base 指向正确');
+  process.exit(1);
+}
 
 const all = [...assets];
 const missing = all.filter((u) => !isCached(u));
@@ -108,12 +138,18 @@ if (DRY_RUN) {
 
 // ── 2. 逐个走一遍 css-proxy，让服务端按自己的规则抓取并落盘 ──
 let ok = 0, failed = 0, done = 0;
-await pool(missing, ASSET_CONCURRENCY, async (url) => {
-  const res = await fetch(`${BASE}/css-proxy?url=${encodeURIComponent(url)}`);
+const run = await pool(missing, ASSET_CONCURRENCY, async (url) => {
+  const res = await fetch(`${BASE}/css-proxy?url=${encodeURIComponent(url)}`, { headers: HEADERS });
+  await drain(res);
   // 回源失败时 CSS 会以注释形式软失败，用是否真的落盘来判定成功与否
   if (res.ok && isCached(url)) ok++; else failed++;
   if (++done % 200 === 0) console.log(`  已处理 ${done}/${missing.length}（成功 ${ok} / 失败 ${failed}）`);
 });
+failed += run.errors;
+if (run.errors) {
+  console.warn(`抓取阶段有 ${run.errors} 个请求抛错，首个错误：${run.firstError?.message || run.firstError}`);
+}
 
 console.log(`\n完成：新抓取 ${ok}，失败 ${failed}`);
 if (failed) console.log('失败多半是上游 wikidot / wdfiles 当前不可达，链路恢复后重跑即可。');
+if (ok === 0 && failed > 0) process.exit(1);

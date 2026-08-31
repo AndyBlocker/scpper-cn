@@ -8,6 +8,7 @@ import {
   isAllowedUrl,
   rewriteCssUrls,
 } from '../utils/asset-proxy.js';
+import { hasInternalKey } from '../utils/internal-key.js';
 
 // ── Disk cache ──
 //
@@ -70,9 +71,9 @@ function touchOnDisk(url: string): void {
   try { fs.utimesSync(dataPath, now, fs.statSync(dataPath).mtime); } catch { /* ignore */ }
 }
 
-// 周期性按容量上限做 LRU 淘汰（不再按年龄删除 —— 见上面的缓存策略说明）
-if (DISK_CACHE_ENABLED) {
-  setInterval(async () => {
+// 按容量上限做 LRU 淘汰（不再按年龄删除 —— 见上面的缓存策略说明）
+async function sweepDiskCache(): Promise<void> {
+  {
     try {
       const names = await fsp.readdir(DISK_CACHE_DIR);
       const items: Array<{ key: string; bytes: number; atimeMs: number }> = [];
@@ -97,7 +98,14 @@ if (DISK_CACHE_ENABLED) {
         total -= item.bytes;
       }
     } catch { /* ignore sweep errors */ }
-  }, DISK_CACHE_CLEANUP_INTERVAL_MS).unref();
+  }
+}
+
+if (DISK_CACHE_ENABLED) {
+  // 启动后先扫一次：setInterval 要等满一个周期才首次触发，
+  // 而一轮资源预热可能在这一个小时里就把容量写超。
+  setTimeout(() => { void sweepDiskCache(); }, 30_000).unref();
+  setInterval(() => { void sweepDiskCache(); }, DISK_CACHE_CLEANUP_INTERVAL_MS).unref();
 }
 
 const DEFAULT_CACHE_CONTROL =
@@ -116,20 +124,7 @@ const RATE_BUCKETS_MAX_SIZE = 10_000;
 // Simple in-memory per-IP rate limiter
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
-/**
- * 本机发起的请求不计入限流。
- *
- * 限流是用来挡公网滥用的，而资源预热脚本从 127.0.0.1 直连本服务，
- * 会瞬间打满额度。app 设了 `trust proxy: 1`，经 nginx 进来的请求 req.ip 一定是
- * 真实客户端地址，所以只有真正从本机发出的请求才会落到回环地址上。
- */
-function isLoopback(ip: string): boolean {
-  const addr = ip.replace(/^::ffff:/, '');
-  return addr === '127.0.0.1' || addr === '::1';
-}
-
 function isRateLimited(ip: string): boolean {
-  if (isLoopback(ip)) return false;
   const now = Date.now();
   const bucket = rateBuckets.get(ip);
   if (!bucket || now >= bucket.resetAt) {
@@ -317,11 +312,16 @@ async function fetchAndStore(url: string, proxyPath: string): Promise<FetchResul
   }
 }
 
-// 同一个 URL 的后台刷新只跑一份，避免一页几十个陈旧资源同时打上游
+// 后台刷新是绕过限流的（请求本身命中了缓存，不占额度），所以必须自己设闸门：
+// 去重保证同一个 URL 只跑一份，并发上限防止爬虫扫过大量陈旧 URL 时
+// 一次性打出成百上千个 10 秒超时的上游连接。超出上限就跳过，
+// 内容仍是可用的旧值，下次请求再刷。
 const revalidating = new Set<string>();
+const MAX_CONCURRENT_REVALIDATIONS = Number(process.env.CSS_PROXY_REVALIDATE_CONCURRENCY || 4);
 
 function revalidateInBackground(url: string, proxyPath: string): void {
   if (revalidating.has(url)) return;
+  if (revalidating.size >= MAX_CONCURRENT_REVALIDATIONS) return;
   revalidating.add(url);
   void fetchAndStore(url, proxyPath).finally(() => revalidating.delete(url));
 }
@@ -331,6 +331,8 @@ export function cssProxyRouter() {
 
   router.get(['/css-proxy', '/api/css-proxy'], async (req, res) => {
     const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    // 资源预热脚本带内部密钥，不占限流额度；不能用回环地址判断（见 start.ts 的说明）
+    const trusted = hasInternalKey(req);
 
     const queryValue = Array.isArray(req.query.url) ? req.query.url[0] : req.query.url;
     const url = String(queryValue || '');
@@ -361,7 +363,7 @@ export function cssProxyRouter() {
     }
 
     // 到这里才是真的要回源，限流从这里开始算
-    if (isRateLimited(clientIp)) {
+    if (!trusted && isRateLimited(clientIp)) {
       if (wantsCss) {
         const body = cssErrorComment('Rate limited');
         setHeaders(res, 'text/css; charset=utf-8', 'no-cache');

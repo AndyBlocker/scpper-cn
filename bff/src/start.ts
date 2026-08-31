@@ -9,6 +9,7 @@ import { buildRouter } from './web/router.js';
 import { pixelRateLimiter } from './web/routes/tracking.js';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { initPools } from './web/utils/dbPool.js';
+import { hasInternalKey } from './web/utils/internal-key.js';
 
 export async function createServer() {
   const app = express();
@@ -62,10 +63,11 @@ export async function createServer() {
     legacyHeaders: false,
     message: { error: 'too_many_requests' },
     skip: (req) => {
-      // 本机发起的请求不限流：app 设了 trust proxy:1，经 nginx 进来的请求 req.ip
-      // 一定是真实客户端地址，只有本机脚本（如资源预热）才会落到回环地址上
-      const ip = String(req.ip || '').replace(/^::ffff:/, '');
-      if (ip === '127.0.0.1' || ip === '::1') return true;
+      // 带正确内部密钥的请求不限流（资源预热脚本用）。
+      // 不能用"来源是回环地址"来判断：前端 Nuxt 把 /api/** 代理到 127.0.0.1:4396，
+      // 公网请求到了 BFF 这边同样表现为本机来源 —— router.ts 的 guardInternalRoutes
+      // 就是因为这个才要求必须带 x-internal-key。
+      if (hasInternalKey(req)) return true;
       const p = req.path;
       return p === '/healthz' || p.startsWith('/internal') || p.startsWith('/avatar')
         || p.startsWith('/tracking/pixel');
