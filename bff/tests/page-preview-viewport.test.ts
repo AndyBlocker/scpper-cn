@@ -50,7 +50,15 @@ describe('page preview viewport', () => {
     const res = await request(app).get('/pages/21558311/preview').expect(200);
     const body = res.text;
 
-    expect(body).toContain('id="scpper-preview-viewport-unlock"');
+    expect(body).toContain('id="scpper-preview-overrides"');
+    // fader 点击捕获层默认隐藏，只在 credit 视图被 :target 激活时出现。
+    // 它靠外部主题 CSS 隐藏祖先是不可靠的：主题 CSS 一失败就会盖住整个视口
+    // 去掉 position:fixed 是关键：这样它至多覆盖自己的包含块，而不是整个视口
+    expect(body).toContain('position: absolute !important');
+    expect(body).not.toContain('.fader-mirror { position: fixed');
+    // 显隐规则必须覆盖 #u-credit-view 与 #u-credit-otherwise 两个模态框，
+    // 只写前者会让后者的"点背景关闭"在主题 CSS 正常的页面上失效
+    expect(body).toContain('[id^="u-credit"]:target .fader-mirror { display: block !important; }');
     // 选择器特异性高于裸元素选择器，这样即使页面里有同为 important 的
     // `html { overflow: hidden !important }`，靠前的位置也不会吃亏
     expect(body).toContain('html:root { overflow: auto !important; }');
@@ -59,7 +67,7 @@ describe('page preview viewport', () => {
     // 锚在 <head> 开标签之后：解锁规则带 !important，不依赖源码顺序，
     // 而放在 <!DOCTYPE> 之前会把文档打进 quirks mode
     const doctype = body.indexOf('<!DOCTYPE html>');
-    const unlock = body.indexOf('scpper-preview-viewport-unlock');
+    const unlock = body.indexOf('scpper-preview-overrides');
     expect(doctype).toBe(0);
     expect(unlock).toBeGreaterThan(body.indexOf('<head>'));
     expect(unlock).toBeLessThan(body.indexOf('</head>'));
@@ -130,7 +138,7 @@ describe('page preview viewport', () => {
     // 认不出可信前缀时应整段跳过改写，原样保留
     expect(body).toContain('url(https://scp-wiki.wdfiles.com/local--files/x/z.png)');
     // 视口解锁仍然要注入
-    expect(body).toContain('scpper-preview-viewport-unlock');
+    expect(body).toContain('scpper-preview-overrides');
   });
 
   // 回归：head 里的内联脚本在字符串字面量中出现 '</head>'，

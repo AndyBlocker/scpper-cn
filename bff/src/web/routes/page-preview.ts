@@ -15,7 +15,7 @@ function getSyncerPool(): pg.Pool | null {
 }
 
 /**
- * 预览视口解锁样式。
+ * 预览出口注入的修正样式。
  *
  * Wikidot 的页面 <head> 里带着一条 `data-wikidot-theme` 的 interwiki 样式表
  * (interwiki.scpwikicn.com/css/style.css)，那是给侧栏 interwiki 小 iframe 用的，
@@ -23,12 +23,40 @@ function getSyncerPool(): pg.Pool | null {
  * 由于 html 的 overflow 是默认的 visible，body 的 overflow 会按 CSS 规范传播到
  * viewport，于是整个预览文档被锁死：滚轮与触摸都滑不动（脚本改 scrollTop 仍有效）。
  *
- * 放在 BFF 出口而不是 syncer 预处理里，是因为 PageContentCache 中已存的三万多份
- * HTML 都带着这条样式表，服务端注入可以立刻对存量缓存生效，无需重跑同步。
+ * 第二组是 .fader-mirror —— syncer 把 credit module 的 backmodule iframe 换成了这个
+ * 点击捕获层，样式是 `position:fixed` 铺满视口。它平时不碍事，靠的是 wikidot 主题 CSS
+ * 把祖先容器隐藏着；主题 CSS 一旦加载失败（上游 wdfiles 不可达时常发生），
+ * 它就变成一块盖住整个视口的透明浮层，点哪里都触发 history.back()。
+ * 实测同一页面：主题 CSS 正常时 0x0 不拦截，主题 CSS 失败时 1216x639 且吃掉所有点击。
+ *
+ * 两条规则各管一件事：
+ *   display:none + [id^="u-credit"]:target  —— 只在模态框真的被打开时才让它存在。
+ *     必须用 [id^="u-credit"] 而不是单个 id：credit module 有 #u-credit-view 与
+ *     #u-credit-otherwise 两个模态框（后者见于 314 份缓存页面），只写前者会让后者的
+ *     "点背景关闭"在主题 CSS 正常的页面上失效 —— 那是比原 bug 更常见的回归。
+ *   position:absolute + inset:0            —— 打开时它填满自己的定位包含块
+ *     （模态容器），而不是像原来的 position:fixed 那样无条件铺满视口。
+ *
+ * 为什么不能干脆不依赖 :target、只靠几何约束：主题 CSS 里给背景定尺寸的规则是
+ *   [id*=u-credit] .fader, [id*=u-credit] .fader iframe { width:100vw; height:100% }
+ * —— 它只认 iframe，而我们已经把 iframe 换成了 div，所以主题根本不会给这个 div
+ * 任何尺寸；全屏背景一直是 MIRROR_CSS 自己提供的。试过改成"让 .fader 决定"，
+ * 结果是背景在主题正常的页面上直接消失（实测点开模态后不再可点关闭）。
+ *
+ * 已知残留：主题 CSS 失败且用户主动点开模态时，包含块退化为初始包含块，
+ * 捕获层仍会覆盖首屏 —— 但点一下就会 history.back() popping 掉 hash 而自愈，
+ * 不再是加载即锁死。另外查过缓存里的主题 CSS，没有用 class 开合 credit 模态的
+ * 写法（unfolded 的命中全是 collapsible-block），所以没有为此加投机性的选择器。
+ *
+ * 放在 BFF 出口而不是只改 syncer，是因为 PageContentCache 中已存的三万多份 HTML
+ * 都已经定型，服务端注入可以立刻对存量缓存生效，无需重跑同步。
  */
-const VIEWPORT_UNLOCK_STYLE = `<style id="scpper-preview-viewport-unlock">
+const PREVIEW_OVERRIDE_STYLE = `<style id="scpper-preview-overrides">
 html:root { overflow: auto !important; }
 :root > body { overflow: visible !important; }
+.fader-mirror { display: none !important; position: absolute !important; inset: 0 !important; }
+[id^="u-credit"]:target .fader-mirror { display: block !important; }
+iframe[src*="backmodule"] { display: none !important; }
 </style>`;
 
 /**
@@ -43,18 +71,18 @@ html:root { overflow: auto !important; }
  * 页面里哪怕出现 `html { overflow: hidden !important }` 这种同为 important 的规则也压不过。
  * （真正触发本 bug 的 interwiki 规则本身并不带 !important，这里只是加一层保险。）
  */
-function withViewportUnlock(html: string): string {
+function withPreviewOverrides(html: string): string {
   const headOpen = html.match(/<head\b[^>]*>/i);
   if (headOpen?.index !== undefined) {
     const at = headOpen.index + headOpen[0].length;
-    return html.slice(0, at) + VIEWPORT_UNLOCK_STYLE + html.slice(at);
+    return html.slice(0, at) + PREVIEW_OVERRIDE_STYLE + html.slice(at);
   }
   const bodyOpen = html.search(/<body\b/i);
   if (bodyOpen !== -1) {
-    return html.slice(0, bodyOpen) + VIEWPORT_UNLOCK_STYLE + html.slice(bodyOpen);
+    return html.slice(0, bodyOpen) + PREVIEW_OVERRIDE_STYLE + html.slice(bodyOpen);
   }
   // 既没有 head 也没有 body 的异常文档：追加到末尾（放在最前面会触发 quirks mode）
-  return html + VIEWPORT_UNLOCK_STYLE;
+  return html + PREVIEW_OVERRIDE_STYLE;
 }
 
 // ── 内联 CSS 里的图片改写 ──
@@ -275,7 +303,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         return res.status(404).send('content not cached');
       }
 
-      // HTML 主体已在 syncer 存储时预处理完成，出口再补视口解锁样式与内联 CSS 的资源代理
+      // HTML 主体已在 syncer 存储时预处理完成，出口再补修正样式与内联 CSS 的资源代理
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'private, max-age=300');
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -291,7 +319,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         "frame-ancestors 'self'",
         "form-action 'none'"
       ].join('; '));
-      return res.send(withViewportUnlock(withProxiedInlineAssets(contentResult.rows[0].full_page_html)));
+      return res.send(withPreviewOverrides(withProxiedInlineAssets(contentResult.rows[0].full_page_html)));
     } catch (err) {
       next(err);
     }
