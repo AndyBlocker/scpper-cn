@@ -128,28 +128,67 @@ if (assets.size === 0) {
 }
 
 const all = [...assets];
-const missing = all.filter((u) => !isCached(u));
-console.log(`\n唯一资源 ${all.length}，其中已缓存 ${all.length - missing.length}，待抓取 ${missing.length}`);
+console.log(`\n页面里直接引用的唯一资源 ${all.length}，其中已缓存 ${all.filter(isCached).length}`);
 
 if (DRY_RUN) {
-  console.log('--dry-run：不实际抓取');
+  console.log('--dry-run：不实际抓取（也不会展开 CSS 里的嵌套依赖）');
   process.exit(0);
 }
 
 // ── 2. 逐个走一遍 css-proxy，让服务端按自己的规则抓取并落盘 ──
-let ok = 0, failed = 0, done = 0;
-const run = await pool(missing, ASSET_CONCURRENCY, async (url) => {
-  const res = await fetch(`${BASE}/css-proxy?url=${encodeURIComponent(url)}`, { headers: HEADERS });
-  await drain(res);
-  // 回源失败时 CSS 会以注释形式软失败，用是否真的落盘来判定成功与否
-  if (res.ok && isCached(url)) ok++; else failed++;
-  if (++done % 200 === 0) console.log(`  已处理 ${done}/${missing.length}（成功 ${ok} / 失败 ${failed}）`);
-});
-failed += run.errors;
-if (run.errors) {
-  console.warn(`抓取阶段有 ${run.errors} 个请求抛错，首个错误：${run.firstError?.message || run.firstError}`);
+//
+// 用工作队列而不是固定列表：主题 CSS 里的背景图/图标/字体，其代理链接是
+// css-proxy 在返回 CSS 时才生成的，压根不出现在页面 HTML 里。所以遇到 CSS
+// 要把响应读出来、把里面的代理目标继续入队，否则这些资源永远预热不到。
+const MAX_DEPTH = Number(arg('max-depth', 4));
+const queued = new Set(all);
+const queue = all.map((url) => ({ url, depth: 0 }));
+
+let warmed = 0, hit = 0, failed = 0, done = 0, discovered = 0;
+let cursor = 0;
+let errors = 0;
+let firstError = null;
+
+async function worker() {
+  while (cursor < queue.length) {
+    const { url, depth } = queue[cursor++];
+    const wasCached = isCached(url);
+    try {
+      const res = await fetch(`${BASE}/css-proxy?url=${encodeURIComponent(url)}`, { headers: HEADERS });
+      const type = String(res.headers.get('content-type') || '');
+      if (res.ok && type.includes('css') && depth < MAX_DEPTH) {
+        const css = await res.text();
+        const nested = new Set();
+        collectProxyTargets(css, nested);
+        for (const next of nested) {
+          if (queued.has(next)) continue;
+          queued.add(next);
+          queue.push({ url: next, depth: depth + 1 });
+          discovered += 1;
+        }
+      } else {
+        await drain(res);
+      }
+      // 回源失败时 CSS 会以注释形式软失败，用是否真的落盘来判定成功与否
+      if (res.ok && isCached(url)) { wasCached ? hit++ : warmed++; } else { failed++; }
+    } catch (err) {
+      errors += 1;
+      failed += 1;
+      firstError ??= err;
+    }
+    if (++done % 200 === 0) {
+      console.log(`  已处理 ${done}/${queue.length}（新抓 ${warmed} / 已有 ${hit} / 失败 ${failed}，` +
+                  `从 CSS 里发现 ${discovered}）`);
+    }
+  }
 }
 
-console.log(`\n完成：新抓取 ${ok}，失败 ${failed}`);
+await Promise.all(Array.from({ length: Math.max(1, ASSET_CONCURRENCY) }, worker));
+
+if (errors) {
+  console.warn(`抓取阶段有 ${errors} 个请求抛错，首个错误：${firstError?.message || firstError}`);
+}
+console.log(`\n完成：处理 ${done} 个资源（其中 ${discovered} 个是从 CSS 里递归发现的）`);
+console.log(`      新抓取 ${warmed}，已在缓存 ${hit}，失败 ${failed}`);
 if (failed) console.log('失败多半是上游 wikidot / wdfiles 当前不可达，链路恢复后重跑即可。');
-if (ok === 0 && failed > 0) process.exit(1);
+if (warmed === 0 && failed > 0) process.exit(1);

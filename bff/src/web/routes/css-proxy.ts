@@ -71,6 +71,7 @@ async function readFromDisk(url: string): Promise<CachedEntry | null> {
  */
 async function writeToDisk(url: string, contentType: string, body: Buffer | string): Promise<void> {
   if (!DISK_CACHE_ENABLED) return;
+  noteBytesWritten(Buffer.byteLength(body as Buffer));
   const key = cacheKeyFor(url);
   const dataTmp = path.join(DISK_CACHE_DIR, `${key}.${process.pid}.tmp`);
   const metaTmp = path.join(DISK_CACHE_DIR, `${key}.${process.pid}.meta.tmp`);
@@ -95,6 +96,23 @@ function touchOnDisk(url: string): void {
       await fsp.utimes(dataPath, new Date(), stat.mtime);
     } catch { /* 条目可能刚被淘汰 */ }
   })();
+}
+
+/**
+ * 写入量到阈值就触发一次淘汰，光靠定时器不够：
+ * 一轮批量预热完全可能在两次定时扫描之间就把容量上限写穿。
+ * 扫描是合并的 —— 正在跑就不再排队。
+ */
+const SWEEP_WRITE_THRESHOLD = Math.max(64 * 1024 * 1024, DISK_CACHE_MAX_BYTES / 20);
+let bytesSinceSweep = 0;
+let sweepInFlight = false;
+
+function noteBytesWritten(bytes: number): void {
+  bytesSinceSweep += bytes;
+  if (bytesSinceSweep < SWEEP_WRITE_THRESHOLD || sweepInFlight) return;
+  bytesSinceSweep = 0;
+  sweepInFlight = true;
+  void sweepDiskCache().finally(() => { sweepInFlight = false; });
 }
 
 // 按容量上限做 LRU 淘汰（不再按年龄删除 —— 见上面的缓存策略说明）
