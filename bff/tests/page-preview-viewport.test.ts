@@ -132,4 +132,30 @@ describe('page preview viewport', () => {
     // 视口解锁仍然要注入
     expect(body).toContain('scpper-preview-viewport-unlock');
   });
+
+  // 回归：head 里的内联脚本在字符串字面量中出现 '</head>'，
+  // 边界搜索若不先剥掉 script 就会提前截断，导致认不出代理前缀、整段跳过改写
+  test('head 边界不被脚本里的 </head> 字面量骗到', async () => {
+    const tricky = [
+      '<!DOCTYPE html><html><head>',
+      '<script>var t = "</head><body>";</script>',
+      '<base href="https://scp-wiki-cn.wikidot.com/">',
+      `<link rel="stylesheet" href="${PROXY}?url=interwiki">`,
+      '</head><body id="html-body">',
+      '<div style="background:url(https://scp-wiki.wdfiles.com/local--files/x/k.png)"></div>',
+      '</body></html>',
+    ].join('');
+
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ fullname: 'scp-1449' }] })
+      .mockResolvedValueOnce({ rows: [{ full_page_html: tricky }] });
+
+    const { createServer } = await import('../src/start');
+    const app = await createServer();
+    const body = (await request(app).get('/pages/21558311/preview').expect(200)).text;
+
+    expect(body).toContain(
+      `${PROXY}?url=${encodeURIComponent('https://scp-wiki.wdfiles.com/local--files/x/k.png')}`,
+    );
+  });
 });

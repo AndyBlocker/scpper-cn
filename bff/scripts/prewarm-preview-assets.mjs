@@ -108,6 +108,11 @@ function collectProxyTargets(html, into) {
     const value = m[1] ?? m[2] ?? m[3] ?? '';
     if (value.includes('css-proxy')) push(value);
   }
+  // @import "x" / @import 'x'（不带 url() 的合法写法，rewriteCssUrls 同样会改写它）
+  for (const m of html.matchAll(/@import\s+(?:"([^"]*)"|'([^']*)')/gi)) {
+    const value = m[1] ?? m[2] ?? '';
+    if (value.includes('css-proxy')) push(value);
+  }
 }
 
 // ── 1. 收集资源清单 ──

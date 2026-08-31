@@ -71,10 +71,19 @@ const PROXY_PATH_SUFFIX = '/api/css-proxy';
  */
 let warnedMissingProxyPath = false;
 
-/** 只取 <head> 区域 —— <body> 里是用户投稿的正文，不能当作可信输入 */
+/**
+ * 取出 <head> 区域 —— <body> 里是用户投稿的正文，不能当作可信输入。
+ *
+ * 找边界之前先把 script 与注释的内容抹掉：head 里的内联脚本可能在字符串字面量里
+ * 出现 '</head>' 或 '<body'，直接搜会把区域提前截断（syncer 注入的 MIRROR_INIT_SCRIPT
+ * 就在 head 里）。抹除时保留标签本身，边界判断只看真正的标记。
+ */
 function headRegion(html: string): string {
-  const end = html.search(/<\/head\s*>|<body\b/i);
-  return end === -1 ? html.slice(0, 8192) : html.slice(0, end);
+  const masked = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, (m) => ' '.repeat(m.length))
+    .replace(/<!--[\s\S]*?-->/g, (m) => ' '.repeat(m.length));
+  const end = masked.search(/<\/head\s*>|<body\b/i);
+  return end === -1 ? masked.slice(0, 8192) : masked.slice(0, end);
 }
 
 function detectProxyPath(html: string): string | null {

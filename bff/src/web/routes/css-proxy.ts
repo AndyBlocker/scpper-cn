@@ -224,10 +224,36 @@ function isRateLimited(ip: string): boolean {
   return bucket.count > RATE_MAX_PER_IP || bucket.bytes > RATE_MAX_BYTES_PER_IP;
 }
 
-/** 回源实际取回的字节数计入该 IP 的预算 */
+/**
+ * 回源取回的字节数计入该 IP 的预算。
+ * 必须边读边记 —— 事后记账挡不住并发：一批请求会在计数更新之前全部通过检查。
+ */
 function noteUpstreamBytes(ip: string, bytes: number): void {
   const bucket = rateBuckets.get(ip);
   if (bucket && Date.now() < bucket.resetAt) bucket.bytes += bytes;
+}
+
+/**
+ * 每个 IP 同时在途的回源数量上限。
+ *
+ * 字节预算是个窗口内的总量约束，管不住"同一瞬间"的并发 —— readLimitedBuffer
+ * 会把整个响应放在内存里，300 个并发 × 8MB 就是 2.4GB。这里直接给在途数量封顶，
+ * 把峰值内存限制在 上限 × MAX_RESPONSE_SIZE。
+ */
+const MAX_INFLIGHT_PER_IP = Number(process.env.CSS_PROXY_INFLIGHT_MAX || 8);
+const inflight = new Map<string, number>();
+
+function acquireInflight(ip: string): boolean {
+  const current = inflight.get(ip) || 0;
+  if (current >= MAX_INFLIGHT_PER_IP) return false;
+  inflight.set(ip, current + 1);
+  return true;
+}
+
+function releaseInflight(ip: string): void {
+  const current = inflight.get(ip) || 0;
+  if (current <= 1) inflight.delete(ip);
+  else inflight.set(ip, current - 1);
 }
 
 // Periodic cleanup to prevent memory leak
@@ -331,7 +357,11 @@ async function fetchAllowedUpstream(inputUrl: string): Promise<globalThis.Respon
   throw new Error(`Too many redirects`);
 }
 
-async function readLimitedText(response: globalThis.Response, maxBytes: number): Promise<string> {
+async function readLimitedText(
+  response: globalThis.Response,
+  maxBytes: number,
+  onBytes?: (n: number) => void,
+): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) return '';
   const decoder = new TextDecoder();
@@ -343,6 +373,7 @@ async function readLimitedText(response: globalThis.Response, maxBytes: number):
       const { done, value } = await reader.read();
       if (done) break;
       totalBytes += value.byteLength;
+      onBytes?.(value.byteLength);
       if (totalBytes > maxBytes) {
         throw new Error('Response too large');
       }
@@ -356,7 +387,11 @@ async function readLimitedText(response: globalThis.Response, maxBytes: number):
   return chunks.join('');
 }
 
-async function readLimitedBuffer(response: globalThis.Response, maxBytes: number): Promise<Buffer> {
+async function readLimitedBuffer(
+  response: globalThis.Response,
+  maxBytes: number,
+  onBytes?: (n: number) => void,
+): Promise<Buffer> {
   const reader = response.body?.getReader();
   if (!reader) return Buffer.alloc(0);
   const chunks: Uint8Array[] = [];
@@ -367,6 +402,7 @@ async function readLimitedBuffer(response: globalThis.Response, maxBytes: number
       const { done, value } = await reader.read();
       if (done) break;
       totalBytes += value.byteLength;
+      onBytes?.(value.byteLength);
       if (totalBytes > maxBytes) {
         throw new Error('Response too large');
       }
@@ -386,7 +422,11 @@ type FetchResult = FetchOk | FetchFail;
 /**
  * 回源抓取并写入缓存。主请求路径与后台刷新共用这一份实现。
  */
-async function fetchAndStore(url: string, proxyPath: string): Promise<FetchResult> {
+async function fetchAndStore(
+  url: string,
+  proxyPath: string,
+  onBytes?: (n: number) => void,
+): Promise<FetchResult> {
   try {
     const upstream = await fetchAllowedUpstream(url);
 
@@ -419,7 +459,7 @@ async function fetchAndStore(url: string, proxyPath: string): Promise<FetchResul
     if (contentType.includes('text/css') || contentType.includes('/css')) {
       let css: string;
       try {
-        css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
+        css = await readLimitedText(upstream, MAX_RESPONSE_SIZE, onBytes);
       } catch (err) {
         await discard(upstream);
         throw err;
@@ -432,7 +472,7 @@ async function fetchAndStore(url: string, proxyPath: string): Promise<FetchResul
 
     let buf: Buffer;
     try {
-      buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
+      buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE, onBytes);
     } catch (err) {
       await discard(upstream);
       throw err;
@@ -513,10 +553,24 @@ export function cssProxyRouter() {
       return res.status(429).send('Too many requests');
     }
 
-    const result = await fetchAndStore(url, proxyPath);
+    if (!trusted && !acquireInflight(clientIp)) {
+      if (wantsCss) {
+        setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
+        return res.status(200).send(cssErrorComment('Too many concurrent fetches'));
+      }
+      setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
+      return res.status(429).send('Too many concurrent fetches');
+    }
+
+    let result: FetchResult;
+    try {
+      // 边读边记账，失败/超限的流量同样计入
+      result = await fetchAndStore(url, proxyPath, (n) => noteUpstreamBytes(clientIp, n));
+    } finally {
+      if (!trusted) releaseInflight(clientIp);
+    }
 
     if (result.ok) {
-      noteUpstreamBytes(clientIp, Buffer.byteLength(result.body as Buffer));
       setHeaders(res, result.contentType, DEFAULT_CACHE_CONTROL);
       return res.status(200).send(result.body);
     }
