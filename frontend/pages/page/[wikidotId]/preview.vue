@@ -1,5 +1,5 @@
 <template>
-  <div class="preview-page">
+  <div ref="pageRef" class="preview-page">
     <div class="preview-header">
       <div class="flex items-center gap-3">
         <NuxtLink :to="`/page/${wikidotId}`" class="back-link">
@@ -54,14 +54,41 @@ const { data: pageInfo } = useAsyncData(
 )
 
 const fullname = computed(() => pageInfo.value?.fullname || '')
+const pageRef = ref<HTMLElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const iframeLoading = ref(true)
+
+// 预览区最小高度，避免在极矮的视口里被压扁到不可用
+const MIN_PREVIEW_HEIGHT = 420
+
+// default 布局是 sticky header + main 的上下内边距 + footer，
+// 原先硬编码的 calc(100vh - 60px) 会让 iframe 底部落到首屏之外；
+// 改成按元素在文档中的实际位置算出可用高度。
+function syncPreviewHeight() {
+  const el = pageRef.value
+  if (!el) return
+  const offsetTop = el.getBoundingClientRect().top + window.scrollY
+  const available = window.innerHeight - offsetTop
+  el.style.setProperty('--preview-height', `${Math.max(MIN_PREVIEW_HEIGHT, Math.round(available))}px`)
+}
+
+let resizeFrame = 0
+function scheduleSyncPreviewHeight() {
+  if (resizeFrame) return
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0
+    syncPreviewHeight()
+  })
+}
 
 function onIframeLoad() {
   iframeLoading.value = false
 }
 
 onMounted(() => {
+  syncPreviewHeight()
+  window.addEventListener('resize', scheduleSyncPreviewHeight)
+
   const iframe = iframeRef.value
   if (!iframe) return
   // SSR hydration 可能导致 @load 丢失，手动绑定
@@ -76,6 +103,11 @@ onMounted(() => {
   setTimeout(() => { iframeLoading.value = false }, 8000)
 })
 
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', scheduleSyncPreviewHeight)
+  if (resizeFrame) cancelAnimationFrame(resizeFrame)
+})
+
 useHead({
   title: computed(() => `预览 - ${fullname.value || wikidotId.value}`),
 })
@@ -85,7 +117,9 @@ useHead({
 .preview-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 60px);
+  /* --preview-height 由 syncPreviewHeight() 在客户端量出；兜底值扣掉 header/内边距/footer */
+  height: var(--preview-height, calc(100vh - 240px));
+  min-height: 420px;
 }
 
 .preview-header {

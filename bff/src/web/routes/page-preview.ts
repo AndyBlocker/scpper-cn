@@ -13,6 +13,33 @@ function getSyncerPool(): pg.Pool | null {
   return syncerPool;
 }
 
+/**
+ * 预览视口解锁样式。
+ *
+ * Wikidot 的页面 <head> 里带着一条 `data-wikidot-theme` 的 interwiki 样式表
+ * (interwiki.scpwikicn.com/css/style.css)，那是给侧栏 interwiki 小 iframe 用的，
+ * 其中的 `body { overflow: hidden }` 是整份文档里唯一的 body overflow 声明。
+ * 由于 html 的 overflow 是默认的 visible，body 的 overflow 会按 CSS 规范传播到
+ * viewport，于是整个预览文档被锁死：滚轮与触摸都滑不动（脚本改 scrollTop 仍有效）。
+ *
+ * 放在 BFF 出口而不是 syncer 预处理里，是因为 PageContentCache 中已存的三万多份
+ * HTML 都带着这条样式表，服务端注入可以立刻对存量缓存生效，无需重跑同步。
+ */
+const VIEWPORT_UNLOCK_STYLE = `<style id="scpper-preview-viewport-unlock">
+html { overflow: auto !important; }
+body { overflow: visible !important; }
+</style>`;
+
+/** 把解锁样式插到 </head> 之前，确保它排在页面自带样式表之后 */
+function withViewportUnlock(html: string): string {
+  const headEnd = html.search(/<\/head\s*>/i);
+  if (headEnd === -1) {
+    // 没有 </head> 的异常文档：退化为插到最前面，配合 !important 依然生效
+    return VIEWPORT_UNLOCK_STYLE + html;
+  }
+  return html.slice(0, headEnd) + VIEWPORT_UNLOCK_STYLE + html.slice(headEnd);
+}
+
 export function pagePreviewRouter(mainPool: pg.Pool) {
   const router = Router();
 
@@ -89,7 +116,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         return res.status(404).send('content not cached');
       }
 
-      // HTML 已在 syncer 存储时预处理完成，直接返回
+      // HTML 主体已在 syncer 存储时预处理完成，出口只补一层视口解锁样式
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'private, max-age=300');
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -105,7 +132,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         "frame-ancestors 'self'",
         "form-action 'none'"
       ].join('; '));
-      return res.send(contentResult.rows[0].full_page_html);
+      return res.send(withViewportUnlock(contentResult.rows[0].full_page_html));
     } catch (err) {
       next(err);
     }
