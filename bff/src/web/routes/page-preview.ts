@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import pg from 'pg';
+import { rewriteCssUrls } from '../utils/asset-proxy.js';
 
 const SYNCER_DB_URL = process.env.SYNCER_DATABASE_URL || '';
 
@@ -26,18 +27,176 @@ function getSyncerPool(): pg.Pool | null {
  * HTML 都带着这条样式表，服务端注入可以立刻对存量缓存生效，无需重跑同步。
  */
 const VIEWPORT_UNLOCK_STYLE = `<style id="scpper-preview-viewport-unlock">
-html { overflow: auto !important; }
-body { overflow: visible !important; }
+html:root { overflow: auto !important; }
+:root > body { overflow: visible !important; }
 </style>`;
 
-/** 把解锁样式插到 </head> 之前，确保它排在页面自带样式表之后 */
+/**
+ * 插入解锁样式。
+ *
+ * 锚点用 <head> 开标签而不是 </head>，因为后者有两个坑：</head> 可能出现在 head 里的
+ * script 字符串字面量中，而"插到文档最前面"的兜底会把 style 放到 <!DOCTYPE> 之前，
+ * 直接把文档打进 quirks mode。
+ *
+ * 位置靠前意味着源码顺序上吃亏，所以选择器用 html:root / :root > body 抬高特异性：
+ * !important 只在重要性层面取胜，同重要性下仍要比特异性、再比源码顺序。抬高之后，
+ * 页面里哪怕出现 `html { overflow: hidden !important }` 这种同为 important 的规则也压不过。
+ * （真正触发本 bug 的 interwiki 规则本身并不带 !important，这里只是加一层保险。）
+ */
 function withViewportUnlock(html: string): string {
-  const headEnd = html.search(/<\/head\s*>/i);
-  if (headEnd === -1) {
-    // 没有 </head> 的异常文档：退化为插到最前面，配合 !important 依然生效
-    return VIEWPORT_UNLOCK_STYLE + html;
+  const headOpen = html.match(/<head\b[^>]*>/i);
+  if (headOpen?.index !== undefined) {
+    const at = headOpen.index + headOpen[0].length;
+    return html.slice(0, at) + VIEWPORT_UNLOCK_STYLE + html.slice(at);
   }
-  return html.slice(0, headEnd) + VIEWPORT_UNLOCK_STYLE + html.slice(headEnd);
+  const bodyOpen = html.search(/<body\b/i);
+  if (bodyOpen !== -1) {
+    return html.slice(0, bodyOpen) + VIEWPORT_UNLOCK_STYLE + html.slice(bodyOpen);
+  }
+  // 既没有 head 也没有 body 的异常文档：追加到末尾（放在最前面会触发 quirks mode）
+  return html + VIEWPORT_UNLOCK_STYLE;
+}
+
+// ── 内联 CSS 里的图片改写 ──
+
+const DEFAULT_WIKI_BASE = 'https://scp-wiki-cn.wikidot.com/';
+const PROXY_PATH_SUFFIX = '/api/css-proxy';
+
+/**
+ * 取出该文档使用的代理前缀。
+ *
+ * syncer 存储时会把资源链接改写成绝对地址（`https://<镜像域>/api/css-proxy?url=...`），
+ * 因为文档里注入了 <base href="wikidot">，相对路径会被解析到 wikidot 去。
+ * 这里直接从文档里认出已有的前缀，跟着它走，避免 BFF 再配一份镜像域名。
+ */
+let warnedMissingProxyPath = false;
+
+/**
+ * 取出 <head> 区域 —— <body> 里是用户投稿的正文，不能当作可信输入。
+ *
+ * 找边界之前先把 script 与注释的内容抹掉：head 里的内联脚本可能在字符串字面量里
+ * 出现 '</head>' 或 '<body'，直接搜会把区域提前截断（syncer 注入的 MIRROR_INIT_SCRIPT
+ * 就在 head 里）。抹除时保留标签本身，边界判断只看真正的标记。
+ */
+function headRegion(html: string): string {
+  const masked = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, (m) => ' '.repeat(m.length))
+    .replace(/<!--[\s\S]*?-->/g, (m) => ' '.repeat(m.length));
+  const end = masked.search(/<\/head\s*>|<body\b/i);
+  return end === -1 ? masked.slice(0, 8192) : masked.slice(0, end);
+}
+
+function detectProxyPath(html: string): string | null {
+  // 配了环境变量就以它为准，不去猜
+  const origin = process.env.MIRROR_ORIGIN || '';
+  if (origin) return origin.replace(/\/+$/, '') + PROXY_PATH_SUFFIX;
+
+  // 回退：从 <head> 里已有的 <link href> / <script src> 认出前缀。
+  // 必须同时限制在 head 内、且限制在属性值里 —— 早先的实现扫描整份文档，
+  // 而 SCP 页面正文是用户投稿的：只要在正文里写一句
+  // https://evil.example/api/css-proxy?x 且排在合法链接前面，
+  // 这一页所有内联 CSS 资源都会被劫持到攻击者的域，泄露访问者 IP/UA。
+  const head = headRegion(html);
+  for (const m of head.matchAll(/\b(?:href|src)="(https?:\/\/[^"]+?\/api\/css-proxy)\?/gi)) {
+    return m[1];
+  }
+
+  // 认不出前缀就整段跳过改写。这种情况下预览里的图片会退回直连源站，
+  // 静默失效很难察觉，所以至少提醒一次。
+  if (!warnedMissingProxyPath) {
+    warnedMissingProxyPath = true;
+    console.warn(
+      '[page-preview] 无法确定 css-proxy 的绝对前缀，内联 CSS 的资源改写已跳过。' +
+      '请给 BFF 配置 MIRROR_ORIGIN。',
+    );
+  }
+  return null;
+}
+
+function detectBaseHref(html: string): string {
+  // 同样只认 <head> 里的 <base>，正文里写的不算
+  const found = headRegion(html).match(/<base\b[^>]*\bhref="([^"]+)"/i);
+  const value = found?.[1] || DEFAULT_WIKI_BASE;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : DEFAULT_WIKI_BASE;
+  } catch {
+    return DEFAULT_WIKI_BASE;
+  }
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  quot: '"', apos: "'", amp: '&', lt: '<', gt: '>', nbsp: '\u00a0',
+};
+
+/**
+ * style="" 属性里的 CSS 会先经过 HTML 实体解码，所以改写前要解码、改写后要重新编码。
+ *
+ * 关键是"解码得彻底"：如果只认识一部分实体却无条件把 & 重新编码成 &amp;，
+ * 没被解码的实体（比如 &#x27;）会被 rewriteCssUrls 当成 URL 的一部分吃进去，
+ * 解析成 https://…/&#x27;https:/… 这种垃圾，把本来能正常显示的图片改坏。
+ * 这里数字实体与常见命名实体都解码；遇到不认识的实体就整段放弃改写，宁可不动。
+ */
+function rewriteStyleAttribute(value: string, base: string, proxyPath: string, quote = '"'): string {
+  let unknown = false;
+  const decoded = value.replace(/&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g, (all, body: string) => {
+    if (body.startsWith('#')) {
+      const code = body[1] === 'x' || body[1] === 'X'
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10);
+      // 越界码点会让 String.fromCodePoint 抛 RangeError，
+      // 异常从改写回调里逃出去会把整个预览打成 500 —— 保持原样即可
+      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return all;
+      if (code >= 0xd800 && code <= 0xdfff) return all;
+      return String.fromCodePoint(code);
+    }
+    const named = NAMED_ENTITIES[body.toLowerCase()];
+    if (named !== undefined) return named;
+    unknown = true;
+    return all;
+  });
+  if (unknown) return value;
+
+  const rewritten = rewriteCssUrls(decoded, base, proxyPath);
+  // 只需要转义定界用的那个引号
+  return rewritten
+    .replace(/&/g, '&amp;')
+    .replace(quote === '"' ? /"/g : /'/g, quote === '"' ? '&quot;' : '&#39;');
+}
+
+/**
+ * 把内联 CSS 引用的图片/字体也送进 css-proxy。
+ *
+ * syncer 的预处理只改写了 <img|source|video|audio src> 和 @import，
+ * `background: url(...)` 这类完全没覆盖 —— 抽样 300 页有 1712 处这样的引用直连源站，
+ * 其中 87% 指向的域本来就在代理白名单里。直连的后果是国内取不到图，
+ * 而且其中的 http:// 明文引用在 https 页面里会被当成混合内容拦掉。
+ *
+ * 放在 BFF 出口而不是 syncer：存量三万多份缓存 HTML 都已经定型，出口改写立刻生效。
+ * 改写本身是幂等的（已经是代理链接的会跳过），所以将来 syncer 补上也不会冲突。
+ */
+function withProxiedInlineAssets(html: string): string {
+  const proxyPath = detectProxyPath(html);
+  if (!proxyPath) return html;
+  const base = detectBaseHref(html);
+
+  return html
+    // <style> 块里是原始 CSS，实体不参与解析
+    .replace(
+      /(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>)/gi,
+      (_all, open: string, css: string, close: string) =>
+        open + rewriteCssUrls(css, base, proxyPath) + close,
+    )
+    // style="" 与 style='' 两种写法都要处理
+    .replace(
+      /(\sstyle=)("([^"]*)"|'([^']*)')/gi,
+      (all: string, prefix: string, _quoted: string, dq?: string, sq?: string) => {
+        const quote = dq !== undefined ? '"' : "'";
+        const value = dq !== undefined ? dq : (sq ?? '');
+        if (!/url\(/i.test(value)) return all;
+        return prefix + quote + rewriteStyleAttribute(value, base, proxyPath, quote) + quote;
+      },
+    );
 }
 
 export function pagePreviewRouter(mainPool: pg.Pool) {
@@ -116,7 +275,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         return res.status(404).send('content not cached');
       }
 
-      // HTML 主体已在 syncer 存储时预处理完成，出口只补一层视口解锁样式
+      // HTML 主体已在 syncer 存储时预处理完成，出口再补视口解锁样式与内联 CSS 的资源代理
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'private, max-age=300');
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -132,7 +291,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         "frame-ancestors 'self'",
         "form-action 'none'"
       ].join('; '));
-      return res.send(withViewportUnlock(contentResult.rows[0].full_page_html));
+      return res.send(withViewportUnlock(withProxiedInlineAssets(contentResult.rows[0].full_page_html)));
     } catch (err) {
       next(err);
     }
