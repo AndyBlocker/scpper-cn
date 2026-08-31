@@ -27,17 +27,21 @@ function getSyncerPool(): pg.Pool | null {
  * HTML 都带着这条样式表，服务端注入可以立刻对存量缓存生效，无需重跑同步。
  */
 const VIEWPORT_UNLOCK_STYLE = `<style id="scpper-preview-viewport-unlock">
-html { overflow: auto !important; }
-body { overflow: visible !important; }
+html:root { overflow: auto !important; }
+:root > body { overflow: visible !important; }
 </style>`;
 
 /**
  * 插入解锁样式。
  *
- * 锚点用 <head> 开标签而不是 </head>：解锁规则带 !important，在层叠里优先级高于
- * 页面自带的普通声明，与源码顺序无关，所以不需要排到最后。锚在开标签上还顺带躲开了
- * 两个坑 —— </head> 可能出现在 head 里的 script 字符串字面量中，而"插到文档最前面"
- * 的兜底会把 style 放到 <!DOCTYPE> 之前，直接把文档打进 quirks mode。
+ * 锚点用 <head> 开标签而不是 </head>，因为后者有两个坑：</head> 可能出现在 head 里的
+ * script 字符串字面量中，而"插到文档最前面"的兜底会把 style 放到 <!DOCTYPE> 之前，
+ * 直接把文档打进 quirks mode。
+ *
+ * 位置靠前意味着源码顺序上吃亏，所以选择器用 html:root / :root > body 抬高特异性：
+ * !important 只在重要性层面取胜，同重要性下仍要比特异性、再比源码顺序。抬高之后，
+ * 页面里哪怕出现 `html { overflow: hidden !important }` 这种同为 important 的规则也压不过。
+ * （真正触发本 bug 的 interwiki 规则本身并不带 !important，这里只是加一层保险。）
  */
 function withViewportUnlock(html: string): string {
   const headOpen = html.match(/<head\b[^>]*>/i);
@@ -102,14 +106,18 @@ const NAMED_ENTITIES: Record<string, string> = {
  * 解析成 https://…/&#x27;https:/… 这种垃圾，把本来能正常显示的图片改坏。
  * 这里数字实体与常见命名实体都解码；遇到不认识的实体就整段放弃改写，宁可不动。
  */
-function rewriteStyleAttribute(value: string, base: string, proxyPath: string): string {
+function rewriteStyleAttribute(value: string, base: string, proxyPath: string, quote = '"'): string {
   let unknown = false;
   const decoded = value.replace(/&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g, (all, body: string) => {
     if (body.startsWith('#')) {
       const code = body[1] === 'x' || body[1] === 'X'
         ? parseInt(body.slice(2), 16)
         : parseInt(body.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : all;
+      // 越界码点会让 String.fromCodePoint 抛 RangeError，
+      // 异常从改写回调里逃出去会把整个预览打成 500 —— 保持原样即可
+      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return all;
+      if (code >= 0xd800 && code <= 0xdfff) return all;
+      return String.fromCodePoint(code);
     }
     const named = NAMED_ENTITIES[body.toLowerCase()];
     if (named !== undefined) return named;
@@ -119,7 +127,10 @@ function rewriteStyleAttribute(value: string, base: string, proxyPath: string): 
   if (unknown) return value;
 
   const rewritten = rewriteCssUrls(decoded, base, proxyPath);
-  return rewritten.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  // 只需要转义定界用的那个引号
+  return rewritten
+    .replace(/&/g, '&amp;')
+    .replace(quote === '"' ? /"/g : /'/g, quote === '"' ? '&quot;' : '&#39;');
 }
 
 /**
@@ -145,11 +156,15 @@ function withProxiedInlineAssets(html: string): string {
       (_all, open: string, css: string, close: string) =>
         open + rewriteCssUrls(css, base, proxyPath) + close,
     )
-    // style="" 属性
+    // style="" 与 style='' 两种写法都要处理
     .replace(
-      /(\sstyle=")([^"]*)(")/gi,
-      (all: string, open: string, value: string, close: string) =>
-        /url\(/i.test(value) ? open + rewriteStyleAttribute(value, base, proxyPath) + close : all,
+      /(\sstyle=)("([^"]*)"|'([^']*)')/gi,
+      (all: string, prefix: string, _quoted: string, dq?: string, sq?: string) => {
+        const quote = dq !== undefined ? '"' : "'";
+        const value = dq !== undefined ? dq : (sq ?? '');
+        if (!/url\(/i.test(value)) return all;
+        return prefix + quote + rewriteStyleAttribute(value, base, proxyPath, quote) + quote;
+      },
     );
 }
 

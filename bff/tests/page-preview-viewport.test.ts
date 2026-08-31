@@ -29,6 +29,8 @@ const CACHED_HTML = [
   '<div style="background:URL(https://scp-wiki.wdfiles.com/local--files/x/e.png)">大写</div>',
   '<div style="background:url(&#x27;https://scp-wiki.wdfiles.com/local--files/x/f.png&#x27;)">十六进制实体</div>',
   '<div style="background:url(&quot;https://scp-wiki.wdfiles.com/local--files/x/g.png&quot;);content:&nbsp;">未处理实体</div>',
+  "<div style='background:url(https://scp-wiki.wdfiles.com/local--files/x/h.png)'>单引号属性</div>",
+  '<div style="background:url(https://scp-wiki.wdfiles.com/local--files/x/i.png);content:&#99999999;">越界实体</div>',
   '</body></html>'
 ].join('');
 
@@ -49,8 +51,10 @@ describe('page preview viewport', () => {
     const body = res.text;
 
     expect(body).toContain('id="scpper-preview-viewport-unlock"');
-    expect(body).toContain('html { overflow: auto !important; }');
-    expect(body).toContain('body { overflow: visible !important; }');
+    // 选择器特异性高于裸元素选择器，这样即使页面里有同为 important 的
+    // `html { overflow: hidden !important }`，靠前的位置也不会吃亏
+    expect(body).toContain('html:root { overflow: auto !important; }');
+    expect(body).toContain(':root > body { overflow: visible !important; }');
 
     // 锚在 <head> 开标签之后：解锁规则带 !important，不依赖源码顺序，
     // 而放在 <!DOCTYPE> 之前会把文档打进 quirks mode
@@ -89,6 +93,11 @@ describe('page preview viewport', () => {
     expect(body).not.toMatch(/url=[^"'\s)]*%26%23x27/i);
     // 解码后不得残留被二次编码的实体
     expect(body).not.toContain('&amp;#x27;');
+
+    // 单引号形式的 style 属性同样要改写
+    expect(body).toContain(`${PROXY}?url=${enc('https://scp-wiki.wdfiles.com/local--files/x/h.png')}`);
+    // 越界数字实体不能让整个预览抛异常（String.fromCodePoint 会 RangeError）
+    expect(body).toContain(`${PROXY}?url=${enc('https://scp-wiki.wdfiles.com/local--files/x/i.png')}`);
 
     // 已经是代理链接的不被二次包装
     expect(body).toContain(`${PROXY}?url=interwiki`);

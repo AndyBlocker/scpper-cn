@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Request, Response as ExpressResponse } from 'express';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -25,6 +25,8 @@ const DISK_CACHE_FRESH_MS = Number(process.env.CSS_PROXY_FRESH_MS || 7 * 24 * 60
 /** 缓存目录容量上限，超了按最久未使用淘汰 */
 const DISK_CACHE_MAX_BYTES = Number(process.env.CSS_PROXY_MAX_BYTES || 20 * 1024 * 1024 * 1024);
 const DISK_CACHE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+/** 临时文件超过这个年龄才算是中断残留（正常写入远快于此） */
+const STALE_TMP_MS = 10 * 60 * 1000;
 
 if (DISK_CACHE_ENABLED) {
   try { fs.mkdirSync(DISK_CACHE_DIR, { recursive: true }); } catch { /* ignore */ }
@@ -73,8 +75,12 @@ async function writeToDisk(url: string, contentType: string, body: Buffer | stri
   if (!DISK_CACHE_ENABLED) return;
   noteBytesWritten(Buffer.byteLength(body as Buffer));
   const key = cacheKeyFor(url);
-  const dataTmp = path.join(DISK_CACHE_DIR, `${key}.${process.pid}.tmp`);
-  const metaTmp = path.join(DISK_CACHE_DIR, `${key}.${process.pid}.meta.tmp`);
+  // 后缀必须每次唯一：同一个 URL 的两个并发未命中会同时走到这里，
+  // 共用路径会让其中一方的 rename 失败、或在清理时删掉另一方的临时文件，
+  // 结果是 .meta 缺失、该资源每次都重新回源。
+  const stamp = `${process.pid}.${Date.now().toString(36)}.${randomUUID().slice(0, 8)}`;
+  const dataTmp = path.join(DISK_CACHE_DIR, `${key}.${stamp}.tmp`);
+  const metaTmp = path.join(DISK_CACHE_DIR, `${key}.${stamp}.meta.tmp`);
   try {
     await fsp.writeFile(dataTmp, body);
     await fsp.rename(dataTmp, path.join(DISK_CACHE_DIR, key + '.data'));
@@ -124,9 +130,16 @@ async function sweepDiskCache(): Promise<void> {
     let total = 0;
 
     for (const name of names) {
-      // 清理中断留下的临时文件
+      // 只回收放置过久的临时文件。扫描可能与 writeToDisk 并发，
+      // 无条件删除会在 writeFile 与 rename 之间把文件抽走，
+      // 结果是资源正常返回却永远存不进缓存。
       if (name.endsWith('.tmp')) {
-        await fsp.rm(path.join(DISK_CACHE_DIR, name), { force: true }).catch(() => {});
+        try {
+          const stat = await fsp.stat(path.join(DISK_CACHE_DIR, name));
+          if (Date.now() - stat.mtimeMs > STALE_TMP_MS) {
+            await fsp.rm(path.join(DISK_CACHE_DIR, name), { force: true });
+          }
+        } catch { /* ignore */ }
         continue;
       }
       if (!name.endsWith('.data')) continue;
