@@ -53,8 +53,12 @@ describe('page preview viewport', () => {
     expect(body).toContain('id="scpper-preview-overrides"');
     // fader 点击捕获层默认隐藏，只在 credit 视图被 :target 激活时出现。
     // 它靠外部主题 CSS 隐藏祖先是不可靠的：主题 CSS 一失败就会盖住整个视口
-    expect(body).toContain('.fader-mirror { display: none !important; }');
-    expect(body).toContain('#u-credit-view:target .fader-mirror { display: block !important; }');
+    // 去掉 position:fixed 是关键：这样它至多覆盖自己的包含块，而不是整个视口
+    expect(body).toContain('position: absolute !important');
+    expect(body).not.toContain('.fader-mirror { position: fixed');
+    // 显隐规则必须覆盖 #u-credit-view 与 #u-credit-otherwise 两个模态框，
+    // 只写前者会让后者的"点背景关闭"在主题 CSS 正常的页面上失效
+    expect(body).toContain('[id^="u-credit"]:target .fader-mirror { display: block !important; }');
     // 选择器特异性高于裸元素选择器，这样即使页面里有同为 important 的
     // `html { overflow: hidden !important }`，靠前的位置也不会吃亏
     expect(body).toContain('html:root { overflow: auto !important; }');

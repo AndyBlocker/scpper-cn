@@ -23,12 +23,17 @@ function getSyncerPool(): pg.Pool | null {
  * 由于 html 的 overflow 是默认的 visible，body 的 overflow 会按 CSS 规范传播到
  * viewport，于是整个预览文档被锁死：滚轮与触摸都滑不动（脚本改 scrollTop 仍有效）。
  *
- * 第二条是 .fader-mirror —— syncer 把 credit module 的 backmodule iframe 换成了这个
+ * 第二组是 .fader-mirror —— syncer 把 credit module 的 backmodule iframe 换成了这个
  * 点击捕获层，样式是 `position:fixed` 铺满视口。它平时不碍事，靠的是 wikidot 主题 CSS
- * 把祖先 #u-credit-view 隐藏着；主题 CSS 一旦加载失败（上游 wdfiles 不可达时常发生），
+ * 把祖先容器隐藏着；主题 CSS 一旦加载失败（上游 wdfiles 不可达时常发生），
  * 它就变成一块盖住整个视口的透明浮层，点哪里都触发 history.back()。
  * 实测同一页面：主题 CSS 正常时 0x0 不拦截，主题 CSS 失败时 1216x639 且吃掉所有点击。
- * 这个元素是我们自己造的，显隐不该交给外部样式表决定，所以在这里显式兜住。
+ *
+ * 关键是把"能铺满视口"这个性质本身去掉：改成 absolute + inset:0，让它至多覆盖自己的
+ * 定位包含块，而不是整个视口。仅靠"容器被 :target 激活"来控制显隐是不够的 ——
+ * credit module 有 #u-credit-view 与 #u-credit-otherwise 两个模态框（后者见于 314 份
+ * 缓存页面），而且有的主题用 class（.unfolded）而不是 :target 来开合。所以显隐规则
+ * 用 [id^="u-credit"] 覆盖同族容器，定位规则则不依赖任何容器身份。
  *
  * 放在 BFF 出口而不是只改 syncer，是因为 PageContentCache 中已存的三万多份 HTML
  * 都已经定型，服务端注入可以立刻对存量缓存生效，无需重跑同步。
@@ -36,8 +41,9 @@ function getSyncerPool(): pg.Pool | null {
 const PREVIEW_OVERRIDE_STYLE = `<style id="scpper-preview-overrides">
 html:root { overflow: auto !important; }
 :root > body { overflow: visible !important; }
-.fader-mirror { display: none !important; }
-#u-credit-view:target .fader-mirror { display: block !important; }
+.fader-mirror { display: none !important; position: absolute !important; inset: 0 !important; }
+[id^="u-credit"]:target .fader-mirror { display: block !important; }
+iframe[src*="backmodule"] { display: none !important; }
 </style>`;
 
 /**

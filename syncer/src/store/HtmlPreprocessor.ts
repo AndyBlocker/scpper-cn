@@ -85,16 +85,25 @@ const MIRROR_CSS = `<style>
 .page-rate-widget-box,
 #edit-page-comments,
 .odialog-shader { display: none !important; }
-/* .fader-mirror 是下面用来替换 credit module backmodule iframe 的点击捕获层。
-   默认必须隐藏：它 position:fixed 铺满视口，如果只靠 wikidot 主题 CSS 隐藏祖先
-   #u-credit-view，主题 CSS 加载失败时整页点击都会被它吃掉（触发 history.back()）。
-   BFF 的预览出口也注入了同样的兜底，用于已经存下来的历史 HTML。 */
+/* 下面的替换逻辑漏掉的 backmodule iframe（例如 credit:backmodule/code/1 与
+   scp-jp 的 start.html / otherwise.html）在预览里被 CSP 的 frame-src 'none' 挡下，
+   会留下空白框，统一隐藏。原来的选择器写的是 `.creditRate iframe[...]`，
+   但这些 iframe 实际挂在 #u-credit-view > .fader 下面，从来没匹配上过。 */
+iframe[src*="backmodule"] { display: none !important; }
+
+/* .fader-mirror 是下面用来替换 backmodule iframe 的点击捕获层。
+   不能用 position:fixed —— 那样它的尺寸就与祖先无关，一旦 wikidot 主题 CSS 加载失败
+   （祖先容器不再被隐藏），它就盖住整个视口，整页点击都被它吃掉（触发 history.back()）。
+   改成 absolute + inset:0，至多覆盖自己的定位包含块。
+   显隐另外用 [id^="u-credit"] 兜一层：credit module 有 #u-credit-view 与
+   #u-credit-otherwise 两个模态框，不能只写其中一个。
+   BFF 的预览出口注入了同样的规则，用于已经存下来的历史 HTML。 */
 .fader-mirror {
   display: none;
-  width: 100%; height: 100%; position: fixed;
-  top: 0; left: 0; cursor: pointer; z-index: 999;
+  position: absolute; inset: 0;
+  cursor: pointer; z-index: 999;
 }
-#u-credit-view:target .fader-mirror { display: block; }
+[id^="u-credit"]:target .fader-mirror { display: block; }
 .credit-back-mirror {
   display: block; text-align: center; margin: 8px 0;
   font-size: 0.8em; cursor: pointer; color: #b01;
