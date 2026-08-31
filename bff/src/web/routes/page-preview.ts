@@ -15,7 +15,7 @@ function getSyncerPool(): pg.Pool | null {
 }
 
 /**
- * 预览视口解锁样式。
+ * 预览出口注入的修正样式。
  *
  * Wikidot 的页面 <head> 里带着一条 `data-wikidot-theme` 的 interwiki 样式表
  * (interwiki.scpwikicn.com/css/style.css)，那是给侧栏 interwiki 小 iframe 用的，
@@ -23,12 +23,21 @@ function getSyncerPool(): pg.Pool | null {
  * 由于 html 的 overflow 是默认的 visible，body 的 overflow 会按 CSS 规范传播到
  * viewport，于是整个预览文档被锁死：滚轮与触摸都滑不动（脚本改 scrollTop 仍有效）。
  *
- * 放在 BFF 出口而不是 syncer 预处理里，是因为 PageContentCache 中已存的三万多份
- * HTML 都带着这条样式表，服务端注入可以立刻对存量缓存生效，无需重跑同步。
+ * 第二条是 .fader-mirror —— syncer 把 credit module 的 backmodule iframe 换成了这个
+ * 点击捕获层，样式是 `position:fixed` 铺满视口。它平时不碍事，靠的是 wikidot 主题 CSS
+ * 把祖先 #u-credit-view 隐藏着；主题 CSS 一旦加载失败（上游 wdfiles 不可达时常发生），
+ * 它就变成一块盖住整个视口的透明浮层，点哪里都触发 history.back()。
+ * 实测同一页面：主题 CSS 正常时 0x0 不拦截，主题 CSS 失败时 1216x639 且吃掉所有点击。
+ * 这个元素是我们自己造的，显隐不该交给外部样式表决定，所以在这里显式兜住。
+ *
+ * 放在 BFF 出口而不是只改 syncer，是因为 PageContentCache 中已存的三万多份 HTML
+ * 都已经定型，服务端注入可以立刻对存量缓存生效，无需重跑同步。
  */
-const VIEWPORT_UNLOCK_STYLE = `<style id="scpper-preview-viewport-unlock">
+const PREVIEW_OVERRIDE_STYLE = `<style id="scpper-preview-overrides">
 html:root { overflow: auto !important; }
 :root > body { overflow: visible !important; }
+.fader-mirror { display: none !important; }
+#u-credit-view:target .fader-mirror { display: block !important; }
 </style>`;
 
 /**
@@ -43,18 +52,18 @@ html:root { overflow: auto !important; }
  * 页面里哪怕出现 `html { overflow: hidden !important }` 这种同为 important 的规则也压不过。
  * （真正触发本 bug 的 interwiki 规则本身并不带 !important，这里只是加一层保险。）
  */
-function withViewportUnlock(html: string): string {
+function withPreviewOverrides(html: string): string {
   const headOpen = html.match(/<head\b[^>]*>/i);
   if (headOpen?.index !== undefined) {
     const at = headOpen.index + headOpen[0].length;
-    return html.slice(0, at) + VIEWPORT_UNLOCK_STYLE + html.slice(at);
+    return html.slice(0, at) + PREVIEW_OVERRIDE_STYLE + html.slice(at);
   }
   const bodyOpen = html.search(/<body\b/i);
   if (bodyOpen !== -1) {
-    return html.slice(0, bodyOpen) + VIEWPORT_UNLOCK_STYLE + html.slice(bodyOpen);
+    return html.slice(0, bodyOpen) + PREVIEW_OVERRIDE_STYLE + html.slice(bodyOpen);
   }
   // 既没有 head 也没有 body 的异常文档：追加到末尾（放在最前面会触发 quirks mode）
-  return html + VIEWPORT_UNLOCK_STYLE;
+  return html + PREVIEW_OVERRIDE_STYLE;
 }
 
 // ── 内联 CSS 里的图片改写 ──
@@ -275,7 +284,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         return res.status(404).send('content not cached');
       }
 
-      // HTML 主体已在 syncer 存储时预处理完成，出口再补视口解锁样式与内联 CSS 的资源代理
+      // HTML 主体已在 syncer 存储时预处理完成，出口再补修正样式与内联 CSS 的资源代理
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'private, max-age=300');
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -291,7 +300,7 @@ export function pagePreviewRouter(mainPool: pg.Pool) {
         "frame-ancestors 'self'",
         "form-action 'none'"
       ].join('; '));
-      return res.send(withViewportUnlock(withProxiedInlineAssets(contentResult.rows[0].full_page_html)));
+      return res.send(withPreviewOverrides(withProxiedInlineAssets(contentResult.rows[0].full_page_html)));
     } catch (err) {
       next(err);
     }

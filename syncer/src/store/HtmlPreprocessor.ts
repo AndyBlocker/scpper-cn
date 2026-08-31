@@ -85,11 +85,16 @@ const MIRROR_CSS = `<style>
 .page-rate-widget-box,
 #edit-page-comments,
 .odialog-shader { display: none !important; }
-.creditRate iframe[src*="backmodule"] { display: none !important; }
+/* .fader-mirror 是下面用来替换 credit module backmodule iframe 的点击捕获层。
+   默认必须隐藏：它 position:fixed 铺满视口，如果只靠 wikidot 主题 CSS 隐藏祖先
+   #u-credit-view，主题 CSS 加载失败时整页点击都会被它吃掉（触发 history.back()）。
+   BFF 的预览出口也注入了同样的兜底，用于已经存下来的历史 HTML。 */
 .fader-mirror {
+  display: none;
   width: 100%; height: 100%; position: fixed;
   top: 0; left: 0; cursor: pointer; z-index: 999;
 }
+#u-credit-view:target .fader-mirror { display: block; }
 .credit-back-mirror {
   display: block; text-align: center; margin: 8px 0;
   font-size: 0.8em; cursor: pointer; color: #b01;
