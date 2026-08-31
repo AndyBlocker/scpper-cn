@@ -4,12 +4,25 @@ import { createHash } from 'crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import {
+  isAllowedUrl,
+  rewriteCssUrls,
+} from '../utils/asset-proxy.js';
 
 // ── Disk cache ──
+//
+// 缓存策略是 stale-while-revalidate：
+// 上游（wikidot / wdfiles）对国内是一条不稳定的链路，经常整段时间连不上。
+// 旧实现按 7 天硬过期并在读到时删除条目，一旦此时回源失败，资源就永久消失了。
+// 现在过期只代表"不新鲜"：照样先把旧内容吐出去，再在后台悄悄回源刷新；
+// 回源失败就继续用旧的。淘汰改由容量上限的 LRU 负责。
 const DISK_CACHE_DIR = process.env.CSS_PROXY_CACHE_DIR ||
   path.resolve(process.cwd(), 'cache/css-proxy');
 const DISK_CACHE_ENABLED = process.env.CSS_PROXY_DISK_CACHE !== '0';
-const DISK_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+/** 超过这个年龄就在后台刷新，但内容仍然可用 */
+const DISK_CACHE_FRESH_MS = Number(process.env.CSS_PROXY_FRESH_MS || 7 * 24 * 60 * 60 * 1000);
+/** 缓存目录容量上限，超了按最久未使用淘汰 */
+const DISK_CACHE_MAX_BYTES = Number(process.env.CSS_PROXY_MAX_BYTES || 20 * 1024 * 1024 * 1024);
 const DISK_CACHE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 if (DISK_CACHE_ENABLED) {
@@ -20,7 +33,7 @@ function cacheKeyFor(url: string): string {
   return createHash('sha256').update(url).digest('hex');
 }
 
-type CachedEntry = { contentType: string; body: Buffer };
+type CachedEntry = { contentType: string; body: Buffer; fresh: boolean };
 
 function readFromDisk(url: string): CachedEntry | null {
   if (!DISK_CACHE_ENABLED) return null;
@@ -30,15 +43,9 @@ function readFromDisk(url: string): CachedEntry | null {
   try {
     if (!fs.existsSync(metaPath) || !fs.existsSync(dataPath)) return null;
     const stat = fs.statSync(metaPath);
-    if (Date.now() - stat.mtimeMs > DISK_CACHE_MAX_AGE_MS) {
-      // Expired — remove lazily
-      try { fs.unlinkSync(metaPath); } catch { /* ignore */ }
-      try { fs.unlinkSync(dataPath); } catch { /* ignore */ }
-      return null;
-    }
     const contentType = fs.readFileSync(metaPath, 'utf-8').trim();
     const body = fs.readFileSync(dataPath);
-    return { contentType, body };
+    return { contentType, body, fresh: Date.now() - stat.mtimeMs <= DISK_CACHE_FRESH_MS };
   } catch {
     return null;
   }
@@ -55,49 +62,74 @@ function writeToDisk(url: string, contentType: string, body: Buffer | string): v
   } catch { /* ignore write errors */ }
 }
 
-// Periodic disk cache cleanup: remove files older than 7 days
+/** 记一次命中，让 LRU 能识别热条目（只动 .data 的 atime，不影响 .meta 的新鲜度判断） */
+function touchOnDisk(url: string): void {
+  if (!DISK_CACHE_ENABLED) return;
+  const dataPath = path.join(DISK_CACHE_DIR, cacheKeyFor(url) + '.data');
+  const now = new Date();
+  try { fs.utimesSync(dataPath, now, fs.statSync(dataPath).mtime); } catch { /* ignore */ }
+}
+
+// 周期性按容量上限做 LRU 淘汰（不再按年龄删除 —— 见上面的缓存策略说明）
 if (DISK_CACHE_ENABLED) {
   setInterval(async () => {
     try {
-      const entries = await fsp.readdir(DISK_CACHE_DIR);
-      const now = Date.now();
-      for (const entry of entries) {
-        if (!entry.endsWith('.meta')) continue;
-        const metaPath = path.join(DISK_CACHE_DIR, entry);
-        const dataPath = path.join(DISK_CACHE_DIR, entry.replace(/\.meta$/, '.data'));
+      const names = await fsp.readdir(DISK_CACHE_DIR);
+      const items: Array<{ key: string; bytes: number; atimeMs: number }> = [];
+      let total = 0;
+      for (const name of names) {
+        if (!name.endsWith('.data')) continue;
+        const key = name.replace(/\.data$/, '');
         try {
-          const stat = await fsp.stat(metaPath);
-          if (now - stat.mtimeMs > DISK_CACHE_MAX_AGE_MS) {
-            await fsp.rm(metaPath, { force: true });
-            await fsp.rm(dataPath, { force: true });
-          }
+          const stat = await fsp.stat(path.join(DISK_CACHE_DIR, name));
+          items.push({ key, bytes: stat.size, atimeMs: stat.atimeMs });
+          total += stat.size;
         } catch { /* ignore per-file errors */ }
+      }
+      if (total <= DISK_CACHE_MAX_BYTES) return;
+      // 最久未访问的先淘汰，直到回到上限的 90%
+      const target = DISK_CACHE_MAX_BYTES * 0.9;
+      items.sort((a, b) => a.atimeMs - b.atimeMs);
+      for (const item of items) {
+        if (total <= target) break;
+        await fsp.rm(path.join(DISK_CACHE_DIR, item.key + '.data'), { force: true });
+        await fsp.rm(path.join(DISK_CACHE_DIR, item.key + '.meta'), { force: true });
+        total -= item.bytes;
       }
     } catch { /* ignore sweep errors */ }
   }, DISK_CACHE_CLEANUP_INTERVAL_MS).unref();
 }
 
-const ALLOWED_EXACT_HOSTS = [
-  'd3g0gp89917ko0.cloudfront.net',
-  'files.wikidot.com',
-];
-const ALLOWED_HOST_SUFFIXES = [
-  'wikidot.com',
-  'wdfiles.com',
-  'scpwikicn.com',
-];
 const DEFAULT_CACHE_CONTROL =
   process.env.CSS_PROXY_CACHE_CONTROL || 'public, max-age=3600, s-maxage=7200';
 const MAX_REDIRECTS = 5;
-const MAX_RESPONSE_SIZE = 2 * 1024 * 1024; // 2 MB
+/** 单个资源体积上限；SCP 正文里的大幅插图经常超过 2MB */
+const MAX_RESPONSE_SIZE = Number(process.env.CSS_PROXY_MAX_RESPONSE_BYTES || 8 * 1024 * 1024);
+/** 回源超时 —— 上游不可达时会一直挂着，必须掐断，否则连接被拖死 */
+const UPSTREAM_TIMEOUT_MS = Number(process.env.CSS_PROXY_UPSTREAM_TIMEOUT_MS || 10_000);
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX_PER_IP = 60;
+// 限流只作用于真正需要回源的请求（缓存命中不计数）。
+// 一个预览页要拉 13~15 个资源，旧的 60/min 意味着看四个页面就全被 429 掉。
+const RATE_MAX_PER_IP = Number(process.env.CSS_PROXY_RATE_MAX || 300);
 const RATE_BUCKETS_MAX_SIZE = 10_000;
 
 // Simple in-memory per-IP rate limiter
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
+/**
+ * 本机发起的请求不计入限流。
+ *
+ * 限流是用来挡公网滥用的，而资源预热脚本从 127.0.0.1 直连本服务，
+ * 会瞬间打满额度。app 设了 `trust proxy: 1`，经 nginx 进来的请求 req.ip 一定是
+ * 真实客户端地址，所以只有真正从本机发出的请求才会落到回环地址上。
+ */
+function isLoopback(ip: string): boolean {
+  const addr = ip.replace(/^::ffff:/, '');
+  return addr === '127.0.0.1' || addr === '::1';
+}
+
 function isRateLimited(ip: string): boolean {
+  if (isLoopback(ip)) return false;
   const now = Date.now();
   const bucket = rateBuckets.get(ip);
   if (!bucket || now >= bucket.resetAt) {
@@ -128,74 +160,10 @@ setInterval(() => {
   }
 }, RATE_WINDOW_MS).unref();
 
-function isAllowedUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    const protocol = String(u.protocol || '').toLowerCase();
-    if (protocol !== 'http:' && protocol !== 'https:') return false;
-    if (u.username || u.password) return false;
-    const host = String(u.hostname || '').toLowerCase();
-    if (!host) return false;
-    if (ALLOWED_EXACT_HOSTS.includes(host)) return true;
-    return ALLOWED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
-  } catch {
-    return false;
-  }
-}
-
-function isAlreadyProxyRef(raw: string): boolean {
-  const value = String(raw || '').trim();
-  if (!value) return false;
-  if (/^\/(?:api\/)?css-proxy(?:[/?#]|$)/i.test(value)) return true;
-  try {
-    const parsed = new URL(value, 'https://scpper.mer.run');
-    return /\/(?:api\/)?css-proxy$/i.test(parsed.pathname);
-  } catch {
-    return false;
-  }
-}
-
 function proxyPathForRequest(_req: Request): string {
   // Always generate externally reachable path via site gateway.
   // Internal upstream path may be rewritten to '/css-proxy' by reverse proxy.
   return '/api/css-proxy';
-}
-
-function toProxyHref(proxyPath: string, raw: string): string {
-  return `${proxyPath}?url=${encodeURIComponent(raw)}`;
-}
-
-function rewriteCssRef(rawUrl: string, base: URL, proxyPath: string): string {
-  const value = String(rawUrl || '').trim();
-  if (!value) return value;
-  if (isAlreadyProxyRef(value)) return value;
-  if (/^(?:data:|blob:|javascript:|mailto:|tel:|#)/i.test(value)) return value;
-  if (/^var\(/i.test(value)) return value;
-
-  try {
-    const abs = new URL(value, base).href;
-    return isAllowedUrl(abs) ? toProxyHref(proxyPath, abs) : abs;
-  } catch {
-    return value;
-  }
-}
-
-function rewriteCssUrls(css: string, baseUrl: string, proxyPath: string): string {
-  const base = new URL(baseUrl);
-  return css
-    .replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_all, quote, rawUrl) => {
-      const rewritten = rewriteCssRef(rawUrl, base, proxyPath);
-      return `url(${quote}${rewritten}${quote})`;
-    })
-    .replace(
-      /@import\s+url\(\s*(["']?)([^"')]+)\1\s*\)/gi,
-      (_all, quote, rawUrl) =>
-        `@import url(${quote}${rewriteCssRef(rawUrl, base, proxyPath)}${quote})`,
-    )
-    .replace(
-      /@import\s+(["'])([^"']+)\1/gi,
-      (_all, quote, rawUrl) => `@import ${quote}${rewriteCssRef(rawUrl, base, proxyPath)}${quote}`,
-    );
 }
 
 function cssErrorComment(message: string): string {
@@ -231,6 +199,7 @@ async function fetchAllowedUpstream(inputUrl: string): Promise<globalThis.Respon
         Accept: '*/*',
       },
       redirect: 'manual',
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
     if (![301, 302, 303, 307, 308].includes(upstream.status)) {
@@ -296,15 +265,72 @@ async function readLimitedBuffer(response: globalThis.Response, maxBytes: number
   return Buffer.concat(chunks);
 }
 
+type FetchOk = { ok: true; contentType: string; body: Buffer | string };
+type FetchFail = { ok: false; reason: string; status: number };
+type FetchResult = FetchOk | FetchFail;
+
+/**
+ * 回源抓取并写入缓存。主请求路径与后台刷新共用这一份实现。
+ */
+async function fetchAndStore(url: string, proxyPath: string): Promise<FetchResult> {
+  try {
+    const upstream = await fetchAllowedUpstream(url);
+
+    const declaredLength = Number(upstream.headers.get('content-length'));
+    if (declaredLength && declaredLength > MAX_RESPONSE_SIZE) {
+      return { ok: false, reason: 'Upstream response too large', status: 502 };
+    }
+
+    if (!upstream.ok) {
+      return { ok: false, reason: `Upstream returned ${upstream.status}`, status: upstream.status };
+    }
+
+    const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
+    const finalUrl = upstream.url || url;
+    if (!isAllowedUrl(finalUrl)) {
+      return { ok: false, reason: 'Disallowed final URL', status: 502 };
+    }
+
+    if (contentType.includes('text/html')) {
+      return { ok: false, reason: 'Upstream returned text/html instead of CSS', status: 502 };
+    }
+
+    if (contentType.includes('text/css') || contentType.includes('/css')) {
+      let css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
+      css = rewriteCssUrls(css, finalUrl, proxyPath);
+      writeToDisk(url, 'text/css; charset=utf-8', css);
+      return { ok: true, contentType: 'text/css; charset=utf-8', body: css };
+    }
+
+    const buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
+    const finalContentType = contentType || 'application/octet-stream';
+    writeToDisk(url, finalContentType, buf);
+    return { ok: true, contentType: finalContentType, body: buf };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const oversize = message === 'Response too large';
+    return {
+      ok: false,
+      reason: oversize ? 'Response too large' : 'Proxy fetch failed',
+      status: 502,
+    };
+  }
+}
+
+// 同一个 URL 的后台刷新只跑一份，避免一页几十个陈旧资源同时打上游
+const revalidating = new Set<string>();
+
+function revalidateInBackground(url: string, proxyPath: string): void {
+  if (revalidating.has(url)) return;
+  revalidating.add(url);
+  void fetchAndStore(url, proxyPath).finally(() => revalidating.delete(url));
+}
+
 export function cssProxyRouter() {
   const router = Router();
 
   router.get(['/css-proxy', '/api/css-proxy'], async (req, res) => {
     const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
-    if (isRateLimited(clientIp)) {
-      setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-      return res.status(429).send('Too many requests');
-    }
 
     const queryValue = Array.isArray(req.query.url) ? req.query.url[0] : req.query.url;
     const url = String(queryValue || '');
@@ -321,78 +347,45 @@ export function cssProxyRouter() {
       return res.status(400).send('invalid or disallowed url');
     }
 
-    // Disk cache hit — return directly without rate-limiting upstream fetch
+    // 缓存优先：命中就直接吐，不占限流额度。
+    // 限流的目的是保护上游和本机出口带宽，命中缓存的请求两者都不消耗。
     const cached = readFromDisk(url);
     if (cached) {
+      touchOnDisk(url);
+      if (!cached.fresh) {
+        // 不新鲜 —— 先把旧内容给出去，回源放到后台，避免用户等一个可能连不上的上游
+        void revalidateInBackground(url, proxyPath);
+      }
       setHeaders(res, cached.contentType, DEFAULT_CACHE_CONTROL);
       return res.status(200).send(cached.body);
     }
 
-    try {
-      const upstream = await fetchAllowedUpstream(url);
-
-      // Check Content-Length early if available
-      const declaredLength = Number(upstream.headers.get('content-length'));
-      if (declaredLength && declaredLength > MAX_RESPONSE_SIZE) {
-        if (wantsCss) {
-          const body = cssErrorComment('Upstream response too large');
-          setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
-          return res.status(200).send(body);
-        }
-        setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-        return res.status(502).send('upstream response too large');
-      }
-
-      if (!upstream.ok) {
-        if (wantsCss) {
-          const body = cssErrorComment(`Upstream returned ${upstream.status}`);
-          setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
-          return res.status(200).send(body);
-        }
-        setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-        return res.status(upstream.status).send(`proxy upstream error`);
-      }
-
-      const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
-      const finalUrl = upstream.url || url;
-      if (!isAllowedUrl(finalUrl)) {
-        throw new Error('Disallowed final URL');
-      }
-
-      if (contentType.includes('text/html')) {
-        if (wantsCss) {
-          const body = cssErrorComment('Upstream returned text/html instead of CSS');
-          setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
-          return res.status(200).send(body);
-        }
-        setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-        return res.status(502).send('proxy upstream returned html');
-      }
-
-      if (contentType.includes('text/css') || contentType.includes('/css')) {
-        let css = await readLimitedText(upstream, MAX_RESPONSE_SIZE);
-        css = rewriteCssUrls(css, finalUrl, proxyPath);
-        writeToDisk(url, 'text/css; charset=utf-8', css);
-        setHeaders(res, 'text/css; charset=utf-8', DEFAULT_CACHE_CONTROL);
-        return res.status(200).send(css);
-      }
-
-      const buf = await readLimitedBuffer(upstream, MAX_RESPONSE_SIZE);
-      const finalContentType = contentType || 'application/octet-stream';
-      writeToDisk(url, finalContentType, buf);
-      setHeaders(res, finalContentType, DEFAULT_CACHE_CONTROL);
-      return res.status(200).send(buf);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      const isOversize = message === 'Response too large';
+    // 到这里才是真的要回源，限流从这里开始算
+    if (isRateLimited(clientIp)) {
       if (wantsCss) {
-        const body = cssErrorComment(isOversize ? 'Response too large' : 'Proxy fetch failed');
+        const body = cssErrorComment('Rate limited');
         setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
         return res.status(200).send(body);
       }
       setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
-      return res.status(502).send(isOversize ? 'upstream response too large' : 'proxy fetch failed');
+      return res.status(429).send('Too many requests');
     }
+
+    const result = await fetchAndStore(url, proxyPath);
+
+    if (result.ok) {
+      setHeaders(res, result.contentType, DEFAULT_CACHE_CONTROL);
+      return res.status(200).send(result.body);
+    }
+
+    // 回源失败且本地没有可退回的旧内容：CSS 用注释形式软失败（避免整页样式炸掉），
+    // 其余资源如实返回错误状态
+    if (wantsCss) {
+      setHeaders(res, 'text/css; charset=utf-8', 'no-cache');
+      return res.status(200).send(cssErrorComment(result.reason));
+    }
+    setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
+    return res.status(result.status).send('proxy fetch failed');
   });
 
   return router;

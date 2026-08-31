@@ -118,3 +118,6 @@ frontend/public/annual-summary/
 # frontend/CODE_REVIEW.md
 
 node_modules
+
+# css-proxy 磁盘缓存（运行时生成）
+bff/cache/

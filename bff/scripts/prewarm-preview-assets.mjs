@@ -1,0 +1,99 @@
+#!/usr/bin/env node
+/**
+ * 预热页面预览用到的静态资源。
+ *
+ * 预览里的图片是运行时向 wikidot / wdfiles 回源取的，而那条链路对国内很不稳定
+ * ——经常整段时间连不上，导致正文插图集体裂图。这个脚本趁链路通的时候把资源
+ * 抓进 css-proxy 的磁盘缓存；缓存现在是 stale-while-revalidate + 容量 LRU，
+ * 抓进来的内容不会因为过期被删掉。
+ *
+ * 资源清单直接从预览接口的输出里提取，保证跟浏览器实际会请求的完全一致
+ * （包括 BFF 出口新增的内联 CSS 改写），不需要在这里复刻一份改写逻辑。
+ *
+ * 用法：
+ *   node scripts/prewarm-preview-assets.mjs [--limit N] [--concurrency N] [--dry-run]
+ *   node scripts/prewarm-preview-assets.mjs --base http://127.0.0.1:4396
+ */
+import pg from 'pg';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import 'dotenv/config';
+
+function arg(name, fallback) {
+  const i = process.argv.indexOf(`--${name}`);
+  return i === -1 ? fallback : process.argv[i + 1];
+}
+const DRY_RUN = process.argv.includes('--dry-run');
+const LIMIT = Number(arg('limit', 0)) || 0;
+const PAGE_CONCURRENCY = Number(arg('concurrency', 6));
+const ASSET_CONCURRENCY = Number(arg('asset-concurrency', 6));
+const BASE = String(arg('base', 'http://127.0.0.1:4396')).replace(/\/+$/, '');
+const CACHE_DIR = process.env.CSS_PROXY_CACHE_DIR || path.resolve(process.cwd(), 'cache/css-proxy');
+
+const SYNCER_DB_URL = process.env.SYNCER_DATABASE_URL || '';
+if (!SYNCER_DB_URL) {
+  console.error('SYNCER_DATABASE_URL 未配置');
+  process.exit(1);
+}
+
+const isCached = (url) =>
+  fs.existsSync(path.join(CACHE_DIR, createHash('sha256').update(url).digest('hex') + '.meta'));
+
+/** 以固定并发跑完一批任务 */
+async function pool(items, concurrency, worker) {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      try { await worker(item); } catch { /* 单条失败不影响整体 */ }
+    }
+  });
+  await Promise.all(runners);
+}
+
+const client = new pg.Client({ connectionString: SYNCER_DB_URL });
+await client.connect();
+const { rows } = await client.query(
+  `SELECT "wikidotId" FROM "PageContentCache"
+   WHERE "fullPageHtml" IS NOT NULL AND "wikidotId" IS NOT NULL
+   ORDER BY "wikidotId"
+   ${LIMIT ? `LIMIT ${LIMIT}` : ''}`,
+);
+await client.end();
+console.log(`待扫描页面：${rows.length}`);
+
+// ── 1. 收集资源清单 ──
+const assets = new Set();
+let scanned = 0;
+await pool(rows, PAGE_CONCURRENCY, async ({ wikidotId }) => {
+  const res = await fetch(`${BASE}/pages/${wikidotId}/preview`);
+  if (res.ok) {
+    const html = await res.text();
+    for (const m of html.matchAll(/css-proxy\?url=([^"'\s)&]+)/gi)) {
+      try { assets.add(decodeURIComponent(m[1])); } catch { /* 跳过坏链接 */ }
+    }
+  }
+  if (++scanned % 500 === 0) console.log(`  已扫描 ${scanned}/${rows.length}，累计资源 ${assets.size}`);
+});
+
+const all = [...assets];
+const missing = all.filter((u) => !isCached(u));
+console.log(`\n唯一资源 ${all.length}，其中已缓存 ${all.length - missing.length}，待抓取 ${missing.length}`);
+
+if (DRY_RUN) {
+  console.log('--dry-run：不实际抓取');
+  process.exit(0);
+}
+
+// ── 2. 逐个走一遍 css-proxy，让服务端按自己的规则抓取并落盘 ──
+let ok = 0, failed = 0, done = 0;
+await pool(missing, ASSET_CONCURRENCY, async (url) => {
+  const res = await fetch(`${BASE}/css-proxy?url=${encodeURIComponent(url)}`);
+  // 回源失败时 CSS 会以注释形式软失败，用是否真的落盘来判定成功与否
+  if (res.ok && isCached(url)) ok++; else failed++;
+  if (++done % 200 === 0) console.log(`  已处理 ${done}/${missing.length}（成功 ${ok} / 失败 ${failed}）`);
+});
+
+console.log(`\n完成：新抓取 ${ok}，失败 ${failed}`);
+if (failed) console.log('失败多半是上游 wikidot / wdfiles 当前不可达，链路恢复后重跑即可。');
