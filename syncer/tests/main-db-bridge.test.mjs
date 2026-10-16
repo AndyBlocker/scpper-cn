@@ -20,7 +20,7 @@ const bridge = await import(`data:text/javascript;base64,${Buffer.from(`
   function getMainPool() { return pool; }
   export function setPool(value) { pool = value; }
   ${outputText}
-  export { loadPageMapping };
+  export { loadPageMapping, createNewPage };
 `).toString('base64')}`);
 
 function mapping(overrides = {}) {
@@ -41,7 +41,8 @@ test('URL reuse keeps first deterministic live mapping rather than deleted prede
   const result = await bridge.loadPageMapping(pool);
   assert.equal(result.get('scp-cn-3000').wikidotId, 1452014507);
   assert.match(query.sql, /ORDER BY fullname, \(p\."isDeleted" OR pv\."isDeleted"\) ASC/);
-  assert.match(query.sql, /pv\."validFrom" DESC, pv\.id DESC, p\.id DESC/);
+  assert.match(query.sql, /pv\."validFrom" DESC NULLS LAST, pv\.id DESC, p\.id DESC/);
+  assert.match(query.sql, /p\."isDeleted" AS is_deleted/);
   assert.deepEqual(query.params, [true]);
 });
 
@@ -115,4 +116,39 @@ test('attribution guard rejecting a concurrent deletion reports a skipped write'
   } });
   const result = await bridge.bridgeAttributions([{ pageFullname: 'scp-cn-3000', userName: 'author', normalizedType: 'AUTHOR', order: 0, date: null }]);
   assert.deepEqual(result, { written: 0, skipped: 1 });
+});
+
+
+test('restoring a deleted Wikidot identity clears both Page and current PageVersion deletion flags', async () => {
+  const queries = [];
+  let released = false;
+  const client = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      if (sql.includes('SELECT id, "currentUrl"')) {
+        return { rows: [{ id: 10, currentUrl: 'http://scp-wiki-cn.wikidot.com/scp-cn-3000' }] };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+    release: () => { released = true; },
+  };
+  const id = await bridge.createNewPage(
+    { connect: async () => client },
+    'scp-cn-3000',
+    1451202340,
+    { rating: 2024, votesCount: 2204, commentsCount: 1, revisionsCount: 2, tags: [], title: 'SCP-CN-3000-超威蓝猫' },
+  );
+  assert.equal(id, 10);
+  const identityLookup = queries.find(({ sql }) => sql.includes('SELECT id, "currentUrl"'));
+  assert.match(identityLookup.sql, /WHERE "wikidotId" = \$1/);
+  assert.deepEqual(identityLookup.params, [1451202340]);
+  const pageUpdate = queries.find(({ sql }) => sql.includes('UPDATE "Page"'));
+  assert.match(pageUpdate.sql, /"isDeleted" = false/);
+  assert.equal(pageUpdate.params[0], 10);
+  const versionUpdate = queries.find(({ sql }) => sql.includes('UPDATE "PageVersion"'));
+  assert.match(versionUpdate.sql, /"isDeleted" = false/);
+  assert.match(versionUpdate.sql, /WHERE "pageId" = \$1 AND "validTo" IS NULL/);
+  assert.equal(versionUpdate.params[0], 10);
+  assert.equal(queries.at(-1).sql, 'COMMIT');
+  assert.equal(released, true);
 });

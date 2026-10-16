@@ -4,6 +4,7 @@
   "description": "SCPper CN vote sentinel and sync-v2 service",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "dev": "node --import tsx/esm src/index.ts",
     "sentinel": "node --import tsx/esm src/index.ts sentinel --run-immediately",
     "sync": "node --import tsx/esm src/index.ts sync --run-immediately",

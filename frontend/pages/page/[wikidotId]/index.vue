@@ -75,7 +75,7 @@
         这是已删除页面的历史记录。保存的评分未经核实，不代表现存文章的评分。
         <template v-if="page?.urlReusedBy">
           原地址已被另一篇文章使用：
-          <NuxtLink :to="`/page/${page.urlReusedBy.wikidotId}`" class="underline">{{ page.urlReusedBy.title }}（查看现存文章）</NuxtLink>。
+          <NuxtLink :to="`/page/${page.urlReusedBy.wikidotId}`" class="underline">{{ page.urlReusedBy.title || `页面 ${page.urlReusedBy.wikidotId}` }}（查看现存文章）</NuxtLink>。
         </template>
       </aside>
 
@@ -861,7 +861,7 @@ const wilsonLB = computed(() => {
 const ratingTooltip = computed(() => page.value?.isDeleted
   ? '已删除页面保存的历史评分，未经核实；更新时间不代表评分采集时间'
   : `最近更新：${formatRelativeTime(page.value?.updatedAt || page.value?.createdAt || '')}`)
-const voteTooltip = computed(() => `总票数：${totalVotes.value}`)
+const voteTooltip = computed(() => distributionAvailable.value ? `总票数：${totalVotes.value}` : '投票明细暂无数据')
 const wilsonTooltip = computed(() => `基于 Wilson 区间的下界，结合票数与比例`)
 
 // Controversy index

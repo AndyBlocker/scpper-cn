@@ -265,6 +265,7 @@ async function loadPageMapping(
 ): Promise<Map<string, PageMapping>> {
   // 主同步保留已删除页作为恢复候选；URL 复用时始终优先当前存活页。
   // 元数据扫描仅按 URL 识别页面，不能据此更新已删除的历史页面。
+  // is_deleted 保持 Page 级含义，避免改变主同步的僵尸恢复判定。
   const { rows } = await pool.query<{
     fullname: string;
     page_id: string;
@@ -285,12 +286,12 @@ async function loadPageMapping(
       pv.tags,
       pv.rating::text,
       pv."voteCount"::text AS vote_count,
-      (p."isDeleted" OR pv."isDeleted") AS is_deleted
+      p."isDeleted" AS is_deleted
     FROM "Page" p
     JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
     WHERE $1::boolean OR (p."isDeleted" = false AND pv."isDeleted" = false)
     ORDER BY fullname, (p."isDeleted" OR pv."isDeleted") ASC,
-      pv."validFrom" DESC, pv.id DESC, p.id DESC
+      pv."validFrom" DESC NULLS LAST, pv.id DESC, p.id DESC
   `, [includeDeleted]);
 
   const map = new Map<string, PageMapping>();

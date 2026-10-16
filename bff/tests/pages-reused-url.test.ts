@@ -13,7 +13,7 @@ describe('deleted page with a reused URL', () => {
         url: 'https://scp-wiki-cn.wikidot.com/scp-cn-3000',
         isDeleted: deleted, rating: 2024, alternateTitle: '众节点永垂不朽'
       }] };
-      if (sql.includes('regexp_replace')) return { rows: replacement ? [{ wikidotId: 1452014507, title: 'SCP-CN-3000' }] : [] };
+      if (sql.includes('reused-url')) return { rows: replacement ? [{ wikidotId: 1452014507, title: 'SCP-CN-3000' }] : [] };
       if (sql.includes('pv."isDeleted" = false') && historical) return { rows: [{ pageVersionId: 10, alternateTitle: 'historical', rating: 12 }] };
       return { rows: [] };
     });
@@ -43,6 +43,6 @@ describe('deleted page with a reused URL', () => {
     const { app, query } = appFor(false, true);
     const { body } = await request(app).get('/pages/by-id?wikidotId=1451202340').expect(200);
     expect(body.alternateTitle).toBe('众节点永垂不朽');
-    expect(query.mock.calls.some(([sql]) => sql.includes('regexp_replace'))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => sql.includes('reused-url'))).toBe(false);
   });
 });

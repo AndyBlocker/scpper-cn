@@ -341,16 +341,22 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     if (row.isDeleted !== true || !row.pageId) return row;
 
     // URLs can be reused by a different Wikidot page. Never borrow its metadata.
+    const urlBase = typeof row.url === 'string'
+      ? row.url.replace(/^https?:\/\//, '').replace(/\/+$/, '')
+      : '';
+    const candidateUrls = urlBase ? [
+      `http://${urlBase}`, `https://${urlBase}`,
+      `http://${urlBase}/`, `https://${urlBase}/`
+    ] : [];
     const { rows: replacements } = await readPool.query(`
       SELECT p."wikidotId", pv.title
       FROM "Page" p
       JOIN "PageVersion" pv ON pv."pageId" = p.id
       WHERE p.id <> $1 AND p."isDeleted" = false
         AND pv."validTo" IS NULL AND pv."isDeleted" = false
-        AND regexp_replace(regexp_replace(p."currentUrl", '^https?://', ''), '/+$', '')
-          = regexp_replace(regexp_replace($2::text, '^https?://', ''), '/+$', '')
+        AND p."currentUrl" = ANY($2::text[]) /* reused-url */
       ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC LIMIT 1
-    `, [row.pageId, row.url]);
+    `, [row.pageId, candidateUrls]);
     if (replacements[0]) {
       row.urlReusedBy = replacements[0];
       // The old value may have been imported by URL after deletion.
