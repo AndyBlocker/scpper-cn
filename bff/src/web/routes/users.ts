@@ -4,6 +4,7 @@ import type { RedisClientType } from 'redis';
 import { extractPreviewCandidates, pickPreview, toPreviewPick, extractExcerptFallback } from '../utils/preview.js';
 import { createCache } from '../utils/cache.js';
 import { getReadPoolSync } from '../utils/dbPool.js';
+import { USER_PAGE_ATTRIBUTION_JOIN } from '../utils/userPageAttribution.js';
 
 export function usersRouter(pool: Pool, redis: RedisClientType | null) {
   const router = Router();
@@ -535,7 +536,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
       const sort = String(sortBy || 'date').toLowerCase();
       const dir = (String(sortDir || '').toLowerCase() === 'asc') ? 'ASC' : 'DESC';
       const orderExpr = (sort === 'rating') ? 't.rating' : 't."createdAt"';
-      const cacheKey = `users:${wikidotIdInt}:pages:${tabLower}:${limitInt}:${offsetInt}:${includeDeletedBool ? 1 : 0}:${sort}:${dir}`;
+      const cacheKey = `users:${wikidotIdInt}:pages:v2:${tabLower}:${limitInt}:${offsetInt}:${includeDeletedBool ? 1 : 0}:${sort}:${dir}`;
 
       const items = await cache.remember(cacheKey, 180, async () => {
         let tabCond = '';
@@ -674,6 +675,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               pv2.id DESC
             LIMIT 1
           ) effective_pv ON TRUE
+          ${USER_PAGE_ATTRIBUTION_JOIN}
           -- Historical tags: last non-deleted version with real tags (only for deleted pages)
           LEFT JOIN LATERAL (
             SELECT pv2.tags
@@ -703,7 +705,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
             LIMIT 1
           ) latest ON TRUE
           WHERE u."wikidotId" = $1
-            AND a."pageVerId" = effective_pv.id
+            AND a."pageVerId" = attribution_pv.id
             AND (
               $2::boolean = true
               OR COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) = false
@@ -749,7 +751,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
       }
       const { includeDeleted = 'true' } = req.query as Record<string, string>;
       const includeDeletedBool = String(includeDeleted || 'true').toLowerCase() === 'true';
-      const cacheKey = `users:${wikidotIdInt}:page-counts:${includeDeletedBool ? 1 : 0}`;
+      const cacheKey = `users:${wikidotIdInt}:page-counts:v2:${includeDeletedBool ? 1 : 0}`;
       const row = await cache.remember(cacheKey, 180, async () => {
         const sql = `
           WITH latest_user_pages AS (
@@ -780,6 +782,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
                 pv2.id DESC
               LIMIT 1
             ) effective_pv ON TRUE
+          ${USER_PAGE_ATTRIBUTION_JOIN}
             LEFT JOIN LATERAL (
               SELECT pv2.tags
               FROM "PageVersion" pv2
@@ -798,7 +801,7 @@ export function usersRouter(pool: Pool, redis: RedisClientType | null) {
               LIMIT 1
             ) latest ON TRUE
             WHERE u."wikidotId" = $1
-              AND a."pageVerId" = effective_pv.id
+              AND a."pageVerId" = attribution_pv.id
             ORDER BY p."wikidotId", effective_pv.id DESC
           )
           SELECT 
