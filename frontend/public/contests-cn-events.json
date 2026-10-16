@@ -619,6 +619,46 @@
       "endsAt": "2026-03-10T23:59:00+08:00",
       "detailsMd": "来源：<https://scp-wiki-cn.wikidot.com/winter-contest-2026>\n\n> 日期依据竞赛页“征文开始/计票截止”赛程人工复核（北京时间）。",
       "__local": true
+    },
+    {
+      "id": "cat-month-hub",
+      "title": "2026小猫月",
+      "summary": "单日卡面展示活动，不开放投稿，非竞赛",
+      "color": "#ec4899",
+      "startsAt": "2026-04-01T00:00:00+08:00",
+      "endsAt": "2026-04-01T23:59:59+08:00",
+      "detailsMd": "来源：<https://scp-wiki-cn.wikidot.com/cat-month-hub>\n\n2026年4月1日单日卡面展示，不开放投稿，非竞赛。原页仅标注4月1日，日历按全天展示。时间均为北京时间（UTC+8）。",
+      "__local": true
+    },
+    {
+      "id": "zhongfen-nazotoki-furniture-centre",
+      "title": "解谜解谜家具城！",
+      "summary": "中文分部原创征文与解谜活动",
+      "color": "#06b6d4",
+      "startsAt": "2026-07-06T20:00:00+08:00",
+      "endsAt": "2026-07-26T20:00:00+08:00",
+      "detailsMd": "来源：<https://scp-wiki-cn.wikidot.com/zhongfen-nazotoki-furniture-centre>\n\n投稿时间：2026年7月6日20:00至7月24日20:00。验收时间：7月26日08:00；结算时间：7月26日20:00。日历展示从投稿开始至活动结算。时间均为北京时间（UTC+8）。",
+      "__local": true
+    },
+    {
+      "id": "summer-contest-2026",
+      "title": "2026夏季征文：幕前",
+      "summary": "中文分部征文/活动",
+      "color": "#f97316",
+      "startsAt": "2026-08-17T00:00:00+08:00",
+      "endsAt": "2026-09-09T23:59:00+08:00",
+      "detailsMd": "来源：<https://scp-wiki-cn.wikidot.com/summer-contest-2026>\n\n征文开始：2026年8月17日00:00；投稿截止：9月2日23:59；计票截止：9月9日23:59。日历展示从投稿开始至计票截止。时间均为北京时间（UTC+8）。",
+      "__local": true
+    },
+    {
+      "id": "2026-cn-game-crossover-contest-hub",
+      "title": "第二届电子游戏竞赛",
+      "summary": "中文分部征文/活动",
+      "color": "#8b5cf6",
+      "startsAt": "2026-10-05T00:00:00+08:00",
+      "endsAt": "2026-10-31T23:59:00+08:00",
+      "detailsMd": "来源：<https://scp-wiki-cn.wikidot.com/2026-cn-game-crossover-contest-hub>；赛程规则：<https://scp-wiki-cn.wikidot.com/fragment:2026-game-crossover-contest-rules>\n\n投稿开始：2026年10月5日00:00；投稿截止：10月25日23:59；投票截止：10月31日23:59。日历展示从投稿开始至投票截止。时间均为北京时间（UTC+8）。",
+      "__local": true
     }
   ]
 }
