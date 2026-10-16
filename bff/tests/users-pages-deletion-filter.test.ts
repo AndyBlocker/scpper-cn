@@ -38,6 +38,8 @@ describe('/users pages and counts deletion filter', () => {
     const call = capturedSql.find((s) => s.includes('FROM "Attribution" a') && s.includes('ORDER BY t."createdAt" DESC'));
     expect(call).toBeTruthy();
     // should filter by page/latest deletion status, not attributed version validity
+    expect(call!).toContain('AND a."pageVerId" = attribution_pv.id');
+    expect(call!).toContain('WHERE last_live."pageId" = p.id AND NOT last_live."isDeleted"');
     expect(call!).toContain('OR COALESCE(p."isDeleted", latest."isDeleted", effective_pv."isDeleted", false) = false');
     expect(call!).not.toContain('AND ($2::boolean = true OR pv."validTo" IS NULL)');
   });
@@ -52,6 +54,8 @@ describe('/users pages and counts deletion filter', () => {
     const call = capturedSql.find((s) => s.includes('WITH latest_user_pages AS'));
     expect(call).toBeTruthy();
     // ensure final WHERE uses computed is_deleted flag rather than validTo
+    expect(call!).toContain('AND a."pageVerId" = attribution_pv.id');
+    expect(call!).toContain('WHERE last_live."pageId" = p.id AND NOT last_live."isDeleted"');
     expect(call!).toContain('OR COALESCE(is_deleted, false) = false');
     expect(call!).not.toContain('WHERE ($2::boolean = true OR "validTo" IS NULL)');
   });
