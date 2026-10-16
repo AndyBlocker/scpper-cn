@@ -149,7 +149,7 @@ export async function runSyncerLoop(options: SyncerLoopOptions): Promise<void> {
           .map(c => c.fullname);
         const htmlTargetFullnames = [
           ...new Set([
-            ...changes.filter(c => c.curr).map(c => c.fullname),
+            ...contentChangedPages.map(c => c.fullname),
             ...newPageFullnames,
           ])
         ];
@@ -157,16 +157,13 @@ export async function runSyncerLoop(options: SyncerLoopOptions): Promise<void> {
         let fullPageSaved = 0;
         if (htmlTargetFullnames.length > 0) {
           const contentFullnames = htmlTargetFullnames;
-          // A reused URL can appear as a stats-only change. Refresh its identity
-          // every changed scan, and fail closed if the HTML fetch cannot verify it.
-          for (const fullname of contentFullnames) wikidotIds.delete(fullname);
           const fullPages = await fetchFullPageHtml(contentFullnames, options.tier2Concurrency);
 
           // 从原始 HTML 中提取 wikidotId（在预处理之前）
           const extractedIds = extractWikidotIds(fullPages);
           let newIdCount = 0;
           for (const [fn, wid] of extractedIds) {
-            if (wikidotIds.get(fn) !== wid) {
+            if (!wikidotIds.has(fn)) {
               wikidotIds.set(fn, wid);
               newIdCount++;
               // 同步更新 syncer DB 的 PageSnapshot.wikidotId

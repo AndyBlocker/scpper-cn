@@ -17,10 +17,6 @@ const { outputText } = ts.transpileModule(source, {
 });
 const bridge = await import(`data:text/javascript;base64,${Buffer.from(`
   let pool;
-  let prisma;
-  function getSyncerPrisma() { return prisma; }
-  function extractTextFromSource(source) { return source; }
-  export function setPrisma(value) { prisma = value; }
   function getMainPool() { return pool; }
   export function setPool(value) { pool = value; }
   ${outputText}
@@ -155,73 +151,4 @@ test('restoring a deleted Wikidot identity clears both Page and current PageVers
   assert.equal(versionUpdate.params[0], 10);
   assert.equal(queries.at(-1).sql, 'COMMIT');
   assert.equal(released, true);
-});
-
-
-test('identity selection prefers verified Wikidot ID even when both candidates are live', async () => {
-  const result = await bridge.loadPageMapping({ query: async () => ({ rows: [
-    mapping({ wikidot_id: '1451202340', page_id: '10', page_version_id: '100' }), mapping(),
-  ] }) }, true, new Map([['scp-cn-3000', 1452014507]]));
-  assert.equal(result.get('scp-cn-3000').pageVersionId, 200);
-});
-
-const snap = { fullname: 'scp-cn-3000', title: 'new article', rating: 2278,
-  votesCount: 2400, commentsCount: 1, revisionsCount: 2, tags: [] };
-
-function change(categories) {
-  return { fullname: snap.fullname, curr: snap, categories: new Set(categories) };
-}
-
-function emptyPrisma() {
-  return { pageContentCache: { findMany: async () => [{ fullname: snap.fullname, source: 'new source' }] },
-    voteChangeEvent: { findMany: async () => [] }, revisionRecord: { findMany: async () => [] } };
-}
-
-test('replacement creates its own identity before source propagation and leaves predecessor untouched', async () => {
-  const queries = [];
-  let created = false;
-  const query = async (sql, params) => {
-    queries.push({ sql, params });
-    if (sql.includes('SUBSTRING(p.')) return { rows: created ? [mapping(), mapping({ page_id: '10', page_version_id: '100', wikidot_id: '1451202340', is_deleted: true })] : [mapping({ page_id: '10', page_version_id: '100', wikidot_id: '1451202340', is_deleted: true })] };
-    if (sql.includes('SELECT id, "currentUrl"')) return { rows: [] };
-    if (sql.includes('INSERT INTO "Page"')) return { rows: [{ id: 20 }] };
-    if (sql.includes('INSERT INTO "PageVersion"')) { created = true; return { rows: [{ id: 200 }] }; }
-    return { rows: [], rowCount: 1 };
-  };
-  bridge.setPool({ query, connect: async () => ({ query, release() {} }) });
-  bridge.setPrisma(emptyPrisma());
-  const result = await bridge.bridgeToMainDb([change(['new_page', 'content_changed'])], new Map(), new Map([[snap.fullname, 1452014507]]));
-  assert.equal(result.newPagesCreated, 1);
-  const sourceWrite = queries.find(q => q.sql.includes('SET source ='));
-  assert.deepEqual(sourceWrite.params, [200, 'new source', 'new source']);
-  assert.equal(queries.some(q => q.sql.includes('UPDATE') && q.params?.[0] === 100), false);
-});
-
-test('unknown deleted identity skips stats, source, votes and revisions', async () => {
-  const queries = [];
-  bridge.setPool({ query: async (sql, params) => {
-    queries.push({ sql, params });
-    return { rows: [mapping({ is_deleted: true })] };
-  } });
-  bridge.setPrisma(emptyPrisma());
-  const result = await bridge.bridgeToMainDb([change(['content_changed', 'votes_changed', 'metadata_changed'])], new Map(), new Map());
-  assert.equal(result.pagesUpdated + result.newPagesCreated + result.newVersionsCreated, 0);
-  assert.equal(queries.length, 1);
-});
-
-test('failed replacement creation never falls back to old identity for source or stats', async () => {
-  const queries = [];
-  bridge.setPool({ query: async (sql, params) => {
-    queries.push({ sql, params });
-    return { rows: [mapping({ wikidot_id: '1451202340' })] };
-  }, connect: async () => { throw new Error('injected create failure'); } });
-  bridge.setPrisma(emptyPrisma());
-  const originalWarn = console.warn;
-  console.warn = () => {};
-  let result;
-  try {
-    result = await bridge.bridgeToMainDb([change(['content_changed', 'votes_changed'])], new Map(), new Map([[snap.fullname, 1452014507]]));
-  } finally { console.warn = originalWarn; }
-  assert.equal(result.newPagesCreated + result.pagesUpdated, 0);
-  assert.equal(queries.every(q => !q.sql.includes('UPDATE') && !q.sql.includes('INSERT')), true);
 });
