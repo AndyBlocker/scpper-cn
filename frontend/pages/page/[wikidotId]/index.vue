@@ -71,6 +71,14 @@
         </div>
       </header>
 
+      <aside v-if="page?.isDeleted" class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+        这是已删除页面的历史记录。保存的评分未经核实，不代表现存文章的评分。
+        <template v-if="page?.urlReusedBy">
+          原地址已被另一篇文章使用：
+          <NuxtLink :to="`/page/${page.urlReusedBy.wikidotId}`" class="underline">{{ page.urlReusedBy.title }}（查看现存文章）</NuxtLink>。
+        </template>
+      </aside>
+
       <!-- Meta line -->
       <section class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] leading-5 text-neutral-600 dark:text-neutral-400">
         <div v-if="groupedAttributions && groupedAttributions.length > 0" class="inline-flex items-center gap-2">
@@ -120,6 +128,9 @@
       <!-- Metrics -->
       <PageMetrics
         :total-score-display="totalScoreDisplay"
+        :historical="Boolean(page?.isDeleted)"
+        :distribution-available="distributionAvailable"
+        :controversy-available="Boolean(stats?.hasStats)"
         :upvotes="upvotes"
         :downvotes="downvotes"
         :total-votes="totalVotes"
@@ -255,6 +266,7 @@
 </template>
 
 <script setup lang="ts">
+import { resolvePageVoteMetrics } from '~/utils/pageVoteMetrics'
 import { computed, ref, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import { definePageMeta, useAsyncData, useHead, useNuxtApp, useRoute, useRuntimeConfig } from '#imports'
 import { orderTags } from '~/composables/useTagOrder'
@@ -783,9 +795,10 @@ async function copySourceUrl(){
 // Tags
 const allTags = computed(() => orderTags(Array.isArray(page.value?.tags) ? page.value!.tags : []))
 
-// Votes derived
-const upvotes = computed(() => Number(voteDistribution.value?.upvotes ?? stats.value?.uv ?? 0))
-const downvotes = computed(() => Number(voteDistribution.value?.downvotes ?? stats.value?.dv ?? 0))
+const resolvedVotes = computed(() => resolvePageVoteMetrics(voteDistribution.value, stats.value, page.value?.voteCount))
+const distributionAvailable = computed(() => resolvedVotes.value.available)
+const upvotes = computed(() => resolvedVotes.value.upvotes)
+const downvotes = computed(() => resolvedVotes.value.downvotes)
 const totalVotes = computed(() => Math.max(0, upvotes.value + downvotes.value))
 const upvotePct = computed(() => totalVotes.value ? (upvotes.value / totalVotes.value) * 100 : 0)
 const downvotePct = computed(() => totalVotes.value ? (downvotes.value / totalVotes.value) * 100 : 0)
@@ -845,7 +858,9 @@ const wilsonLB = computed(() => {
 })
 
 // Tooltips
-const ratingTooltip = computed(() => `最近更新：${formatRelativeTime(page.value?.updatedAt || page.value?.createdAt || '')}`)
+const ratingTooltip = computed(() => page.value?.isDeleted
+  ? '已删除页面保存的历史评分，未经核实；更新时间不代表评分采集时间'
+  : `最近更新：${formatRelativeTime(page.value?.updatedAt || page.value?.createdAt || '')}`)
 const voteTooltip = computed(() => `总票数：${totalVotes.value}`)
 const wilsonTooltip = computed(() => `基于 Wilson 区间的下界，结合票数与比例`)
 

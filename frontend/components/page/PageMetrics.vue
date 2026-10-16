@@ -21,18 +21,18 @@
       <!-- 评分 -->
       <div class="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 shadow-sm">
         <div class="flex items-start justify-between">
-          <div class="text-[12px] text-neutral-600 dark:text-neutral-400">评分</div>
+          <div class="text-[12px] text-neutral-600 dark:text-neutral-400">{{ historical ? '历史评分（未核实）' : '评分' }}</div>
           <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="ratingTooltip">
             {{ totalScoreDisplay }}
           </div>
         </div>
         <div class="mt-2 grid grid-cols-2 text-[11px]">
-          <div class="text-green-600 dark:text-green-400">↑ {{ upvotes }}</div>
-          <div class="text-red-600 dark:text-red-400 text-right">↓ {{ downvotes }}</div>
+          <div class="text-green-600 dark:text-green-400">↑ {{ distributionAvailable ? upvotes : '—' }}</div>
+          <div class="text-red-600 dark:text-red-400 text-right">↓ {{ distributionAvailable ? downvotes : '—' }}</div>
         </div>
         <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden flex">
-          <div class="h-full bg-[var(--g-accent)]" :style="{ width: upvotePct + '%' }" aria-hidden="true"></div>
-          <div class="h-full bg-red-500" :style="{ width: downvotePct + '%' }" aria-hidden="true"></div>
+          <div class="h-full bg-[var(--g-accent)]" :style="{ width: (distributionAvailable ? upvotePct : 0) + '%' }" aria-hidden="true"></div>
+          <div class="h-full bg-red-500" :style="{ width: (distributionAvailable ? downvotePct : 0) + '%' }" aria-hidden="true"></div>
         </div>
       </div>
 
@@ -41,12 +41,12 @@
         <div class="flex items-start justify-between">
           <div class="text-[12px] text-neutral-600 dark:text-neutral-400">支持率</div>
           <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="voteTooltip">
-            {{ likeRatioPct.toFixed(0) }}%
+            {{ distributionAvailable ? `${Number(likeRatioPct).toFixed(0)}%` : '—' }}
           </div>
         </div>
-        <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">总票数 {{ totalVotes }}</div>
+        <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">{{ distributionAvailable ? `总票数 ${totalVotes}` : '投票明细暂无数据' }}</div>
         <div class="mt-2 h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-          <div class="h-full bg-[var(--g-accent)]" :style="{ width: likeRatioPct + '%' }" aria-hidden="true"></div>
+          <div class="h-full bg-[var(--g-accent)]" :style="{ width: (distributionAvailable ? likeRatioPct : 0) + '%' }" aria-hidden="true"></div>
         </div>
       </div>
 
@@ -55,7 +55,7 @@
         <div class="flex items-start justify-between">
           <div class="text-[12px] text-neutral-600 dark:text-neutral-400">Wilson 95% 下界</div>
           <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100" :title="wilsonTooltip">
-            {{ (wilsonLB * 100).toFixed(1) }}%
+            {{ distributionAvailable ? `${Number(wilsonLB * 100).toFixed(1)}%` : '—' }}
           </div>
         </div>
         <div class="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">
@@ -71,7 +71,7 @@
         <div class="flex items-start justify-between">
           <div class="text-[12px] text-neutral-600 dark:text-neutral-400">争议指数</div>
           <div class="text-lg font-bold text-neutral-900 dark:text-neutral-100">
-            {{ controversyIdx.toFixed(3) }}
+            {{ controversyAvailable ? Number(controversyIdx).toFixed(3) : '—' }}
           </div>
         </div>
       </div>
@@ -83,6 +83,9 @@
 import { formatDateUtc8 } from '~/utils/timezone'
 
 defineProps<{
+  historical: boolean
+  distributionAvailable: boolean
+  controversyAvailable: boolean
   totalScoreDisplay: string
   upvotes: number
   downvotes: number

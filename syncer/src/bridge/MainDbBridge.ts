@@ -259,8 +259,12 @@ export async function bridgeToMainDb(
 
 // ── Internal: Page Mapping ──
 
-async function loadPageMapping(pool: pg.Pool): Promise<Map<string, PageMapping>> {
-  // 同时加载已删除和未删除的页面，以便检测僵尸页面（被错误标记删除但实际存在的）
+async function loadPageMapping(
+  pool: pg.Pool,
+  includeDeleted = true,
+): Promise<Map<string, PageMapping>> {
+  // 主同步保留已删除页作为恢复候选；URL 复用时始终优先当前存活页。
+  // 元数据扫描仅按 URL 识别页面，不能据此更新已删除的历史页面。
   const { rows } = await pool.query<{
     fullname: string;
     page_id: string;
@@ -281,14 +285,17 @@ async function loadPageMapping(pool: pg.Pool): Promise<Map<string, PageMapping>>
       pv.tags,
       pv.rating::text,
       pv."voteCount"::text AS vote_count,
-      p."isDeleted" AS is_deleted
+      (p."isDeleted" OR pv."isDeleted") AS is_deleted
     FROM "Page" p
     JOIN "PageVersion" pv ON pv."pageId" = p.id AND pv."validTo" IS NULL
-  `);
+    WHERE $1::boolean OR (p."isDeleted" = false AND pv."isDeleted" = false)
+    ORDER BY fullname, (p."isDeleted" OR pv."isDeleted") ASC,
+      pv."validFrom" DESC, pv.id DESC, p.id DESC
+  `, [includeDeleted]);
 
   const map = new Map<string, PageMapping>();
   for (const r of rows) {
-    if (!r.fullname) continue;
+    if (!r.fullname || map.has(r.fullname)) continue;
     map.set(r.fullname, {
       pageId: parseInt(r.page_id, 10),
       pageVersionId: parseInt(r.page_version_id, 10),
@@ -917,7 +924,7 @@ export async function bridgeAlternateTitles(
   const t0 = Date.now();
   console.log(`[bridge-alt] Writing ${entries.length} alternate titles...`);
 
-  const pageMap = await loadPageMapping(pool);
+  const pageMap = await loadPageMapping(pool, false);
   let updated = 0;
   let skipped = 0;
 
@@ -927,7 +934,7 @@ export async function bridgeAlternateTitles(
 
   for (const entry of entries) {
     const mapping = pageMap.get(entry.fullname);
-    if (!mapping) { skipped++; continue; }
+    if (!mapping || mapping.isDeleted) { skipped++; continue; }
     pvIds.push(mapping.pageVersionId);
     titles.push(entry.alternateTitle);
   }
@@ -939,7 +946,10 @@ export async function bridgeAlternateTitles(
       FROM (
         SELECT unnest($1::int[]) AS id, unnest($2::text[]) AS alt_title
       ) u
-      WHERE pv.id = u.id AND (pv."alternateTitle" IS NULL OR pv."alternateTitle" != u.alt_title)
+      WHERE pv.id = u.id
+        AND pv."validTo" IS NULL AND pv."isDeleted" = false
+        AND EXISTS (SELECT 1 FROM "Page" p WHERE p.id = pv."pageId" AND p."isDeleted" = false)
+        AND (pv."alternateTitle" IS NULL OR pv."alternateTitle" != u.alt_title)
     `, [pvIds, titles]);
     updated = result.rowCount ?? 0;
   }
@@ -967,7 +977,7 @@ export async function bridgeAttributions(
   console.log(`[bridge-attr] Writing ${entries.length} attribution entries...`);
 
   // 加载 fullname → pageVersionId 映射
-  const pageMap = await loadPageMapping(pool);
+  const pageMap = await loadPageMapping(pool, false);
   console.log(`[bridge-attr] pageMap size: ${pageMap.size}, sample: ${[...pageMap.keys()].slice(0, 3).join(', ')}`);
 
   // 加载 userName → userId 映射（通过 displayName 查找）
@@ -980,29 +990,39 @@ export async function bridgeAttributions(
 
   for (const entry of entries) {
     const mapping = pageMap.get(entry.pageFullname);
-    if (!mapping) { skipped++; continue; }
+    if (!mapping || mapping.isDeleted) { skipped++; continue; }
 
     const userId = userNameMap.get(entry.userName) ?? null;
     const anonKey = userId == null ? entry.userName : null;
     const date = entry.date ? new Date(entry.date) : null;
 
     try {
+      let affectedRows = 0;
       if (userId != null) {
-        await pool.query(`
+        const result = await pool.query(`
           INSERT INTO "Attribution" ("pageVerId", type, "order", date, "userId")
-          VALUES ($1, $2, $3, $4, $5)
+          SELECT $1, $2, $3, $4, $5
+          FROM "PageVersion" pv JOIN "Page" p ON p.id = pv."pageId"
+          WHERE pv.id = $1 AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false AND p."isDeleted" = false
           ON CONFLICT ("pageVerId", type, "order", "userId") DO UPDATE SET
             date = COALESCE(EXCLUDED.date, "Attribution".date)
         `, [mapping.pageVersionId, entry.normalizedType, entry.order, date, userId]);
+        affectedRows = result.rowCount ?? 0;
       } else {
-        await pool.query(`
+        const result = await pool.query(`
           INSERT INTO "Attribution" ("pageVerId", type, "order", date, "anonKey")
-          VALUES ($1, $2, $3, $4, $5)
+          SELECT $1, $2, $3, $4, $5
+          FROM "PageVersion" pv JOIN "Page" p ON p.id = pv."pageId"
+          WHERE pv.id = $1 AND pv."validTo" IS NULL
+            AND pv."isDeleted" = false AND p."isDeleted" = false
           ON CONFLICT ("pageVerId", type, "order", "anonKey") DO UPDATE SET
             date = COALESCE(EXCLUDED.date, "Attribution".date)
         `, [mapping.pageVersionId, entry.normalizedType, entry.order, date, anonKey]);
+        affectedRows = result.rowCount ?? 0;
       }
-      written++;
+      if (affectedRows > 0) written++;
+      else skipped++;
     } catch (err) {
       if (skipped < 3) {
         console.warn(`[bridge-attr] SQL error for ${entry.pageFullname}:`, err instanceof Error ? err.message : err);
@@ -1015,15 +1035,16 @@ export async function bridgeAttributions(
   const affectedPages = new Map<number, number>();
   for (const entry of entries) {
     const mapping = pageMap.get(entry.pageFullname);
-    if (!mapping) continue;
+    if (!mapping || mapping.isDeleted) continue;
     affectedPages.set(mapping.pageVersionId, (affectedPages.get(mapping.pageVersionId) ?? 0) + 1);
   }
 
   for (const [pvId, count] of affectedPages) {
     try {
       await pool.query(`
-        UPDATE "PageVersion" SET "attributionCount" = $2, "updatedAt" = NOW()
-        WHERE id = $1
+        UPDATE "PageVersion" pv SET "attributionCount" = $2, "updatedAt" = NOW()
+        WHERE pv.id = $1 AND pv."validTo" IS NULL AND pv."isDeleted" = false
+          AND EXISTS (SELECT 1 FROM "Page" p WHERE p.id = pv."pageId" AND p."isDeleted" = false)
       `, [pvId, count]);
     } catch { /* non-critical */ }
   }

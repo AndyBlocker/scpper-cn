@@ -340,6 +340,24 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     await hydrateRowsWithImages([row]);
     if (row.isDeleted !== true || !row.pageId) return row;
 
+    // URLs can be reused by a different Wikidot page. Never borrow its metadata.
+    const { rows: replacements } = await readPool.query(`
+      SELECT p."wikidotId", pv.title
+      FROM "Page" p
+      JOIN "PageVersion" pv ON pv."pageId" = p.id
+      WHERE p.id <> $1 AND p."isDeleted" = false
+        AND pv."validTo" IS NULL AND pv."isDeleted" = false
+        AND regexp_replace(regexp_replace(p."currentUrl", '^https?://', ''), '/+$', '')
+          = regexp_replace(regexp_replace($2::text, '^https?://', ''), '/+$', '')
+      ORDER BY pv."validFrom" DESC NULLS LAST, pv.id DESC LIMIT 1
+    `, [row.pageId, row.url]);
+    if (replacements[0]) {
+      row.urlReusedBy = replacements[0];
+      // The old value may have been imported by URL after deletion.
+      row.alternateTitle = null;
+    }
+
+
     const fallbackSql = `
       SELECT
         pv.id AS "pageVersionId",
@@ -392,6 +410,7 @@ export function pagesRouter(pool: Pool, redis: RedisClientType | null) {
     if (!Array.isArray(merged.images)) {
       merged.images = [];
     }
+    if (merged.urlReusedBy) merged.alternateTitle = null;
     return merged;
   }
 
