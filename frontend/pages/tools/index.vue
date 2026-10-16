@@ -5,9 +5,9 @@
         <span>工具枢纽</span>
       </div>
       <div class="space-y-3">
-        <h1 class="text-3xl font-semibold text-neutral-900 dark:text-neutral-50 sm:text-4xl">集中入口，一步抵达分析与赛事模块</h1>
+        <h1 class="text-3xl font-semibold text-neutral-900 dark:text-neutral-50 sm:text-4xl">集中入口，一步抵达常用工具</h1>
         <p class="text-sm leading-relaxed text-neutral-600 dark:text-neutral-300">
-          按类别快速定位常用数据工具与最新竞赛专题，点击卡片即可跳转到对应页面。
+          快速定位数据分析、创作与站点工具，点击卡片即可跳转到对应页面。
         </p>
       </div>
     </header>
@@ -113,34 +113,6 @@ const sections = [
         description: '基于全站文本内容，从词汇统计、作者指纹、语义网络等维度探索文字特征。',
         badge: 'Text Lab',
         icon: 'BookOpenText'
-      }
-    ]
-  },
-  {
-    key: 'events',
-    title: '竞赛',
-    caption: '了解比赛时间线、规则与参赛作品展示，持续关注创作赛事。',
-    items: [
-      {
-        to: '/scpcn4k',
-        title: 'SCP-CN-4000 “难题”竞赛',
-        description: '阅读导语与规则，查看“cn4000”标签下的随机四篇与全量作品列表。',
-        badge: 'SCP-CN-4000',
-        icon: 'Key'
-      },
-      {
-        to: '/newbee2025',
-        title: '2025“群雄逐鹿”新秀竞赛',
-        description: '查看倒计时、参赛规则以及“2025新秀竞赛”标签下的参赛作品展示。',
-        badge: 'Newbee 2025',
-        icon: 'Trophy'
-      },
-      {
-        to: '/winter-contest-2026',
-        title: '2026冬季征文：循环',
-        description: '查看征文导语、赛程节点、规则与“2026冬季征文”标签下的参赛作品。',
-        badge: 'Winter 2026',
-        icon: 'Snowflake'
       }
     ]
   }

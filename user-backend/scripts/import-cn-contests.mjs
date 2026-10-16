@@ -2,6 +2,9 @@
 // Import CN Branch contests/events directly into the database (CalendarEvent).
 // Prefers reading pre-built events from frontend/public/contests-cn-events.json.
 // If missing, tries to build from external/contest_events.json + external/contest_date_lines.json.
+// Restricted backfill (from user-backend/):
+// node --env-file=.env scripts/import-cn-contests.mjs --only=slug1,slug2 --create-only --dry-run
+// --only accepts source slugs or imported cn-* IDs. --create-only skips every existing match.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -70,12 +73,36 @@ function dedupeById(items) {
   return out;
 }
 
+function importOptions(args) {
+  const onlyArgs = args.filter((arg) => arg === '--only' || arg.startsWith('--only='));
+  if (onlyArgs.length > 1) throw new Error('Specify --only=slug1,slug2 only once.');
+  let only = null;
+  if (onlyArgs.length === 1) {
+    const arg = onlyArgs[0];
+    if (!arg.startsWith('--only=')) throw new Error('Use --only=slug1,slug2 with at least one ID.');
+    only = arg.slice('--only='.length).split(',').map((id) => id.trim());
+    if (only.some((id) => !id)) throw new Error('--only must contain non-empty, comma-separated IDs.');
+    only = [...new Set(only)];
+  }
+  return { only, createOnly: args.includes('--create-only'), dryRun: args.includes('--dry-run') };
+}
+
+function selectItems(items, only) {
+  if (!only) return items;
+  const knownIds = new Set(items.flatMap((item) => [item.sourceId, item.id]));
+  const unknown = only.filter((id) => !knownIds.has(id));
+  if (unknown.length > 0) throw new Error(`Unknown --only ID(s): ${unknown.join(', ')}`);
+  const selected = new Set(only);
+  return items.filter((item) => selected.has(item.sourceId) || selected.has(item.id));
+}
+
 function toItemsFromPublicJson() {
   const publicJson = path.join(repoRoot, 'frontend', 'public', 'contests-cn-events.json');
   if (!exists(publicJson)) return null;
   const data = readJson(publicJson);
   if (!data || !Array.isArray(data.items)) return null;
   return data.items.map((it) => ({
+    sourceId: String(it.id || it.title),
     id: sanitizeId(it.id || it.title),
     title: String(it.title || it.id),
     summary: it.summary ?? null,
@@ -226,6 +253,7 @@ function toItemsFromExternal() {
     const e = pickEnd(candidateLines);
     if (!s || !e) continue;
     items.push({
+      sourceId: String(ev.slug),
       id: sanitizeId(ev.slug),
       title: String(ev.title || ev.slug),
       summary: '中文分部征文/活动',
@@ -240,14 +268,16 @@ function toItemsFromExternal() {
 }
 
 async function main() {
+  const { only, createOnly, dryRun } = importOptions(process.argv.slice(2));
   const fromPublic = toItemsFromPublicJson();
   const rawItems = fromPublic ?? toItemsFromExternal();
   if (!rawItems || rawItems.length === 0) {
     console.error('No contest items found to import.');
     process.exit(1);
   }
-  const items = dedupeById(rawItems);
-  const dryRun = process.argv.includes('--dry-run');
+  // Validate every selector before querying or writing the database.
+  const items = dedupeById(selectItems(rawItems, only));
+  if (only) console.log(`Selected input IDs (${items.length}): ${items.map((item) => item.id).join(', ')}`);
 
   const existingEvents = await prisma.calendarEvent.findMany({
     select: { id: true, title: true, summary: true, detailsMd: true, startsAt: true, endsAt: true }
@@ -262,8 +292,15 @@ async function main() {
     existingByTitle.set(tk, preferEvent(existingByTitle.get(tk), ev));
   }
 
-  let created = 0, updated = 0, matchedExisting = 0, matchedByTitle = 0;
+  let created = 0, updated = 0, matchedExisting = 0, matchedByTitle = 0, skippedExisting = 0;
   for (const it of items) {
+    const fp = eventFingerprint(it.title, it.startsAt, it.endsAt);
+    const existingMatch = existingById.get(it.id) || existingByFp.get(fp) || existingByTitle.get(titleKey(it.title));
+    if (createOnly && existingMatch) {
+      skippedExisting++;
+      console.log(`Skipped existing: ${it.id} → ${existingMatch.id}`);
+      continue;
+    }
     const data = {
       title: it.title,
       summary: it.summary,
@@ -322,10 +359,13 @@ async function main() {
   }
 
   if (dryRun) {
-    console.log(`Dry run only. Input: ${items.length}, would create: ${created}, would updateById: ${updated}, wouldMatchExistingByTimeTitle: ${matchedExisting}, wouldMatchExistingByTitle: ${matchedByTitle}`);
+    console.log(`Dry run only. Input: ${items.length}, would create: ${created}, would updateById: ${updated}, wouldMatchExistingByTimeTitle: ${matchedExisting}, wouldMatchExistingByTitle: ${matchedByTitle}${createOnly ? `, skippedExisting: ${skippedExisting}` : ''}`);
   } else {
-    console.log(`Imported contests → created: ${created}, updatedById: ${updated}, matchedExistingByTimeTitle: ${matchedExisting}, matchedExistingByTitle: ${matchedByTitle}`);
+    console.log(`Imported contests → created: ${created}, updatedById: ${updated}, matchedExistingByTimeTitle: ${matchedExisting}, matchedExistingByTitle: ${matchedByTitle}${createOnly ? `, skippedExisting: ${skippedExisting}` : ''}`);
   }
 }
 
-main().finally(async () => { await prisma.$disconnect(); });
+main().catch((error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+}).finally(async () => { await prisma.$disconnect(); });
