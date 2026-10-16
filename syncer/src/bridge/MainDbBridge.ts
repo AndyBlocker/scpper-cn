@@ -59,7 +59,7 @@ export async function bridgeToMainDb(
   console.log(`[bridge] Starting main DB bridge for ${changes.length} changes...`);
 
   // 1. 加载 fullname → (pageId, pageVersionId) 映射
-  const pageMap = await loadPageMapping(pool);
+  const pageMap = await loadPageMapping(pool, true, wikidotIds);
   console.log(`[bridge] Loaded ${pageMap.size} page mappings from main DB`);
 
   const result: BridgeResult = {
@@ -132,6 +132,17 @@ export async function bridgeToMainDb(
       continue;
     }
 
+    const actualId = wikidotIds.get(change.fullname);
+    if (!actualId) {
+      console.warn(`[bridge] Skipping unverified identity: ${change.fullname}`);
+      continue;
+    }
+    if (actualId !== mapping.wikidotId) {
+      // A fullname is only a location: a replacement article has its own identity.
+      newPages.push({ fullname: change.fullname, snap });
+      continue;
+    }
+
     // 僵尸页面检测：主库标记为已删除，但 V2 扫描到了（说明实际存在）
     if (mapping.isDeleted) {
       console.log(`[bridge] Zombie page detected: ${change.fullname} (was deleted, now alive)`);
@@ -157,27 +168,6 @@ export async function bridgeToMainDb(
   // 4. 批量更新 PageVersion（仅统计字段）
   if (statsUpdates.length > 0) {
     result.pagesUpdated = await batchUpdatePageVersionStats(pool, statsUpdates);
-  }
-
-  // 4b. 更新有内容变化的页面的 source + textContent
-  if (sourceMap.size > 0) {
-    let contentUpdated = 0;
-    for (const [fullname, source] of sourceMap) {
-      const mapping = pageMap.get(fullname);
-      if (!mapping) continue;
-      const textContent = extractTextFromSource(source);
-      try {
-        await pool.query(`
-          UPDATE "PageVersion"
-          SET source = $2, "textContent" = $3, search_text = $3, "updatedAt" = NOW()
-          WHERE id = $1
-        `, [mapping.pageVersionId, source, textContent]);
-        contentUpdated++;
-      } catch { /* non-critical */ }
-    }
-    if (contentUpdated > 0) {
-      console.log(`[bridge] Content updated: ${contentUpdated} pages (source + textContent)`);
-    }
   }
 
   // 4. 创建新 PageVersion（title/tags 变化）
@@ -227,8 +217,36 @@ export async function bridgeToMainDb(
   // 重新加载映射（包含新创建的页面和新版本的 pageVersionId）
   const needFreshMap = newPages.length > 0 || versionUpdates.length > 0;
   const freshPageMap = needFreshMap
-    ? await loadPageMapping(pool)
-    : pageMap;
+    ? await loadPageMapping(pool, true, wikidotIds)
+    : new Map(pageMap);
+
+  // Failed creates and unknown identities must never fall back to a predecessor.
+  for (const [fullname, mapping] of freshPageMap) {
+    if (mapping.isDeleted || wikidotIds.get(fullname) !== mapping.wikidotId) {
+      freshPageMap.delete(fullname);
+    }
+  }
+
+  // 新页面和版本创建完成后，将内容写入已核对身份的当前版本
+  if (sourceMap.size > 0) {
+    let contentUpdated = 0;
+    for (const [fullname, source] of sourceMap) {
+      const mapping = freshPageMap.get(fullname);
+      if (!mapping) continue;
+      const textContent = extractTextFromSource(source);
+      try {
+        await pool.query(`
+          UPDATE "PageVersion"
+          SET source = $2, "textContent" = $3, search_text = $3, "updatedAt" = NOW()
+          WHERE id = $1
+        `, [mapping.pageVersionId, source, textContent]);
+        contentUpdated++;
+      } catch { /* non-critical */ }
+    }
+    if (contentUpdated > 0) {
+      console.log(`[bridge] Content updated: ${contentUpdated} pages (source + textContent)`);
+    }
+  }
 
   if (voteChangedFullnames.length > 0) {
     const { usersEnsured, votesWritten } = await bridgeVotes(pool, voteChangedFullnames, freshPageMap);
@@ -262,6 +280,7 @@ export async function bridgeToMainDb(
 async function loadPageMapping(
   pool: pg.Pool,
   includeDeleted = true,
+  expectedIds?: Map<string, number>,
 ): Promise<Map<string, PageMapping>> {
   // 主同步保留已删除页作为恢复候选；URL 复用时始终优先当前存活页。
   // 元数据扫描仅按 URL 识别页面，不能据此更新已删除的历史页面。
@@ -296,7 +315,10 @@ async function loadPageMapping(
 
   const map = new Map<string, PageMapping>();
   for (const r of rows) {
-    if (!r.fullname || map.has(r.fullname)) continue;
+    if (!r.fullname) continue;
+    const selected = map.get(r.fullname);
+    if (selected && (selected.wikidotId === expectedIds?.get(r.fullname)
+      || parseInt(r.wikidot_id, 10) !== expectedIds?.get(r.fullname))) continue;
     map.set(r.fullname, {
       pageId: parseInt(r.page_id, 10),
       pageVersionId: parseInt(r.page_version_id, 10),

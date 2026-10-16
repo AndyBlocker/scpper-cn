@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolvePageVoteMetrics as resolve } from '../utils/pageVoteMetrics.ts';
+import { resolvePageVoteMetrics as resolve, resolvePageRating } from '../utils/pageVoteMetrics.ts';
 
 test('missing details do not become zero votes for a historical snapshot', () => {
   assert.equal(resolve({ upvotes: '0', downvotes: '0' }, null, 2204).available, false);
@@ -18,4 +18,12 @@ test('actual details take precedence and verified zero-vote snapshots remain zer
 test('invalid or uncomputed counters do not establish availability', () => {
   assert.equal(resolve({ upvotes: -1, downvotes: 1 }, { hasStats: false, uv: 10, dv: 2 }, 12).available, false);
   assert.equal(resolve({ upvotes: 'bad', downvotes: 1 }, null, 12).available, false);
+});
+
+test('missing rating and missing votes remain unknown rather than zero', () => {
+  const unknown = resolve({ upvotes: 0, downvotes: 0 }, null, 2204);
+  assert.equal(resolvePageRating(null, unknown), null);
+  assert.equal(resolvePageRating(2024, unknown), 2024);
+  assert.equal(resolvePageRating(null, resolve({ upvotes: 0, downvotes: 0 }, null, 0)), 0);
+  assert.equal(resolvePageRating(null, resolve(null, { hasStats: true, uv: 8, dv: 2 }, 10)), 6);
 });

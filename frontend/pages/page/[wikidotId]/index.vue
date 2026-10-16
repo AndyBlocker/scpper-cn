@@ -266,7 +266,7 @@
 </template>
 
 <script setup lang="ts">
-import { resolvePageVoteMetrics } from '~/utils/pageVoteMetrics'
+import { resolvePageRating, resolvePageVoteMetrics } from '~/utils/pageVoteMetrics'
 import { computed, ref, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import { definePageMeta, useAsyncData, useHead, useNuxtApp, useRoute, useRuntimeConfig } from '#imports'
 import { orderTags } from '~/composables/useTagOrder'
@@ -803,36 +803,10 @@ const totalVotes = computed(() => Math.max(0, upvotes.value + downvotes.value))
 const upvotePct = computed(() => totalVotes.value ? (upvotes.value / totalVotes.value) * 100 : 0)
 const downvotePct = computed(() => totalVotes.value ? (downvotes.value / totalVotes.value) * 100 : 0)
 const likeRatioPct = computed(() => totalVotes.value ? (upvotes.value / totalVotes.value) * 100 : 0)
-const totalScore = computed(() => {
-  // 优先 page.rating（PhaseA 同步的 wikidot 权威字段）
-  // 显式判 null/undefined：Number(null) === 0 会让未加载时顽固显示 0，
-  // 无法 fallback 到 stats / voteDistribution
-  if (page.value?.rating != null) {
-    const authoritative = Number(page.value.rating)
-    if (Number.isFinite(authoritative)) return authoritative
-  }
-
-  // 次选 stats.hasStats 时的 uv-dv
-  const statsValue = stats.value as any
-  if (statsValue && statsValue.hasStats) {
-    const up = Number(statsValue.uv ?? 0)
-    const down = Number(statsValue.dv ?? 0)
-    if (Number.isFinite(up) && Number.isFinite(down)) return up - down
-  }
-
-  // 最后 voteDistribution
-  const distribution = voteDistribution.value as any
-  if (distribution && distribution.upvotes != null && distribution.downvotes != null) {
-    const up = Number(distribution.upvotes)
-    const down = Number(distribution.downvotes)
-    if (Number.isFinite(up) && Number.isFinite(down)) return up - down
-  }
-
-  return 0
-})
+const totalScore = computed(() => resolvePageRating(page.value?.rating, resolvedVotes.value))
 const totalScoreDisplay = computed(() => {
   const value = totalScore.value
-  return Number.isFinite(value) ? value.toFixed(0) : '0'
+  return value == null ? '—' : Number(value).toFixed(0)
 })
 
 const totalViewsCount = computed(() => {

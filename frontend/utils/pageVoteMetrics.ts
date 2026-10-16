@@ -20,3 +20,8 @@ export function resolvePageVoteMetrics(distribution: Counts | null | undefined, 
   }
   return { available: false, upvotes: 0, downvotes: 0 }
 }
+
+export function resolvePageRating(rating: unknown, votes: { available: boolean; upvotes: number; downvotes: number }): number | null {
+  if (rating != null && Number.isFinite(Number(rating))) return Number(rating)
+  return votes.available ? votes.upvotes - votes.downvotes : null
+}
