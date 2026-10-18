@@ -17,6 +17,25 @@ const ALLOWED_HOST_SUFFIXES = [
   'scpwikicn.com',
 ];
 
+/** 旧预览 HTML 把头像也放进了通用资源代理，改用已有头像服务以复用其缓存与兜底。 */
+export function wikidotAvatarUserId(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    if (!['www.wikidot.com', 'wikidot.com'].includes(url.hostname)) return null;
+    if (url.username || url.password || url.port || url.pathname !== '/avatar.php') return null;
+
+    // 历史预处理在 encodeURIComponent 之前未解码 HTML 属性里的 &amp;。
+    // 仅处理 query 中这一种实体，不对任意 URL 做 HTML 解码。
+    const params = new URLSearchParams(url.search.replace(/&amp;/g, '&'));
+    const values = params.getAll('userid');
+    if (values.length !== 1 || !/^[1-9][0-9]{0,12}$/.test(values[0])) return null;
+    return Number.isSafeInteger(Number(values[0])) ? values[0] : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 只允许代理 wikidot 生态内的域名，避免变成开放代理 */
 export function isAllowedUrl(raw: string): boolean {
   try {

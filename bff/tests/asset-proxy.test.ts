@@ -3,12 +3,36 @@ import {
   isAlreadyProxyRef,
   rewriteAssetRef,
   rewriteCssUrls,
+  wikidotAvatarUserId,
 } from '../src/web/utils/asset-proxy';
 
 const BASE = new URL('https://scp-wiki-cn.wikidot.com/');
 const P = 'https://scpper.example/api/css-proxy';
 
 describe('asset-proxy', () => {
+  test('识别原始及旧 HTML 实体编码的 Wikidot 头像', () => {
+    expect(wikidotAvatarUserId('https://www.wikidot.com/avatar.php?userid=9869350&size=small'))
+      .toBe('9869350');
+    expect(wikidotAvatarUserId('http://wikidot.com/avatar.php?size=small&amp;userid=9869350&amp;timestamp=123'))
+      .toBe('9869350');
+  });
+
+  test.each([
+    'https://www.wikidot.com.attacker.net/avatar.php?userid=1',
+    'https://scp-wiki-cn.wikidot.com/avatar.php?userid=1',
+    'https://name@www.wikidot.com/avatar.php?userid=1',
+    'https://www.wikidot.com:8443/avatar.php?userid=1',
+    'https://www.wikidot.com/other.php?userid=1',
+    'https://www.wikidot.com/avatar.php?userid=0',
+    'https://www.wikidot.com/avatar.php?userid=-1',
+    'https://www.wikidot.com/avatar.php?userid=1.5',
+    'https://www.wikidot.com/avatar.php?userid=9007199254740992',
+    'https://www.wikidot.com/avatar.php?userid=1&userid=2',
+    'https://www.wikidot.com/avatar.php?userid=1&amp;userid=2',
+  ])('不把不合法或非标准头像 URL 映射到头像服务：%s', (url) => {
+    expect(wikidotAvatarUserId(url)).toBeNull();
+  });
+
   test('只代理 wikidot 生态内的域名', () => {
     expect(isAllowedUrl('https://scp-wiki.wdfiles.com/local--files/x/a.png')).toBe(true);
     expect(isAllowedUrl('https://d3g0gp89917ko0.cloudfront.net/x.css')).toBe(true);

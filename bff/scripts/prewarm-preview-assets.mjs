@@ -18,6 +18,7 @@ import pg from 'pg';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { classifyPrewarmResponse, shouldFailPrewarm } from './prewarm-preview-result.mjs';
 import 'dotenv/config';
 
 function arg(name, fallback) {
@@ -135,7 +136,7 @@ if (assets.size === 0) {
 }
 
 const all = [...assets];
-console.log(`\n页面里直接引用的唯一资源 ${all.length}，其中已缓存 ${all.filter(isCached).length}`);
+console.log(`\n页面里直接引用的唯一资源 ${all.length}，其中磁盘已缓存 ${all.filter(isCached).length}`);
 
 if (DRY_RUN) {
   console.log('--dry-run：不实际抓取（也不会展开 CSS 里的嵌套依赖）');
@@ -152,6 +153,7 @@ const queued = new Set(all);
 const queue = all.map((url) => ({ url, depth: 0 }));
 
 let warmed = 0, hit = 0, failed = 0, done = 0, discovered = 0;
+let avatarWarmed = 0, avatarFallback = 0;
 let cursor = 0;
 let errors = 0;
 let firstError = null;
@@ -176,8 +178,13 @@ async function worker() {
       } else {
         await drain(res);
       }
-      // 回源失败时 CSS 会以注释形式软失败，用是否真的落盘来判定成功与否
-      if (res.ok && isCached(url)) { wasCached ? hit++ : warmed++; } else { failed++; }
+      // 头像由独立服务缓存；其他资源（包括 200 软失败的 CSS）仍检查真实落盘。
+      const outcome = classifyPrewarmResponse(res, { diskCached: isCached(url), wasCached });
+      if (outcome === 'avatar-warmed') avatarWarmed++;
+      else if (outcome === 'avatar-fallback') avatarFallback++;
+      else if (outcome === 'hit') hit++;
+      else if (outcome === 'warmed') warmed++;
+      else failed++;
     } catch (err) {
       errors += 1;
       failed += 1;
@@ -185,7 +192,7 @@ async function worker() {
     }
     if (++done % 200 === 0) {
       console.log(`  已处理 ${done}/${queue.length}（新抓 ${warmed} / 已有 ${hit} / 失败 ${failed}，` +
-                  `从 CSS 里发现 ${discovered}）`);
+                  `头像缓存 ${avatarWarmed} / 默认头像兜底 ${avatarFallback}，从 CSS 里发现 ${discovered}）`);
     }
   }
 }
@@ -197,5 +204,7 @@ if (errors) {
 }
 console.log(`\n完成：处理 ${done} 个资源（其中 ${discovered} 个是从 CSS 里递归发现的）`);
 console.log(`      新抓取 ${warmed}，已在缓存 ${hit}，失败 ${failed}`);
-if (failed) console.log('失败多半是上游 wikidot / wdfiles 当前不可达，链路恢复后重跑即可。');
-if (warmed === 0 && failed > 0) process.exit(1);
+console.log(`      头像缓存成功 ${avatarWarmed}，默认头像兜底 ${avatarFallback}（不计原图预热成功）`);
+if (failed) console.log('失败可能来自上游链路、头像服务或异常响应；检查服务日志，恢复后可重跑。');
+if (avatarFallback) console.log('默认头像仅为显示兜底，尚未确认原头像缓存可用，稍后可重跑预热。');
+if (shouldFailPrewarm({ warmed, avatarWarmed, failed, avatarFallback })) process.exit(1);

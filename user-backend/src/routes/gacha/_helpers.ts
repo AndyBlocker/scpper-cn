@@ -1,3 +1,4 @@
+import { createSnapshotRefresh, consumeIdPages } from '../../utils/snapshot-refresh.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { Prisma, GachaRarity, GachaMatchMode, GachaAffixVisualStyle as PrismaAffixVisualStyle } from '@prisma/client';
@@ -64,6 +65,7 @@ setInterval(() => {
     if (nowMs - entry.fetchedAt > ORACLE_CACHE_TTL_MS * 4) oracleTickCache.delete(cat);
   }
 }, 60_000).unref();
+const drawPoolRefresh = createSnapshotRefresh<DrawPoolCardSnapshot[]>();
 export let drawPoolCache: {
   fetchedAt: number;
   items: DrawPoolCardSnapshot[];
@@ -88,6 +90,7 @@ export const TEN_DRAW_REFORGE_REWARD: TicketBalance = {
 export const TEN_DRAW_REFORGE_SOURCE = 'TEN_DRAW_COMPLETION_BONUS';
 
 export function invalidateDrawPoolCache() {
+  drawPoolRefresh.invalidate();
   drawPoolCache = null;
 }
 
@@ -2416,49 +2419,52 @@ export async function loadDrawPoolSnapshot(asOf = now(), force = false) {
     return drawPoolCache.items;
   }
 
-  const [cards, boosts] = await Promise.all([
-    prisma.gachaCardDefinition.findMany({
-      where: { poolId: PERMANENT_POOL_ID },
-      select: {
-        id: true,
-        title: true,
-        rarity: true,
-        tags: true,
-        authorKeys: true,
-        imageUrl: true,
-        wikidotId: true,
-        pageId: true,
-        rewardTokens: true,
-        weight: true
+  const load = async () => {
+    const boosts = await fetchActiveBoostRules(prisma, asOf);
+    const flatItems: FlatPoolItem[] = [];
+    await consumeIdPages(
+      (after, take) => prisma.gachaCardDefinition.findMany({
+        where: { poolId: PERMANENT_POOL_ID, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: 'asc' },
+        take,
+        select: {
+          id: true,
+          title: true,
+          rarity: true,
+          tags: true,
+          authorKeys: true,
+          imageUrl: true,
+          wikidotId: true,
+          pageId: true,
+          rewardTokens: true,
+          weight: true
+        }
+      }),
+      (card) => {
+        const adjustedWeight = computeAdjustedWeight(card, boosts);
+        if (adjustedWeight <= 0) return;
+        flatItems.push({
+          id: card.id,
+          title: card.title,
+          rarity: card.rarity,
+          tags: card.tags ?? [],
+          authors: resolveCardAuthorsFromTags(card.tags, card.authorKeys),
+          imageUrl: card.imageUrl ?? null,
+          wikidotId: card.wikidotId ?? null,
+          pageId: card.pageId ?? null,
+          rewardTokens: Math.max(0, Math.floor(Number(card.rewardTokens ?? 0) || 0)),
+          adjustedWeight
+        });
       }
-    }),
-    fetchActiveBoostRules(prisma, asOf)
-  ]);
+    );
+    return deduplicatePoolByPage(flatItems);
+  };
 
-  const items: DrawPoolCardSnapshot[] = deduplicatePoolByPage(
-    cards
-      .map((card) => ({
-        id: card.id,
-        title: card.title,
-        rarity: card.rarity,
-        tags: card.tags ?? [],
-        authors: resolveCardAuthorsFromTags(card.tags, card.authorKeys),
-        imageUrl: card.imageUrl ?? null,
-        wikidotId: card.wikidotId ?? null,
-        pageId: card.pageId ?? null,
-        rewardTokens: Math.max(0, Math.floor(Number(card.rewardTokens ?? 0) || 0)),
-        adjustedWeight: computeAdjustedWeight(card, boosts)
-      }))
-      .filter((item) => item.adjustedWeight > 0)
-  );
-
-  if (canUseCache) {
-    drawPoolCache = {
-      fetchedAt: Date.now(),
-      items
-    };
-  }
-  return items;
+  // Historical snapshots use their own boost date and must not join the live refresh.
+  if (!canUseCache) return load();
+  return drawPoolRefresh.run(load, (items) => {
+    drawPoolCache = { fetchedAt: Date.now(), items };
+  });
 }
 
 export async function ensureWallet(tx: Tx, userId: string) {
