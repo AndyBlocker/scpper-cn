@@ -206,6 +206,9 @@ export class UserFollowActivityJob {
       }
     }
 
+    // Re-scanning the same attribution event must preserve its read state and
+    // detection time. A changed type, page version or attribution is a new event.
+    // Guard both UPDATE and ON CONFLICT: an unchanged UPDATE returns zero too.
     // Process attribution additions
     for (const e of addEvents) {
       const list = followsByTarget.get(e.targetUserId) || [];
@@ -222,11 +225,18 @@ export class UserFollowActivityJob {
               "detectedAt" = ${now},
               "acknowledgedAt" = NULL
           WHERE "followId" = ${f.id} AND "attributionId" = ${e.attributionId}
+            AND (type IS DISTINCT FROM 'ATTRIBUTION'
+              OR "pageVersionId" IS DISTINCT FROM ${e.pageVersionId})
         `);
         if (touched === 0) {
-          await this.prisma.$executeRaw(Prisma.sql`
+          const written = await this.prisma.$executeRaw(Prisma.sql`
             INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "attributionId", "pageVersionId", "detectedAt", "createdAt")
-            VALUES (${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now})
+            SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now}
+            WHERE NOT EXISTS (
+              SELECT 1 FROM "UserActivityAlert"
+              WHERE "followId" = ${f.id} AND type = 'ATTRIBUTION'
+                AND "pageVersionId" = ${e.pageVersionId} AND "attributionId" = ${e.attributionId}
+            )
             ON CONFLICT ("followId", "type", "pageVersionId") WHERE "pageVersionId" IS NOT NULL DO UPDATE
             SET "attributionId" = EXCLUDED."attributionId",
                 "followerId" = EXCLUDED."followerId",
@@ -234,8 +244,9 @@ export class UserFollowActivityJob {
                 "pageId" = EXCLUDED."pageId",
                 "detectedAt" = EXCLUDED."detectedAt",
                 "acknowledgedAt" = NULL
+            WHERE "UserActivityAlert"."attributionId" IS DISTINCT FROM EXCLUDED."attributionId"
           `);
-          created += 1;
+          created += written;
         } else {
           updated += 1;
         }
@@ -258,11 +269,18 @@ export class UserFollowActivityJob {
               "detectedAt" = ${now},
               "acknowledgedAt" = NULL
           WHERE "followId" = ${f.id} AND "attributionId" = ${e.attributionId}
+            AND (type IS DISTINCT FROM 'ATTRIBUTION_REMOVED'
+              OR "pageVersionId" IS DISTINCT FROM ${e.pageVersionId})
         `);
         if (touched === 0) {
-          await this.prisma.$executeRaw(Prisma.sql`
+          const written = await this.prisma.$executeRaw(Prisma.sql`
             INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "attributionId", "pageVersionId", "detectedAt", "createdAt")
-            VALUES (${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION_REMOVED', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now})
+            SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION_REMOVED', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now}
+            WHERE NOT EXISTS (
+              SELECT 1 FROM "UserActivityAlert"
+              WHERE "followId" = ${f.id} AND type = 'ATTRIBUTION_REMOVED'
+                AND "pageVersionId" = ${e.pageVersionId} AND "attributionId" = ${e.attributionId}
+            )
             ON CONFLICT ("followId", "type", "pageVersionId") WHERE "pageVersionId" IS NOT NULL DO UPDATE
             SET "attributionId" = EXCLUDED."attributionId",
                 "followerId" = EXCLUDED."followerId",
@@ -270,8 +288,9 @@ export class UserFollowActivityJob {
                 "pageId" = EXCLUDED."pageId",
                 "detectedAt" = EXCLUDED."detectedAt",
                 "acknowledgedAt" = NULL
+            WHERE "UserActivityAlert"."attributionId" IS DISTINCT FROM EXCLUDED."attributionId"
           `);
-          created += 1;
+          created += written;
         } else {
           updated += 1;
         }
