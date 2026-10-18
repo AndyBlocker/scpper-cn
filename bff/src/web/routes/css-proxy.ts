@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 import {
   isAllowedUrl,
   rewriteCssUrls,
@@ -509,8 +510,42 @@ function revalidateInBackground(url: string, proxyPath: string): void {
 
 export function cssProxyRouter() {
   const router = Router();
+  const avatarAgentBase = (process.env.AVATAR_AGENT_BASE_URL || 'http://127.0.0.1:3200').replace(/\/$/, '');
+  const avatarUserIds = new WeakMap<Request, string>();
+  const avatarProxy = createProxyMiddleware<Request, ExpressResponse>({
+    target: avatarAgentBase,
+    router: (req) => `${avatarAgentBase}/avatar/${avatarUserIds.get(req)}`,
+    ignorePath: true,
+    changeOrigin: true,
+    proxyTimeout: 10_000,
+    on: {
+      proxyReq: (proxyReq) => {
+        for (const header of ['cookie', 'authorization', 'proxy-authorization', 'x-internal-key', 'x-scpper-expected-user-id']) {
+          proxyReq.removeHeader(header);
+        }
+      },
+      proxyRes: (proxyRes, _req, res) => {
+        // http-proxy 会覆盖已有响应头，必须在上游响应中合并缓存变体。
+        const upstreamVary = proxyRes.headers.vary;
+        if (upstreamVary) res.vary(Array.isArray(upstreamVary) ? upstreamVary.join(', ') : upstreamVary);
+        res.vary('Accept');
+        res.vary('Sec-Fetch-Dest');
+        proxyRes.headers.vary = String(res.getHeader('Vary'));
+      },
+      error: (_err, _req, res) => {
+        if ('writeHead' in res && !res.headersSent) {
+          res.writeHead(502, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            Vary: 'Accept, Sec-Fetch-Dest',
+          });
+        }
+        res.end(JSON.stringify({ error: 'avatar_proxy_unavailable' }));
+      },
+    },
+  });
 
-  router.get(['/css-proxy', '/api/css-proxy'], async (req, res) => {
+  router.get(['/css-proxy', '/api/css-proxy'], async (req, res, next) => {
     const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     // 资源预热脚本带内部密钥，不占限流额度；不能用回环地址判断（见 start.ts 的说明）
     const trusted = hasInternalKey(req);
@@ -534,12 +569,14 @@ export function cssProxyRouter() {
     // 样式表请求保持 CSS 处理，避免把 @import 等请求误重定向到图片。
     const avatarUserId = wikidotAvatarUserId(url);
     if (avatarUserId) {
-      // 同一 URL 的图片跳转与样式响应必须是不同缓存变体。
+      // 同一 URL 的图片与样式响应必须是不同缓存变体。
       res.vary('Accept');
       res.vary('Sec-Fetch-Dest');
       if (!wantsCss) {
-        res.setHeader('Cache-Control', 'public, max-age=300');
-        return res.redirect(302, `/api/avatar/${avatarUserId}`);
+        // Nitro 的网关代理会在 BFF 地址跟随重定向，不能返回 /api/avatar 跳转。
+        // 只向固定头像服务发送已验证的 ID，不转发原始 URL 或 query。
+        avatarUserIds.set(req, avatarUserId);
+        return avatarProxy(req, res, next);
       }
     }
 
