@@ -533,6 +533,10 @@ export function cssProxyRouter() {
         proxyRes.headers.vary = String(res.getHeader('Vary'));
       },
       error: (_err, _req, res) => {
+        if ('headersSent' in res && res.headersSent) {
+          res.destroy();
+          return;
+        }
         if ('writeHead' in res && !res.headersSent) {
           res.writeHead(502, {
             'Content-Type': 'application/json; charset=utf-8',
