@@ -35,6 +35,8 @@ describe('css-proxy avatars', () => {
 
     expect(res.headers.location).toBe('/api/avatar/9869350');
     expect(res.headers['cache-control']).toBe('public, max-age=300');
+    expect(res.headers.vary).toContain('Accept');
+    expect(res.headers.vary).toContain('Sec-Fetch-Dest');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -46,6 +48,8 @@ describe('css-proxy avatars', () => {
 
     expect(res.headers.location).toBeUndefined();
     expect(res.headers['content-type']).toContain('text/css');
+    expect(res.headers.vary).toContain('Accept');
+    expect(res.headers.vary).toContain('Sec-Fetch-Dest');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
