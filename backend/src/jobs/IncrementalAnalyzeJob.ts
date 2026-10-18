@@ -11,6 +11,7 @@ import { WikidotBindingVerifyJob } from './WikidotBindingVerifyJob.js';
 import { TagDefinitionService } from '../services/TagDefinitionService.js';
 import { runCategoryIndexTickJob } from './CategoryIndexTickJob.js';
 import { runCategoryIndexForecastJob } from './CategoryIndexForecastJob.js';
+import { withTaskAdvisoryLock } from '../utils/task-advisory-lock.js';
 // @ts-ignore - importing from scripts folder
 // import updateSearchIndexIncremental from '../../scripts/update-search-index-incremental.js';
 
@@ -297,18 +298,21 @@ export class IncrementalAnalyzeJob {
    * 运行单个分析任务
    */
   private async runTask(taskName: string, forceFullAnalysis = false, options: { forceFullHistory?: boolean } = {}) {
-    // Acquire task-level advisory lock to avoid concurrent runs of the same task
-    const lockResult = await this.prisma.$queryRaw<Array<{ locked: boolean }>>`
-      SELECT pg_try_advisory_lock(hashtext(${taskName})) as locked
-    `;
-    if (!lockResult[0]?.locked) {
-      console.log(`⏭️ Task ${taskName}: another worker holds the lock, skipping...`);
-      return;
-    }
+    await withTaskAdvisoryLock(taskName, async (assertLockHeld) => {
+      await this.runLockedTask(taskName, forceFullAnalysis, options, assertLockHeld);
+    });
+  }
 
+  private async runLockedTask(
+    taskName: string,
+    forceFullAnalysis: boolean,
+    options: { forceFullHistory?: boolean },
+    assertLockHeld: () => void
+  ) {
     try {
       // 获取变更集（受影响的 pageVersionId）
       const changeSet = await this.getChangeSet(taskName, forceFullAnalysis);
+      assertLockHeld();
 
       if (changeSet.length === 0 && !forceFullAnalysis) {
         const alwaysRunTasks = new Set([
@@ -464,6 +468,7 @@ export class IncrementalAnalyzeJob {
       }
 
       // 更新水位线
+      assertLockHeld();
       if (taskName !== 'category_index_tick' && taskName !== 'category_index_forecast') {
         await this.updateWatermark(taskName, changeSet);
       }
@@ -471,14 +476,6 @@ export class IncrementalAnalyzeJob {
     } catch (error) {
       console.error(`❌ Task ${taskName} failed:`, error);
       throw error;
-    } finally {
-      // Release advisory lock and verify it was actually released
-      const unlockResult = await this.prisma.$queryRaw<[{ pg_advisory_unlock: boolean }]>`
-        SELECT pg_advisory_unlock(hashtext(${taskName}))
-      `;
-      if (unlockResult?.[0]?.pg_advisory_unlock !== true) {
-        console.warn(`⚠️ pg_advisory_unlock returned false for task ${taskName} — lock may not have been held`);
-      }
     }
   }
 

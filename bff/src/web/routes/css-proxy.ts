@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   isAllowedUrl,
   rewriteCssUrls,
+  wikidotAvatarUserId,
 } from '../utils/asset-proxy.js';
 import { hasInternalKey } from '../utils/internal-key.js';
 
@@ -527,6 +528,14 @@ export function cssProxyRouter() {
       }
       setHeaders(res, 'text/plain; charset=utf-8', 'no-cache');
       return res.status(400).send('invalid or disallowed url');
+    }
+
+    // 不再为预览中的每个头像单独回源 Wikidot；旧缓存 HTML 无需重写即可生效。
+    // 样式表请求保持 CSS 处理，避免把 @import 等请求误重定向到图片。
+    const avatarUserId = wantsCss ? null : wikidotAvatarUserId(url);
+    if (avatarUserId) {
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      return res.redirect(302, `/api/avatar/${avatarUserId}`);
     }
 
     // 缓存优先：命中就直接吐，不占限流额度。
