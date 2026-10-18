@@ -32,7 +32,9 @@ export class UserFollowActivityJob {
     // Prepare attribution diff: current vs previous version
     const pvPairs = await this.prisma.$queryRaw<Array<{ pvId: number; pageId: number; previousPvId: number | null; pvValidFrom: Date }>>`
       SELECT pv.id AS "pvId", pv."pageId" AS "pageId",
-             (SELECT id FROM "PageVersion" x WHERE x."pageId" = pv."pageId" AND x.id < pv.id ORDER BY x.id DESC LIMIT 1) AS "previousPvId",
+             (SELECT id FROM "PageVersion" x
+              WHERE x."pageId" = pv."pageId" AND (x."validFrom", x.id) < (pv."validFrom", pv.id)
+              ORDER BY x."validFrom" DESC, x.id DESC LIMIT 1) AS "previousPvId",
              pv."validFrom" AS "pvValidFrom"
       FROM "PageVersion" pv
       WHERE pv.id = ANY(${pageVersionIds}::int[])
@@ -78,7 +80,10 @@ export class UserFollowActivityJob {
       if (row.userId == null) continue;
       const pvId = Number(row.pvId); const u = Number(row.userId); const aid = Number(row.attributionId);
       if (!curMap.has(pvId)) curMap.set(pvId, new Map());
-      curMap.get(pvId)!.set(u, aid);
+      // A user may have several credited roles. The attribution row is only a
+      // reference; choose it consistently regardless of query/physical row order.
+      const existingAid = curMap.get(pvId)!.get(u);
+      if (existingAid == null || aid < existingAid) curMap.get(pvId)!.set(u, aid);
     }
     const pvValidFromMap = new Map<number, Date>();
     for (const pair of pvPairs) {
@@ -206,94 +211,37 @@ export class UserFollowActivityJob {
       }
     }
 
-    // Re-scanning the same attribution event must preserve its read state and
-    // detection time. A changed type, page version or attribution is a new event.
-    // Guard both UPDATE and ON CONFLICT: an unchanged UPDATE returns zero too.
-    // Process attribution additions
-    for (const e of addEvents) {
-      const list = followsByTarget.get(e.targetUserId) || [];
-      for (const f of list) {
-        const eventTime = e.occurredAt instanceof Date && !Number.isNaN(e.occurredAt.getTime()) ? e.occurredAt : now;
-        if (!Number.isNaN(f.createdAt.getTime()) && eventTime < f.createdAt) continue;
-        const touched = await this.prisma.$executeRaw(Prisma.sql`
-          UPDATE "UserActivityAlert"
-          SET type = 'ATTRIBUTION',
-              "followerId" = ${f.followerId},
-              "targetUserId" = ${e.targetUserId},
-              "pageId" = ${e.pageId},
-              "pageVersionId" = ${e.pageVersionId},
-              "detectedAt" = ${now},
-              "acknowledgedAt" = NULL
-          WHERE "followId" = ${f.id} AND "attributionId" = ${e.attributionId}
-            AND (type IS DISTINCT FROM 'ATTRIBUTION'
-              OR "pageVersionId" IS DISTINCT FROM ${e.pageVersionId})
-        `);
-        if (touched === 0) {
-          const written = await this.prisma.$executeRaw(Prisma.sql`
-            INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "attributionId", "pageVersionId", "detectedAt", "createdAt")
-            SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now}
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "UserActivityAlert"
-              WHERE "followId" = ${f.id} AND type = 'ATTRIBUTION'
-                AND "pageVersionId" = ${e.pageVersionId} AND "attributionId" = ${e.attributionId}
-            )
-            ON CONFLICT ("followId", "type", "pageVersionId") WHERE "pageVersionId" IS NOT NULL DO UPDATE
-            SET "attributionId" = EXCLUDED."attributionId",
-                "followerId" = EXCLUDED."followerId",
-                "targetUserId" = EXCLUDED."targetUserId",
-                "pageId" = EXCLUDED."pageId",
-                "detectedAt" = EXCLUDED."detectedAt",
-                "acknowledgedAt" = NULL
-            WHERE "UserActivityAlert"."attributionId" IS DISTINCT FROM EXCLUDED."attributionId"
-          `);
-          created += written;
-        } else {
-          updated += 1;
-        }
-      }
-    }
+    // Attribution events are identified by (follow, type, pageVersion), not by
+    // the chosen role row. Append real events and leave existing read history
+    // untouched, including when a role is replaced or an old batch is replayed.
+    // This is latest-state compression: do not backfill older announcements
+    // after a newer state is known. Legacy imports can assign a larger id to
+    // an older version, so all three ordering checks use (validFrom, id).
+    const attributionEvents = [
+      ...addEvents.map(event => ({ ...event, type: 'ATTRIBUTION' as const })),
+      ...removeEvents.map(event => ({ ...event, type: 'ATTRIBUTION_REMOVED' as const }))
+    ].sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || b.pageVersionId - a.pageVersionId);
 
-    // Process attribution removals
-    for (const e of removeEvents) {
+    for (const e of attributionEvents) {
       const list = followsByTarget.get(e.targetUserId) || [];
       for (const f of list) {
         const eventTime = e.occurredAt instanceof Date && !Number.isNaN(e.occurredAt.getTime()) ? e.occurredAt : now;
         if (!Number.isNaN(f.createdAt.getTime()) && eventTime < f.createdAt) continue;
-        const touched = await this.prisma.$executeRaw(Prisma.sql`
-          UPDATE "UserActivityAlert"
-          SET type = 'ATTRIBUTION_REMOVED',
-              "followerId" = ${f.followerId},
-              "targetUserId" = ${e.targetUserId},
-              "pageId" = ${e.pageId},
-              "pageVersionId" = ${e.pageVersionId},
-              "detectedAt" = ${now},
-              "acknowledgedAt" = NULL
-          WHERE "followId" = ${f.id} AND "attributionId" = ${e.attributionId}
-            AND (type IS DISTINCT FROM 'ATTRIBUTION_REMOVED'
-              OR "pageVersionId" IS DISTINCT FROM ${e.pageVersionId})
+        const written = await this.prisma.$executeRaw(Prisma.sql`
+          INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "attributionId", "pageVersionId", "detectedAt", "createdAt")
+          SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, ${e.type}, ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "UserActivityAlert" existing
+            JOIN "PageVersion" existing_pv ON existing_pv.id = existing."pageVersionId"
+            JOIN "PageVersion" incoming_pv ON incoming_pv.id = ${e.pageVersionId}
+            WHERE existing."followId" = ${f.id} AND existing."pageId" = ${e.pageId}
+              AND existing.type IN ('ATTRIBUTION', 'ATTRIBUTION_REMOVED')
+              AND ((existing_pv."validFrom", existing_pv.id) > (incoming_pv."validFrom", incoming_pv.id)
+                OR (existing."pageVersionId" = incoming_pv.id AND existing.type = ${e.type}))
+          )
+          ON CONFLICT ("followId", "type", "pageVersionId") WHERE "pageVersionId" IS NOT NULL DO NOTHING
         `);
-        if (touched === 0) {
-          const written = await this.prisma.$executeRaw(Prisma.sql`
-            INSERT INTO "UserActivityAlert" ("followId", "followerId", "targetUserId", "pageId", type, "attributionId", "pageVersionId", "detectedAt", "createdAt")
-            SELECT ${f.id}, ${f.followerId}, ${e.targetUserId}, ${e.pageId}, 'ATTRIBUTION_REMOVED', ${e.attributionId}, ${e.pageVersionId}, ${now}, ${now}
-            WHERE NOT EXISTS (
-              SELECT 1 FROM "UserActivityAlert"
-              WHERE "followId" = ${f.id} AND type = 'ATTRIBUTION_REMOVED'
-                AND "pageVersionId" = ${e.pageVersionId} AND "attributionId" = ${e.attributionId}
-            )
-            ON CONFLICT ("followId", "type", "pageVersionId") WHERE "pageVersionId" IS NOT NULL DO UPDATE
-            SET "attributionId" = EXCLUDED."attributionId",
-                "followerId" = EXCLUDED."followerId",
-                "targetUserId" = EXCLUDED."targetUserId",
-                "pageId" = EXCLUDED."pageId",
-                "detectedAt" = EXCLUDED."detectedAt",
-                "acknowledgedAt" = NULL
-            WHERE "UserActivityAlert"."attributionId" IS DISTINCT FROM EXCLUDED."attributionId"
-          `);
-          created += written;
-        } else {
-          updated += 1;
-        }
+        created += written;
       }
     }
 
