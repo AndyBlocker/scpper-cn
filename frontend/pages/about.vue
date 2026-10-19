@@ -124,6 +124,10 @@
             <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="10018496" :display-name="'Fleeting Meteors'" bare />
             ：祝scpper 未来一切顺利，同时也希望大家能够写出自己所期盼的文字，以上。 -- 2026.8.16
           </div>
+          <div class="text-sm leading-6 text-neutral-700 dark:text-neutral-300">
+            <UserCard class="inline-flex align-[-0.5ex] mr-2 h-6" size="S" :wikidot-id="6535743" :display-name="'LinXingJun'" bare />
+            ：给中猫付token费用,以及给中猫那可能的百万小号,以及给scpper那可能的API功能和MCP功能开发,以及可能的中猫开源,以及可能的中猫小模型训练与开发 -- 2026.9.29
+          </div>
 
           <p class="text-sm leading-6 text-neutral-700 dark:text-neutral-300 mt-3">
             感谢以上赞助者对网站的支持！
