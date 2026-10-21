@@ -1,6 +1,6 @@
 // Full probe for all BFF endpoints. Saves a JSON report to disk.
 // Usage:
-//   node bff/scripts/probe-bff-full.mjs --base http://localhost:4396 --out bff/probe-report.json
+//   node bff/scripts/probe-bff-full.mjs --base http://127.0.0.1:4396 --out bff/probe-report.json
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -39,7 +39,7 @@ function safeParseInt(v, d = undefined) { const n = Number(v); return Number.isF
 
 async function main() {
   const argv = parseArgs(process.argv.slice(2));
-  const base = argv.base || process.env.BFF_BASE_URL || 'http://localhost:4396';
+  const base = argv.base || process.env.BFF_BASE_URL || 'http://127.0.0.1:4396';
   const outPath = argv.out || 'probe-report.json';
   const timeoutMs = safeParseInt(argv.timeout || process.env.BFF_TIMEOUT_MS, 8000) ?? 8000;
 

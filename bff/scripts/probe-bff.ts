@@ -1,9 +1,9 @@
 /*
 Simple probe script for BFF endpoints.
 Usage:
-  BFF_BASE_URL=http://localhost:4396 npx ts-node bff/scripts/probe-bff.ts
+  BFF_BASE_URL=http://127.0.0.1:4396 npx ts-node bff/scripts/probe-bff.ts
 or:
-  npm run probe -- --base http://localhost:4396
+  npm run probe -- --base http://127.0.0.1:4396
 */
 
 type Json = unknown;
@@ -69,7 +69,7 @@ function sampleArray<T>(arr: T[], n = 3): T[] {
 
 async function main() {
   const argv = parseArgs(process.argv.slice(2));
-  const base = argv.base || process.env.BFF_BASE_URL || 'http://localhost:4396';
+  const base = argv.base || process.env.BFF_BASE_URL || 'http://127.0.0.1:4396';
   const timeoutMs = Number(argv.timeout || process.env.BFF_TIMEOUT_MS || 5000);
   const verbose = argv.verbose === '1';
 

@@ -1,8 +1,8 @@
 // Simple probe script for BFF endpoints (pure ESM JS)
 // Usage:
-//   node bff/scripts/probe-bff.mjs --base http://localhost:4396
+//   node bff/scripts/probe-bff.mjs --base http://127.0.0.1:4396
 // or
-//   BFF_BASE_URL=http://localhost:4396 npm --prefix bff run probe
+//   BFF_BASE_URL=http://127.0.0.1:4396 npm --prefix bff run probe
 
 function parseArgs(argv) {
   const args = {};
@@ -39,7 +39,7 @@ function pick(obj, keys) { const o = {}; for (const k of keys) if (k in obj) o[k
 
 async function main() {
   const argv = parseArgs(process.argv.slice(2));
-  const base = argv.base || process.env.BFF_BASE_URL || 'http://localhost:4396';
+  const base = argv.base || process.env.BFF_BASE_URL || 'http://127.0.0.1:4396';
   const timeoutMs = Number(argv.timeout || process.env.BFF_TIMEOUT_MS || 5000);
   const verbose = argv.verbose === '1';
 

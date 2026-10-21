@@ -48,7 +48,7 @@ const commandTable = {
     actions: {
       dev: 'nuxt dev --port "$PORT" --host 0.0.0.0',
       build: 'nuxt build',
-      start: 'nuxt start --port "$PORT" --host 0.0.0.0'
+      start: 'nuxt start --port "$PORT" --host "${NITRO_HOST:-127.0.0.1}"'
     },
     devEnv: {
       PORT: SAFE_DEV_PORTS.frontend,
