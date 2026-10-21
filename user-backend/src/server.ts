@@ -12,9 +12,9 @@ import {
 
 async function main() {
   const app = createApp();
-  const server = app.listen(config.port, () => {
+  const server = app.listen(config.port, config.host, () => {
     // eslint-disable-next-line no-console
-    console.log(`[user-backend] listening on http://localhost:${config.port}`);
+    console.log(`[user-backend] listening on http://${config.host}:${config.port}`);
   });
 
   // Background expiry sweeps — each on its own interval to avoid bunching.
