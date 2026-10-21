@@ -9,6 +9,8 @@ module.exports = {
       env: {
         PORT: 9876,
         NITRO_PORT: 9876,
+        // Loopback only: openresty proxies scpper.mer.run to 127.0.0.1:9876.
+        NITRO_HOST: process.env.NITRO_HOST || '127.0.0.1',
         NODE_ENV: 'production',
         NITRO_PRESET: 'node-server',
         BFF_BASE: process.env.BFF_BASE || '/api',

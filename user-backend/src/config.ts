@@ -8,6 +8,8 @@ function toNumber(value: string | undefined, fallback: number) {
 
 export const config = {
   port: toNumber(process.env.USER_BACKEND_PORT, 4455),
+  // Loopback by default: callers (bff, backend notify dispatch) dial 127.0.0.1.
+  host: process.env.USER_BACKEND_HOST || '127.0.0.1',
   verification: {
     codeLength: toNumber(process.env.USER_VERIFICATION_CODE_LENGTH, 6),
     ttlMinutes: toNumber(process.env.USER_VERIFICATION_TTL_MINUTES, 10),
