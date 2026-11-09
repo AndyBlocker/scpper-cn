@@ -149,6 +149,40 @@ test('ticks after expiry cannot liquidate a position; payout uses the expiry tic
   assert.equal(result.settlements[0]?.liquidatedAt, null);
 });
 
+test('expiry waits for the expiry-hour tick, then liquidates when a delayed breach arrives', async () => {
+  const expireAt = new Date(at(8).getTime() + 30 * 60 * 1000).toISOString();
+  const data = single(position({ expireAt }));
+  const pending = await data.settle(context([tick(0, 100), tick(7, 100)]));
+  assert.equal(pending.settlements.length, 0);
+  assert.equal(pending.state.active.length, 1);
+  assert.equal(data.writes.length, 0);
+
+  const result = await data.settle(context([tick(0, 100), tick(7, 100), tick(8, 89)]));
+  assert.equal(result.settlements[0]?.status, 'LIQUIDATED');
+  assert.equal(result.settlements[0]?.liquidatedAt, at(8).toISOString());
+  assert.equal(result.settlements[0]?.settleIndex, 89);
+  assert.equal(result.settlements[0]?.payout, 0);
+  assert.equal(data.writes.length, 1);
+});
+
+test('expiry waits for the expiry-hour tick, then pays out using the delayed expiry price', async () => {
+  const expireAt = new Date(at(8).getTime() + 30 * 60 * 1000).toISOString();
+  const data = single(position({ expireAt }));
+  const pending = await data.settle(context([tick(0, 100), tick(7, 100)]));
+  assert.equal(pending.settlements.length, 0);
+  assert.equal(pending.state.active.length, 1);
+  assert.equal(data.writes.length, 0);
+
+  const result = await data.settle(context([tick(0, 100), tick(7, 100), tick(8, 105)]));
+  assert.equal(result.settlements[0]?.status, 'SETTLED');
+  assert.equal(result.settlements[0]?.settleIndex, 105);
+  assert.equal(result.settlements[0]?.payout, 146);
+  assert.equal(result.settlements[0]?.liquidatedAt, null);
+  assert.equal(result.wallet.balance, 646);
+  assert.equal(data.writes[0]?.metadata.settleTickTs, at(8).toISOString());
+  assert.equal(data.writes.length, 1);
+});
+
 test('a tick exactly at expiry can trigger liquidation', async () => {
   const data = single(position({ expireAt: at(8).toISOString() }));
   const result = await data.settle(context([tick(0, 100), tick(8, 90), tick(12, 100)]));

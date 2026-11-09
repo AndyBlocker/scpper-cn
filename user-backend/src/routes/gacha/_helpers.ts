@@ -6437,6 +6437,16 @@ export async function settleDueMarketPositions(
       settleIndex = Number(liquidationTick.indexMark);
       liquidatedAt = settleTickTs.toISOString();
     } else if (expireAt && expireAt.getTime() <= asOf.getTime()) {
+      // Hourly ticks are generated asynchronously. Wait until the expiry hour
+      // exists before finalizing a survivor: a not-yet-published tick may still
+      // contain a liquidation. Use the live context to check coverage,
+      // since a historical window intentionally ends at expiry.
+      const latestTick = marketTickAt(contract, asOf, context);
+      const expiryHourMs = Math.floor(expireAt.getTime() / (60 * 60 * 1000)) * 60 * 60 * 1000;
+      if (!latestTick || latestTick.asOfTs.getTime() < expiryHourMs) {
+        remainingActive.push(position);
+        continue;
+      }
       // Surviving positions settle at the last price at/before expiry, never a
       // later price from the current oracle window.
       const expireTick = findLastTickAtOrBefore(ticks, expireAt);
