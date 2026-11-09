@@ -5578,17 +5578,16 @@ export async function loadUsersWithDueMarketSettlement(
   const cursorCondition = afterUserId
     ? Prisma.sql`AND opens."userId" > ${afterUserId}`
     : Prisma.empty;
+  // Unexpired positions also need liquidation checks, including offline users.
   return tx.$queryRaw<Array<{ userId: string }>>(Prisma.sql`
     WITH opens AS (
       SELECT DISTINCT ON (open_events."positionId")
         open_events."positionId",
-        open_events."userId",
-        open_events."expireAt"
+        open_events."userId"
       FROM (
         SELECT
           "userId",
           COALESCE(metadata->>'positionId', '') AS "positionId",
-          COALESCE((metadata->>'expireAt')::timestamptz, "createdAt") AS "expireAt",
           "createdAt"
         FROM "GachaLedgerEntry"
         WHERE reason = ${MARKET_OPEN_REASON}
@@ -5609,7 +5608,6 @@ export async function loadUsersWithDueMarketSettlement(
     FROM opens
     LEFT JOIN settles ON settles."positionId" = opens."positionId"
     WHERE settles."positionId" IS NULL
-      AND opens."expireAt" <= ${asOf}
       ${cursorCondition}
     ORDER BY opens."userId" ASC
     LIMIT ${Math.max(1, Math.floor(limit))}
@@ -5636,13 +5634,18 @@ export async function runMarketSettleSweep(asOf = now()) {
       const userId = String(row.userId || '').trim();
       if (!userId) continue;
       cursor = userId;
-      // eslint-disable-next-line no-await-in-loop
-      const settledForUser = await runSerializableTransaction(async (tx) => {
-        const wallet = await ensureWallet(tx, userId);
-        const settled = await settleDueMarketPositions(tx, userId, wallet, oracleContext, asOf);
-        return settled.settlements.length;
-      });
-      settledPositions += settledForUser;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const settledForUser = await runSerializableTransaction(async (tx) => {
+          const wallet = await ensureWallet(tx, userId);
+          const settled = await settleDueMarketPositions(tx, userId, wallet, oracleContext, asOf);
+          return settled.settlements.length;
+        });
+        settledPositions += settledForUser;
+      } catch (error) {
+        // A broken position or wallet must not starve every subsequent user.
+        console.warn(`[gacha] market settle sweep failed for user ${userId}`, error);
+      }
     }
     if (dueUsers.length < MARKET_SETTLE_SWEEP_USER_BATCH_SIZE) {
       // Reached the end of due users — reset cursor for next invocation
@@ -6385,7 +6388,29 @@ export async function settleDueMarketPositions(
   const settlements: MarketSettlementRecord[] = [];
   const remainingActive: typeof state.active = [];
 
-  for (const position of state.active) {
+  // The shared context holds the latest 40 days. A delayed settlement may need
+  // an older window ending at expiry to cover the full (at most 30 day) holding
+  // period. Fetch missing windows concurrently, rather than serially extending
+  // the transaction for each position. Historical reads bypass realtime caches.
+  const historicalWindows = new Map<string, Promise<OracleTick[]>>();
+  const positionTicks = await Promise.all(state.active.map(async (position) => {
+    const contract = resolveMarketContract(position.contractId);
+    if (!contract) return [] as OracleTick[];
+    const ticks = context.byCategory[contract.category] ?? [];
+    if (!ticks.length) return ticks;
+    const openedAt = new Date(position.openedAt);
+    if (ticks[0]!.asOfTs.getTime() <= openedAt.getTime()) return ticks;
+    const endAt = new Date(Math.min(asOf.getTime(), new Date(position.expireAt).getTime()));
+    const key = `${contract.category}:${endAt.toISOString()}`;
+    let historical = historicalWindows.get(key);
+    if (!historical) {
+      historical = fetchOracleTicksFromBff(contract.category, ORACLE_TICK_LIMIT_POSITION, endAt);
+      historicalWindows.set(key, historical);
+    }
+    return historical;
+  }));
+
+  for (const [positionIndex, position] of state.active.entries()) {
     const contract = resolveMarketContract(position.contractId);
     if (!contract) continue;
     const expireAt = toDate(position.expireAt);
@@ -6394,26 +6419,41 @@ export async function settleDueMarketPositions(
     let settleTickTs = asOf;
     let settleIndex = INDEX_BASE;
     let liquidatedAt: string | null = null;
+    const ticks = positionTicks[positionIndex]!;
+    const openedAtMs = new Date(position.openedAt).getTime();
+    const endAtMs = Math.min(asOf.getTime(), expireAt?.getTime() ?? asOf.getTime());
+    // Liquidation is irreversible: use the first breach during the holding
+    // period, even if the price has recovered by the next sweep/API request.
+    // entryTickTs can predate the actual opening, so it is not the lower bound.
+    const liquidationTick = ticks.find((tick) => (
+      tick.asOfTs.getTime() >= openedAtMs
+      && tick.asOfTs.getTime() <= endAtMs
+      && marketCalcEquity(position.margin, position.side, position.leverage, position.entryIndex, Number(tick.indexMark)) <= 0
+    ));
 
-    // Expired positions must settle at IndexPriceAtOrBefore(expireAt),
-    // and should not be overridden by current-time equity checks.
-    if (expireAt && expireAt.getTime() <= asOf.getTime()) {
-      let expireTick = marketTickAt(contract, expireAt, context);
+    if (liquidationTick) {
+      status = 'LIQUIDATED';
+      settleTickTs = liquidationTick.asOfTs;
+      settleIndex = Number(liquidationTick.indexMark);
+      liquidatedAt = settleTickTs.toISOString();
+    } else if (expireAt && expireAt.getTime() <= asOf.getTime()) {
+      // Hourly ticks are generated asynchronously. Wait until the expiry hour
+      // exists before finalizing a survivor: a not-yet-published tick may still
+      // contain a liquidation. Use the live context to check coverage,
+      // since a historical window intentionally ends at expiry.
+      const latestTick = marketTickAt(contract, asOf, context);
+      const expiryHourMs = Math.floor(expireAt.getTime() / (60 * 60 * 1000)) * 60 * 60 * 1000;
+      if (!latestTick || latestTick.asOfTs.getTime() < expiryHourMs) {
+        remainingActive.push(position);
+        continue;
+      }
+      // Surviving positions settle at the last price at/before expiry, never a
+      // later price from the current oracle window.
+      const expireTick = findLastTickAtOrBefore(ticks, expireAt);
       if (!expireTick) {
-        // expireAt may be older than the oracle tick window. Use the earliest
-        // available tick as an approximation to avoid permanent limbo. The tick
-        // may be after expireAt if the oracle window has rolled past, but locking
-        // a user's margin forever is worse than settling on a nearby price.
-        const categoryTicks = context.byCategory[contract.category] ?? [];
-        const earliest = categoryTicks.length > 0 ? categoryTicks[0]! : null;
-        if (!earliest) {
-          console.warn(`[market-settle] ⚠️ No ticks at all for ${contract.category}, skipping position ${position.positionId}`);
-          remainingActive.push(position);
-          continue;
-        }
-        expireTick = earliest;
-        const isApproximate = earliest.asOfTs.getTime() > expireAt.getTime();
-        console.warn(`[market-settle] ⚠️ No tick for ${contract.category} at expireAt=${expireAt.toISOString()}, using ${isApproximate ? 'approximate post-expiry' : 'earliest'} tick at ${expireTick.asOfTs.toISOString()}`);
+        console.warn(`[market-settle] No tick for ${contract.category} at expiry, skipping position ${position.positionId}`);
+        remainingActive.push(position);
+        continue;
       }
       settleTickTs = expireTick.asOfTs;
       settleIndex = Number(expireTick.indexMark);
@@ -6429,27 +6469,6 @@ export async function settleDueMarketPositions(
         liquidatedAt = settleTickTs.toISOString();
       } else {
         status = 'SETTLED';
-      }
-    } else {
-      const currentTick = marketTickAt(contract, asOf, context);
-      if (!currentTick) {
-        // No tick available — do NOT settle/liquidate with INDEX_BASE fallback.
-        // Keep position active and let next cycle retry with fresh ticks.
-        remainingActive.push(position);
-        continue;
-      }
-      settleTickTs = currentTick.asOfTs;
-      settleIndex = Number(currentTick.indexMark);
-      const currentEquity = marketCalcEquity(
-        position.margin,
-        position.side,
-        position.leverage,
-        position.entryIndex,
-        settleIndex
-      );
-      if (currentEquity <= 0) {
-        status = 'LIQUIDATED';
-        liquidatedAt = settleTickTs.toISOString();
       }
     }
 
